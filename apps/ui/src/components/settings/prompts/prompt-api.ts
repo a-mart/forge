@@ -77,11 +77,13 @@ export type { PromptPreviewResponse, PromptPreviewSection } from '@forge/protoco
 export async function fetchPromptPreview(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
+  agentId?: string,
 ): Promise<PromptPreviewResponse> {
   const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
     ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
     : clientOrWsUrl
   const params = new URLSearchParams({ profileId })
+  if (agentId) params.set('agentId', agentId)
   const response = await client.fetch(`/api/prompts/preview?${params}`)
   if (!response.ok) throw new Error(await client.readApiError(response))
 

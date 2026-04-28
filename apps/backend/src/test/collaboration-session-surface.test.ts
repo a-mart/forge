@@ -228,4 +228,51 @@ describe('collaboration session surface metadata', () => {
     ).rejects.toThrow(`runtime unavailable for ${created.sessionAgent.agentId}`)
     expect(manager.runtimeCreateCalls).toEqual([created.sessionAgent.agentId])
   })
+
+  it('does not let returned collab metadata mutation leak back into the live session descriptor', async () => {
+    const manager = new CollabLazyRuntimeSwarmManager(await makeConfig())
+    await bootWithDefaultManager(manager, manager.getConfig())
+
+    await manager.ensureCollaborationStorageProfile()
+
+    const sessionAgentId = 'collab-channel-session-2'
+    const created = await manager.createSessionFromBaseDescriptor(
+      '_collaboration',
+      {
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-collab-base',
+          thinkingLevel: 'high',
+        },
+        cwd: join(manager.getConfig().paths.dataDir, 'profiles', '_collaboration', 'sessions', sessionAgentId, 'workspace'),
+        archetypeId: 'collaboration-channel',
+      },
+      {
+        label: 'Ops',
+        name: 'Ops',
+        sessionAgentId,
+      },
+      {
+        sessionSurface: 'collab',
+        collab: {
+          workspaceId: 'workspace-1',
+          channelId: 'channel-2',
+        },
+      },
+    )
+
+    if (!created.sessionAgent.collab) {
+      throw new Error('expected collab metadata on created session')
+    }
+    created.sessionAgent.collab.channelId = 'mutated-channel'
+    created.sessionAgent.collab.workspaceId = 'mutated-workspace'
+
+    expect(manager.getAgent(sessionAgentId)).toMatchObject({
+      sessionSurface: 'collab',
+      collab: {
+        workspaceId: 'workspace-1',
+        channelId: 'channel-2',
+      },
+    })
+  })
 })

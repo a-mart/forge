@@ -48,24 +48,34 @@ describe("prompt routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Prompt preview not available" });
   });
 
-  it("requires profileId for prompt preview and proxies successful preview payloads", async () => {
+  it("supports profile and agent-scoped prompt preview requests", async () => {
     const previewManagerSystemPrompt = vi.fn(async () => ({
       sections: [{ label: "System Prompt", content: "Hello", source: "profile" }],
     }));
+    const previewManagerSystemPromptForAgent = vi.fn(async () => ({
+      sections: [{ label: "System Prompt", content: "Hello agent", source: "agent" }],
+    }));
     const server = await createPromptRouteTestServer({
       promptRegistry: createPromptRegistryStub(),
-      promptPreviewProvider: { previewManagerSystemPrompt },
+      promptPreviewProvider: { previewManagerSystemPrompt, previewManagerSystemPromptForAgent },
     });
 
     const missingProfile = await fetch(`${server.baseUrl}/api/prompts/preview`);
     expect(missingProfile.status).toBe(400);
-    await expect(missingProfile.json()).resolves.toEqual({ error: "profileId query parameter is required." });
+    await expect(missingProfile.json()).resolves.toEqual({ error: "profileId or agentId query parameter is required." });
 
-    const response = await fetch(`${server.baseUrl}/api/prompts/preview?profileId=alpha`);
-    expect(response.status).toBe(200);
+    const profileResponse = await fetch(`${server.baseUrl}/api/prompts/preview?profileId=alpha`);
+    expect(profileResponse.status).toBe(200);
     expect(previewManagerSystemPrompt).toHaveBeenCalledWith("alpha");
-    await expect(response.json()).resolves.toEqual({
+    await expect(profileResponse.json()).resolves.toEqual({
       sections: [{ label: "System Prompt", content: "Hello", source: "profile" }],
+    });
+
+    const agentResponse = await fetch(`${server.baseUrl}/api/prompts/preview?agentId=alpha--s2`);
+    expect(agentResponse.status).toBe(200);
+    expect(previewManagerSystemPromptForAgent).toHaveBeenCalledWith("alpha--s2");
+    await expect(agentResponse.json()).resolves.toEqual({
+      sections: [{ label: "System Prompt", content: "Hello agent", source: "agent" }],
     });
   });
 
@@ -113,17 +123,36 @@ describe("prompt routes", () => {
         hasProfileOverride: true,
       }),
     );
+    expect(payload.prompts).toContainEqual(
+      expect.objectContaining({
+        category: "archetype",
+        promptId: "collaboration-channel",
+        displayName: "Collaboration Channel System Prompt",
+      }),
+    );
   });
 
-  it("gets a resolved prompt entry and supports layer-specific reads", async () => {
+  it("gets resolved prompt entries and supports layer-specific reads", async () => {
     const promptRegistry = createPromptRegistryStub({
-      resolveEntry: vi.fn(async () => ({
-        category: "archetype",
-        promptId: "manager",
-        content: "manager-content",
-        sourceLayer: "repo",
-        sourcePath: "/repo/manager.md",
-      })),
+      resolveEntry: vi.fn(async (_category, promptId) => {
+        if (promptId === "collaboration-channel") {
+          return {
+            category: "archetype",
+            promptId: "collaboration-channel",
+            content: "collaboration-content",
+            sourceLayer: "builtin",
+            sourcePath: "/repo/collaboration-channel.md",
+          };
+        }
+
+        return {
+          category: "archetype",
+          promptId: "manager",
+          content: "manager-content",
+          sourceLayer: "repo",
+          sourcePath: "/repo/manager.md",
+        };
+      }),
       resolveAtLayer: vi.fn(async () => "builtin-manager"),
     });
 
@@ -138,6 +167,18 @@ describe("prompt routes", () => {
         content: "manager-content",
         sourceLayer: "repo",
         sourcePath: "/repo/manager.md",
+      }),
+    );
+
+    const collabResponse = await fetch(`${server.baseUrl}/api/prompts/archetype/collaboration-channel`);
+    expect(collabResponse.status).toBe(200);
+    await expect(collabResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        category: "archetype",
+        promptId: "collaboration-channel",
+        content: "collaboration-content",
+        sourceLayer: "builtin",
+        sourcePath: "/repo/collaboration-channel.md",
       }),
     );
 
@@ -386,7 +427,10 @@ function createPromptRegistryStub(overrides?: Partial<PromptRegistryForRoutes>):
 async function createPromptRouteTestServer(options: {
   promptRegistry: PromptRegistryForRoutes;
   broadcastEvent?: (event: ServerEvent) => void;
-  promptPreviewProvider?: { previewManagerSystemPrompt: (profileId: string) => Promise<unknown> };
+  promptPreviewProvider?: {
+    previewManagerSystemPrompt: (profileId: string) => Promise<unknown>;
+    previewManagerSystemPromptForAgent?: (agentId: string) => Promise<unknown>;
+  };
   listProfiles?: () => Array<{
     profileId: string;
     displayName: string;

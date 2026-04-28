@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getByText, queryByText } from '@testing-library/dom'
+import { fireEvent, getByText, queryByText } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -181,5 +181,90 @@ describe('SettingsPrompts', () => {
     expect(getByText(container, 'Category')).toBeTruthy()
     expect(getByText(container, 'Prompt')).toBeTruthy()
     expect(queryByText(container, 'Cortex item')).toBeNull()
+  })
+
+  it('requests preview for the active session when preview session context is provided', async () => {
+    const profiles: ManagerProfile[] = [
+      {
+        profileId: 'feature-manager',
+        displayName: 'Feature Manager',
+        defaultSessionAgentId: 'feature-manager',
+        defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+        createdAt: '2026-03-16T00:00:00.000Z',
+        updatedAt: '2026-03-16T00:00:00.000Z',
+      },
+    ]
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          prompts: [
+            {
+              category: 'archetype',
+              promptId: 'manager',
+              displayName: 'Manager',
+              description: 'Manager prompt.',
+              activeLayer: 'builtin',
+              hasProfileOverride: false,
+              variables: [],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ enabled: false, surfaces: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          category: 'archetype',
+          promptId: 'manager',
+          content: 'You are the manager.',
+          sourceLayer: 'builtin',
+          sourcePath: '/tmp/manager.md',
+          variables: [],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sections: [{ label: 'System Prompt', content: 'Preview', source: 'session' }],
+        }),
+      }) as typeof fetch
+
+    globalThis.fetch = fetchMock
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(
+          HelpProvider,
+          null,
+          createElement(SettingsPrompts, {
+            wsUrl: 'ws://127.0.0.1:47187',
+            profiles,
+            promptChangeKey: 0,
+            previewSession: {
+              agentId: 'feature-manager--s2',
+              profileId: 'feature-manager',
+            },
+          }),
+        ),
+      )
+    })
+
+    await flushPromises()
+    await flushPromises()
+
+    fireEvent.click(getByText(container, 'Preview'))
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      expect.stringContaining('/api/prompts/preview?profileId=feature-manager&agentId=feature-manager--s2'),
+      expect.anything(),
+    )
   })
 })

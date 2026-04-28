@@ -29,6 +29,11 @@ interface SettingsPanelProps {
   onBack?: () => void
   onPlaywrightSnapshotUpdate?: (snapshot: PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
+  /** Optional active session context for session-specific runtime prompt previews. */
+  previewSession?: {
+    agentId: string
+    profileId: string
+  } | null
   /** Optional target for target-aware Settings shell. When omitted, Builder target is created from wsUrl. */
   target?: SettingsBackendTarget
 }
@@ -44,6 +49,7 @@ export function SettingsPanel({
   onBack,
   onPlaywrightSnapshotUpdate,
   onPlaywrightSettingsLoaded,
+  previewSession,
   target: externalTarget,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
@@ -98,6 +104,7 @@ export function SettingsPanel({
           apiClient={apiClient}
           profiles={profiles}
           promptChangeKey={promptChangeKey}
+          previewSession={previewSession}
         />
       )}
       {activeTab === 'specialists' && (

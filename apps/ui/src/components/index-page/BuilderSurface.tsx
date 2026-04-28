@@ -1109,6 +1109,21 @@ export function BuilderSurface({
 
   const showPlaywrightNav = state.playwrightSettings?.effectiveEnabled === true
 
+  const previewSession = useMemo(() => {
+    if (!activeAgentId) return null
+    const activeDescriptor = state.agents.find((agent) => agent.agentId === activeAgentId)
+    if (!activeDescriptor) return null
+
+    const sessionAgentId = activeDescriptor.role === 'manager' ? activeDescriptor.agentId : activeDescriptor.managerId
+    const sessionDescriptor = state.agents.find((agent) => agent.agentId === sessionAgentId && agent.role === 'manager')
+    if (!sessionDescriptor?.profileId) return null
+
+    return {
+      agentId: sessionDescriptor.agentId,
+      profileId: sessionDescriptor.profileId,
+    }
+  }, [activeAgentId, state.agents])
+
   const handleSuggestionClick = (prompt: string) => {
     messageInputRef.current?.setInput(prompt)
   }
@@ -1204,6 +1219,7 @@ export function BuilderSurface({
                 }
                 onPlaywrightSnapshotUpdate={handlePlaywrightSnapshotUpdate}
                 onPlaywrightSettingsLoaded={handlePlaywrightSettingsLoaded}
+                previewSession={previewSession}
               />
             ) : activeView === 'playwright' ? (
               <PlaywrightDashboardView

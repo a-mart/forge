@@ -67,9 +67,14 @@ interface SettingsPromptsProps {
   profiles: ManagerProfile[]
   /** Bumped when a prompt_changed or cortex_prompt_surface_changed WS event fires */
   promptChangeKey: number
+  /** Optional active session context for per-session runtime prompt preview. */
+  previewSession?: {
+    agentId: string
+    profileId: string
+  } | null
 }
 
-export function SettingsPrompts({ wsUrl, apiClient, profiles, promptChangeKey }: SettingsPromptsProps) {
+export function SettingsPrompts({ wsUrl, apiClient, profiles, promptChangeKey, previewSession }: SettingsPromptsProps) {
   useHelpContext('settings.prompts')
   const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
 
@@ -236,15 +241,16 @@ export function SettingsPrompts({ wsUrl, apiClient, profiles, promptChangeKey }:
     setPreviewOpen(true)
     setPreviewLoading(true)
     setPreviewError(null)
+    const previewAgentId = previewSession?.profileId === selectedProfileId ? previewSession.agentId : undefined
     try {
-      const result = await fetchPromptPreview(clientOrWsUrl, selectedProfileId)
+      const result = await fetchPromptPreview(clientOrWsUrl, selectedProfileId, previewAgentId)
       setPreviewSections(result.sections)
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : 'Failed to load preview')
     } finally {
       setPreviewLoading(false)
     }
-  }, [clientOrWsUrl, selectedProfileId])
+  }, [clientOrWsUrl, previewSession, selectedProfileId])
 
   return (
     <div className="flex flex-col gap-6">

@@ -96,18 +96,32 @@ export function createPromptRoutes(options: {
           return;
         }
 
-        const profileId = requestUrl.searchParams.get("profileId");
-        if (!profileId || profileId.trim().length === 0) {
-          sendJson(response, 400, { error: "profileId query parameter is required." });
+        const profileId = requestUrl.searchParams.get("profileId")?.trim() ?? "";
+        const agentId = requestUrl.searchParams.get("agentId")?.trim() ?? "";
+
+        if (!agentId && !profileId) {
+          sendJson(response, 400, { error: "profileId or agentId query parameter is required." });
           return;
         }
 
         try {
-          const result = await promptPreviewProvider.previewManagerSystemPrompt(profileId);
+          const result = agentId
+            ? await (() => {
+                if (!promptPreviewProvider.previewManagerSystemPromptForAgent) {
+                  throw new Error("Agent prompt preview not available");
+                }
+                return promptPreviewProvider.previewManagerSystemPromptForAgent(agentId);
+              })()
+            : await promptPreviewProvider.previewManagerSystemPrompt(profileId);
           sendJson(response, 200, result as unknown as Record<string, unknown>);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          const statusCode = message.includes("Unknown profile") ? 404 : 500;
+          const statusCode =
+            message === "Agent prompt preview not available"
+              ? 501
+              : message.includes("Unknown profile") || message.includes("Unknown manager session")
+                ? 404
+                : 500;
           sendJson(response, statusCode, { error: message });
         }
       },

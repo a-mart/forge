@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import { assertBuilderSession } from "./swarm-manager-utils.js";
+import { assertBuilderSession, cloneDescriptor } from "./swarm-manager-utils.js";
 import { savePins, type PinRegistry } from "./message-pins.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
@@ -392,22 +392,4 @@ export class SwarmSessionService {
       sessionAgent: cloneDescriptor(forkedDescriptor)
     };
   }
-}
-
-function cloneDescriptor<T extends AgentDescriptor>(descriptor: T): T {
-  return {
-    ...descriptor,
-    model: { ...descriptor.model },
-    contextUsage: descriptor.contextUsage ? { ...descriptor.contextUsage } : undefined,
-    ...(descriptor.projectAgent
-      ? {
-          projectAgent: {
-            ...descriptor.projectAgent,
-            ...(descriptor.projectAgent.capabilities
-              ? { capabilities: [...descriptor.projectAgent.capabilities] }
-              : {})
-          }
-        }
-      : {})
-  };
 }
