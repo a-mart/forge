@@ -17,9 +17,9 @@ The builtin manager archetype is intentionally concise and outcome-first in user
 
 **Stack:** TypeScript, React 19, TanStack Start, Radix UI/shadcn, Tailwind v4, Vitest, Electron, pnpm monorepo
 
-## Collaboration Mode split
+## Collaboration mode
 
-Use the public `middleman` repo for shared protocol, UI/client code, and other public-safe core files. Use the private `/Users/adam/repos/forge-collab` repo for private backend, storage, auth, and collaboration docs. When working in either repo or a worktree, pass an explicit `cwd` and route the task to the correct repo before editing.
+Use this public repo/worktree as the active implementation target for collaboration work, including backend, storage, auth, UI, and shared protocol changes. The private `/Users/adam/repos/forge-collab` repo is legacy/reference only, unless a task explicitly says to consult it. Always pass an explicit `cwd` before editing.
 
 ## Prerequisites
 
