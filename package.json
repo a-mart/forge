@@ -45,7 +45,8 @@
       "sharp",
       "esbuild",
       "electron",
-      "node-pty"
+      "node-pty",
+      "better-sqlite3"
     ],
     "patchedDependencies": {
       "@mariozechner/pi-coding-agent@0.65.2": "patches/@mariozechner__pi-coding-agent@0.65.2.patch",

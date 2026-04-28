@@ -121,6 +121,18 @@ export function getSessionMetaPath(dataDir: string, profileId: string, sessionAg
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "meta.json");
 }
 
+export function getSessionContextDir(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "context");
+}
+
+export function getSessionContextPromptPath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionContextDir(dataDir, profileId, sessionAgentId), "prompt.md");
+}
+
+export function getSessionContextReferenceDir(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionContextDir(dataDir, profileId, sessionAgentId), "reference");
+}
+
 export function getSessionTerminalsDir(dataDir: string, profileId: string, sessionAgentId: string): string {
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "terminals");
 }
@@ -263,6 +275,18 @@ export function getSharedAuthDir(dataDir: string): string {
 
 export function getSharedAuthFilePath(dataDir: string): string {
   return join(getSharedAuthDir(dataDir), "auth.json");
+}
+
+export function getSharedCollaborationConfigDir(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "collaboration");
+}
+
+export function getCollaborationAuthDbPath(dataDir: string): string {
+  return join(getSharedCollaborationConfigDir(dataDir), "auth.db");
+}
+
+export function getCollaborationAuthSecretPath(dataDir: string): string {
+  return join(getSharedCollaborationConfigDir(dataDir), "auth-secret.key");
 }
 
 export function getSharedSecretsFilePath(dataDir: string): string {

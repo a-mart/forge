@@ -84,6 +84,9 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
   const sharedAuthFile = join(sharedAuthDir, 'auth.json')
   const sharedSecretsFile = join(sharedConfigDir, 'secrets.json')
   const sharedIntegrationsDir = join(sharedConfigDir, 'integrations')
+  const collaborationConfigDir = join(sharedConfigDir, 'collaboration')
+  const collaborationAuthDbPath = join(collaborationConfigDir, 'auth.db')
+  const collaborationAuthSecretPath = join(collaborationConfigDir, 'auth-secret.key')
   const authDir = join(dataDir, 'auth')
   const authFile = join(authDir, 'auth.json')
   const secretsFile = join(dataDir, 'secrets.json')
@@ -141,6 +144,18 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
     isDesktop: options.isDesktop ?? false,
     runtimeTarget: options.runtimeTarget ?? 'builder',
     cortexEnabled: options.cortexEnabled ?? true,
+    adminEmail: undefined,
+    adminPassword: undefined,
+    collaborationAuthSecret: undefined,
+    collaborationBaseUrl: undefined,
+    collaborationTrustedOrigins: undefined,
+    collaborationModules:
+      (options.runtimeTarget ?? 'builder') === 'collaboration-server'
+        ? {
+            loadAuthModule: () => import('better-auth'),
+            loadDatabaseModule: async () => (await import('better-sqlite3')).default,
+          }
+        : undefined,
     allowNonManagerSubscriptions: options.allowNonManagerSubscriptions ?? false,
     managerId,
     managerDisplayName: options.managerDisplayName ?? 'Manager',
@@ -163,6 +178,9 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
       sharedAuthFile,
       sharedSecretsFile,
       sharedIntegrationsDir,
+      collaborationConfigDir,
+      collaborationAuthDbPath,
+      collaborationAuthSecretPath,
       sessionsDir,
       memoryDir,
       authDir,

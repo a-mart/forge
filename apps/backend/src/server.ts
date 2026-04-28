@@ -5,6 +5,10 @@ import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-se
 import { PlaywrightLivePreviewService } from "./playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
 import { readPlaywrightDashboardEnvOverride, createConfig } from "./config.js";
+import { bootstrapCollaborationAdmin } from "./collaboration/auth/admin-bootstrap.js";
+import { clearCollaborationBetterAuthService, getOrCreateCollaborationBetterAuthService } from "./collaboration/auth/better-auth-service.js";
+import { closeCollaborationAuthDb, getOrCreateCollaborationAuthDb } from "./collaboration/auth/collaboration-db.js";
+import { runCollaborationAuthMigrations } from "./collaboration/auth/migration-runner.js";
 import { StatsService } from "./stats/stats-service.js";
 import { collectFeatureAdoption } from "./telemetry/feature-counters.js";
 import {
@@ -16,6 +20,7 @@ import { TelemetryService } from "./telemetry/telemetry-service.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
+import { isCollaborationServerRuntimeTarget } from "./runtime-target.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
 import { seedBuiltins } from "./swarm/specialists/specialist-registry.js";
 import { UnreadTracker } from "./swarm/unread-tracker.js";
@@ -84,7 +89,13 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   });
 
   await seedBuiltins(config.paths.dataDir);
+  await runCollaborationAuthMigrations(config);
 
+  if (isCollaborationServerRuntimeTarget(config.runtimeTarget)) {
+    const authService = await getOrCreateCollaborationBetterAuthService(config);
+    const collaborationDatabase = await getOrCreateCollaborationAuthDb(config);
+    await bootstrapCollaborationAdmin(config, collaborationDatabase, authService);
+  }
 
   swarmManager = new SwarmManager(config, {
     versioningService,
@@ -389,6 +400,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         terminalService?.shutdown(),
         versioningService.stop(),
       ]);
+      clearCollaborationBetterAuthService(config);
+      closeCollaborationAuthDb(config);
       runtimeLock.release();
     }
     throw error;
@@ -493,6 +506,8 @@ class BackendServer implements StartedServer {
       this.versioningService.stop(),
     ]);
 
+    clearCollaborationBetterAuthService(this.config);
+    closeCollaborationAuthDb(this.config);
     this.runtimeLock.release();
 
     if (activeServer === this) {

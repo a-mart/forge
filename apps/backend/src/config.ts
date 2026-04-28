@@ -4,6 +4,8 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { normalizeAllowlistRoots } from "./swarm/cwd-policy.js";
 import {
   getAgentsStoreFilePath,
+  getCollaborationAuthDbPath,
+  getCollaborationAuthSecretPath,
   getLegacyAuthDirPath,
   getLegacyAuthFilePath,
   getLegacyMemoryDirPath,
@@ -13,6 +15,7 @@ import {
   getSharedAuthDir,
   getSharedAuthFilePath,
   getSharedCacheDir,
+  getSharedCollaborationConfigDir,
   getSharedConfigDir,
   getSharedDir,
   getSharedIntegrationsDir,
@@ -22,7 +25,7 @@ import {
   getUploadsDir
 } from "./swarm/data-paths.js";
 import type { SwarmConfig } from "./swarm/types.js";
-import { resolveRuntimeTargetFromEnv } from "./runtime-target.js";
+import { isCollaborationServerRuntimeTarget, resolveRuntimeTargetFromEnv } from "./runtime-target.js";
 
 export function readPlaywrightDashboardEnvOverride(): boolean | undefined {
   return parseOptionalBooleanEnv(
@@ -56,6 +59,9 @@ export function createConfig(): SwarmConfig {
   const sharedAuthFile = getSharedAuthFilePath(dataDir);
   const sharedSecretsFile = getSharedSecretsFilePath(dataDir);
   const sharedIntegrationsDir = getSharedIntegrationsDir(dataDir);
+  const collaborationConfigDir = getSharedCollaborationConfigDir(dataDir);
+  const collaborationAuthDbPath = getCollaborationAuthDbPath(dataDir);
+  const collaborationAuthSecretPath = getCollaborationAuthSecretPath(dataDir);
   // Legacy flat-layout paths retained for backward compatibility.
   const sessionsDir = getLegacySessionsDirPath(dataDir);
   const authDir = getLegacyAuthDirPath(dataDir);
@@ -79,6 +85,28 @@ export function createConfig(): SwarmConfig {
 
   const isDesktop = parseBooleanEnv(process.env.FORGE_DESKTOP);
   const runtimeTarget = resolveRuntimeTargetFromEnv();
+  const adminEmail = parseOptionalStringEnv(
+    process.env.FORGE_ADMIN_EMAIL ?? process.env.MIDDLEMAN_ADMIN_EMAIL,
+  );
+  const adminPassword = parseOptionalStringEnv(
+    process.env.FORGE_ADMIN_PASSWORD ?? process.env.MIDDLEMAN_ADMIN_PASSWORD,
+  );
+  const collaborationAuthSecret = parseOptionalStringEnv(
+    process.env.FORGE_COLLABORATION_AUTH_SECRET ?? process.env.MIDDLEMAN_COLLABORATION_AUTH_SECRET,
+  );
+  const collaborationBaseUrl = parseOptionalStringEnv(
+    process.env.FORGE_COLLABORATION_BASE_URL ?? process.env.MIDDLEMAN_COLLABORATION_BASE_URL,
+  );
+  const collaborationTrustedOrigins = parseOptionalStringListEnv(
+    process.env.FORGE_COLLABORATION_TRUSTED_ORIGINS ??
+      process.env.MIDDLEMAN_COLLABORATION_TRUSTED_ORIGINS,
+  );
+  const collaborationModules = isCollaborationServerRuntimeTarget(runtimeTarget)
+    ? {
+        loadAuthModule: () => import("better-auth"),
+        loadDatabaseModule: async () => (await import("better-sqlite3")).default,
+      }
+    : undefined;
 
   return {
     host: process.env.FORGE_HOST ?? process.env.MIDDLEMAN_HOST ?? "127.0.0.1",
@@ -91,6 +119,12 @@ export function createConfig(): SwarmConfig {
         process.env.FORGE_CORTEX_ENABLED ?? process.env.MIDDLEMAN_CORTEX_ENABLED,
         "FORGE_CORTEX_ENABLED"
       ) !== false,
+    adminEmail,
+    adminPassword,
+    collaborationAuthSecret,
+    collaborationBaseUrl,
+    collaborationTrustedOrigins,
+    collaborationModules,
     allowNonManagerSubscriptions: true,
     managerId,
     managerDisplayName: "Manager",
@@ -117,6 +151,9 @@ export function createConfig(): SwarmConfig {
       sharedAuthFile,
       sharedSecretsFile,
       sharedIntegrationsDir,
+      collaborationConfigDir,
+      collaborationAuthDbPath,
+      collaborationAuthSecretPath,
       sessionsDir,
       memoryDir,
       authDir,
@@ -220,6 +257,19 @@ function parseBooleanEnv(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+function parseOptionalStringEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function parseOptionalStringListEnv(value: string | undefined): string[] | undefined {
+  const entries = value
+    ?.split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  return entries?.length ? entries : undefined;
+}
 
 function parseOptionalBooleanEnv(
   value: string | undefined,

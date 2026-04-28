@@ -10,6 +10,10 @@ export function isBuilderRuntimeTarget(target: RuntimeTarget): boolean {
   return target === "builder";
 }
 
+export function isCollaborationServerRuntimeTarget(target: RuntimeTarget): boolean {
+  return target === "collaboration-server";
+}
+
 export function resolveRuntimeTargetFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   warn: (message: string) => void = (message) => console.warn(message),

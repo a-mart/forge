@@ -8,6 +8,7 @@ import {
   type ProjectAgentMessageContext,
 } from "@forge/protocol";
 import type { AgentStatus } from "./agent-state-machine.js";
+import type Database from "better-sqlite3";
 import type { RuntimeTarget } from "../runtime-target.js";
 
 export type AgentRole = "manager" | "worker";
@@ -145,6 +146,9 @@ export interface SwarmPaths {
   sharedAuthFile: string;
   sharedSecretsFile: string;
   sharedIntegrationsDir: string;
+  collaborationConfigDir?: string;
+  collaborationAuthDbPath?: string;
+  collaborationAuthSecretPath?: string;
 
   // Legacy compatibility fields (flat layout)
   /** @deprecated Use profilesDir-based paths instead. */
@@ -172,6 +176,15 @@ export type {
   SettingsEnvVariable as SkillEnvRequirement,
 } from "@forge/protocol";
 
+export interface CollaborationDatabaseConstructor {
+  new (path: string, options?: Database.Options): Database.Database;
+}
+
+export interface CollaborationModuleLoaders {
+  loadAuthModule: () => Promise<typeof import("better-auth")>;
+  loadDatabaseModule: () => Promise<CollaborationDatabaseConstructor>;
+}
+
 export interface SwarmConfig {
   host: string;
   port: number;
@@ -179,6 +192,12 @@ export interface SwarmConfig {
   isDesktop: boolean;
   runtimeTarget: RuntimeTarget;
   cortexEnabled: boolean;
+  adminEmail?: string;
+  adminPassword?: string;
+  collaborationAuthSecret?: string;
+  collaborationBaseUrl?: string;
+  collaborationTrustedOrigins?: string[];
+  collaborationModules?: CollaborationModuleLoaders;
   allowNonManagerSubscriptions: boolean;
   managerId?: string;
   managerDisplayName: string;

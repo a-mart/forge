@@ -19,6 +19,11 @@ const MANAGED_ENV_KEYS = [
   'FORGE_PLAYWRIGHT_DASHBOARD_ENABLED',
   'FORGE_TELEMETRY',
   'FORGE_COLLABORATION_ENABLED',
+  'FORGE_ADMIN_EMAIL',
+  'FORGE_ADMIN_PASSWORD',
+  'FORGE_COLLABORATION_AUTH_SECRET',
+  'FORGE_COLLABORATION_BASE_URL',
+  'FORGE_COLLABORATION_TRUSTED_ORIGINS',
 
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
@@ -29,6 +34,11 @@ const MANAGED_ENV_KEYS = [
   'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
   'MIDDLEMAN_TELEMETRY',
   'MIDDLEMAN_COLLABORATION_ENABLED',
+  'MIDDLEMAN_ADMIN_EMAIL',
+  'MIDDLEMAN_ADMIN_PASSWORD',
+  'MIDDLEMAN_COLLABORATION_AUTH_SECRET',
+  'MIDDLEMAN_COLLABORATION_BASE_URL',
+  'MIDDLEMAN_COLLABORATION_TRUSTED_ORIGINS',
 
   'LOCALAPPDATA',
 ] as const
@@ -113,6 +123,9 @@ describe('createConfig', () => {
       expect(config.paths.sharedConfigDir).toBe(resolve(dataDir, 'shared', 'config'))
       expect(config.paths.sharedCacheDir).toBe(resolve(dataDir, 'shared', 'cache'))
       expect(config.paths.sharedStateDir).toBe(resolve(dataDir, 'shared', 'state'))
+      expect(config.paths.collaborationConfigDir).toBe(resolve(dataDir, 'shared', 'config', 'collaboration'))
+      expect(config.paths.collaborationAuthDbPath).toBe(resolve(dataDir, 'shared', 'config', 'collaboration', 'auth.db'))
+      expect(config.paths.collaborationAuthSecretPath).toBe(resolve(dataDir, 'shared', 'config', 'collaboration', 'auth-secret.key'))
     })
   })
 
@@ -364,7 +377,9 @@ describe('createConfig', () => {
   it('parses FORGE_RUNTIME_TARGET when set', async () => {
     await withEnv({ FORGE_RUNTIME_TARGET: 'collaboration-server' }, () => {
       expect(resolveRuntimeTargetFromEnv()).toBe('collaboration-server')
-      expect(createConfig().runtimeTarget).toBe('collaboration-server')
+      const config = createConfig()
+      expect(config.runtimeTarget).toBe('collaboration-server')
+      expect(config.collaborationModules).toBeDefined()
     })
   })
 
@@ -373,6 +388,36 @@ describe('createConfig', () => {
       expect(resolveRuntimeTargetFromEnv()).toBe('collaboration-server')
       expect(createConfig().runtimeTarget).toBe('collaboration-server')
     })
+  })
+
+  it('keeps collaboration loaders disabled in builder runtime', async () => {
+    await withEnv({ FORGE_RUNTIME_TARGET: 'builder' }, () => {
+      expect(createConfig().collaborationModules).toBeUndefined()
+    })
+  })
+
+  it('parses collaboration auth env values for collaboration-server runtime', async () => {
+    await withEnv(
+      {
+        FORGE_RUNTIME_TARGET: 'collaboration-server',
+        FORGE_ADMIN_EMAIL: ' admin@example.com ',
+        FORGE_ADMIN_PASSWORD: ' super-secret ',
+        FORGE_COLLABORATION_AUTH_SECRET: ' auth-secret ',
+        FORGE_COLLABORATION_BASE_URL: ' https://forge.example.com/collab ',
+        FORGE_COLLABORATION_TRUSTED_ORIGINS: ' http://127.0.0.1:47188 , https://app.example.com ',
+      },
+      () => {
+        const config = createConfig()
+        expect(config.adminEmail).toBe('admin@example.com')
+        expect(config.adminPassword).toBe('super-secret')
+        expect(config.collaborationAuthSecret).toBe('auth-secret')
+        expect(config.collaborationBaseUrl).toBe('https://forge.example.com/collab')
+        expect(config.collaborationTrustedOrigins).toEqual([
+          'http://127.0.0.1:47188',
+          'https://app.example.com',
+        ])
+      },
+    )
   })
 
   it('maps legacy collaboration enabled env to collaboration-server only when runtime target is unset', async () => {
