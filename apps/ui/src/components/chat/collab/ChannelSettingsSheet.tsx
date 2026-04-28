@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { CollaborationAiRoleId, CollaborationCategory, CollaborationChannel } from '@forge/protocol'
-import { AI_ROLE_OPTIONS, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
+import { AI_ROLE_OPTIONS, aiRoleLabel, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
+import type { AiRoleOption } from '@/lib/collaboration-ai-roles'
+import { fetchAiRoles } from '@/lib/collaboration-ai-roles-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -84,8 +86,32 @@ export function ChannelSettingsSheet({
   const [aiRoleId, setAiRoleId] = useState<CollaborationAiRoleId>(channelAiRoleId)
   const [modelId, setModelId] = useState(channelModelId ?? '')
   const [promptOverlay, setPromptOverlay] = useState(channelPromptOverlay)
+  const [roleOptions, setRoleOptions] = useState<AiRoleOption[]>([...AI_ROLE_OPTIONS])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Fetch the full role library (builtins + custom) when the sheet opens
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void fetchAiRoles()
+      .then((data) => {
+        if (cancelled) return
+        setRoleOptions(
+          data.roles.map((r) => ({
+            value: r.roleId,
+            label: r.name,
+            description: r.description ?? '',
+          })),
+        )
+      })
+      .catch(() => {
+        /* Keep static builtins as fallback */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   useEffect(() => {
     const nextBaseline = buildBaseline({
@@ -273,14 +299,16 @@ export function ChannelSettingsSheet({
               <Label htmlFor="collab-channel-settings-ai-role">AI Role</Label>
               <Select
                 value={aiRoleId}
-                onValueChange={(value) => setAiRoleId(value)}
+                onValueChange={(value) => { if (value) setAiRoleId(value) }}
                 disabled={!isAdmin || isSaving}
               >
                 <SelectTrigger id="collab-channel-settings-ai-role" className="w-full">
-                  <SelectValue placeholder="Select role" />
+                  <SelectValue placeholder="Select role">
+                    {roleOptions.find((o) => o.value === aiRoleId)?.label ?? aiRoleLabel(aiRoleId)}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {AI_ROLE_OPTIONS.map((option) => (
+                  {roleOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -288,7 +316,10 @@ export function ChannelSettingsSheet({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {AI_ROLE_OPTIONS.find((option) => option.value === aiRoleId)?.description ?? ''}
+                {roleOptions.find((option) => option.value === aiRoleId)?.description ?? ''}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Role changes apply immediately after saving.
               </p>
             </div>
 

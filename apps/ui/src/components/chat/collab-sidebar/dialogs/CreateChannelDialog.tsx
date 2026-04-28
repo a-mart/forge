@@ -17,8 +17,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { AI_ROLE_OPTIONS, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
-import type { CollaborationAiRoleId } from '@/lib/collaboration-ai-roles'
+import { AI_ROLE_OPTIONS, aiRoleLabel, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
+import type { AiRoleOption, CollaborationAiRoleId } from '@/lib/collaboration-ai-roles'
+import { fetchAiRoles } from '@/lib/collaboration-ai-roles-api'
 import { createChannel } from '@/lib/collaboration-api'
 import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
 
@@ -43,18 +44,25 @@ export function CreateChannelDialog({
   const [categoryValue, setCategoryValue] = useState(defaultCategoryId ?? NO_CATEGORY_VALUE)
   const [aiRoleId, setAiRoleId] = useState<CollaborationAiRoleId>(DEFAULT_AI_ROLE)
   const [description, setDescription] = useState('')
+  const [roleOptions, setRoleOptions] = useState<AiRoleOption[]>([...AI_ROLE_OPTIONS])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Track whether the user has manually picked a role so category changes
   // stop auto-syncing once the user has made an explicit choice.
   const userOverrodeRole = useRef(false)
+  const workspaceDefaultRef = useRef<CollaborationAiRoleId>(DEFAULT_AI_ROLE)
+  const categoryValueRef = useRef(categoryValue)
 
   /** Resolve the defaultAiRoleId for a category value. */
-  function roleForCategoryWithDefault(catValue: string): CollaborationAiRoleId {
-    if (catValue === NO_CATEGORY_VALUE) return DEFAULT_AI_ROLE
+  function roleForCategoryWithDefault(catValue: string, wsDefault: CollaborationAiRoleId): CollaborationAiRoleId {
+    if (catValue === NO_CATEGORY_VALUE) return wsDefault
     const cat = categories.find((c) => c.categoryId === catValue)
-    return cat?.defaultAiRoleId ?? cat?.defaultAiRole ?? DEFAULT_AI_ROLE
+    return cat?.defaultAiRoleId ?? cat?.defaultAiRole ?? wsDefault
+  }
+
+  function roleForCategory(catValue: string): CollaborationAiRoleId {
+    return roleForCategoryWithDefault(catValue, workspaceDefaultRef.current)
   }
 
   // Sync category selection when the dialog opens with a pre-selected category
@@ -62,11 +70,47 @@ export function CreateChannelDialog({
     if (open) {
       const nextCat = defaultCategoryId ?? NO_CATEGORY_VALUE
       setCategoryValue(nextCat)
-      setAiRoleId(roleForCategoryWithDefault(nextCat))
+      categoryValueRef.current = nextCat
+      setAiRoleId(roleForCategoryWithDefault(nextCat, workspaceDefaultRef.current))
       userOverrodeRole.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categories identity is stable within a single open
   }, [open, defaultCategoryId])
+
+  // Fetch the full role library (builtins + custom) when the dialog opens
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void fetchAiRoles()
+      .then((data) => {
+        if (cancelled) return
+        setRoleOptions(
+          data.roles.map((r) => ({
+            value: r.roleId,
+            label: r.name,
+            description: r.description ?? '',
+          })),
+        )
+        if (data.workspaceDefaultAiRoleId) {
+          workspaceDefaultRef.current = data.workspaceDefaultAiRoleId
+        }
+        if (!userOverrodeRole.current) {
+          const currentCat = categoryValueRef.current
+          const effectiveDefault = roleForCategoryWithDefault(
+            currentCat,
+            data.workspaceDefaultAiRoleId ?? DEFAULT_AI_ROLE,
+          )
+          setAiRoleId(effectiveDefault)
+        }
+      })
+      .catch(() => {
+        /* Keep static builtins as fallback */
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot on open
+  }, [open])
 
   const sortedCategories = useMemo(
     () => [...categories].sort((left, right) => left.position - right.position || left.name.localeCompare(right.name)),
@@ -75,12 +119,14 @@ export function CreateChannelDialog({
 
   function handleCategoryChange(nextCat: string) {
     setCategoryValue(nextCat)
+    categoryValueRef.current = nextCat
     if (!userOverrodeRole.current) {
-      setAiRoleId(roleForCategoryWithDefault(nextCat))
+      setAiRoleId(roleForCategory(nextCat))
     }
   }
 
   function handleAiRoleChange(value: string) {
+    if (!value) return
     setAiRoleId(value)
     userOverrodeRole.current = true
   }
@@ -104,7 +150,8 @@ export function CreateChannelDialog({
       onCreated?.(channel)
       setName('')
       setCategoryValue(NO_CATEGORY_VALUE)
-      setAiRoleId(DEFAULT_AI_ROLE)
+      categoryValueRef.current = NO_CATEGORY_VALUE
+      setAiRoleId(workspaceDefaultRef.current)
       userOverrodeRole.current = false
       setDescription('')
       onClose()
@@ -155,16 +202,18 @@ export function CreateChannelDialog({
             <Label htmlFor="collab-create-channel-ai-role">AI Role</Label>
             <Select value={aiRoleId} onValueChange={handleAiRoleChange} disabled={isSaving}>
               <SelectTrigger id="collab-create-channel-ai-role" className="w-full">
-                <SelectValue placeholder="Select role" />
+                <SelectValue placeholder="Select role">
+                  {roleOptions.find((o) => o.value === aiRoleId)?.label ?? aiRoleLabel(aiRoleId)}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {AI_ROLE_OPTIONS.map((option) => (
+                {roleOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              {AI_ROLE_OPTIONS.find((option) => option.value === aiRoleId)?.description ?? ''}
+              {roleOptions.find((option) => option.value === aiRoleId)?.description ?? ''}
             </p>
           </div>
 

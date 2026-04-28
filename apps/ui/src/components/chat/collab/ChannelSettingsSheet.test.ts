@@ -19,6 +19,27 @@ vi.mock('@/lib/model-preset', () => ({
   getAvailableChangeManagerFamilies: () => [],
 }))
 
+// Hoisted mocks for AI roles API
+const aiRolesApiStub = vi.hoisted(() => {
+  const stubData = {
+    roles: [
+      { roleId: 'channel_assistant', name: 'Channel Assistant', description: 'Helper.', prompt: '', builtin: true, usage: { workspaceDefault: true, categoryCount: 0, channelCount: 0, totalAssignments: 1, inUse: true } },
+      { roleId: 'work_coordinator', name: 'Work Coordinator', description: 'Coordinator.', prompt: '', builtin: true, usage: { workspaceDefault: false, categoryCount: 0, channelCount: 0, totalAssignments: 0, inUse: false } },
+      { roleId: 'facilitator_scribe', name: 'Facilitator & Scribe', description: 'Scribe.', prompt: '', builtin: true, usage: { workspaceDefault: false, categoryCount: 0, channelCount: 0, totalAssignments: 0, inUse: false } },
+    ],
+    workspaceDefaultAiRoleId: 'channel_assistant',
+  }
+  return { fetchAiRoles: vi.fn(() => Promise.resolve(stubData)) }
+})
+
+vi.mock('@/lib/collaboration-ai-roles-api', () => ({
+  fetchAiRoles: aiRolesApiStub.fetchAiRoles,
+}))
+
+vi.mock('@/lib/collaboration-endpoints', () => ({
+  resolveCollaborationApiBaseUrl: () => 'http://localhost:47187',
+}))
+
 // Hoisted mocks for collaboration-api
 const apiMocks = vi.hoisted(() => ({
   getChannel: vi.fn(),
@@ -72,6 +93,7 @@ beforeEach(() => {
   root = createRoot(container)
   apiMocks.getChannel.mockReset()
   apiMocks.updateChannel.mockReset()
+  aiRolesApiStub.fetchAiRoles.mockClear()
 })
 
 afterEach(() => {

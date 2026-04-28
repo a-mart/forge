@@ -16,8 +16,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { AI_ROLE_OPTIONS, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
-import type { CollaborationAiRoleId } from '@/lib/collaboration-ai-roles'
+import { AI_ROLE_OPTIONS, aiRoleLabel, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
+import type { AiRoleOption, CollaborationAiRoleId } from '@/lib/collaboration-ai-roles'
+import { fetchAiRoles } from '@/lib/collaboration-ai-roles-api'
 import { updateCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
 import type { CollaborationCategory } from '@forge/protocol'
@@ -43,8 +44,32 @@ export function RenameCategoryDialog({
   const categoryAiRoleId: CollaborationAiRoleId = category.defaultAiRoleId ?? category.defaultAiRole ?? DEFAULT_AI_ROLE
   const [defaultAiRoleId, setDefaultAiRoleId] = useState<CollaborationAiRoleId>(categoryAiRoleId)
   const [defaultModelId, setDefaultModelId] = useState(category.defaultModelId ?? NO_DEFAULT_MODEL_VALUE)
+  const [roleOptions, setRoleOptions] = useState<AiRoleOption[]>([...AI_ROLE_OPTIONS])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Fetch the full role library (builtins + custom) when the dialog opens
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void fetchAiRoles()
+      .then((data) => {
+        if (cancelled) return
+        setRoleOptions(
+          data.roles.map((r) => ({
+            value: r.roleId,
+            label: r.name,
+            description: r.description ?? '',
+          })),
+        )
+      })
+      .catch(() => {
+        /* Keep static builtins as fallback */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
   const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
   const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
@@ -101,20 +126,22 @@ export function RenameCategoryDialog({
             <Label htmlFor="collab-rename-category-default-ai-role">Default AI role</Label>
             <Select
               value={defaultAiRoleId}
-              onValueChange={(value) => setDefaultAiRoleId(value)}
+              onValueChange={(value) => { if (value) setDefaultAiRoleId(value) }}
               disabled={isSaving}
             >
               <SelectTrigger id="collab-rename-category-default-ai-role" className="w-full">
-                <SelectValue placeholder="Select role" />
+                <SelectValue placeholder="Select role">
+                  {aiRoleLabel(defaultAiRoleId)}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {AI_ROLE_OPTIONS.map((option) => (
+                {roleOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              New channels in this category start with this role.
+              Changes affect new channels only. Existing channels keep their current role.
             </p>
           </div>
 
