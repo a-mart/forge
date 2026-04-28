@@ -396,6 +396,45 @@ describe("collaboration HTTP routes", () => {
     );
     expect(channelDetailUnauthedResponse.status).toBe(401);
     await expect(channelDetailUnauthedResponse.json()).resolves.toEqual({ error: "Authentication required" });
+
+    const archiveChannelResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/archive`,
+      {
+        method: "POST",
+        headers: { cookie: adminCookieHeader },
+      },
+    );
+    expect(archiveChannelResponse.status).toBe(200);
+    const archiveChannelBody = await archiveChannelResponse.json() as {
+      ok: true;
+      channel: { channelId: string; archived: boolean; archivedAt?: string };
+    };
+    expect(archiveChannelBody).toMatchObject({
+      ok: true,
+      channel: {
+        channelId: createChannelBody.channel.channelId,
+        archived: true,
+      },
+    });
+    expect(archiveChannelBody.channel.archivedAt).toBeTruthy();
+
+    const archivedChannelResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}`,
+      { headers: { cookie: adminCookieHeader } },
+    );
+    expect(archivedChannelResponse.status).toBe(200);
+    await expect(archivedChannelResponse.json()).resolves.toMatchObject({
+      channel: expect.objectContaining({
+        channelId: createChannelBody.channel.channelId,
+        archived: true,
+      }),
+    });
+
+    const channelsAfterArchiveResponse = await fetch(`${baseUrl}/api/collaboration/channels`, {
+      headers: { cookie: adminCookieHeader },
+    });
+    expect(channelsAfterArchiveResponse.status).toBe(200);
+    await expect(channelsAfterArchiveResponse.json()).resolves.toEqual({ channels: [] });
   });
 });
 

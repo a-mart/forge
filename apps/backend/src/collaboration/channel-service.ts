@@ -47,6 +47,7 @@ export interface CollaborationChannelServiceSwarmManager {
     },
   ) => Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }>;
   stopSession?: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
+  stopCollaborationSession?: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
   deleteSession?: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
   updateManagerModel?: (
     managerId: string,
@@ -120,7 +121,7 @@ export class CollaborationChannelService {
   ) {}
 
   async createChannel(params: CreateCollaborationChannelParams): Promise<CollaborationChannel> {
-    const manager = this.requireRuntimeManager();
+    const manager = this.requireSessionCreationManager();
     const normalizedWorkspaceId = normalizeRequiredString(params.workspaceId, "workspaceId");
     const workspace = this.requireWorkspace(normalizedWorkspaceId);
     const categoryId = this.normalizeOptionalCategoryId(params.categoryId, normalizedWorkspaceId);
@@ -358,10 +359,10 @@ export class CollaborationChannelService {
     channelId: string,
     archivedByUserId: string | null | undefined,
   ): Promise<CollaborationChannel> {
-    const manager = this.requireRuntimeManager();
+    const manager = this.requireCollaborationStopManager();
     const existing = this.requireChannel(normalizeRequiredString(channelId, "channelId"));
 
-    await manager.stopSession!(existing.backingSessionAgentId);
+    await manager.stopCollaborationSession(existing.backingSessionAgentId);
 
     const archived = this.dbHelpers.archiveChannel(existing.channelId, {
       archivedAt: new Date().toISOString(),
@@ -526,19 +527,35 @@ export class CollaborationChannelService {
     }
   }
 
-  private requireRuntimeManager(): Required<
-    Pick<CollaborationChannelServiceSwarmManager, "createSessionFromBaseDescriptor" | "stopSession">
+  private requireSessionCreationManager(): Required<
+    Pick<CollaborationChannelServiceSwarmManager, "createSessionFromBaseDescriptor">
   > &
     CollaborationChannelServiceSwarmManager {
-    if (this.swarmManager?.createSessionFromBaseDescriptor && this.swarmManager.stopSession) {
+    if (this.swarmManager?.createSessionFromBaseDescriptor) {
       return this.swarmManager as Required<
-        Pick<CollaborationChannelServiceSwarmManager, "createSessionFromBaseDescriptor" | "stopSession">
+        Pick<CollaborationChannelServiceSwarmManager, "createSessionFromBaseDescriptor">
       > & CollaborationChannelServiceSwarmManager;
     }
 
     throw new CollaborationChannelServiceError(
       "unavailable",
-      "Collaboration channel service requires a swarm manager with collaboration session lifecycle support",
+      "Collaboration channel service requires a swarm manager with collaboration session creation support",
+    );
+  }
+
+  private requireCollaborationStopManager(): Required<
+    Pick<CollaborationChannelServiceSwarmManager, "stopCollaborationSession">
+  > &
+    CollaborationChannelServiceSwarmManager {
+    if (this.swarmManager?.stopCollaborationSession) {
+      return this.swarmManager as Required<
+        Pick<CollaborationChannelServiceSwarmManager, "stopCollaborationSession">
+      > & CollaborationChannelServiceSwarmManager;
+    }
+
+    throw new CollaborationChannelServiceError(
+      "unavailable",
+      "Collaboration channel service requires a swarm manager with collaboration session stop support",
     );
   }
 

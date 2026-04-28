@@ -226,6 +226,7 @@ import type {
 } from "./types.js";
 import {
   assertBuilderSession,
+  assertCollabSession,
   buildModelCapacityBlockKey,
   clampModelCapacityBlockDurationMs,
   cloneDescriptor,
@@ -2170,6 +2171,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.lifecycleService.stopSession(agentId);
   }
 
+  async stopCollaborationSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
+    this.getRequiredCollaborationSessionDescriptor(agentId, "stop collaboration sessions");
+    return this.lifecycleService.stopSession(agentId);
+  }
+
   async resumeSession(agentId: string): Promise<void> {
     this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions");
     await this.lifecycleService.resumeSession(agentId);
@@ -2657,6 +2663,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): AgentDescriptor & { role: "manager"; profileId: string } {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     assertBuilderSession(descriptor, action);
+    return descriptor;
+  }
+
+  private getRequiredCollaborationSessionDescriptor(
+    agentId: string,
+    action: string
+  ): AgentDescriptor & { role: "manager"; profileId: string } {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    assertCollabSession(descriptor, action);
     return descriptor;
   }
 

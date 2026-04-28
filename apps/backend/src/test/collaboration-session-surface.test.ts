@@ -275,4 +275,61 @@ describe('collaboration session surface metadata', () => {
       },
     })
   })
+
+  it('keeps the Builder stop guard while exposing a collab-only stop helper', async () => {
+    const manager = new TestSwarmManagerBase(await makeConfig())
+    await bootWithDefaultManager(manager, manager.getConfig())
+
+    await manager.ensureCollaborationStorageProfile()
+
+    const sessionAgentId = 'collab-channel-session-stop'
+    const created = await manager.createSessionFromBaseDescriptor(
+      '_collaboration',
+      {
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-collab-base',
+          thinkingLevel: 'high',
+        },
+        cwd: join(manager.getConfig().paths.dataDir, 'profiles', '_collaboration', 'sessions', sessionAgentId, 'workspace'),
+        archetypeId: 'collaboration-channel',
+      },
+      {
+        label: 'Archive target',
+        name: 'Archive target',
+        sessionAgentId,
+      },
+      {
+        sessionSurface: 'collab',
+        collab: {
+          workspaceId: 'workspace-1',
+          channelId: 'channel-stop',
+        },
+      },
+    )
+
+    await manager.dispatchRuntimeUserMessage({
+      targetAgentId: created.sessionAgent.agentId,
+      text: 'hello',
+      sourceContext: { channel: 'web' },
+    })
+
+    const runtime = manager.runtimeByAgentId.get(sessionAgentId)
+    expect(runtime).toBeTruthy()
+
+    await expect(manager.stopSession(sessionAgentId)).rejects.toThrow(
+      `Cannot stop Builder sessions for collaboration-backed session ${sessionAgentId}.`,
+    )
+
+    await expect(manager.stopCollaborationSession(sessionAgentId)).resolves.toEqual({
+      terminatedWorkerIds: [],
+    })
+    expect(runtime?.terminateCalls).toHaveLength(1)
+    expect(runtime?.terminateCalls[0]).toMatchObject({ abort: true })
+    expect(manager.getAgent(sessionAgentId)).toMatchObject({
+      agentId: sessionAgentId,
+      sessionSurface: 'collab',
+      status: 'idle',
+    })
+  })
 })
