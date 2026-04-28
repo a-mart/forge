@@ -1,6 +1,6 @@
 # Collaboration
 
-Forge collaboration mode adds multi-user access on top of the existing Builder UI. The public Forge repo includes the collaboration client UI and protocol types only; the collaboration server/backend is closed-source, lives in the private `a-mart/forge-collab` repo, and cannot be self-hosted from this repo. Collaboration uses a dedicated auth database and a hidden system profile for channel-backed sessions.
+Forge collaboration mode adds multi-user access on top of the same public Forge repo. The public repository now includes the collaboration-server runtime, the full UI, protocol types, and the Docker/self-host path, so collaboration can be deployed from this repo without a private backend. Collaboration uses a dedicated auth database, a hidden system profile, and session-backed channel actors.
 
 ## Storage model
 
@@ -10,17 +10,17 @@ Forge collaboration mode adds multi-user access on top of the existing Builder U
 | Channel sessions | `~/.forge/profiles/_collaboration/sessions/` | Each channel is backed by one manager session under the `_collaboration` profile. |
 | Auth database | `~/.forge/shared/config/collaboration/auth.db` | SQLite store for users, sessions, workspaces, channels, categories, and per-user read state. |
 | Auth secret | `~/.forge/shared/config/collaboration/auth-secret.key` | Used when `FORGE_COLLABORATION_AUTH_SECRET` is not set. |
-| Additional instructions | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel-level additional instructions live in the backing session context directory. |
+| Additional instructions | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel-level guidance lives in the backing session context directory. |
 
 The collaboration profile is system-managed. Builder snapshots and profile lists exclude it, but the backing sessions still live in the normal session tree under `_collaboration`.
 
-Fresh collaboration backend deployments should start from an empty `FORGE_DATA_DIR` or volume. Do not copy a local Builder `~/.forge` directory into the collaboration server.
+Fresh collaboration deployments should start from an empty `FORGE_DATA_DIR` or volume. Do not copy an existing Builder `~/.forge` directory into a collaboration server deployment.
 
-Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the remote collaboration backend. Collab Settings are admin-only. Provider auth entered there writes directly to the remote collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
+Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the collaboration backend. Collab Settings are admin-only. Provider auth entered there writes directly to the collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
 
 Remote Collab Settings also includes member and invite management, plus password controls. Admins can manage members and invites, issue temporary-password resets that require a password change on next sign-in, and users can change their own password from the collaboration UI.
 
-Channel and category settings expose default model controls, and the former "prompt overlay" label is now **Additional instructions** for channel-level guidance.
+Channel and category settings expose default model controls. AI Roles are not part of the public collaboration runtime. The former "prompt overlay" label is now **Additional instructions** for channel-level guidance.
 
 ## Authentication
 
@@ -31,35 +31,41 @@ There are two roles:
 - `admin` for full Builder access plus collaboration admin actions
 - `member` for collaboration access only
 
-The first admin is bootstrapped from environment variables. If collaboration is enabled and no admin exists yet, both `FORGE_ADMIN_EMAIL` and `FORGE_ADMIN_PASSWORD` must be present.
+The first admin is bootstrapped from environment variables. On a fresh deployment, if collaboration is enabled and no admin exists yet, both `FORGE_ADMIN_EMAIL` and `FORGE_ADMIN_PASSWORD` must be present.
 
 If `FORGE_COLLABORATION_AUTH_SECRET` is not set, Forge generates a 32-byte secret, writes it to `auth-secret.key`, and reuses that file on later starts.
 
-## Endpoint model
+## Deployment shapes
 
 Forge supports two deployment shapes:
 
-### Hosted collaboration server
+### Public self-hosted collaboration server
 
-Settings → Collaboration connects the Builder client to a separately hosted collaboration server. Builder stays local, for example in Electron, while the collaboration service runs from the private `a-mart/forge-collab` deployment.
+The public repo ships the collaboration-server runtime and a Docker entry point. `Dockerfile` and `docker-compose.yml` build and run the collaboration server with the built UI served from the same origin. The container defaults to `FORGE_RUNTIME_TARGET=collaboration-server`, `FORGE_HOST=0.0.0.0`, `FORGE_PORT=47287`, and `FORGE_DATA_DIR=/var/lib/forge`.
 
-This is the only supported deployment shape for the public Forge repository. The public repo does not contain the collaboration backend implementation.
+A first boot must provide `FORGE_ADMIN_EMAIL` and `FORGE_ADMIN_PASSWORD` so the initial admin account can be created. `FORGE_COLLABORATION_BASE_URL` should match the public browser URL for the deployed collaboration server, and `FORGE_COLLABORATION_TRUSTED_ORIGINS` should list any Builder/UI origins that are allowed to talk to it in split deployments.
+
+`FORGE_COLLABORATION_AUTH_SECRET` is optional. Leave it unset to let the server generate and persist a local secret in the data directory.
+
+### Split Builder + collaboration deployment
+
+Settings → Collaboration can also connect a local Builder client to a separately hosted collaboration server. In that setup, Builder stays local, while the collaboration service runs from this repo or from any deployment that exposes the collaboration runtime over HTTPS.
+
+The Builder/Collab toggle lives in the sidebar header. When collaboration is enabled, the New Project action moves next to session search for quicker access.
 
 ## Remote sign-in flow
 
 1. Open **Settings → Collaboration**.
-2. Enter the remote collaboration server URL.
+2. Enter the collaboration server URL.
 3. Click **Save** and **Test** to confirm the server is reachable.
-4. Sign in with the remote collaboration server admin or member email and password.
+4. Sign in with the collaboration server admin or member email and password.
 5. After sign-in succeeds, the Builder/Collab toggle becomes available in the UI.
 
-The collaboration status panel reports the configured remote server, not the local Builder backend. It reflects the enabled state and auth status of the connected collaboration service. If a collaboration session or socket is invalidated by a lifecycle change, the public UI shows sign-in recovery instead of retrying forever or leaving the screen stuck loading.
+The collaboration status panel reports the configured collaboration server, not the local Builder backend. It reflects the enabled state and auth status of the connected collaboration service. If a collaboration session or socket is invalidated by a lifecycle change, the UI shows sign-in recovery instead of retrying forever or leaving the screen stuck loading.
 
-Once connected, the main Settings surface switches context with the mode: Builder Settings continue to target the local backend, while Collab Settings target the remote collaboration backend. Only collaboration admins can access Collab Settings.
+Once connected, the main Settings surface switches context with the mode: Builder Settings continue to target the local backend, while Collab Settings target the collaboration backend. Only collaboration admins can access Collab Settings.
 
-The Builder/Collab toggle lives in the sidebar header. When collaboration is enabled, the New Project action moves next to session search for quicker access.
-
-Hosted deployment uses:
+Hosted deployments use:
 
 - `FORGE_COLLABORATION_BASE_URL` for the collaboration origin
 - `FORGE_COLLABORATION_TRUSTED_ORIGINS` to list the Builder origins that may talk to the collaboration backend
@@ -70,7 +76,9 @@ The base URL changes the canonical browser origin used for invite links and cook
 ## Architecture
 
 - Each channel maps to one backing manager session under `_collaboration`.
+- Channels are session-backed actors: the channel state, history, and additional instructions all live in the backing session context.
 - Collaboration uses a single workspace model.
+- Workspace and category defaults are model and CWD only.
 - The collab surface reuses the Builder `MessageList` and `MessageInput` components.
 - Worker visibility uses the shared `WorkerPillBar` and `WorkerQuickLook` pattern.
 - Collaboration uses the same WebSocket transport layer as Builder, but the collab client connects separately to the configured collaboration origin.
@@ -79,9 +87,9 @@ The base URL changes the canonical browser origin used for invite links and cook
 
 | Variable | Purpose |
 |----------|---------|
-| `FORGE_RUNTIME_TARGET` | Selects the runtime target. Use `builder` for the default local Builder backend or `collaboration-server` for the dedicated collaboration runtime as that backend work lands. |
+| `FORGE_RUNTIME_TARGET` | Selects the runtime target. Use `builder` for the default local Builder backend or `collaboration-server` for the deployable collaboration runtime. |
 | `FORGE_COLLABORATION_ENABLED` | Legacy compatibility flag. When `FORGE_RUNTIME_TARGET` is unset, `true` maps to `collaboration-server`. |
-| `FORGE_ADMIN_EMAIL` / `FORGE_ADMIN_PASSWORD` | Bootstrap credentials for the first admin account. |
+| `FORGE_ADMIN_EMAIL` / `FORGE_ADMIN_PASSWORD` | Bootstrap credentials for the first admin account on a fresh collaboration deployment. |
 | `FORGE_COLLABORATION_BASE_URL` | Canonical collaboration UI base URL for login redirects and invite links. |
 | `FORGE_COLLABORATION_AUTH_SECRET` | Auth secret. Generated automatically if omitted. |
 | `FORGE_COLLABORATION_TRUSTED_ORIGINS` | Comma-separated Builder origins allowed in split deployment. |
