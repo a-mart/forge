@@ -1,6 +1,6 @@
 # Collaboration
 
-Forge collaboration mode adds multi-user access on top of the same public Forge repo. The public repository now includes the collaboration-server runtime, the full UI, protocol types, and the Docker/self-host path, so collaboration can be deployed from this repo without a private backend. Collaboration uses a dedicated auth database, a hidden system profile, and session-backed channel actors.
+Forge collaboration mode adds multi-user access on top of the public Forge repo. This repository ships the collaboration server/runtime target, the full UI, protocol types, and the Docker/self-host path, so collaboration can be deployed from this repo end to end. Collaboration uses a dedicated auth database, a hidden system profile, and session-backed channel actors.
 
 ## Storage model
 
@@ -20,7 +20,7 @@ Settings are contextual: Builder mode Settings configure the local backend, whil
 
 Remote Collab Settings also includes member and invite management, plus password controls. Admins can manage members and invites, issue temporary-password resets that require a password change on next sign-in, and users can change their own password from the collaboration UI.
 
-Channel and category settings expose default model controls. AI Roles are not part of the public collaboration runtime. The former "prompt overlay" label is now **Additional instructions** for channel-level guidance.
+Channel and category settings expose per-channel guidance and reference docs. The former "prompt overlay" label is now **Additional instructions** for channel-level guidance.
 
 ## Authentication
 

@@ -19,7 +19,7 @@ The builtin manager archetype is intentionally concise and outcome-first in user
 
 ## Collaboration mode
 
-Use this public repo/worktree as the active implementation target for collaboration work, including backend, storage, auth, UI, and shared protocol changes. The private `/Users/adam/repos/forge-collab` repo is legacy/reference only, unless a task explicitly says to consult it. Always pass an explicit `cwd` before editing.
+Use this public repo/worktree as the active implementation target for collaboration work, including the collaboration server/runtime target, backend auth/DB/routes/WS, UI, protocol, and Docker/full UI serving path. If historical reference is needed, the private `/Users/adam/repos/forge-collab` repo may be consulted as legacy/reference only. Always pass an explicit `cwd` before editing.
 
 ## Prerequisites
 

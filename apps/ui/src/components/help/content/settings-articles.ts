@@ -40,15 +40,15 @@ Edit the default preferences Forge shares with new manager sessions. These are t
 
 ## Collaboration
 
-Open **Settings > Collaboration** to connect Forge to a remote collaboration server. Enter the remote server URL, click **Save** and **Test** to confirm it is reachable, then sign in with the remote collaboration server admin or member email and password. After sign-in succeeds, the Builder/Collab toggle becomes available.
+Open **Settings > Collaboration** to connect Forge to a collaboration server. Enter the server URL, click **Save** and **Test** to confirm it is reachable, then sign in with an admin or member email and password. After sign-in succeeds, the Builder/Collab toggle becomes available.
 
-Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the remote collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the remote collaboration backend instead of copying or sharing the local Builder auth file.
+Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the collaboration backend instead of copying or sharing the local Builder auth file.
 
 Collab Settings also includes members and invites, plus password management. Admins can manage members and invites, issue temporary-password resets that require a password change, and users can change their own password. If a collaboration session or socket gets invalidated by a lifecycle change, the public UI shows sign-in recovery instead of looping on reconnect or staying stuck on loading.
 
-Channel and category settings include default model controls, and channel-specific guidance is labeled **Additional instructions**.
+Collaboration channels are session-backed and can carry per-channel instructions and reference docs. Channel guidance is labeled **Additional instructions**.
 
-The Collaboration status panel reflects the configured remote collaboration server, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
+The Collaboration status panel reflects the configured collaboration server, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
 
 ## System
 
