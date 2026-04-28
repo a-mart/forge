@@ -27,6 +27,10 @@ import type {
   SkillInventoryEntry
 } from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
+import {
+  COLLABORATION_DISPLAY_NAME,
+  COLLABORATION_PROFILE_ID,
+} from "../collaboration/constants.js";
 
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import {
@@ -1394,6 +1398,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       runtimes: this.runtimes,
       provisioner: this.sessionProvisioner,
       prepareSessionCreation: (profileId, options) => this.prepareSessionCreation(profileId, options),
+      prepareSessionCreationFromBase: (profileId, base, options) =>
+        this.prepareSessionCreationFromBase(profileId, base, options),
       getRequiredSessionDescriptor: (agentId) => this.getRequiredSessionDescriptor(agentId),
       getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
       stopSessionInternal: (agentId, options) => this.stopSessionInternal(agentId, options),
@@ -1690,6 +1696,122 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.profilesSnapshotVersion;
   }
 
+  hasCollaborationStorageProfile(): boolean {
+    return this.profiles.has(COLLABORATION_PROFILE_ID);
+  }
+
+  hasCollaborationStorageRootSession(): boolean {
+    const descriptor = this.descriptors.get(COLLABORATION_PROFILE_ID);
+    return Boolean(descriptor && descriptor.role === "manager" && descriptor.profileId === COLLABORATION_PROFILE_ID);
+  }
+
+  async ensureCollaborationStorageProfile(): Promise<void> {
+    const existingDescriptor = this.descriptors.get(COLLABORATION_PROFILE_ID);
+    if (existingDescriptor && existingDescriptor.role !== "manager") {
+      throw new Error(
+        `Cannot provision collaboration profile because agentId "${COLLABORATION_PROFILE_ID}" is already in use`,
+      );
+    }
+
+    const now = this.now();
+    const existingManagerDescriptor = existingDescriptor as (AgentDescriptor & { role: "manager" }) | undefined;
+    const existingProfile = this.profiles.get(COLLABORATION_PROFILE_ID);
+    const createdAt = existingManagerDescriptor?.createdAt ?? existingProfile?.createdAt ?? now;
+
+    const descriptor: AgentDescriptor = {
+      agentId: COLLABORATION_PROFILE_ID,
+      displayName: COLLABORATION_DISPLAY_NAME,
+      role: "manager",
+      managerId: COLLABORATION_PROFILE_ID,
+      profileId: COLLABORATION_PROFILE_ID,
+      sessionLabel: COLLABORATION_DISPLAY_NAME,
+      status: "idle",
+      createdAt,
+      updatedAt: existingManagerDescriptor?.updatedAt ?? now,
+      cwd: existingManagerDescriptor?.cwd ?? this.config.defaultCwd,
+      model: { ...(existingManagerDescriptor?.model ?? this.config.defaultModel) },
+      modelOrigin: "profile_default",
+      sessionFile: getSessionFilePath(
+        this.config.paths.dataDir,
+        COLLABORATION_PROFILE_ID,
+        COLLABORATION_PROFILE_ID,
+      ),
+      archetypeId: existingManagerDescriptor?.archetypeId ?? MANAGER_ARCHETYPE_ID,
+      ...(existingManagerDescriptor?.sessionSystemPrompt
+        ? { sessionSystemPrompt: existingManagerDescriptor.sessionSystemPrompt }
+        : {}),
+    };
+
+    const profile: ManagerProfile = {
+      profileId: COLLABORATION_PROFILE_ID,
+      displayName: COLLABORATION_DISPLAY_NAME,
+      defaultSessionAgentId: COLLABORATION_PROFILE_ID,
+      defaultModel: { ...(existingProfile?.defaultModel ?? descriptor.model) },
+      createdAt: existingProfile?.createdAt ?? createdAt,
+      updatedAt: existingProfile?.updatedAt ?? now,
+      profileType: "system",
+      ...(existingProfile?.sortOrder !== undefined ? { sortOrder: existingProfile.sortOrder } : {}),
+    };
+
+    const hadProfile = Boolean(existingProfile);
+    const hadDescriptor = Boolean(existingManagerDescriptor);
+    const changed =
+      !existingProfile ||
+      existingProfile.displayName !== profile.displayName ||
+      existingProfile.defaultSessionAgentId !== profile.defaultSessionAgentId ||
+      existingProfile.profileType !== profile.profileType ||
+      !existingManagerDescriptor ||
+      existingManagerDescriptor.profileId !== descriptor.profileId ||
+      existingManagerDescriptor.managerId !== descriptor.managerId ||
+      existingManagerDescriptor.displayName !== descriptor.displayName ||
+      existingManagerDescriptor.sessionLabel !== descriptor.sessionLabel ||
+      existingManagerDescriptor.status !== descriptor.status ||
+      existingManagerDescriptor.creatorAgentId !== undefined ||
+      existingManagerDescriptor.sessionPurpose !== undefined ||
+      existingManagerDescriptor.sessionSurface !== undefined ||
+      existingManagerDescriptor.collab !== undefined ||
+      existingManagerDescriptor.projectAgent !== undefined ||
+      existingManagerDescriptor.sessionFile !== descriptor.sessionFile ||
+      existingManagerDescriptor.cwd !== descriptor.cwd ||
+      existingManagerDescriptor.archetypeId !== descriptor.archetypeId ||
+      existingManagerDescriptor.sessionSystemPrompt !== descriptor.sessionSystemPrompt ||
+      existingManagerDescriptor.model.provider !== descriptor.model.provider ||
+      existingManagerDescriptor.model.modelId !== descriptor.model.modelId ||
+      existingManagerDescriptor.model.thinkingLevel !== descriptor.model.thinkingLevel;
+
+    if (changed) {
+      descriptor.updatedAt = now;
+      profile.updatedAt = now;
+    }
+
+    this.profiles.set(profile.profileId, profile);
+    this.descriptors.set(descriptor.agentId, descriptor);
+
+    await this.ensureProfilePiDirectories(profile.profileId);
+    await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
+    await this.ensureAgentMemoryFile(this.getAgentMemoryPath(descriptor.agentId), profile.profileId);
+    await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, profile.profileId), profile.profileId);
+    await this.writeInitialSessionMeta(descriptor);
+    await this.refreshSessionMetaStats(descriptor);
+
+    if (changed) {
+      await this.saveStore();
+    }
+
+    if (!hadProfile || !hadDescriptor) {
+      this.logDebug("collaboration:storage-profile:ensured", {
+        profileId: COLLABORATION_PROFILE_ID,
+      });
+      return;
+    }
+
+    if (changed) {
+      this.logDebug("collaboration:storage-profile:synced", {
+        profileId: COLLABORATION_PROFILE_ID,
+      });
+    }
+  }
+
   async listCortexReviewRuns(): Promise<CortexReviewRunRecord[]> {
     return this.cortexService.listReviewRuns();
   }
@@ -1839,7 +1961,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createSession(
     profileId: string,
-    options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
+    options?: {
+      label?: string;
+      name?: string;
+      sessionAgentId?: string;
+      sessionPurpose?: AgentDescriptor["sessionPurpose"];
+    }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const createdSession = await this.sessionService.createSession(profileId, options);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
@@ -1851,15 +1978,54 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createSessionWithOverrides(
     profileId: string,
-    options: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] } = {},
+    options: {
+      label?: string;
+      name?: string;
+      sessionAgentId?: string;
+      sessionPurpose?: AgentDescriptor["sessionPurpose"];
+    } = {},
     overrides: {
       model?: AgentModelDescriptor;
       cwd?: string;
       sessionSystemPrompt?: string;
+      sessionSurface?: AgentDescriptor["sessionSurface"];
+      collab?: AgentDescriptor["collab"];
     } = {}
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const createdSession = await this.sessionService.createSessionWithOverrides(
       profileId,
+      options,
+      overrides,
+    );
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor: createdSession.sessionAgent
+    });
+    return createdSession;
+  }
+
+  async createSessionFromBaseDescriptor(
+    profileId: string,
+    base: {
+      model: AgentModelDescriptor;
+      cwd: string;
+      archetypeId?: AgentDescriptor["archetypeId"];
+      sessionSystemPrompt?: string;
+    },
+    options: {
+      label?: string;
+      name?: string;
+      sessionAgentId?: string;
+      sessionPurpose?: AgentDescriptor["sessionPurpose"];
+    } = {},
+    overrides: {
+      sessionSurface?: AgentDescriptor["sessionSurface"];
+      collab?: AgentDescriptor["collab"];
+    } = {}
+  ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    const createdSession = await this.sessionService.createSessionFromBaseDescriptor(
+      profileId,
+      base,
       options,
       overrides,
     );
@@ -2409,6 +2575,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.promptService.previewManagerSystemPrompt(profileId);
   }
 
+  async previewManagerSystemPromptForAgent(agentId: string): Promise<PromptPreviewResponse> {
+    return this.promptService.previewManagerSystemPromptForAgent(agentId);
+  }
+
   getAgent(agentId: string): AgentDescriptor | undefined {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor) {
@@ -2558,7 +2728,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private getBuilderSessionsForProfile(profileId: string): Array<AgentDescriptor & { role: "manager"; profileId: string }> {
-    return this.getSessionsForProfile(profileId);
+    return this.getSessionsForProfile(profileId).filter((descriptor) => descriptor.sessionSurface !== "collab");
   }
 
   private getWorkersForManager(managerId: string): AgentDescriptor[] {
@@ -2574,7 +2744,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     for (const descriptor of this.sortedDescriptors()) {
       if (descriptor.role === "manager") {
-        managers.push(descriptor);
+        if (descriptor.sessionSurface !== "collab") {
+          managers.push(descriptor);
+        }
         continue;
       }
 
@@ -2649,8 +2821,119 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private prepareSessionCreation(
     profileId: string,
-    options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
+    options?: {
+      label?: string;
+      name?: string;
+      sessionAgentId?: string;
+      sessionPurpose?: AgentDescriptor["sessionPurpose"];
+    }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
+    const profile = this.profiles.get(profileId);
+    if (!profile) {
+      throw new Error(`Unknown profile: ${profileId}`);
+    }
+
+    const templateDescriptor = this.descriptors.get(profile.defaultSessionAgentId);
+    if (!templateDescriptor || templateDescriptor.role !== "manager") {
+      throw new Error(`Profile default session is missing: ${profile.defaultSessionAgentId}`);
+    }
+
+    if (templateDescriptor.sessionSurface === "collab") {
+      throw new Error(`Profile default session must remain Builder-only: ${templateDescriptor.agentId}`);
+    }
+
+    return this.prepareSessionCreationFromBase(
+      profileId,
+      {
+        model: profile.defaultModel,
+        modelOrigin: "profile_default",
+        cwd: templateDescriptor.cwd,
+        archetypeId: templateDescriptor.archetypeId,
+        ...(templateDescriptor.sessionSystemPrompt !== undefined
+          ? { sessionSystemPrompt: templateDescriptor.sessionSystemPrompt }
+          : {})
+      },
+      options,
+    );
+  }
+
+  private prepareSessionCreationFromBase(
+    profileId: string,
+    base: {
+      model: AgentModelDescriptor;
+      modelOrigin?: AgentDescriptor["modelOrigin"];
+      cwd: string;
+      archetypeId?: AgentDescriptor["archetypeId"];
+      sessionSystemPrompt?: string;
+    },
+    options?: {
+      label?: string;
+      name?: string;
+      sessionAgentId?: string;
+      sessionPurpose?: AgentDescriptor["sessionPurpose"];
+    }
+  ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
+    const preparedIdentity = this.prepareSessionIdentity(profileId, options);
+
+    const sessionDescriptor: AgentDescriptor = {
+      agentId: preparedIdentity.sessionAgentId,
+      displayName: preparedIdentity.displayName,
+      role: "manager",
+      managerId: preparedIdentity.sessionAgentId,
+      profileId: preparedIdentity.profile.profileId,
+      sessionLabel: preparedIdentity.sessionLabel,
+      sessionPurpose: options?.sessionPurpose,
+      status: "idle",
+      createdAt: preparedIdentity.createdAt,
+      updatedAt: preparedIdentity.createdAt,
+      cwd: base.cwd,
+      model: { ...base.model },
+      ...(base.modelOrigin !== undefined ? { modelOrigin: base.modelOrigin } : {}),
+      sessionFile: getSessionFilePath(
+        this.config.paths.dataDir,
+        preparedIdentity.profile.profileId,
+        preparedIdentity.sessionAgentId,
+      ),
+      ...(base.archetypeId !== undefined ? { archetypeId: base.archetypeId } : {}),
+      ...(base.sessionSystemPrompt !== undefined
+        ? { sessionSystemPrompt: base.sessionSystemPrompt }
+        : {})
+    };
+
+    if (sessionDescriptor.sessionPurpose === "agent_creator") {
+      sessionDescriptor.archetypeId = "agent-architect";
+      if (
+        !sessionDescriptor.sessionLabel ||
+        sessionDescriptor.sessionLabel === `Session ${preparedIdentity.sessionNumber}`
+      ) {
+        sessionDescriptor.sessionLabel = "Agent Creator";
+        sessionDescriptor.displayName = "Agent Creator";
+      }
+    }
+
+    return {
+      profile: preparedIdentity.profile,
+      sessionDescriptor,
+      sessionNumber: preparedIdentity.sessionNumber
+    };
+  }
+
+  private prepareSessionIdentity(
+    profileId: string,
+    options?: {
+      label?: string;
+      name?: string;
+      sessionAgentId?: string;
+      sessionPurpose?: AgentDescriptor["sessionPurpose"];
+    }
+  ): {
+    profile: ManagerProfile;
+    sessionAgentId: string;
+    sessionLabel: string;
+    displayName: string;
+    sessionNumber: number;
+    createdAt: string;
+  } {
     const profile = this.profiles.get(profileId);
     if (!profile) {
       throw new Error(`Unknown profile: ${profileId}`);
@@ -2660,19 +2943,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("Agent creator sessions cannot be created in the Cortex profile");
     }
 
-    const templateDescriptor = this.descriptors.get(profile.defaultSessionAgentId);
-    if (!templateDescriptor || templateDescriptor.role !== "manager") {
-      throw new Error(`Profile default session is missing: ${profile.defaultSessionAgentId}`);
-    }
-
     const { agentId: autoSessionAgentId, sessionNumber } = this.generateSessionAgentIdentity(profileId);
     const normalizedName = options?.name?.trim();
     const normalizedLabel = options?.label?.trim();
+    const normalizedSessionAgentId = options?.sessionAgentId?.trim();
 
     let sessionAgentId = autoSessionAgentId;
-    let sessionLabel = normalizedLabel && normalizedLabel.length > 0
-      ? normalizedLabel
-      : `Session ${sessionNumber}`;
+    let sessionLabel = normalizedLabel && normalizedLabel.length > 0 ? normalizedLabel : `Session ${sessionNumber}`;
     let displayName = normalizedLabel && normalizedLabel.length > 0 ? normalizedLabel : sessionAgentId;
 
     if (normalizedName && normalizedName.length > 0) {
@@ -2686,38 +2963,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       displayName = normalizedName;
     }
 
-    const createdAt = this.now();
+    if (normalizedSessionAgentId && normalizedSessionAgentId.length > 0) {
+      if (this.isSessionAgentIdReserved(profileId, normalizedSessionAgentId)) {
+        throw new Error(`Session agent id already exists: ${normalizedSessionAgentId}`);
+      }
 
-    const sessionDescriptor: AgentDescriptor = {
-      agentId: sessionAgentId,
-      displayName,
-      role: "manager",
-      managerId: sessionAgentId,
-      archetypeId: templateDescriptor.archetypeId,
-      profileId: profile.profileId,
-      sessionLabel,
-      sessionPurpose: options?.sessionPurpose,
-      status: "idle",
-      createdAt,
-      updatedAt: createdAt,
-      cwd: templateDescriptor.cwd,
-      model: { ...profile.defaultModel },
-      modelOrigin: "profile_default",
-      sessionFile: getSessionFilePath(this.config.paths.dataDir, profile.profileId, sessionAgentId)
-    };
-
-    if (sessionDescriptor.sessionPurpose === "agent_creator") {
-      sessionDescriptor.archetypeId = "agent-architect";
-      if (!sessionDescriptor.sessionLabel || sessionDescriptor.sessionLabel === `Session ${sessionNumber}`) {
-        sessionDescriptor.sessionLabel = "Agent Creator";
-        sessionDescriptor.displayName = "Agent Creator";
+      sessionAgentId = normalizedSessionAgentId;
+      if (!normalizedLabel || normalizedLabel.length === 0) {
+        displayName = normalizedName && normalizedName.length > 0 ? normalizedName : normalizedSessionAgentId;
       }
     }
 
     return {
       profile,
-      sessionDescriptor,
-      sessionNumber
+      sessionAgentId,
+      sessionLabel,
+      displayName,
+      sessionNumber,
+      createdAt: this.now()
     };
   }
 

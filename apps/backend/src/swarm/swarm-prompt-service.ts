@@ -7,6 +7,8 @@ import {
   getCommonKnowledgePath,
   getProfileMemoryPath,
   getProjectAgentPromptPath,
+  getSessionContextPromptPath,
+  getSessionContextReferenceDir,
 } from "./data-paths.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { getOnboardingSnapshot } from "./onboarding-state.js";
@@ -25,11 +27,17 @@ import {
   listProjectAgentReferenceDocs,
   readProjectAgentReferenceDoc,
 } from "./reference-docs.js";
+import {
+  listReferenceDocs,
+  readPromptFile,
+  readReferenceDoc,
+} from "./storage/asset-root-storage.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "./types.js";
 import {
   buildSessionMemoryRuntimeView,
   escapeXmlForPreview,
+  isCollabSession,
   isEnoentError,
   normalizeOptionalAgentId,
 } from "./swarm-manager-utils.js";
@@ -63,6 +71,11 @@ const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
   "# Onboarding Snapshot (authoritative backend state — read-only reference)";
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 const AGENTS_CONTEXT_FILE_NAME = "AGENTS.md";
+const COLLABORATION_CHANNEL_INSTRUCTIONS = `This session backs a trusted Forge collaboration channel with multiple human participants.
+- Treat every reply as visible to the full channel audience.
+- Keep answers concise, easy to scan, and explicit about decisions, blockers, and next steps when relevant.
+- Normal manager capabilities remain available here, including specialists, workers, current activity visibility, and current tool behavior.
+- Delegate when it helps, then summarize the outcome back into the channel in a way humans can follow.`;
 
 interface ResolvedSpecialistDefinitionLike {
   specialistId: string;
@@ -117,7 +130,16 @@ export class SwarmPromptService {
       throw new Error(`Profile default session is missing: ${profile.defaultSessionAgentId}`);
     }
 
-    const resolvedProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? profileId;
+    return this.previewManagerSystemPromptForAgent(descriptor.agentId);
+  }
+
+  async previewManagerSystemPromptForAgent(agentId: string): Promise<PromptPreviewResponse> {
+    const descriptor = this.options.descriptors.get(agentId);
+    if (!isSessionAgent(descriptor)) {
+      throw new Error(`Unknown manager session: ${agentId}`);
+    }
+
+    const resolvedProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? descriptor.agentId;
     const { prompt: projectAgentPrompt, sourcePath: projectAgentPromptSourcePath } =
       await this.resolveProjectAgentSystemPromptOverride(descriptor);
     const archetypeId = descriptor.archetypeId
@@ -286,6 +308,10 @@ export class SwarmPromptService {
         profileId,
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+
+    if (isCollabSession(descriptor)) {
+      prompt = await this.appendCollabContextOverlays(descriptor, prompt);
     }
 
     return prompt;
@@ -591,6 +617,32 @@ export class SwarmPromptService {
       prompt,
       sourcePath: prompt ? sourcePath : undefined,
     };
+  }
+
+  private async appendCollabContextOverlays(descriptor: AgentDescriptor, basePrompt: string): Promise<string> {
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const promptPath = getSessionContextPromptPath(this.options.config.paths.dataDir, profileId, descriptor.agentId);
+    const referenceDir = getSessionContextReferenceDir(this.options.config.paths.dataDir, profileId, descriptor.agentId);
+    const sections: string[] = [basePrompt.trimEnd()];
+
+    sections.push(`# Collaboration channel instructions\n\n${COLLABORATION_CHANNEL_INSTRUCTIONS}`);
+
+    const contextPrompt = (await readPromptFile(promptPath))?.trim();
+    if (contextPrompt) {
+      sections.push(`# Additional instructions\n\n${contextPrompt}`);
+    }
+
+    const referenceDocs = await listReferenceDocs(referenceDir);
+    for (const referenceDoc of referenceDocs) {
+      const content = (await readReferenceDoc(referenceDir, referenceDoc.fileName))?.trim();
+      if (!content) {
+        continue;
+      }
+
+      sections.push(`# Channel Reference: ${referenceDoc.fileName}\n\n${content}`);
+    }
+
+    return sections.join("\n\n");
   }
 
   private appendAvailableSkillsBlock(systemPrompt: string): string {

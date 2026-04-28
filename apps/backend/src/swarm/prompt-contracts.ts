@@ -64,4 +64,5 @@ export type PromptRegistryForRoutes = PromptRegistryContract;
 
 export interface PromptPreviewProvider {
   previewManagerSystemPrompt(profileId: string): Promise<PromptPreviewResponse>;
+  previewManagerSystemPromptForAgent?(agentId: string): Promise<PromptPreviewResponse>;
 }

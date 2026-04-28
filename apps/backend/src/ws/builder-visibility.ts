@@ -20,7 +20,7 @@ export function filterBuilderVisibleAgents(
   systemProfileIds: Set<string>,
 ): AgentDescriptor[] {
   return agents.filter((agent) => {
-    if ((agent as { sessionSurface?: string }).sessionSurface === "collab") {
+    if (agent.sessionSurface === "collab") {
       return false;
     }
 

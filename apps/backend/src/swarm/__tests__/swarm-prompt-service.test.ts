@@ -3,9 +3,16 @@ import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileBackedPromptRegistry } from "../prompts/prompt-registry.js";
 import { writeProjectAgentRecord } from "../project-agent-storage.js";
+import { writeReferenceDoc } from "../storage/asset-root-storage.js";
 import { SwarmPromptService } from "../swarm-prompt-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
-import { getCommonKnowledgePath, getProfileMemoryPath, resolveMemoryFilePath } from "../data-paths.js";
+import {
+  getCommonKnowledgePath,
+  getProfileMemoryPath,
+  getSessionContextPromptPath,
+  getSessionContextReferenceDir,
+  resolveMemoryFilePath,
+} from "../data-paths.js";
 import type { PersistedProjectAgentConfig } from "@forge/protocol";
 import { createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
 
@@ -236,6 +243,117 @@ describe("SwarmPromptService", () => {
     expect(resolved).toContain("# Model-Specific Instructions");
     expect(resolved).toContain("Return the requested sections only");
     expect(resolved).toContain("Legacy routing guidance for tests.");
+  });
+
+  it("previewManagerSystemPromptForAgent uses the requested collab session and appends session context overlays", async () => {
+    const { config } = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const profileId = "manager";
+    const defaultDescriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "default-manager",
+      profileId,
+      archetypeId: "manager",
+    });
+    const collabDescriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "collab-preview",
+      profileId,
+      archetypeId: "collaboration-channel",
+      sessionSurface: "collab",
+      collab: {
+        workspaceId: "workspace-1",
+        channelId: "channel-1",
+      },
+    });
+    const profiles = new Map<string, ManagerProfile>([[profileId, createProfile(defaultDescriptor.agentId)]]);
+    const descriptors = new Map<string, AgentDescriptor>([
+      [defaultDescriptor.agentId, defaultDescriptor],
+      [collabDescriptor.agentId, collabDescriptor],
+    ]);
+
+    const defaultSessionMemoryPath = resolveMemoryFilePath(
+      dataDir,
+      { agentId: defaultDescriptor.agentId, role: "manager", profileId, managerId: defaultDescriptor.agentId },
+      undefined
+    );
+    const collabSessionMemoryPath = resolveMemoryFilePath(
+      dataDir,
+      { agentId: collabDescriptor.agentId, role: "manager", profileId, managerId: collabDescriptor.agentId },
+      undefined
+    );
+    const profileMemoryPath = getProfileMemoryPath(dataDir, profileId);
+    const collabPromptPath = getSessionContextPromptPath(dataDir, profileId, collabDescriptor.agentId);
+    const collabReferenceDir = getSessionContextReferenceDir(dataDir, profileId, collabDescriptor.agentId);
+    await ensureMemoryFile(defaultSessionMemoryPath, "# Default session mem\n");
+    await ensureMemoryFile(collabSessionMemoryPath, "# Collaboration session mem\n");
+    await ensureMemoryFile(profileMemoryPath, "# Profile mem\n");
+    await mkdir(dirname(collabPromptPath), { recursive: true });
+    await writeFile(collabPromptPath, "Collaboration-specific prompt overlay", "utf8");
+    await writeReferenceDoc(collabReferenceDir, "playbook.md", "Use the escalation playbook.");
+
+    const promptRegistry = new FileBackedPromptRegistry({
+      dataDir,
+      repoDir: config.paths.rootDir,
+      builtinArchetypesDir: BUILTIN_ARCHETYPES,
+      builtinOperationalDir: BUILTIN_OPERATIONAL
+    });
+
+    const service = new SwarmPromptService({
+      config,
+      descriptors,
+      profiles,
+      promptRegistry,
+      skillMetadataService: {
+        ensureSkillMetadataLoaded: async () => {},
+        getSkillMetadata: () => [{ skillName: "memory", description: "Memory skill", path: "/tmp/memory/SKILL.md" }],
+        getAdditionalSkillPaths: () => []
+      } as never,
+      getAgentMemoryPath: (agentId) =>
+        resolveMemoryFilePath(
+          dataDir,
+          { agentId, role: "manager", profileId, managerId: agentId },
+          undefined
+        ),
+      ensureAgentMemoryFile: async (path) => {
+        await mkdir(dirname(path), { recursive: true });
+        try {
+          await readFile(path);
+        } catch {
+          await writeFile(path, "# m\n", "utf8");
+        }
+      },
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => profileId,
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [defaultDescriptor, collabDescriptor],
+      loadSpecialistRegistryModule: async () => ({
+        resolveRoster: async () => [],
+        generateRosterBlock: () => "Specialist roster block",
+        getSpecialistsEnabled: async () => true,
+        legacyModelRoutingGuidance: "Legacy routing guidance for tests."
+      }),
+      getIntegrationContext: () => undefined,
+      logDebug: () => {}
+    });
+
+    const defaultPreview = await service.previewManagerSystemPrompt(profileId);
+    const defaultSystemPrompt = defaultPreview.sections[0]?.content ?? "";
+    expect(defaultSystemPrompt).not.toContain("# Collaboration channel instructions");
+    expect(defaultSystemPrompt).not.toContain("Collaboration-specific prompt overlay");
+
+    const preview = await service.previewManagerSystemPromptForAgent(collabDescriptor.agentId);
+    const systemPrompt = preview.sections[0]?.content ?? "";
+    const memoryComposite = preview.sections[1]?.content ?? "";
+
+    expect(systemPrompt).toContain("You are the manager agent for a collaboration channel in a multi-agent swarm.");
+    expect(systemPrompt).toContain("Specialist roster block");
+    expect(systemPrompt).toContain("# Collaboration channel instructions");
+    expect(systemPrompt).toContain("# Additional instructions\n\nCollaboration-specific prompt overlay");
+    expect(systemPrompt).toContain("# Channel Reference: playbook.md\n\nUse the escalation playbook.");
+    expect(systemPrompt).toContain("<available_skills>");
+    expect(systemPrompt).toContain("<name>memory</name>");
+    expect(memoryComposite).toContain("Collaboration session mem");
+    expect(memoryComposite).not.toContain("Default session mem");
   });
 
   it("resolveProjectAgentSystemPromptOverride prefers on-disk project agent prompt.md", async () => {

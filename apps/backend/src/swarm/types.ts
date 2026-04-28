@@ -1,7 +1,9 @@
 import {
   MANAGER_MODEL_PRESETS,
+  type AgentCollaborationLink,
   type AgentCreatorResult,
   type AgentModelOrigin,
+  type AgentSessionSurface,
   type ChoiceRequestEvent,
   type ManagerProfile,
   type ProjectAgentInfo,
@@ -16,7 +18,7 @@ export type AgentRole = "manager" | "worker";
 export type AgentArchetypeId = string;
 
 export type { AgentStatus };
-export type { AgentModelOrigin, ManagerProfile };
+export type { AgentCollaborationLink, AgentModelOrigin, AgentSessionSurface, ManagerProfile };
 export type { ProjectAgentMessageContext };
 export type {
   ChoiceAnswer,
@@ -66,6 +68,8 @@ export interface AgentDescriptor {
   profileId?: string;
   sessionLabel?: string;
   sessionPurpose?: AgentSessionPurpose;
+  sessionSurface?: AgentSessionSurface;
+  collab?: AgentCollaborationLink;
   sessionSystemPrompt?: string;
   pinnedAt?: string;
   mergedAt?: string;

@@ -37,6 +37,9 @@ describe("FileBackedPromptRegistry", () => {
     await expect(registry.resolve("archetype", "manager")).resolves.toContain(
       "You are the manager agent in a multi-agent swarm."
     );
+    await expect(registry.resolve("archetype", "collaboration-channel")).resolves.toContain(
+      "You are the manager agent for a collaboration channel in a multi-agent swarm."
+    );
     await expect(registry.resolve("operational", "memory-merge")).resolves.toContain(
       "You are a memory file editor."
     );

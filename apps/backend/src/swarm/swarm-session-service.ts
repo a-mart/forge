@@ -12,14 +12,47 @@ interface StopSessionInternalOptions {
   deleteWorkers?: boolean;
 }
 
+interface SessionCreationOptions {
+  label?: string;
+  name?: string;
+  sessionAgentId?: string;
+  sessionPurpose?: AgentDescriptor["sessionPurpose"];
+}
+
+interface SessionCreationOverrides {
+  model?: AgentModelDescriptor;
+  cwd?: string;
+  sessionSystemPrompt?: string;
+  sessionSurface?: AgentDescriptor["sessionSurface"];
+  collab?: AgentDescriptor["collab"];
+}
+
+interface SessionCreationBaseDescriptor {
+  model: AgentModelDescriptor;
+  cwd: string;
+  archetypeId?: AgentDescriptor["archetypeId"];
+  sessionSystemPrompt?: string;
+}
+
+interface PreparedSessionCreation {
+  profile: ManagerProfile;
+  sessionDescriptor: AgentDescriptor;
+  sessionNumber: number;
+}
+
 export interface SwarmSessionServiceOptions {
   profiles: Map<string, ManagerProfile>;
   runtimes: Map<string, SwarmAgentRuntime>;
   provisioner: SessionProvisioner;
   prepareSessionCreation: (
     profileId: string,
-    options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
-  ) => { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number };
+    options?: SessionCreationOptions
+  ) => PreparedSessionCreation;
+  prepareSessionCreationFromBase: (
+    profileId: string,
+    base: SessionCreationBaseDescriptor,
+    options?: SessionCreationOptions
+  ) => PreparedSessionCreation;
   getRequiredSessionDescriptor: (agentId: string) => ProvisionedSessionDescriptor;
   getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<SwarmAgentRuntime>;
   stopSessionInternal: (
@@ -78,26 +111,23 @@ export class SwarmSessionService {
 
   async createSession(
     profileId: string,
-    options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
+    options?: SessionCreationOptions
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     return this.createSessionWithOverrides(profileId, options);
   }
 
   createSessionWithOverrides(
     profileId: string,
-    options: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] } = {},
-    overrides: {
-      model?: AgentModelDescriptor;
-      cwd?: string;
-      sessionSystemPrompt?: string;
-    } = {}
+    options: SessionCreationOptions = {},
+    overrides: SessionCreationOverrides = {}
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    this.assertValidSessionOverrides(overrides);
 
     const prepared = this.options.prepareSessionCreation(profileId, options);
     const sessionDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
 
     if (overrides.model) {
-      sessionDescriptor.model = overrides.model;
+      sessionDescriptor.model = { ...overrides.model };
       sessionDescriptor.modelOrigin = "session_override";
     }
 
@@ -109,19 +139,67 @@ export class SwarmSessionService {
       sessionDescriptor.sessionSystemPrompt = overrides.sessionSystemPrompt;
     }
 
+    if (overrides.sessionSurface !== undefined) {
+      sessionDescriptor.sessionSurface = overrides.sessionSurface;
+    }
+
+    if (overrides.collab !== undefined) {
+      sessionDescriptor.collab = overrides.collab ? { ...overrides.collab } : undefined;
+    }
+
     return this.createSessionWithPreparedDescriptor(prepared, sessionDescriptor);
   }
 
+  createSessionFromBaseDescriptor(
+    profileId: string,
+    base: SessionCreationBaseDescriptor,
+    options: SessionCreationOptions = {},
+    overrides: Pick<SessionCreationOverrides, "sessionSurface" | "collab"> = {}
+  ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    this.assertValidSessionOverrides(overrides);
+
+    const prepared = this.options.prepareSessionCreationFromBase(profileId, base, options);
+    const sessionDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
+
+    if (overrides.sessionSurface !== undefined) {
+      sessionDescriptor.sessionSurface = overrides.sessionSurface;
+    }
+
+    if (overrides.collab !== undefined) {
+      sessionDescriptor.collab = overrides.collab ? { ...overrides.collab } : undefined;
+    }
+
+    return this.createSessionWithPreparedDescriptor(prepared, sessionDescriptor);
+  }
+
+  private assertValidSessionOverrides(
+    overrides: Pick<SessionCreationOverrides, "sessionSurface" | "collab">
+  ): void {
+    if (overrides.sessionSurface === "collab" && overrides.collab === undefined) {
+      throw new Error("Collaboration-backed sessions require collab metadata.");
+    }
+
+    if (overrides.sessionSurface !== "collab" && overrides.collab !== undefined) {
+      throw new Error("Collab metadata is only valid for collaboration-backed sessions.");
+    }
+  }
+
   private async createSessionWithPreparedDescriptor(
-    prepared: { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number },
+    prepared: PreparedSessionCreation,
     sessionDescriptor: ProvisionedSessionDescriptor
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    const shouldInitializeRuntime = sessionDescriptor.sessionSurface !== "collab";
+
     await this.options.provisioner.provisionSession({
       descriptor: sessionDescriptor,
-      initializeRuntime: async () => {
-        const runtime = await this.options.getOrCreateRuntimeForDescriptor(sessionDescriptor);
-        sessionDescriptor.contextUsage = runtime.getContextUsage();
-      }
+      ...(shouldInitializeRuntime
+        ? {
+            initializeRuntime: async () => {
+              const runtime = await this.options.getOrCreateRuntimeForDescriptor(sessionDescriptor);
+              sessionDescriptor.contextUsage = runtime.getContextUsage();
+            }
+          }
+        : {})
     });
 
     await this.options.saveStore();

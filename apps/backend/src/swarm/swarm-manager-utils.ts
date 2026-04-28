@@ -46,6 +46,7 @@ const SYNTHETIC_PI_MODEL_BLUEPRINTS: Readonly<Record<string, Readonly<Record<str
   }
 };
 const VALID_PERSISTED_PROJECT_AGENT_CAPABILITIES = new Set<string>(PROJECT_AGENT_CAPABILITIES);
+const VALID_PERSISTED_SESSION_SURFACES = new Set(["builder", "collab"]);
 const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "idle",
   "streaming",
@@ -104,10 +105,55 @@ function cloneProjectAgentInfo(descriptor: AgentDescriptor): AgentDescriptor["pr
   return cloneProjectAgentInfoValue(descriptor.projectAgent) ?? undefined;
 }
 
+export function isCollabSession(
+  descriptor: Pick<AgentDescriptor, "sessionSurface"> | null | undefined
+): boolean {
+  return descriptor?.sessionSurface === "collab";
+}
+
+export function getCollabSessionInfo(
+  descriptor: Pick<AgentDescriptor, "sessionSurface" | "collab"> | null | undefined
+): { workspaceId: string; channelId: string } | null {
+  if (descriptor?.sessionSurface !== "collab") {
+    return null;
+  }
+
+  const collab = descriptor.collab;
+  if (!isRecord(collab)) {
+    return null;
+  }
+
+  if (!isNonEmptyString(collab.workspaceId) || !isNonEmptyString(collab.channelId)) {
+    return null;
+  }
+
+  return {
+    workspaceId: collab.workspaceId,
+    channelId: collab.channelId
+  };
+}
+
 export function assertBuilderSession(
-  _descriptor: Pick<AgentDescriptor, "agentId"> | null | undefined,
-  _action = "perform this Builder operation"
-): void {}
+  descriptor: Pick<AgentDescriptor, "agentId" | "sessionSurface"> | null | undefined,
+  action = "perform this Builder operation"
+): void {
+  if (descriptor?.sessionSurface !== "collab") {
+    return;
+  }
+
+  throw new Error(`Cannot ${action} for collaboration-backed session ${descriptor.agentId}.`);
+}
+
+export function assertCollabSession(
+  descriptor: Pick<AgentDescriptor, "agentId" | "sessionSurface"> | null | undefined,
+  action = "perform this collaboration operation"
+): void {
+  if (descriptor?.sessionSurface === "collab") {
+    return;
+  }
+
+  throw new Error(`Cannot ${action} for Builder session ${descriptor?.agentId ?? "unknown"}.`);
+}
 
 export function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return {
@@ -115,6 +161,7 @@ export function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
     model: { ...descriptor.model },
     contextUsage: cloneContextUsage(descriptor.contextUsage),
     projectAgent: cloneProjectAgentInfo(descriptor),
+    collab: descriptor.collab ? { ...descriptor.collab } : undefined,
     ...(descriptor.agentCreatorResult !== undefined
       ? {
           agentCreatorResult: {
@@ -276,6 +323,35 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     value.sessionPurpose !== "agent_creator"
   ) {
     return 'sessionPurpose must be "cortex_review" or "agent_creator" when provided';
+  }
+
+  if (
+    value.sessionSurface !== undefined &&
+    (!isNonEmptyString(value.sessionSurface) || !VALID_PERSISTED_SESSION_SURFACES.has(value.sessionSurface))
+  ) {
+    return 'sessionSurface must be "builder" or "collab" when provided';
+  }
+
+  if (value.collab !== undefined) {
+    if (!isRecord(value.collab)) {
+      return "collab must be an object when provided";
+    }
+
+    if (!isNonEmptyString(value.collab.workspaceId)) {
+      return "collab.workspaceId must be a non-empty string";
+    }
+
+    if (!isNonEmptyString(value.collab.channelId)) {
+      return "collab.channelId must be a non-empty string";
+    }
+  }
+
+  if (value.sessionSurface === "collab" && value.collab === undefined) {
+    return 'collab metadata is required when sessionSurface is "collab"';
+  }
+
+  if (value.sessionSurface !== "collab" && value.collab !== undefined) {
+    return 'collab metadata must be omitted unless sessionSurface is "collab"';
   }
 
   if (value.sessionSystemPrompt !== undefined && typeof value.sessionSystemPrompt !== "string") {
