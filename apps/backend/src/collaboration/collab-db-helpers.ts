@@ -52,6 +52,16 @@ interface CollaborationChannelRow {
   updated_at: string;
 }
 
+interface CollaborationChannelUserStateRow {
+  channel_id: string;
+  user_id: string;
+  last_read_message_id: string | null;
+  last_read_message_seq: number;
+  last_read_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CollaborationWorkspaceDefaultsRecord {
   defaultModelProvider: string | null;
   defaultModelId: string | null;
@@ -97,6 +107,16 @@ export interface CollaborationChannelRecord {
   lastMessageSeq: number;
   lastMessageId: string | null;
   lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CollaborationChannelUserStateRecord {
+  channelId: string;
+  userId: string;
+  lastReadMessageId: string | null;
+  lastReadMessageSeq: number;
+  lastReadAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -173,6 +193,22 @@ export interface UpdateCollaborationChannelInput {
 export interface ArchiveCollaborationChannelInput {
   archivedAt: string;
   archivedByUserId: string | null;
+  updatedAt: string;
+}
+
+export interface AdvanceCollaborationChannelActivityInput {
+  lastMessageId?: string | null;
+  lastMessageAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertCollaborationChannelReadStateInput {
+  channelId: string;
+  userId: string;
+  lastReadMessageId?: string | null;
+  lastReadMessageSeq: number;
+  lastReadAt?: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -373,6 +409,13 @@ export class CollaborationDbHelpers {
     return row ? mapChannelRow(row) : null;
   }
 
+  getChannelByBackingSessionAgentId(backingSessionAgentId: string): CollaborationChannelRecord | null {
+    const row = this.database
+      .prepare<[string], CollaborationChannelRow>(`${channelSelectSql} WHERE backing_session_agent_id = ?`)
+      .get(backingSessionAgentId);
+    return row ? mapChannelRow(row) : null;
+  }
+
   createChannel(input: CreateCollaborationChannelInput): CollaborationChannelRecord {
     this.database.prepare(
       `INSERT INTO collab_channel (
@@ -466,6 +509,71 @@ export class CollaborationDbHelpers {
     return this.getChannel(channelId);
   }
 
+  advanceChannelActivity(
+    channelId: string,
+    input: AdvanceCollaborationChannelActivityInput,
+  ): CollaborationChannelRecord | null {
+    const result = this.database.prepare(
+      `UPDATE collab_channel
+       SET last_message_seq = last_message_seq + 1,
+           last_message_id = ?,
+           last_message_at = ?,
+           updated_at = ?
+       WHERE channel_id = ?`,
+    ).run(input.lastMessageId ?? null, input.lastMessageAt, input.updatedAt, channelId);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
+    return this.getChannel(channelId);
+  }
+
+  getChannelUserState(channelId: string, userId: string): CollaborationChannelUserStateRecord | null {
+    const row = this.database
+      .prepare<[string, string], CollaborationChannelUserStateRow>(
+        `${channelUserStateSelectSql} WHERE channel_id = ? AND user_id = ?`,
+      )
+      .get(channelId, userId);
+    return row ? mapChannelUserStateRow(row) : null;
+  }
+
+  upsertChannelReadState(
+    input: UpsertCollaborationChannelReadStateInput,
+  ): CollaborationChannelUserStateRecord {
+    this.database.prepare(
+      `INSERT INTO collab_channel_user_state (
+         channel_id,
+         user_id,
+         last_read_message_id,
+         last_read_message_seq,
+         last_read_at,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(channel_id, user_id) DO UPDATE SET
+         last_read_message_id = excluded.last_read_message_id,
+         last_read_message_seq = excluded.last_read_message_seq,
+         last_read_at = excluded.last_read_at,
+         updated_at = excluded.updated_at`,
+    ).run(
+      input.channelId,
+      input.userId,
+      input.lastReadMessageId ?? null,
+      input.lastReadMessageSeq,
+      input.lastReadAt ?? null,
+      input.createdAt,
+      input.updatedAt,
+    );
+
+    return requireChannelUserState(
+      this.getChannelUserState(input.channelId, input.userId),
+      input.channelId,
+      input.userId,
+    );
+  }
+
   archiveChannel(channelId: string, input: ArchiveCollaborationChannelInput): CollaborationChannelRecord | null {
     return this.updateChannel(channelId, {
       archived: true,
@@ -527,6 +635,15 @@ const channelSelectSql = `SELECT channel_id,
   updated_at
 FROM collab_channel`;
 
+const channelUserStateSelectSql = `SELECT channel_id,
+  user_id,
+  last_read_message_id,
+  last_read_message_seq,
+  last_read_at,
+  created_at,
+  updated_at
+FROM collab_channel_user_state`;
+
 function mapWorkspaceRow(row: CollaborationWorkspaceRow): CollaborationWorkspaceRecord {
   return {
     workspaceId: row.workspace_id,
@@ -583,6 +700,20 @@ function mapChannelRow(row: CollaborationChannelRow): CollaborationChannelRecord
   };
 }
 
+function mapChannelUserStateRow(
+  row: CollaborationChannelUserStateRow,
+): CollaborationChannelUserStateRecord {
+  return {
+    channelId: row.channel_id,
+    userId: row.user_id,
+    lastReadMessageId: row.last_read_message_id,
+    lastReadMessageSeq: row.last_read_message_seq,
+    lastReadAt: row.last_read_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function requireWorkspace(
   workspace: CollaborationWorkspaceRecord | null,
   workspaceId: string,
@@ -614,6 +745,18 @@ function requireChannel(
   }
 
   throw new Error(`Unknown collaboration channel: ${channelId}`);
+}
+
+function requireChannelUserState(
+  channelUserState: CollaborationChannelUserStateRecord | null,
+  channelId: string,
+  userId: string,
+): CollaborationChannelUserStateRecord {
+  if (channelUserState) {
+    return channelUserState;
+  }
+
+  throw new Error(`Unknown collaboration channel user state: ${channelId}/${userId}`);
 }
 
 function requiredDefault(value: string | null, fieldName: string): string {

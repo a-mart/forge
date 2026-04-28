@@ -5,6 +5,7 @@ import {
   type AgentModelOrigin,
   type AgentSessionSurface,
   type ChoiceRequestEvent,
+  type CollaborationAuthor,
   type ManagerProfile,
   type ProjectAgentInfo,
   type ProjectAgentMessageContext,
@@ -261,6 +262,7 @@ export interface ConversationMessageEvent {
   timestamp: string;
   source: "user_input" | "speak_to_user" | "system" | "project_agent_input";
   sourceContext?: MessageSourceContext;
+  collaborationAuthor?: CollaborationAuthor;
   projectAgentContext?: ProjectAgentMessageContext;
   pinned?: boolean;
 }

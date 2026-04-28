@@ -1,5 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import type { CollaborationRole } from "@forge/protocol";
+import type { WebSocket } from "ws";
 import type { SwarmConfig } from "../../swarm/types.js";
 import { isCollaborationServerRuntimeTarget } from "../../runtime-target.js";
 import { getOrCreateCollaborationBetterAuthService } from "./better-auth-service.js";
@@ -47,6 +48,7 @@ interface CollaborationRequestCorsContext {
 }
 
 const requestAuthContextMap = new WeakMap<IncomingMessage, CollaborationAuthContext | null>();
+const socketAuthContextMap = new WeakMap<WebSocket, CollaborationAuthContext>();
 const requestCorsContextMap = new WeakMap<IncomingMessage, CollaborationRequestCorsContext>();
 
 export async function authenticateRequest(
@@ -199,6 +201,19 @@ export function getCollaborationRequestAuthContext(
   request: IncomingMessage,
 ): CollaborationRequestAuthContext | null {
   return requestAuthContextMap.get(request) ?? null;
+}
+
+export function setCollaborationSocketAuthContext(
+  socket: WebSocket,
+  authContext: CollaborationAuthContext,
+): void {
+  socketAuthContextMap.set(socket, authContext);
+}
+
+export function getCollaborationSocketAuthContext(
+  socket: WebSocket,
+): CollaborationAuthContext | null {
+  return socketAuthContextMap.get(socket) ?? null;
 }
 
 export function setCollaborationRequestCorsContext(

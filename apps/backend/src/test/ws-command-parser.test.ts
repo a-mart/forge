@@ -356,6 +356,49 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses collaboration websocket commands', () => {
+    expect(parseJsonCommand({ type: 'collab_bootstrap' })).toEqual({
+      ok: true,
+      command: { type: 'collab_bootstrap' },
+    })
+
+    expect(parseJsonCommand({
+      type: 'collab_subscribe_channel',
+      channelId: '  channel-1  ',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'collab_subscribe_channel',
+        channelId: 'channel-1',
+      },
+    })
+
+    expect(parseJsonCommand({
+      type: 'collab_user_message',
+      channelId: 'channel-1',
+      content: '  hello  ',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'collab_user_message',
+        channelId: 'channel-1',
+        content: 'hello',
+        attachments: undefined,
+      },
+    })
+
+    expect(parseJsonCommand({
+      type: 'collab_mark_channel_read',
+      channelId: 'channel-1',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'collab_mark_channel_read',
+        channelId: 'channel-1',
+      },
+    })
+  })
+
   it('rejects invalid session command payloads', () => {
     const invalidPayloads: Array<{ payload: unknown; message: string }> = [
       {

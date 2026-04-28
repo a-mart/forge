@@ -17,9 +17,12 @@ import {
   evaluateCollaborationAdminAccess,
   evaluateCollaborationAuthenticatedAccess,
   evaluateCollaborationPasswordChangeAccess,
+  resolveCollaborationAuthContextForUserId,
   setCollaborationRequestAuthContext,
   setCollaborationRequestCorsContext,
+  setCollaborationSocketAuthContext,
   validateCollaborationHttpOrigin,
+  type CollaborationAuthContext,
 } from "../collaboration/auth/collaboration-auth-middleware.js";
 import { getOrCreateCollaborationBetterAuthService } from "../collaboration/auth/better-auth-service.js";
 import type { CollaborationReadinessRequestService } from "../collaboration/readiness-service.js";
@@ -39,6 +42,7 @@ import {
 } from "../swarm/cortex-auto-review-settings.js";
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
+import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
 
@@ -125,6 +129,7 @@ export class SwarmWebSocketServer {
   private readonly onConversationMessage = (event: ServerEvent): void => {
     if (event.type !== "conversation_message") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.wsHandler.broadcastCollaborationConversationMessage(event);
 
     const shouldBroadcastUnread =
       !this.isUnreadNotificationSuppressed(event.agentId) &&
@@ -164,17 +169,24 @@ export class SwarmWebSocketServer {
   private readonly onAgentMessage = (event: ServerEvent): void => {
     if (event.type !== "agent_message") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.wsHandler.broadcastCollaborationAgentMessage(event);
   };
 
   private readonly onAgentToolCall = (event: ServerEvent): void => {
     if (event.type !== "agent_tool_call") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.wsHandler.broadcastCollaborationAgentToolCall(event);
   };
 
   private readonly onChoiceRequest = (event: ServerEvent): void => {
     if (event.type !== "choice_request") return;
 
     this.wsHandler.broadcastToSubscribed(event);
+
+    const collabSessionAgentId = this.resolveChoiceSessionAgentId(event.agentId);
+    if (collabSessionAgentId) {
+      this.wsHandler.broadcastCollaborationChoiceRequest(event, collabSessionAgentId);
+    }
 
     if (event.status === "pending") {
       const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
@@ -207,16 +219,27 @@ export class SwarmWebSocketServer {
   private readonly onMessagePinned = (event: ServerEvent): void => {
     if (event.type !== "message_pinned") return;
     this.wsHandler.broadcastToSubscribed(event);
+
+    const descriptor = this.swarmManager.getAgent(event.agentId);
+    if (descriptor?.role === "manager" && isCollabSession(descriptor) && descriptor.collab?.channelId) {
+      this.wsHandler.getCollaborationSubscriptionManager().broadcastMessagePinned(
+        descriptor.collab.channelId,
+        event.messageId,
+        event.pinned,
+      );
+    }
   };
 
   private readonly onAgentStatus = (event: ServerEvent): void => {
     if (event.type !== "agent_status") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.wsHandler.broadcastCollaborationAgentStatus(event);
   };
 
   private readonly onSessionWorkersSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_workers_snapshot") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.wsHandler.broadcastCollaborationSessionWorkersSnapshot(event);
   };
 
   private readonly onAgentsSnapshot = (event: ServerEvent): void => {
@@ -275,6 +298,20 @@ export class SwarmWebSocketServer {
     return { profileId: descriptor.profileId ?? descriptor.agentId };
   }
 
+  private resolveChoiceSessionAgentId(agentId: string): string | undefined {
+    const descriptor = this.swarmManager.getAgent(agentId);
+    if (!descriptor) {
+      return undefined;
+    }
+
+    const sessionAgentId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+    const sessionDescriptor = this.swarmManager.getAgent(sessionAgentId);
+    if (!sessionDescriptor || sessionDescriptor.role !== "manager" || !isCollabSession(sessionDescriptor)) {
+      return undefined;
+    }
+
+    return sessionAgentId;
+  }
 
   constructor(options: {
     swarmManager: SwarmManager;
@@ -339,6 +376,7 @@ export class SwarmWebSocketServer {
             .filter(
               (descriptor) =>
                 descriptor.role === "manager" &&
+                !isCollabSession(descriptor) &&
                 (descriptor.profileId ?? descriptor.agentId) === profileId,
             )
             .map((descriptor) => descriptor.agentId) ?? [],
@@ -370,6 +408,7 @@ export class SwarmWebSocketServer {
         : undefined,
       unreadTracker: this.unreadTracker,
       perf: this.swarmManager.getSidebarPerfRecorder(),
+      collaborationReadinessService: options.collaborationReadinessService ?? undefined,
     });
     wsHandlerRef = this.wsHandler;
 
@@ -643,6 +682,51 @@ export class SwarmWebSocketServer {
       }
     }
 
+    const config = this.swarmManager.getConfig();
+    let authContext: CollaborationAuthContext | null = null;
+
+    if (!isBuilderRuntimeTarget(config.runtimeTarget)) {
+      const originValidation = validateCollaborationHttpOrigin(request, config);
+      if (!originValidation.ok) {
+        rejectWebSocketUpgrade(socket, 403, originValidation.errorMessage);
+        return;
+      }
+
+      try {
+        const authService = await getOrCreateCollaborationBetterAuthService(config);
+        const session = await authService.getSessionFromCookieHeader(request.headers.cookie);
+        if (!session) {
+          rejectWebSocketUpgrade(socket, 401, "Authentication required");
+          return;
+        }
+
+        const resolvedAuthContext = await resolveCollaborationAuthContextForUserId(config, session.user.id);
+        if (!resolvedAuthContext) {
+          rejectWebSocketUpgrade(socket, 401, "Authentication required");
+          return;
+        }
+
+        authContext = {
+          ...resolvedAuthContext,
+          ...(session.session?.id ? { sessionId: session.session.id } : {}),
+        };
+
+        if (authContext.disabled) {
+          rejectWebSocketUpgrade(socket, 403, "User account is disabled");
+          return;
+        }
+
+        if (authContext.passwordChangeRequired) {
+          rejectWebSocketUpgrade(socket, 403, "Password change required");
+          return;
+        }
+      } catch (error) {
+        console.error("[collaboration] Failed to authenticate WebSocket upgrade", error);
+        rejectWebSocketUpgrade(socket, 500, "Internal Server Error");
+        return;
+      }
+    }
+
     const wss = this.wss;
     if (!wss) {
       ignoreSocketErrors(socket);
@@ -651,6 +735,11 @@ export class SwarmWebSocketServer {
     }
 
     wss.handleUpgrade(request, socket, head, (client) => {
+      if (authContext) {
+        setCollaborationSocketAuthContext(client, authContext);
+        this.wsHandler.getCollaborationSubscriptionManager().registerSocket(client, authContext);
+      }
+
       wss.emit("connection", client, request);
     });
   }
@@ -787,6 +876,36 @@ function ignoreSocketErrors(socket: Duplex): void {
   socket.once("error", () => {});
 }
 
+function rejectWebSocketUpgrade(
+  socket: Duplex,
+  statusCode: 401 | 403 | 500,
+  message: string,
+): void {
+  if (socket.destroyed) {
+    return;
+  }
+
+  ignoreSocketErrors(socket);
+
+  const body = JSON.stringify({ error: message });
+  const statusText =
+    statusCode === 401
+      ? "Unauthorized"
+      : statusCode === 403
+        ? "Forbidden"
+        : "Internal Server Error";
+
+  socket.end(
+    [
+      `HTTP/1.1 ${statusCode} ${statusText}`,
+      "Connection: close",
+      "Content-Type: application/json; charset=utf-8",
+      `Content-Length: ${Buffer.byteLength(body, "utf8")}`,
+      "",
+      body,
+    ].join("\r\n"),
+  );
+}
 
 async function tryWriteOwnedControlPidFile(pidFile: string): Promise<boolean> {
   const existingPid = await readControlPidFromFile(pidFile);

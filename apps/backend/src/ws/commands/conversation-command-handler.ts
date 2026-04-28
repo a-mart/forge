@@ -5,6 +5,10 @@ import type {
   ServerEvent,
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
+import { getCollaborationSocketAuthContext } from "../../collaboration/auth/collaboration-auth-middleware.js";
+import type { DispatchCollaborationChannelMessageParams } from "../../collaboration/channel-message-service.js";
+import { isCollaborationServerRuntimeTarget } from "../../runtime-target.js";
+import { isCollabSession } from "../../swarm/swarm-manager-utils.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 
 function validateAnswersAgainstQuestions(
@@ -40,6 +44,9 @@ export interface ConversationCommandRouteContext {
   send: (socket: WebSocket, event: ServerEvent) => void;
   logDebug: (message: string, details?: unknown) => void;
   resolveConfiguredManagerId: () => string | undefined;
+  dispatchCollaborationUserMessage?: (
+    params: DispatchCollaborationChannelMessageParams,
+  ) => Promise<void>;
 }
 
 export async function handleConversationCommand(context: ConversationCommandRouteContext): Promise<boolean> {
@@ -52,6 +59,7 @@ export async function handleConversationCommand(context: ConversationCommandRout
     send,
     logDebug,
     resolveConfiguredManagerId,
+    dispatchCollaborationUserMessage,
   } = context;
 
   if (command.type === "choice_response" || command.type === "choice_cancel") {
@@ -122,18 +130,18 @@ export async function handleConversationCommand(context: ConversationCommandRout
     managerId,
     requestedDelivery: command.delivery ?? "auto",
     textPreview: previewForLog(command.text),
-    attachmentCount: command.attachments?.length ?? 0
+    attachmentCount: command.attachments?.length ?? 0,
   });
 
   if (!allowNonManagerSubscriptions && managerId && targetAgentId !== managerId) {
     logDebug("user_message:rejected:subscription_not_supported", {
       targetAgentId,
-      managerId
+      managerId,
     });
     send(socket, {
       type: "error",
       code: "SUBSCRIPTION_NOT_SUPPORTED",
-      message: `Messages are currently limited to ${managerId}.`
+      message: `Messages are currently limited to ${managerId}.`,
     });
     return true;
   }
@@ -141,20 +149,81 @@ export async function handleConversationCommand(context: ConversationCommandRout
   const targetDescriptor = swarmManager.getAgent(targetAgentId);
   if (!targetDescriptor) {
     logDebug("user_message:rejected:unknown_agent", {
-      targetAgentId
+      targetAgentId,
     });
     send(socket, {
       type: "error",
       code: "UNKNOWN_AGENT",
-      message: `Agent ${targetAgentId} does not exist.`
+      message: `Agent ${targetAgentId} does not exist.`,
     });
     return true;
   }
 
   try {
+    const authContext = isCollaborationServerRuntimeTarget(swarmManager.getConfig().runtimeTarget)
+      ? getCollaborationSocketAuthContext(socket)
+      : null;
+
+    if (isCollabSession(targetDescriptor)) {
+      const collabInfo = targetDescriptor.collab;
+      if (!collabInfo) {
+        send(socket, {
+          type: "error",
+          code: "INVALID_COLLAB_SESSION",
+          message: `Agent ${targetAgentId} is missing collaboration metadata.`,
+        });
+        return true;
+      }
+
+      if (!authContext || !dispatchCollaborationUserMessage) {
+        if (targetDescriptor.role === "manager" && command.text.trim() === "/new") {
+          logDebug("user_message:manager_reset:rejected:collab_surface", {
+            targetAgentId: targetDescriptor.agentId,
+          });
+          send(socket, {
+            type: "error",
+            code: "BUILDER_OPERATION_NOT_ALLOWED",
+            message: "The /new command is only available for Builder sessions.",
+          });
+          return true;
+        }
+
+        logDebug("user_message:rejected:collab_auth_required", {
+          targetAgentId: targetDescriptor.agentId,
+        });
+        send(socket, {
+          type: "error",
+          code: "COLLABORATION_AUTH_REQUIRED",
+          message: "Collaboration-authenticated access is required for collab channels.",
+        });
+        return true;
+      }
+
+      logDebug("user_message:dispatch:start", {
+        targetAgentId,
+        targetRole: targetDescriptor.role,
+        persistedAttachmentCount: command.attachments?.length ?? 0,
+        collabChannelId: collabInfo.channelId,
+      });
+
+      await dispatchCollaborationUserMessage({
+        channelId: collabInfo.channelId,
+        userId: authContext.userId,
+        text: command.text,
+        attachments: command.attachments,
+      });
+
+      logDebug("user_message:dispatch:complete", {
+        targetAgentId,
+        targetRole: targetDescriptor.role,
+        collabChannelId: collabInfo.channelId,
+      });
+      return true;
+    }
+
     if (targetDescriptor.role === "manager" && command.text.trim() === "/new") {
       logDebug("user_message:manager_reset", {
-        targetAgentId: targetDescriptor.agentId
+        targetAgentId: targetDescriptor.agentId,
       });
       await swarmManager.resetManagerSession(targetDescriptor.agentId, "user_new_command");
       return true;
@@ -163,31 +232,33 @@ export async function handleConversationCommand(context: ConversationCommandRout
     logDebug("user_message:dispatch:start", {
       targetAgentId,
       targetRole: targetDescriptor.role,
-      persistedAttachmentCount: command.attachments?.length ?? 0
+      persistedAttachmentCount: command.attachments?.length ?? 0,
     });
 
     await swarmManager.handleUserMessage(command.text, {
       targetAgentId,
       delivery: command.delivery,
       attachments: command.attachments,
-      sourceContext: { channel: "web" }
+      sourceContext: authContext
+        ? { channel: "web", userId: authContext.userId }
+        : { channel: "web" },
     });
 
     logDebug("user_message:dispatch:complete", {
       targetAgentId,
-      targetRole: targetDescriptor.role
+      targetRole: targetDescriptor.role,
     });
   } catch (error) {
     logDebug("user_message:dispatch:error", {
       targetAgentId,
       targetRole: targetDescriptor.role,
       message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
     });
     send(socket, {
       type: "error",
       code: "USER_MESSAGE_FAILED",
-      message: error instanceof Error ? error.message : String(error)
+      message: error instanceof Error ? error.message : String(error),
     });
   }
 

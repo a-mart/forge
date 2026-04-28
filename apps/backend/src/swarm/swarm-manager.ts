@@ -8,6 +8,7 @@ import { isSystemProfile } from "@forge/protocol";
 import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
+  CollaborationAuthor,
   CredentialPoolState,
   CredentialPoolStrategy,
   PooledCredentialInfo,
@@ -272,6 +273,7 @@ export interface AppendConversationUserMessageOptions {
   targetAgentId?: string;
   attachments?: ConversationAttachment[];
   sourceContext?: MessageSourceContext;
+  collaborationAuthor?: CollaborationAuthor;
 }
 
 export interface AppendConversationUserMessageResult {
@@ -288,6 +290,7 @@ export interface DispatchRuntimeUserMessageOptions {
   targetAgentId: string;
   text: string;
   sourceContext: MessageSourceContext;
+  collaborationAuthor?: CollaborationAuthor;
   runtimeAttachments?: ConversationAttachment[];
   persistedAttachmentCount?: number;
   delivery?: RequestedDeliveryMode;
@@ -3843,7 +3846,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
     const target = this.resolveUserMessageTarget(options?.targetAgentId);
-    return this.appendConversationUserMessageInternal(target, trimmed, attachments, sourceContext);
+    return this.appendConversationUserMessageInternal(
+      target,
+      trimmed,
+      attachments,
+      sourceContext,
+      options?.collaborationAuthor,
+    );
   }
 
   async dispatchRuntimeUserMessage(options: DispatchRuntimeUserMessageOptions): Promise<void> {
@@ -3857,6 +3866,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       runtimeAttachments,
       Math.max(0, Math.trunc(options.persistedAttachmentCount ?? runtimeAttachments.length)),
       options.delivery,
+      options.collaborationAuthor,
     );
   }
 
@@ -3942,6 +3952,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     text: string,
     attachments: ConversationAttachment[],
     sourceContext: MessageSourceContext,
+    collaborationAuthor?: CollaborationAuthor,
   ): Promise<AppendConversationUserMessageResult> {
     const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
     const attachmentMetadata = toConversationAttachmentMetadata(
@@ -3958,6 +3969,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sourceContext,
       textPreview: previewForLog(text),
       attachmentCount: persistedAttachments.length,
+      collaborationAuthor: collaborationAuthor
+        ? {
+            userId: collaborationAuthor.userId,
+            workspaceId: collaborationAuthor.workspaceId,
+            channelId: collaborationAuthor.channelId,
+            role: collaborationAuthor.role,
+          }
+        : undefined,
     });
 
     const userEvent: ConversationMessageEvent = {
@@ -3969,6 +3988,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       timestamp: receivedAt,
       source: "user_input",
       sourceContext,
+      collaborationAuthor,
     };
     this.emitConversationMessage(userEvent);
     this.markSessionActivity(target.agentId, receivedAt);
@@ -3991,6 +4011,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     runtimeAttachments: ConversationAttachment[],
     persistedAttachmentCount: number,
     delivery?: RequestedDeliveryMode,
+    collaborationAuthor?: CollaborationAuthor,
   ): Promise<void> {
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
 
@@ -4068,7 +4089,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw error;
     }
 
-    const managerVisibleMessage = formatInboundUserMessageForManager(text, sourceContext);
+    const managerVisibleMessage = formatInboundUserMessageForManager(text, sourceContext, collaborationAuthor);
 
     const runtimeMessage = await this.prepareModelInboundMessage(
       managerContextId,

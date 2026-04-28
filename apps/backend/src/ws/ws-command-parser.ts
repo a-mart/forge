@@ -1,6 +1,7 @@
 import type { ClientCommand } from "@forge/protocol";
 import { type RawData } from "ws";
 import type { CommandParser, ParsedClientCommand } from "./commands/command-parse-helpers.js";
+import { parseCollabCommand } from "./commands/parse-collab-command.js";
 import { parseConversationCommand } from "./commands/parse-conversation-command.js";
 import { parseManagerCommand } from "./commands/parse-manager-command.js";
 import { parseProjectAgentCommand } from "./commands/parse-project-agent-command.js";
@@ -12,6 +13,7 @@ const COMMAND_PARSERS: CommandParser[] = [
   parseManagerCommand,
   parseSessionCommand,
   parseProjectAgentCommand,
+  parseCollabCommand,
   parseConversationCommand
 ];
 
@@ -81,6 +83,14 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "clear_all_pins":
     case "subscribe":
     case "user_message":
+    case "collab_bootstrap":
+    case "collab_subscribe_channel":
+    case "collab_unsubscribe_channel":
+    case "collab_user_message":
+    case "collab_mark_channel_read":
+    case "collab_choice_response":
+    case "collab_choice_cancel":
+    case "collab_pin_message":
     case "kill_agent":
     case "choice_response":
     case "choice_cancel":

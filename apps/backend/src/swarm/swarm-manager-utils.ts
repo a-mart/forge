@@ -6,6 +6,7 @@ import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import {
   PROJECT_AGENT_CAPABILITIES,
   type AgentRuntimeExtensionSnapshot,
+  type CollaborationAuthor,
   type SessionMemoryMergeFailureStage
 } from "@forge/protocol";
 import { sanitizePathSegment as sanitizePersistedPathSegment } from "./data-paths.js";
@@ -1306,8 +1307,17 @@ export function extractRuntimeMessageText(message: string | RuntimeUserMessage):
 export function formatInboundUserMessageForManager(
   text: string,
   sourceContext: MessageSourceContext,
+  collaborationAuthor?: CollaborationAuthor,
 ): string {
-  const metadataBlock = `[sourceContext] ${JSON.stringify(sourceContext)}`;
+  const metadataLines = [`[sourceContext] ${JSON.stringify(sourceContext)}`];
+  if (collaborationAuthor) {
+    metadataLines.push(`[collaborationAuthor] ${JSON.stringify({
+      displayName: collaborationAuthor.displayName,
+      role: collaborationAuthor.role,
+    })}`);
+  }
+
+  const metadataBlock = metadataLines.join("\n");
   const trimmed = text.trim();
 
   if (trimmed.length === 0) {
