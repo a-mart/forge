@@ -15,6 +15,7 @@ import {
 } from "./collaboration/me-routes.js";
 import {
   createCollaborationRouteServicesGetter,
+  type CollaborationRouteBroadcasts,
   type CollaborationRouteSwarmManager,
 } from "./collaboration/route-services.js";
 import { createCollaborationStatusRoutes } from "./collaboration/status-routes.js";
@@ -26,6 +27,7 @@ export function createCollaborationRoutes(options: {
   settingsService: CollaborationSettingsService;
   readinessService?: CollaborationReadinessRequestService;
   swarmManager?: CollaborationRouteSwarmManager;
+  broadcasts?: CollaborationRouteBroadcasts;
 }): HttpRoute[] {
   const getServices = createCollaborationRouteServicesGetter(options);
 

@@ -436,6 +436,7 @@ export class SwarmWebSocketServer {
             settingsService: this.collaborationSettingsService,
             readinessService: this.collaborationReadinessService ?? undefined,
             swarmManager: this.swarmManager,
+            broadcasts: this.wsHandler.getCollaborationSubscriptionManager(),
           })
         : []),
       ...createHealthRoutes({

@@ -91,12 +91,13 @@ export function createCollaborationChannelRoutes(options: {
             return;
           }
 
-          const { channelService } = await options.getServices();
+          const { channelService, broadcasts } = await options.getServices();
           const channel = await channelService.createChannel({
             ...parseCreateChannelBody(await readJsonBody(request)),
             workspaceId: workspace.workspaceId,
             createdByUserId: adminContext.userId,
           });
+          broadcasts?.broadcastChannelCreated(channel);
           sendJson(response, 200, { ok: true, channel });
         } catch (error) {
           sendJson(response, mapCollaborationChannelErrorStatus(error), {
@@ -142,7 +143,7 @@ export function createCollaborationChannelRoutes(options: {
             throw new Error("channelIds must be an array");
           }
 
-          const { channelService } = await options.getServices();
+          const { channelService, broadcasts } = await options.getServices();
           const channels = channelService.reorderChannels({
             workspaceId: workspace.workspaceId,
             channelIds: body.channelIds.map((value) => {
@@ -152,6 +153,7 @@ export function createCollaborationChannelRoutes(options: {
               return value;
             }),
           });
+          broadcasts?.broadcastChannelReordered(channels);
           sendJson(response, 200, { ok: true, channels });
         } catch (error) {
           sendJson(response, mapCollaborationChannelErrorStatus(error), {
@@ -186,7 +188,7 @@ export function createCollaborationChannelRoutes(options: {
         }
 
         try {
-          const { channelService, promptOverlayService } = await options.getServices();
+          const { channelService, promptOverlayService, broadcasts } = await options.getServices();
 
           if (request.method === "GET") {
             const authContext = await requireAuthenticatedRequestContext(request, response, options.getServices);
@@ -227,6 +229,9 @@ export function createCollaborationChannelRoutes(options: {
             }
             await options.swarmManager.updateManagerModel(channel.sessionAgentId, update.modelId);
           }
+          broadcasts?.broadcastChannelUpdated(
+            await attachChannelEffectiveModelId(options.swarmManager, channelService.getChannel(channel.channelId)),
+          );
           sendJson(response, 200, {
             ok: true,
             channel: await attachChannelAdminSettings(promptOverlayService, options.swarmManager, channel),
@@ -324,8 +329,9 @@ export function createCollaborationChannelRoutes(options: {
         }
 
         try {
-          const { channelService } = await options.getServices();
+          const { channelService, broadcasts } = await options.getServices();
           const channel = await channelService.archiveChannel(channelId, adminContext.userId);
+          broadcasts?.broadcastChannelArchived(channel.workspaceId, channel.channelId);
           sendJson(response, 200, { ok: true, channel });
         } catch (error) {
           sendJson(response, mapCollaborationChannelErrorStatus(error), {

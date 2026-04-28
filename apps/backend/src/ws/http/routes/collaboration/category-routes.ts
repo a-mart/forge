@@ -76,11 +76,12 @@ export function createCollaborationCategoryRoutes(options: {
             return;
           }
 
-          const { categoryService } = await options.getServices();
+          const { categoryService, broadcasts } = await options.getServices();
           const category = categoryService.createCategory({
             ...parseCreateCategoryBody(await readJsonBody(request)),
             workspaceId: workspace.workspaceId,
           });
+          broadcasts?.broadcastCategoryCreated(category);
           sendJson(response, 200, { ok: true, category });
         } catch (error) {
           sendJson(response, mapCollaborationCategoryErrorStatus(error), {
@@ -126,7 +127,7 @@ export function createCollaborationCategoryRoutes(options: {
             throw new Error("categoryIds must be an array");
           }
 
-          const { categoryService } = await options.getServices();
+          const { categoryService, broadcasts } = await options.getServices();
           const categories = categoryService.reorderCategories({
             workspaceId: workspace.workspaceId,
             categoryIds: body.categoryIds.map((value) => {
@@ -136,6 +137,7 @@ export function createCollaborationCategoryRoutes(options: {
               return value;
             }),
           });
+          broadcasts?.broadcastCategoryReordered(categories);
           sendJson(response, 200, { ok: true, categories });
         } catch (error) {
           sendJson(response, mapCollaborationCategoryErrorStatus(error), {
@@ -177,14 +179,19 @@ export function createCollaborationCategoryRoutes(options: {
         void adminContext;
 
         try {
-          const { categoryService } = await options.getServices();
+          const { categoryService, dbHelpers, broadcasts } = await options.getServices();
           if (request.method === "DELETE") {
+            const existingCategory = dbHelpers.getCategory(categoryId);
             categoryService.deleteCategory(categoryId);
+            if (existingCategory) {
+              broadcasts?.broadcastCategoryDeleted(existingCategory.workspaceId, categoryId);
+            }
             sendJson(response, 200, { ok: true });
             return;
           }
 
           const category = categoryService.updateCategory(categoryId, parseUpdateCategoryBody(await readJsonBody(request)));
+          broadcasts?.broadcastCategoryUpdated(category);
           sendJson(response, 200, { ok: true, category });
         } catch (error) {
           sendJson(response, mapCollaborationCategoryErrorStatus(error), {

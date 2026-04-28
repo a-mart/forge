@@ -28,7 +28,22 @@ import type {
   CollaborationReadinessRequestService,
 } from "../../../../collaboration/readiness-service.js";
 import type { SwarmConfig } from "../../../../swarm/types.js";
-import type { PromptPreviewResponse } from "@forge/protocol";
+import type {
+  CollaborationCategory,
+  CollaborationChannel,
+  PromptPreviewResponse,
+} from "@forge/protocol";
+
+export interface CollaborationRouteBroadcasts {
+  broadcastChannelCreated(channel: CollaborationChannel): void;
+  broadcastChannelUpdated(channel: CollaborationChannel): void;
+  broadcastChannelArchived(workspaceId: string, channelId: string): void;
+  broadcastChannelReordered(channels: CollaborationChannel[]): void;
+  broadcastCategoryCreated(category: CollaborationCategory): void;
+  broadcastCategoryUpdated(category: CollaborationCategory): void;
+  broadcastCategoryDeleted(workspaceId: string, categoryId: string): void;
+  broadcastCategoryReordered(categories: CollaborationCategory[]): void;
+}
 
 export interface CollaborationRouteServices {
   authService: CollaborationBetterAuthService;
@@ -40,6 +55,7 @@ export interface CollaborationRouteServices {
   channelService: CollaborationChannelService;
   promptOverlayService: ChannelPromptOverlayService;
   categoryService: CollaborationCategoryService;
+  broadcasts: CollaborationRouteBroadcasts | null;
 }
 
 export interface CollaborationRouteSwarmManager
@@ -53,6 +69,7 @@ export interface CollaborationRouteContext {
   settingsService: CollaborationSettingsService;
   readinessService?: CollaborationReadinessRequestService;
   swarmManager?: CollaborationRouteSwarmManager;
+  broadcasts?: CollaborationRouteBroadcasts;
 }
 
 export function createCollaborationRouteServicesGetter(context: CollaborationRouteContext): () => Promise<CollaborationRouteServices> {
@@ -87,5 +104,6 @@ async function createCollaborationRouteServices(
     channelService: new CollaborationChannelService(dbHelpers, context.swarmManager, context.config.paths.dataDir),
     promptOverlayService: new ChannelPromptOverlayService(dbHelpers, context.config.paths.dataDir),
     categoryService: new CollaborationCategoryService(dbHelpers),
+    broadcasts: context.broadcasts ?? null,
   };
 }

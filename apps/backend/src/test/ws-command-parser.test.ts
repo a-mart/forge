@@ -644,6 +644,70 @@ describe('ws command parser session commands', () => {
     }
   })
 
+  it('parses collaboration choice and pin commands', () => {
+    expect(parseJsonCommand({
+      type: 'collab_choice_response',
+      channelId: ' channel-1 ',
+      choiceId: ' choice-1 ',
+      answers: [
+        {
+          questionId: 'question-1',
+          selectedOptionIds: ['option-1'],
+        },
+      ],
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'collab_choice_response',
+        channelId: 'channel-1',
+        choiceId: 'choice-1',
+        answers: [
+          {
+            questionId: 'question-1',
+            selectedOptionIds: ['option-1'],
+          },
+        ],
+      },
+    })
+
+    expect(parseJsonCommand({
+      type: 'collab_pin_message',
+      channelId: ' channel-1 ',
+      messageId: ' message-1 ',
+      pinned: true,
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'collab_pin_message',
+        channelId: 'channel-1',
+        messageId: 'message-1',
+        pinned: true,
+      },
+    })
+  })
+
+  it('rejects malformed collaboration choice and pin commands', () => {
+    expect(parseJsonCommand({
+      type: 'collab_choice_response',
+      channelId: 'channel-1',
+      choiceId: 'choice-1',
+      answers: 'nope',
+    })).toEqual({
+      ok: false,
+      error: 'collab_choice_response.answers must be an array of valid ChoiceAnswer objects',
+    })
+
+    expect(parseJsonCommand({
+      type: 'collab_pin_message',
+      channelId: 'channel-1',
+      messageId: 'message-1',
+      pinned: 'yes',
+    })).toEqual({
+      ok: false,
+      error: 'collab_pin_message.pinned must be a boolean',
+    })
+  })
+
   it('extracts request ids for new session commands', () => {
     const commands = [
       { type: 'api_proxy', requestId: 'req-proxy', method: 'GET', path: '/api/slash-commands' },
