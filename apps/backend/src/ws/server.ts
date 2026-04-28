@@ -2,6 +2,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import type {
+  CollaborationStatus,
   ServerEvent,
   TerminalClosedEvent,
   TerminalCreatedEvent,
@@ -26,6 +27,7 @@ import {
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
+import { isBuilderRuntimeTarget } from "../runtime-target.js";
 
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
@@ -367,6 +369,9 @@ export class SwarmWebSocketServer {
     this.tokenAnalyticsService = new TokenAnalyticsService(this.swarmManager);
 
     this.httpRoutes = [
+      ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
+        ? [createDisabledCollaborationStatusRoute()]
+        : []),
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile,
         allowReboot: !this.swarmManager.getConfig().isDesktop,
@@ -656,6 +661,43 @@ export class SwarmWebSocketServer {
       sendJson(response, statusCode, { error: message });
     }
   }
+}
+
+function createDisabledCollaborationStatusRoute(): HttpRoute {
+  return {
+    methods: "GET, OPTIONS",
+    matches: (pathname: string) => pathname === "/api/collaboration/status",
+    handle: async (request: IncomingMessage, response: ServerResponse) => {
+      applyCorsHeaders(request, response, "GET, OPTIONS");
+
+      if (request.method === "OPTIONS") {
+        response.statusCode = 204;
+        response.end();
+        return;
+      }
+
+      if (request.method !== "GET") {
+        response.setHeader("Allow", "GET, OPTIONS");
+        sendJson(response, 405, { error: "Method Not Allowed" });
+        return;
+      }
+
+      sendJson(response, 200, buildDisabledCollaborationStatus() as unknown as Record<string, unknown>);
+    }
+  };
+}
+
+function buildDisabledCollaborationStatus(): CollaborationStatus {
+  return {
+    enabled: false,
+    adminExists: false,
+    ready: false,
+    bootstrapState: "disabled",
+    workspaceExists: false,
+    workspaceDefaultsInitialized: false,
+    storageProfileExists: false,
+    storageRootSessionExists: false,
+  };
 }
 
 function ignoreSocketErrors(socket: Duplex): void {

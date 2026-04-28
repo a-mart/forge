@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createConfig, readPlaywrightDashboardEnvOverride, readTelemetryEnvOverride } from '../config.js'
+import { resolveRuntimeTargetFromEnv } from '../runtime-target.js'
 import { withPlatform } from './test-helpers.js'
 
 const MANAGED_ENV_KEYS = [
@@ -14,16 +15,20 @@ const MANAGED_ENV_KEYS = [
   'FORGE_DEBUG',
   'FORGE_RESOURCES_DIR',
   'FORGE_DESKTOP',
+  'FORGE_RUNTIME_TARGET',
   'FORGE_PLAYWRIGHT_DASHBOARD_ENABLED',
   'FORGE_TELEMETRY',
+  'FORGE_COLLABORATION_ENABLED',
 
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
   'MIDDLEMAN_DATA_DIR',
   'MIDDLEMAN_DEBUG',
   'MIDDLEMAN_RESOURCES_DIR',
+  'MIDDLEMAN_RUNTIME_TARGET',
   'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
   'MIDDLEMAN_TELEMETRY',
+  'MIDDLEMAN_COLLABORATION_ENABLED',
 
   'LOCALAPPDATA',
 ] as const
@@ -103,6 +108,7 @@ describe('createConfig', () => {
       expect(config.host).toBe('127.0.0.1')
       expect(config.port).toBe(47187)
       expect(config.debug).toBe(false)
+      expect(config.runtimeTarget).toBe('builder')
       expect(config.paths.dataDir).toBe(dataDir)
       expect(config.paths.sharedConfigDir).toBe(resolve(dataDir, 'shared', 'config'))
       expect(config.paths.sharedCacheDir).toBe(resolve(dataDir, 'shared', 'cache'))
@@ -342,6 +348,62 @@ describe('createConfig', () => {
       })
       expect(warnSpy).toHaveBeenCalledWith(
         '[config] Ignoring invalid FORGE_TELEMETRY value: maybe',
+      )
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('defaults runtime target to builder when no runtime env is set', async () => {
+    await withEnv({}, () => {
+      expect(resolveRuntimeTargetFromEnv()).toBe('builder')
+      expect(createConfig().runtimeTarget).toBe('builder')
+    })
+  })
+
+  it('parses FORGE_RUNTIME_TARGET when set', async () => {
+    await withEnv({ FORGE_RUNTIME_TARGET: 'collaboration-server' }, () => {
+      expect(resolveRuntimeTargetFromEnv()).toBe('collaboration-server')
+      expect(createConfig().runtimeTarget).toBe('collaboration-server')
+    })
+  })
+
+  it('supports legacy MIDDLEMAN_RUNTIME_TARGET when FORGE_RUNTIME_TARGET is absent', async () => {
+    await withEnv({ MIDDLEMAN_RUNTIME_TARGET: 'collaboration-server' }, () => {
+      expect(resolveRuntimeTargetFromEnv()).toBe('collaboration-server')
+      expect(createConfig().runtimeTarget).toBe('collaboration-server')
+    })
+  })
+
+  it('maps legacy collaboration enabled env to collaboration-server only when runtime target is unset', async () => {
+    await withEnv({ FORGE_COLLABORATION_ENABLED: 'true' }, () => {
+      expect(resolveRuntimeTargetFromEnv()).toBe('collaboration-server')
+      expect(createConfig().runtimeTarget).toBe('collaboration-server')
+    })
+
+    await withEnv(
+      {
+        FORGE_RUNTIME_TARGET: 'builder',
+        FORGE_COLLABORATION_ENABLED: 'true',
+        MIDDLEMAN_COLLABORATION_ENABLED: 'true',
+      },
+      () => {
+        expect(resolveRuntimeTargetFromEnv()).toBe('builder')
+        expect(createConfig().runtimeTarget).toBe('builder')
+      }
+    )
+  })
+
+  it('warns and falls back to builder for invalid FORGE_RUNTIME_TARGET values', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await withEnv({ FORGE_RUNTIME_TARGET: 'ship-it' }, () => {
+        expect(resolveRuntimeTargetFromEnv()).toBe('builder')
+        expect(createConfig().runtimeTarget).toBe('builder')
+      })
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[config] Ignoring invalid FORGE_RUNTIME_TARGET value: ship-it',
       )
     } finally {
       warnSpy.mockRestore()

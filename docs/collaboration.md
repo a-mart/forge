@@ -79,7 +79,8 @@ The base URL changes the canonical browser origin used for invite links and cook
 
 | Variable | Purpose |
 |----------|---------|
-| `FORGE_COLLABORATION_ENABLED` | Enables collaboration mode. |
+| `FORGE_RUNTIME_TARGET` | Selects the runtime target. Use `builder` for the default local Builder backend or `collaboration-server` for the dedicated collaboration runtime as that backend work lands. |
+| `FORGE_COLLABORATION_ENABLED` | Legacy compatibility flag. When `FORGE_RUNTIME_TARGET` is unset, `true` maps to `collaboration-server`. |
 | `FORGE_ADMIN_EMAIL` / `FORGE_ADMIN_PASSWORD` | Bootstrap credentials for the first admin account. |
 | `FORGE_COLLABORATION_BASE_URL` | Canonical collaboration UI base URL for login redirects and invite links. |
 | `FORGE_COLLABORATION_AUTH_SECRET` | Auth secret. Generated automatically if omitted. |

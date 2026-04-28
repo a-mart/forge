@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { getProfileMemoryPath } from '../swarm/data-paths.js'
 import type { AgentModelDescriptor, SwarmConfig } from '../swarm/types.js'
+import type { RuntimeTarget } from '../runtime-target.js'
 import { getAvailablePort } from './network.js'
 
 const DEFAULT_MODEL: AgentModelDescriptor = {
@@ -18,6 +19,7 @@ export interface TempConfigOptions {
   host?: string
   debug?: boolean
   isDesktop?: boolean
+  runtimeTarget?: RuntimeTarget
   cortexEnabled?: boolean
   allowNonManagerSubscriptions?: boolean
   managerId?: string
@@ -137,6 +139,7 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
     port: options.port ?? (await getAvailablePort(options.host ?? '127.0.0.1')),
     debug: options.debug ?? false,
     isDesktop: options.isDesktop ?? false,
+    runtimeTarget: options.runtimeTarget ?? 'builder',
     cortexEnabled: options.cortexEnabled ?? true,
     allowNonManagerSubscriptions: options.allowNonManagerSubscriptions ?? false,
     managerId,

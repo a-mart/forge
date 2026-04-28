@@ -6,6 +6,7 @@ const BASE_CONFIG: SwarmConfig = {
   port: 47187,
   debug: true,
   isDesktop: false,
+  runtimeTarget: "builder",
   cortexEnabled: true,
   allowNonManagerSubscriptions: true,
   managerId: undefined,

@@ -22,6 +22,7 @@ import {
   getUploadsDir
 } from "./swarm/data-paths.js";
 import type { SwarmConfig } from "./swarm/types.js";
+import { resolveRuntimeTargetFromEnv } from "./runtime-target.js";
 
 export function readPlaywrightDashboardEnvOverride(): boolean | undefined {
   return parseOptionalBooleanEnv(
@@ -77,12 +78,14 @@ export function createConfig(): SwarmConfig {
   ]);
 
   const isDesktop = parseBooleanEnv(process.env.FORGE_DESKTOP);
+  const runtimeTarget = resolveRuntimeTargetFromEnv();
 
   return {
     host: process.env.FORGE_HOST ?? process.env.MIDDLEMAN_HOST ?? "127.0.0.1",
     port: Number.parseInt(process.env.FORGE_PORT ?? process.env.MIDDLEMAN_PORT ?? "47187", 10),
     debug: (process.env.FORGE_DEBUG ?? process.env.MIDDLEMAN_DEBUG ?? "false") === "true",
     isDesktop,
+    runtimeTarget,
     cortexEnabled:
       parseOptionalBooleanEnv(
         process.env.FORGE_CORTEX_ENABLED ?? process.env.MIDDLEMAN_CORTEX_ENABLED,
