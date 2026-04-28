@@ -220,6 +220,96 @@ describe('CreateCategoryDialog defaultAiRole', () => {
     expect(callArgs.defaultAiRoleId).toBe('facilitator_scribe')
   })
 
+  it('reopen uses cached workspace default synchronously before fetch resolves', async () => {
+    // First open: fetch returns work_coordinator as workspace default
+    aiRolesApiStub.fetchAiRoles.mockResolvedValue({
+      ...aiRolesApiStub.stubData,
+      workspaceDefaultAiRoleId: 'work_coordinator',
+    })
+
+    flushSync(() => {
+      root.render(
+        createElement(CreateCategoryDialog, {
+          open: true,
+          onClose: vi.fn(),
+        }),
+      )
+    })
+
+    // Wait for fetch to resolve and cache the workspace default
+    await vi.waitFor(() => {
+      const trigger = document.getElementById('collab-create-category-default-ai-role')
+      expect(trigger?.textContent).toContain('Work Coordinator')
+    })
+
+    // Close
+    flushSync(() => {
+      root.render(
+        createElement(CreateCategoryDialog, {
+          open: false,
+          onClose: vi.fn(),
+        }),
+      )
+    })
+
+    // Reopen with a slow fetch that hasn't resolved yet
+    let resolveFetch!: (value: any) => void
+    aiRolesApiStub.fetchAiRoles.mockReturnValue(
+      new Promise((resolve) => { resolveFetch = resolve }),
+    )
+
+    flushSync(() => {
+      root.render(
+        createElement(CreateCategoryDialog, {
+          open: true,
+          onClose: vi.fn(),
+        }),
+      )
+    })
+
+    // Should immediately show the cached workspace default (work_coordinator),
+    // NOT the hardcoded DEFAULT_AI_ROLE (channel_assistant)
+    const trigger = document.getElementById('collab-create-category-default-ai-role')
+    expect(trigger?.textContent).toContain('Work Coordinator')
+
+    // Submit before fetch resolves — should use the cached default
+    const returnedCategory: CollaborationCategory = {
+      categoryId: 'reopen-cat',
+      workspaceId: 'workspace-1',
+      name: 'Reopen',
+      defaultAiRoleId: 'work_coordinator',
+      position: 0,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    apiMocks.createCategory.mockResolvedValue(returnedCategory)
+
+    const nameInput = document.getElementById('collab-create-category-name') as HTMLInputElement | null
+    if (nameInput) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(nameInput, 'Reopen')
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+
+    const submitButton = Array.from(document.body.querySelectorAll('button[type="submit"]')).find(
+      (btn) => btn.textContent?.includes('Create category'),
+    ) as HTMLButtonElement | undefined
+    if (submitButton) {
+      flushSync(() => { submitButton.click() })
+    }
+
+    await vi.waitFor(() => {
+      expect(apiMocks.createCategory).toHaveBeenCalled()
+    })
+
+    const callArgs = apiMocks.createCategory.mock.calls[0][0] as Record<string, unknown>
+    expect(callArgs.defaultAiRoleId).toBe('work_coordinator')
+
+    // Clean up the dangling promise
+    resolveFetch(aiRolesApiStub.stubData)
+  })
+
   it('submits workspace default role when user does not override', async () => {
     // Workspace default is channel_assistant (from stubData default)
     const returnedCategory: CollaborationCategory = {
@@ -298,6 +388,44 @@ describe('RenameCategoryDialog defaultAiRole', () => {
     const trigger = document.getElementById('collab-rename-category-default-ai-role')
     expect(trigger).toBeTruthy()
     expect(trigger?.textContent).toContain('Work Coordinator')
+  })
+
+  it('displays custom role name from roleOptions instead of raw ID', async () => {
+    // Return a custom role from the API
+    aiRolesApiStub.fetchAiRoles.mockResolvedValue({
+      roles: [
+        ...aiRolesApiStub.stubData.roles,
+        { roleId: 'my_custom_role', name: 'My Custom Role', description: 'Custom.', prompt: '', builtin: false, usage: { workspaceDefault: false, categoryCount: 1, channelCount: 0, totalAssignments: 1, inUse: true } },
+      ],
+      workspaceDefaultAiRoleId: 'channel_assistant',
+    })
+
+    const customCategory: CollaborationCategory = {
+      categoryId: 'cat-custom',
+      workspaceId: 'workspace-1',
+      name: 'Custom Category',
+      defaultAiRoleId: 'my_custom_role',
+      position: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    flushSync(() => {
+      root.render(
+        createElement(RenameCategoryDialog, {
+          open: true,
+          category: customCategory,
+          onClose: vi.fn(),
+        }),
+      )
+    })
+
+    // Before fetch resolves, aiRoleLabel falls back to the raw ID for unknown roles
+    // After fetch resolves, it should show the custom role name from roleOptions
+    await vi.waitFor(() => {
+      const trigger = document.getElementById('collab-rename-category-default-ai-role')
+      expect(trigger?.textContent).toContain('My Custom Role')
+    })
   })
 
   it('submits defaultAiRole to updateCategory', async () => {

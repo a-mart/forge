@@ -131,7 +131,7 @@ export function RenameCategoryDialog({
             >
               <SelectTrigger id="collab-rename-category-default-ai-role" className="w-full">
                 <SelectValue placeholder="Select role">
-                  {aiRoleLabel(defaultAiRoleId)}
+                  {roleOptions.find((o) => o.value === defaultAiRoleId)?.label ?? aiRoleLabel(defaultAiRoleId)}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>

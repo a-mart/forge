@@ -45,11 +45,21 @@ export function CreateCategoryDialog({
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const userOverrodeRole = useRef(false)
+  const workspaceDefaultRef = useRef<CollaborationAiRoleId>(DEFAULT_AI_ROLE)
+
+  // Reset form synchronously on every open using cached workspace default
+  useEffect(() => {
+    if (!open) return
+    userOverrodeRole.current = false
+    setDefaultAiRoleId(workspaceDefaultRef.current)
+    setName('')
+    setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
+    setError(null)
+  }, [open])
 
   // Fetch the full role library (builtins + custom) when the dialog opens
   useEffect(() => {
     if (!open) return
-    userOverrodeRole.current = false
     let cancelled = false
     void fetchAiRoles()
       .then((data) => {
@@ -61,8 +71,11 @@ export function CreateCategoryDialog({
             description: r.description ?? '',
           })),
         )
-        if (!userOverrodeRole.current && data.workspaceDefaultAiRoleId) {
-          setDefaultAiRoleId(data.workspaceDefaultAiRoleId)
+        if (data.workspaceDefaultAiRoleId) {
+          workspaceDefaultRef.current = data.workspaceDefaultAiRoleId
+          if (!userOverrodeRole.current) {
+            setDefaultAiRoleId(data.workspaceDefaultAiRoleId)
+          }
         }
       })
       .catch(() => {
@@ -98,7 +111,7 @@ export function CreateCategoryDialog({
       })
       onCreated?.(category)
       setName('')
-      setDefaultAiRoleId(DEFAULT_AI_ROLE)
+      setDefaultAiRoleId(workspaceDefaultRef.current)
       setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
       onClose()
     } catch (err) {
