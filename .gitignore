@@ -17,6 +17,7 @@ troubleshoot-*.md
 data/
 apps/electron/.stage/
 apps/electron/release/
+.swarm/
 
 # Audit reports
 AUDIT_*.md

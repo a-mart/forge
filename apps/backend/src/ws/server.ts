@@ -11,6 +11,19 @@ import type {
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { MobilePushService } from "../mobile/mobile-push-service.js";
+import {
+  authenticateRequest,
+  classifyCollaborationHttpRequest,
+  evaluateCollaborationAdminAccess,
+  evaluateCollaborationAuthenticatedAccess,
+  evaluateCollaborationPasswordChangeAccess,
+  setCollaborationRequestAuthContext,
+  setCollaborationRequestCorsContext,
+  validateCollaborationHttpOrigin,
+} from "../collaboration/auth/collaboration-auth-middleware.js";
+import { getOrCreateCollaborationBetterAuthService } from "../collaboration/auth/better-auth-service.js";
+import type { CollaborationReadinessRequestService } from "../collaboration/readiness-service.js";
+import type { CollaborationSettingsService } from "../collaboration/settings-service.js";
 
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import { PlaywrightLivePreviewProxy } from "../playwright/playwright-live-preview-proxy.js";
@@ -32,7 +45,7 @@ import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
-
+import { createCollaborationRoutes } from "./http/routes/collaboration-routes.js";
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
 import { createCortexRoutes } from "./http/routes/cortex-routes.js";
 import { createDebugRoutes } from "./http/routes/debug-routes.js";
@@ -98,6 +111,8 @@ export class SwarmWebSocketServer {
   private readonly statsService: StatsService;
   private readonly tokenAnalyticsService: TokenAnalyticsService;
   private readonly telemetryService: TelemetryService | null;
+  private readonly collaborationSettingsService: CollaborationSettingsService | null;
+  private readonly collaborationReadinessService: CollaborationReadinessRequestService | null;
   private readonly httpRoutes: HttpRoute[];
   private readonly controlPidFile: string;
   private readonly shouldManageControlPid: boolean;
@@ -278,6 +293,8 @@ export class SwarmWebSocketServer {
     unreadTracker?: UnreadTracker;
     statsService?: StatsService;
     telemetryService?: TelemetryService | null;
+    collaborationSettingsService?: CollaborationSettingsService;
+    collaborationReadinessService?: CollaborationReadinessRequestService;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -357,6 +374,8 @@ export class SwarmWebSocketServer {
     wsHandlerRef = this.wsHandler;
 
     this.telemetryService = options.telemetryService ?? null;
+    this.collaborationSettingsService = options.collaborationSettingsService ?? null;
+    this.collaborationReadinessService = options.collaborationReadinessService ?? null;
     this.statsService = options.statsService ?? new StatsService(this.swarmManager, {
       onRefreshAllCompleted: (allStats) => {
         void this.telemetryService?.sendOnStatsRefresh(allStats);
@@ -371,6 +390,14 @@ export class SwarmWebSocketServer {
     this.httpRoutes = [
       ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
         ? [createDisabledCollaborationStatusRoute()]
+        : []),
+      ...(this.collaborationSettingsService
+        ? createCollaborationRoutes({
+            config: this.swarmManager.getConfig(),
+            settingsService: this.collaborationSettingsService,
+            readinessService: this.collaborationReadinessService ?? undefined,
+            swarmManager: this.swarmManager,
+          })
         : []),
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile,
@@ -633,6 +660,62 @@ export class SwarmWebSocketServer {
     let route: HttpRoute | undefined;
 
     try {
+      if (!isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)) {
+        const originValidation = validateCollaborationHttpOrigin(request, this.swarmManager.getConfig());
+        if (!originValidation.ok) {
+          setCollaborationRequestCorsContext(request, { allowedOrigin: null });
+          applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+          sendJson(response, 403, { error: originValidation.errorMessage });
+          return;
+        }
+
+        setCollaborationRequestCorsContext(request, { allowedOrigin: originValidation.allowedOrigin });
+
+        if (requestUrl.pathname === "/api/auth" || requestUrl.pathname.startsWith("/api/auth/")) {
+          applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+          if (request.method === "OPTIONS") {
+            response.statusCode = 204;
+            response.end();
+            return;
+          }
+
+          const authService = await getOrCreateCollaborationBetterAuthService(this.swarmManager.getConfig());
+          await authService.handleAuthRequest(request, response);
+          return;
+        }
+
+        const authContext = await authenticateRequest(request, this.swarmManager.getConfig());
+        setCollaborationRequestAuthContext(request, authContext);
+
+        const passwordChangeAccess = evaluateCollaborationPasswordChangeAccess(
+          authContext,
+          requestUrl.pathname,
+          request.method,
+        );
+        if (!passwordChangeAccess.ok) {
+          applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+          sendJson(response, passwordChangeAccess.statusCode, { error: passwordChangeAccess.error });
+          return;
+        }
+
+        const accessClass = classifyCollaborationHttpRequest(requestUrl.pathname, request.method);
+        if (accessClass === "authenticated") {
+          const access = evaluateCollaborationAuthenticatedAccess(authContext);
+          if (!access.ok) {
+            applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+            sendJson(response, access.statusCode, { error: access.error });
+            return;
+          }
+        } else if (accessClass === "admin") {
+          const access = evaluateCollaborationAdminAccess(authContext);
+          if (!access.ok) {
+            applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+            sendJson(response, access.statusCode, { error: access.error });
+            return;
+          }
+        }
+      }
+
       route = this.httpRoutes.find((candidate) => candidate.matches(requestUrl.pathname));
 
       if (!route) {

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname } from "node:path";
-
+import { getCollaborationRequestCorsContext } from "../collaboration/auth/collaboration-auth-middleware.js";
 
 const DEFAULT_MAX_HTTP_BODY_SIZE_BYTES = 64 * 1024;
 
@@ -94,10 +94,23 @@ export async function parseJsonBody(request: IncomingMessage, maxBytes: number):
 }
 
 export function applyCorsHeaders(request: IncomingMessage, response: ServerResponse, methods: string): void {
-  const origin = typeof request.headers.origin === "string" ? request.headers.origin : "*";
+  const collabCorsContext = getCollaborationRequestCorsContext(request);
+  const allowedOrigin = collabCorsContext?.allowedOrigin ?? null;
 
-  response.setHeader("Access-Control-Allow-Origin", origin);
-  response.setHeader("Vary", "Origin");
+  if (allowedOrigin) {
+    response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    response.setHeader("Access-Control-Allow-Credentials", "true");
+    response.setHeader("Vary", "Origin");
+  } else if (collabCorsContext) {
+    response.removeHeader("Access-Control-Allow-Origin");
+    response.removeHeader("Access-Control-Allow-Credentials");
+    response.removeHeader("Vary");
+  } else {
+    const origin = typeof request.headers.origin === "string" ? request.headers.origin : "*";
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+  }
+
   response.setHeader("Access-Control-Allow-Methods", methods);
   response.setHeader("Access-Control-Allow-Headers", "content-type");
 }

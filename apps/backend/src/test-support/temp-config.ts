@@ -21,6 +21,11 @@ export interface TempConfigOptions {
   isDesktop?: boolean
   runtimeTarget?: RuntimeTarget
   cortexEnabled?: boolean
+  adminEmail?: string
+  adminPassword?: string
+  collaborationAuthSecret?: string
+  collaborationBaseUrl?: string
+  collaborationTrustedOrigins?: string[]
   allowNonManagerSubscriptions?: boolean
   managerId?: string
   managerDisplayName?: string
@@ -144,11 +149,11 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
     isDesktop: options.isDesktop ?? false,
     runtimeTarget: options.runtimeTarget ?? 'builder',
     cortexEnabled: options.cortexEnabled ?? true,
-    adminEmail: undefined,
-    adminPassword: undefined,
-    collaborationAuthSecret: undefined,
-    collaborationBaseUrl: undefined,
-    collaborationTrustedOrigins: undefined,
+    adminEmail: options.adminEmail,
+    adminPassword: options.adminPassword,
+    collaborationAuthSecret: options.collaborationAuthSecret,
+    collaborationBaseUrl: options.collaborationBaseUrl,
+    collaborationTrustedOrigins: options.collaborationTrustedOrigins,
     collaborationModules:
       (options.runtimeTarget ?? 'builder') === 'collaboration-server'
         ? {
