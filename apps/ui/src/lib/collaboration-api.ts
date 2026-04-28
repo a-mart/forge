@@ -6,7 +6,7 @@
  */
 
 import type {
-  CollaborationAiRole,
+  CollaborationAiRoleId,
   CollaborationCategory,
   CollaborationChannel,
   CollaborationChannelPromptPreviewResponse,
@@ -62,7 +62,7 @@ export async function createChannel(
     categoryId?: string
     description?: string
     aiEnabled?: boolean
-    aiRole?: CollaborationAiRole
+    aiRoleId?: CollaborationAiRoleId
   },
 ): Promise<CollaborationChannel> {
   const response = await apiFetch<{ ok: true; channel: CollaborationChannel }>(
@@ -83,7 +83,7 @@ export async function updateChannel(
     categoryId?: string | null
     aiEnabled?: boolean
     modelId?: string
-    aiRole?: CollaborationAiRole
+    aiRoleId?: CollaborationAiRoleId
     promptOverlay?: string | null
   },
 ): Promise<CollaborationChannel> {
@@ -111,7 +111,7 @@ export function reorderChannels(channelIds: string[]): Promise<void> {
 }
 
 export async function createCategory(
-  params: { name: string; defaultModelId?: string | null; defaultAiRole?: CollaborationAiRole },
+  params: { name: string; defaultModelId?: string | null; defaultAiRoleId?: CollaborationAiRoleId },
 ): Promise<CollaborationCategory> {
   const response = await apiFetch<{ ok: true; category: CollaborationCategory }>(
     '/api/collaboration/categories',
@@ -125,7 +125,7 @@ export async function createCategory(
 
 export async function updateCategory(
   categoryId: string,
-  params: { name?: string; defaultModelId?: string | null; defaultAiRole?: CollaborationAiRole },
+  params: { name?: string; defaultModelId?: string | null; defaultAiRoleId?: CollaborationAiRoleId },
 ): Promise<CollaborationCategory> {
   const response = await apiFetch<{ ok: true; category: CollaborationCategory }>(`/api/collaboration/categories/${encodeURIComponent(categoryId)}`, {
     method: 'PATCH',

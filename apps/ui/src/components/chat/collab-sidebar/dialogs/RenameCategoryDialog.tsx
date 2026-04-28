@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { AI_ROLE_OPTIONS, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
-import type { CollaborationAiRole } from '@/lib/collaboration-ai-roles'
+import type { CollaborationAiRoleId } from '@/lib/collaboration-ai-roles'
 import { updateCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
 import type { CollaborationCategory } from '@forge/protocol'
@@ -40,7 +40,8 @@ export function RenameCategoryDialog({
   wsUrl,
 }: RenameCategoryDialogProps) {
   const [name, setName] = useState(category.name)
-  const [defaultAiRole, setDefaultAiRole] = useState<CollaborationAiRole>(category.defaultAiRole ?? DEFAULT_AI_ROLE)
+  const categoryAiRoleId: CollaborationAiRoleId = category.defaultAiRoleId ?? category.defaultAiRole ?? DEFAULT_AI_ROLE
+  const [defaultAiRoleId, setDefaultAiRoleId] = useState<CollaborationAiRoleId>(categoryAiRoleId)
   const [defaultModelId, setDefaultModelId] = useState(category.defaultModelId ?? NO_DEFAULT_MODEL_VALUE)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -49,7 +50,7 @@ export function RenameCategoryDialog({
 
   useEffect(() => {
     setName(category.name)
-    setDefaultAiRole(category.defaultAiRole ?? DEFAULT_AI_ROLE)
+    setDefaultAiRoleId(category.defaultAiRoleId ?? category.defaultAiRole ?? DEFAULT_AI_ROLE)
     setDefaultModelId(category.defaultModelId ?? NO_DEFAULT_MODEL_VALUE)
     setError(null)
   }, [category])
@@ -66,7 +67,7 @@ export function RenameCategoryDialog({
     try {
       const updated = await updateCategory(category.categoryId, {
         name: trimmedName,
-        defaultAiRole,
+        defaultAiRoleId,
         defaultModelId: defaultModelId === NO_DEFAULT_MODEL_VALUE ? null : defaultModelId,
       })
       onRenamed?.(updated)
@@ -99,8 +100,8 @@ export function RenameCategoryDialog({
           <div className="space-y-2">
             <Label htmlFor="collab-rename-category-default-ai-role">Default AI role</Label>
             <Select
-              value={defaultAiRole}
-              onValueChange={(value) => setDefaultAiRole(value as CollaborationAiRole)}
+              value={defaultAiRoleId}
+              onValueChange={(value) => setDefaultAiRoleId(value)}
               disabled={isSaving}
             >
               <SelectTrigger id="collab-rename-category-default-ai-role" className="w-full">

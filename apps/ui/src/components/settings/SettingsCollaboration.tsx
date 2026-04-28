@@ -18,6 +18,7 @@ import {
   setCollabServerUrl,
   resolveCollaborationApiBaseUrl,
 } from '@/lib/collaboration-endpoints'
+import { SettingsAiRoles } from './SettingsAiRoles'
 import type { CollaborationSessionInfo, CollaborationStatus } from '@forge/protocol'
 
 interface SettingsCollaborationProps {
@@ -534,6 +535,9 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
             onAuthError={handleAuthError}
           />
           <CollaborationInvites onAuthError={handleAuthError} />
+
+          {/* AI Roles — admin-only, available on both Builder and Collab targets */}
+          <SettingsAiRoles />
         </>
       )}
     </div>

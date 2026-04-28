@@ -1,5 +1,6 @@
 import type { ConversationAttachment, ConversationMessageAttachment } from './attachments.js'
-import type { AgentContextUsage, AgentDescriptor, AgentModelDescriptor, AgentStatus, CollaborationAiRole } from './agents.js'
+import type { AgentContextUsage, AgentDescriptor, AgentModelDescriptor, AgentStatus } from './agents.js'
+import type { CollaborationAiRole, CollaborationAiRoleId } from './collaboration-ai-roles.js'
 import type { AgentMessageEvent, AgentToolCallEvent, ProjectAgentMessageContext } from './conversation-events.js'
 import type { MessageSourceContext } from './messaging.js'
 import type { ChoiceAnswer, ChoiceQuestion, ChoiceRequestStatus } from './shared-types.js'
@@ -13,6 +14,12 @@ export type CollaborationInviteLookupError = 'not_found' | 'expired' | 'revoked'
 export interface CollaborationStatus {
   enabled: boolean
   adminExists: boolean
+  ready: boolean
+  bootstrapState: 'disabled' | 'initializing' | 'ready' | 'degraded'
+  workspaceExists: boolean
+  workspaceDefaultsInitialized: boolean
+  storageProfileExists: boolean
+  storageRootSessionExists: boolean
   baseUrl?: string
 }
 
@@ -83,12 +90,19 @@ export interface CollaborationWorkspaceBaseAi {
 
 export interface CollaborationWorkspace {
   workspaceId: string
+  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. */
+  backingProfileId: string
   displayName: string
   description?: string
   aiDisplayName?: string
   createdByUserId?: string
   createdAt: string
   updatedAt: string
+  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. */
+  profileDisplayName: string
+  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. */
+  defaultSessionAgentId: string
+  baseAi: CollaborationWorkspaceBaseAi
   memberCount?: number
 }
 
@@ -97,7 +111,9 @@ export interface CollaborationCategory {
   workspaceId: string
   name: string
   defaultModelId?: string
-  defaultAiRole: CollaborationAiRole
+  defaultAiRoleId: CollaborationAiRoleId
+  /** @deprecated Builtin-only compatibility mirror. Use defaultAiRoleId. */
+  defaultAiRole?: CollaborationAiRole
   position: number
   createdAt: string
   updatedAt: string
@@ -113,7 +129,9 @@ export interface CollaborationChannel {
   description?: string
   aiEnabled: boolean
   modelId?: string
-  aiRole: CollaborationAiRole
+  aiRoleId: CollaborationAiRoleId
+  /** @deprecated Builtin-only compatibility mirror. Use aiRoleId. */
+  aiRole?: CollaborationAiRole
   promptOverlay?: string
   position: number
   archived: boolean

@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { AI_ROLE_OPTIONS, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
-import type { CollaborationAiRole } from '@/lib/collaboration-ai-roles'
+import type { CollaborationAiRoleId } from '@/lib/collaboration-ai-roles'
 import { createCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
 import type { CollaborationCategory } from '@forge/protocol'
@@ -38,7 +38,7 @@ export function CreateCategoryDialog({
   wsUrl,
 }: CreateCategoryDialogProps) {
   const [name, setName] = useState('')
-  const [defaultAiRole, setDefaultAiRole] = useState<CollaborationAiRole>(DEFAULT_AI_ROLE)
+  const [defaultAiRoleId, setDefaultAiRoleId] = useState<CollaborationAiRoleId>(DEFAULT_AI_ROLE)
   const [defaultModelId, setDefaultModelId] = useState(NO_DEFAULT_MODEL_VALUE)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -57,12 +57,12 @@ export function CreateCategoryDialog({
     try {
       const category = await createCategory({
         name: trimmedName,
-        defaultAiRole,
+        defaultAiRoleId,
         ...(defaultModelId !== NO_DEFAULT_MODEL_VALUE ? { defaultModelId } : {}),
       })
       onCreated?.(category)
       setName('')
-      setDefaultAiRole(DEFAULT_AI_ROLE)
+      setDefaultAiRoleId(DEFAULT_AI_ROLE)
       setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
       onClose()
     } catch (err) {
@@ -94,8 +94,8 @@ export function CreateCategoryDialog({
           <div className="space-y-2">
             <Label htmlFor="collab-create-category-default-ai-role">Default AI role</Label>
             <Select
-              value={defaultAiRole}
-              onValueChange={(value) => setDefaultAiRole(value as CollaborationAiRole)}
+              value={defaultAiRoleId}
+              onValueChange={(value) => setDefaultAiRoleId(value)}
               disabled={isSaving}
             >
               <SelectTrigger id="collab-create-category-default-ai-role" className="w-full">

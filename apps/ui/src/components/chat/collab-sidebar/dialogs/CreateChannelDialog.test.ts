@@ -28,6 +28,7 @@ const categories: CollaborationCategory[] = [
     categoryId: 'cat-eng',
     workspaceId: 'workspace-1',
     name: 'Engineering',
+    defaultAiRoleId: 'work_coordinator',
     defaultAiRole: 'work_coordinator',
     position: 1,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -37,6 +38,7 @@ const categories: CollaborationCategory[] = [
     categoryId: 'cat-ops',
     workspaceId: 'workspace-1',
     name: 'Operations',
+    defaultAiRoleId: 'facilitator_scribe',
     defaultAiRole: 'facilitator_scribe',
     position: 2,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -100,6 +102,7 @@ describe('CreateChannelDialog AI role', () => {
       name: 'test',
       slug: 'test',
       aiEnabled: true,
+      aiRoleId: 'work_coordinator',
       aiRole: 'work_coordinator',
       position: 0,
       archived: false,
@@ -141,7 +144,7 @@ describe('CreateChannelDialog AI role', () => {
     })
 
     const callArgs = apiMocks.createChannel.mock.calls[0][0] as Record<string, unknown>
-    expect(callArgs.aiRole).toBe('work_coordinator')
+    expect(callArgs.aiRoleId).toBe('work_coordinator')
   })
 
   it('renders the AI Role label', () => {

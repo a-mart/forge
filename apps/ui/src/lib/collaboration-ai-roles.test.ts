@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   AI_ROLE_OPTIONS,
   aiRoleLabel,
-  COLLABORATION_AI_ROLES,
+  COLLABORATION_AI_ROLE_IDS,
   DEFAULT_AI_ROLE,
 } from './collaboration-ai-roles'
 
 describe('collaboration-ai-roles', () => {
   it('exports all three canonical roles', () => {
-    expect(COLLABORATION_AI_ROLES).toEqual([
+    expect(COLLABORATION_AI_ROLE_IDS).toEqual([
       'channel_assistant',
       'work_coordinator',
       'facilitator_scribe',
@@ -17,7 +17,7 @@ describe('collaboration-ai-roles', () => {
 
   it('provides a display option for every role', () => {
     const optionValues = AI_ROLE_OPTIONS.map((option) => option.value)
-    for (const role of COLLABORATION_AI_ROLES) {
+    for (const role of COLLABORATION_AI_ROLE_IDS) {
       expect(optionValues).toContain(role)
     }
   })

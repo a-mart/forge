@@ -69,6 +69,7 @@ describe('CreateCategoryDialog defaultAiRole', () => {
       categoryId: 'new-cat',
       workspaceId: 'workspace-1',
       name: 'Test',
+      defaultAiRoleId: 'channel_assistant',
       defaultAiRole: 'channel_assistant',
       position: 0,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -111,7 +112,7 @@ describe('CreateCategoryDialog defaultAiRole', () => {
     })
 
     const callArgs = apiMocks.createCategory.mock.calls[0][0] as Record<string, unknown>
-    expect(callArgs.defaultAiRole).toBe('channel_assistant')
+    expect(callArgs.defaultAiRoleId).toBe('channel_assistant')
   })
 })
 
@@ -120,6 +121,7 @@ describe('RenameCategoryDialog defaultAiRole', () => {
     categoryId: 'cat-1',
     workspaceId: 'workspace-1',
     name: 'Engineering',
+    defaultAiRoleId: 'work_coordinator',
     defaultAiRole: 'work_coordinator',
     position: 1,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -170,6 +172,6 @@ describe('RenameCategoryDialog defaultAiRole', () => {
     })
 
     const callArgs = apiMocks.updateCategory.mock.calls[0][1] as Record<string, unknown>
-    expect(callArgs.defaultAiRole).toBe('work_coordinator')
+    expect(callArgs.defaultAiRoleId).toBe('work_coordinator')
   })
 })

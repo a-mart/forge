@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import type { CollaborationAiRole, CollaborationCategory, CollaborationChannel } from '@forge/protocol'
+import type { CollaborationAiRoleId, CollaborationCategory, CollaborationChannel } from '@forge/protocol'
 import { AI_ROLE_OPTIONS, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,7 +31,7 @@ interface ChannelSettingsBaseline {
   description: string | null
   categoryId: string | null
   aiEnabled: boolean
-  aiRole: CollaborationAiRole
+  aiRoleId: CollaborationAiRoleId
   modelId: string | null
   promptOverlay: string | null
 }
@@ -64,7 +64,7 @@ export function ChannelSettingsSheet({
   const channelDescription = channel.description ?? ''
   const channelCategoryId = channel.categoryId ?? null
   const channelAiEnabled = channel.aiEnabled
-  const channelAiRole = channel.aiRole ?? DEFAULT_AI_ROLE
+  const channelAiRoleId: CollaborationAiRoleId = channel.aiRoleId ?? channel.aiRole ?? DEFAULT_AI_ROLE
   const channelPromptOverlay = channel.promptOverlay ?? ''
   const channelModelId = channel.modelId ?? null
 
@@ -73,7 +73,7 @@ export function ChannelSettingsSheet({
     description: channelDescription,
     categoryId: channelCategoryId,
     aiEnabled: channelAiEnabled,
-    aiRole: channelAiRole,
+    aiRoleId: channelAiRoleId,
     modelId: channelModelId,
     promptOverlay: channelPromptOverlay,
   }))
@@ -81,7 +81,7 @@ export function ChannelSettingsSheet({
   const [description, setDescription] = useState(channelDescription)
   const [categoryValue, setCategoryValue] = useState(channelCategoryId ?? NO_CATEGORY_VALUE)
   const [aiEnabled, setAiEnabled] = useState(channelAiEnabled)
-  const [aiRole, setAiRole] = useState<CollaborationAiRole>(channelAiRole)
+  const [aiRoleId, setAiRoleId] = useState<CollaborationAiRoleId>(channelAiRoleId)
   const [modelId, setModelId] = useState(channelModelId ?? '')
   const [promptOverlay, setPromptOverlay] = useState(channelPromptOverlay)
   const [isSaving, setIsSaving] = useState(false)
@@ -93,7 +93,7 @@ export function ChannelSettingsSheet({
       description: channelDescription,
       categoryId: channelCategoryId,
       aiEnabled: channelAiEnabled,
-      aiRole: channelAiRole,
+      aiRoleId: channelAiRoleId,
       modelId: channelModelId,
       promptOverlay: channelPromptOverlay,
     })
@@ -102,14 +102,14 @@ export function ChannelSettingsSheet({
     setDescription(channelDescription)
     setCategoryValue(channelCategoryId ?? NO_CATEGORY_VALUE)
     setAiEnabled(nextBaseline.aiEnabled)
-    setAiRole(nextBaseline.aiRole)
+    setAiRoleId(nextBaseline.aiRoleId)
     setModelId(nextBaseline.modelId ?? '')
     setPromptOverlay(channelPromptOverlay)
     setError(null)
     setIsSaving(false)
   }, [
     channelAiEnabled,
-    channelAiRole,
+    channelAiRoleId,
     channelCategoryId,
     channel.channelId,
     channelDescription,
@@ -137,7 +137,7 @@ export function ChannelSettingsSheet({
           description: freshChannel.description ?? '',
           categoryId: freshChannel.categoryId ?? null,
           aiEnabled: freshChannel.aiEnabled,
-          aiRole: freshChannel.aiRole ?? DEFAULT_AI_ROLE,
+          aiRoleId: freshChannel.aiRoleId ?? freshChannel.aiRole ?? DEFAULT_AI_ROLE,
           modelId: freshChannel.modelId ?? null,
           promptOverlay: freshChannel.promptOverlay ?? '',
         })
@@ -146,7 +146,7 @@ export function ChannelSettingsSheet({
         setDescription(freshChannel.description ?? '')
         setCategoryValue(freshChannel.categoryId ?? NO_CATEGORY_VALUE)
         setAiEnabled(nextBaseline.aiEnabled)
-        setAiRole(nextBaseline.aiRole)
+        setAiRoleId(nextBaseline.aiRoleId)
         setModelId(nextBaseline.modelId ?? '')
         setPromptOverlay(freshChannel.promptOverlay ?? '')
       })
@@ -174,7 +174,7 @@ export function ChannelSettingsSheet({
     normalizedDescription !== baseline.description ||
     normalizedCategoryId !== baseline.categoryId ||
     aiEnabled !== baseline.aiEnabled ||
-    aiRole !== baseline.aiRole ||
+    aiRoleId !== baseline.aiRoleId ||
     normalizedModelId !== baseline.modelId ||
     normalizedPromptOverlay !== baseline.promptOverlay
 
@@ -195,7 +195,7 @@ export function ChannelSettingsSheet({
         description: normalizedDescription,
         categoryId: normalizedCategoryId,
         aiEnabled,
-        aiRole,
+        aiRoleId,
         ...(normalizedModelId ? { modelId: normalizedModelId } : {}),
         promptOverlay: normalizedPromptOverlay,
       })
@@ -272,8 +272,8 @@ export function ChannelSettingsSheet({
             <div className="space-y-2">
               <Label htmlFor="collab-channel-settings-ai-role">AI Role</Label>
               <Select
-                value={aiRole}
-                onValueChange={(value) => setAiRole(value as CollaborationAiRole)}
+                value={aiRoleId}
+                onValueChange={(value) => setAiRoleId(value)}
                 disabled={!isAdmin || isSaving}
               >
                 <SelectTrigger id="collab-channel-settings-ai-role" className="w-full">
@@ -288,7 +288,7 @@ export function ChannelSettingsSheet({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {AI_ROLE_OPTIONS.find((option) => option.value === aiRole)?.description ?? ''}
+                {AI_ROLE_OPTIONS.find((option) => option.value === aiRoleId)?.description ?? ''}
               </p>
             </div>
 
@@ -376,7 +376,7 @@ function buildBaseline(values: {
   description: string
   categoryId: string | null
   aiEnabled: boolean
-  aiRole: CollaborationAiRole
+  aiRoleId: CollaborationAiRoleId
   modelId: string | null
   promptOverlay: string
 }): ChannelSettingsBaseline {
@@ -385,7 +385,7 @@ function buildBaseline(values: {
     description: normalizeOptionalText(values.description),
     categoryId: values.categoryId,
     aiEnabled: values.aiEnabled,
-    aiRole: values.aiRole,
+    aiRoleId: values.aiRoleId,
     modelId: values.modelId,
     promptOverlay: normalizeOptionalText(values.promptOverlay),
   }

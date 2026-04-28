@@ -39,6 +39,7 @@ const channel: CollaborationChannel = {
   name: 'engineering',
   slug: 'engineering',
   aiEnabled: true,
+  aiRoleId: 'channel_assistant',
   aiRole: 'channel_assistant',
   position: 0,
   archived: false,
@@ -81,7 +82,7 @@ afterEach(() => {
 
 describe('ChannelSettingsSheet AI role plumbing', () => {
   it('renders the AI Role selector with the correct initial value', () => {
-    renderSheet({ aiRole: 'work_coordinator' })
+    renderSheet({ aiRoleId: 'work_coordinator', aiRole: 'work_coordinator' })
 
     const label = Array.from(document.body.querySelectorAll('label')).find(
       (node) => node.textContent === 'AI Role',
@@ -105,7 +106,7 @@ describe('ChannelSettingsSheet AI role plumbing', () => {
   })
 
   it('renders the facilitator_scribe role correctly', () => {
-    renderSheet({ aiRole: 'facilitator_scribe' })
+    renderSheet({ aiRoleId: 'facilitator_scribe', aiRole: 'facilitator_scribe' })
 
     const trigger = document.getElementById('collab-channel-settings-ai-role')
     expect(trigger?.textContent).toContain('Facilitator & Scribe')
@@ -125,7 +126,7 @@ describe('ChannelSettingsSheet AI role plumbing', () => {
   })
 
   it('shows Save button disabled when aiRole has not changed', () => {
-    renderSheet({ aiRole: 'channel_assistant' })
+    renderSheet({ aiRoleId: 'channel_assistant', aiRole: 'channel_assistant' })
 
     const saveButton = Array.from(document.body.querySelectorAll('button[type="submit"]')).find(
       (btn) => btn.textContent?.includes('Save'),

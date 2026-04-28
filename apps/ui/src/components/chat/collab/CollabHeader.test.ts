@@ -34,6 +34,7 @@ const channel: CollaborationChannel = {
   name: 'general',
   slug: 'general',
   aiEnabled: false,
+  aiRoleId: 'channel_assistant',
   aiRole: 'channel_assistant',
   position: 0,
   archived: false,
