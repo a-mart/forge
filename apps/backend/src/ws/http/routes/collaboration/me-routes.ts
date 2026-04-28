@@ -43,12 +43,13 @@ export function createCollaborationMeRoutes(options: {
           return;
         }
 
-        const { authService, userService } = await options.getServices();
+        const { authService, broadcasts, userService } = await options.getServices();
         const userState = userService.getUserState(authContext.userId);
 
         if (!userState || userState.disabled) {
           if (userState?.disabled) {
             await authService.revokeUserSessions(userState.userId);
+            broadcasts?.disconnectUserSockets(userState.userId);
             appendSetCookieHeaders(response, await authService.clearSessionCookies());
           }
 
@@ -95,7 +96,7 @@ export function createCollaborationMeRoutes(options: {
 
         try {
           const body = parseCollaborationMePasswordBody(await readJsonBody(request));
-          const { auditService, userService } = await options.getServices();
+          const { auditService, broadcasts, userService } = await options.getServices();
           const sessionId = authContext.sessionId;
           if (!sessionId) {
             throw new Error("Missing collaboration session context");
@@ -107,6 +108,8 @@ export function createCollaborationMeRoutes(options: {
             body.newPassword,
             sessionId,
           );
+
+          broadcasts?.disconnectUserSockets(authContext.userId, { excludeSessionId: sessionId });
 
           auditService.log({
             action: "collaboration_user_password_changed",

@@ -80,15 +80,15 @@ export function createCollaborationUserRoutes(options: {
         }
 
         try {
-          const { auditService, authService, userService } = await options.getServices();
+          const { auditService, authService, broadcasts, userService } = await options.getServices();
 
           if (request.method === "DELETE") {
             const deletedUser = userService.deleteUser(userId);
             await authService.revokeUserSessions(userId).catch(() => undefined);
+            broadcasts?.disconnectUserSockets(deletedUser.userId);
             auditService.log({
               action: "collaboration_user_deleted",
               actorUserId: adminContext.userId,
-              targetUserId: deletedUser.userId,
               metadata: {
                 deletedUserId: deletedUser.userId,
                 role: deletedUser.role,
@@ -102,6 +102,9 @@ export function createCollaborationUserRoutes(options: {
 
           const update = parseCollaborationUserUpdate(await readJsonBody(request));
           const result = await userService.updateUser(userId, update);
+          if (result.roleChanged || result.disabledChanged) {
+            broadcasts?.disconnectUserSockets(result.user.userId);
+          }
           auditService.log({
             action: "collaboration_user_updated",
             actorUserId: adminContext.userId,
@@ -154,9 +157,10 @@ export function createCollaborationUserRoutes(options: {
 
         try {
           const body = parsePasswordResetBody(await readJsonBody(request));
-          const { auditService, authService, userService } = await options.getServices();
+          const { auditService, authService, broadcasts, userService } = await options.getServices();
           const userState = await userService.resetUserPassword(userId, body.temporaryPassword);
           await authService.revokeUserSessions(userId);
+          broadcasts?.disconnectUserSockets(userState.userId);
 
           auditService.log({
             action: "collaboration_user_password_reset",

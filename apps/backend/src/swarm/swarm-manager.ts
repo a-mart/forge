@@ -2184,6 +2184,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.lifecycleService.resumeSession(agentId);
   }
 
+  async deleteCollaborationSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
+    const deletedSessionDescriptor = cloneDescriptor(
+      this.getRequiredCollaborationSessionDescriptor(agentId, "delete collaboration sessions")
+    );
+    const result = await this.sessionService.deleteCollaborationSession(agentId);
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "deleted",
+      sessionDescriptor: deletedSessionDescriptor
+    });
+    return result;
+  }
+
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     const deletedSessionDescriptor = cloneDescriptor(
       this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder sessions")

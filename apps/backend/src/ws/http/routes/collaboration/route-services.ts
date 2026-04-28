@@ -43,6 +43,7 @@ export interface CollaborationRouteBroadcasts {
   broadcastCategoryUpdated(category: CollaborationCategory): void;
   broadcastCategoryDeleted(workspaceId: string, categoryId: string): void;
   broadcastCategoryReordered(categories: CollaborationCategory[]): void;
+  disconnectUserSockets(userId: string, options?: { excludeSessionId?: string }): void;
 }
 
 export interface CollaborationRouteServices {

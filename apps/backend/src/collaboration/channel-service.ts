@@ -48,6 +48,7 @@ export interface CollaborationChannelServiceSwarmManager {
   ) => Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }>;
   stopSession?: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
   stopCollaborationSession?: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
+  deleteCollaborationSession?: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
   deleteSession?: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
   updateManagerModel?: (
     managerId: string,
@@ -564,6 +565,11 @@ export class CollaborationChannelService {
     sessionAgentId: string,
   ): Promise<void> {
     try {
+      if (manager.deleteCollaborationSession) {
+        await manager.deleteCollaborationSession(sessionAgentId);
+        return;
+      }
+
       await manager.deleteSession?.(sessionAgentId);
     } catch {
       // Best-effort cleanup only.

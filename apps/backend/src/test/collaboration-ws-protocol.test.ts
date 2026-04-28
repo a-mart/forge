@@ -146,14 +146,18 @@ async function login(baseUrl: string, email = ADMIN_EMAIL, password = ADMIN_PASS
   return setCookieHeadersToCookieHeader(readSetCookieHeaders(loginResponse));
 }
 
-async function createMember(baseUrl: string, adminCookie: string): Promise<string> {
+async function createInvitedUser(
+  baseUrl: string,
+  adminCookie: string,
+  user: { email: string; name: string; password: string },
+): Promise<string> {
   const inviteResponse = await fetch(`${baseUrl}/api/collaboration/invites`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       cookie: adminCookie,
     },
-    body: JSON.stringify({ email: MEMBER_EMAIL, expiresInDays: 14 }),
+    body: JSON.stringify({ email: user.email, expiresInDays: 14 }),
   });
   expect(inviteResponse.status).toBe(200);
   const inviteBody = await inviteResponse.json() as {
@@ -166,15 +170,36 @@ async function createMember(baseUrl: string, adminCookie: string): Promise<strin
   const redeemResponse = await fetch(`${baseUrl}/api/collaboration/invites/${inviteToken}/redeem`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      email: MEMBER_EMAIL,
-      name: "Member",
-      password: MEMBER_PASSWORD,
-    }),
+    body: JSON.stringify(user),
   });
   expect(redeemResponse.status).toBe(200);
 
-  return login(baseUrl, MEMBER_EMAIL, MEMBER_PASSWORD);
+  return login(baseUrl, user.email, user.password);
+}
+
+async function createMember(baseUrl: string, adminCookie: string): Promise<string> {
+  return createInvitedUser(baseUrl, adminCookie, {
+    email: MEMBER_EMAIL,
+    name: "Member",
+    password: MEMBER_PASSWORD,
+  });
+}
+
+async function getCurrentCollaborationUser(
+  baseUrl: string,
+  cookie: string,
+): Promise<{ userId: string; email: string; name: string; role: string }> {
+  const response = await fetch(`${baseUrl}/api/collaboration/me`, {
+    headers: { cookie },
+  });
+  expect(response.status).toBe(200);
+  const body = await response.json() as {
+    authenticated: boolean;
+    user?: { userId: string; email: string; name: string; role: string };
+  };
+  expect(body.authenticated).toBe(true);
+  expect(body.user).toBeTruthy();
+  return body.user!;
 }
 
 async function createCategory(baseUrl: string, cookie: string, name: string): Promise<{ categoryId: string; workspaceId: string; name: string }> {
@@ -215,6 +240,21 @@ async function createChannel(
   };
   expect(payload.ok).toBe(true);
   return payload.channel;
+}
+
+async function getChannel(
+  baseUrl: string,
+  cookie: string,
+  channelId: string,
+): Promise<{ channelId: string; archived: boolean; lastMessageSeq: number; lastMessageId?: string }> {
+  const response = await fetch(`${baseUrl}/api/collaboration/channels/${encodeURIComponent(channelId)}`, {
+    headers: { cookie },
+  });
+  expect(response.status).toBe(200);
+  const body = await response.json() as {
+    channel: { channelId: string; archived: boolean; lastMessageSeq: number; lastMessageId?: string };
+  };
+  return body.channel;
 }
 
 async function expectUnexpectedResponseStatus(
@@ -261,10 +301,255 @@ async function openAuthenticatedWs(baseUrl: string, cookie: string): Promise<WsE
   return new WsEventHarness(socket);
 }
 
+async function waitForSocketClose(
+  socket: WebSocket,
+  timeoutMs = 5_000,
+): Promise<{ code: number; reason: string }> {
+  if (socket.readyState === WebSocket.CLOSED) {
+    return { code: 1005, reason: "" };
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for websocket close"));
+    }, timeoutMs);
+
+    const onClose = (code: number, reason: Buffer) => {
+      cleanup();
+      resolve({ code, reason: reason.toString("utf8") });
+    };
+
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("close", onClose);
+      socket.off("error", onError);
+    };
+
+    socket.once("close", onClose);
+    socket.once("error", onError);
+  });
+}
+
+async function expectNoSocketEvent<T extends ServerEvent["type"]>(
+  harness: WsEventHarness,
+  type: T,
+  predicate?: (event: Extract<ServerEvent, { type: T }>) => boolean,
+  windowMs = 250,
+): Promise<void> {
+  const matchingEvents = harness.events.filter(
+    (event): event is Extract<ServerEvent, { type: T }> =>
+      event.type === type && (predicate ? predicate(event) : true),
+  );
+  expect(matchingEvents).toEqual([]);
+
+  await new Promise((resolve) => setTimeout(resolve, windowMs));
+
+  const matchingEventsAfterWait = harness.events.filter(
+    (event): event is Extract<ServerEvent, { type: T }> =>
+      event.type === type && (predicate ? predicate(event) : true),
+  );
+  expect(matchingEventsAfterWait).toEqual([]);
+}
+
 describe("collaboration websocket protocol", () => {
   it("rejects websocket upgrades without an authenticated collaboration cookie session", async () => {
     const { baseUrl } = await startCollaborationServer();
     await expect(expectUnexpectedResponseStatus(baseUrl, { origin: baseUrl })).resolves.toBe(401);
+  });
+
+  it("disconnects sibling collaboration sockets after self password change while preserving the current session", async () => {
+    const { baseUrl } = await startCollaborationServer();
+    const currentCookie = await login(baseUrl);
+    const siblingCookie = await login(baseUrl);
+    const currentWs = await openAuthenticatedWs(baseUrl, currentCookie);
+    const siblingWs = await openAuthenticatedWs(baseUrl, siblingCookie);
+
+    const response = await fetch(`${baseUrl}/api/collaboration/me/password`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: currentCookie,
+      },
+      body: JSON.stringify({
+        currentPassword: ADMIN_PASSWORD,
+        newPassword: "rotated-admin-password-123",
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    await expect(waitForSocketClose(siblingWs.socket)).resolves.toEqual({
+      code: 4001,
+      reason: "collaboration_session_invalidated",
+    });
+
+    currentWs.socket.send(JSON.stringify({ type: "collab_bootstrap" }));
+    const bootstrap = await currentWs.waitForEvent("collab_bootstrap");
+    expect(bootstrap.currentUser.email).toBe(ADMIN_EMAIL);
+
+    await expect(expectUnexpectedResponseStatus(baseUrl, {
+      origin: baseUrl,
+      cookie: siblingCookie,
+    })).resolves.toBe(401);
+  });
+
+  it("disconnects collaboration sockets when admin auth mutations invalidate their session state", async () => {
+    const { baseUrl } = await startCollaborationServer();
+    const adminCookie = await login(baseUrl);
+
+    const roleCookie = await createInvitedUser(baseUrl, adminCookie, {
+      email: "role-member@example.com",
+      name: "Role Member",
+      password: "role-member-password-123",
+    });
+    const resetCookie = await createInvitedUser(baseUrl, adminCookie, {
+      email: "reset-member@example.com",
+      name: "Reset Member",
+      password: "reset-member-password-123",
+    });
+    const disableCookie = await createInvitedUser(baseUrl, adminCookie, {
+      email: "disable-member@example.com",
+      name: "Disable Member",
+      password: "disable-member-password-123",
+    });
+    const deleteCookie = await createInvitedUser(baseUrl, adminCookie, {
+      email: "delete-member@example.com",
+      name: "Delete Member",
+      password: "delete-member-password-123",
+    });
+
+    const roleUser = await getCurrentCollaborationUser(baseUrl, roleCookie);
+    const resetUser = await getCurrentCollaborationUser(baseUrl, resetCookie);
+    const disableUser = await getCurrentCollaborationUser(baseUrl, disableCookie);
+    const deleteUser = await getCurrentCollaborationUser(baseUrl, deleteCookie);
+
+    const roleWs = await openAuthenticatedWs(baseUrl, roleCookie);
+    const resetWs = await openAuthenticatedWs(baseUrl, resetCookie);
+    const disableWs = await openAuthenticatedWs(baseUrl, disableCookie);
+    const deleteWs = await openAuthenticatedWs(baseUrl, deleteCookie);
+
+    const roleResponse = await fetch(`${baseUrl}/api/collaboration/users/${encodeURIComponent(roleUser.userId)}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookie,
+      },
+      body: JSON.stringify({ role: "admin" }),
+    });
+    expect(roleResponse.status).toBe(200);
+    await expect(waitForSocketClose(roleWs.socket)).resolves.toEqual({
+      code: 4001,
+      reason: "collaboration_session_invalidated",
+    });
+
+    const reopenedRoleWs = await openAuthenticatedWs(baseUrl, roleCookie);
+    reopenedRoleWs.socket.send(JSON.stringify({ type: "collab_bootstrap" }));
+    const roleBootstrap = await reopenedRoleWs.waitForEvent("collab_bootstrap");
+    expect(roleBootstrap.currentUser.role).toBe("admin");
+
+    const passwordResetResponse = await fetch(
+      `${baseUrl}/api/collaboration/users/${encodeURIComponent(resetUser.userId)}/password-reset`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookie,
+        },
+        body: JSON.stringify({ temporaryPassword: "temporary-reset-password-123" }),
+      },
+    );
+    expect(passwordResetResponse.status).toBe(200);
+    await expect(waitForSocketClose(resetWs.socket)).resolves.toEqual({
+      code: 4001,
+      reason: "collaboration_session_invalidated",
+    });
+
+    const disableResponse = await fetch(
+      `${baseUrl}/api/collaboration/users/${encodeURIComponent(disableUser.userId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookie,
+        },
+        body: JSON.stringify({ disabled: true }),
+      },
+    );
+    expect(disableResponse.status).toBe(200);
+    await expect(waitForSocketClose(disableWs.socket)).resolves.toEqual({
+      code: 4001,
+      reason: "collaboration_session_invalidated",
+    });
+
+    const deleteResponse = await fetch(
+      `${baseUrl}/api/collaboration/users/${encodeURIComponent(deleteUser.userId)}`,
+      {
+        method: "DELETE",
+        headers: { cookie: adminCookie },
+      },
+    );
+    expect(deleteResponse.status).toBe(200);
+    await expect(waitForSocketClose(deleteWs.socket)).resolves.toEqual({
+      code: 4001,
+      reason: "collaboration_session_invalidated",
+    });
+  });
+
+  it("rejects archived channel messages before persistence or broadcast", async () => {
+    const { baseUrl } = await startCollaborationServer();
+    const cookie = await login(baseUrl);
+    const channel = await createChannel(baseUrl, cookie, { name: "Archived Ops", aiEnabled: false });
+    const ws = await openAuthenticatedWs(baseUrl, cookie);
+
+    ws.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channel.channelId }));
+    await ws.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channel.channelId);
+    await ws.waitForEvent("collab_channel_history", (event) => event.channelId === channel.channelId);
+
+    const archiveResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(channel.channelId)}/archive`,
+      {
+        method: "POST",
+        headers: { cookie },
+      },
+    );
+    expect(archiveResponse.status).toBe(200);
+    await ws.waitForEvent(
+      "collab_channel_archived",
+      (event) => event.channelId === channel.channelId && event.workspaceId === channel.workspaceId,
+    );
+
+    ws.socket.send(JSON.stringify({
+      type: "collab_user_message",
+      channelId: channel.channelId,
+      content: "This should never persist",
+    }));
+
+    const archivedError = await ws.waitForEvent(
+      "error",
+      (event) =>
+        event.code === "COLLAB_USER_MESSAGE_FAILED" &&
+        event.message === `Cannot send messages to archived collaboration channel ${channel.channelId}`,
+    );
+    expect(archivedError.code).toBe("COLLAB_USER_MESSAGE_FAILED");
+
+    await expectNoSocketEvent(
+      ws,
+      "collab_channel_message",
+      (event) => event.channelId === channel.channelId && event.message.text === "This should never persist",
+    );
+
+    const persistedChannel = await getChannel(baseUrl, cookie, channel.channelId);
+    expect(persistedChannel).toMatchObject({
+      channelId: channel.channelId,
+      archived: true,
+      lastMessageSeq: 0,
+    });
+    expect(persistedChannel.lastMessageId).toBeUndefined();
   });
 
   it("supports authenticated collab bootstrap, subscribe, user message, and mark-read flows", async () => {

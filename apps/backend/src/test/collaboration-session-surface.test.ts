@@ -276,6 +276,48 @@ describe('collaboration session surface metadata', () => {
     })
   })
 
+  it('keeps the Builder delete guard while exposing a collab-only delete helper', async () => {
+    const manager = new TestSwarmManagerBase(await makeConfig())
+    await bootWithDefaultManager(manager, manager.getConfig())
+
+    await manager.ensureCollaborationStorageProfile()
+
+    const sessionAgentId = 'collab-channel-session-delete'
+    await manager.createSessionFromBaseDescriptor(
+      '_collaboration',
+      {
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-collab-base',
+          thinkingLevel: 'high',
+        },
+        cwd: join(manager.getConfig().paths.dataDir, 'profiles', '_collaboration', 'sessions', sessionAgentId, 'workspace'),
+        archetypeId: 'collaboration-channel',
+      },
+      {
+        label: 'Delete target',
+        name: 'Delete target',
+        sessionAgentId,
+      },
+      {
+        sessionSurface: 'collab',
+        collab: {
+          workspaceId: 'workspace-1',
+          channelId: 'channel-delete',
+        },
+      },
+    )
+
+    await expect(manager.deleteSession(sessionAgentId)).rejects.toThrow(
+      `Cannot delete Builder sessions for collaboration-backed session ${sessionAgentId}.`,
+    )
+
+    await expect(manager.deleteCollaborationSession(sessionAgentId)).resolves.toEqual({
+      terminatedWorkerIds: [],
+    })
+    expect(manager.getAgent(sessionAgentId)).toBeUndefined()
+  })
+
   it('keeps the Builder stop guard while exposing a collab-only stop helper', async () => {
     const manager = new TestSwarmManagerBase(await makeConfig())
     await bootWithDefaultManager(manager, manager.getConfig())

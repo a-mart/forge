@@ -283,8 +283,7 @@ export class CollabCommandHandler {
   ): Promise<void> {
     this.subscriptionManager.registerSocket(socket, authContext);
 
-    const { channelService } = await this.getServices();
-    channelService.getChannel(command.channelId);
+    await this.requireWritableChannel(command.channelId, "send messages to");
 
     const channelMessageService = await this.getChannelMessageService();
     const result = await channelMessageService.dispatchUserMessage({
@@ -339,8 +338,7 @@ export class CollabCommandHandler {
   ): Promise<void> {
     this.subscriptionManager.registerSocket(socket, authContext);
 
-    const { channelService } = await this.getServices();
-    const channel = channelService.getChannel(command.channelId);
+    const channel = await this.requireWritableChannel(command.channelId, "answer choices in");
     const pendingChoice = this.swarmManager.getPendingChoice(command.choiceId);
     if (!pendingChoice) {
       this.sendChoiceError(socket, "CHOICE_NOT_PENDING", `Choice ${command.choiceId} is not pending`);
@@ -372,8 +370,7 @@ export class CollabCommandHandler {
   ): Promise<void> {
     this.subscriptionManager.registerSocket(socket, authContext);
 
-    const { channelService } = await this.getServices();
-    const channel = channelService.getChannel(command.channelId);
+    const channel = await this.requireWritableChannel(command.channelId, "cancel choices in");
     const pendingChoice = this.swarmManager.getPendingChoice(command.choiceId);
     if (!pendingChoice) {
       this.sendChoiceError(socket, "CHOICE_NOT_PENDING", `Choice ${command.choiceId} is not pending`);
@@ -399,8 +396,7 @@ export class CollabCommandHandler {
   ): Promise<void> {
     this.subscriptionManager.registerSocket(socket, authContext);
 
-    const { channelService } = await this.getServices();
-    const channel = channelService.getChannel(command.channelId);
+    const channel = await this.requireWritableChannel(command.channelId, "pin messages in");
     const result = await this.swarmManager.pinMessage(
       channel.sessionAgentId,
       command.messageId,
@@ -421,6 +417,16 @@ export class CollabCommandHandler {
       this.servicesPromise = this.createServices();
     }
     return this.servicesPromise;
+  }
+
+  private async requireWritableChannel(channelId: string, action: string): Promise<CollaborationChannel> {
+    const { channelService } = await this.getServices();
+    const channel = channelService.getChannel(channelId);
+    if (channel.archived) {
+      throw new Error(`Cannot ${action} archived collaboration channel ${channelId}`);
+    }
+
+    return channel;
   }
 
   private async requireReadyWorkspace() {

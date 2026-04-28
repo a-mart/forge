@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import { assertBuilderSession, cloneDescriptor } from "./swarm-manager-utils.js";
+import { assertBuilderSession, assertCollabSession, cloneDescriptor } from "./swarm-manager-utils.js";
 import { savePins, type PinRegistry } from "./message-pins.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
@@ -225,11 +225,24 @@ export class SwarmSessionService {
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
     assertBuilderSession(descriptor, "delete Builder sessions");
+    return this.deleteSessionDescriptor(descriptor);
+  }
+
+  async deleteCollaborationSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
+    const descriptor = this.options.getRequiredSessionDescriptor(agentId);
+    assertCollabSession(descriptor, "delete collaboration sessions");
+    return this.deleteSessionDescriptor(descriptor);
+  }
+
+  private async deleteSessionDescriptor(
+    descriptor: AgentDescriptor,
+  ): Promise<{ terminatedWorkerIds: string[] }> {
     this.options.assertSessionIsDeletable(descriptor);
+    const profileId = descriptor.profileId ?? descriptor.agentId;
     const wasProjectAgent = Boolean(descriptor.projectAgent);
     const projectAgentHandle = descriptor.projectAgent?.handle;
 
-    const { terminatedWorkerIds } = await this.options.stopSessionInternal(agentId, {
+    const { terminatedWorkerIds } = await this.options.stopSessionInternal(descriptor.agentId, {
       saveStore: false,
       emitSnapshots: false,
       emitStatus: false,
@@ -239,20 +252,20 @@ export class SwarmSessionService {
     await this.options.provisioner.disposeSession(descriptor, { terminateRuntime: false });
 
     if (wasProjectAgent && projectAgentHandle) {
-      await this.options.deleteProjectAgentRecord(descriptor.profileId, projectAgentHandle);
+      await this.options.deleteProjectAgentRecord(profileId, projectAgentHandle);
     }
 
     await this.options.saveStore();
     this.options.emitSessionLifecycle({
       action: "deleted",
       sessionAgentId: descriptor.agentId,
-      profileId: descriptor.profileId
+      profileId
     });
     this.options.emitAgentsSnapshot();
     this.options.emitProfilesSnapshot();
 
     if (wasProjectAgent) {
-      await this.options.notifyProjectAgentsChanged(descriptor.profileId);
+      await this.options.notifyProjectAgentsChanged(profileId);
     }
 
     return { terminatedWorkerIds };

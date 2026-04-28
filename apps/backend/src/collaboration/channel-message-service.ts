@@ -43,7 +43,7 @@ export interface DispatchCollaborationChannelMessageResult {
 
 export class CollaborationChannelMessageServiceError extends Error {
   constructor(
-    public readonly code: "channel_not_found" | "user_not_found" | "user_disabled",
+    public readonly code: "channel_not_found" | "channel_archived" | "user_not_found" | "user_disabled",
     message: string,
   ) {
     super(message);
@@ -68,6 +68,13 @@ export class CollaborationChannelMessageService {
     const channelId = normalizeRequiredString(params.channelId, "channelId");
     const userId = normalizeRequiredString(params.userId, "userId");
     const channel = this.channelService.getChannel(channelId);
+    if (channel.archived) {
+      throw new CollaborationChannelMessageServiceError(
+        "channel_archived",
+        `Collaboration channel ${channelId} is archived`,
+      );
+    }
+
     const user = this.userService.getUser(userId);
     if (!user) {
       throw new CollaborationChannelMessageServiceError(
