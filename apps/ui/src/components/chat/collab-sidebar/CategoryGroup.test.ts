@@ -26,8 +26,6 @@ function renderGroup(): void {
             categoryId: 'category-1',
             workspaceId: 'workspace-1',
             name: 'General',
-            defaultAiRoleId: 'channel_assistant',
-            defaultAiRole: 'channel_assistant',
             position: 1,
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',

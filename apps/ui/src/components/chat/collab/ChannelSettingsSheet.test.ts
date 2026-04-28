@@ -13,34 +13,15 @@ globalThis.ResizeObserver ??= class ResizeObserver {
   disconnect() {}
 } as typeof ResizeObserver
 
-// Stub model-preset so useModelPresets / getAvailableChangeManagerFamilies don't hit the WS
 vi.mock('@/lib/model-preset', () => ({
   useModelPresets: () => [],
   getAvailableChangeManagerFamilies: () => [],
-}))
-
-// Hoisted mocks for AI roles API
-const aiRolesApiStub = vi.hoisted(() => {
-  const stubData = {
-    roles: [
-      { roleId: 'channel_assistant', name: 'Channel Assistant', description: 'Helper.', prompt: '', builtin: true, usage: { workspaceDefault: true, categoryCount: 0, channelCount: 0, totalAssignments: 1, inUse: true } },
-      { roleId: 'work_coordinator', name: 'Work Coordinator', description: 'Coordinator.', prompt: '', builtin: true, usage: { workspaceDefault: false, categoryCount: 0, channelCount: 0, totalAssignments: 0, inUse: false } },
-      { roleId: 'facilitator_scribe', name: 'Facilitator & Scribe', description: 'Scribe.', prompt: '', builtin: true, usage: { workspaceDefault: false, categoryCount: 0, channelCount: 0, totalAssignments: 0, inUse: false } },
-    ],
-    workspaceDefaultAiRoleId: 'channel_assistant',
-  }
-  return { fetchAiRoles: vi.fn(() => Promise.resolve(stubData)) }
-})
-
-vi.mock('@/lib/collaboration-ai-roles-api', () => ({
-  fetchAiRoles: aiRolesApiStub.fetchAiRoles,
 }))
 
 vi.mock('@/lib/collaboration-endpoints', () => ({
   resolveCollaborationApiBaseUrl: () => 'http://localhost:47187',
 }))
 
-// Hoisted mocks for collaboration-api
 const apiMocks = vi.hoisted(() => ({
   getChannel: vi.fn(),
   updateChannel: vi.fn(),
@@ -60,8 +41,6 @@ const channel: CollaborationChannel = {
   name: 'engineering',
   slug: 'engineering',
   aiEnabled: true,
-  aiRoleId: 'channel_assistant',
-  aiRole: 'channel_assistant',
   position: 0,
   archived: false,
   lastMessageSeq: 1,
@@ -93,7 +72,6 @@ beforeEach(() => {
   root = createRoot(container)
   apiMocks.getChannel.mockReset()
   apiMocks.updateChannel.mockReset()
-  aiRolesApiStub.fetchAiRoles.mockClear()
 })
 
 afterEach(() => {
@@ -102,53 +80,24 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('ChannelSettingsSheet AI role plumbing', () => {
-  it('renders the AI Role selector with the correct initial value', () => {
-    renderSheet({ aiRoleId: 'work_coordinator', aiRole: 'work_coordinator' })
-
-    const label = Array.from(document.body.querySelectorAll('label')).find(
-      (node) => node.textContent === 'AI Role',
-    )
-    expect(label).toBeTruthy()
-
-    const trigger = document.getElementById('collab-channel-settings-ai-role')
-    expect(trigger).toBeTruthy()
-    expect(trigger?.textContent).toContain('Work Coordinator')
-  })
-
-  it('renders "Additional instructions" label instead of "Prompt overlay"', () => {
+describe('ChannelSettingsSheet', () => {
+  it('renders Additional instructions with the updated labeling', () => {
     renderSheet()
 
-    const labels = Array.from(document.body.querySelectorAll('label')).map(
-      (node) => node.textContent,
-    )
-
-    expect(labels).toContain('Additional instructions')
+    const labels = Array.from(document.body.querySelectorAll('label')).map((node) => node.textContent)
+    expect(labels).toEqual(expect.arrayContaining([
+      'Channel name',
+      'Topic / description',
+      'Category',
+      'Model',
+      'Auto-reply',
+      'Additional instructions',
+    ]))
     expect(labels).not.toContain('Prompt overlay')
   })
 
-  it('renders the facilitator_scribe role correctly', () => {
-    renderSheet({ aiRoleId: 'facilitator_scribe', aiRole: 'facilitator_scribe' })
-
-    const trigger = document.getElementById('collab-channel-settings-ai-role')
-    expect(trigger?.textContent).toContain('Facilitator & Scribe')
-  })
-
-  it('disables the AI Role selector for non-admin users', () => {
-    renderSheet({}, { isAdmin: false })
-
-    const trigger = document.getElementById('collab-channel-settings-ai-role')
-    expect(trigger).toBeTruthy()
-    // Radix Select sets disabled or aria-disabled on the trigger button
-    const isDisabled =
-      (trigger as HTMLButtonElement | null)?.disabled === true ||
-      trigger?.getAttribute('aria-disabled') === 'true' ||
-      trigger?.getAttribute('data-disabled') !== null
-    expect(isDisabled).toBe(true)
-  })
-
-  it('shows Save button disabled when aiRole has not changed', () => {
-    renderSheet({ aiRoleId: 'channel_assistant', aiRole: 'channel_assistant' })
+  it('shows Save button disabled when nothing has changed', () => {
+    renderSheet()
 
     const saveButton = Array.from(document.body.querySelectorAll('button[type="submit"]')).find(
       (btn) => btn.textContent?.includes('Save'),
@@ -156,5 +105,40 @@ describe('ChannelSettingsSheet AI role plumbing', () => {
 
     expect(saveButton).toBeTruthy()
     expect(saveButton?.disabled).toBe(true)
+  })
+
+  it('submits updated instructions with the trimmed channel payload', async () => {
+    renderSheet({ promptOverlay: 'Existing guidance' })
+
+    const instructionsInput = document.getElementById('collab-channel-settings-prompt-overlay') as HTMLTextAreaElement | null
+    expect(instructionsInput).toBeTruthy()
+    if (instructionsInput) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(instructionsInput, '  Updated guidance  ')
+      instructionsInput.dispatchEvent(new Event('input', { bubbles: true }))
+      instructionsInput.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+
+    const submitButton = Array.from(document.body.querySelectorAll('button[type="submit"]')).find(
+      (btn) => btn.textContent?.includes('Save'),
+    ) as HTMLButtonElement | undefined
+    expect(submitButton?.disabled).toBe(false)
+
+    if (submitButton) {
+      flushSync(() => { submitButton.click() })
+    }
+
+    await vi.waitFor(() => {
+      expect(apiMocks.updateChannel).toHaveBeenCalled()
+    })
+
+    const callArgs = apiMocks.updateChannel.mock.calls[0][1] as Record<string, unknown>
+    expect(callArgs).toEqual({
+      name: 'engineering',
+      description: null,
+      categoryId: null,
+      aiEnabled: true,
+      promptOverlay: 'Updated guidance',
+    })
   })
 })

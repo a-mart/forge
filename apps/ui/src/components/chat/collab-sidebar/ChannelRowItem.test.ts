@@ -19,8 +19,6 @@ const channel: CollaborationChannel = {
   name: 'support',
   slug: 'support',
   aiEnabled: true,
-  aiRoleId: 'channel_assistant',
-  aiRole: 'channel_assistant',
   position: 0,
   archived: false,
   lastMessageSeq: 2,

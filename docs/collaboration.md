@@ -18,9 +18,9 @@ Fresh collaboration backend deployments should start from an empty `FORGE_DATA_D
 
 Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the remote collaboration backend. Collab Settings are admin-only. Provider auth entered there writes directly to the remote collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
 
-Remote Collab Settings also includes member and invite management, plus password controls, and an **AI Roles** panel for managing workspace roles used by channel/category role selectors. Admins can manage members and invites, issue temporary-password resets that require a password change on next sign-in, and users can change their own password from the collaboration UI.
+Remote Collab Settings also includes member and invite management, plus password controls. Admins can manage members and invites, issue temporary-password resets that require a password change on next sign-in, and users can change their own password from the collaboration UI.
 
-Channel and category settings include **AI Role** selectors that use canonical role IDs and workspace defaults. Categories define a default AI role, and channels inherit that default when created unless a channel-specific role is selected. The former "prompt overlay" label is now **Additional instructions** for channel-level guidance.
+Channel and category settings expose default model controls, and the former "prompt overlay" label is now **Additional instructions** for channel-level guidance.
 
 ## Authentication
 

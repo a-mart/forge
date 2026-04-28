@@ -88,13 +88,6 @@ export interface ManagerProfile {
   sortOrder?: number
 }
 
-export { COLLABORATION_AI_ROLE_IDS } from './collaboration-ai-roles.js'
-export { COLLABORATION_AI_ROLES } from './collaboration-ai-roles-compat.js'
-export type {
-  CollaborationAiRole,
-  CollaborationAiRoleId,
-} from './collaboration-ai-roles.js'
-
 export type AgentSessionPurpose = 'cortex_review' | 'agent_creator'
 export type AgentSessionSurface = 'builder' | 'collab'
 

@@ -16,9 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { AI_ROLE_OPTIONS, aiRoleLabel, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
-import type { AiRoleOption, CollaborationAiRoleId } from '@/lib/collaboration-ai-roles'
-import { fetchAiRoles } from '@/lib/collaboration-ai-roles-api'
 import { updateCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
 import type { CollaborationCategory } from '@forge/protocol'
@@ -41,41 +38,14 @@ export function RenameCategoryDialog({
   wsUrl,
 }: RenameCategoryDialogProps) {
   const [name, setName] = useState(category.name)
-  const categoryAiRoleId: CollaborationAiRoleId = category.defaultAiRoleId ?? category.defaultAiRole ?? DEFAULT_AI_ROLE
-  const [defaultAiRoleId, setDefaultAiRoleId] = useState<CollaborationAiRoleId>(categoryAiRoleId)
   const [defaultModelId, setDefaultModelId] = useState(category.defaultModelId ?? NO_DEFAULT_MODEL_VALUE)
-  const [roleOptions, setRoleOptions] = useState<AiRoleOption[]>([...AI_ROLE_OPTIONS])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // Fetch the full role library (builtins + custom) when the dialog opens
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    void fetchAiRoles()
-      .then((data) => {
-        if (cancelled) return
-        setRoleOptions(
-          data.roles.map((r) => ({
-            value: r.roleId,
-            label: r.name,
-            description: r.description ?? '',
-          })),
-        )
-      })
-      .catch(() => {
-        /* Keep static builtins as fallback */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [open])
   const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
   const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
   useEffect(() => {
     setName(category.name)
-    setDefaultAiRoleId(category.defaultAiRoleId ?? category.defaultAiRole ?? DEFAULT_AI_ROLE)
     setDefaultModelId(category.defaultModelId ?? NO_DEFAULT_MODEL_VALUE)
     setError(null)
   }, [category])
@@ -92,7 +62,6 @@ export function RenameCategoryDialog({
     try {
       const updated = await updateCategory(category.categoryId, {
         name: trimmedName,
-        defaultAiRoleId,
         defaultModelId: defaultModelId === NO_DEFAULT_MODEL_VALUE ? null : defaultModelId,
       })
       onRenamed?.(updated)
@@ -109,7 +78,7 @@ export function RenameCategoryDialog({
       <DialogContent className="max-w-sm p-4">
         <DialogHeader className="mb-3">
           <DialogTitle>Category settings</DialogTitle>
-          <DialogDescription>Update the category name, default AI role, and default model.</DialogDescription>
+          <DialogDescription>Update the category name and default model.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -120,29 +89,6 @@ export function RenameCategoryDialog({
               onChange={(event) => setName(event.target.value)}
               autoFocus
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="collab-rename-category-default-ai-role">Default AI role</Label>
-            <Select
-              value={defaultAiRoleId}
-              onValueChange={(value) => { if (value) setDefaultAiRoleId(value) }}
-              disabled={isSaving}
-            >
-              <SelectTrigger id="collab-rename-category-default-ai-role" className="w-full">
-                <SelectValue placeholder="Select role">
-                  {roleOptions.find((o) => o.value === defaultAiRoleId)?.label ?? aiRoleLabel(defaultAiRoleId)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {roleOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Changes affect new channels only. Existing channels keep their current role.
-            </p>
           </div>
 
           <div className="space-y-2">

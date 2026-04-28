@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -16,9 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { AI_ROLE_OPTIONS, aiRoleLabel, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
-import type { AiRoleOption, CollaborationAiRoleId } from '@/lib/collaboration-ai-roles'
-import { fetchAiRoles } from '@/lib/collaboration-ai-roles-api'
 import { createCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
 import type { CollaborationCategory } from '@forge/protocol'
@@ -39,60 +36,18 @@ export function CreateCategoryDialog({
   wsUrl,
 }: CreateCategoryDialogProps) {
   const [name, setName] = useState('')
-  const [defaultAiRoleId, setDefaultAiRoleId] = useState<CollaborationAiRoleId>(DEFAULT_AI_ROLE)
   const [defaultModelId, setDefaultModelId] = useState(NO_DEFAULT_MODEL_VALUE)
-  const [roleOptions, setRoleOptions] = useState<AiRoleOption[]>([...AI_ROLE_OPTIONS])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const userOverrodeRole = useRef(false)
-  const workspaceDefaultRef = useRef<CollaborationAiRoleId>(DEFAULT_AI_ROLE)
+  const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
+  const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
-  // Reset form synchronously on every open using cached workspace default
   useEffect(() => {
     if (!open) return
-    userOverrodeRole.current = false
-    setDefaultAiRoleId(workspaceDefaultRef.current)
     setName('')
     setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
     setError(null)
   }, [open])
-
-  // Fetch the full role library (builtins + custom) when the dialog opens
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    void fetchAiRoles()
-      .then((data) => {
-        if (cancelled) return
-        setRoleOptions(
-          data.roles.map((r) => ({
-            value: r.roleId,
-            label: r.name,
-            description: r.description ?? '',
-          })),
-        )
-        if (data.workspaceDefaultAiRoleId) {
-          workspaceDefaultRef.current = data.workspaceDefaultAiRoleId
-          if (!userOverrodeRole.current) {
-            setDefaultAiRoleId(data.workspaceDefaultAiRoleId)
-          }
-        }
-      })
-      .catch(() => {
-        /* Keep static builtins as fallback */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [open])
-
-  function handleRoleChange(value: string) {
-    if (!value) return
-    setDefaultAiRoleId(value)
-    userOverrodeRole.current = true
-  }
-  const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
-  const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -106,12 +61,10 @@ export function CreateCategoryDialog({
     try {
       const category = await createCategory({
         name: trimmedName,
-        defaultAiRoleId,
         ...(defaultModelId !== NO_DEFAULT_MODEL_VALUE ? { defaultModelId } : {}),
       })
       onCreated?.(category)
       setName('')
-      setDefaultAiRoleId(workspaceDefaultRef.current)
       setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
       onClose()
     } catch (err) {
@@ -138,29 +91,6 @@ export function CreateCategoryDialog({
               placeholder="Planning"
               autoFocus
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="collab-create-category-default-ai-role">Default AI role</Label>
-            <Select
-              value={defaultAiRoleId}
-              onValueChange={handleRoleChange}
-              disabled={isSaving}
-            >
-              <SelectTrigger id="collab-create-category-default-ai-role" className="w-full">
-                <SelectValue placeholder="Select role">
-                  {roleOptions.find((o) => o.value === defaultAiRoleId)?.label ?? aiRoleLabel(defaultAiRoleId)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {roleOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              New channels in this category start with this role. Existing channels are not affected.
-            </p>
           </div>
 
           <div className="space-y-2">

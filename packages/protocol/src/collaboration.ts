@@ -1,6 +1,5 @@
 import type { ConversationAttachment, ConversationMessageAttachment } from './attachments.js'
 import type { AgentContextUsage, AgentDescriptor, AgentModelDescriptor, AgentStatus } from './agents.js'
-import type { CollaborationAiRole, CollaborationAiRoleId } from './collaboration-ai-roles.js'
 import type { AgentMessageEvent, AgentToolCallEvent, ProjectAgentMessageContext } from './conversation-events.js'
 import type { MessageSourceContext } from './messaging.js'
 import type { ChoiceAnswer, ChoiceQuestion, ChoiceRequestStatus } from './shared-types.js'
@@ -118,9 +117,6 @@ export interface CollaborationCategory {
   workspaceId: string
   name: string
   defaultModelId?: string
-  defaultAiRoleId: CollaborationAiRoleId
-  /** @deprecated Builtin-only compatibility mirror. Use defaultAiRoleId. */
-  defaultAiRole?: CollaborationAiRole
   position: number
   createdAt: string
   updatedAt: string
@@ -136,9 +132,6 @@ export interface CollaborationChannel {
   description?: string
   aiEnabled: boolean
   modelId?: string
-  aiRoleId: CollaborationAiRoleId
-  /** @deprecated Builtin-only compatibility mirror. Use aiRoleId. */
-  aiRole?: CollaborationAiRole
   promptOverlay?: string
   position: number
   archived: boolean

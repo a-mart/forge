@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import type { CollaborationAiRoleId, CollaborationCategory, CollaborationChannel } from '@forge/protocol'
-import { AI_ROLE_OPTIONS, aiRoleLabel, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
-import type { AiRoleOption } from '@/lib/collaboration-ai-roles'
-import { fetchAiRoles } from '@/lib/collaboration-ai-roles-api'
+import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -33,7 +30,6 @@ interface ChannelSettingsBaseline {
   description: string | null
   categoryId: string | null
   aiEnabled: boolean
-  aiRoleId: CollaborationAiRoleId
   modelId: string | null
   promptOverlay: string | null
 }
@@ -66,7 +62,6 @@ export function ChannelSettingsSheet({
   const channelDescription = channel.description ?? ''
   const channelCategoryId = channel.categoryId ?? null
   const channelAiEnabled = channel.aiEnabled
-  const channelAiRoleId: CollaborationAiRoleId = channel.aiRoleId ?? channel.aiRole ?? DEFAULT_AI_ROLE
   const channelPromptOverlay = channel.promptOverlay ?? ''
   const channelModelId = channel.modelId ?? null
 
@@ -75,7 +70,6 @@ export function ChannelSettingsSheet({
     description: channelDescription,
     categoryId: channelCategoryId,
     aiEnabled: channelAiEnabled,
-    aiRoleId: channelAiRoleId,
     modelId: channelModelId,
     promptOverlay: channelPromptOverlay,
   }))
@@ -83,35 +77,10 @@ export function ChannelSettingsSheet({
   const [description, setDescription] = useState(channelDescription)
   const [categoryValue, setCategoryValue] = useState(channelCategoryId ?? NO_CATEGORY_VALUE)
   const [aiEnabled, setAiEnabled] = useState(channelAiEnabled)
-  const [aiRoleId, setAiRoleId] = useState<CollaborationAiRoleId>(channelAiRoleId)
   const [modelId, setModelId] = useState(channelModelId ?? '')
   const [promptOverlay, setPromptOverlay] = useState(channelPromptOverlay)
-  const [roleOptions, setRoleOptions] = useState<AiRoleOption[]>([...AI_ROLE_OPTIONS])
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // Fetch the full role library (builtins + custom) when the sheet opens
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    void fetchAiRoles()
-      .then((data) => {
-        if (cancelled) return
-        setRoleOptions(
-          data.roles.map((r) => ({
-            value: r.roleId,
-            label: r.name,
-            description: r.description ?? '',
-          })),
-        )
-      })
-      .catch(() => {
-        /* Keep static builtins as fallback */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [open])
 
   useEffect(() => {
     const nextBaseline = buildBaseline({
@@ -119,7 +88,6 @@ export function ChannelSettingsSheet({
       description: channelDescription,
       categoryId: channelCategoryId,
       aiEnabled: channelAiEnabled,
-      aiRoleId: channelAiRoleId,
       modelId: channelModelId,
       promptOverlay: channelPromptOverlay,
     })
@@ -128,14 +96,12 @@ export function ChannelSettingsSheet({
     setDescription(channelDescription)
     setCategoryValue(channelCategoryId ?? NO_CATEGORY_VALUE)
     setAiEnabled(nextBaseline.aiEnabled)
-    setAiRoleId(nextBaseline.aiRoleId)
     setModelId(nextBaseline.modelId ?? '')
     setPromptOverlay(channelPromptOverlay)
     setError(null)
     setIsSaving(false)
   }, [
     channelAiEnabled,
-    channelAiRoleId,
     channelCategoryId,
     channel.channelId,
     channelDescription,
@@ -163,7 +129,6 @@ export function ChannelSettingsSheet({
           description: freshChannel.description ?? '',
           categoryId: freshChannel.categoryId ?? null,
           aiEnabled: freshChannel.aiEnabled,
-          aiRoleId: freshChannel.aiRoleId ?? freshChannel.aiRole ?? DEFAULT_AI_ROLE,
           modelId: freshChannel.modelId ?? null,
           promptOverlay: freshChannel.promptOverlay ?? '',
         })
@@ -172,7 +137,6 @@ export function ChannelSettingsSheet({
         setDescription(freshChannel.description ?? '')
         setCategoryValue(freshChannel.categoryId ?? NO_CATEGORY_VALUE)
         setAiEnabled(nextBaseline.aiEnabled)
-        setAiRoleId(nextBaseline.aiRoleId)
         setModelId(nextBaseline.modelId ?? '')
         setPromptOverlay(freshChannel.promptOverlay ?? '')
       })
@@ -200,7 +164,6 @@ export function ChannelSettingsSheet({
     normalizedDescription !== baseline.description ||
     normalizedCategoryId !== baseline.categoryId ||
     aiEnabled !== baseline.aiEnabled ||
-    aiRoleId !== baseline.aiRoleId ||
     normalizedModelId !== baseline.modelId ||
     normalizedPromptOverlay !== baseline.promptOverlay
 
@@ -221,7 +184,6 @@ export function ChannelSettingsSheet({
         description: normalizedDescription,
         categoryId: normalizedCategoryId,
         aiEnabled,
-        aiRoleId,
         ...(normalizedModelId ? { modelId: normalizedModelId } : {}),
         promptOverlay: normalizedPromptOverlay,
       })
@@ -244,7 +206,7 @@ export function ChannelSettingsSheet({
           <SheetTitle>Channel settings</SheetTitle>
           <SheetDescription>
             {isAdmin
-              ? 'Update the channel name, topic, category, and AI behavior.'
+              ? 'Update the channel name, topic, category, and AI settings.'
               : 'Review the current channel configuration.'}
           </SheetDescription>
         </SheetHeader>
@@ -296,34 +258,6 @@ export function ChannelSettingsSheet({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="collab-channel-settings-ai-role">AI Role</Label>
-              <Select
-                value={aiRoleId}
-                onValueChange={(value) => { if (value) setAiRoleId(value) }}
-                disabled={!isAdmin || isSaving}
-              >
-                <SelectTrigger id="collab-channel-settings-ai-role" className="w-full">
-                  <SelectValue placeholder="Select role">
-                    {roleOptions.find((o) => o.value === aiRoleId)?.label ?? aiRoleLabel(aiRoleId)}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {roleOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {roleOptions.find((option) => option.value === aiRoleId)?.description ?? ''}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Role changes apply immediately after saving.
-              </p>
-            </div>
-
-            <div className="space-y-2">
               <Label htmlFor="collab-channel-settings-model">Model</Label>
               <Select
                 value={modelId}
@@ -342,7 +276,7 @@ export function ChannelSettingsSheet({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Changes apply to this channel's AI configuration.
+                Changes apply to this channel&apos;s AI configuration.
               </p>
             </div>
 
@@ -407,7 +341,6 @@ function buildBaseline(values: {
   description: string
   categoryId: string | null
   aiEnabled: boolean
-  aiRoleId: CollaborationAiRoleId
   modelId: string | null
   promptOverlay: string
 }): ChannelSettingsBaseline {
@@ -416,7 +349,6 @@ function buildBaseline(values: {
     description: normalizeOptionalText(values.description),
     categoryId: values.categoryId,
     aiEnabled: values.aiEnabled,
-    aiRoleId: values.aiRoleId,
     modelId: values.modelId,
     promptOverlay: normalizeOptionalText(values.promptOverlay),
   }
