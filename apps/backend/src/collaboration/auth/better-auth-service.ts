@@ -1,6 +1,7 @@
-import { createHmac } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type Database from "better-sqlite3";
+import { setSessionCookie } from "better-auth/cookies";
+import { makeSignature } from "better-auth/crypto";
 import { isCollaborationServerRuntimeTarget } from "../../runtime-target.js";
 import type { SwarmConfig } from "../../swarm/types.js";
 import { getCollaborationAuthSecret } from "./auth-secret-service.js";
@@ -182,6 +183,7 @@ interface BetterAuthRuntime {
     };
     internalAdapter: {
       findUserByEmail(email: string): Promise<{ user: CollaborationAuthUser } | null>;
+      findUserById(userId: string): Promise<CollaborationAuthUser | null>;
       createUser(user: { email: string; name: string }): Promise<CollaborationAuthUser>;
       createSession(userId: string, dontRememberMe?: boolean): Promise<CollaborationAuthSession["session"] | null>;
       linkAccount(account: {
@@ -192,6 +194,13 @@ interface BetterAuthRuntime {
       }): Promise<unknown>;
       deleteUser(userId: string): Promise<void>;
       deleteSessions(userId: string): Promise<void>;
+    };
+    options?: {
+      session?: {
+        cookieCache?: {
+          enabled?: boolean;
+        };
+      };
     };
   }>;
 }
@@ -268,17 +277,19 @@ class BetterAuthService implements CollaborationBetterAuthService {
   async createSessionCookies(userId: string): Promise<string[]> {
     const normalizedUserId = normalizeRequiredValue(userId, "userId");
     const context = await this.auth.$context;
+    const user = await context.internalAdapter.findUserById(normalizedUserId);
+    if (!user) {
+      throw new Error(`Collaboration auth user not found for user ${normalizedUserId}`);
+    }
+
     const session = await context.internalAdapter.createSession(normalizedUserId);
     if (!session) {
       throw new Error(`Failed to create collaboration auth session for user ${normalizedUserId}`);
     }
 
-    return [
-      serializeSignedCookie(context.authCookies.sessionToken.name, session.token, context.secret, {
-        ...context.authCookies.sessionToken.attributes,
-        maxAge: context.sessionConfig.expiresIn,
-      }),
-    ];
+    const collector = createSessionCookieCollector(context);
+    await setSessionCookie(collector.context as never, { session, user }, false);
+    return collector.cookies;
   }
 
   async clearSessionCookies(): Promise<string[]> {
@@ -417,15 +428,53 @@ function normalizeCookieHeader(cookieHeader: string | string[] | undefined): str
   return normalized ? normalized : null;
 }
 
-function serializeSignedCookie(
+function createSessionCookieCollector(
+  context: Awaited<BetterAuthRuntime["$context"]>,
+): {
+  cookies: string[];
+  context: {
+    context: {
+      authCookies: Awaited<BetterAuthRuntime["$context"]>["authCookies"];
+      sessionConfig: Awaited<BetterAuthRuntime["$context"]>["sessionConfig"];
+      secret: string | BufferSource;
+      options?: Awaited<BetterAuthRuntime["$context"]>["options"];
+      setNewSession(_session: CollaborationAuthSession): void;
+    };
+    getSignedCookie(_name: string, _secret: string | BufferSource): Promise<string | null>;
+    setSignedCookie(name: string, value: string, secret: string | BufferSource, attributes: CookieAttributes): Promise<void>;
+    setCookie(name: string, value: string, attributes: CookieAttributes): void;
+  };
+} {
+  const cookies: string[] = [];
+  return {
+    cookies,
+    context: {
+      context: {
+        authCookies: context.authCookies,
+        sessionConfig: context.sessionConfig,
+        secret: context.secret,
+        options: context.options,
+        setNewSession: () => undefined,
+      },
+      getSignedCookie: async () => null,
+      setSignedCookie: async (name, value, secret, attributes) => {
+        cookies.push(await serializeSignedCookie(name, value, secret, attributes));
+      },
+      setCookie: (name, value, attributes) => {
+        cookies.push(serializeCookie(name, value, attributes));
+      },
+    },
+  };
+}
+
+async function serializeSignedCookie(
   name: string,
   value: string,
   secret: string | BufferSource,
   attributes: CookieAttributes,
-): string {
-  const normalizedSecret = normalizeSecret(secret);
+): Promise<string> {
   const encodedValue = encodeURIComponent(value);
-  const signature = createHmac("sha256", normalizedSecret).update(value).digest("base64url");
+  const signature = await makeSignature(value, secret);
   return serializeCookie(name, `${encodedValue}.${signature}`, attributes);
 }
 
@@ -483,18 +532,3 @@ function normalizeSameSite(value: CookieAttributes["sameSite"]): "Lax" | "Strict
   return null;
 }
 
-function normalizeSecret(secret: string | BufferSource): string | Buffer {
-  if (typeof secret === "string") {
-    return secret;
-  }
-
-  if (secret instanceof ArrayBuffer) {
-    return Buffer.from(secret);
-  }
-
-  if (ArrayBuffer.isView(secret)) {
-    return Buffer.from(secret.buffer, secret.byteOffset, secret.byteLength);
-  }
-
-  return Buffer.from(String(secret));
-}

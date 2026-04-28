@@ -109,7 +109,7 @@ describe("collaboration auth DB", () => {
     expect(appliedMigrations).toEqual([...EXPECTED_MIGRATIONS]);
   });
 
-  it("supports inserting and querying collaboration workspace metadata", async () => {
+  it("supports inserting and querying collaboration workspace and category defaults metadata", async () => {
     const config = await createFreshTestConfig();
     const database = await openMigratedDatabase(config);
 
@@ -144,13 +144,62 @@ describe("collaboration auth DB", () => {
       "2026-04-28T00:00:00.000Z",
     );
 
-    const row = database.prepare<[], { default_cwd: string; default_model_id: string }>(
-      `SELECT default_cwd, default_model_id FROM collab_workspace WHERE workspace_id = 'workspace-1'`,
+    database.prepare(
+      `INSERT INTO collab_category (
+         category_id,
+         workspace_id,
+         name,
+         default_model_provider,
+         default_model_id,
+         default_model_thinking_level,
+         default_cwd,
+         position,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "category-1",
+      "workspace-1",
+      "Spec Review",
+      "anthropic",
+      "claude-opus-4-6",
+      "high",
+      "/repo/reviews",
+      0,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+
+    const workspaceRow = database.prepare<[], {
+      default_cwd: string;
+      default_model_provider: string;
+      default_model_id: string;
+      default_model_thinking_level: string;
+    }>(
+      `SELECT default_cwd, default_model_provider, default_model_id, default_model_thinking_level FROM collab_workspace WHERE workspace_id = 'workspace-1'`,
     ).get();
 
-    expect(row).toEqual({
+    const categoryRow = database.prepare<[], {
+      default_cwd: string | null;
+      default_model_provider: string | null;
+      default_model_id: string | null;
+      default_model_thinking_level: string | null;
+    }>(
+      `SELECT default_cwd, default_model_provider, default_model_id, default_model_thinking_level FROM collab_category WHERE category_id = 'category-1'`,
+    ).get();
+
+    expect(workspaceRow).toEqual({
       default_cwd: "/repo",
+      default_model_provider: "openai-codex",
       default_model_id: "gpt-5.3-codex",
+      default_model_thinking_level: "xhigh",
+    });
+    expect(categoryRow).toEqual({
+      default_cwd: "/repo/reviews",
+      default_model_provider: "anthropic",
+      default_model_id: "claude-opus-4-6",
+      default_model_thinking_level: "high",
     });
   });
 

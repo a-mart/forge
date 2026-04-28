@@ -112,10 +112,18 @@ export interface CollaborationWorkspace {
   memberCount?: number
 }
 
+export interface CollaborationCategoryChannelCreationDefaults {
+  model: AgentModelDescriptor
+  cwd?: string
+}
+
 export interface CollaborationCategory {
   categoryId: string
   workspaceId: string
   name: string
+  /** Category-level create-time defaults for new channels. */
+  channelCreationDefaults?: CollaborationCategoryChannelCreationDefaults
+  /** @deprecated Legacy compatibility field; use channelCreationDefaults.model.modelId instead. */
   defaultModelId?: string
   position: number
   createdAt: string

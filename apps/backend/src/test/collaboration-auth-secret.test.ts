@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -50,6 +50,19 @@ describe("collaboration auth secret service", () => {
     await expect(getCollaborationAuthSecret(handle.config)).resolves.toBe("persisted-secret-value");
   });
 
+  it("repairs persisted secrets to mode 0600", async () => {
+    const handle = await createTempConfig({ runtimeTarget: "collaboration-server" });
+    tempRoots.push(handle.tempRootDir);
+    const secretPath = handle.config.paths.collaborationAuthSecretPath!;
+
+    await mkdir(resolve(secretPath, ".."), { recursive: true });
+    await writeFile(secretPath, "persisted-secret-value\n", { encoding: "utf8", mode: 0o644 });
+    await chmod(secretPath, 0o644);
+
+    await expect(getCollaborationAuthSecret(handle.config)).resolves.toBe("persisted-secret-value");
+    expect((await stat(secretPath)).mode & 0o777).toBe(0o600);
+  });
+
   it("generates and persists a new secret when no env or file-backed secret exists", async () => {
     const handle = await createTempConfig({ runtimeTarget: "collaboration-server" });
     tempRoots.push(handle.tempRootDir);
@@ -62,6 +75,7 @@ describe("collaboration auth secret service", () => {
 
     expect(existsSync(secretPath)).toBe(true);
     expect(secret).toBe(persistedSecret.trim());
+    expect((await stat(secretPath)).mode & 0o777).toBe(0o600);
   });
 
   it("rejects builder runtime configs", async () => {

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isCollaborationServerRuntimeTarget } from "../../runtime-target.js";
 import type { SwarmConfig } from "../../swarm/types.js";
@@ -26,13 +26,16 @@ export async function getCollaborationAuthSecret(config: SwarmConfig): Promise<s
 
   const generatedSecret = randomBytes(32).toString("hex");
   await mkdir(dirname(secretPath), { recursive: true });
-  await writeFile(secretPath, `${generatedSecret}\n`, "utf8");
+  await writeFile(secretPath, `${generatedSecret}\n`, { encoding: "utf8", mode: 0o600 });
+  await enforceSecretPermissions(secretPath);
   return generatedSecret;
 }
 
 async function readPersistedSecret(secretPath: string): Promise<string | null> {
   try {
-    return normalizeSecret(await readFile(secretPath, "utf8"));
+    const persistedSecret = normalizeSecret(await readFile(secretPath, "utf8"));
+    await enforceSecretPermissions(secretPath);
+    return persistedSecret;
   } catch (error) {
     if (isErrorWithCode(error, "ENOENT")) {
       return null;
@@ -40,6 +43,10 @@ async function readPersistedSecret(secretPath: string): Promise<string | null> {
 
     throw error;
   }
+}
+
+async function enforceSecretPermissions(secretPath: string): Promise<void> {
+  await chmod(secretPath, 0o600);
 }
 
 function normalizeSecret(value: string | undefined): string | null {
