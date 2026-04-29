@@ -43,7 +43,7 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 |----------|---------|-------------|
 | `FORGE_ADMIN_EMAIL` | — | Bootstrap email for the first collaboration admin account. Required on first boot if no admin exists yet. |
 | `FORGE_ADMIN_PASSWORD` | — | Bootstrap password for the first collaboration admin account. Required on first boot if no admin exists yet. |
-| `FORGE_COLLABORATION_BASE_URL` | — | Canonical collaboration browser URL used for login redirects and invite links. |
+| `FORGE_COLLABORATION_BASE_URL` | — | Canonical collaboration browser URL used for login redirects and invite links. For local `docker compose`, use `http://127.0.0.1:47387` by default and keep it aligned with `FORGE_PUBLIC_PORT` if you override the host mapping. |
 | `FORGE_COLLABORATION_TRUSTED_ORIGINS` | — | Comma-separated Builder/UI origins allowed to talk to the collaboration server in split deployments. |
 | `FORGE_COLLABORATION_AUTH_SECRET` | generated locally if unset | Optional auth secret for the collaboration server. If omitted, the server generates and persists one in the data directory. |
 
@@ -229,6 +229,7 @@ See [PI_EXTENSIONS.md](PI_EXTENSIONS.md) for the full guide, including writing e
 |------|---------|-----|
 | Development (`pnpm dev`) | `47187` | `47188` |
 | Production (`pnpm prod`) | `47287` | `47189` |
+| Docker collaboration compose (host -> container) | `47387 -> 47287` by default | Same origin on `47387` by default |
 
 ## Remote / Network Access
 

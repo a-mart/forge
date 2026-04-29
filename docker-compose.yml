@@ -15,10 +15,10 @@ services:
       FORGE_DATA_DIR: /var/lib/forge
       FORGE_ADMIN_EMAIL: ${FORGE_ADMIN_EMAIL:?set FORGE_ADMIN_EMAIL in your shell or .env}
       FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:?set FORGE_ADMIN_PASSWORD in your shell or .env}
-      FORGE_COLLABORATION_BASE_URL: ${FORGE_COLLABORATION_BASE_URL:-}
+      FORGE_COLLABORATION_BASE_URL: ${FORGE_COLLABORATION_BASE_URL:-http://127.0.0.1:47387}
       FORGE_COLLABORATION_TRUSTED_ORIGINS: ${FORGE_COLLABORATION_TRUSTED_ORIGINS:-}
     ports:
-      - '${FORGE_PUBLIC_PORT:-47287}:47287'
+      - '${FORGE_PUBLIC_PORT:-47387}:47287'
     volumes:
       - forge-collaboration-data:/var/lib/forge
     restart: unless-stopped

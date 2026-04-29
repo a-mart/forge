@@ -43,7 +43,9 @@ Forge supports two deployment shapes:
 
 The public repo ships the collaboration-server runtime and a Docker entry point. `Dockerfile` and `docker-compose.yml` build and run the collaboration server with the built UI served from the same origin. The container defaults to `FORGE_RUNTIME_TARGET=collaboration-server`, `FORGE_HOST=0.0.0.0`, `FORGE_PORT=47287`, and `FORGE_DATA_DIR=/var/lib/forge`.
 
-A first boot must provide `FORGE_ADMIN_EMAIL` and `FORGE_ADMIN_PASSWORD` so the initial admin account can be created. `FORGE_COLLABORATION_BASE_URL` should match the public browser URL for the deployed collaboration server, and `FORGE_COLLABORATION_TRUSTED_ORIGINS` should list any Builder/UI origins that are allowed to talk to it in split deployments.
+To avoid colliding with Forge's local/Electron production backend on `127.0.0.1:47287`, the default Docker host mapping is `http://127.0.0.1:47387` on the host while the container keeps listening on `47287` internally. Override the published host port with `FORGE_PUBLIC_PORT` if needed.
+
+A first boot must provide `FORGE_ADMIN_EMAIL` and `FORGE_ADMIN_PASSWORD` so the initial admin account can be created. For local `docker compose` use, set `FORGE_COLLABORATION_BASE_URL=http://127.0.0.1:47387` by default, and update it if you change `FORGE_PUBLIC_PORT`. Hosted deployments should set `FORGE_COLLABORATION_BASE_URL` to the public browser URL for the collaboration server, and `FORGE_COLLABORATION_TRUSTED_ORIGINS` should list any Builder/UI origins that are allowed to talk to it in split deployments.
 
 `FORGE_COLLABORATION_AUTH_SECRET` is optional. Leave it unset to let the server generate and persist a local secret in the data directory.
 
@@ -90,7 +92,7 @@ The base URL changes the canonical browser origin used for invite links and cook
 | `FORGE_RUNTIME_TARGET` | Selects the runtime target. Use `builder` for the default local Builder backend or `collaboration-server` for the deployable collaboration runtime. |
 | `FORGE_COLLABORATION_ENABLED` | Legacy compatibility flag. When `FORGE_RUNTIME_TARGET` is unset, `true` maps to `collaboration-server`. |
 | `FORGE_ADMIN_EMAIL` / `FORGE_ADMIN_PASSWORD` | Bootstrap credentials for the first admin account on a fresh collaboration deployment. |
-| `FORGE_COLLABORATION_BASE_URL` | Canonical collaboration UI base URL for login redirects and invite links. |
+| `FORGE_COLLABORATION_BASE_URL` | Canonical collaboration UI base URL for login redirects and invite links. For local `docker compose`, use `http://127.0.0.1:47387` by default and keep it aligned with `FORGE_PUBLIC_PORT` if you override the host mapping. |
 | `FORGE_COLLABORATION_AUTH_SECRET` | Auth secret. Generated automatically if omitted. |
 | `FORGE_COLLABORATION_TRUSTED_ORIGINS` | Comma-separated Builder origins allowed in split deployment. |
 

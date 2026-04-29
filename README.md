@@ -314,6 +314,7 @@ pnpm prod:restart
 Production defaults:
 - Backend: `http://127.0.0.1:47287`
 - UI: `http://127.0.0.1:47189`
+- Docker collaboration compose: `http://127.0.0.1:47387` on the host by default (`47287` stays container-internal)
 
 ## Platform Notes
 
