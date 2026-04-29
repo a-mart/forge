@@ -43,13 +43,13 @@ describe('collaboration-endpoints', () => {
     localStorageMock.clear()
   })
 
-  it('resolveCollaborationApiBaseUrl falls back to Builder backend URL when no config', async () => {
+  it('resolveCollaborationApiBaseUrl falls back to Forge backend URL when no config', async () => {
     const { resolveCollaborationApiBaseUrl } = await import('./collaboration-endpoints')
     const baseUrl = resolveCollaborationApiBaseUrl()
     expect(baseUrl).toBe('http://127.0.0.1:47187/')
   })
 
-  it('resolveCollaborationWsUrl falls back to Builder backend WS URL when no config', async () => {
+  it('resolveCollaborationWsUrl falls back to Forge backend WS URL when no config', async () => {
     const { resolveCollaborationWsUrl } = await import('./collaboration-endpoints')
     const wsUrl = resolveCollaborationWsUrl()
     expect(wsUrl).toBe('ws://127.0.0.1:47187')

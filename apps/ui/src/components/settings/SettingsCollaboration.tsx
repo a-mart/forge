@@ -99,7 +99,14 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
     } catch (err) {
       setStatus(null)
       setSession(null)
-      setError(err instanceof Error ? err.message : 'Could not load collaboration status')
+      if (err instanceof TypeError && /fetch|network/i.test(err.message)) {
+        setError(
+          'Could not reach the collaboration server. ' +
+          'Check that the server URL is correct and the server is running.',
+        )
+      } else {
+        setError(err instanceof Error ? err.message : 'Could not load collaboration status')
+      }
     } finally {
       setLoading(false)
     }
@@ -128,8 +135,10 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
     try {
       const baseUrl = trimmed.endsWith('/') ? trimmed : trimmed + '/'
       const endpoint = new URL('/api/collaboration/status', baseUrl).toString()
+      // Use default credentials (same-origin) for the test — the status endpoint
+      // is public and omitting credentials relaxes CORS requirements so servers
+      // with `Access-Control-Allow-Origin: *` are reachable.
       const response = await fetch(endpoint, {
-        credentials: 'include',
         signal: AbortSignal.timeout(10_000),
       })
 
@@ -148,6 +157,13 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
       if (err instanceof Error) {
         if (err.name === 'TimeoutError' || err.name === 'AbortError') {
           setTestError('Connection timed out')
+        } else if (err instanceof TypeError && /fetch|network/i.test(err.message)) {
+          // Browser-level network / CORS failure (e.g. "Failed to fetch",
+          // "NetworkError when attempting to fetch resource").
+          setTestError(
+            'Could not reach the server. Verify the URL is correct and the server is running. ' +
+            'If the server is on a different origin, ensure its CORS configuration allows requests from this UI.',
+          )
         } else {
           setTestError(err.message)
         }
@@ -271,7 +287,7 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
       {/* Remote server configuration */}
       <SettingsSection
         label="Collaboration Server"
-        description="Connect to a remote Forge collaboration server. Leave empty to use same-origin (private fork)."
+        description="Connect to a remote Forge collaboration server for multi-user access."
       >
         <div className="flex flex-col gap-4 px-2 py-3">
           <div className="flex flex-col gap-2">
@@ -340,7 +356,7 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
           {!currentConfiguredUrl && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/50" />
-              Using same-origin (no remote server configured)
+              No remote server configured
             </div>
           )}
         </div>

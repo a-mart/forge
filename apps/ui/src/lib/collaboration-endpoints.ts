@@ -3,7 +3,7 @@
  *
  * Resolution order:
  *   1. User-configured remote collab server URL (localStorage)
- *   2. Derived from Builder backend URL (same-origin deployment — private fork default)
+ *   2. Derived from Forge backend URL (same-origin deployment)
  */
 
 import { resolveBackendWsUrl } from './backend-url'
@@ -64,7 +64,7 @@ export function resolveCollaborationApiBaseUrl(): string {
     return normalized
   }
 
-  // Fallback: same-origin (private fork where collab backend IS the Builder)
+  // Fallback: same-origin (collab backend co-located with the Forge backend)
   const wsUrl = resolveBackendWsUrl()
   return resolveApiEndpoint(wsUrl, '/')
 }
@@ -87,6 +87,6 @@ export function resolveCollaborationWsUrl(): string {
     }
   }
 
-  // Fallback: same-origin Builder backend WS
+  // Fallback: same-origin Forge backend WS
   return resolveBackendWsUrl()
 }
