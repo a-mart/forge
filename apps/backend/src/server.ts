@@ -90,7 +90,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     },
   });
 
-  await seedBuiltins(config.paths.dataDir);
+  await seedBuiltins(config.paths.dataDir, { runtimeTarget: config.runtimeTarget });
   await runCollaborationAuthMigrations(config);
 
   if (isCollaborationServerRuntimeTarget(config.runtimeTarget)) {

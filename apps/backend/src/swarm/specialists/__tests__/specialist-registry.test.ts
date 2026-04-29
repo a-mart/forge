@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +15,7 @@ import {
   saveSharedSpecialist,
   seedBuiltins,
 } from "../specialist-registry.js";
+import { getBuiltinSpecialistsDir } from "../../agents/specialists/specialist-paths.js";
 import { modelCatalogService } from "../../model-catalog-service.js";
 import { writeModelOverrides } from "../../model-overrides.js";
 
@@ -42,6 +43,21 @@ describe("specialist-registry", () => {
     }
 
     invalidateSpecialistCache();
+  });
+
+  it("resolves and copies canonical builtin specialists through the agents module path", async () => {
+    const builtinDir = getBuiltinSpecialistsDir();
+    const files = await readdir(builtinDir);
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await seedBuiltins(dataDir);
+
+    expect(files).toContain("backend.md");
+    expect(files).toContain("scout.md");
+    await expect(readFile(join(dataDir, "shared", "specialists", "backend.md"), "utf8")).resolves.toContain(
+      "displayName: Backend Engineer",
+    );
   });
 
   it("parses frontmatter and body from a specialist file", async () => {
@@ -597,6 +613,30 @@ describe("specialist-registry", () => {
 
     const rosterBlock = generateRosterBlock(roster);
     expect(rosterBlock).not.toContain("`cursor-builder`");
+  });
+
+  it("seeds a curated builtin subset for collaboration-server runtime", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await seedBuiltins(dataDir, { runtimeTarget: "collaboration-server" });
+
+    const roster = await resolveSharedRoster(dataDir);
+    const handles = roster.map((entry) => entry.specialistId).sort();
+
+    expect(handles).toEqual([
+      "backend",
+      "code-reviewer",
+      "code-reviewer-2",
+      "doc-writer",
+      "frontend",
+      "planner",
+      "researcher",
+      "scout",
+    ].sort());
+    expect(handles).not.toContain("architect");
+    expect(handles).not.toContain("cursor-builder");
+    expect(handles).not.toContain("web-researcher");
   });
 
   it("skips overwriting pinned builtin files during seeding", async () => {

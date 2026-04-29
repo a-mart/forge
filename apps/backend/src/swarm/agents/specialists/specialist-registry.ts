@@ -2,6 +2,8 @@ import { access, copyFile, mkdir, readdir, readFile, rename, unlink, writeFile }
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Dirent } from "node:fs";
+import type { RuntimeTarget } from "../../../runtime-target.js";
+import { isCollaborationServerRuntimeTarget } from "../../../runtime-target.js";
 import {
   FORGE_MODEL_CATALOG,
   getCatalogFamily,
@@ -27,6 +29,16 @@ const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const CACHE_KEY_SEPARATOR = "\u0000";
 const SPECIALISTS_ENABLED_FILENAME = "specialists-enabled.json";
 const REMOVED_BUILTIN_SPECIALIST_FILES = new Set(["app-runtime.md"]);
+const COLLABORATION_SERVER_BUILTIN_SPECIALIST_FILES = new Set([
+  "backend.md",
+  "code-reviewer-2.md",
+  "code-reviewer.md",
+  "doc-writer.md",
+  "frontend.md",
+  "planner.md",
+  "researcher.md",
+  "scout.md",
+]);
 
 function formatPresetList(entries: string[]): string {
   if (entries.length === 0) {
@@ -275,13 +287,20 @@ export function generateRosterBlock(roster: ResolvedSpecialistDefinition[]): str
   return lines.join("\n");
 }
 
-export async function seedBuiltins(dataDir: string): Promise<void> {
+export interface SeedBuiltinsOptions {
+  runtimeTarget?: RuntimeTarget;
+}
+
+export async function seedBuiltins(dataDir: string, options: SeedBuiltinsOptions = {}): Promise<void> {
   const builtinDir = getBuiltinSpecialistsDir();
   const sharedDir = getSharedSpecialistsDir(dataDir);
 
   await mkdir(sharedDir, { recursive: true });
 
-  const builtinFiles = await listMarkdownFiles(builtinDir);
+  const builtinFiles = filterBuiltinFilesForRuntimeTarget(
+    await listMarkdownFiles(builtinDir),
+    options.runtimeTarget,
+  );
 
   for (const removedFile of REMOVED_BUILTIN_SPECIALIST_FILES) {
     await unlink(join(sharedDir, removedFile)).catch((error) => {
@@ -333,6 +352,14 @@ export async function seedBuiltins(dataDir: string): Promise<void> {
   }
 
   invalidateSpecialistCache();
+}
+
+function filterBuiltinFilesForRuntimeTarget(files: Dirent[], runtimeTarget: RuntimeTarget | undefined): Dirent[] {
+  if (!runtimeTarget || !isCollaborationServerRuntimeTarget(runtimeTarget)) {
+    return files;
+  }
+
+  return files.filter((file) => COLLABORATION_SERVER_BUILTIN_SPECIALIST_FILES.has(file.name));
 }
 
 export async function getSpecialistsEnabled(dataDir: string): Promise<boolean> {
