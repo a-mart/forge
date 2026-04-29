@@ -45,7 +45,7 @@ The public repo ships the collaboration-server runtime and a Docker entry point.
 
 To avoid colliding with Forge's local/Electron production backend on `127.0.0.1:47287`, the default Docker host mapping is `http://127.0.0.1:47387` on the host while the container keeps listening on `47287` internally. Override the published host port with `FORGE_PUBLIC_PORT` if needed.
 
-A first boot must provide `FORGE_ADMIN_EMAIL` and `FORGE_ADMIN_PASSWORD` so the initial admin account can be created. For local `docker compose` use, set `FORGE_COLLABORATION_BASE_URL=http://127.0.0.1:47387` by default, and update it if you change `FORGE_PUBLIC_PORT`. Hosted deployments should set `FORGE_COLLABORATION_BASE_URL` to the public browser URL for the collaboration server, and `FORGE_COLLABORATION_TRUSTED_ORIGINS` should list any Builder/UI origins that are allowed to talk to it in split deployments.
+A first boot must provide `FORGE_ADMIN_EMAIL` and `FORGE_ADMIN_PASSWORD` so the initial admin account can be created. For local `docker compose` use, set `FORGE_COLLABORATION_BASE_URL=http://127.0.0.1:47387` by default, and update it if you change `FORGE_PUBLIC_PORT`. The shipped `docker-compose.yml` now defaults `FORGE_COLLABORATION_TRUSTED_ORIGINS` to `http://127.0.0.1:47188,http://127.0.0.1:47189` so local Forge UI/Electron dev and local preview can reach the Docker collaboration server without extra setup. Use `127.0.0.1` consistently for local HTTP split deployments; mixing `localhost` and `127.0.0.1` makes the auth cookies cross-site and therefore requires HTTPS. Hosted deployments should set `FORGE_COLLABORATION_BASE_URL` to the public browser URL for the collaboration server, and `FORGE_COLLABORATION_TRUSTED_ORIGINS` should list any Builder/UI origins that are allowed to talk to it in split deployments.
 
 `FORGE_COLLABORATION_AUTH_SECRET` is optional. Leave it unset to let the server generate and persist a local secret in the data directory.
 
@@ -94,6 +94,6 @@ The base URL changes the canonical browser origin used for invite links and cook
 | `FORGE_ADMIN_EMAIL` / `FORGE_ADMIN_PASSWORD` | Bootstrap credentials for the first admin account on a fresh collaboration deployment. |
 | `FORGE_COLLABORATION_BASE_URL` | Canonical collaboration UI base URL for login redirects and invite links. For local `docker compose`, use `http://127.0.0.1:47387` by default and keep it aligned with `FORGE_PUBLIC_PORT` if you override the host mapping. |
 | `FORGE_COLLABORATION_AUTH_SECRET` | Auth secret. Generated automatically if omitted. |
-| `FORGE_COLLABORATION_TRUSTED_ORIGINS` | Comma-separated Builder origins allowed in split deployment. |
+| `FORGE_COLLABORATION_TRUSTED_ORIGINS` | Comma-separated Builder origins allowed in split deployment. Local docker-compose defaults this to `http://127.0.0.1:47188,http://127.0.0.1:47189`. |
 
 See [docs/CONFIGURATION.md](CONFIGURATION.md) for the broader environment variable reference.

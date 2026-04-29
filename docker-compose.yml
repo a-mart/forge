@@ -16,7 +16,10 @@ services:
       FORGE_ADMIN_EMAIL: ${FORGE_ADMIN_EMAIL:?set FORGE_ADMIN_EMAIL in your shell or .env}
       FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:?set FORGE_ADMIN_PASSWORD in your shell or .env}
       FORGE_COLLABORATION_BASE_URL: ${FORGE_COLLABORATION_BASE_URL:-http://127.0.0.1:47387}
-      FORGE_COLLABORATION_TRUSTED_ORIGINS: ${FORGE_COLLABORATION_TRUSTED_ORIGINS:-}
+      # Local split-deployment default: allow the Forge UI/Electron dev origins on 127.0.0.1.
+      # Keep localhost out of the default list: localhost <-> 127.0.0.1 becomes cross-site for cookies
+      # and would require HTTPS.
+      FORGE_COLLABORATION_TRUSTED_ORIGINS: ${FORGE_COLLABORATION_TRUSTED_ORIGINS:-http://127.0.0.1:47188,http://127.0.0.1:47189}
     ports:
       - '${FORGE_PUBLIC_PORT:-47387}:47287'
     volumes:
