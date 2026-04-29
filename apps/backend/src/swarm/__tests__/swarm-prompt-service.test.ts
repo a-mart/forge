@@ -11,6 +11,7 @@ import {
   getProfileMemoryPath,
   getSessionContextPromptPath,
   getSessionContextReferenceDir,
+  getSessionReferenceDir,
   resolveMemoryFilePath,
 } from "../data-paths.js";
 import type { PersistedProjectAgentConfig } from "@forge/protocol";
@@ -282,7 +283,7 @@ describe("SwarmPromptService", () => {
     );
     const profileMemoryPath = getProfileMemoryPath(dataDir, profileId);
     const collabPromptPath = getSessionContextPromptPath(dataDir, profileId, collabDescriptor.agentId);
-    const collabReferenceDir = getSessionContextReferenceDir(dataDir, profileId, collabDescriptor.agentId);
+    const collabReferenceDir = getSessionReferenceDir(dataDir, profileId, collabDescriptor.agentId);
     await ensureMemoryFile(defaultSessionMemoryPath, "# Default session mem\n");
     await ensureMemoryFile(collabSessionMemoryPath, "# Collaboration session mem\n");
     await ensureMemoryFile(profileMemoryPath, "# Profile mem\n");
@@ -354,6 +355,111 @@ describe("SwarmPromptService", () => {
     expect(systemPrompt).toContain("<name>memory</name>");
     expect(memoryComposite).toContain("Collaboration session mem");
     expect(memoryComposite).not.toContain("Default session mem");
+  });
+
+  it("migrates legacy collab context reference docs to session-root reference docs on prompt access", async () => {
+    const { config } = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const profileId = "manager";
+    const collabDescriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "collab-legacy-reference",
+      profileId,
+      archetypeId: "collaboration-channel",
+      sessionSurface: "collab",
+      collab: {
+        workspaceId: "workspace-1",
+        channelId: "channel-1",
+      },
+    });
+    const legacyReferenceDir = getSessionContextReferenceDir(dataDir, profileId, collabDescriptor.agentId);
+    const rootReferenceDir = getSessionReferenceDir(dataDir, profileId, collabDescriptor.agentId);
+    await writeReferenceDoc(legacyReferenceDir, "legacy-playbook.md", "Legacy escalation playbook.");
+
+    const promptRegistry = new FileBackedPromptRegistry({
+      dataDir,
+      repoDir: config.paths.rootDir,
+      builtinArchetypesDir: BUILTIN_ARCHETYPES,
+      builtinOperationalDir: BUILTIN_OPERATIONAL
+    });
+    const service = new SwarmPromptService({
+      config,
+      descriptors: new Map([[collabDescriptor.agentId, collabDescriptor]]),
+      profiles: new Map([[profileId, createProfile(collabDescriptor.agentId)]]),
+      promptRegistry,
+      skillMetadataService: {} as never,
+      getAgentMemoryPath: () => "/tmp/memory.md",
+      ensureAgentMemoryFile: async () => {},
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => profileId,
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [collabDescriptor],
+      loadSpecialistRegistryModule: async () => specialistRegistryStub(),
+      getIntegrationContext: () => undefined,
+      logDebug: () => {}
+    });
+
+    const resolved = await service.buildResolvedManagerPrompt(collabDescriptor);
+
+    expect(resolved).toContain("# Channel Reference: legacy-playbook.md\n\nLegacy escalation playbook.");
+    await expect(readFile(join(rootReferenceDir, "legacy-playbook.md"), "utf8")).resolves.toContain(
+      "Legacy escalation playbook."
+    );
+  });
+
+  it("uses session-root collab reference docs without falling back to legacy docs when root docs exist", async () => {
+    const { config } = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const profileId = "manager";
+    const collabDescriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "collab-root-reference",
+      profileId,
+      archetypeId: "collaboration-channel",
+      sessionSurface: "collab",
+      collab: {
+        workspaceId: "workspace-1",
+        channelId: "channel-1",
+      },
+    });
+    await writeReferenceDoc(
+      getSessionReferenceDir(dataDir, profileId, collabDescriptor.agentId),
+      "root-playbook.md",
+      "Root reference wins."
+    );
+    await writeReferenceDoc(
+      getSessionContextReferenceDir(dataDir, profileId, collabDescriptor.agentId),
+      "legacy-playbook.md",
+      "Legacy reference should not be injected."
+    );
+
+    const promptRegistry = new FileBackedPromptRegistry({
+      dataDir,
+      repoDir: config.paths.rootDir,
+      builtinArchetypesDir: BUILTIN_ARCHETYPES,
+      builtinOperationalDir: BUILTIN_OPERATIONAL
+    });
+    const service = new SwarmPromptService({
+      config,
+      descriptors: new Map([[collabDescriptor.agentId, collabDescriptor]]),
+      profiles: new Map([[profileId, createProfile(collabDescriptor.agentId)]]),
+      promptRegistry,
+      skillMetadataService: {} as never,
+      getAgentMemoryPath: () => "/tmp/memory.md",
+      ensureAgentMemoryFile: async () => {},
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => profileId,
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [collabDescriptor],
+      loadSpecialistRegistryModule: async () => specialistRegistryStub(),
+      getIntegrationContext: () => undefined,
+      logDebug: () => {}
+    });
+
+    const resolved = await service.buildResolvedManagerPrompt(collabDescriptor);
+
+    expect(resolved).toContain("# Channel Reference: root-playbook.md\n\nRoot reference wins.");
+    expect(resolved).not.toContain("Legacy reference should not be injected.");
   });
 
   it("resolveProjectAgentSystemPromptOverride prefers on-disk project agent prompt.md", async () => {

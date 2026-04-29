@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { PromptPreviewResponse, PromptPreviewSection } from "@forge/protocol";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
@@ -9,6 +9,7 @@ import {
   getProjectAgentPromptPath,
   getSessionContextPromptPath,
   getSessionContextReferenceDir,
+  getSessionReferenceDir,
 } from "./data-paths.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { getOnboardingSnapshot } from "./onboarding-state.js";
@@ -621,8 +622,9 @@ export class SwarmPromptService {
 
   private async appendCollabContextOverlays(descriptor: AgentDescriptor, basePrompt: string): Promise<string> {
     const profileId = descriptor.profileId ?? descriptor.agentId;
-    const promptPath = getSessionContextPromptPath(this.options.config.paths.dataDir, profileId, descriptor.agentId);
-    const referenceDir = getSessionContextReferenceDir(this.options.config.paths.dataDir, profileId, descriptor.agentId);
+    const dataDir = this.options.config.paths.dataDir;
+    const promptPath = getSessionContextPromptPath(dataDir, profileId, descriptor.agentId);
+    const referenceDocs = await this.resolveCollabReferenceDocs(dataDir, profileId, descriptor.agentId);
     const sections: string[] = [basePrompt.trimEnd()];
 
     sections.push(`# Collaboration channel instructions\n\n${COLLABORATION_CHANNEL_INSTRUCTIONS}`);
@@ -632,9 +634,8 @@ export class SwarmPromptService {
       sections.push(`# Additional instructions\n\n${contextPrompt}`);
     }
 
-    const referenceDocs = await listReferenceDocs(referenceDir);
-    for (const referenceDoc of referenceDocs) {
-      const content = (await readReferenceDoc(referenceDir, referenceDoc.fileName))?.trim();
+    for (const referenceDoc of referenceDocs.docs) {
+      const content = (await readReferenceDoc(referenceDocs.dir, referenceDoc.fileName))?.trim();
       if (!content) {
         continue;
       }
@@ -643,6 +644,49 @@ export class SwarmPromptService {
     }
 
     return sections.join("\n\n");
+  }
+
+  private async resolveCollabReferenceDocs(
+    dataDir: string,
+    profileId: string,
+    sessionAgentId: string,
+  ): Promise<{ dir: string; docs: Awaited<ReturnType<typeof listReferenceDocs>> }> {
+    const referenceDir = getSessionReferenceDir(dataDir, profileId, sessionAgentId);
+    const legacyReferenceDir = getSessionContextReferenceDir(dataDir, profileId, sessionAgentId);
+
+    let docs = await listReferenceDocs(referenceDir);
+    if (docs.length > 0) {
+      return { dir: referenceDir, docs };
+    }
+
+    const legacyDocs = await listReferenceDocs(legacyReferenceDir);
+    if (legacyDocs.length === 0) {
+      return { dir: referenceDir, docs };
+    }
+
+    try {
+      await mkdir(referenceDir, { recursive: true });
+      for (const legacyDoc of legacyDocs) {
+        const targetExists = existsSync(join(referenceDir, legacyDoc.fileName));
+        if (!targetExists) {
+          await copyFile(legacyDoc.path, join(referenceDir, legacyDoc.fileName));
+        }
+      }
+      docs = await listReferenceDocs(referenceDir);
+      if (docs.length > 0) {
+        return { dir: referenceDir, docs };
+      }
+    } catch (error) {
+      this.options.logDebug("collaboration:reference:migration:error", {
+        profileId,
+        sessionAgentId,
+        referenceDir,
+        legacyReferenceDir,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return { dir: legacyReferenceDir, docs: legacyDocs };
   }
 
   private appendAvailableSkillsBlock(systemPrompt: string): string {

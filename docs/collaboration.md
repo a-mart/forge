@@ -10,7 +10,8 @@ Forge collaboration mode adds multi-user access on top of the public Forge repo.
 | Channel sessions | `~/.forge/profiles/_collaboration/sessions/` | Each channel is backed by one manager session under the `_collaboration` profile. |
 | Auth database | `~/.forge/shared/config/collaboration/auth.db` | SQLite store for users, sessions, workspaces, channels, categories, and per-user read state. |
 | Auth secret | `~/.forge/shared/config/collaboration/auth-secret.key` | Used when `FORGE_COLLABORATION_AUTH_SECRET` is not set. |
-| Additional instructions | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel-level guidance lives in the backing session context directory. |
+| Additional instructions | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel-level guidance remains in the backing session context directory. |
+| Reference docs | `~/.forge/profiles/_collaboration/sessions/<sessionId>/reference/` | Channel reference docs live at the session root. Legacy `context/reference/` docs are read only when the root `reference/` directory is missing or empty, and are copied forward non-destructively on prompt access. |
 
 The collaboration profile is system-managed. Builder snapshots and profile lists exclude it, but the backing sessions still live in the normal session tree under `_collaboration`.
 
@@ -80,7 +81,7 @@ The base URL changes the canonical browser origin used for invite links and cook
 ## Architecture
 
 - Each channel maps to one backing manager session under `_collaboration`.
-- Channels are session-backed actors: the channel state, history, and additional instructions all live in the backing session context.
+- Channels are session-backed actors: the channel state and history live in the backing session, additional instructions stay at `context/prompt.md`, and injected channel reference docs live at session-root `reference/`.
 - Collaboration uses a single workspace model.
 - Workspace and category defaults are model and CWD only.
 - The collab surface reuses the Builder `MessageList` and `MessageInput` components.
