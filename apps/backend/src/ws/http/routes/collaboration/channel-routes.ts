@@ -1,6 +1,10 @@
 import type { CollaborationChannelPromptPreviewResponse, PromptPreviewResponse } from "@forge/protocol";
-import { inferSwarmModelPresetFromDescriptor } from "../../../../swarm/model-presets.js";
-import type { SwarmConfig } from "../../../../swarm/types.js";
+import { parseSwarmReasoningLevel } from "../../../../swarm/model-presets.js";
+import type { SwarmConfig, SwarmReasoningLevel } from "../../../../swarm/types.js";
+import {
+  attachEffectiveChannelModelSettings,
+  resolveRequestedChannelModelSettings,
+} from "../../../../collaboration/channel-service.js";
 import type { CollaborationReadinessRequestService } from "../../../../collaboration/readiness-service.js";
 import type { HttpRoute } from "../../shared/http-route.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../../http-utils.js";
@@ -73,10 +77,12 @@ export function createCollaborationChannelRoutes(options: {
 
             const { channelService } = await options.getServices();
             sendJson(response, 200, {
-              channels: channelService.listChannels({
-                workspaceId: workspace.workspaceId,
-                archived: parseArchivedFilter(requestUrl.searchParams.get("archived")),
-              }),
+              channels: channelService
+                .listChannels({
+                  workspaceId: workspace.workspaceId,
+                  archived: parseArchivedFilter(requestUrl.searchParams.get("archived")),
+                })
+                .map((channel) => attachEffectiveChannelModelSettings(options.swarmManager, channel)),
             });
             return;
           }
@@ -196,7 +202,10 @@ export function createCollaborationChannelRoutes(options: {
               return;
             }
 
-            const channel = channelService.getChannel(channelId);
+            const channel = attachEffectiveChannelModelSettings(
+              options.swarmManager,
+              channelService.getChannel(channelId),
+            );
             sendJson(response, 200, {
               channel:
                 authContext.role === "admin"
@@ -213,24 +222,45 @@ export function createCollaborationChannelRoutes(options: {
 
           void adminContext;
 
-          const existingChannel = await attachChannelEffectiveModelId(
+          const existingChannel = attachEffectiveChannelModelSettings(
             options.swarmManager,
             channelService.getChannel(channelId),
           );
           const update = parseUpdateChannelBody(await readJsonBody(request));
-          const channel = channelService.updateChannel(channelId, update);
+          const nextModelSettings =
+            update.modelId !== undefined || update.reasoningLevel !== undefined
+              ? resolveRequestedChannelModelSettings(existingChannel, update)
+              : null;
+          if (nextModelSettings) {
+            if (!options.swarmManager?.updateManagerModel) {
+              throw new Error("Collaboration channel model updates require swarm manager support");
+            }
+
+            const modelChanged = nextModelSettings.modelId !== existingChannel.modelId;
+            const reasoningChanged = nextModelSettings.reasoningLevel !== existingChannel.reasoningLevel;
+            if (modelChanged || reasoningChanged) {
+              await options.swarmManager.updateManagerModel(
+                existingChannel.sessionAgentId,
+                nextModelSettings.modelId,
+                nextModelSettings.reasoningLevel,
+              );
+            }
+          }
+          const channel = channelService.updateChannel(channelId, {
+            ...update,
+            ...(nextModelSettings
+              ? {
+                  modelId: nextModelSettings.modelId,
+                  reasoningLevel: nextModelSettings.reasoningLevel,
+                }
+              : {}),
+          });
           if (update.promptOverlay !== undefined) {
             await promptOverlayService.setPromptOverlay(channel.channelId, update.promptOverlay);
             await recycleCollaborationBackingSessionRuntime(options.swarmManager, channel.sessionAgentId);
           }
-          if (update.modelId !== undefined && update.modelId !== existingChannel.modelId) {
-            if (!options.swarmManager?.updateManagerModel) {
-              throw new Error("Collaboration channel model updates require swarm manager support");
-            }
-            await options.swarmManager.updateManagerModel(channel.sessionAgentId, update.modelId);
-          }
           broadcasts?.broadcastChannelUpdated(
-            await attachChannelEffectiveModelId(options.swarmManager, channelService.getChannel(channel.channelId)),
+            attachEffectiveChannelModelSettings(options.swarmManager, channelService.getChannel(channel.channelId)),
           );
           sendJson(response, 200, {
             ok: true,
@@ -356,27 +386,10 @@ async function attachChannelAdminSettings(
   swarmManager: CollaborationRouteSwarmManager | undefined,
   channel: ReturnType<CollaborationRouteServices["channelService"]["getChannel"]>,
 ) {
-  return attachChannelEffectiveModelId(swarmManager, await attachPromptOverlay(promptOverlayService, channel));
-}
-
-async function attachChannelEffectiveModelId(
-  swarmManager: CollaborationRouteSwarmManager | undefined,
-  channel: ReturnType<CollaborationRouteServices["channelService"]["getChannel"]>,
-) {
-  if (channel.modelId) {
-    return channel;
-  }
-
-  const descriptor = swarmManager?.getAgent(channel.sessionAgentId);
-  const inferredModelId = inferSwarmModelPresetFromDescriptor(descriptor?.model);
-  if (!inferredModelId) {
-    return channel;
-  }
-
-  return {
-    ...channel,
-    modelId: inferredModelId,
-  };
+  return attachEffectiveChannelModelSettings(
+    swarmManager,
+    await attachPromptOverlay(promptOverlayService, channel),
+  );
 }
 
 async function recycleCollaborationBackingSessionRuntime(
@@ -426,6 +439,7 @@ function parseUpdateChannelBody(body: unknown): {
   description?: string | null;
   aiEnabled?: boolean;
   modelId?: string;
+  reasoningLevel?: SwarmReasoningLevel | null;
   promptOverlay?: string | null;
   position?: number;
 } {
@@ -436,6 +450,7 @@ function parseUpdateChannelBody(body: unknown): {
     description?: string | null;
     aiEnabled?: boolean;
     modelId?: string;
+    reasoningLevel?: SwarmReasoningLevel | null;
     promptOverlay?: string | null;
     position?: number;
   } = {};
@@ -458,6 +473,13 @@ function parseUpdateChannelBody(body: unknown): {
 
   if (input.modelId !== undefined) {
     parsed.modelId = requireStringField(input.modelId, "modelId");
+  }
+
+  if (input.reasoningLevel !== undefined) {
+    parsed.reasoningLevel =
+      input.reasoningLevel === null
+        ? null
+        : parseSwarmReasoningLevel(input.reasoningLevel, "reasoningLevel");
   }
 
   if (input.promptOverlay !== undefined) {

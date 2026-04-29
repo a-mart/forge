@@ -73,6 +73,7 @@ export interface UpdateCollaborationChannelParams {
   description?: string | null;
   aiEnabled?: boolean;
   modelId?: string;
+  reasoningLevel?: SwarmReasoningLevel | null;
   position?: number;
 }
 
@@ -181,6 +182,7 @@ export class CollaborationChannelService {
         description,
         aiEnabled,
         modelId: defaultModelPreset ?? null,
+        modelThinkingLevel: normalizeChannelReasoningLevel(defaultModel.thinkingLevel) ?? defaultModel.thinkingLevel,
         position,
         createdByUserId: normalizeOptionalString(params.createdByUserId) ?? null,
         createdAt: now,
@@ -235,7 +237,19 @@ export class CollaborationChannelService {
   updateChannel(channelId: string, params: UpdateCollaborationChannelParams): CollaborationChannel {
     const normalizedChannelId = normalizeRequiredString(channelId, "channelId");
     const existing = this.requireChannel(normalizedChannelId);
-    const update: UpdateCollaborationChannelParams = {};
+    const existingChannel = attachEffectiveChannelModelSettings(
+      this.swarmManager,
+      this.toChannelDto(existing),
+    );
+    const update: {
+      categoryId?: string | null;
+      name?: string;
+      description?: string | null;
+      aiEnabled?: boolean;
+      modelId?: string;
+      reasoningLevel?: SwarmReasoningLevel;
+      position?: number;
+    } = {};
 
     if (params.categoryId !== undefined) {
       update.categoryId = this.normalizeOptionalCategoryId(params.categoryId, existing.workspaceId);
@@ -264,6 +278,14 @@ export class CollaborationChannelService {
       update.position = normalizeOptionalPosition(params.position);
     }
 
+    const nextModelSettings = hasChannelModelUpdate(params)
+      ? resolveRequestedChannelModelSettings(existingChannel, params)
+      : null;
+    if (nextModelSettings) {
+      update.modelId = nextModelSettings.modelId;
+      update.reasoningLevel = nextModelSettings.reasoningLevel;
+    }
+
     const nextSlug =
       update.name !== undefined
         ? buildUniqueSlug(
@@ -281,10 +303,11 @@ export class CollaborationChannelService {
       update.description === undefined &&
       update.aiEnabled === undefined &&
       update.modelId === undefined &&
+      update.reasoningLevel === undefined &&
       update.position === undefined &&
       nextSlug === undefined
     ) {
-      return this.toChannelDto(existing);
+      return existingChannel;
     }
 
     try {
@@ -295,6 +318,7 @@ export class CollaborationChannelService {
         ...(update.description !== undefined ? { description: update.description } : {}),
         ...(update.aiEnabled !== undefined ? { aiEnabled: update.aiEnabled } : {}),
         ...(update.modelId !== undefined ? { modelId: update.modelId } : {}),
+        ...(update.reasoningLevel !== undefined ? { modelThinkingLevel: update.reasoningLevel } : {}),
         ...(update.position !== undefined ? { position: update.position } : {}),
         updatedAt: new Date().toISOString(),
       });
@@ -304,7 +328,7 @@ export class CollaborationChannelService {
           `Unknown collaboration channel: ${normalizedChannelId}`,
         );
       }
-      return this.toChannelDto(updated);
+      return attachEffectiveChannelModelSettings(this.swarmManager, this.toChannelDto(updated));
     } catch (error) {
       throw mapChannelPersistenceError(error, existing.workspaceId);
     }
@@ -391,6 +415,7 @@ export class CollaborationChannelService {
     description: string | null;
     aiEnabled: boolean;
     modelId: string | null;
+    modelThinkingLevel: string | null;
     position: number;
     archived: boolean;
     archivedAt: string | null;
@@ -414,6 +439,9 @@ export class CollaborationChannelService {
       ...(record.description ? { description: record.description } : {}),
       aiEnabled: record.aiEnabled,
       ...(record.modelId ? { modelId: record.modelId } : {}),
+      ...(normalizeChannelReasoningLevel(record.modelThinkingLevel)
+        ? { reasoningLevel: normalizeChannelReasoningLevel(record.modelThinkingLevel) }
+        : {}),
       position: record.position,
       archived: record.archived,
       ...(record.archivedAt ? { archivedAt: record.archivedAt } : {}),
@@ -614,6 +642,81 @@ function resolveChannelModel(
     "orphaned_workspace",
     `Collaboration workspace ${workspaceId} is missing default model configuration`,
   );
+}
+
+export function attachEffectiveChannelModelSettings(
+  swarmManager: Pick<CollaborationChannelServiceSwarmManager, "getAgent"> | undefined,
+  channel: CollaborationChannel,
+): CollaborationChannel {
+  const descriptor = swarmManager?.getAgent(channel.sessionAgentId);
+  const inferredModelId = channel.modelId ?? inferSwarmModelPresetFromDescriptor(descriptor?.model);
+  const inferredReasoningLevel =
+    channel.reasoningLevel ??
+    normalizeChannelReasoningLevel(descriptor?.model.thinkingLevel) ??
+    normalizeChannelReasoningLevel(
+      inferredModelId ? resolveModelDescriptorFromPreset(inferredModelId).thinkingLevel : undefined,
+    );
+
+  if (inferredModelId === channel.modelId && inferredReasoningLevel === channel.reasoningLevel) {
+    return channel;
+  }
+
+  return {
+    ...channel,
+    ...(inferredModelId ? { modelId: inferredModelId } : {}),
+    ...(inferredReasoningLevel ? { reasoningLevel: inferredReasoningLevel } : {}),
+  };
+}
+
+function hasChannelModelUpdate(
+  params: Pick<UpdateCollaborationChannelParams, "modelId" | "reasoningLevel">,
+): boolean {
+  return params.modelId !== undefined || params.reasoningLevel !== undefined;
+}
+
+export function resolveRequestedChannelModelSettings(
+  existingChannel: CollaborationChannel,
+  params: Pick<UpdateCollaborationChannelParams, "modelId" | "reasoningLevel">,
+): { modelId: string; reasoningLevel: SwarmReasoningLevel } {
+  const currentModelId = params.modelId ?? existingChannel.modelId;
+  if (!currentModelId) {
+    throw new Error("reasoningLevel updates require an existing channel model");
+  }
+
+  const descriptor = resolveModelDescriptorFromPreset(currentModelId);
+  const reasoningLevel =
+    params.reasoningLevel === undefined
+      ? (params.modelId === undefined ? existingChannel.reasoningLevel : undefined) ??
+        normalizeChannelReasoningLevel(descriptor.thinkingLevel) ??
+        "xhigh"
+      : params.reasoningLevel === null
+        ? normalizeChannelReasoningLevel(descriptor.thinkingLevel) ?? "xhigh"
+        : params.reasoningLevel;
+
+  return {
+    modelId: currentModelId,
+    reasoningLevel,
+  };
+}
+
+function normalizeChannelReasoningLevel(value: string | null | undefined): SwarmReasoningLevel | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case "none":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return normalized;
+    case "x-high":
+      return "xhigh";
+    default:
+      return undefined;
+  }
 }
 
 function normalizeRequiredString(value: string, fieldName: string): string {

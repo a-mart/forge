@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
+import type { CollaborationCategory, CollaborationChannel, ManagerReasoningLevel } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,7 +21,12 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { getChannel, updateChannel } from '@/lib/collaboration-api'
-import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
+import {
+  getAvailableChangeManagerFamilies,
+  getSupportedReasoningLevelsForModelId,
+  useModelPresets,
+} from '@/lib/model-preset'
+import { REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
 
 const NO_CATEGORY_VALUE = '__none__'
 
@@ -31,6 +36,7 @@ interface ChannelSettingsBaseline {
   categoryId: string | null
   aiEnabled: boolean
   modelId: string | null
+  reasoningLevel: string | null
   promptOverlay: string | null
 }
 
@@ -64,6 +70,7 @@ export function ChannelSettingsSheet({
   const channelAiEnabled = channel.aiEnabled
   const channelPromptOverlay = channel.promptOverlay ?? ''
   const channelModelId = channel.modelId ?? null
+  const channelReasoningLevel = channel.reasoningLevel ?? null
 
   const [baseline, setBaseline] = useState<ChannelSettingsBaseline>(() => buildBaseline({
     name: channelName,
@@ -71,6 +78,7 @@ export function ChannelSettingsSheet({
     categoryId: channelCategoryId,
     aiEnabled: channelAiEnabled,
     modelId: channelModelId,
+    reasoningLevel: channelReasoningLevel,
     promptOverlay: channelPromptOverlay,
   }))
   const [name, setName] = useState(channelName)
@@ -78,9 +86,30 @@ export function ChannelSettingsSheet({
   const [categoryValue, setCategoryValue] = useState(channelCategoryId ?? NO_CATEGORY_VALUE)
   const [aiEnabled, setAiEnabled] = useState(channelAiEnabled)
   const [modelId, setModelId] = useState(channelModelId ?? '')
+  const [reasoningLevel, setReasoningLevel] = useState(channelReasoningLevel ?? '')
   const [promptOverlay, setPromptOverlay] = useState(channelPromptOverlay)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const supportedLevels = useMemo(
+    () => modelId
+      ? getSupportedReasoningLevelsForModelId(modelId, modelPresets)
+      : [] as ManagerReasoningLevel[],
+    [modelId, modelPresets],
+  )
+
+  // When model changes, auto-set reasoning level to default for that model
+  const handleModelChange = (newModelId: string) => {
+    setModelId(newModelId)
+    if (!newModelId) {
+      setReasoningLevel('')
+      return
+    }
+    const preset = modelPresets.find((p) => p.presetId === newModelId || p.modelId === newModelId)
+    if (preset) {
+      setReasoningLevel(preset.defaultReasoningLevel)
+    }
+  }
 
   useEffect(() => {
     const nextBaseline = buildBaseline({
@@ -89,6 +118,7 @@ export function ChannelSettingsSheet({
       categoryId: channelCategoryId,
       aiEnabled: channelAiEnabled,
       modelId: channelModelId,
+      reasoningLevel: channelReasoningLevel,
       promptOverlay: channelPromptOverlay,
     })
     setBaseline(nextBaseline)
@@ -97,6 +127,7 @@ export function ChannelSettingsSheet({
     setCategoryValue(channelCategoryId ?? NO_CATEGORY_VALUE)
     setAiEnabled(nextBaseline.aiEnabled)
     setModelId(nextBaseline.modelId ?? '')
+    setReasoningLevel(nextBaseline.reasoningLevel ?? '')
     setPromptOverlay(channelPromptOverlay)
     setError(null)
     setIsSaving(false)
@@ -108,6 +139,7 @@ export function ChannelSettingsSheet({
     channelName,
     channelPromptOverlay,
     channelModelId,
+    channelReasoningLevel,
     open,
   ])
 
@@ -130,6 +162,7 @@ export function ChannelSettingsSheet({
           categoryId: freshChannel.categoryId ?? null,
           aiEnabled: freshChannel.aiEnabled,
           modelId: freshChannel.modelId ?? null,
+          reasoningLevel: freshChannel.reasoningLevel ?? null,
           promptOverlay: freshChannel.promptOverlay ?? '',
         })
         setBaseline(nextBaseline)
@@ -138,6 +171,7 @@ export function ChannelSettingsSheet({
         setCategoryValue(freshChannel.categoryId ?? NO_CATEGORY_VALUE)
         setAiEnabled(nextBaseline.aiEnabled)
         setModelId(nextBaseline.modelId ?? '')
+        setReasoningLevel(nextBaseline.reasoningLevel ?? '')
         setPromptOverlay(freshChannel.promptOverlay ?? '')
       })
       .catch((loadError) => {
@@ -158,6 +192,7 @@ export function ChannelSettingsSheet({
   const normalizedPromptOverlay = normalizeOptionalText(promptOverlay)
   const normalizedCategoryId = categoryValue === NO_CATEGORY_VALUE ? null : categoryValue
   const normalizedModelId = modelId || null
+  const normalizedReasoningLevel = reasoningLevel || null
 
   const hasChanges =
     trimmedName !== baseline.name ||
@@ -165,6 +200,7 @@ export function ChannelSettingsSheet({
     normalizedCategoryId !== baseline.categoryId ||
     aiEnabled !== baseline.aiEnabled ||
     normalizedModelId !== baseline.modelId ||
+    normalizedReasoningLevel !== baseline.reasoningLevel ||
     normalizedPromptOverlay !== baseline.promptOverlay
 
   const canSave = isAdmin && trimmedName.length > 0 && hasChanges && !isSaving
@@ -185,6 +221,7 @@ export function ChannelSettingsSheet({
         categoryId: normalizedCategoryId,
         aiEnabled,
         ...(normalizedModelId ? { modelId: normalizedModelId } : {}),
+        ...(normalizedReasoningLevel ? { reasoningLevel: normalizedReasoningLevel } : {}),
         promptOverlay: normalizedPromptOverlay,
       })
       onOpenChange(false)
@@ -259,22 +296,45 @@ export function ChannelSettingsSheet({
 
             <div className="space-y-2">
               <Label htmlFor="collab-channel-settings-model">Model</Label>
-              <Select
-                value={modelId}
-                onValueChange={setModelId}
-                disabled={!isAdmin || isSaving || modelFamilies.length === 0}
-              >
-                <SelectTrigger id="collab-channel-settings-model" className="w-full">
-                  <SelectValue placeholder="Select model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelFamilies.map((family) => (
-                    <SelectItem key={family.familyId} value={family.familyId}>
-                      {family.displayName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex gap-2">
+                <Select
+                  value={modelId}
+                  onValueChange={handleModelChange}
+                  disabled={!isAdmin || isSaving || modelFamilies.length === 0}
+                >
+                  <SelectTrigger id="collab-channel-settings-model" className="flex-1">
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelFamilies.map((family) => (
+                      <SelectItem key={family.familyId} value={family.familyId}>
+                        {family.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {modelId && supportedLevels.length > 0 ? (
+                  <Select
+                    value={reasoningLevel}
+                    onValueChange={setReasoningLevel}
+                    disabled={!isAdmin || isSaving}
+                  >
+                    <SelectTrigger
+                      id="collab-channel-settings-reasoning-level"
+                      className="w-28 shrink-0"
+                    >
+                      <SelectValue placeholder="Reasoning" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {supportedLevels.map((level) => (
+                        <SelectItem key={level} value={level}>
+                          {REASONING_LEVEL_LABELS[level] || level}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+              </div>
               <p className="text-xs text-muted-foreground">
                 Changes apply to this channel&apos;s AI configuration.
               </p>
@@ -342,6 +402,7 @@ function buildBaseline(values: {
   categoryId: string | null
   aiEnabled: boolean
   modelId: string | null
+  reasoningLevel: string | null
   promptOverlay: string
 }): ChannelSettingsBaseline {
   return {
@@ -350,6 +411,7 @@ function buildBaseline(values: {
     categoryId: values.categoryId,
     aiEnabled: values.aiEnabled,
     modelId: values.modelId,
+    reasoningLevel: values.reasoningLevel,
     promptOverlay: normalizeOptionalText(values.promptOverlay),
   }
 }

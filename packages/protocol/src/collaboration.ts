@@ -1,5 +1,5 @@
 import type { ConversationAttachment, ConversationMessageAttachment } from './attachments.js'
-import type { AgentContextUsage, AgentDescriptor, AgentModelDescriptor, AgentStatus } from './agents.js'
+import type { AgentContextUsage, AgentDescriptor, AgentModelDescriptor, AgentStatus, ManagerReasoningLevel } from './agents.js'
 import type { AgentMessageEvent, AgentToolCallEvent, ProjectAgentMessageContext } from './conversation-events.js'
 import type { MessageSourceContext } from './messaging.js'
 import type { ChoiceAnswer, ChoiceQuestion, ChoiceRequestStatus } from './shared-types.js'
@@ -125,6 +125,8 @@ export interface CollaborationCategory {
   channelCreationDefaults?: CollaborationCategoryChannelCreationDefaults
   /** @deprecated Legacy compatibility field; use channelCreationDefaults.model.modelId instead. */
   defaultModelId?: string
+  /** @deprecated Legacy compatibility field; use channelCreationDefaults.model.thinkingLevel instead. */
+  defaultReasoningLevel?: ManagerReasoningLevel
   position: number
   createdAt: string
   updatedAt: string
@@ -140,6 +142,7 @@ export interface CollaborationChannel {
   description?: string
   aiEnabled: boolean
   modelId?: string
+  reasoningLevel?: ManagerReasoningLevel
   promptOverlay?: string
   position: number
   archived: boolean

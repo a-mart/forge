@@ -18,15 +18,31 @@ import {
 } from '@/components/ui/select'
 import { createCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
-import type { CollaborationCategory } from '@forge/protocol'
+import { REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
+import type { CollaborationCategory, ManagerReasoningLevel, ModelPresetInfo } from '@forge/protocol'
 
 const NO_DEFAULT_MODEL_VALUE = '__none__'
+const NO_REASONING_LEVEL_VALUE = '__none__'
 
 interface CreateCategoryDialogProps {
   open: boolean
   onClose: () => void
   onCreated?: (category: CollaborationCategory) => void
   wsUrl?: string
+}
+
+/** Resolve the preset info for a given family/preset ID. */
+function findPreset(modelPresets: ModelPresetInfo[], familyId: string): ModelPresetInfo | undefined {
+  return modelPresets.find((preset) => preset.presetId === familyId)
+}
+
+/** Get supported reasoning levels for the selected model family. */
+function getSupportedLevelsForFamily(
+  modelPresets: ModelPresetInfo[],
+  familyId: string,
+): ManagerReasoningLevel[] {
+  const preset = findPreset(modelPresets, familyId)
+  return preset?.supportedReasoningLevels ?? []
 }
 
 export function CreateCategoryDialog({
@@ -37,17 +53,38 @@ export function CreateCategoryDialog({
 }: CreateCategoryDialogProps) {
   const [name, setName] = useState('')
   const [defaultModelId, setDefaultModelId] = useState(NO_DEFAULT_MODEL_VALUE)
+  const [reasoningLevel, setReasoningLevel] = useState(NO_REASONING_LEVEL_VALUE)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
   const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
+  const supportedLevels = useMemo(
+    () => defaultModelId !== NO_DEFAULT_MODEL_VALUE
+      ? getSupportedLevelsForFamily(modelPresets, defaultModelId)
+      : [],
+    [modelPresets, defaultModelId],
+  )
+
   useEffect(() => {
     if (!open) return
     setName('')
     setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
+    setReasoningLevel(NO_REASONING_LEVEL_VALUE)
     setError(null)
   }, [open])
+
+  // Reset reasoning level when model changes
+  useEffect(() => {
+    if (defaultModelId === NO_DEFAULT_MODEL_VALUE) {
+      setReasoningLevel(NO_REASONING_LEVEL_VALUE)
+      return
+    }
+    const preset = findPreset(modelPresets, defaultModelId)
+    if (preset) {
+      setReasoningLevel(preset.defaultReasoningLevel)
+    }
+  }, [defaultModelId, modelPresets])
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -59,13 +96,32 @@ export function CreateCategoryDialog({
     setIsSaving(true)
     setError(null)
     try {
+      const hasModel = defaultModelId !== NO_DEFAULT_MODEL_VALUE
+      const preset = hasModel ? findPreset(modelPresets, defaultModelId) : undefined
+
       const category = await createCategory({
         name: trimmedName,
-        ...(defaultModelId !== NO_DEFAULT_MODEL_VALUE ? { defaultModelId } : {}),
+        ...(hasModel && preset
+          ? {
+              channelCreationDefaults: {
+                model: {
+                  provider: preset.provider,
+                  modelId: preset.modelId,
+                  thinkingLevel: reasoningLevel !== NO_REASONING_LEVEL_VALUE
+                    ? reasoningLevel
+                    : preset.defaultReasoningLevel,
+                },
+              },
+              defaultModelId: defaultModelId,
+            }
+          : hasModel
+            ? { defaultModelId }
+            : {}),
       })
       onCreated?.(category)
       setName('')
       setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
+      setReasoningLevel(NO_REASONING_LEVEL_VALUE)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create category')
@@ -95,17 +151,36 @@ export function CreateCategoryDialog({
 
           <div className="space-y-2">
             <Label htmlFor="collab-create-category-default-model">Default model</Label>
-            <Select value={defaultModelId} onValueChange={setDefaultModelId} disabled={isSaving}>
-              <SelectTrigger id="collab-create-category-default-model" className="w-full">
-                <SelectValue placeholder="No default" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_DEFAULT_MODEL_VALUE}>No default</SelectItem>
-                {modelFamilies.map((family) => (
-                  <SelectItem key={family.familyId} value={family.familyId}>{family.displayName}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex gap-2">
+              <Select value={defaultModelId} onValueChange={setDefaultModelId} disabled={isSaving}>
+                <SelectTrigger id="collab-create-category-default-model" className="flex-1">
+                  <SelectValue placeholder="No default" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_DEFAULT_MODEL_VALUE}>No default</SelectItem>
+                  {modelFamilies.map((family) => (
+                    <SelectItem key={family.familyId} value={family.familyId}>{family.displayName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {defaultModelId !== NO_DEFAULT_MODEL_VALUE && supportedLevels.length > 0 ? (
+                <Select value={reasoningLevel} onValueChange={setReasoningLevel} disabled={isSaving}>
+                  <SelectTrigger
+                    id="collab-create-category-reasoning-level"
+                    className="w-28 shrink-0"
+                  >
+                    <SelectValue placeholder="Reasoning" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {supportedLevels.map((level) => (
+                      <SelectItem key={level} value={level}>
+                        {REASONING_LEVEL_LABELS[level] || level}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+            </div>
             <p className="text-xs text-muted-foreground">
               New channels in this category start with this model.
             </p>

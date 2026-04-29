@@ -40,6 +40,7 @@ interface CollaborationChannelRow {
   description: string | null;
   ai_enabled: number;
   model_id: string | null;
+  model_thinking_level: string | null;
   position: number;
   archived: number;
   archived_at: string | null;
@@ -99,6 +100,7 @@ export interface CollaborationChannelRecord {
   description: string | null;
   aiEnabled: boolean;
   modelId: string | null;
+  modelThinkingLevel: string | null;
   position: number;
   archived: boolean;
   archivedAt: string | null;
@@ -161,6 +163,7 @@ export interface CreateCollaborationChannelInput {
   description?: string | null;
   aiEnabled: boolean;
   modelId?: string | null;
+  modelThinkingLevel?: string | null;
   position: number;
   archived?: boolean;
   archivedAt?: string | null;
@@ -180,6 +183,7 @@ export interface UpdateCollaborationChannelInput {
   description?: string | null;
   aiEnabled?: boolean;
   modelId?: string | null;
+  modelThinkingLevel?: string | null;
   position?: number;
   archived?: boolean;
   archivedAt?: string | null;
@@ -428,6 +432,7 @@ export class CollaborationDbHelpers {
          description,
          ai_enabled,
          model_id,
+         model_thinking_level,
          position,
          archived,
          archived_at,
@@ -439,7 +444,7 @@ export class CollaborationDbHelpers {
          created_at,
          updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.channelId,
       input.workspaceId,
@@ -450,6 +455,7 @@ export class CollaborationDbHelpers {
       input.description ?? null,
       input.aiEnabled ? 1 : 0,
       normalizeNullableString(input.modelId ?? null),
+      normalizeNullableString(input.modelThinkingLevel ?? null),
       input.position,
       input.archived ? 1 : 0,
       input.archivedAt ?? null,
@@ -479,6 +485,7 @@ export class CollaborationDbHelpers {
            description = ?,
            ai_enabled = ?,
            model_id = ?,
+           model_thinking_level = ?,
            position = ?,
            archived = ?,
            archived_at = ?,
@@ -495,6 +502,9 @@ export class CollaborationDbHelpers {
       input.description !== undefined ? input.description : existing.description,
       input.aiEnabled !== undefined ? (input.aiEnabled ? 1 : 0) : (existing.aiEnabled ? 1 : 0),
       input.modelId !== undefined ? normalizeNullableString(input.modelId) : normalizeNullableString(existing.modelId),
+      input.modelThinkingLevel !== undefined
+        ? normalizeNullableString(input.modelThinkingLevel)
+        : normalizeNullableString(existing.modelThinkingLevel),
       input.position ?? existing.position,
       input.archived !== undefined ? (input.archived ? 1 : 0) : (existing.archived ? 1 : 0),
       input.archivedAt !== undefined ? input.archivedAt : existing.archivedAt,
@@ -623,6 +633,7 @@ const channelSelectSql = `SELECT channel_id,
   description,
   ai_enabled,
   model_id,
+  model_thinking_level,
   position,
   archived,
   archived_at,
@@ -687,6 +698,7 @@ function mapChannelRow(row: CollaborationChannelRow): CollaborationChannelRecord
     description: row.description,
     aiEnabled: row.ai_enabled === 1,
     modelId: row.model_id,
+    modelThinkingLevel: row.model_thinking_level,
     position: row.position,
     archived: row.archived === 1,
     archivedAt: row.archived_at,

@@ -16,10 +16,21 @@ globalThis.ResizeObserver ??= class ResizeObserver {
 vi.mock('@/lib/model-preset', () => ({
   useModelPresets: () => [],
   getAvailableChangeManagerFamilies: () => [],
+  getSupportedReasoningLevelsForModelId: () => [],
 }))
 
 vi.mock('@/lib/collaboration-endpoints', () => ({
   resolveCollaborationApiBaseUrl: () => 'http://localhost:47187',
+}))
+
+vi.mock('@/components/settings/specialists/types', () => ({
+  REASONING_LEVEL_LABELS: {
+    none: 'None',
+    low: 'Low',
+    medium: 'Medium',
+    high: 'High',
+    xhigh: 'Max',
+  },
 }))
 
 const apiMocks = vi.hoisted(() => ({
@@ -140,5 +151,17 @@ describe('ChannelSettingsSheet', () => {
       aiEnabled: true,
       promptOverlay: 'Updated guidance',
     })
+  })
+
+  it('tracks reasoningLevel in baseline and change detection', () => {
+    renderSheet({ reasoningLevel: 'high' })
+
+    // No changes yet — save should be disabled
+    const saveButton = Array.from(document.body.querySelectorAll('button[type="submit"]')).find(
+      (btn) => btn.textContent?.includes('Save'),
+    ) as HTMLButtonElement | undefined
+
+    expect(saveButton).toBeTruthy()
+    expect(saveButton?.disabled).toBe(true)
   })
 })

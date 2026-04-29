@@ -31,6 +31,7 @@ const EXPECTED_MIGRATIONS = [
   "0004-collaboration-workspace.sql",
   "0005-collaboration-audit-log.sql",
   "0006-collab-category-defaults-upgrade.sql",
+  "0007-collab-channel-reasoning.sql",
 ] as const;
 
 const LEGACY_0004_COLLABORATION_WORKSPACE_SQL = `CREATE TABLE IF NOT EXISTS collab_workspace (
@@ -280,12 +281,14 @@ describe("collaboration auth DB", () => {
     expect(listTableColumns(database, "collab_category")).not.toContain("default_model_provider");
     expect(listTableColumns(database, "collab_category")).not.toContain("default_model_thinking_level");
     expect(listTableColumns(database, "collab_category")).not.toContain("default_cwd");
+    expect(listTableColumns(database, "collab_channel")).not.toContain("model_thinking_level");
 
     await runCollaborationAuthMigrations(config);
 
     expect(listTableColumns(database, "collab_category")).toContain("default_model_provider");
     expect(listTableColumns(database, "collab_category")).toContain("default_model_thinking_level");
     expect(listTableColumns(database, "collab_category")).toContain("default_cwd");
+    expect(listTableColumns(database, "collab_channel")).toContain("model_thinking_level");
 
     const upgradedCategory = database.prepare<[], {
       default_model_id: string | null;

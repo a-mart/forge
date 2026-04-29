@@ -81,6 +81,7 @@ export async function updateChannel(
     categoryId?: string | null
     aiEnabled?: boolean
     modelId?: string
+    reasoningLevel?: string
     promptOverlay?: string | null
   },
 ): Promise<CollaborationChannel> {

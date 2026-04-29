@@ -12,7 +12,7 @@ import { CollaborationChannelService } from "../../collaboration/channel-service
 import type { CollaborationReadinessRequestService } from "../../collaboration/readiness-service.js";
 import { CollaborationWorkspaceService } from "../../collaboration/workspace-service.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
-import { inferSwarmModelPresetFromDescriptor } from "../../swarm/model-presets.js";
+import { attachEffectiveChannelModelSettings } from "../../collaboration/channel-service.js";
 import type {
   ChoiceAnswer,
   ChoiceQuestion,
@@ -178,7 +178,7 @@ export class CollabCommandHandler {
           .listChannels({ workspaceId: workspace.workspaceId })
           .map((channel) =>
             toBootstrapChannel(
-              attachEffectiveModelId(this.swarmManager, channel),
+              attachEffectiveChannelModelSettings(this.swarmManager, channel),
               dbHelpers.getChannelUserState(channel.channelId, authContext.userId),
             ),
           )
@@ -201,7 +201,7 @@ export class CollabCommandHandler {
     channelId: string,
   ): Promise<void> {
     const { channelService } = await this.getServices();
-    const channel = attachEffectiveModelId(this.swarmManager, channelService.getChannel(channelId));
+    const channel = attachEffectiveChannelModelSettings(this.swarmManager, channelService.getChannel(channelId));
     this.subscriptionManager.subscribe(socket, authContext, channel);
 
     this.send(socket, {
@@ -606,21 +606,4 @@ export function toCollaborationCommandError(code: string, message: string): Erro
     code,
     message,
   };
-}
-
-function attachEffectiveModelId(
-  swarmManager: SwarmManager,
-  channel: CollaborationChannel,
-): CollaborationChannel {
-  if (channel.modelId) {
-    return channel;
-  }
-
-  const descriptor = swarmManager.getAgent(channel.sessionAgentId);
-  const inferredModelId = inferSwarmModelPresetFromDescriptor(descriptor?.model);
-  if (!inferredModelId) {
-    return channel;
-  }
-
-  return { ...channel, modelId: inferredModelId };
 }

@@ -18,6 +18,16 @@ vi.mock('@/lib/model-preset', () => ({
   getAvailableChangeManagerFamilies: () => [],
 }))
 
+vi.mock('@/components/settings/specialists/types', () => ({
+  REASONING_LEVEL_LABELS: {
+    none: 'None',
+    low: 'Low',
+    medium: 'Medium',
+    high: 'High',
+    xhigh: 'Max',
+  },
+}))
+
 const apiMocks = vi.hoisted(() => ({
   createCategory: vi.fn(),
   updateCategory: vi.fn(),
@@ -141,7 +151,7 @@ describe('RenameCategoryDialog', () => {
     expect(labels).toEqual(expect.arrayContaining(['Name', 'Default model']))
   })
 
-  it('submits the expected update payload', async () => {
+  it('submits the expected update payload with channelCreationDefaults cleared', async () => {
     apiMocks.updateCategory.mockResolvedValue({ ...category, name: 'Engineering' })
 
     flushSync(() => {
@@ -171,6 +181,7 @@ describe('RenameCategoryDialog', () => {
     expect(callArgs).toEqual({
       name: 'Engineering',
       defaultModelId: null,
+      channelCreationDefaults: null,
     })
   })
 })

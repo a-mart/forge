@@ -1,4 +1,5 @@
 import type { CollaborationCategory } from "@forge/protocol";
+import { parseSwarmReasoningLevel } from "../../../../swarm/model-presets.js";
 import type { CollaborationReadinessRequestService } from "../../../../collaboration/readiness-service.js";
 import type { HttpRoute } from "../../shared/http-route.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../../http-utils.js";
@@ -207,6 +208,7 @@ function parseCreateCategoryBody(body: unknown): {
   name: string;
   channelCreationDefaults?: CollaborationCategory["channelCreationDefaults"] | null;
   defaultModelId?: string | null;
+  defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
 } {
   const parsed = parseCategoryBody(body);
   if (!parsed.name) {
@@ -217,6 +219,7 @@ function parseCreateCategoryBody(body: unknown): {
     name: parsed.name,
     ...(parsed.channelCreationDefaults !== undefined ? { channelCreationDefaults: parsed.channelCreationDefaults } : {}),
     ...(parsed.defaultModelId !== undefined ? { defaultModelId: parsed.defaultModelId } : {}),
+    ...(parsed.defaultReasoningLevel !== undefined ? { defaultReasoningLevel: parsed.defaultReasoningLevel } : {}),
   };
 }
 
@@ -224,6 +227,7 @@ function parseUpdateCategoryBody(body: unknown): {
   name?: string;
   channelCreationDefaults?: CollaborationCategory["channelCreationDefaults"] | null;
   defaultModelId?: string | null;
+  defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
 } {
   return parseCategoryBody(body);
 }
@@ -232,12 +236,14 @@ function parseCategoryBody(body: unknown): {
   name?: string;
   channelCreationDefaults?: CollaborationCategory["channelCreationDefaults"] | null;
   defaultModelId?: string | null;
+  defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
 } {
   const input = expectObjectBody(body);
   const parsed: {
     name?: string;
     channelCreationDefaults?: CollaborationCategory["channelCreationDefaults"] | null;
     defaultModelId?: string | null;
+    defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
   } = {};
 
   if (input.name !== undefined) {
@@ -252,6 +258,17 @@ function parseCategoryBody(body: unknown): {
       throw new Error("defaultModelId must be a non-empty string or null when provided");
     }
     parsed.defaultModelId = input.defaultModelId === null ? null : input.defaultModelId.trim();
+  }
+
+  if (input.defaultReasoningLevel !== undefined) {
+    if (input.defaultReasoningLevel === null) {
+      parsed.defaultReasoningLevel = null;
+    } else {
+      parsed.defaultReasoningLevel = parseSwarmReasoningLevel(
+        input.defaultReasoningLevel,
+        "defaultReasoningLevel",
+      );
+    }
   }
 
   if (input.channelCreationDefaults !== undefined) {

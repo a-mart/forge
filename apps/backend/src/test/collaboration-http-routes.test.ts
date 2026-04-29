@@ -1,8 +1,9 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getOrCreateCollaborationBetterAuthService, clearCollaborationBetterAuthService } from "../collaboration/auth/better-auth-service.js";
+import { resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
 import { closeCollaborationAuthDb } from "../collaboration/auth/collaboration-db.js";
 import { startServer, type StartedServer } from "../server.js";
 import { createTempConfig, type TempConfigHandle } from "../test-support/temp-config.js";
@@ -225,15 +226,24 @@ describe("collaboration HTTP routes", () => {
       body: JSON.stringify({
         name: "Planning",
         defaultModelId: "pi-opus",
+        defaultReasoningLevel: "low",
       }),
     });
     expect(createCategoryResponse.status).toBe(200);
     const createCategoryBody = await createCategoryResponse.json() as {
       ok: true;
-      category: { categoryId: string; name: string; defaultModelId?: string };
+      category: {
+        categoryId: string;
+        name: string;
+        defaultModelId?: string;
+        defaultReasoningLevel?: string;
+        channelCreationDefaults?: { model: { thinkingLevel: string } };
+      };
     };
     expect(createCategoryBody.category.name).toBe("Planning");
     expect(createCategoryBody.category.defaultModelId).toBe("pi-opus");
+    expect(createCategoryBody.category.defaultReasoningLevel).toBe("low");
+    expect(createCategoryBody.category.channelCreationDefaults?.model.thinkingLevel).toBe("low");
 
     const categoriesUnauthedResponse = await fetch(`${baseUrl}/api/collaboration/categories`);
     expect(categoriesUnauthedResponse.status).toBe(401);
@@ -249,6 +259,10 @@ describe("collaboration HTTP routes", () => {
           categoryId: createCategoryBody.category.categoryId,
           name: "Planning",
           defaultModelId: "pi-opus",
+          defaultReasoningLevel: "low",
+          channelCreationDefaults: expect.objectContaining({
+            model: expect.objectContaining({ thinkingLevel: "low" }),
+          }),
         }),
       ],
     });
@@ -284,10 +298,20 @@ describe("collaboration HTTP routes", () => {
     expect(createChannelResponse.status).toBe(200);
     const createChannelBody = await createChannelResponse.json() as {
       ok: true;
-      channel: { channelId: string; sessionAgentId: string; modelId?: string; description?: string };
+      channel: {
+        channelId: string;
+        sessionAgentId: string;
+        modelId?: string;
+        reasoningLevel?: string;
+        description?: string;
+      };
     };
     expect(createChannelBody.channel.description).toBe("Primary room");
     expect(createChannelBody.channel.modelId).toBe("pi-opus");
+    expect(createChannelBody.channel.reasoningLevel).toBe("low");
+    await expect(readStoredChannelModel(config.paths.agentsStoreFile, createChannelBody.channel.sessionAgentId)).resolves.toMatchObject({
+      thinkingLevel: "low",
+    });
 
     const channelsUnauthedResponse = await fetch(`${baseUrl}/api/collaboration/channels`);
     expect(channelsUnauthedResponse.status).toBe(401);
@@ -303,6 +327,7 @@ describe("collaboration HTTP routes", () => {
           channelId: createChannelBody.channel.channelId,
           name: "General",
           modelId: "pi-opus",
+          reasoningLevel: "low",
         }),
       ],
     });
@@ -323,6 +348,54 @@ describe("collaboration HTTP routes", () => {
       ],
     });
 
+    const updateChannelReasoningResponse = await fetch(`${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify({
+        reasoningLevel: "high",
+      }),
+    });
+    expect(updateChannelReasoningResponse.status).toBe(200);
+    await expect(updateChannelReasoningResponse.json()).resolves.toMatchObject({
+      ok: true,
+      channel: expect.objectContaining({
+        channelId: createChannelBody.channel.channelId,
+        modelId: "pi-opus",
+        reasoningLevel: "high",
+      }),
+    });
+    await expect(readStoredChannelModel(config.paths.agentsStoreFile, createChannelBody.channel.sessionAgentId)).resolves.toMatchObject({
+      thinkingLevel: "high",
+    });
+
+    const codexDefaultReasoning = resolveModelDescriptorFromPreset("pi-codex").thinkingLevel;
+    const updateChannelModelResponse = await fetch(`${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify({
+        modelId: "pi-codex",
+      }),
+    });
+    expect(updateChannelModelResponse.status).toBe(200);
+    await expect(updateChannelModelResponse.json()).resolves.toMatchObject({
+      ok: true,
+      channel: expect.objectContaining({
+        channelId: createChannelBody.channel.channelId,
+        modelId: "pi-codex",
+        reasoningLevel: codexDefaultReasoning,
+      }),
+    });
+    await expect(readStoredChannelModel(config.paths.agentsStoreFile, createChannelBody.channel.sessionAgentId)).resolves.toMatchObject({
+      thinkingLevel: codexDefaultReasoning,
+      modelId: resolveModelDescriptorFromPreset("pi-codex").modelId,
+    });
+
     const updateChannelResponse = await fetch(`${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}`, {
       method: "PATCH",
       headers: {
@@ -338,6 +411,8 @@ describe("collaboration HTTP routes", () => {
       ok: true,
       channel: expect.objectContaining({
         channelId: createChannelBody.channel.channelId,
+        modelId: "pi-codex",
+        reasoningLevel: codexDefaultReasoning,
         promptOverlay: "Prefer concise answers.",
       }),
     });
@@ -456,4 +531,19 @@ function setCookieHeadersToCookieHeader(setCookies: string[]): string {
       return firstSeparatorIndex >= 0 ? cookie.slice(0, firstSeparatorIndex) : cookie;
     })
     .join("; ");
+}
+
+async function readStoredChannelModel(
+  agentsStoreFile: string,
+  sessionAgentId: string,
+): Promise<{ modelId: string; thinkingLevel: string }> {
+  const store = JSON.parse(await readFile(agentsStoreFile, "utf8")) as {
+    agents: Array<{ agentId: string; model: { modelId: string; thinkingLevel: string } }>;
+  };
+  const agent = store.agents.find((entry) => entry.agentId === sessionAgentId);
+  if (!agent) {
+    throw new Error(`Missing persisted channel agent ${sessionAgentId}`);
+  }
+
+  return agent.model;
 }

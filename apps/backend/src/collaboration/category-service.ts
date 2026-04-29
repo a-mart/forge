@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { CollaborationCategory } from "@forge/protocol";
 import { inferSwarmModelPresetFromDescriptor, resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
-import type { AgentModelDescriptor } from "../swarm/types.js";
+import type { AgentModelDescriptor, SwarmReasoningLevel } from "../swarm/types.js";
 import type { CollaborationDbHelpers } from "./collab-db-helpers.js";
 
 export interface CreateCollaborationCategoryParams {
@@ -12,6 +12,7 @@ export interface CreateCollaborationCategoryParams {
     cwd?: string;
   } | null;
   defaultModelId?: string | null;
+  defaultReasoningLevel?: SwarmReasoningLevel | null;
   position?: number;
 }
 
@@ -22,6 +23,7 @@ export interface UpdateCollaborationCategoryParams {
     cwd?: string;
   } | null;
   defaultModelId?: string | null;
+  defaultReasoningLevel?: SwarmReasoningLevel | null;
 }
 
 export interface ReorderCollaborationCategoriesParams {
@@ -68,7 +70,7 @@ export class CollaborationCategoryService {
     this.requireWorkspace(normalizedWorkspaceId);
     const categories = this.dbHelpers.listCategories(normalizedWorkspaceId);
     const now = new Date().toISOString();
-    const defaults = normalizeCategoryDefaults(params);
+    const defaults = resolveCreateCategoryDefaults(params);
 
     try {
       return toCategoryDto(
@@ -105,8 +107,8 @@ export class CollaborationCategoryService {
       update.name = normalizeRequiredString(params.name, "name");
     }
 
-    if (params.channelCreationDefaults !== undefined || params.defaultModelId !== undefined) {
-      const defaults = normalizeCategoryDefaults(params);
+    if (hasCategoryDefaultsUpdate(params)) {
+      const defaults = resolveUpdatedCategoryDefaults(existing, params);
       update.defaultModelProvider = defaults?.model.provider ?? null;
       update.defaultModelId = defaults?.model.modelId ?? null;
       update.defaultModelThinkingLevel = defaults?.model.thinkingLevel ?? null;
@@ -249,6 +251,7 @@ function toCategoryDto(record: {
         }
       : {}),
     ...(defaultModelId ? { defaultModelId } : {}),
+    ...(model ? { defaultReasoningLevel: normalizeReasoningLevel(model.thinkingLevel) } : {}),
     position: record.position,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -271,8 +274,78 @@ function toCategoryModelDescriptor(record: {
   return null;
 }
 
-function normalizeCategoryDefaults(
-  params: Pick<CreateCollaborationCategoryParams | UpdateCollaborationCategoryParams, "channelCreationDefaults" | "defaultModelId">,
+function hasCategoryDefaultsUpdate(
+  params: Pick<CreateCollaborationCategoryParams | UpdateCollaborationCategoryParams, "channelCreationDefaults" | "defaultModelId" | "defaultReasoningLevel">,
+): boolean {
+  return (
+    params.channelCreationDefaults !== undefined ||
+    params.defaultModelId !== undefined ||
+    params.defaultReasoningLevel !== undefined
+  );
+}
+
+function resolveCreateCategoryDefaults(
+  params: Pick<CreateCollaborationCategoryParams, "channelCreationDefaults" | "defaultModelId" | "defaultReasoningLevel">,
+): { model: AgentModelDescriptor; cwd?: string } | null {
+  return resolveCategoryDefaultsInput(params);
+}
+
+function resolveUpdatedCategoryDefaults(
+  existing: {
+    defaultModelProvider: string | null;
+    defaultModelId: string | null;
+    defaultModelThinkingLevel: string | null;
+    defaultCwd: string | null;
+  },
+  params: Pick<UpdateCollaborationCategoryParams, "channelCreationDefaults" | "defaultModelId" | "defaultReasoningLevel">,
+): { model: AgentModelDescriptor; cwd?: string } | null {
+  if (params.channelCreationDefaults !== undefined) {
+    return resolveCategoryDefaultsInput(params);
+  }
+
+  if (params.defaultModelId === null) {
+    return null;
+  }
+
+  const currentModel = toCategoryModelDescriptor(existing);
+  const currentModelPreset = currentModel ? inferSwarmModelPresetFromDescriptor(currentModel) : undefined;
+  const requestedModelDescriptor =
+    params.defaultModelId !== undefined ? resolveModelDescriptorFromPreset(params.defaultModelId) : undefined;
+  const descriptor = requestedModelDescriptor ?? currentModel;
+  if (!descriptor) {
+    if (params.defaultReasoningLevel !== undefined) {
+      throw new Error("defaultReasoningLevel requires a category default model");
+    }
+    return null;
+  }
+
+  const preservedReasoningLevel =
+    params.defaultModelId === undefined || params.defaultModelId === currentModelPreset
+      ? normalizeReasoningLevel(existing.defaultModelThinkingLevel)
+      : undefined;
+  const defaultReasoningLevel = normalizeReasoningLevel(
+    requestedModelDescriptor?.thinkingLevel ??
+      (currentModelPreset ? resolveModelDescriptorFromPreset(currentModelPreset).thinkingLevel : descriptor.thinkingLevel),
+  ) ?? descriptor.thinkingLevel;
+  const reasoningLevel =
+    params.defaultReasoningLevel === undefined
+      ? preservedReasoningLevel ?? defaultReasoningLevel
+      : params.defaultReasoningLevel === null
+        ? defaultReasoningLevel
+        : params.defaultReasoningLevel;
+  const cwd = normalizeOptionalString(existing.defaultCwd ?? undefined);
+
+  return {
+    model: {
+      ...descriptor,
+      thinkingLevel: reasoningLevel,
+    },
+    ...(cwd ? { cwd } : {}),
+  };
+}
+
+function resolveCategoryDefaultsInput(
+  params: Pick<CreateCollaborationCategoryParams | UpdateCollaborationCategoryParams, "channelCreationDefaults" | "defaultModelId" | "defaultReasoningLevel">,
 ): { model: AgentModelDescriptor; cwd?: string } | null {
   if (params.channelCreationDefaults !== undefined) {
     if (params.channelCreationDefaults === null) {
@@ -301,7 +374,12 @@ function normalizeCategoryDefaults(
   }
 
   const descriptor = resolveModelDescriptorFromPreset(params.defaultModelId);
-  return { model: descriptor };
+  return {
+    model: {
+      ...descriptor,
+      thinkingLevel: params.defaultReasoningLevel ?? descriptor.thinkingLevel,
+    },
+  };
 }
 
 function nextCategoryPosition(categories: Array<{ position: number }>): number {
@@ -356,4 +434,24 @@ function isUniqueConstraintError(error: unknown): boolean {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function normalizeReasoningLevel(value: string | null | undefined): SwarmReasoningLevel | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case "none":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return normalized;
+    case "x-high":
+      return "xhigh";
+    default:
+      return undefined;
+  }
 }

@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS collab_channel (
   description TEXT,
   ai_enabled INTEGER NOT NULL DEFAULT 1 CHECK (ai_enabled IN (0, 1)),
   model_id TEXT,
+  model_thinking_level TEXT,
   position INTEGER NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT,
@@ -210,6 +211,12 @@ CREATE INDEX IF NOT EXISTS collaboration_audit_log_target_invite_id_idx ON colla
       addColumnIfMissing(database, "collab_category", "default_model_provider", "TEXT");
       addColumnIfMissing(database, "collab_category", "default_model_thinking_level", "TEXT");
       addColumnIfMissing(database, "collab_category", "default_cwd", "TEXT");
+    },
+  },
+  {
+    name: "0007-collab-channel-reasoning.sql",
+    apply: (database) => {
+      addColumnIfMissing(database, "collab_channel", "model_thinking_level", "TEXT");
     },
   },
 ];
