@@ -25,6 +25,9 @@ const defaultSurfaceMock = vi.hoisted(() => ({
 const builderSurfacePropsMock = vi.hoisted(() => ({
   value: null as null | Record<string, unknown>,
 }))
+const collabServerUrlMock = vi.hoisted(() => ({
+  value: null as string | null,
+}))
 
 vi.mock('@/components/index-page/BuilderSurface', () => ({
   BuilderSurface: (props: Record<string, unknown>) => {
@@ -48,6 +51,11 @@ vi.mock('@/hooks/use-collaboration-session', () => ({
 
 vi.mock('@/lib/backend-url', () => ({
   resolveBackendWsUrl: () => 'ws://forge.test/ws',
+}))
+
+vi.mock('@/lib/collaboration-endpoints', () => ({
+  resolveCollaborationWsUrl: () => 'ws://forge.test/ws',
+  getCollabServerUrl: () => collabServerUrlMock.value,
 }))
 
 vi.mock('@/lib/electron-bridge', () => ({
@@ -86,6 +94,7 @@ beforeEach(() => {
   collabSessionHookMock.mockReset()
   builderSurfacePropsMock.value = null
   defaultSurfaceMock.value = 'builder'
+  collabServerUrlMock.value = null
   collabSessionHookMock.mockReturnValue({
     isCollabEnabled: false,
     isAdmin: false,
@@ -323,5 +332,69 @@ describe('IndexPage collab bootstrap gating', () => {
     // Admin should see collab surface with settings
     expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
     expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
+  })
+
+  it('shows collab mode switch when server URL is configured but server is offline', () => {
+    collabServerUrlMock.value = 'https://collab.example.com'
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: false,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    expect(builderSurfacePropsMock.value).toMatchObject({
+      collaborationModeSwitch: {
+        activeSurface: 'builder',
+      },
+    })
+  })
+
+  it('renders collab surface when server URL is configured but offline and user navigates to collab', () => {
+    collabServerUrlMock.value = 'https://collab.example.com'
+    routeStateMock.value = {
+      routeState: {
+        view: 'chat',
+        agentId: '__default__',
+        surface: 'collab',
+      },
+      activeView: 'chat',
+      activeSurface: 'collab',
+      navigateToRoute: vi.fn(),
+    }
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: false,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
+    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
+  })
+
+  it('hides mode switch when no server URL is configured and collab is not enabled', () => {
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: false,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    expect(builderSurfacePropsMock.value?.collaborationModeSwitch).toBeUndefined()
   })
 })

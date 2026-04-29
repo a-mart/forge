@@ -82,7 +82,7 @@ export function IndexPage() {
     // Forced collab settings must stay on collab even when unauthenticated — renders blocked state
     if (isForcedCollabSettings) return 'collab'
     if (isCollabUnauthenticated && defaultSurface !== 'collab') return 'builder'
-    return collabSession.isCollabEnabled ? 'collab' : 'builder'
+    return (collabSession.isCollabEnabled || hasConfiguredCollabServer) ? 'collab' : 'builder'
   }, [activeSurface, collabSession.isCollabEnabled, defaultSurface, hasConfiguredCollabServer, inElectron, isForcedCollabSettings, isCollabUnauthenticated, shouldBlockOnCollabBootstrap])
 
   useEffect(() => {
@@ -217,7 +217,7 @@ export function IndexPage() {
             activeView={activeView}
             navigateToRoute={navigateToRoute}
             collaborationModeSwitch={
-              activeView === 'chat' && collabSession.isCollabEnabled && collabSession.isAdmin
+              activeView === 'chat' && ((collabSession.isCollabEnabled && collabSession.isAdmin) || hasConfiguredCollabServer)
                 ? {
                     activeSurface: 'builder',
                     onSelectSurface: (surface) => {
