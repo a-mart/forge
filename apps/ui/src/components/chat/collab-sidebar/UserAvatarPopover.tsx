@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { LogOut, Settings } from 'lucide-react'
+import { LogOut } from 'lucide-react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,6 @@ import type { CollaborationBootstrapCurrentUser } from '@forge/protocol'
 interface UserAvatarPopoverProps {
   wsUrl: string
   currentUser: CollaborationBootstrapCurrentUser | null
-  onOpenSettings?: () => void
 }
 
 function getInitial(user: CollaborationBootstrapCurrentUser | null): string {
@@ -26,7 +25,7 @@ function getInitial(user: CollaborationBootstrapCurrentUser | null): string {
   return source.charAt(0).toUpperCase() || '?'
 }
 
-export function UserAvatarPopover({ wsUrl, currentUser, onOpenSettings }: UserAvatarPopoverProps) {
+export function UserAvatarPopover({ wsUrl, currentUser }: UserAvatarPopoverProps) {
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [open, setOpen] = useState(false)
 
@@ -91,19 +90,6 @@ export function UserAvatarPopover({ wsUrl, currentUser, onOpenSettings }: UserAv
               </Badge>
             ) : null}
           </div>
-          {onOpenSettings ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 w-full justify-start gap-2 px-2 text-xs text-muted-foreground hover:text-sidebar-foreground"
-              onClick={onOpenSettings}
-              aria-label="Collab Settings"
-            >
-              <Settings className="size-3.5" />
-              Settings
-            </Button>
-          ) : null}
           <Button
             type="button"
             variant="ghost"

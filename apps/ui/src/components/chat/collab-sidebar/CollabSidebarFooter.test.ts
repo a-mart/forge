@@ -81,9 +81,7 @@ describe('UserAvatarPopover', () => {
     })
   })
 
-  it('shows Settings button when onOpenSettings is provided (admin)', async () => {
-    const onOpenSettings = vi.fn()
-
+  it('does not show Settings button in the profile popover (moved to sidebar footer)', async () => {
     flushSync(() => {
       root.render(
         createElement(
@@ -98,7 +96,6 @@ describe('UserAvatarPopover', () => {
               role: 'admin',
               disabled: false,
             },
-            onOpenSettings,
           }),
         ),
       )
@@ -109,44 +106,10 @@ describe('UserAvatarPopover', () => {
     fireEvent.click(trigger)
 
     await waitFor(() => {
-      expect(getByRole(document.body, 'button', { name: 'Collab Settings' })).toBeTruthy()
-    })
-
-    fireEvent.click(getByRole(document.body, 'button', { name: 'Collab Settings' }))
-
-    expect(onOpenSettings).toHaveBeenCalledOnce()
-  })
-
-  it('does not show Settings button when onOpenSettings is not provided (member)', async () => {
-    flushSync(() => {
-      root.render(
-        createElement(
-          TooltipProvider,
-          null,
-          createElement(UserAvatarPopover, {
-            wsUrl: 'ws://127.0.0.1:47387',
-            currentUser: {
-              userId: 'user-2',
-              email: 'member@test.com',
-              name: 'Member',
-              role: 'member',
-              disabled: false,
-            },
-            // no onOpenSettings — member should not see it
-          }),
-        ),
-      )
-    })
-
-    // Open the user popover by clicking the avatar trigger
-    const trigger = getByRole(container, 'button', { name: 'Member' })
-    fireEvent.click(trigger)
-
-    await waitFor(() => {
       expect(getByRole(document.body, 'button', { name: 'Sign out' })).toBeTruthy()
     })
 
-    // Settings button should not be present
+    // Settings button should not be present — settings access is in the sidebar footer
     const allButtons = document.body.querySelectorAll('button')
     const settingsButton = Array.from(allButtons).find(btn => btn.getAttribute('aria-label') === 'Collab Settings')
     expect(settingsButton).toBeUndefined()

@@ -16,8 +16,8 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { FolderPlus, MoreHorizontal, Plus } from 'lucide-react'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { FolderPlus, MoreHorizontal, Plus, Settings } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCollabWsContext } from '@/hooks/index-page/use-collab-ws-connection'
 import type { ActiveSurface } from '@/hooks/index-page/use-route-state'
 import { reorderCategories, reorderChannels, updateChannel } from '@/lib/collaboration-api'
@@ -27,6 +27,7 @@ import {
   getChannelUnreadCount,
   isChannelMuted,
 } from '@/lib/collab-selectors'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -54,16 +55,20 @@ interface CollabSidebarProps {
   wsUrl: string
   selectedChannelId?: string
   activeSurface: ActiveSurface
+  isSettingsActive?: boolean
   onSelectChannel: (channelId?: string) => void
   onSelectSurface: (surface: ActiveSurface) => void
+  onOpenSettings?: () => void
 }
 
 export function CollabSidebar({
   wsUrl,
   selectedChannelId,
   activeSurface,
+  isSettingsActive = false,
   onSelectChannel,
   onSelectSurface,
+  onOpenSettings,
 }: CollabSidebarProps) {
   const { clientRef, state } = useCollabWsContext()
   const sensors = useSensors(
@@ -427,6 +432,35 @@ export function CollabSidebar({
             ) : null}
           </DragOverlay>
         </DndContext>
+
+        {/* Footer: settings icon (admin only, mirrors Builder sidebar footer) */}
+        {onOpenSettings ? (
+          <div className="shrink-0 border-t border-sidebar-border">
+            <TooltipProvider delayDuration={200}>
+              <div className="flex items-center justify-center gap-1 px-2 py-1.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={onOpenSettings}
+                      className={cn(
+                        'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                        isSettingsActive
+                          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                          : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+                      )}
+                      aria-label="Settings"
+                      aria-pressed={isSettingsActive}
+                    >
+                      <Settings aria-hidden="true" className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={6}>Settings</TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
+          </div>
+        ) : null}
 
       </aside>
 

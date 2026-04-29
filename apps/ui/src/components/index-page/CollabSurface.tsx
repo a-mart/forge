@@ -55,8 +55,10 @@ export function CollabSurface({
         wsUrl={wsUrl}
         selectedChannelId={channel}
         activeSurface={activeSurface}
+        isSettingsActive={isSettingsView}
         onSelectChannel={onSelectChannel}
         onSelectSurface={onSelectSurface}
+        onOpenSettings={isAdmin ? onOpenSettings : undefined}
       />
 
       {isSettingsView ? (
@@ -72,7 +74,6 @@ export function CollabSurface({
           wsUrl={wsUrl}
           channelId={channel}
           onSelectChannel={onSelectChannel}
-          onOpenSettings={isAdmin ? onOpenSettings : undefined}
         />
       )}
     </CollabWsProvider>

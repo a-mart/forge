@@ -57,7 +57,6 @@ interface CollabHeaderProps {
   /** User profile popover (top-right) */
   wsUrl?: string
   currentUser?: CollaborationBootstrapCurrentUser | null
-  onOpenSettings?: () => void
 }
 
 function ChannelToggleButton({
@@ -105,7 +104,6 @@ export function CollabHeader({
   onToggleWorkerPanel,
   wsUrl,
   currentUser,
-  onOpenSettings,
 }: CollabHeaderProps) {
   const breadcrumb = useMemo(() => {
     if (!categoryName) {
@@ -288,7 +286,6 @@ export function CollabHeader({
                 <UserAvatarPopover
                   wsUrl={wsUrl}
                   currentUser={currentUser ?? null}
-                  onOpenSettings={onOpenSettings}
                 />
               </TooltipProvider>
             </>

@@ -23,7 +23,6 @@ interface CollabWorkspaceProps {
   wsUrl: string
   channelId?: string
   onSelectChannel?: (channelId?: string) => void
-  onOpenSettings?: () => void
 }
 
 /**
@@ -56,7 +55,6 @@ export function CollabWorkspace({
   wsUrl,
   channelId,
   onSelectChannel,
-  onOpenSettings,
 }: CollabWorkspaceProps) {
   const { clientRef, state } = useCollabWsContext()
   const previousChannelIdRef = useRef<string | undefined>(undefined)
@@ -371,7 +369,6 @@ export function CollabWorkspace({
           onToggleWorkerPanel={state.sessionWorkers.length > 0 ? handleToggleWorkerPanel : undefined}
           wsUrl={wsUrl}
           currentUser={state.currentUser}
-          onOpenSettings={onOpenSettings}
         />
       ) : null}
 
@@ -406,7 +403,6 @@ export function CollabWorkspace({
             <UserAvatarPopover
               wsUrl={wsUrl}
               currentUser={state.currentUser}
-              onOpenSettings={onOpenSettings}
             />
           </TooltipProvider>
         </div>
