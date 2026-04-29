@@ -314,7 +314,7 @@ pnpm prod:restart
 Production defaults:
 - Backend: `http://127.0.0.1:47287`
 - UI: `http://127.0.0.1:47189`
-- Docker collaboration compose: `http://127.0.0.1:47387` on the host by default (`47287` stays container-internal). Its default trusted origins allow local Forge UI dev on `http://127.0.0.1:47188` and local preview on `http://127.0.0.1:47189`.
+- Docker collaboration compose: `http://127.0.0.1:47387` on the host by default (`47287` stays container-internal), with persistent data visible in `./.forge-collaboration-data` (`/var/lib/forge` in the container). Its default trusted origins allow local Forge UI dev on `http://127.0.0.1:47188` and local preview on `http://127.0.0.1:47189`.
 
 ## Platform Notes
 

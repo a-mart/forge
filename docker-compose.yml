@@ -23,8 +23,7 @@ services:
     ports:
       - '${FORGE_PUBLIC_PORT:-47387}:47287'
     volumes:
-      - forge-collaboration-data:/var/lib/forge
+      # Visible host-side collaboration data. This directory is gitignored and
+      # intentionally left on disk when containers are removed.
+      - ./.forge-collaboration-data:/var/lib/forge
     restart: unless-stopped
-
-volumes:
-  forge-collaboration-data:

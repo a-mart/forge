@@ -7,6 +7,7 @@ node_modules/
 .env
 .middleman-test/
 .forge-test/
+.forge-collaboration-data/
 .cta.json
 
 # Internal development artifacts

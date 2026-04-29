@@ -229,7 +229,7 @@ See [PI_EXTENSIONS.md](PI_EXTENSIONS.md) for the full guide, including writing e
 |------|---------|-----|
 | Development (`pnpm dev`) | `47187` | `47188` |
 | Production (`pnpm prod`) | `47287` | `47189` |
-| Docker collaboration compose (host -> container) | `47387 -> 47287` by default | Same origin on `47387` by default |
+| Docker collaboration compose (host -> container) | `47387 -> 47287` by default | Same origin on `47387` by default; data bind-mounted at `./.forge-collaboration-data -> /var/lib/forge` |
 
 ## Remote / Network Access
 
