@@ -214,6 +214,25 @@ describe('CreateCategoryDialog', () => {
       defaultSelectedSpecialistHandles: ['backend'],
     })
   })
+
+  it('fetches specialists with collaboration targetSpace', async () => {
+    flushSync(() => {
+      root.render(
+        createElement(CreateCategoryDialog, {
+          open: true,
+          onClose: vi.fn(),
+          wsUrl: 'ws://127.0.0.1:47187',
+        }),
+      )
+    })
+
+    await vi.waitFor(() => {
+      expect(specialistApiMocks.fetchSharedSpecialists).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        'collaboration',
+      )
+    })
+  })
 })
 
 describe('RenameCategoryDialog', () => {
@@ -241,6 +260,26 @@ describe('RenameCategoryDialog', () => {
     expect(document.body.textContent).toContain('Update the category name, default model, and specialist defaults.')
     const labels = Array.from(document.body.querySelectorAll('label')).map((node) => node.textContent)
     expect(labels).toEqual(expect.arrayContaining(['Name', 'Default model']))
+  })
+
+  it('fetches specialists with collaboration targetSpace', async () => {
+    flushSync(() => {
+      root.render(
+        createElement(RenameCategoryDialog, {
+          open: true,
+          category,
+          onClose: vi.fn(),
+          wsUrl: 'ws://127.0.0.1:47187',
+        }),
+      )
+    })
+
+    await vi.waitFor(() => {
+      expect(specialistApiMocks.fetchSharedSpecialists).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        'collaboration',
+      )
+    })
   })
 
   it('submits the expected update payload with channelCreationDefaults cleared', async () => {

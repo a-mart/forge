@@ -10,10 +10,6 @@ export const DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES = [
 
 export type CollaborationSpecialistHandleList = string[];
 
-export function defaultCollaborationSpecialistHandles(): CollaborationSpecialistHandleList {
-  return [...DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES];
-}
-
 export function serializeCollaborationSpecialistHandles(handles: readonly string[]): string {
   return JSON.stringify(normalizeCollaborationSpecialistHandles(handles));
 }

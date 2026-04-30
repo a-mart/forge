@@ -23,6 +23,7 @@ const COLLABORATION_CHANNEL_SPECIALIST_DETAIL_PATH =
   /^\/api\/collaboration\/channels\/[^/]+\/specialists\/[^/]+$/;
 const COLLABORATION_CATEGORIES_PATH = "/api/collaboration/categories";
 const COLLABORATION_ME_PASSWORD_PATH = "/api/collaboration/me/password";
+const SETTINGS_SPECIALISTS_PATH = "/api/settings/specialists";
 
 interface CollaborationRequestAuthRow {
   user_id: string;
@@ -173,6 +174,11 @@ export function classifyCollaborationHttpRequest(
 
   if (!pathname.startsWith("/api/") && (normalizedMethod === "GET" || normalizedMethod === "HEAD")) {
     return "public";
+  }
+
+  // Settings specialist routes — all operations require admin on the collab server
+  if (pathname === SETTINGS_SPECIALISTS_PATH || pathname.startsWith(`${SETTINGS_SPECIALISTS_PATH}/`)) {
+    return "admin";
   }
 
   return "admin";

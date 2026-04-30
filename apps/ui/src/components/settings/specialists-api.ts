@@ -152,9 +152,11 @@ export async function fetchRosterPrompt(
 
 export async function fetchSharedSpecialists(
   clientOrWsUrl: SettingsApiClient | string | undefined,
+  targetSpaceOverride?: SpecialistTargetSpace,
 ): Promise<ResolvedSpecialistDefinition[]> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(undefined, '', inferTargetSpace(client))
+  const effectiveTargetSpace = targetSpaceOverride ?? inferTargetSpace(client)
+  const path = buildSpecialistPath(undefined, '', effectiveTargetSpace)
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { specialists?: unknown }
@@ -301,7 +303,7 @@ export async function updateCategoryDefaultSpecialists(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   categoryId: string,
   handles: string[],
-): Promise<void> {
+): Promise<CollaborationCategory> {
   const client = resolveClient(clientOrWsUrl)
   const path = `/api/collaboration/categories/${encodeURIComponent(categoryId)}`
   const response = await client.fetch(path, {
@@ -310,6 +312,9 @@ export async function updateCategoryDefaultSpecialists(
     body: JSON.stringify({ defaultSelectedSpecialistHandles: handles }),
   })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { category?: CollaborationCategory }
+  if (!payload.category) throw new Error('Backend did not return updated category')
+  return payload.category
 }
 
 /* ------------------------------------------------------------------ */

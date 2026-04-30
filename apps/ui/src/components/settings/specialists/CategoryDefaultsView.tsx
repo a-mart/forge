@@ -14,6 +14,7 @@ interface CategoryDefaultsViewProps {
   clientOrWsUrl: SettingsApiClient | string
   category: CollaborationCategory
   specialistChangeKey: number
+  onCategoryUpdated?: (category: CollaborationCategory) => void
 }
 
 /**
@@ -25,6 +26,7 @@ export function CategoryDefaultsView({
   clientOrWsUrl,
   category,
   specialistChangeKey,
+  onCategoryUpdated,
 }: CategoryDefaultsViewProps) {
   const [globalSpecialists, setGlobalSpecialists] = useState<ResolvedSpecialistDefinition[]>([])
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(
@@ -45,7 +47,7 @@ export function CategoryDefaultsView({
     setLoading(true)
     setError(null)
 
-    fetchSharedSpecialists(clientOrWsUrl)
+    fetchSharedSpecialists(clientOrWsUrl, 'collaboration')
       .then((specs) => {
         if (!cancelled) {
           // Only show enabled collab specialists
@@ -88,17 +90,18 @@ export function CategoryDefaultsView({
     setSaving(true)
     setError(null)
     try {
-      await updateCategoryDefaultSpecialists(
+      const updated = await updateCategoryDefaultSpecialists(
         clientOrWsUrl,
         category.categoryId,
         Array.from(selectedHandles),
       )
+      onCategoryUpdated?.(updated)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save defaults')
     } finally {
       setSaving(false)
     }
-  }, [clientOrWsUrl, category.categoryId, selectedHandles])
+  }, [clientOrWsUrl, category.categoryId, selectedHandles, onCategoryUpdated])
 
   const missingHandles = category.missingDefaultSpecialistHandles ?? []
 

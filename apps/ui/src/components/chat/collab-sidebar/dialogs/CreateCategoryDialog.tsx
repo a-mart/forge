@@ -80,7 +80,7 @@ export function CreateCategoryDialog({
     let cancelled = false
     setSpecialistsLoading(true)
 
-    fetchSharedSpecialists(wsUrl)
+    fetchSharedSpecialists(wsUrl, 'collaboration')
       .then((specs) => {
         if (!cancelled) {
           setGlobalSpecialists(

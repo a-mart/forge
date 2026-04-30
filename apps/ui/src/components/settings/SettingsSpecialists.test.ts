@@ -727,6 +727,41 @@ describe('SettingsSpecialists (collab mode)', () => {
     expect(container.textContent).toContain('Global Collaboration Specialists')
   })
 
+  it('fetches specialists with collaboration targetSpace in collab mode', async () => {
+    const apiClient = makeCollabApiClient()
+    const collabSpec = makeSpecialist({
+      specialistId: 'collab-planner',
+      displayName: 'Collab Planner',
+      targetSpace: ['collaboration'],
+    })
+    specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([collabSpec])
+    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
+    specialistsApiMock.fetchCollabCategories.mockResolvedValue([])
+    specialistsApiMock.fetchCollabChannels.mockResolvedValue([])
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsSpecialists, {
+          wsUrl: 'ws://collab.test:47187',
+          apiClient,
+          profiles: [],
+          specialistChangeKey: 0,
+          modelConfigChangeKey: 0,
+        }),
+      )
+    })
+    await flush()
+    await flush()
+
+    // fetchSharedSpecialists is called with the collab apiClient which has
+    // target.kind === 'collab', so inferTargetSpace returns 'collaboration'
+    expect(specialistsApiMock.fetchSharedSpecialists).toHaveBeenCalled()
+    const callArgs = specialistsApiMock.fetchSharedSpecialists.mock.calls[0]
+    const client = callArgs[0] as SettingsApiClient
+    expect(client.target.kind).toBe('collab')
+  })
+
   it('shows Channel badge on channel-sourced specialist card', async () => {
     const spec = makeSpecialist({
       sourceKind: 'channel' as ResolvedSpecialistDefinition['sourceKind'],

@@ -124,6 +124,18 @@ describe("collaboration HTTP auth middleware", () => {
     expect(classifyCollaborationHttpRequest("/api/collaboration/categories/category-1", "PATCH")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/auth", "GET")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/auth", "OPTIONS")).toBe("public");
+
+    // Settings specialist routes — all require admin
+    expect(classifyCollaborationHttpRequest("/api/settings/specialists", "GET")).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/settings/specialists/enabled", "GET")).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/settings/specialists/enabled", "PUT")).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/settings/specialists/template", "GET")).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/settings/specialists/backend", "PUT")).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/settings/specialists/backend", "DELETE")).toBe("admin");
+    expect(
+      classifyCollaborationHttpRequest("/api/settings/specialists/roster-prompt", "GET"),
+    ).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/settings/specialists", "OPTIONS")).toBe("public");
     expect(classifyCollaborationHttpRequest("/", "GET")).toBe("public");
     expect(classifyCollaborationHttpRequest("/settings", "HEAD")).toBe("public");
   });
@@ -180,6 +192,27 @@ describe("collaboration HTTP auth middleware", () => {
         createAuthContext("member"),
       ),
     ).toEqual({ ok: false, statusCode: 403, error: "Admin access required" });
+
+    // Settings specialist routes require admin
+    expect(enforcePathAccess("/api/settings/specialists", "GET", null)).toEqual({
+      ok: false,
+      statusCode: 401,
+      error: "Authentication required",
+    });
+    expect(enforcePathAccess("/api/settings/specialists", "GET", createAuthContext("member"))).toEqual({
+      ok: false,
+      statusCode: 403,
+      error: "Admin access required",
+    });
+    expect(enforcePathAccess("/api/settings/specialists", "GET", createAuthContext("admin"))).toEqual({ ok: true });
+    expect(enforcePathAccess("/api/settings/specialists/backend", "PUT", createAuthContext("member"))).toEqual({
+      ok: false,
+      statusCode: 403,
+      error: "Admin access required",
+    });
+    expect(enforcePathAccess("/api/settings/specialists/enabled", "PUT", createAuthContext("admin"))).toEqual({
+      ok: true,
+    });
   });
 
   it("allows password-change-required users to reach only exempt paths", () => {

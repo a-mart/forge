@@ -238,6 +238,13 @@ export function SettingsSpecialists({
     void loadSpecialists()
   }, [loadSpecialists])
 
+  /* ---- Category defaults saved callback ---- */
+  const handleCategoryUpdated = useCallback((updated: CollaborationCategory) => {
+    setCollabCategories((prev) =>
+      prev.map((c) => (c.categoryId === updated.categoryId ? updated : c)),
+    )
+  }, [])
+
   /* ---- Resolve category for category scope ---- */
   const selectedCategory = isCategory
     ? collabCategories.find((c) => c.categoryId === categoryId)
@@ -405,6 +412,7 @@ export function SettingsSpecialists({
             clientOrWsUrl={clientOrWsUrl}
             category={selectedCategory}
             specialistChangeKey={specialistChangeKey}
+            onCategoryUpdated={handleCategoryUpdated}
           />
         </div>
       )}
