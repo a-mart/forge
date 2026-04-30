@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Users } from 'lucide-react'
 import type { CollaborationCategory, CollaborationChannel, ManagerReasoningLevel } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -370,6 +371,21 @@ export function ChannelSettingsSheet({
               <p className="text-xs text-muted-foreground">
                 Extra context that applies only to this channel.
               </p>
+            </div>
+
+            {/* Specialist configuration hint */}
+            <div className="rounded-xl border border-border/70 bg-card/60 p-3">
+              <div className="flex items-start gap-3">
+                <Users className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-foreground">Specialist workers</p>
+                  <p className="text-xs text-muted-foreground">
+                    Manage which specialist workers are assigned to this channel in{' '}
+                    <span className="font-medium text-foreground">Settings &gt; Specialists</span>{' '}
+                    (select this channel in the scope selector).
+                  </p>
+                </div>
+              </div>
             </div>
 
             {error ? <p className="text-xs text-destructive">{error}</p> : null}

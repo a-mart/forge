@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -19,7 +21,8 @@ import {
 import { updateCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
 import { REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
-import type { CollaborationCategory, ManagerReasoningLevel, ModelPresetInfo } from '@forge/protocol'
+import { fetchSharedSpecialists } from '@/components/settings/specialists-api'
+import type { CollaborationCategory, ManagerReasoningLevel, ModelPresetInfo, ResolvedSpecialistDefinition } from '@forge/protocol'
 
 const NO_DEFAULT_MODEL_VALUE = '__none__'
 const NO_REASONING_LEVEL_VALUE = '__none__'
@@ -69,6 +72,13 @@ export function RenameCategoryDialog({
   const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
   const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
+  // Default specialist handles
+  const [globalSpecialists, setGlobalSpecialists] = useState<ResolvedSpecialistDefinition[]>([])
+  const [specialistsLoading, setSpecialistsLoading] = useState(false)
+  const [selectedHandles, setSelectedHandles] = useState<Set<string>>(
+    new Set(category.defaultSelectedSpecialistHandles),
+  )
+
   const supportedLevels = useMemo(
     () => defaultModelId !== NO_DEFAULT_MODEL_VALUE
       ? getSupportedLevelsForFamily(modelPresets, defaultModelId)
@@ -76,10 +86,35 @@ export function RenameCategoryDialog({
     [modelPresets, defaultModelId],
   )
 
+  // Load global collab specialists when dialog opens
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setSpecialistsLoading(true)
+
+    fetchSharedSpecialists(wsUrl)
+      .then((specs) => {
+        if (!cancelled) {
+          setGlobalSpecialists(
+            specs.filter((s) => s.targetSpace.includes('collaboration') && s.enabled),
+          )
+        }
+      })
+      .catch(() => {
+        // Non-critical
+      })
+      .finally(() => {
+        if (!cancelled) setSpecialistsLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [open, wsUrl])
+
   useEffect(() => {
     setName(category.name)
     setDefaultModelId(category.defaultModelId ?? NO_DEFAULT_MODEL_VALUE)
     setReasoningLevel(deriveInitialReasoningLevel(category))
+    setSelectedHandles(new Set(category.defaultSelectedSpecialistHandles))
     setError(null)
   }, [category])
 
@@ -95,6 +130,15 @@ export function RenameCategoryDialog({
       setReasoningLevel(preset.defaultReasoningLevel)
     }
   }
+
+  const handleToggleSpecialist = useCallback((handle: string, checked: boolean) => {
+    setSelectedHandles((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(handle)
+      else next.delete(handle)
+      return next
+    })
+  }, [])
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -127,22 +171,25 @@ export function RenameCategoryDialog({
           : hasModel
             ? { defaultModelId }
             : { defaultModelId: null, channelCreationDefaults: null }),
+        defaultSelectedSpecialistHandles: Array.from(selectedHandles),
       })
       onRenamed?.(updated)
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not rename category')
+      setError(err instanceof Error ? err.message : 'Could not save category')
     } finally {
       setIsSaving(false)
     }
   }
+
+  const missingHandles = category.missingDefaultSpecialistHandles ?? []
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
       <DialogContent className="max-w-sm p-4">
         <DialogHeader className="mb-3">
           <DialogTitle>Category settings</DialogTitle>
-          <DialogDescription>Update the category name and default model.</DialogDescription>
+          <DialogDescription>Update the category name, default model, and specialist defaults.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -192,6 +239,52 @@ export function RenameCategoryDialog({
             </p>
           </div>
 
+          {/* Default specialist handles */}
+          {!specialistsLoading && globalSpecialists.length > 0 && (
+            <div className="space-y-2">
+              <Label>Default specialists</Label>
+              <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-border/50 p-2">
+                {globalSpecialists.map((spec) => (
+                  <label
+                    key={spec.specialistId}
+                    className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 transition-colors hover:bg-muted/30"
+                  >
+                    <Checkbox
+                      checked={selectedHandles.has(spec.specialistId)}
+                      onCheckedChange={(checked) =>
+                        handleToggleSpecialist(spec.specialistId, checked === true)
+                      }
+                      disabled={isSaving}
+                    />
+                    <div
+                      className="size-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: spec.color }}
+                    />
+                    <span className="text-sm">{spec.displayName}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Selected specialists are auto-assigned to new channels in this category.
+              </p>
+            </div>
+          )}
+          {specialistsLoading && (
+            <div className="flex items-center gap-2 py-2">
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Loading specialists...</span>
+            </div>
+          )}
+
+          {missingHandles.length > 0 && (
+            <div className="flex items-start gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-yellow-500" />
+              <p className="text-xs text-yellow-400/90">
+                Missing specialist handles: {missingHandles.join(', ')}
+              </p>
+            </div>
+          )}
+
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
           <div className="flex items-center justify-end gap-2">
@@ -199,7 +292,7 @@ export function RenameCategoryDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!name.trim() || isSaving}>
-              {isSaving ? 'Saving…' : 'Save changes'}
+              {isSaving ? 'Saving...' : 'Save changes'}
             </Button>
           </div>
         </form>

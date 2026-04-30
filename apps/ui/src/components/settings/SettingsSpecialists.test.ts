@@ -7,6 +7,7 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsSpecialists } from './SettingsSpecialists'
 import type { ManagerProfile, ResolvedSpecialistDefinition } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
@@ -16,6 +17,7 @@ const specialistsApiMock = vi.hoisted(() => ({
   fetchSpecialists: vi.fn(),
   fetchSharedSpecialists: vi.fn(),
   fetchRosterPrompt: vi.fn(),
+  fetchChannelRosterPrompt: vi.fn(),
   fetchWorkerTemplate: vi.fn(),
   fetchSpecialistsEnabled: vi.fn(),
   setSpecialistsEnabledApi: vi.fn(),
@@ -23,12 +25,20 @@ const specialistsApiMock = vi.hoisted(() => ({
   saveSharedSpecialist: vi.fn(),
   deleteSpecialist: vi.fn(),
   deleteSharedSpecialist: vi.fn(),
+  fetchChannelSpecialists: vi.fn(),
+  saveChannelSpecialist: vi.fn(),
+  deleteChannelSpecialistApi: vi.fn(),
+  updateChannelSpecialistSelection: vi.fn(),
+  updateCategoryDefaultSpecialists: vi.fn(),
+  fetchCollabCategories: vi.fn(),
+  fetchCollabChannels: vi.fn(),
 }))
 
 vi.mock('./specialists-api', () => ({
   fetchSpecialists: (...args: unknown[]) => specialistsApiMock.fetchSpecialists(...args),
   fetchSharedSpecialists: (...args: unknown[]) => specialistsApiMock.fetchSharedSpecialists(...args),
   fetchRosterPrompt: (...args: unknown[]) => specialistsApiMock.fetchRosterPrompt(...args),
+  fetchChannelRosterPrompt: (...args: unknown[]) => specialistsApiMock.fetchChannelRosterPrompt(...args),
   fetchWorkerTemplate: (...args: unknown[]) => specialistsApiMock.fetchWorkerTemplate(...args),
   fetchSpecialistsEnabled: (...args: unknown[]) => specialistsApiMock.fetchSpecialistsEnabled(...args),
   setSpecialistsEnabledApi: (...args: unknown[]) => specialistsApiMock.setSpecialistsEnabledApi(...args),
@@ -36,6 +46,13 @@ vi.mock('./specialists-api', () => ({
   saveSharedSpecialist: (...args: unknown[]) => specialistsApiMock.saveSharedSpecialist(...args),
   deleteSpecialist: (...args: unknown[]) => specialistsApiMock.deleteSpecialist(...args),
   deleteSharedSpecialist: (...args: unknown[]) => specialistsApiMock.deleteSharedSpecialist(...args),
+  fetchChannelSpecialists: (...args: unknown[]) => specialistsApiMock.fetchChannelSpecialists(...args),
+  saveChannelSpecialist: (...args: unknown[]) => specialistsApiMock.saveChannelSpecialist(...args),
+  deleteChannelSpecialistApi: (...args: unknown[]) => specialistsApiMock.deleteChannelSpecialistApi(...args),
+  updateChannelSpecialistSelection: (...args: unknown[]) => specialistsApiMock.updateChannelSpecialistSelection(...args),
+  updateCategoryDefaultSpecialists: (...args: unknown[]) => specialistsApiMock.updateCategoryDefaultSpecialists(...args),
+  fetchCollabCategories: (...args: unknown[]) => specialistsApiMock.fetchCollabCategories(...args),
+  fetchCollabChannels: (...args: unknown[]) => specialistsApiMock.fetchCollabChannels(...args),
 }))
 
 vi.mock('@/lib/model-preset', () => ({
@@ -598,5 +615,128 @@ describe('SettingsSpecialists', () => {
 
       expect(container.textContent).toContain('Hide disabled')
     })
+  })
+
+  /* ---- TargetSpace badges ---- */
+
+  describe('targetSpace badges', () => {
+    it('shows Collab badge for collaboration-only specialist', async () => {
+      const spec = makeSpecialist({ targetSpace: ['collaboration'] })
+      renderSpecialists([spec])
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Collab')
+    })
+
+    it('shows Both badge for dual-target specialist', async () => {
+      const spec = makeSpecialist({ targetSpace: ['builder', 'collaboration'] })
+      renderSpecialists([spec])
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Both')
+    })
+
+    it('does not show badge for builder-only specialist', async () => {
+      const spec = makeSpecialist({ targetSpace: ['builder'] })
+      renderSpecialists([spec])
+      await flush()
+      await flush()
+
+      expect(container.textContent).not.toContain('Collab')
+      expect(container.textContent).not.toContain('Both')
+    })
+  })
+})
+
+/* ================================================================== */
+/*  Collab mode tests                                                  */
+/* ================================================================== */
+
+describe('SettingsSpecialists (collab mode)', () => {
+  function makeCollabApiClient(): SettingsApiClient {
+    return {
+      target: {
+        kind: 'collab',
+        label: 'Collab Server',
+        description: 'Remote collaboration server',
+        wsUrl: 'ws://collab.test:47187',
+        apiBaseUrl: 'http://collab.test:47187',
+        fetchCredentials: 'include',
+        requiresAdmin: true,
+        availableTabs: ['specialists'],
+      },
+      endpoint: (path: string) => `http://collab.test:47187${path}`,
+      fetch: vi.fn(),
+      fetchJson: vi.fn(),
+      readApiError: vi.fn(),
+    }
+  }
+
+  it('renders collab settings banner when apiClient targets collab', async () => {
+    const apiClient = makeCollabApiClient()
+    specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([])
+    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
+    specialistsApiMock.fetchCollabCategories.mockResolvedValue([])
+    specialistsApiMock.fetchCollabChannels.mockResolvedValue([])
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsSpecialists, {
+          wsUrl: 'ws://collab.test:47187',
+          apiClient,
+          profiles: [],
+          specialistChangeKey: 0,
+          modelConfigChangeKey: 0,
+        }),
+      )
+    })
+    await flush()
+    await flush()
+
+    const banner = document.body.querySelector('[data-testid="collab-settings-banner"]')
+    expect(banner).toBeTruthy()
+    expect(banner?.textContent).toContain('Editing remote collaboration server settings')
+    expect(banner?.textContent).toContain('http://collab.test:47187')
+  })
+
+  it('shows Global Collaboration label in scope selector for collab mode', async () => {
+    const apiClient = makeCollabApiClient()
+    specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([])
+    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
+    specialistsApiMock.fetchCollabCategories.mockResolvedValue([])
+    specialistsApiMock.fetchCollabChannels.mockResolvedValue([])
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsSpecialists, {
+          wsUrl: 'ws://collab.test:47187',
+          apiClient,
+          profiles: [],
+          specialistChangeKey: 0,
+          modelConfigChangeKey: 0,
+        }),
+      )
+    })
+    await flush()
+    await flush()
+
+    expect(container.textContent).toContain('Global Collaboration Specialists')
+  })
+
+  it('shows Channel badge on channel-sourced specialist card', async () => {
+    const spec = makeSpecialist({
+      sourceKind: 'channel' as ResolvedSpecialistDefinition['sourceKind'],
+      targetSpace: ['collaboration'],
+      builtin: false,
+    })
+    renderSpecialists([spec])
+    await flush()
+    await flush()
+
+    expect(container.textContent).toContain('Channel')
   })
 })

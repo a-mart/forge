@@ -113,6 +113,7 @@ export async function createCategory(
     name: string
     channelCreationDefaults?: CollaborationCategory['channelCreationDefaults'] | null
     defaultModelId?: string | null
+    defaultSelectedSpecialistHandles?: string[]
   },
 ): Promise<CollaborationCategory> {
   const response = await apiFetch<{ ok: true; category: CollaborationCategory }>(
@@ -131,6 +132,7 @@ export async function updateCategory(
     name?: string
     channelCreationDefaults?: CollaborationCategory['channelCreationDefaults'] | null
     defaultModelId?: string | null
+    defaultSelectedSpecialistHandles?: string[]
   },
 ): Promise<CollaborationCategory> {
   const response = await apiFetch<{ ok: true; category: CollaborationCategory }>(`/api/collaboration/categories/${encodeURIComponent(categoryId)}`, {

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -19,7 +21,8 @@ import {
 import { createCategory } from '@/lib/collaboration-api'
 import { getAvailableChangeManagerFamilies, useModelPresets } from '@/lib/model-preset'
 import { REASONING_LEVEL_LABELS } from '@/components/settings/specialists/types'
-import type { CollaborationCategory, ManagerReasoningLevel, ModelPresetInfo } from '@forge/protocol'
+import { fetchSharedSpecialists } from '@/components/settings/specialists-api'
+import type { CollaborationCategory, ManagerReasoningLevel, ModelPresetInfo, ResolvedSpecialistDefinition } from '@forge/protocol'
 
 const NO_DEFAULT_MODEL_VALUE = '__none__'
 const NO_REASONING_LEVEL_VALUE = '__none__'
@@ -59,6 +62,11 @@ export function CreateCategoryDialog({
   const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
   const modelFamilies = useMemo(() => getAvailableChangeManagerFamilies(modelPresets), [modelPresets])
 
+  // Default specialist handles
+  const [globalSpecialists, setGlobalSpecialists] = useState<ResolvedSpecialistDefinition[]>([])
+  const [specialistsLoading, setSpecialistsLoading] = useState(false)
+  const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set())
+
   const supportedLevels = useMemo(
     () => defaultModelId !== NO_DEFAULT_MODEL_VALUE
       ? getSupportedLevelsForFamily(modelPresets, defaultModelId)
@@ -66,11 +74,36 @@ export function CreateCategoryDialog({
     [modelPresets, defaultModelId],
   )
 
+  // Load global collab specialists when dialog opens
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setSpecialistsLoading(true)
+
+    fetchSharedSpecialists(wsUrl)
+      .then((specs) => {
+        if (!cancelled) {
+          setGlobalSpecialists(
+            specs.filter((s) => s.targetSpace.includes('collaboration') && s.enabled),
+          )
+        }
+      })
+      .catch(() => {
+        // Non-critical — specialist defaults section just won't show
+      })
+      .finally(() => {
+        if (!cancelled) setSpecialistsLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [open, wsUrl])
+
   useEffect(() => {
     if (!open) return
     setName('')
     setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
     setReasoningLevel(NO_REASONING_LEVEL_VALUE)
+    setSelectedHandles(new Set())
     setError(null)
   }, [open])
 
@@ -85,6 +118,15 @@ export function CreateCategoryDialog({
       setReasoningLevel(preset.defaultReasoningLevel)
     }
   }, [defaultModelId, modelPresets])
+
+  const handleToggleSpecialist = useCallback((handle: string, checked: boolean) => {
+    setSelectedHandles((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(handle)
+      else next.delete(handle)
+      return next
+    })
+  }, [])
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -117,11 +159,15 @@ export function CreateCategoryDialog({
           : hasModel
             ? { defaultModelId }
             : {}),
+        ...(selectedHandles.size > 0
+          ? { defaultSelectedSpecialistHandles: Array.from(selectedHandles) }
+          : {}),
       })
       onCreated?.(category)
       setName('')
       setDefaultModelId(NO_DEFAULT_MODEL_VALUE)
       setReasoningLevel(NO_REASONING_LEVEL_VALUE)
+      setSelectedHandles(new Set())
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create category')
@@ -186,6 +232,43 @@ export function CreateCategoryDialog({
             </p>
           </div>
 
+          {/* Default specialist handles */}
+          {!specialistsLoading && globalSpecialists.length > 0 && (
+            <div className="space-y-2">
+              <Label>Default specialists</Label>
+              <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-border/50 p-2">
+                {globalSpecialists.map((spec) => (
+                  <label
+                    key={spec.specialistId}
+                    className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 transition-colors hover:bg-muted/30"
+                  >
+                    <Checkbox
+                      checked={selectedHandles.has(spec.specialistId)}
+                      onCheckedChange={(checked) =>
+                        handleToggleSpecialist(spec.specialistId, checked === true)
+                      }
+                      disabled={isSaving}
+                    />
+                    <div
+                      className="size-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: spec.color }}
+                    />
+                    <span className="text-sm">{spec.displayName}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Selected specialists are auto-assigned to new channels in this category.
+              </p>
+            </div>
+          )}
+          {specialistsLoading && (
+            <div className="flex items-center gap-2 py-2">
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Loading specialists...</span>
+            </div>
+          )}
+
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
           <div className="flex items-center justify-end gap-2">
@@ -193,7 +276,7 @@ export function CreateCategoryDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!name.trim() || isSaving}>
-              {isSaving ? 'Creating…' : 'Create category'}
+              {isSaving ? 'Creating...' : 'Create category'}
             </Button>
           </div>
         </form>

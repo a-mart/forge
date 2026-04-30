@@ -6,21 +6,30 @@ import {
   fetchSharedSpecialists,
   fetchSpecialistsEnabled,
   setSpecialistsEnabledApi,
+  fetchChannelSpecialists,
 } from '../../specialists-api'
 
 /**
  * Manages loading of specialist definitions and the global enabled toggle.
+ *
+ * When `channelId` is provided, specialists are loaded from the channel
+ * specialist endpoint rather than the global or profile endpoints.
  */
 export function useSpecialistsData(
   clientOrWsUrl: SettingsApiClient | string,
   selectedScope: string,
   isGlobal: boolean,
   specialistChangeKey: number,
+  channelId?: string,
 ) {
   const [specialists, setSpecialists] = useState<ResolvedSpecialistDefinition[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadRequestIdRef = useRef(0)
+
+  // Channel selection metadata (only populated for channel scope)
+  const [selectedGlobalHandles, setSelectedGlobalHandles] = useState<string[]>([])
+  const [missingSelectedHandles, setMissingSelectedHandles] = useState<string[]>([])
 
   // Global specialists enabled toggle
   const [specialistsEnabled, setSpecialistsEnabled] = useState(true)
@@ -35,6 +44,8 @@ export function useSpecialistsData(
     setSpecialists([])
     setLoading(true)
     setError(null)
+    setSelectedGlobalHandles([])
+    setMissingSelectedHandles([])
   }, [selectedScope])
 
   const loadSpecialists = useCallback(async (): Promise<ResolvedSpecialistDefinition[]> => {
@@ -43,9 +54,22 @@ export function useSpecialistsData(
     setError(null)
 
     try {
-      const data = isGlobal
-        ? await fetchSharedSpecialists(clientOrWsUrl)
-        : await fetchSpecialists(clientOrWsUrl, selectedScope)
+      let data: ResolvedSpecialistDefinition[]
+
+      if (channelId) {
+        // Channel scope — load from channel specialist endpoint
+        const channelResponse = await fetchChannelSpecialists(clientOrWsUrl, channelId)
+        data = channelResponse.specialists
+        if (requestId === loadRequestIdRef.current) {
+          setSelectedGlobalHandles(channelResponse.selectedGlobalSpecialistHandles)
+          setMissingSelectedHandles(channelResponse.missingSelectedSpecialistHandles)
+        }
+      } else if (isGlobal) {
+        data = await fetchSharedSpecialists(clientOrWsUrl)
+      } else {
+        data = await fetchSpecialists(clientOrWsUrl, selectedScope)
+      }
+
       if (requestId === loadRequestIdRef.current) {
         setSpecialists(data)
       }
@@ -61,7 +85,7 @@ export function useSpecialistsData(
         setLoading(false)
       }
     }
-  }, [clientOrWsUrl, selectedScope, isGlobal])
+  }, [clientOrWsUrl, selectedScope, isGlobal, channelId])
 
   useEffect(() => {
     void loadSpecialists()
@@ -100,5 +124,7 @@ export function useSpecialistsData(
     enabledLoading,
     enabledToggling,
     handleToggleEnabled,
+    selectedGlobalHandles,
+    missingSelectedHandles,
   }
 }

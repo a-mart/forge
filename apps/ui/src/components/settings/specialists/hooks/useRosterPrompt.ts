@@ -1,11 +1,19 @@
 import { useCallback, useRef, useState } from 'react'
 import type { SettingsApiClient } from '../../settings-api-client'
-import { fetchRosterPrompt } from '../../specialists-api'
+import { fetchRosterPrompt, fetchChannelRosterPrompt } from '../../specialists-api'
 
 /**
  * Manages the roster prompt dialog state and fetching.
+ *
+ * When `channelId` is provided, the channel-specific roster prompt endpoint
+ * is used instead of the profile roster prompt.
  */
-export function useRosterPrompt(clientOrWsUrl: SettingsApiClient | string, selectedScope: string, isGlobal: boolean) {
+export function useRosterPrompt(
+  clientOrWsUrl: SettingsApiClient | string,
+  selectedScope: string,
+  isGlobal: boolean,
+  channelId?: string,
+) {
   const rosterRequestIdRef = useRef(0)
   const [rosterOpen, setRosterOpen] = useState(false)
   const [rosterMarkdown, setRosterMarkdown] = useState('')
@@ -13,7 +21,7 @@ export function useRosterPrompt(clientOrWsUrl: SettingsApiClient | string, selec
   const [rosterError, setRosterError] = useState<string | null>(null)
 
   const handleViewRoster = useCallback(async () => {
-    if (isGlobal) return
+    if (isGlobal && !channelId) return
 
     const requestId = ++rosterRequestIdRef.current
     setRosterOpen(true)
@@ -21,7 +29,9 @@ export function useRosterPrompt(clientOrWsUrl: SettingsApiClient | string, selec
     setRosterError(null)
 
     try {
-      const markdown = await fetchRosterPrompt(clientOrWsUrl, selectedScope)
+      const markdown = channelId
+        ? await fetchChannelRosterPrompt(clientOrWsUrl, channelId)
+        : await fetchRosterPrompt(clientOrWsUrl, selectedScope)
       if (requestId === rosterRequestIdRef.current) {
         setRosterMarkdown(markdown)
       }
@@ -35,7 +45,7 @@ export function useRosterPrompt(clientOrWsUrl: SettingsApiClient | string, selec
         setRosterLoading(false)
       }
     }
-  }, [clientOrWsUrl, selectedScope, isGlobal])
+  }, [clientOrWsUrl, selectedScope, isGlobal, channelId])
 
   /** Reset roster state (used on scope change). */
   const resetRoster = useCallback(() => {
