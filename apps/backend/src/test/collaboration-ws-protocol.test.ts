@@ -223,7 +223,14 @@ async function createCategory(baseUrl: string, cookie: string, name: string): Pr
 async function createChannel(
   baseUrl: string,
   cookie: string,
-  body: { name: string; categoryId?: string; description?: string; aiEnabled?: boolean },
+  body: {
+    name: string;
+    categoryId?: string;
+    description?: string;
+    aiEnabled?: boolean;
+    selectedGlobalSpecialistHandles?: string[];
+    activeSelectedSpecialistHandles?: string[];
+  },
 ): Promise<{ channelId: string; workspaceId: string; name: string }> {
   const response = await fetch(`${baseUrl}/api/collaboration/channels`, {
     method: "POST",
@@ -555,7 +562,26 @@ describe("collaboration websocket protocol", () => {
   it("supports authenticated collab bootstrap, subscribe, user message, and mark-read flows", async () => {
     const { baseUrl } = await startCollaborationServer();
     const cookie = await login(baseUrl);
-    const channel = await createChannel(baseUrl, cookie, { name: "Ops", aiEnabled: false });
+    const channel = await createChannel(baseUrl, cookie, {
+      name: "Ops",
+      aiEnabled: false,
+      selectedGlobalSpecialistHandles: ["missing-selected-specialist"],
+    });
+    const missingDefaultCategoryResponse = await fetch(`${baseUrl}/api/collaboration/categories`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        name: "Missing defaults",
+        defaultSelectedSpecialistHandles: ["missing-default-specialist"],
+      }),
+    });
+    expect(missingDefaultCategoryResponse.status).toBe(200);
+    const missingDefaultCategory = (await missingDefaultCategoryResponse.json() as {
+      category: { categoryId: string };
+    }).category;
     const ws = await openAuthenticatedWs(baseUrl, cookie);
 
     ws.socket.send(JSON.stringify({ type: "collab_bootstrap" }));
@@ -563,7 +589,20 @@ describe("collaboration websocket protocol", () => {
     expect(bootstrap.currentUser.email).toBe(ADMIN_EMAIL);
     expect(bootstrap.channels).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ channelId: channel.channelId, name: channel.name }),
+        expect.objectContaining({
+          channelId: channel.channelId,
+          name: channel.name,
+          selectedGlobalSpecialistHandles: ["missing-selected-specialist"],
+          missingSelectedSpecialistHandles: ["missing-selected-specialist"],
+        }),
+      ]),
+    );
+    expect(bootstrap.categories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          categoryId: missingDefaultCategory.categoryId,
+          missingDefaultSpecialistHandles: ["missing-default-specialist"],
+        }),
       ]),
     );
 

@@ -245,6 +245,30 @@ describe("collaboration HTTP routes", () => {
     expect(createCategoryBody.category.defaultReasoningLevel).toBe("low");
     expect(createCategoryBody.category.channelCreationDefaults?.model.thinkingLevel).toBe("low");
 
+    const missingDefaultsCategoryResponse = await fetch(`${baseUrl}/api/collaboration/categories`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify({
+        name: "Missing defaults",
+        defaultSelectedSpecialistHandles: ["missing-default-specialist"],
+      }),
+    });
+    expect(missingDefaultsCategoryResponse.status).toBe(200);
+    const missingDefaultsCategoryBody = await missingDefaultsCategoryResponse.json() as {
+      ok: true;
+      category: { categoryId: string; defaultSelectedSpecialistHandles: string[]; missingDefaultSpecialistHandles?: string[] };
+    };
+    expect(missingDefaultsCategoryBody).toMatchObject({
+      ok: true,
+      category: expect.objectContaining({
+        defaultSelectedSpecialistHandles: ["missing-default-specialist"],
+        missingDefaultSpecialistHandles: ["missing-default-specialist"],
+      }),
+    });
+
     const categoriesUnauthedResponse = await fetch(`${baseUrl}/api/collaboration/categories`);
     expect(categoriesUnauthedResponse.status).toBe(401);
     await expect(categoriesUnauthedResponse.json()).resolves.toEqual({ error: "Authentication required" });
@@ -264,6 +288,10 @@ describe("collaboration HTTP routes", () => {
             model: expect.objectContaining({ thinkingLevel: "low" }),
           }),
         }),
+        expect.objectContaining({
+          name: "Missing defaults",
+          missingDefaultSpecialistHandles: ["missing-default-specialist"],
+        }),
       ],
     });
 
@@ -273,15 +301,32 @@ describe("collaboration HTTP routes", () => {
         "content-type": "application/json",
         cookie: adminCookieHeader,
       },
-      body: JSON.stringify({ categoryIds: [createCategoryBody.category.categoryId] }),
+      body: JSON.stringify({
+        categoryIds: [createCategoryBody.category.categoryId, missingDefaultsCategoryBody.category.categoryId],
+      }),
     });
     expect(reorderCategoriesResponse.status).toBe(200);
     await expect(reorderCategoriesResponse.json()).resolves.toMatchObject({
       ok: true,
       categories: [
         expect.objectContaining({ categoryId: createCategoryBody.category.categoryId }),
+        expect.objectContaining({ categoryId: missingDefaultsCategoryBody.category.categoryId }),
       ],
     });
+
+    const saveGlobalSpecialistResponse = await fetch(`${baseUrl}/api/settings/specialists/global-collab?targetSpace=collaboration`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify(createSpecialistBody({
+        displayName: "Global Collab",
+        whenToUse: "Use globally",
+        promptBody: "Global collaboration prompt",
+      })),
+    });
+    expect(saveGlobalSpecialistResponse.status).toBe(200);
 
     const createChannelResponse = await fetch(`${baseUrl}/api/collaboration/channels`, {
       method: "POST",
@@ -293,6 +338,7 @@ describe("collaboration HTTP routes", () => {
         name: "General",
         categoryId: createCategoryBody.category.categoryId,
         description: "Primary room",
+        selectedGlobalSpecialistHandles: ["global-collab", "missing-selected-specialist"],
       }),
     });
     expect(createChannelResponse.status).toBe(200);
@@ -304,9 +350,15 @@ describe("collaboration HTTP routes", () => {
         modelId?: string;
         reasoningLevel?: string;
         description?: string;
+        selectedGlobalSpecialistHandles: string[];
+        activeSelectedSpecialistHandles: string[];
+        missingSelectedSpecialistHandles?: string[];
       };
     };
     expect(createChannelBody.channel.description).toBe("Primary room");
+    expect(createChannelBody.channel.selectedGlobalSpecialistHandles).toEqual(["global-collab", "missing-selected-specialist"]);
+    expect(createChannelBody.channel.activeSelectedSpecialistHandles).toEqual(["global-collab", "missing-selected-specialist"]);
+    expect(createChannelBody.channel.missingSelectedSpecialistHandles).toEqual(["missing-selected-specialist"]);
     expect(createChannelBody.channel.modelId).toBe("pi-opus");
     expect(createChannelBody.channel.reasoningLevel).toBe("low");
     await expect(readStoredChannelModel(config.paths.agentsStoreFile, createChannelBody.channel.sessionAgentId)).resolves.toMatchObject({
@@ -328,6 +380,117 @@ describe("collaboration HTTP routes", () => {
           name: "General",
           modelId: "pi-opus",
           reasoningLevel: "low",
+          selectedGlobalSpecialistHandles: ["global-collab", "missing-selected-specialist"],
+          missingSelectedSpecialistHandles: ["missing-selected-specialist"],
+        }),
+      ],
+    });
+
+    const authService = await getOrCreateCollaborationBetterAuthService(config);
+    const memberCookieHeader = setCookieHeadersToCookieHeader(
+      await authService.createSessionCookies(redeemBody.user.userId),
+    );
+
+    const memberSpecialistsResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists`,
+      { headers: { cookie: memberCookieHeader } },
+    );
+    expect(memberSpecialistsResponse.status).toBe(403);
+    await expect(memberSpecialistsResponse.json()).resolves.toEqual({ error: "Admin access required" });
+
+    const memberRosterPromptResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists/roster-prompt`,
+      { headers: { cookie: memberCookieHeader } },
+    );
+    expect(memberRosterPromptResponse.status).toBe(403);
+    await expect(memberRosterPromptResponse.json()).resolves.toEqual({ error: "Admin access required" });
+
+    const saveChannelSpecialistResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists/global-collab`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify(createSpecialistBody({
+          displayName: "Local Collab",
+          whenToUse: "Use locally",
+          promptBody: "Local collaboration prompt",
+        })),
+      },
+    );
+    expect(saveChannelSpecialistResponse.status).toBe(200);
+
+    const channelSpecialistsResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists`,
+      { headers: { cookie: adminCookieHeader } },
+    );
+    expect(channelSpecialistsResponse.status).toBe(200);
+    await expect(channelSpecialistsResponse.json()).resolves.toMatchObject({
+      channelId: createChannelBody.channel.channelId,
+      selectedGlobalSpecialistHandles: ["global-collab", "missing-selected-specialist"],
+      missingSelectedSpecialistHandles: ["missing-selected-specialist"],
+      specialists: [
+        expect.objectContaining({
+          specialistId: "global-collab",
+          displayName: "Local Collab",
+          sourceKind: "channel",
+          shadowsGlobal: true,
+          promptBody: "Local collaboration prompt",
+        }),
+      ],
+    });
+
+    const rosterPromptResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists/roster-prompt`,
+      { headers: { cookie: adminCookieHeader } },
+    );
+    expect(rosterPromptResponse.status).toBe(200);
+    const rosterPromptBody = await rosterPromptResponse.json() as { markdown: string };
+    expect(rosterPromptBody.markdown).toContain("Use locally");
+
+    const updateSelectionResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists/selection`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({ selectedGlobalSpecialistHandles: ["global-collab"] }),
+      },
+    );
+    expect(updateSelectionResponse.status).toBe(200);
+    await expect(updateSelectionResponse.json()).resolves.toMatchObject({
+      ok: true,
+      channel: expect.objectContaining({
+        selectedGlobalSpecialistHandles: ["global-collab"],
+        activeSelectedSpecialistHandles: ["global-collab"],
+      }),
+    });
+
+    const deleteChannelSpecialistResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists/global-collab`,
+      {
+        method: "DELETE",
+        headers: { cookie: adminCookieHeader },
+      },
+    );
+    expect(deleteChannelSpecialistResponse.status).toBe(200);
+
+    const channelSpecialistsAfterDeleteResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists`,
+      { headers: { cookie: adminCookieHeader } },
+    );
+    expect(channelSpecialistsAfterDeleteResponse.status).toBe(200);
+    await expect(channelSpecialistsAfterDeleteResponse.json()).resolves.toMatchObject({
+      specialists: [
+        expect.objectContaining({
+          specialistId: "global-collab",
+          displayName: "Global Collab",
+          sourceKind: "global",
+          promptBody: "Global collaboration prompt",
         }),
       ],
     });
@@ -428,11 +591,6 @@ describe("collaboration HTTP routes", () => {
       }),
     });
 
-    const authService = await getOrCreateCollaborationBetterAuthService(config);
-    const memberCookieHeader = setCookieHeadersToCookieHeader(
-      await authService.createSessionCookies(redeemBody.user.userId),
-    );
-
     const memberSettingsResponse = await fetch(`${baseUrl}/api/settings/auth`, {
       headers: { cookie: memberCookieHeader },
     });
@@ -531,6 +689,29 @@ function setCookieHeadersToCookieHeader(setCookies: string[]): string {
       return firstSeparatorIndex >= 0 ? cookie.slice(0, firstSeparatorIndex) : cookie;
     })
     .join("; ");
+}
+
+function createSpecialistBody(overrides: Partial<{
+  displayName: string;
+  color: string;
+  enabled: boolean;
+  whenToUse: string;
+  modelId: string;
+  provider: string;
+  reasoningLevel: string;
+  promptBody: string;
+}> = {}): Record<string, unknown> {
+  return {
+    displayName: "Collab Specialist",
+    color: "#3366ff",
+    enabled: true,
+    whenToUse: "Use for collaboration tasks",
+    modelId: "gpt-5.4",
+    provider: "openai-codex",
+    reasoningLevel: "medium",
+    promptBody: "You are a collaboration specialist.",
+    ...overrides,
+  };
 }
 
 async function readStoredChannelModel(

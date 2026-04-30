@@ -526,6 +526,57 @@ describe("SwarmAgentLifecycleService", () => {
     expect(emitAgentsSnapshot).toHaveBeenCalled();
   });
 
+  it("notifySpecialistRosterChanged with a collaboration session preserves channel-local shadow metadata", async () => {
+    const collabManager = createAgentDescriptor({
+      agentId: "channel-a",
+      role: "manager",
+      managerId: "channel-a",
+      profileId: "_collaboration",
+      sessionSurface: "collab",
+      status: "idle"
+    });
+    const collabWorker = createWorkerDescriptor("/proj", "channel-a", {
+      agentId: "collab-worker",
+      profileId: "_collaboration",
+      specialistId: "global-collab"
+    });
+    const descriptors = new Map([
+      [collabManager.agentId, collabManager],
+      [collabWorker.agentId, collabWorker]
+    ]);
+    const resolveSpecialistRosterForProfile = vi.fn(async () => [
+      { specialistId: "global-collab", displayName: "Global Collab", color: "#111" }
+    ]);
+    const resolveSpecialistRosterForManager = vi.fn(async () => [
+      {
+        specialistId: "global-collab",
+        displayName: "Local Shadow Collab",
+        color: "#222",
+        sourceKind: "channel",
+        shadowsGlobal: true
+      }
+    ]);
+    const saveStore = vi.fn(async () => {});
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        resolveSpecialistRosterForProfile,
+        resolveSpecialistRosterForManager,
+        getSessionsForProfile: vi.fn(() => [collabManager as AgentDescriptor & { role: "manager"; profileId: string }]),
+        saveStore
+      })
+    );
+
+    await svc.notifySpecialistRosterChanged("_collaboration", { sessionAgentId: "channel-a" });
+
+    expect(resolveSpecialistRosterForManager).toHaveBeenCalledWith(collabManager, "collaboration");
+    expect(resolveSpecialistRosterForProfile).not.toHaveBeenCalled();
+    expect(collabWorker.specialistDisplayName).toBe("Local Shadow Collab");
+    expect(collabWorker.specialistColor).toBe("#222");
+    expect(saveStore).toHaveBeenCalled();
+  });
+
   it("spawnAgent retries with specialist fallback model when the first runtime creation hits capacity", async () => {
     const manager = createAgentDescriptor({
       agentId: "m1",

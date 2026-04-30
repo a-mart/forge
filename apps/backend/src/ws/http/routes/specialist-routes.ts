@@ -440,11 +440,37 @@ async function notifyGlobalSpecialistMutation(options: {
   const profiles = swarmManager.listProfiles();
 
   for (const profile of profiles) {
+    if (profile.profileId === "_collaboration") {
+      continue;
+    }
+
     await notifySpecialistRosterMutation({
       swarmManager,
       broadcastEvent,
       dataDir,
       profileId: profile.profileId,
+    });
+  }
+
+  const collaborationSessions = swarmManager.listAgents().filter(
+    (agent) => agent.role === "manager" && agent.profileId === "_collaboration" && agent.sessionSurface === "collab",
+  );
+  if (collaborationSessions.length === 0) {
+    return;
+  }
+
+  const collaborationRoster = await resolveRoster("_collaboration", dataDir, "collaboration");
+  const specialistIds = [...new Set(collaborationRoster.map((entry) => entry.specialistId))];
+  broadcastEvent({
+    type: "specialist_roster_changed",
+    profileId: "_collaboration",
+    specialistIds,
+    updatedAt: new Date().toISOString(),
+  });
+
+  for (const session of collaborationSessions) {
+    await swarmManager.notifySpecialistRosterChanged("_collaboration", {
+      sessionAgentId: session.agentId,
     });
   }
 }

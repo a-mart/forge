@@ -106,6 +106,19 @@ describe("collaboration HTTP auth middleware", () => {
     ).toBe("authenticated");
     expect(classifyCollaborationHttpRequest("/api/collaboration/users", "GET")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/collaboration/invites", "POST")).toBe("admin");
+    expect(classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/specialists", "GET")).toBe("admin");
+    expect(
+      classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/specialists/roster-prompt", "GET"),
+    ).toBe("admin");
+    expect(
+      classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/specialists/selection", "PUT"),
+    ).toBe("admin");
+    expect(
+      classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/specialists/local-specialist", "PUT"),
+    ).toBe("admin");
+    expect(
+      classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/specialists/local-specialist", "DELETE"),
+    ).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/archive", "POST")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/collaboration/channels/reorder", "POST")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/collaboration/categories/category-1", "PATCH")).toBe("admin");
@@ -151,6 +164,22 @@ describe("collaboration HTTP auth middleware", () => {
         createAuthContext("member"),
       ),
     ).toEqual({ ok: true });
+
+    expect(enforcePathAccess("/api/collaboration/channels/channel-1/specialists", "GET", null)).toEqual({
+      ok: false,
+      statusCode: 401,
+      error: "Authentication required",
+    });
+    expect(
+      enforcePathAccess("/api/collaboration/channels/channel-1/specialists", "GET", createAuthContext("member")),
+    ).toEqual({ ok: false, statusCode: 403, error: "Admin access required" });
+    expect(
+      enforcePathAccess(
+        "/api/collaboration/channels/channel-1/specialists/roster-prompt",
+        "GET",
+        createAuthContext("member"),
+      ),
+    ).toEqual({ ok: false, statusCode: 403, error: "Admin access required" });
   });
 
   it("allows password-change-required users to reach only exempt paths", () => {

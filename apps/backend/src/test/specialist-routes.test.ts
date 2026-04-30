@@ -255,7 +255,7 @@ describe("specialist routes", () => {
     );
   });
 
-  it("saves global specialists and notifies every profile", async () => {
+  it("saves global specialists and notifies every user profile", async () => {
     specialistRegistryState.resolveRoster.mockImplementation(async (profileId: string) => [
       { specialistId: `${profileId}-one`, handle: "worker", sourcePath: `/tmp/${profileId}.md` },
     ]);
@@ -292,6 +292,46 @@ describe("specialist routes", () => {
         type: "specialist_roster_changed",
         profileId: "alpha",
         specialistIds: ["alpha-one"],
+      }),
+    );
+  });
+
+  it("notifies collaboration backing sessions individually when global specialists change", async () => {
+    specialistRegistryState.resolveRoster.mockImplementation(async (profileId: string) => [
+      { specialistId: `${profileId}-specialist`, handle: "worker", sourcePath: `/tmp/${profileId}.md` },
+    ]);
+
+    const notifySpecialistRosterChanged = vi.fn(async () => undefined);
+    const broadcastEvent = vi.fn<(event: ServerEvent) => void>();
+    const server = await createSpecialistRouteTestServer({
+      profiles: [
+        { profileId: "alpha", displayName: "Alpha" },
+        { profileId: "_collaboration", displayName: "Collaboration" },
+      ],
+      agents: [
+        { agentId: "channel-a", role: "manager", profileId: "_collaboration", sessionSurface: "collab" },
+        { agentId: "channel-b", role: "manager", profileId: "_collaboration", sessionSurface: "collab" },
+      ],
+      notifySpecialistRosterChanged,
+      broadcastEvent,
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/settings/specialists/collab?targetSpace=collaboration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validSpecialistPayload()),
+    });
+
+    expect(response.status).toBe(200);
+    expect(notifySpecialistRosterChanged).toHaveBeenCalledWith("alpha");
+    expect(notifySpecialistRosterChanged).not.toHaveBeenCalledWith("_collaboration");
+    expect(notifySpecialistRosterChanged).toHaveBeenCalledWith("_collaboration", { sessionAgentId: "channel-a" });
+    expect(notifySpecialistRosterChanged).toHaveBeenCalledWith("_collaboration", { sessionAgentId: "channel-b" });
+    expect(broadcastEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "specialist_roster_changed",
+        profileId: "_collaboration",
+        specialistIds: ["_collaboration-specialist"],
       }),
     );
   });
@@ -486,14 +526,16 @@ function validSpecialistPayload(): Record<string, unknown> {
 
 async function createSpecialistRouteTestServer(options?: {
   profiles?: Array<{ profileId: string; displayName: string; profileType?: "user" | "system" }>;
-  notifySpecialistRosterChanged?: (profileId: string) => Promise<void>;
+  notifySpecialistRosterChanged?: (profileId: string, options?: { sessionAgentId?: string }) => Promise<void>;
   broadcastEvent?: (event: ServerEvent) => void;
+  agents?: Array<{ agentId: string; role: string; profileId?: string; sessionSurface?: string }>;
 }): Promise<TestServer> {
   const profiles = options?.profiles ?? [];
   const swarmManager = {
     getConfig: () => ({ paths: { dataDir: "/tmp/data" } }),
     listProfiles: () => profiles,
     listUserProfiles: () => profiles.filter((profile) => profile.profileType !== "system"),
+    listAgents: () => options?.agents ?? [],
     notifySpecialistRosterChanged: options?.notifySpecialistRosterChanged ?? vi.fn(async () => undefined),
   };
 

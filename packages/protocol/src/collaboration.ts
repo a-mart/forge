@@ -148,7 +148,9 @@ export interface CollaborationChannel {
   modelId?: string
   reasoningLevel?: ManagerReasoningLevel
   promptOverlay?: string
-  /** Active selected global collaboration specialist handles for this channel. */
+  /** Selected global collaboration specialist handles for this channel. */
+  selectedGlobalSpecialistHandles?: string[]
+  /** @deprecated Use selectedGlobalSpecialistHandles. */
   activeSelectedSpecialistHandles: string[]
   /** Active selected handles that do not currently resolve to global collaboration specialists. */
   missingSelectedSpecialistHandles?: string[]

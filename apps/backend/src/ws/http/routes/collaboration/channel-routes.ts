@@ -315,11 +315,11 @@ export function createCollaborationChannelRoutes(options: {
           sendJson(response, 400, { error: "Missing channelId" });
           return;
         }
-        const authContext = await requireAuthenticatedRequestContext(request, response, options.getServices);
-        if (!authContext) {
+        const adminContext = await requireAdminRequestContext(request, response, options.getServices);
+        if (!adminContext) {
           return;
         }
-        void authContext;
+        void adminContext;
         try {
           const { channelService } = await options.getServices();
           const channel = channelService.getChannel(channelId);
@@ -362,11 +362,11 @@ export function createCollaborationChannelRoutes(options: {
           sendJson(response, 400, { error: "Missing channelId" });
           return;
         }
-        const authContext = await requireAuthenticatedRequestContext(request, response, options.getServices);
-        if (!authContext) {
+        const adminContext = await requireAdminRequestContext(request, response, options.getServices);
+        if (!adminContext) {
           return;
         }
-        void authContext;
+        void adminContext;
         try {
           const { channelService } = await options.getServices();
           const channel = channelService.getChannel(channelId);
@@ -457,7 +457,7 @@ export function createCollaborationChannelRoutes(options: {
         }
         void adminContext;
         try {
-          const { channelService } = await options.getServices();
+          const { channelService, broadcasts } = await options.getServices();
           const channel = channelService.getChannel(channelId);
           if (request.method === "PUT") {
             const data = parseSaveChannelSpecialistBody(await readJsonBody(request));
@@ -466,6 +466,7 @@ export function createCollaborationChannelRoutes(options: {
             await deleteChannelSpecialist(options.config.paths.dataDir, channel.sessionAgentId, handle);
           }
           await notifyChannelSpecialistMutation(options.swarmManager, channel.sessionAgentId);
+          broadcasts?.broadcastChannelUpdated(attachEffectiveChannelModelSettings(options.swarmManager, channelService.getChannel(channel.channelId)));
           sendJson(response, 200, { ok: true });
         } catch (error) {
           sendJson(response, mapCollaborationChannelErrorStatus(error), {
@@ -676,11 +677,13 @@ function parseCreateChannelBody(body: unknown): {
     ...(input.aiEnabled !== undefined
       ? { aiEnabled: requireBooleanField(input.aiEnabled, "aiEnabled") }
       : {}),
-    ...(input.activeSelectedSpecialistHandles !== undefined
+    ...(input.selectedGlobalSpecialistHandles !== undefined || input.activeSelectedSpecialistHandles !== undefined
       ? {
           activeSelectedSpecialistHandles: parseHandleArray(
-            input.activeSelectedSpecialistHandles,
-            "activeSelectedSpecialistHandles",
+            input.selectedGlobalSpecialistHandles ?? input.activeSelectedSpecialistHandles,
+            input.selectedGlobalSpecialistHandles !== undefined
+              ? "selectedGlobalSpecialistHandles"
+              : "activeSelectedSpecialistHandles",
           ),
         }
       : {}),
@@ -749,10 +752,12 @@ function parseUpdateChannelBody(body: unknown): {
     parsed.position = input.position;
   }
 
-  if (input.activeSelectedSpecialistHandles !== undefined) {
+  if (input.selectedGlobalSpecialistHandles !== undefined || input.activeSelectedSpecialistHandles !== undefined) {
     parsed.activeSelectedSpecialistHandles = parseHandleArray(
-      input.activeSelectedSpecialistHandles,
-      "activeSelectedSpecialistHandles",
+      input.selectedGlobalSpecialistHandles ?? input.activeSelectedSpecialistHandles,
+      input.selectedGlobalSpecialistHandles !== undefined
+        ? "selectedGlobalSpecialistHandles"
+        : "activeSelectedSpecialistHandles",
     );
   }
 

@@ -474,6 +474,7 @@ export class CollaborationChannelService {
       ...(normalizeChannelReasoningLevel(record.modelThinkingLevel)
         ? { reasoningLevel: normalizeChannelReasoningLevel(record.modelThinkingLevel) }
         : {}),
+      selectedGlobalSpecialistHandles: activeSelectedSpecialistHandles,
       activeSelectedSpecialistHandles,
       ...(missingSelectedSpecialistHandles ? { missingSelectedSpecialistHandles } : {}),
       position: record.position,

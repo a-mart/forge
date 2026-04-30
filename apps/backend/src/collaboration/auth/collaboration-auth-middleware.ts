@@ -13,6 +13,14 @@ const COLLABORATION_CHANNELS_PATH = "/api/collaboration/channels";
 const COLLABORATION_CHANNEL_DETAIL_PATH = /^\/api\/collaboration\/channels\/[^/]+$/;
 const COLLABORATION_CHANNEL_PROMPT_PREVIEW_PATH =
   /^\/api\/collaboration\/channels\/[^/]+\/prompt-preview$/;
+const COLLABORATION_CHANNEL_SPECIALISTS_PATH =
+  /^\/api\/collaboration\/channels\/[^/]+\/specialists$/;
+const COLLABORATION_CHANNEL_SPECIALISTS_ROSTER_PROMPT_PATH =
+  /^\/api\/collaboration\/channels\/[^/]+\/specialists\/roster-prompt$/;
+const COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_PATH =
+  /^\/api\/collaboration\/channels\/[^/]+\/specialists\/selection$/;
+const COLLABORATION_CHANNEL_SPECIALIST_DETAIL_PATH =
+  /^\/api\/collaboration\/channels\/[^/]+\/specialists\/[^/]+$/;
 const COLLABORATION_CATEGORIES_PATH = "/api/collaboration/categories";
 const COLLABORATION_ME_PASSWORD_PATH = "/api/collaboration/me/password";
 
@@ -147,6 +155,16 @@ export function classifyCollaborationHttpRequest(
 
   if (normalizedMethod === "GET" && COLLABORATION_CHANNEL_PROMPT_PREVIEW_PATH.test(pathname)) {
     return "authenticated";
+  }
+
+  if (
+    (normalizedMethod === "GET" && COLLABORATION_CHANNEL_SPECIALISTS_PATH.test(pathname)) ||
+    (normalizedMethod === "GET" && COLLABORATION_CHANNEL_SPECIALISTS_ROSTER_PROMPT_PATH.test(pathname)) ||
+    (normalizedMethod === "PUT" && COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_PATH.test(pathname)) ||
+    ((normalizedMethod === "PUT" || normalizedMethod === "DELETE") &&
+      COLLABORATION_CHANNEL_SPECIALIST_DETAIL_PATH.test(pathname))
+  ) {
+    return "admin";
   }
 
   if (normalizedMethod === "POST" && COLLABORATION_INVITE_REDEEM_PATH.test(pathname)) {
