@@ -1,9 +1,17 @@
 import type Database from "better-sqlite3";
-import {
-  DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES,
-  parseCollaborationSpecialistHandlesJson,
-  serializeCollaborationSpecialistHandles,
-} from "../specialist-selection.js";
+
+// Migration 0008 backfills persisted specialist selections. These defaults and
+// helpers are intentionally frozen here so historical migrations remain
+// deterministic and do not drift with mutable runtime specialist/product logic.
+// Do not change these values or normalization rules after release; add a new
+// migration instead if persisted collaboration defaults need to evolve.
+const MIGRATION_0008_DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES = [
+  "collab-planner",
+  "collab-reviewer",
+  "collab-doc-writer",
+  "collab-scout",
+  "collab-researcher",
+] as const;
 
 export interface CollaborationAuthMigration {
   name: string;
@@ -234,8 +242,8 @@ CREATE INDEX IF NOT EXISTS collaboration_audit_log_target_invite_id_idx ON colla
       addColumnIfMissing(database, "collab_category", "default_specialist_handles_json", "TEXT");
       addColumnIfMissing(database, "collab_channel", "active_specialist_handles_json", "TEXT");
 
-      const defaultHandlesJson = serializeCollaborationSpecialistHandles(
-        DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES,
+      const defaultHandlesJson = serializeMigration0008SpecialistHandles(
+        MIGRATION_0008_DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES,
       );
 
       database
@@ -331,7 +339,7 @@ function validateJsonArrayColumn(
 
   for (const row of rows) {
     try {
-      parseCollaborationSpecialistHandlesJson(row.handles_json, []);
+      parseMigration0008SpecialistHandlesJson(row.handles_json, []);
     } catch (error) {
       throw new Error(
         `Invalid collaboration specialist handle JSON in ${tableName}.${jsonColumnName} for ${row.row_id}: ${
@@ -340,6 +348,63 @@ function validateJsonArrayColumn(
       );
     }
   }
+}
+
+function parseMigration0008SpecialistHandlesJson(
+  value: string | null | undefined,
+  fallback: readonly string[] = MIGRATION_0008_DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES,
+): string[] {
+  if (value == null) {
+    return [...fallback];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`Invalid specialist handles JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("specialist handles JSON must be an array");
+  }
+
+  return normalizeMigration0008SpecialistHandles(parsed);
+}
+
+function serializeMigration0008SpecialistHandles(handles: readonly string[]): string {
+  return JSON.stringify(normalizeMigration0008SpecialistHandles(handles));
+}
+
+function normalizeMigration0008SpecialistHandles(handles: readonly unknown[]): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawHandle of handles) {
+    if (typeof rawHandle !== "string") {
+      throw new Error("specialist handle lists must contain only strings");
+    }
+
+    const handle = normalizeMigration0008SpecialistHandle(rawHandle);
+    if (!handle) {
+      throw new Error(`Invalid specialist handle: ${rawHandle}`);
+    }
+
+    if (!seen.has(handle)) {
+      seen.add(handle);
+      normalized.push(handle);
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeMigration0008SpecialistHandle(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function quoteSqliteIdentifier(identifier: string): string {

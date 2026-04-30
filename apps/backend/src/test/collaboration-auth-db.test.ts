@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { closeCollaborationAuthDb, getOrCreateCollaborationAuthDb } from "../collaboration/auth/collaboration-db.js";
 import { COLLABORATION_AUTH_MIGRATIONS } from "../collaboration/auth/migrations.js";
 import { runCollaborationAuthMigrations } from "../collaboration/auth/migration-runner.js";
-import { DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES } from "../collaboration/specialist-selection.js";
 import { createTempConfig } from "../test-support/temp-config.js";
 import type { SwarmConfig } from "../swarm/types.js";
 
@@ -34,6 +33,14 @@ const EXPECTED_MIGRATIONS = [
   "0006-collab-category-defaults-upgrade.sql",
   "0007-collab-channel-reasoning.sql",
   "0008-collab-specialist-selections.sql",
+] as const;
+
+const EXPECTED_MIGRATION_0008_DEFAULT_SPECIALIST_HANDLES = [
+  "collab-planner",
+  "collab-reviewer",
+  "collab-doc-writer",
+  "collab-scout",
+  "collab-researcher",
 ] as const;
 
 const LEGACY_0004_COLLABORATION_WORKSPACE_SQL = `CREATE TABLE IF NOT EXISTS collab_workspace (
@@ -492,7 +499,7 @@ describe("collaboration auth DB", () => {
     expect(listTableColumns(database, "collab_category")).toContain("default_specialist_handles_json");
     expect(listTableColumns(database, "collab_channel")).toContain("active_specialist_handles_json");
 
-    const defaultHandlesJson = JSON.stringify([...DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES]);
+    const defaultHandlesJson = JSON.stringify([...EXPECTED_MIGRATION_0008_DEFAULT_SPECIALIST_HANDLES]);
     expect(
       database.prepare<[], { value: string }>(
         `SELECT default_specialist_handles_json AS value FROM collab_category WHERE category_id = 'category-1'`,
