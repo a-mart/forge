@@ -1232,6 +1232,7 @@ describe('SwarmManager', () => {
     {
       label: 'specialist roster changes',
       expectedReason: 'specialist_roster_change' as const,
+      expectedAgentIds: [],
       invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, _config: SwarmConfig) => {
         await manager.notifySpecialistRosterChanged('manager')
       },
@@ -1273,6 +1274,20 @@ describe('SwarmManager', () => {
     expect(applyRecyclePolicySpy.mock.calls).toEqual(
       expectedTargets.map((agentId) => [agentId, expectedReason]),
     )
+  })
+
+  it('delegates specialist roster changes through the lifecycle service', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const lifecycleService = (manager as unknown as {
+      lifecycleService: { notifySpecialistRosterChanged: (profileId: string) => Promise<void> }
+    }).lifecycleService
+    const notifySpy = vi.spyOn(lifecycleService, 'notifySpecialistRosterChanged').mockResolvedValue(undefined)
+
+    await manager.notifySpecialistRosterChanged('manager')
+
+    expect(notifySpy).toHaveBeenCalledWith('manager')
   })
 
   it('allows deleting the default manager when requested', async () => {

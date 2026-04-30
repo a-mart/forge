@@ -186,6 +186,56 @@ describe("specialist routes", () => {
     await expect(promptResponse.json()).resolves.toEqual({ markdown: "## Specialists\n- backend\n" });
   });
 
+  it("lists profile-scoped specialists and roster prompt using explicit collaboration targetSpace", async () => {
+    specialistRegistryState.resolveRoster
+      .mockResolvedValueOnce([
+        {
+          specialistId: "collab-specialist",
+          handle: "collab",
+          displayName: "Collab",
+          enabled: true,
+          sourcePath: "/tmp/profiles/alpha/collab.md",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          specialistId: "collab-specialist",
+          handle: "collab",
+          displayName: "Collab",
+          enabled: true,
+          sourcePath: "/tmp/profiles/alpha/collab.md",
+        },
+      ]);
+    specialistRegistryState.generateRosterBlock.mockReturnValueOnce("## Specialists\n- collab\n");
+
+    const server = await createSpecialistRouteTestServer({
+      profiles: [{ profileId: "alpha", displayName: "Alpha" }],
+    });
+
+    const listResponse = await fetch(
+      `${server.baseUrl}/api/settings/specialists?profileId=alpha&targetSpace=collaboration`,
+    );
+    expect(listResponse.status).toBe(200);
+    expect(specialistRegistryState.resolveRoster).toHaveBeenNthCalledWith(1, "alpha", "/tmp/data", "collaboration");
+    await expect(listResponse.json()).resolves.toEqual({
+      specialists: [
+        {
+          specialistId: "collab-specialist",
+          handle: "collab",
+          displayName: "Collab",
+          enabled: true,
+        },
+      ],
+    });
+
+    const promptResponse = await fetch(
+      `${server.baseUrl}/api/settings/specialists/roster-prompt?profileId=alpha&targetSpace=collaboration`,
+    );
+    expect(promptResponse.status).toBe(200);
+    expect(specialistRegistryState.resolveRoster).toHaveBeenNthCalledWith(2, "alpha", "/tmp/data", "collaboration");
+    await expect(promptResponse.json()).resolves.toEqual({ markdown: "## Specialists\n- collab\n" });
+  });
+
   it("saves global specialists with targetSpace from explicit query when body omits it", async () => {
     const server = await createSpecialistRouteTestServer({
       profiles: [{ profileId: "alpha", displayName: "Alpha" }],

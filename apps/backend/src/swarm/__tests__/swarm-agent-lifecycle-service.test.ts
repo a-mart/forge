@@ -431,6 +431,101 @@ describe("SwarmAgentLifecycleService", () => {
     expect(worker.status).toBe("idle");
   });
 
+  it("spawnAgent resolves specialists from the collaboration roster for collab managers", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "collab-manager",
+      role: "manager",
+      managerId: "collab-manager",
+      profileId: "profile-1",
+      status: "idle",
+      cwd: "/proj",
+      sessionSurface: "collab",
+      collab: { workspaceId: "workspace-1", channelId: "channel-1" }
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const resolveSpecialistRosterForProfile = vi.fn(async (_profileId: string, targetSpace?: string) =>
+      targetSpace === "collaboration"
+        ? [
+            {
+              specialistId: "collab-specialist",
+              displayName: "Collab Specialist",
+              color: "#abc",
+              enabled: true,
+              whenToUse: "collaboration work",
+              modelId: "gpt-5.4",
+              provider: "openai-codex",
+              promptBody: "collab prompt",
+              available: true
+            }
+          ]
+        : []
+    );
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        resolveSpecialistRosterForProfile,
+        normalizeSpecialistHandle: vi.fn(async () => "collab-specialist")
+      })
+    );
+
+    const spawned = await svc.spawnAgent("collab-manager", {
+      agentId: "collab-worker",
+      specialist: "collab-specialist"
+    });
+
+    expect(resolveSpecialistRosterForProfile).toHaveBeenCalledWith("profile-1", "collaboration");
+    expect(spawned.specialistId).toBe("collab-specialist");
+    expect(spawned.specialistDisplayName).toBe("Collab Specialist");
+    expect(spawned.model.modelId).toBe("gpt-5.4");
+  });
+
+  it("notifySpecialistRosterChanged syncs worker metadata from builder and collaboration rosters", async () => {
+    const builderManager = createAgentDescriptor({
+      agentId: "builder-manager",
+      role: "manager",
+      managerId: "builder-manager",
+      profileId: "profile-1",
+      status: "idle"
+    });
+    const collabWorker = createWorkerDescriptor("/proj", "builder-manager", {
+      agentId: "collab-worker",
+      profileId: "profile-1",
+      specialistId: "collab-specialist"
+    });
+    const descriptors = new Map([
+      [builderManager.agentId, builderManager],
+      [collabWorker.agentId, collabWorker]
+    ]);
+    const saveStore = vi.fn(async () => {});
+    const emitAgentsSnapshot = vi.fn();
+    const resolveSpecialistRosterForProfile = vi.fn(async (_profileId: string, targetSpace?: string) =>
+      targetSpace === "builder"
+        ? [{ specialistId: "builder-specialist", displayName: "Builder Specialist", color: "#111" }]
+        : [{ specialistId: "collab-specialist", displayName: "Collab Specialist", color: "#222" }]
+    );
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        resolveSpecialistRosterForProfile,
+        getSessionsForProfile: vi.fn(() => [builderManager as AgentDescriptor & { role: "manager"; profileId: string }]),
+        saveStore,
+        emitAgentsSnapshot
+      })
+    );
+
+    await svc.notifySpecialistRosterChanged("profile-1");
+
+    expect(resolveSpecialistRosterForProfile).toHaveBeenCalledWith("profile-1", "builder");
+    expect(resolveSpecialistRosterForProfile).toHaveBeenCalledWith("profile-1", "collaboration");
+    expect(collabWorker.specialistDisplayName).toBe("Collab Specialist");
+    expect(collabWorker.specialistColor).toBe("#222");
+    expect(saveStore).toHaveBeenCalled();
+    expect(emitAgentsSnapshot).toHaveBeenCalled();
+  });
+
   it("spawnAgent retries with specialist fallback model when the first runtime creation hits capacity", async () => {
     const manager = createAgentDescriptor({
       agentId: "m1",

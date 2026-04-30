@@ -177,6 +177,74 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(resolved?.modelId).toBe("gpt-5.3-codex-spark");
   });
 
+  it("resolves worker fallback from the parent collab manager's collaboration roster", async () => {
+    const config = await makeTempConfig();
+    const collabManager = buildWorkerDescriptor(config, {
+      agentId: "collab-manager",
+      role: "manager",
+      managerId: "collab-manager",
+      specialistId: undefined,
+      sessionSurface: "collab",
+      collab: { workspaceId: "workspace-1", channelId: "channel-1" }
+    });
+    const worker = buildWorkerDescriptor(config, { managerId: collabManager.agentId });
+    const descriptors = new Map<string, AgentDescriptor>([
+      [collabManager.agentId, collabManager],
+      [worker.agentId, worker]
+    ]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+    const resolveSpecialistRosterForProfile = vi.fn(async (_profileId: string, targetSpace?: string) =>
+      targetSpace === "collaboration"
+        ? [{ specialistId: "backend", fallbackModelId: "gpt-5.4", fallbackReasoningLevel: "high" }]
+        : []
+    );
+
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn()
+    });
+
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile,
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor: vi.fn(),
+      attachRuntime: vi.fn(),
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn()
+    });
+
+    const resolved = await manager.resolveSpecialistFallbackModelForDescriptor(worker);
+
+    expect(resolveSpecialistRosterForProfile).toHaveBeenCalledWith("profile-1", "collaboration");
+    expect(resolved?.modelId).toBe("gpt-5.4");
+    expect(resolved?.thinkingLevel).toBe("high");
+  });
+
   it("returns undefined when the roster has no fallback model for the specialist", async () => {
     const config = await makeTempConfig();
     const descriptors = new Map<string, AgentDescriptor>();

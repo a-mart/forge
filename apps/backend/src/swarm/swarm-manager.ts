@@ -2541,31 +2541,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async notifySpecialistRosterChanged(profileId: string): Promise<void> {
-    try {
-      const roster = await this.resolveSpecialistRosterForProfile(profileId);
-      await this.lifecycleService.syncWorkerSpecialistMetadata(profileId, roster);
-    } catch (error) {
-      this.logDebug("specialist:roster_change:sync:error", {
-        profileId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    const sessions = this.getSessionsForProfile(profileId);
-    // Specialist edits are already persisted on disk. Runtime refresh is best-effort.
-    const results = await Promise.allSettled(
-      sessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "specialist_roster_change")),
-    );
-
-    results.forEach((result, index) => {
-      if (result.status === "rejected") {
-        this.logDebug("specialist:roster_change:recycle:error", {
-          profileId,
-          agentId: sessions[index]?.agentId,
-          message: result.reason instanceof Error ? result.reason.message : String(result.reason)
-        });
-      }
-    });
+    await this.lifecycleService.notifySpecialistRosterChanged(profileId);
   }
 
   async notifyProjectAgentsChanged(profileId: string): Promise<void> {
