@@ -503,12 +503,28 @@ Click the **Preview** button (eye icon) to see the complete runtime context a ne
       'Create named worker personas with specific models, prompts, and fallback routing.',
     content: `Specialists are named worker templates that tell the manager which model, reasoning level, and system prompt to use for different kinds of tasks. Instead of a single generic worker, you can have a backend specialist running Codex and a frontend specialist running Opus, each with tailored instructions.
 
+Forge also ships collaboration-focused builtins such as \`collab-planner\`, \`collab-reviewer\`, \`collab-doc-writer\`, \`collab-scout\`, and \`collab-researcher\` for channel work that needs project-context aware roles.
+
 ## Global vs. profile scope
 
 Use the scope dropdown to switch between:
 
 - **Global** — specialists shared across all profiles. Builtin specialists live here.
 - **Per-profile** — overrides that apply to one profile only, taking priority over global definitions.
+
+## Builder vs. Collaboration visibility
+
+Specialists are TargetSpace-aware. The Builder roster shows the local Builder set, while Collaboration mode shows the collaboration set for the active channel or server context. That keeps channel-only helpers out of the Builder roster and keeps Builder-only definitions out of Collab views.
+
+## Collaboration scopes
+
+Collab Settings supports three scopes:
+
+- **Global** — shared collaboration specialists available to all channels.
+- **Category** — the default specialists selected for new channels in that category.
+- **Channel** — the active selected specialists for one channel session, plus channel-local specialist CRUD.
+
+Channel-local specialists live at \`profiles/_collaboration/sessions/<channelSessionId>/specialists/<handle>.md\` and shadow any global specialist with the same handle inside that channel.
 
 ## Filtering the roster
 

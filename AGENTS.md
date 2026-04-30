@@ -200,6 +200,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
         ├── meta.json                      # Session metadata (includes sessionPurpose: 'agent_creator' for Agent Architect sessions)
         ├── feedback.jsonl                 # User feedback
         ├── pinned-messages.json           # Pin state (up to 10 message IDs)
+        ├── specialists/<handle>.md        # Channel-local specialist definitions (under _collaboration sessions)
         ├── workers/<workerId>.jsonl       # Worker conversation logs
         └── terminals/<terminalId>/
             ├── meta.json                  # Terminal metadata (shell, cwd, title, cols/rows)

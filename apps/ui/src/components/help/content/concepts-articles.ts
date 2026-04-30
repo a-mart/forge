@@ -134,6 +134,12 @@ const conceptsSpecialists: HelpArticle = {
     'Named worker templates with dedicated models, prompts, and routing rules.',
   content: `Specialists are predefined worker types with their own name, model, and system prompt. Instead of the manager picking a generic worker for every task, it routes work to the right specialist.
 
+## TargetSpace
+
+Specialists are TargetSpace-aware. **Builder** and **Collaboration** each keep their own visible roster, so channel-only specialists do not leak into the Builder picker and Builder-only definitions do not appear in Collab views. Collaboration also supports channel-local specialists that shadow any global handle with the same name for that channel session.
+
+Channel selection state is separate from the file-backed specialist definitions. The active channel remembers which specialists are selected, but the specialist files themselves still live on disk and can be reused or overridden independently.
+
 ## What a specialist includes
 
 Each specialist has:
