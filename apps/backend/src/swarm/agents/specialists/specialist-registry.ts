@@ -21,6 +21,7 @@ import { sanitizePathSegment } from "../../data-paths.js";
 import {
   getBuiltinSpecialistsDir,
   getProfileSpecialistsDir,
+  getSessionSpecialistsDir,
   getSharedSpecialistsDir,
 } from "../../specialists/specialist-paths.js";
 
@@ -92,6 +93,7 @@ function buildLegacyModelRoutingGuidance(): string {
 export const LEGACY_MODEL_ROUTING_GUIDANCE = buildLegacyModelRoutingGuidance();
 
 const rosterCache = new Map<string, ResolvedSpecialistDefinition[]>();
+const sharedRosterHandleCache = new Map<string, string[]>();
 
 export interface SpecialistFrontmatter {
   displayName: string;
@@ -153,7 +155,7 @@ export async function resolveRoster(
   targetSpace: SpecialistTargetSpace = "builder",
 ): Promise<ResolvedSpecialistDefinition[]> {
   const normalizedProfileId = sanitizePathSegment(profileId);
-  const cacheKey = getRosterCacheKey(dataDir, normalizedProfileId, targetSpace);
+  const cacheKey = getRosterCacheKey({ dataDir, profileId: normalizedProfileId, targetSpace });
   const cached = rosterCache.get(cacheKey);
   if (cached) {
     return cloneRosterEntries(cached);
@@ -187,9 +189,65 @@ export async function resolveRoster(
   return cloneRosterEntries(resolved);
 }
 
+export interface CollaborationChannelRosterOptions {
+  sessionAgentId: string;
+  selectedGlobalHandles: readonly string[];
+}
+
+export async function resolveCollaborationChannelRoster(
+  dataDir: string,
+  options: CollaborationChannelRosterOptions,
+): Promise<ResolvedSpecialistDefinition[]> {
+  const normalizedSessionAgentId = sanitizePathSegment(options.sessionAgentId);
+  const selectedGlobalHandles = normalizeSelectedHandles(options.selectedGlobalHandles);
+  const cacheKey = getRosterCacheKey({
+    dataDir,
+    profileId: "_collaboration",
+    targetSpace: "collaboration",
+    sessionAgentId: normalizedSessionAgentId,
+    selectedGlobalHandles,
+  });
+  const cached = rosterCache.get(cacheKey);
+  if (cached) {
+    return cloneRosterEntries(cached);
+  }
+
+  const sharedDir = getSharedSpecialistsDir(dataDir);
+  const channelDir = getSessionSpecialistsDir(dataDir, "_collaboration", normalizedSessionAgentId);
+  const [sharedByHandle, channelByHandle] = await Promise.all([
+    resolveDirectorySpecialists(sharedDir, "shared", "collaboration"),
+    resolveDirectorySpecialists(channelDir, "channel"),
+  ]);
+
+  const selectedShared = new Map<string, ResolvedSpecialistDefinition>();
+  for (const handle of selectedGlobalHandles) {
+    const entry = sharedByHandle.get(handle);
+    if (entry) {
+      selectedShared.set(handle, entry);
+    }
+  }
+
+  const allHandles = [...new Set([...selectedShared.keys(), ...channelByHandle.keys()])].sort();
+  const resolved: ResolvedSpecialistDefinition[] = [];
+  for (const handle of allHandles) {
+    const channelEntry = channelByHandle.get(handle);
+    if (channelEntry) {
+      resolved.push({ ...channelEntry, shadowsGlobal: sharedByHandle.has(handle) });
+      continue;
+    }
+    const sharedEntry = selectedShared.get(handle);
+    if (sharedEntry) {
+      resolved.push(sharedEntry);
+    }
+  }
+
+  rosterCache.set(cacheKey, cloneRosterEntries(resolved));
+  return cloneRosterEntries(resolved);
+}
+
 async function resolveDirectorySpecialists(
   directoryPath: string,
-  scope: "shared" | "profile",
+  scope: "shared" | "profile" | "channel",
   targetSpace?: SpecialistTargetSpace,
 ): Promise<Map<string, ResolvedSpecialistDefinition>> {
   const files = (await listMarkdownFiles(directoryPath)).filter(
@@ -214,14 +272,18 @@ async function resolveDirectorySpecialists(
         handle,
         definition: toResolvedSpecialistDefinition({
           specialistId: handle,
-          frontmatter: parsed.frontmatter,
+          frontmatter: scope === "channel"
+            ? { ...parsed.frontmatter, targetSpace: ["collaboration"] }
+            : parsed.frontmatter,
           body: parsed.body,
           sourceKind:
             scope === "profile"
               ? "profile"
-              : parsed.frontmatter.builtin
-                ? "builtin"
-                : "global",
+              : scope === "channel"
+                ? "channel"
+                : parsed.frontmatter.builtin
+                  ? "builtin"
+                  : "global",
           sourcePath: filePath,
           shadowsGlobal: false,
         }),
@@ -245,8 +307,31 @@ function cloneRosterEntries(roster: ResolvedSpecialistDefinition[]): ResolvedSpe
   return roster.map((entry) => ({ ...entry }));
 }
 
-function getRosterCacheKey(dataDir: string, profileId: string, targetSpace: SpecialistTargetSpace): string {
-  return `${dataDir}${CACHE_KEY_SEPARATOR}${profileId}${CACHE_KEY_SEPARATOR}${targetSpace}`;
+function getSharedRosterHandleCacheKey(dataDir: string, targetSpace: SpecialistTargetSpace): string {
+  return `${dataDir}${CACHE_KEY_SEPARATOR}${targetSpace}`;
+}
+
+async function refreshSharedRosterHandleCache(dataDir: string): Promise<void> {
+  await Promise.all([
+    resolveSharedRoster(dataDir, "builder"),
+    resolveSharedRoster(dataDir, "collaboration"),
+  ]);
+}
+
+function getRosterCacheKey(options: {
+  dataDir: string;
+  profileId: string;
+  targetSpace: SpecialistTargetSpace;
+  sessionAgentId?: string;
+  selectedGlobalHandles?: readonly string[];
+}): string {
+  return [
+    options.dataDir,
+    options.profileId,
+    options.targetSpace,
+    options.sessionAgentId ?? "",
+    ...(options.selectedGlobalHandles ?? []),
+  ].join(CACHE_KEY_SEPARATOR);
 }
 
 export function generateRosterBlock(roster: ResolvedSpecialistDefinition[]): string {
@@ -356,6 +441,7 @@ export async function seedBuiltins(dataDir: string, options: SeedBuiltinsOptions
   }
 
   invalidateSpecialistCache();
+  await refreshSharedRosterHandleCache(dataDir);
 }
 
 export async function getSpecialistsEnabled(dataDir: string): Promise<boolean> {
@@ -415,6 +501,55 @@ export async function saveProfileSpecialist(
   invalidateSpecialistCache(normalizedProfileId);
 }
 
+export async function saveChannelSpecialist(
+  dataDir: string,
+  sessionAgentId: string,
+  handle: string,
+  data: SaveSpecialistRequest,
+): Promise<void> {
+  const normalizedSessionAgentId = sanitizePathSegment(sessionAgentId);
+  const specialistId = normalizeSpecialistHandle(handle);
+
+  if (!specialistId) {
+    throw new Error(`Invalid specialist handle: ${handle}`);
+  }
+
+  const frontmatter = validateSaveRequest({ ...data, targetSpace: ["collaboration"] });
+  const channelDir = getSessionSpecialistsDir(dataDir, "_collaboration", normalizedSessionAgentId);
+  const filePath = join(channelDir, `${sanitizePathSegment(specialistId)}.md`);
+
+  await mkdir(channelDir, { recursive: true });
+  await writeSpecialistFile(filePath, serializeSpecialistFile(frontmatter, data.promptBody));
+
+  invalidateSpecialistCache(undefined, normalizedSessionAgentId);
+}
+
+export async function deleteChannelSpecialist(dataDir: string, sessionAgentId: string, handle: string): Promise<void> {
+  const normalizedSessionAgentId = sanitizePathSegment(sessionAgentId);
+  const specialistId = normalizeSpecialistHandle(handle);
+
+  if (!specialistId) {
+    throw new Error(`Invalid specialist handle: ${handle}`);
+  }
+
+  const filePath = join(
+    getSessionSpecialistsDir(dataDir, "_collaboration", normalizedSessionAgentId),
+    `${sanitizePathSegment(specialistId)}.md`,
+  );
+
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if (isEnoentError(error)) {
+      throw new Error(`Unknown specialist: ${specialistId}`);
+    }
+
+    throw error;
+  }
+
+  invalidateSpecialistCache(undefined, normalizedSessionAgentId);
+}
+
 export async function deleteProfileSpecialist(dataDir: string, profileId: string, handle: string): Promise<void> {
   const normalizedProfileId = sanitizePathSegment(profileId);
   const specialistId = normalizeSpecialistHandle(handle);
@@ -448,7 +583,18 @@ export async function resolveSharedRoster(
   const sharedDir = getSharedSpecialistsDir(dataDir);
   const byHandle = await resolveDirectorySpecialists(sharedDir, "shared", targetSpace);
   const sorted = [...byHandle.values()].sort((a, b) => a.specialistId.localeCompare(b.specialistId));
+  if (targetSpace) {
+    sharedRosterHandleCache.set(getSharedRosterHandleCacheKey(dataDir, targetSpace), sorted.map((entry) => entry.specialistId));
+  }
   return sorted;
+}
+
+export function getCachedSharedSpecialistHandles(
+  dataDir: string,
+  targetSpace: SpecialistTargetSpace,
+): string[] | undefined {
+  const handles = sharedRosterHandleCache.get(getSharedRosterHandleCacheKey(dataDir, targetSpace));
+  return handles ? [...handles] : undefined;
 }
 
 export async function saveSharedSpecialist(
@@ -476,6 +622,7 @@ export async function saveSharedSpecialist(
   await writeSpecialistFile(filePath, serializeSpecialistFile(frontmatter, data.promptBody));
 
   invalidateSpecialistCache();
+  await refreshSharedRosterHandleCache(dataDir);
 }
 
 export async function deleteSharedSpecialist(dataDir: string, handle: string): Promise<void> {
@@ -499,6 +646,7 @@ export async function deleteSharedSpecialist(dataDir: string, handle: string): P
 
   await unlink(filePath);
   invalidateSpecialistCache();
+  await refreshSharedRosterHandleCache(dataDir);
 }
 
 export async function getWorkerTemplate(): Promise<string> {
@@ -519,17 +667,23 @@ export async function getWorkerTemplate(): Promise<string> {
   }
 }
 
-export function invalidateSpecialistCache(profileId?: string): void {
-  if (!profileId) {
+export function invalidateSpecialistCache(profileId?: string, sessionAgentId?: string): void {
+  if (!profileId && !sessionAgentId) {
     rosterCache.clear();
     return;
   }
 
-  const normalizedProfileId = sanitizePathSegment(profileId);
+  const normalizedProfileId = profileId ? sanitizePathSegment(profileId) : undefined;
+  const normalizedSessionAgentId = sessionAgentId ? sanitizePathSegment(sessionAgentId) : undefined;
   for (const key of rosterCache.keys()) {
-    if (key.includes(`${CACHE_KEY_SEPARATOR}${normalizedProfileId}${CACHE_KEY_SEPARATOR}`)) {
-      rosterCache.delete(key);
+    const parts = key.split(CACHE_KEY_SEPARATOR);
+    if (normalizedProfileId && parts[1] !== normalizedProfileId) {
+      continue;
     }
+    if (normalizedSessionAgentId && parts[3] !== normalizedSessionAgentId) {
+      continue;
+    }
+    rosterCache.delete(key);
   }
 }
 
@@ -778,6 +932,20 @@ function parseTargetSpace(value: string | undefined): SpecialistTargetSpace[] | 
   return normalizeTargetSpace(entries);
 }
 
+function normalizeSelectedHandles(handles: readonly string[]): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const rawHandle of handles) {
+    const handle = normalizeSpecialistHandle(rawHandle);
+    if (!handle || seen.has(handle)) {
+      continue;
+    }
+    seen.add(handle);
+    normalized.push(handle);
+  }
+  return normalized;
+}
+
 function normalizeTargetSpace(values: readonly string[] | undefined): SpecialistTargetSpace[] | undefined {
   if (!values) {
     return [...DEFAULT_SPECIALIST_TARGET_SPACE];
@@ -834,7 +1002,7 @@ function toResolvedSpecialistDefinition(options: {
   specialistId: string;
   frontmatter: SpecialistFrontmatter;
   body: string;
-  sourceKind: "builtin" | "global" | "profile";
+  sourceKind: "builtin" | "global" | "profile" | "channel";
   sourcePath: string;
   shadowsGlobal: boolean;
 }): ResolvedSpecialistDefinition {

@@ -8,6 +8,10 @@ import {
   type CollaborationDbHelpers,
 } from "../../collaboration/collab-db-helpers.js";
 import { CollaborationCategoryService } from "../../collaboration/category-service.js";
+import {
+  getCachedSharedSpecialistHandles,
+  resolveSharedRoster,
+} from "../../swarm/specialists/specialist-registry.js";
 import { CollaborationChannelService } from "../../collaboration/channel-service.js";
 import type { CollaborationReadinessRequestService } from "../../collaboration/readiness-service.js";
 import { CollaborationWorkspaceService } from "../../collaboration/workspace-service.js";
@@ -464,16 +468,26 @@ export class CollabCommandHandler {
   }
 
   private async createServices(): Promise<CollaborationWsServices> {
-    const dbHelpers = await createCollaborationDbHelpers(this.swarmManager.getConfig());
+    const config = this.swarmManager.getConfig();
+    const dbHelpers = await createCollaborationDbHelpers(config);
+    const availableGlobalSpecialistHandles = (await resolveSharedRoster(config.paths.dataDir, "collaboration"))
+      .map((entry) => entry.specialistId);
     return {
       dbHelpers,
-      workspaceService: new CollaborationWorkspaceService(dbHelpers, this.swarmManager, this.swarmManager.getConfig()),
+      workspaceService: new CollaborationWorkspaceService(dbHelpers, this.swarmManager, config),
       channelService: new CollaborationChannelService(
         dbHelpers,
         this.swarmManager,
-        this.swarmManager.getConfig().paths.dataDir,
+        config.paths.dataDir,
+        {
+          availableGlobalSpecialistHandles: () =>
+            getCachedSharedSpecialistHandles(config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+        },
       ),
-      categoryService: new CollaborationCategoryService(dbHelpers),
+      categoryService: new CollaborationCategoryService(dbHelpers, {
+        availableGlobalSpecialistHandles: () =>
+          getCachedSharedSpecialistHandles(config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+      }),
     };
   }
 }

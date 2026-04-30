@@ -437,7 +437,7 @@ async function notifyGlobalSpecialistMutation(options: {
   dataDir: string;
 }): Promise<void> {
   const { swarmManager, broadcastEvent, dataDir } = options;
-  const profiles = swarmManager.listUserProfiles();
+  const profiles = swarmManager.listProfiles();
 
   for (const profile of profiles) {
     await notifySpecialistRosterMutation({

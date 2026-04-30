@@ -1,4 +1,4 @@
-export type SpecialistSourceKind = 'builtin' | 'global' | 'profile'
+export type SpecialistSourceKind = 'builtin' | 'global' | 'profile' | 'channel'
 export type SpecialistTargetSpace = 'builder' | 'collaboration'
 export type SpecialistAvailabilityCode = 'ok' | 'invalid_model' | 'missing_auth'
 

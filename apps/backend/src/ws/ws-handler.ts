@@ -27,6 +27,10 @@ import type { PlaywrightDiscoveryService } from "../playwright/playwright-discov
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
+import {
+  getCachedSharedSpecialistHandles,
+  resolveSharedRoster,
+} from "../swarm/specialists/specialist-registry.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
@@ -541,7 +545,12 @@ export class WsHandler {
       getOrCreateCollaborationBetterAuthService(config),
     ]);
 
-    const channelService = new CollaborationChannelService(dbHelpers, this.swarmManager, config.paths.dataDir);
+    const availableGlobalSpecialistHandles = (await resolveSharedRoster(config.paths.dataDir, "collaboration"))
+      .map((entry) => entry.specialistId);
+    const channelService = new CollaborationChannelService(dbHelpers, this.swarmManager, config.paths.dataDir, {
+      availableGlobalSpecialistHandles: () =>
+        getCachedSharedSpecialistHandles(config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+    });
     const userService = new CollaborationUserService(dbHelpers.database, authService);
     return new CollaborationChannelMessageService(this.swarmManager, channelService, dbHelpers, userService);
   }

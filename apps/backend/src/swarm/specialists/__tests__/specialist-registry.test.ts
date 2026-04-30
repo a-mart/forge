@@ -3,14 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  deleteChannelSpecialist,
   deleteProfileSpecialist,
   deleteSharedSpecialist,
   generateRosterBlock,
   invalidateSpecialistCache,
   normalizeSpecialistHandle,
   parseSpecialistFile,
+  resolveCollaborationChannelRoster,
   resolveRoster,
   resolveSharedRoster,
+  saveChannelSpecialist,
   saveProfileSpecialist,
   saveSharedSpecialist,
   seedBuiltins,
@@ -1320,6 +1323,106 @@ describe("specialist-registry", () => {
     );
 
     expect(await parseSpecialistFile(filePath)).toBeNull();
+  });
+
+  it("resolves channel collaboration roster from selected globals plus channel-local shadowing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await saveSharedSpecialist(dataDir, "global-collab", {
+      displayName: "Global Collab",
+      color: "#2563eb",
+      enabled: true,
+      whenToUse: "Use globally in collaboration.",
+      modelId: "gpt-5.3-codex",
+      provider: "openai",
+      targetSpace: ["collaboration"],
+      promptBody: "Global collab prompt.",
+    });
+    await saveSharedSpecialist(dataDir, "unselected-collab", {
+      displayName: "Unselected Collab",
+      color: "#2563eb",
+      enabled: true,
+      whenToUse: "Not selected.",
+      modelId: "gpt-5.3-codex",
+      provider: "openai",
+      targetSpace: ["collaboration"],
+      promptBody: "Unselected prompt.",
+    });
+    await saveChannelSpecialist(dataDir, "channel-a", "global-collab", {
+      displayName: "Local Override",
+      color: "#16a34a",
+      enabled: true,
+      whenToUse: "Use local override.",
+      modelId: "gpt-5.3-codex",
+      provider: "openai",
+      promptBody: "Channel-local prompt.",
+    });
+    await saveChannelSpecialist(dataDir, "channel-a", "local-only", {
+      displayName: "Local Only",
+      color: "#16a34a",
+      enabled: true,
+      whenToUse: "Use locally.",
+      modelId: "gpt-5.3-codex",
+      provider: "openai",
+      targetSpace: ["builder"],
+      promptBody: "Local-only prompt.",
+    });
+
+    const roster = await resolveCollaborationChannelRoster(dataDir, {
+      sessionAgentId: "channel-a",
+      selectedGlobalHandles: ["global-collab", "missing-collab"],
+    });
+    const byId = new Map(roster.map((entry) => [entry.specialistId, entry]));
+
+    expect(roster.map((entry) => entry.specialistId)).toEqual(["global-collab", "local-only"]);
+    expect(byId.get("global-collab")).toMatchObject({
+      sourceKind: "channel",
+      promptBody: "Channel-local prompt.",
+      shadowsGlobal: true,
+      targetSpace: ["collaboration"],
+    });
+    expect(byId.get("local-only")).toMatchObject({ sourceKind: "channel", targetSpace: ["collaboration"] });
+    expect(byId.has("unselected-collab")).toBe(false);
+  });
+
+  it("invalidates channel roster cache for channel-local mutations only", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await saveChannelSpecialist(dataDir, "channel-a", "local", {
+      displayName: "Local A",
+      color: "#2563eb",
+      enabled: true,
+      whenToUse: "Use locally.",
+      modelId: "gpt-5.3-codex",
+      provider: "openai",
+      promptBody: "Local prompt A.",
+    });
+    await saveChannelSpecialist(dataDir, "channel-b", "local", {
+      displayName: "Local B",
+      color: "#2563eb",
+      enabled: true,
+      whenToUse: "Use locally.",
+      modelId: "gpt-5.3-codex",
+      provider: "openai",
+      promptBody: "Local prompt B.",
+    });
+
+    expect((await resolveCollaborationChannelRoster(dataDir, {
+      sessionAgentId: "channel-a",
+      selectedGlobalHandles: [],
+    })).map((entry) => entry.specialistId)).toEqual(["local"]);
+    await deleteChannelSpecialist(dataDir, "channel-a", "local");
+
+    expect(await resolveCollaborationChannelRoster(dataDir, {
+      sessionAgentId: "channel-a",
+      selectedGlobalHandles: [],
+    })).toEqual([]);
+    expect((await resolveCollaborationChannelRoster(dataDir, {
+      sessionAgentId: "channel-b",
+      selectedGlobalHandles: [],
+    })).map((entry) => entry.specialistId)).toEqual(["local"]);
   });
 
   it("rejects deleting builtins and missing shared specialists", async () => {

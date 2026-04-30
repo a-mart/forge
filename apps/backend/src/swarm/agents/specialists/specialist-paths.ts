@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getSharedDir, sanitizePathSegment } from "../../data-paths.js";
+import { getSessionDir, getSharedDir, sanitizePathSegment } from "../../data-paths.js";
 
 export function getSharedSpecialistsDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "specialists");
@@ -9,6 +9,10 @@ export function getSharedSpecialistsDir(dataDir: string): string {
 
 export function getProfileSpecialistsDir(dataDir: string, profileId: string): string {
   return join(dataDir, "profiles", sanitizePathSegment(profileId), "specialists");
+}
+
+export function getSessionSpecialistsDir(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "specialists");
 }
 
 const BUILTIN_SPECIALISTS_RELATIVE_DIR = join("apps", "backend", "src", "swarm", "specialists", "builtins");

@@ -1,5 +1,12 @@
 import type { CollaborationChannelPromptPreviewResponse, PromptPreviewResponse } from "@forge/protocol";
 import { parseSwarmReasoningLevel } from "../../../../swarm/model-presets.js";
+import {
+  deleteChannelSpecialist,
+  generateRosterBlock,
+  resolveCollaborationChannelRoster,
+  saveChannelSpecialist,
+  type SaveSpecialistRequest,
+} from "../../../../swarm/specialists/specialist-registry.js";
 import type { SwarmConfig, SwarmReasoningLevel } from "../../../../swarm/types.js";
 import {
   attachEffectiveChannelModelSettings,
@@ -28,6 +35,17 @@ const COLLABORATION_CHANNEL_METHODS = "GET, PATCH, OPTIONS";
 const COLLABORATION_CHANNEL_PROMPT_PREVIEW_ENDPOINT_PATTERN =
   /^\/api\/collaboration\/channels\/([^/]+)\/prompt-preview$/;
 const COLLABORATION_CHANNEL_PROMPT_PREVIEW_METHODS = "GET, OPTIONS";
+const COLLABORATION_CHANNEL_SPECIALISTS_ENDPOINT_PATTERN =
+  /^\/api\/collaboration\/channels\/([^/]+)\/specialists$/;
+const COLLABORATION_CHANNEL_SPECIALISTS_METHODS = "GET, OPTIONS";
+const COLLABORATION_CHANNEL_SPECIALIST_ENDPOINT_PATTERN =
+  /^\/api\/collaboration\/channels\/([^/]+)\/specialists\/([^/]+)$/;
+const COLLABORATION_CHANNEL_SPECIALIST_METHODS = "PUT, DELETE, OPTIONS";
+const COLLABORATION_CHANNEL_SPECIALISTS_ROSTER_PROMPT_ENDPOINT_PATTERN =
+  /^\/api\/collaboration\/channels\/([^/]+)\/specialists\/roster-prompt$/;
+const COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_ENDPOINT_PATTERN =
+  /^\/api\/collaboration\/channels\/([^/]+)\/specialists\/selection$/;
+const COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_METHODS = "PUT, OPTIONS";
 const COLLABORATION_CHANNEL_ARCHIVE_ENDPOINT_PATTERN =
   /^\/api\/collaboration\/channels\/([^/]+)\/archive$/;
 const COLLABORATION_CHANNEL_ARCHIVE_METHODS = "POST, OPTIONS";
@@ -259,6 +277,9 @@ export function createCollaborationChannelRoutes(options: {
             await promptOverlayService.setPromptOverlay(channel.channelId, update.promptOverlay);
             await recycleCollaborationBackingSessionRuntime(options.swarmManager, channel.sessionAgentId);
           }
+          if (update.activeSelectedSpecialistHandles !== undefined) {
+            await notifyChannelSpecialistMutation(options.swarmManager, channel.sessionAgentId);
+          }
           broadcasts?.broadcastChannelUpdated(
             attachEffectiveChannelModelSettings(options.swarmManager, channelService.getChannel(channel.channelId)),
           );
@@ -269,6 +290,186 @@ export function createCollaborationChannelRoutes(options: {
         } catch (error) {
           sendJson(response, mapCollaborationChannelErrorStatus(error), {
             error: error instanceof Error ? error.message : "Unable to manage collaboration channel",
+          });
+        }
+      },
+    },
+    {
+      methods: COLLABORATION_CHANNEL_SPECIALISTS_METHODS,
+      matches: (pathname) => COLLABORATION_CHANNEL_SPECIALISTS_ENDPOINT_PATTERN.test(pathname),
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, COLLABORATION_CHANNEL_SPECIALISTS_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        applyCorsHeaders(request, response, COLLABORATION_CHANNEL_SPECIALISTS_METHODS);
+        if (request.method !== "GET") {
+          response.setHeader("Allow", COLLABORATION_CHANNEL_SPECIALISTS_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        const channelId = parseSinglePathId(requestUrl.pathname, COLLABORATION_CHANNEL_SPECIALISTS_ENDPOINT_PATTERN);
+        if (!channelId) {
+          sendJson(response, 400, { error: "Missing channelId" });
+          return;
+        }
+        const authContext = await requireAuthenticatedRequestContext(request, response, options.getServices);
+        if (!authContext) {
+          return;
+        }
+        void authContext;
+        try {
+          const { channelService } = await options.getServices();
+          const channel = channelService.getChannel(channelId);
+          const roster = await resolveCollaborationChannelRoster(options.config.paths.dataDir, {
+            sessionAgentId: channel.sessionAgentId,
+            selectedGlobalHandles: channel.activeSelectedSpecialistHandles,
+          });
+          const specialists = roster.map(({ sourcePath: _, ...rest }) => rest);
+          sendJson(response, 200, {
+            channelId: channel.channelId,
+            specialists,
+            selectedGlobalSpecialistHandles: channel.activeSelectedSpecialistHandles,
+            missingSelectedSpecialistHandles: channel.missingSelectedSpecialistHandles ?? [],
+          });
+        } catch (error) {
+          sendJson(response, mapCollaborationChannelErrorStatus(error), {
+            error: error instanceof Error ? error.message : "Unable to list channel specialists",
+          });
+        }
+      },
+    },
+    {
+      methods: COLLABORATION_CHANNEL_PROMPT_PREVIEW_METHODS,
+      matches: (pathname) => COLLABORATION_CHANNEL_SPECIALISTS_ROSTER_PROMPT_ENDPOINT_PATTERN.test(pathname),
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, COLLABORATION_CHANNEL_PROMPT_PREVIEW_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        applyCorsHeaders(request, response, COLLABORATION_CHANNEL_PROMPT_PREVIEW_METHODS);
+        if (request.method !== "GET") {
+          response.setHeader("Allow", COLLABORATION_CHANNEL_PROMPT_PREVIEW_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        const channelId = parseSinglePathId(requestUrl.pathname, COLLABORATION_CHANNEL_SPECIALISTS_ROSTER_PROMPT_ENDPOINT_PATTERN);
+        if (!channelId) {
+          sendJson(response, 400, { error: "Missing channelId" });
+          return;
+        }
+        const authContext = await requireAuthenticatedRequestContext(request, response, options.getServices);
+        if (!authContext) {
+          return;
+        }
+        void authContext;
+        try {
+          const { channelService } = await options.getServices();
+          const channel = channelService.getChannel(channelId);
+          const roster = await resolveCollaborationChannelRoster(options.config.paths.dataDir, {
+            sessionAgentId: channel.sessionAgentId,
+            selectedGlobalHandles: channel.activeSelectedSpecialistHandles,
+          });
+          sendJson(response, 200, { markdown: generateRosterBlock(roster) });
+        } catch (error) {
+          sendJson(response, mapCollaborationChannelErrorStatus(error), {
+            error: error instanceof Error ? error.message : "Unable to render channel specialist roster",
+          });
+        }
+      },
+    },
+    {
+      methods: COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_METHODS,
+      matches: (pathname) => COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_ENDPOINT_PATTERN.test(pathname),
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        applyCorsHeaders(request, response, COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_METHODS);
+        if (request.method !== "PUT") {
+          response.setHeader("Allow", COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        const channelId = parseSinglePathId(requestUrl.pathname, COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_ENDPOINT_PATTERN);
+        if (!channelId) {
+          sendJson(response, 400, { error: "Missing channelId" });
+          return;
+        }
+        const adminContext = await requireAdminRequestContext(request, response, options.getServices);
+        if (!adminContext) {
+          return;
+        }
+        void adminContext;
+        try {
+          const body = expectObjectBody(await readJsonBody(request));
+          const selectedGlobalSpecialistHandles = parseHandleArray(
+            body.selectedGlobalSpecialistHandles,
+            "selectedGlobalSpecialistHandles",
+          );
+          const { channelService, broadcasts } = await options.getServices();
+          const channel = channelService.updateChannel(channelId, {
+            activeSelectedSpecialistHandles: selectedGlobalSpecialistHandles,
+          });
+          await notifyChannelSpecialistMutation(options.swarmManager, channel.sessionAgentId);
+          broadcasts?.broadcastChannelUpdated(attachEffectiveChannelModelSettings(options.swarmManager, channel));
+          sendJson(response, 200, { ok: true, channel });
+        } catch (error) {
+          sendJson(response, mapCollaborationChannelErrorStatus(error), {
+            error: error instanceof Error ? error.message : "Unable to update channel specialist selection",
+          });
+        }
+      },
+    },
+    {
+      methods: COLLABORATION_CHANNEL_SPECIALIST_METHODS,
+      matches: (pathname) => COLLABORATION_CHANNEL_SPECIALIST_ENDPOINT_PATTERN.test(pathname),
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, COLLABORATION_CHANNEL_SPECIALIST_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        applyCorsHeaders(request, response, COLLABORATION_CHANNEL_SPECIALIST_METHODS);
+        if (request.method !== "PUT" && request.method !== "DELETE") {
+          response.setHeader("Allow", COLLABORATION_CHANNEL_SPECIALIST_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        const match = COLLABORATION_CHANNEL_SPECIALIST_ENDPOINT_PATTERN.exec(requestUrl.pathname);
+        const channelId = match?.[1] ? decodeURIComponent(match[1]) : undefined;
+        const handle = match?.[2] ? decodeURIComponent(match[2]) : undefined;
+        if (!channelId || !handle || handle === "selection" || handle === "roster-prompt") {
+          sendJson(response, 400, { error: "Missing channelId or specialist handle" });
+          return;
+        }
+        const adminContext = await requireAdminRequestContext(request, response, options.getServices);
+        if (!adminContext) {
+          return;
+        }
+        void adminContext;
+        try {
+          const { channelService } = await options.getServices();
+          const channel = channelService.getChannel(channelId);
+          if (request.method === "PUT") {
+            const data = parseSaveChannelSpecialistBody(await readJsonBody(request));
+            await saveChannelSpecialist(options.config.paths.dataDir, channel.sessionAgentId, handle, data);
+          } else {
+            await deleteChannelSpecialist(options.config.paths.dataDir, channel.sessionAgentId, handle);
+          }
+          await notifyChannelSpecialistMutation(options.swarmManager, channel.sessionAgentId);
+          sendJson(response, 200, { ok: true });
+        } catch (error) {
+          sendJson(response, mapCollaborationChannelErrorStatus(error), {
+            error: error instanceof Error ? error.message : "Unable to manage channel specialist",
           });
         }
       },
@@ -392,6 +593,28 @@ async function attachChannelAdminSettings(
   );
 }
 
+async function notifyChannelSpecialistMutation(
+  swarmManager: CollaborationRouteSwarmManager | undefined,
+  backingSessionAgentId: string,
+): Promise<void> {
+  const specialistRosterManager = swarmManager as (
+    CollaborationRouteSwarmManager & {
+      notifySpecialistRosterChanged?: (
+        profileId: string,
+        options?: { sessionAgentId?: string },
+      ) => Promise<void>;
+    }
+  ) | undefined;
+  if (specialistRosterManager?.notifySpecialistRosterChanged) {
+    await specialistRosterManager.notifySpecialistRosterChanged("_collaboration", {
+      sessionAgentId: backingSessionAgentId,
+    });
+    return;
+  }
+
+  await recycleCollaborationBackingSessionRuntime(swarmManager, backingSessionAgentId);
+}
+
 async function recycleCollaborationBackingSessionRuntime(
   swarmManager: CollaborationRouteSwarmManager | undefined,
   backingSessionAgentId: string,
@@ -409,6 +632,28 @@ async function recycleCollaborationBackingSessionRuntime(
   }
 
   await runtimeRecycleManager.applyManagerRuntimeRecyclePolicy(backingSessionAgentId, "prompt_mode_change");
+}
+
+function parseSaveChannelSpecialistBody(body: unknown): SaveSpecialistRequest {
+  const input = expectObjectBody(body);
+  return {
+    displayName: requireStringField(input.displayName, "displayName"),
+    color: requireStringField(input.color, "color"),
+    enabled: requireBooleanField(input.enabled, "enabled"),
+    whenToUse: requireStringField(input.whenToUse, "whenToUse"),
+    modelId: requireStringField(input.modelId, "modelId"),
+    provider: input.provider !== undefined ? requireStringField(input.provider, "provider") : undefined,
+    reasoningLevel: input.reasoningLevel !== undefined ? requireStringField(input.reasoningLevel, "reasoningLevel") : undefined,
+    fallbackModelId: input.fallbackModelId !== undefined ? requireStringField(input.fallbackModelId, "fallbackModelId") : undefined,
+    fallbackProvider: input.fallbackProvider !== undefined ? requireStringField(input.fallbackProvider, "fallbackProvider") : undefined,
+    fallbackReasoningLevel: input.fallbackReasoningLevel !== undefined
+      ? requireStringField(input.fallbackReasoningLevel, "fallbackReasoningLevel")
+      : undefined,
+    pinned: input.pinned !== undefined ? requireBooleanField(input.pinned, "pinned") : undefined,
+    webSearch: input.webSearch !== undefined ? requireBooleanField(input.webSearch, "webSearch") : undefined,
+    targetSpace: ["collaboration"],
+    promptBody: requireStringField(input.promptBody, "promptBody"),
+  };
 }
 
 function parseCreateChannelBody(body: unknown): {

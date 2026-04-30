@@ -109,6 +109,10 @@ export interface SwarmPromptServiceOptions {
   refreshSessionMetaStatsBySessionId: (sessionAgentId: string) => Promise<void>;
   getSessionsForProfile: (profileId: string) => AgentDescriptor[];
   loadSpecialistRegistryModule: () => Promise<SpecialistRegistryModuleLike>;
+  resolveSpecialistRosterForManager?: (
+    manager: AgentDescriptor,
+    targetSpace?: SpecialistTargetSpace,
+  ) => Promise<ResolvedSpecialistDefinitionLike[]>;
   getIntegrationContext: (profileId: string) => string | undefined;
   logDebug: (message: string, details?: unknown) => void;
 }
@@ -222,7 +226,7 @@ export class SwarmPromptService {
         : projectAgentPrompt
           ? Promise.resolve(projectAgentPrompt)
           : this.options.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
-      specialistRegistry.resolveRoster(profileId, this.resolveSpecialistTargetSpace(descriptor)),
+      this.resolveSpecialistRosterForDescriptor(descriptor, specialistRegistry),
       specialistRegistry.getSpecialistsEnabled(),
     ]);
 
@@ -329,7 +333,7 @@ export class SwarmPromptService {
     if (specialistId) {
       try {
         const specialistRegistry = await this.options.loadSpecialistRegistryModule();
-        const roster = await specialistRegistry.resolveRoster(profileId, this.resolveSpecialistTargetSpace(descriptor));
+        const roster = await this.resolveSpecialistRosterForDescriptor(descriptor, specialistRegistry);
         const specialist = roster.find((entry) => entry.specialistId === specialistId);
         const specialistPrompt = specialist?.promptBody?.trim();
         if (specialistPrompt) {
@@ -370,6 +374,25 @@ export class SwarmPromptService {
       });
       return DEFAULT_WORKER_SYSTEM_PROMPT;
     }
+  }
+
+  private async resolveSpecialistRosterForDescriptor(
+    descriptor: AgentDescriptor,
+    specialistRegistry: SpecialistRegistryModuleLike,
+  ): Promise<ResolvedSpecialistDefinitionLike[]> {
+    const targetSpace = this.resolveSpecialistTargetSpace(descriptor);
+    if (descriptor.role === "manager") {
+      return this.options.resolveSpecialistRosterForManager
+        ? this.options.resolveSpecialistRosterForManager(descriptor, targetSpace)
+        : specialistRegistry.resolveRoster(descriptor.profileId ?? descriptor.agentId, targetSpace);
+    }
+
+    const managerDescriptor = this.options.descriptors.get(descriptor.managerId);
+    if (managerDescriptor && this.options.resolveSpecialistRosterForManager) {
+      return this.options.resolveSpecialistRosterForManager(managerDescriptor, targetSpace);
+    }
+
+    return specialistRegistry.resolveRoster(descriptor.profileId ?? descriptor.agentId, targetSpace);
   }
 
   private resolveSpecialistTargetSpace(descriptor: AgentDescriptor): SpecialistTargetSpace {

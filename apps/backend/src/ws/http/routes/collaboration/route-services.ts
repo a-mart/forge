@@ -27,6 +27,10 @@ import { CollaborationCategoryService } from "../../../../collaboration/category
 import type {
   CollaborationReadinessRequestService,
 } from "../../../../collaboration/readiness-service.js";
+import {
+  getCachedSharedSpecialistHandles,
+  resolveSharedRoster,
+} from "../../../../swarm/specialists/specialist-registry.js";
 import type { SwarmConfig } from "../../../../swarm/types.js";
 import type {
   CollaborationCategory,
@@ -94,6 +98,7 @@ async function createCollaborationRouteServices(
   ]);
   const database = dbHelpers.database;
   const auditService = new CollaborationAuditService(database);
+  const availableGlobalSpecialistHandles = await resolveAvailableGlobalCollaborationSpecialistHandles(context.config.paths.dataDir);
 
   return {
     authService,
@@ -102,9 +107,20 @@ async function createCollaborationRouteServices(
     inviteService: new CollaborationInviteService(database, authService, context.settingsService, auditService),
     userService: new CollaborationUserService(database, authService),
     workspaceService: new CollaborationWorkspaceService(dbHelpers, context.swarmManager, context.config),
-    channelService: new CollaborationChannelService(dbHelpers, context.swarmManager, context.config.paths.dataDir),
+    channelService: new CollaborationChannelService(dbHelpers, context.swarmManager, context.config.paths.dataDir, {
+      availableGlobalSpecialistHandles: () =>
+        getCachedSharedSpecialistHandles(context.config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+    }),
     promptOverlayService: new ChannelPromptOverlayService(dbHelpers, context.config.paths.dataDir),
-    categoryService: new CollaborationCategoryService(dbHelpers),
+    categoryService: new CollaborationCategoryService(dbHelpers, {
+      availableGlobalSpecialistHandles: () =>
+        getCachedSharedSpecialistHandles(context.config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+    }),
     broadcasts: context.broadcasts ?? null,
   };
+}
+
+async function resolveAvailableGlobalCollaborationSpecialistHandles(dataDir: string): Promise<string[]> {
+  const roster = await resolveSharedRoster(dataDir, "collaboration");
+  return roster.map((entry) => entry.specialistId);
 }

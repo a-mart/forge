@@ -58,6 +58,10 @@ export interface SwarmSpecialistFallbackManagerOptions {
     profileId: string,
     targetSpace?: SpecialistTargetSpace
   ): Promise<ResolvedSpecialistDefinitionLike[]>;
+  resolveSpecialistRosterForManager?(
+    manager: AgentDescriptor,
+    targetSpace?: SpecialistTargetSpace
+  ): Promise<ResolvedSpecialistDefinitionLike[]>;
   resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor;
   resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string>;
   injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string;
@@ -441,10 +445,15 @@ export class SwarmSpecialistFallbackManager {
     }
 
     const managerDescriptor = this.options.descriptors.get(descriptor.managerId);
-    const roster = await this.options.resolveSpecialistRosterForProfile(
-      descriptor.profileId,
-      managerDescriptor && isCollabSession(managerDescriptor) ? "collaboration" : "builder"
-    );
+    const roster = managerDescriptor && this.options.resolveSpecialistRosterForManager
+      ? await this.options.resolveSpecialistRosterForManager(
+          managerDescriptor,
+          managerDescriptor && isCollabSession(managerDescriptor) ? "collaboration" : "builder"
+        )
+      : await this.options.resolveSpecialistRosterForProfile(
+          descriptor.profileId,
+          managerDescriptor && isCollabSession(managerDescriptor) ? "collaboration" : "builder"
+        );
     const specialist = roster.find((entry) => entry.specialistId === specialistId);
     if (!specialist?.fallbackModelId) {
       return undefined;

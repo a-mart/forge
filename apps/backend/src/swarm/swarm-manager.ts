@@ -179,12 +179,15 @@ import {
   getSpecialistsEnabled as specialistGetSpecialistsEnabled,
   LEGACY_MODEL_ROUTING_GUIDANCE,
   normalizeSpecialistHandle as specialistNormalizeSpecialistHandle,
+  resolveCollaborationChannelRoster as specialistResolveCollaborationChannelRoster,
   resolveRoster as specialistResolveRoster,
 } from "./specialists/specialist-registry.js";
 import {
   isNonRunningAgentStatus,
   transitionAgentStatus
 } from "./agent-state-machine.js";
+import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
+import { parseCollaborationSpecialistHandlesJson } from "../collaboration/specialist-selection.js";
 import type {
   RuntimeImageAttachment,
   RuntimeCreationOptions,
@@ -237,6 +240,7 @@ import {
   formatBinaryAttachmentForPrompt,
   formatInboundUserMessageForManager,
   formatTextAttachmentForPrompt,
+  isCollabSession,
   isEnoentError,
   isRecord,
   normalizeAgentId,
@@ -1087,6 +1091,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       workerHealthService: this.workerHealthService,
       now: this.now,
       resolveSpecialistRosterForProfile: (profileId, targetSpace) => this.resolveSpecialistRosterForProfile(profileId, targetSpace),
+      resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSpawnModelWithCapacityFallback: (model) => this.resolveSpawnModelWithCapacityFallback(model),
       resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor),
       injectWorkerIdentityContext: (descriptor, systemPrompt) =>
@@ -1284,6 +1289,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.refreshSessionMetaStatsBySessionId(sessionAgentId),
       getSessionsForProfile: (profileId) => this.getBuilderSessionsForProfile(profileId),
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
+      resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
     });
@@ -1309,6 +1315,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolveSpawnWorkerArchetypeId: (input, normalizedAgentId, profileId) =>
         this.resolveSpawnWorkerArchetypeId(input, normalizedAgentId, profileId),
       resolveSpecialistRosterForProfile: (profileId, targetSpace) => this.resolveSpecialistRosterForProfile(profileId, targetSpace),
+      resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       normalizeSpecialistHandle: async (value) => {
         const specialistModule = await this.loadSpecialistRegistryModule();
         return specialistModule.normalizeSpecialistHandle(value) || undefined;
@@ -2540,8 +2547,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  async notifySpecialistRosterChanged(profileId: string): Promise<void> {
-    await this.lifecycleService.notifySpecialistRosterChanged(profileId);
+  async notifySpecialistRosterChanged(profileId: string, options?: { sessionAgentId?: string }): Promise<void> {
+    await this.lifecycleService.notifySpecialistRosterChanged(profileId, options);
   }
 
   async notifyProjectAgentsChanged(profileId: string): Promise<void> {
@@ -5348,6 +5355,34 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<ResolvedSpecialistDefinitionLike[]> {
     const specialistRegistry = await this.loadSpecialistRegistryModule();
     return specialistRegistry.resolveRoster(profileId, targetSpace);
+  }
+
+  private async resolveSpecialistRosterForManager(
+    manager: AgentDescriptor,
+    targetSpace: SpecialistTargetSpace = "builder"
+  ): Promise<ResolvedSpecialistDefinitionLike[]> {
+    if (targetSpace !== "collaboration" || !isCollabSession(manager)) {
+      return this.resolveSpecialistRosterForProfile(manager.profileId ?? manager.agentId, targetSpace);
+    }
+
+    const channelId = manager.collab?.channelId;
+    if (!channelId) {
+      return this.resolveSpecialistRosterForProfile(manager.profileId ?? manager.agentId, targetSpace);
+    }
+
+    const dbHelpers = await createCollaborationDbHelpers(this.config);
+    const channel = dbHelpers.getChannel(channelId);
+    if (!channel) {
+      return specialistResolveCollaborationChannelRoster(this.config.paths.dataDir, {
+        sessionAgentId: manager.agentId,
+        selectedGlobalHandles: [],
+      }) as Promise<ResolvedSpecialistDefinitionLike[]>;
+    }
+
+    return specialistResolveCollaborationChannelRoster(this.config.paths.dataDir, {
+      sessionAgentId: channel.backingSessionAgentId,
+      selectedGlobalHandles: parseCollaborationSpecialistHandlesJson(channel.activeSpecialistHandlesJson),
+    }) as Promise<ResolvedSpecialistDefinitionLike[]>;
   }
 
   async resolveProjectAgentSystemPromptOverride(

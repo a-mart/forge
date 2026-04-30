@@ -109,6 +109,10 @@ export interface SwarmAgentLifecycleServiceOptions {
     profileId: string,
     targetSpace?: SpecialistTargetSpace
   ) => Promise<ResolvedSpecialistDefinitionLike[]>;
+  resolveSpecialistRosterForManager?: (
+    manager: AgentDescriptor,
+    targetSpace?: SpecialistTargetSpace
+  ) => Promise<ResolvedSpecialistDefinitionLike[]>;
   normalizeSpecialistHandle: (value: string) => Promise<string | undefined>;
   resolveSystemPromptForDescriptor: (descriptor: AgentDescriptor) => Promise<string>;
   injectWorkerIdentityContext: (descriptor: AgentDescriptor, systemPrompt: string) => string;
@@ -318,10 +322,15 @@ export class SwarmAgentLifecycleService {
     let webSearch = false;
 
     if (requestedSpecialistId) {
-      const roster = await this.options.resolveSpecialistRosterForProfile(
-        managerProfileId,
-        isCollabSession(manager) ? "collaboration" : "builder"
-      );
+      const roster = this.options.resolveSpecialistRosterForManager
+        ? await this.options.resolveSpecialistRosterForManager(
+            manager,
+            isCollabSession(manager) ? "collaboration" : "builder"
+          )
+        : await this.options.resolveSpecialistRosterForProfile(
+            managerProfileId,
+            isCollabSession(manager) ? "collaboration" : "builder"
+          );
       specialist = roster.find((entry) => entry.specialistId === requestedSpecialistId);
       if (!specialist) {
         throw new Error(
@@ -882,13 +891,21 @@ export class SwarmAgentLifecycleService {
     return { managerId: targetManagerId, terminatedWorkerIds };
   }
 
-  async notifySpecialistRosterChanged(profileId: string): Promise<void> {
+  async notifySpecialistRosterChanged(profileId: string, options?: { sessionAgentId?: string }): Promise<void> {
     try {
-      const [builderRoster, collaborationRoster] = await Promise.all([
-        this.options.resolveSpecialistRosterForProfile(profileId, "builder"),
-        this.options.resolveSpecialistRosterForProfile(profileId, "collaboration"),
-      ]);
-      await this.syncWorkerSpecialistMetadata(profileId, [...builderRoster, ...collaborationRoster]);
+      if (options?.sessionAgentId) {
+        const manager = this.options.descriptors.get(options.sessionAgentId);
+        const roster = manager && this.options.resolveSpecialistRosterForManager
+          ? await this.options.resolveSpecialistRosterForManager(manager, "collaboration")
+          : [];
+        await this.syncWorkerSpecialistMetadata(profileId, roster, options.sessionAgentId);
+      } else {
+        const [builderRoster, collaborationRoster] = await Promise.all([
+          this.options.resolveSpecialistRosterForProfile(profileId, "builder"),
+          this.options.resolveSpecialistRosterForProfile(profileId, "collaboration"),
+        ]);
+        await this.syncWorkerSpecialistMetadata(profileId, [...builderRoster, ...collaborationRoster]);
+      }
     } catch (error) {
       this.options.logDebug("specialist:roster_change:sync:error", {
         profileId,
@@ -896,7 +913,9 @@ export class SwarmAgentLifecycleService {
       });
     }
 
-    const sessions = this.options.getSessionsForProfile(profileId);
+    const sessions = options?.sessionAgentId
+      ? this.options.getSessionsForProfile(profileId).filter((session) => session.agentId === options.sessionAgentId)
+      : this.options.getSessionsForProfile(profileId);
     const results = await Promise.allSettled(
       sessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "specialist_roster_change")),
     );
@@ -1163,13 +1182,18 @@ export class SwarmAgentLifecycleService {
 
   async syncWorkerSpecialistMetadata(
     profileId: string,
-    roster: ResolvedSpecialistDefinitionLike[]
+    roster: ResolvedSpecialistDefinitionLike[],
+    managerId?: string,
   ): Promise<void> {
     const rosterById = new Map(roster.map((entry) => [entry.specialistId, entry]));
     let changed = false;
 
     for (const descriptor of this.options.descriptors.values()) {
       if (descriptor.role !== "worker" || descriptor.profileId !== profileId) {
+        continue;
+      }
+
+      if (managerId && descriptor.managerId !== managerId) {
         continue;
       }
 
