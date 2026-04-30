@@ -15,6 +15,23 @@ Forge collaboration mode adds multi-user access on top of the public Forge repo.
 
 The collaboration profile is system-managed. Builder snapshots and profile lists exclude it, but the backing sessions still live in the normal session tree under `_collaboration`.
 
+## Collaboration SQLite migration policy
+
+Collaboration uses SQLite for structured state that needs transactional updates and startup migrations: workspace, category, and channel metadata; membership and per-user read state; and any persisted workspace, category, or channel selected-specialist handles and defaults.
+
+User-authored content stays file-backed. Specialist markdown files, prompt bodies, and reference docs are written to disk and must not be replaced by SQLite rows or rewritten by migration code.
+
+Migration policy for collaboration schema changes:
+
+- Run migrations automatically at startup.
+- Prefer additive schema changes whenever possible.
+- Wrap each migration in a transaction.
+- Make migrations idempotent and safe to rerun.
+- Create a timestamped database backup before any non-trivial migration.
+- Fail cleanly without leaving destructive partial state if a migration cannot complete.
+- Never delete or overwrite user-authored files as part of a database migration.
+- If an upgraded database references a missing specialist handle, surface that as missing or invalid config. Do not silently delete the handle or hide the problem by rewriting the record.
+
 Fresh collaboration deployments should start from an empty `FORGE_DATA_DIR` or volume. Do not copy an existing Builder `~/.forge` directory into a collaboration server deployment.
 
 Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the collaboration backend. Collab Settings are admin-only. Provider auth entered there writes directly to the collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
