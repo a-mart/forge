@@ -47,10 +47,9 @@ export function CategoryDefaultsView({
     setLoading(true)
     setError(null)
 
-    fetchSharedSpecialists(clientOrWsUrl, 'collaboration')
+    fetchSharedSpecialists(clientOrWsUrl, { targetSpace: 'collaboration' })
       .then((specs) => {
         if (!cancelled) {
-          // Only show enabled collab specialists
           setGlobalSpecialists(
             specs.filter((s) => s.targetSpace.includes('collaboration')),
           )

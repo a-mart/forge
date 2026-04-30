@@ -47,7 +47,7 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 | `FORGE_COLLABORATION_TRUSTED_ORIGINS` | — | Comma-separated Builder/UI origins allowed to talk to the collaboration server in split deployments. Local `docker-compose.yml` defaults this to `http://127.0.0.1:47188,http://127.0.0.1:47189`. Use `127.0.0.1` consistently for local HTTP split deployments; mixing `localhost` and `127.0.0.1` becomes cross-site and requires HTTPS. |
 | `FORGE_COLLABORATION_AUTH_SECRET` | generated locally if unset | Optional auth secret for the collaboration server. If omitted, the server generates and persists one in the data directory. |
 
-Collaboration keeps structured state in SQLite and user-authored specialist bodies on disk. Workspace, category, and channel metadata, membership, and read state belong in the collaboration database. Specialist markdown files, prompt bodies, and reference docs remain file-backed. See [docs/collaboration.md](collaboration.md#collaboration-sqlite-migration-policy) for the migration policy.
+Collaboration keeps structured state in SQLite and user-authored specialist bodies on disk. Workspace, category, and channel metadata, membership, read state, category default selected specialist handles, and channel selected specialist handles belong in the collaboration database. Specialist markdown files, prompt bodies, and reference docs remain file-backed. Global specialists live in `${FORGE_DATA_DIR}/shared/specialists/`; collaboration channel-local specialists live in `${FORGE_DATA_DIR}/profiles/_collaboration/sessions/<sessionId>/specialists/`. Specialist `TargetSpace` frontmatter controls whether a shared specialist appears in Builder, Collaboration, or both. Collaboration servers seed the union of Builder and `collab-` prefixed Collaboration built-ins, then UI/runtime rosters filter by `TargetSpace`. See [docs/collaboration.md](collaboration.md#collaboration-sqlite-migration-policy) for the migration policy.
 
 ### Playwright Dashboard
 
@@ -127,6 +127,7 @@ All persistent state lives in a single data directory:
 │       ├── context/
 │       │   └── prompt.md      # Collaboration channel additional instructions
 │       ├── reference/         # Collaboration channel reference docs
+│       ├── specialists/       # Collaboration channel-local specialist markdown
 │       └── workers/           # Worker session logs
 ├── swarm/
 │   └── agents.json            # Agent registry

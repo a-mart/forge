@@ -150,12 +150,16 @@ export async function fetchRosterPrompt(
   return typeof payload.markdown === 'string' ? payload.markdown : ''
 }
 
+export interface FetchSharedSpecialistsOptions {
+  targetSpace?: SpecialistTargetSpace
+}
+
 export async function fetchSharedSpecialists(
   clientOrWsUrl: SettingsApiClient | string | undefined,
-  targetSpaceOverride?: SpecialistTargetSpace,
+  options: FetchSharedSpecialistsOptions = {},
 ): Promise<ResolvedSpecialistDefinition[]> {
   const client = resolveClient(clientOrWsUrl)
-  const effectiveTargetSpace = targetSpaceOverride ?? inferTargetSpace(client)
+  const effectiveTargetSpace = options.targetSpace ?? inferTargetSpace(client)
   const path = buildSpecialistPath(undefined, '', effectiveTargetSpace)
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))

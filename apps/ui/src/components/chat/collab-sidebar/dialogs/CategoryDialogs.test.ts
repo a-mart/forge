@@ -229,7 +229,7 @@ describe('CreateCategoryDialog', () => {
     await vi.waitFor(() => {
       expect(specialistApiMocks.fetchSharedSpecialists).toHaveBeenCalledWith(
         'ws://127.0.0.1:47187',
-        'collaboration',
+        { targetSpace: 'collaboration' },
       )
     })
   })
@@ -277,7 +277,7 @@ describe('RenameCategoryDialog', () => {
     await vi.waitFor(() => {
       expect(specialistApiMocks.fetchSharedSpecialists).toHaveBeenCalledWith(
         'ws://127.0.0.1:47187',
-        'collaboration',
+        { targetSpace: 'collaboration' },
       )
     })
   })

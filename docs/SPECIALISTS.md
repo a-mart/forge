@@ -10,8 +10,9 @@ Each specialist is a **markdown file with YAML frontmatter**. The filename (with
 
 - **Global specialists** (shared across all profiles): `~/.forge/shared/specialists/<handle>.md`
 - **Profile-specific specialists**: `~/.forge/profiles/<profileId>/specialists/<handle>.md`
+- **Collaboration channel-local specialists**: `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/<handle>.md`
 
-Profile specialists shadow global ones with the same filename. Forge ships with builtin specialists that are seeded to the global directory on startup.
+Profile specialists shadow global ones with the same filename. Forge ships with builtin specialists that are seeded to the global directory on startup. Collaboration servers seed both Builder built-ins and `collab-` prefixed Collaboration built-ins into the shared directory; each surface filters the roster by `TargetSpace`.
 
 ## Frontmatter Fields
 
@@ -28,9 +29,12 @@ reasoningLevel: high                 # Optional — defaults to model preset def
 fallbackModelId: claude-sonnet-4-5-20250929  # Optional — model if primary is unavailable (can be cross-provider)
 fallbackReasoningLevel: medium       # Optional — reasoning for fallback (defaults to primary)
 pin: true                            # Optional — pin to top of sidebar list
+TargetSpace: builder                 # Optional — builder, collaboration, or [builder, collaboration]
 builtin: true                        # Internal — marks Forge-shipped specialists (do not set manually)
 ---
 ```
+
+`TargetSpace` is the canonical frontmatter key and is case-sensitive when Forge writes files. Use `builder` for normal Builder managers, `collaboration` for collaboration channel managers, or `[builder, collaboration]` for a shared definition available in both surfaces. Files without `TargetSpace` default to Builder-only for legacy compatibility. Collaboration channel-local specialist files are always treated as collaboration-scoped.
 
 ## Available Models
 
@@ -124,8 +128,12 @@ Only exhausted fallback failures surface upward.
 
 ### Resolution Order
 
-When resolving the roster for a profile:
-1. Profile-specific specialists (in `~/.forge/profiles/<profileId>/specialists/`)
-2. Global specialists (in `~/.forge/shared/specialists/`)
+When resolving the roster for a Builder profile:
+1. Profile-specific specialists whose `TargetSpace` includes `builder` (in `~/.forge/profiles/<profileId>/specialists/`)
+2. Global specialists whose `TargetSpace` includes `builder` (in `~/.forge/shared/specialists/`)
 
-Profile files shadow global files with the same handle.
+When resolving a collaboration channel roster:
+1. Channel-local specialists (in `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/`)
+2. Selected global specialists whose `TargetSpace` includes `collaboration` (in `~/.forge/shared/specialists/`)
+
+Profile or channel-local files shadow global files with the same handle. Collaboration category defaults select global handles for newly created channels only; existing channels keep their own selected-handle list in SQLite.

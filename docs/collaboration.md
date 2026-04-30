@@ -12,11 +12,25 @@ Forge collaboration mode adds multi-user access on top of the public Forge repo.
 | Auth secret | `~/.forge/shared/config/collaboration/auth-secret.key` | Used when `FORGE_COLLABORATION_AUTH_SECRET` is not set. |
 | Additional instructions | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel-level guidance remains in the backing session context directory. |
 | Reference docs | `~/.forge/profiles/_collaboration/sessions/<sessionId>/reference/` | Channel reference docs live at the session root. Legacy `context/reference/` docs are read only when the root `reference/` directory is missing or empty, and are copied forward non-destructively on prompt access. |
+| Global/shared specialists | `~/.forge/shared/specialists/<handle>.md` | Shared specialist definitions for both Builder and Collaboration. Built-ins are seeded here on startup. |
 | Channel specialists | `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/<handle>.md` | Channel-local specialist definitions are markdown files at the session root. Selected global specialist handles are stored in SQLite, not in this directory. |
 
 The collaboration profile is system-managed. Builder snapshots and profile lists exclude it, but the backing sessions still live in the normal session tree under `_collaboration`.
 
-Collaboration specialist definitions stay file-backed, while selection state is structured SQLite data. Specialist markdown uses the exact `TargetSpace` frontmatter key (`builder`, `collaboration`, or both). Collaboration servers seed both Builder and Collaboration built-ins into shared specialist storage, then UI/runtime rosters filter to `TargetSpace: collaboration` for collaboration channels. Category rows store default selected global specialist handles for newly-created channels, and channel rows store active selected global specialist handles. A `NULL` legacy value means Forge should fall back to/backfill the default collaboration specialist set. An explicit empty array (`[]`) means no global specialists are selected and must not fall back to defaults. Missing selected handles are surfaced as invalid/missing configuration, ignored by runtime roster resolution, and never silently deleted by migrations.
+## Specialist target spaces and selection state
+
+Collaboration specialist definitions stay file-backed, while selection state is structured SQLite data. Specialist markdown uses the exact `TargetSpace` frontmatter key (`builder`, `collaboration`, or both). The key is case-sensitive when Forge writes files; legacy lowercase `targetSpace` is still accepted on read for compatibility, but new files should use `TargetSpace`.
+
+`TargetSpace` controls where a specialist can appear:
+
+- `TargetSpace: builder` means the specialist is available to normal Builder managers.
+- `TargetSpace: collaboration` means the specialist is available to collaboration channel managers.
+- `TargetSpace: [builder, collaboration]` makes one shared definition available in both surfaces.
+- If `TargetSpace` is missing, Forge treats the file as Builder-only for legacy compatibility.
+
+Forge ships two built-in specialist groups. Builder built-ins keep their normal handles and default to `TargetSpace: builder`. Collaboration built-ins use `collab-` prefixed handles, such as `collab-planner` and `collab-reviewer`, and default to `TargetSpace: collaboration`. Collaboration servers seed the union of Builder and Collaboration built-ins into `~/.forge/shared/specialists/`, but both the UI and runtime rosters filter by `TargetSpace`. A collaboration channel should only see specialists whose target space includes `collaboration`; Builder managers should only see specialists whose target space includes `builder`.
+
+Global/shared specialist markdown lives in `~/.forge/shared/specialists/`. Channel-local specialist markdown lives in `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/` and is always treated as collaboration-scoped. Category and channel selection state is stored in SQLite: category rows store default selected global specialist handles for newly created channels, and channel rows store active selected global specialist handles. Category defaults are templates only; changing a category's defaults does not rewrite existing channels. A `NULL` legacy value means Forge should fall back to/backfill the default collaboration specialist set. An explicit empty array (`[]`) means no global specialists are selected and must not fall back to defaults. Missing selected handles are surfaced as invalid/missing configuration, ignored by runtime roster resolution, and never silently deleted by migrations.
 
 ## Collaboration SQLite migration policy
 
@@ -37,7 +51,7 @@ Migration policy for collaboration schema changes:
 
 Fresh collaboration deployments should start from an empty `FORGE_DATA_DIR` or volume. Do not copy an existing Builder `~/.forge` directory into a collaboration server deployment.
 
-Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the collaboration backend. Collab Settings are admin-only. Provider auth entered there writes directly to the collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
+Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the collaboration backend. Collab Settings are admin-only. A persistent banner appears when Settings is targeting a remote collaboration server so admins can tell they are editing the connected server rather than their local Builder backend. Provider auth entered there writes directly to the collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
 
 Remote Collab Settings also includes member and invite management, plus password controls. Admins can manage members and invites, issue temporary-password resets that require a password change on next sign-in, and users can change their own password from the collaboration UI.
 
