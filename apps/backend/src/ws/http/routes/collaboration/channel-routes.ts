@@ -416,6 +416,7 @@ function parseCreateChannelBody(body: unknown): {
   categoryId?: string | null;
   description?: string | null;
   aiEnabled?: boolean;
+  activeSelectedSpecialistHandles?: string[];
 } {
   const input = expectObjectBody(body);
   const name = requireStringField(input.name, "name");
@@ -430,6 +431,14 @@ function parseCreateChannelBody(body: unknown): {
     ...(input.aiEnabled !== undefined
       ? { aiEnabled: requireBooleanField(input.aiEnabled, "aiEnabled") }
       : {}),
+    ...(input.activeSelectedSpecialistHandles !== undefined
+      ? {
+          activeSelectedSpecialistHandles: parseHandleArray(
+            input.activeSelectedSpecialistHandles,
+            "activeSelectedSpecialistHandles",
+          ),
+        }
+      : {}),
   };
 }
 
@@ -442,6 +451,7 @@ function parseUpdateChannelBody(body: unknown): {
   reasoningLevel?: SwarmReasoningLevel | null;
   promptOverlay?: string | null;
   position?: number;
+  activeSelectedSpecialistHandles?: string[];
 } {
   const input = expectObjectBody(body);
   const parsed: {
@@ -453,6 +463,7 @@ function parseUpdateChannelBody(body: unknown): {
     reasoningLevel?: SwarmReasoningLevel | null;
     promptOverlay?: string | null;
     position?: number;
+    activeSelectedSpecialistHandles?: string[];
   } = {};
 
   if (input.name !== undefined) {
@@ -493,7 +504,27 @@ function parseUpdateChannelBody(body: unknown): {
     parsed.position = input.position;
   }
 
+  if (input.activeSelectedSpecialistHandles !== undefined) {
+    parsed.activeSelectedSpecialistHandles = parseHandleArray(
+      input.activeSelectedSpecialistHandles,
+      "activeSelectedSpecialistHandles",
+    );
+  }
+
   return parsed;
+}
+
+function parseHandleArray(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an array when provided`);
+  }
+
+  return value.map((entry) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw new Error(`${fieldName} must contain only non-empty strings`);
+    }
+    return entry.trim();
+  });
 }
 
 function requireStringField(value: unknown, fieldName: string): string {

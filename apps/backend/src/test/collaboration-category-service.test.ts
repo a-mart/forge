@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runCollaborationAuthMigrations } from "../collaboration/auth/migration-runner.js";
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import { CollaborationCategoryService } from "../collaboration/category-service.js";
+import { DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES } from "../collaboration/specialist-selection.js";
 import { COLLABORATION_PROFILE_ID } from "../collaboration/constants.js";
 import { resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
 import { createTempConfig } from "../test-support/temp-config.js";
@@ -24,7 +25,10 @@ async function createCategoryHarness() {
   tempRoots.push(handle.tempRootDir);
   await runCollaborationAuthMigrations(handle.config);
   const dbHelpers = await createCollaborationDbHelpers(handle.config);
-  const service = new CollaborationCategoryService(dbHelpers);
+  const availableHandles = new Set<string>([...DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES, "custom-collab"]);
+  const service = new CollaborationCategoryService(dbHelpers, {
+    availableGlobalSpecialistHandles: () => availableHandles,
+  });
   const now = new Date().toISOString();
   const workspace = dbHelpers.createWorkspace({
     workspaceId: "workspace-1",
@@ -38,10 +42,34 @@ async function createCategoryHarness() {
     updatedAt: now,
   });
 
-  return { config: handle.config, dbHelpers, service, workspace };
+  return { config: handle.config, dbHelpers, service, workspace, availableHandles };
 }
 
 describe("collaboration category service", () => {
+  it("persists default selected specialist handles including explicit empty arrays", async () => {
+    const { service, workspace } = await createCategoryHarness();
+
+    const defaulted = service.createCategory({
+      workspaceId: workspace.workspaceId,
+      name: "Defaulted",
+    });
+    expect(defaulted.defaultSelectedSpecialistHandles).toEqual([...DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES]);
+    expect(defaulted.missingDefaultSpecialistHandles).toBeUndefined();
+
+    const empty = service.createCategory({
+      workspaceId: workspace.workspaceId,
+      name: "Empty",
+      defaultSelectedSpecialistHandles: [],
+    });
+    expect(empty.defaultSelectedSpecialistHandles).toEqual([]);
+
+    const updated = service.updateCategory(defaulted.categoryId, {
+      defaultSelectedSpecialistHandles: ["custom-collab", "custom-collab", "Missing Specialist"],
+    });
+    expect(updated.defaultSelectedSpecialistHandles).toEqual(["custom-collab", "missing-specialist"]);
+    expect(updated.missingDefaultSpecialistHandles).toEqual(["missing-specialist"]);
+  });
+
   it("persists reasoning defaults and preserves them across same-model updates", async () => {
     const { service, workspace } = await createCategoryHarness();
 

@@ -123,6 +123,10 @@ export interface CollaborationCategory {
   name: string
   /** Category-level create-time defaults for new channels. */
   channelCreationDefaults?: CollaborationCategoryChannelCreationDefaults
+  /** Default global collaboration specialist handles copied to newly-created channels. */
+  defaultSelectedSpecialistHandles: string[]
+  /** Selected default handles that do not currently resolve to global collaboration specialists. */
+  missingDefaultSpecialistHandles?: string[]
   /** @deprecated Legacy compatibility field; use channelCreationDefaults.model.modelId instead. */
   defaultModelId?: string
   /** @deprecated Legacy compatibility field; use channelCreationDefaults.model.thinkingLevel instead. */
@@ -144,6 +148,10 @@ export interface CollaborationChannel {
   modelId?: string
   reasoningLevel?: ManagerReasoningLevel
   promptOverlay?: string
+  /** Active selected global collaboration specialist handles for this channel. */
+  activeSelectedSpecialistHandles: string[]
+  /** Active selected handles that do not currently resolve to global collaboration specialists. */
+  missingSelectedSpecialistHandles?: string[]
   position: number
   archived: boolean
   archivedAt?: string

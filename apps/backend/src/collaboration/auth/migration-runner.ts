@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import type Database from "better-sqlite3";
 import { isCollaborationServerRuntimeTarget } from "../../runtime-target.js";
 import type { SwarmConfig } from "../../swarm/types.js";
@@ -24,7 +26,7 @@ export async function runCollaborationAuthMigrations(config: SwarmConfig): Promi
       continue;
     }
 
-    applyMigration(database, migration);
+    await applyMigration(database, migration, config);
     appliedMigrationNames.add(migration.name);
   }
 }
@@ -45,7 +47,15 @@ function loadAppliedMigrationNames(database: Database.Database): Set<string> {
   return new Set(rows.map((row) => row.name));
 }
 
-function applyMigration(database: Database.Database, migration: CollaborationAuthMigration): void {
+async function applyMigration(
+  database: Database.Database,
+  migration: CollaborationAuthMigration,
+  config: SwarmConfig,
+): Promise<void> {
+  if (migration.backupBeforeApply) {
+    await backupDatabase(database, config, migration.name);
+  }
+
   const apply = database.transaction(() => {
     if (migration.apply) {
       migration.apply(database);
@@ -61,4 +71,22 @@ function applyMigration(database: Database.Database, migration: CollaborationAut
   });
 
   apply();
+}
+
+async function backupDatabase(
+  database: Database.Database,
+  config: SwarmConfig,
+  migrationName: string,
+): Promise<void> {
+  const dbPath = config.paths.collaborationAuthDbPath;
+  if (!dbPath) {
+    throw new Error("Missing collaboration auth DB path in config");
+  }
+
+  const backupDir = path.join(path.dirname(dbPath), "backups");
+  await mkdir(backupDir, { recursive: true });
+  const timestamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
+  const safeMigrationName = migrationName.replace(/[^a-zA-Z0-9._-]+/g, "-");
+  const backupPath = path.join(backupDir, `${timestamp}-${safeMigrationName}.db`);
+  await database.backup(backupPath);
 }

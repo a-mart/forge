@@ -12,8 +12,11 @@ Forge collaboration mode adds multi-user access on top of the public Forge repo.
 | Auth secret | `~/.forge/shared/config/collaboration/auth-secret.key` | Used when `FORGE_COLLABORATION_AUTH_SECRET` is not set. |
 | Additional instructions | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel-level guidance remains in the backing session context directory. |
 | Reference docs | `~/.forge/profiles/_collaboration/sessions/<sessionId>/reference/` | Channel reference docs live at the session root. Legacy `context/reference/` docs are read only when the root `reference/` directory is missing or empty, and are copied forward non-destructively on prompt access. |
+| Channel specialists | `~/.forge/profiles/_collaboration/sessions/<sessionId>/specialists/<handle>.md` | Channel-local specialist definitions are markdown files at the session root. Selected global specialist handles are stored in SQLite, not in this directory. |
 
 The collaboration profile is system-managed. Builder snapshots and profile lists exclude it, but the backing sessions still live in the normal session tree under `_collaboration`.
+
+Collaboration specialist definitions stay file-backed, while selection state is structured SQLite data. Specialist markdown uses the exact `TargetSpace` frontmatter key (`builder`, `collaboration`, or both). Collaboration servers seed both Builder and Collaboration built-ins into shared specialist storage, then UI/runtime rosters filter to `TargetSpace: collaboration` for collaboration channels. Category rows store default selected global specialist handles for newly-created channels, and channel rows store active selected global specialist handles. A `NULL` legacy value means Forge should fall back to/backfill the default collaboration specialist set. An explicit empty array (`[]`) means no global specialists are selected and must not fall back to defaults. Missing selected handles are surfaced as invalid/missing configuration, ignored by runtime roster resolution, and never silently deleted by migrations.
 
 ## Collaboration SQLite migration policy
 
@@ -100,7 +103,7 @@ The base URL changes the canonical browser origin used for invite links and cook
 - Each channel maps to one backing manager session under `_collaboration`.
 - Channels are session-backed actors: the channel state and history live in the backing session, additional instructions stay at `context/prompt.md`, and injected channel reference docs live at session-root `reference/`.
 - Collaboration uses a single workspace model.
-- Workspace and category defaults are model and CWD only.
+- Workspace and category defaults include model/CWD plus category default selected global specialist handles for new channels.
 - The collab surface reuses the Builder `MessageList` and `MessageInput` components.
 - Worker visibility uses the shared `WorkerPillBar` and `WorkerQuickLook` pattern.
 - Collaboration uses the same WebSocket transport layer as Builder, but the collab client connects separately to the configured collaboration origin.

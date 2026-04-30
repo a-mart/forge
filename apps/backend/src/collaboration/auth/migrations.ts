@@ -1,9 +1,15 @@
 import type Database from "better-sqlite3";
+import {
+  DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES,
+  parseCollaborationSpecialistHandlesJson,
+  serializeCollaborationSpecialistHandles,
+} from "../specialist-selection.js";
 
 export interface CollaborationAuthMigration {
   name: string;
   sql?: string;
   apply?: (database: Database.Database) => void;
+  backupBeforeApply?: boolean;
 }
 
 export const COLLABORATION_AUTH_MIGRATIONS: CollaborationAuthMigration[] = [
@@ -129,6 +135,7 @@ CREATE TABLE IF NOT EXISTS collab_category (
   default_model_id TEXT,
   default_model_thinking_level TEXT,
   default_cwd TEXT,
+  default_specialist_handles_json TEXT,
   position INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -149,6 +156,7 @@ CREATE TABLE IF NOT EXISTS collab_channel (
   ai_enabled INTEGER NOT NULL DEFAULT 1 CHECK (ai_enabled IN (0, 1)),
   model_id TEXT,
   model_thinking_level TEXT,
+  active_specialist_handles_json TEXT,
   position INTEGER NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT,
@@ -219,6 +227,43 @@ CREATE INDEX IF NOT EXISTS collaboration_audit_log_target_invite_id_idx ON colla
       addColumnIfMissing(database, "collab_channel", "model_thinking_level", "TEXT");
     },
   },
+  {
+    name: "0008-collab-specialist-selections.sql",
+    backupBeforeApply: true,
+    apply: (database) => {
+      addColumnIfMissing(database, "collab_category", "default_specialist_handles_json", "TEXT");
+      addColumnIfMissing(database, "collab_channel", "active_specialist_handles_json", "TEXT");
+
+      const defaultHandlesJson = serializeCollaborationSpecialistHandles(
+        DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES,
+      );
+
+      database
+        .prepare(
+          `UPDATE collab_category
+           SET default_specialist_handles_json = ?
+           WHERE default_specialist_handles_json IS NULL`,
+        )
+        .run(defaultHandlesJson);
+
+      database
+        .prepare(
+          `UPDATE collab_channel
+           SET active_specialist_handles_json = COALESCE(
+             (
+               SELECT collab_category.default_specialist_handles_json
+               FROM collab_category
+               WHERE collab_category.category_id = collab_channel.category_id
+             ),
+             ?
+           )
+           WHERE active_specialist_handles_json IS NULL`,
+        )
+        .run(defaultHandlesJson);
+
+      validateCollaborationSpecialistSelectionMigration(database);
+    },
+  },
 ];
 
 function addColumnIfMissing(
@@ -239,6 +284,62 @@ function addColumnIfMissing(
   database.exec(
     `ALTER TABLE ${quoteSqliteIdentifier(tableName)} ADD COLUMN ${quoteSqliteIdentifier(columnName)} ${columnDefinitionSql}`,
   );
+}
+
+function validateCollaborationSpecialistSelectionMigration(database: Database.Database): void {
+  requireColumn(database, "collab_category", "default_specialist_handles_json");
+  requireColumn(database, "collab_channel", "active_specialist_handles_json");
+
+  const quickCheck = database.pragma("quick_check", { simple: true });
+  if (quickCheck !== "ok") {
+    throw new Error(`Collaboration DB quick_check failed: ${String(quickCheck)}`);
+  }
+
+  const foreignKeyFailures = database.pragma("foreign_key_check") as unknown[];
+  if (foreignKeyFailures.length > 0) {
+    throw new Error(`Collaboration DB foreign_key_check failed for ${foreignKeyFailures.length} row(s)`);
+  }
+
+  validateJsonArrayColumn(database, "collab_category", "category_id", "default_specialist_handles_json");
+  validateJsonArrayColumn(database, "collab_channel", "channel_id", "active_specialist_handles_json");
+}
+
+function requireColumn(database: Database.Database, tableName: string, columnName: string): void {
+  const hasColumn = database
+    .prepare<[], { name: string }>(`PRAGMA table_info(${quoteSqliteIdentifier(tableName)})`)
+    .all()
+    .some((row) => row.name === columnName);
+
+  if (!hasColumn) {
+    throw new Error(`Collaboration DB migration missing expected column ${tableName}.${columnName}`);
+  }
+}
+
+function validateJsonArrayColumn(
+  database: Database.Database,
+  tableName: string,
+  idColumnName: string,
+  jsonColumnName: string,
+): void {
+  const rows = database
+    .prepare<[], { row_id: string; handles_json: string | null }>(
+      `SELECT ${quoteSqliteIdentifier(idColumnName)} AS row_id,
+              ${quoteSqliteIdentifier(jsonColumnName)} AS handles_json
+       FROM ${quoteSqliteIdentifier(tableName)}`,
+    )
+    .all();
+
+  for (const row of rows) {
+    try {
+      parseCollaborationSpecialistHandlesJson(row.handles_json, []);
+    } catch (error) {
+      throw new Error(
+        `Invalid collaboration specialist handle JSON in ${tableName}.${jsonColumnName} for ${row.row_id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
 }
 
 function quoteSqliteIdentifier(identifier: string): string {

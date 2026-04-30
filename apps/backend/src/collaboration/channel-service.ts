@@ -15,6 +15,11 @@ import type {
 } from "../swarm/types.js";
 import type { CollaborationDbHelpers } from "./collab-db-helpers.js";
 import {
+  findMissingCollaborationSpecialistHandles,
+  parseCollaborationSpecialistHandlesJson,
+  serializeCollaborationSpecialistHandles,
+} from "./specialist-selection.js";
+import {
   createCollaborationChannelSessionAgentId,
   ensureCollaborationChannelWorkingDir,
   getCollaborationChannelWorkingDir,
@@ -65,6 +70,7 @@ export interface CreateCollaborationChannelParams {
   aiEnabled?: boolean;
   position?: number;
   createdByUserId?: string | null;
+  activeSelectedSpecialistHandles?: string[];
 }
 
 export interface UpdateCollaborationChannelParams {
@@ -75,6 +81,7 @@ export interface UpdateCollaborationChannelParams {
   modelId?: string;
   reasoningLevel?: SwarmReasoningLevel | null;
   position?: number;
+  activeSelectedSpecialistHandles?: string[];
 }
 
 export interface ListCollaborationChannelsParams {
@@ -104,6 +111,10 @@ export class CollaborationChannelServiceError extends Error {
   }
 }
 
+export interface CollaborationChannelServiceOptions {
+  availableGlobalSpecialistHandles?: () => Iterable<string> | undefined;
+}
+
 export class CollaborationChannelService {
   constructor(
     private readonly dbHelpers: Pick<
@@ -120,6 +131,7 @@ export class CollaborationChannelService {
     >,
     private readonly swarmManager: CollaborationChannelServiceSwarmManager | undefined,
     private readonly dataDir: string,
+    private readonly options: CollaborationChannelServiceOptions = {},
   ) {}
 
   async createChannel(params: CreateCollaborationChannelParams): Promise<CollaborationChannel> {
@@ -140,6 +152,8 @@ export class CollaborationChannelService {
     const sessionCwd = getCollaborationChannelWorkingDir(this.dataDir, sessionAgentId);
     const defaultModel = resolveChannelModel(category, workspace, normalizedWorkspaceId);
     const defaultModelPreset = inferSwarmModelPresetFromDescriptor(defaultModel);
+    const activeSelectedSpecialistHandles = params.activeSelectedSpecialistHandles ??
+      parseCollaborationSpecialistHandlesJson(category?.defaultSpecialistHandlesJson ?? null);
 
     let createdSessionAgentId: string | undefined;
 
@@ -183,6 +197,7 @@ export class CollaborationChannelService {
         aiEnabled,
         modelId: defaultModelPreset ?? null,
         modelThinkingLevel: normalizeChannelReasoningLevel(defaultModel.thinkingLevel) ?? defaultModel.thinkingLevel,
+        activeSpecialistHandlesJson: serializeCollaborationSpecialistHandles(activeSelectedSpecialistHandles),
         position,
         createdByUserId: normalizeOptionalString(params.createdByUserId) ?? null,
         createdAt: now,
@@ -249,6 +264,7 @@ export class CollaborationChannelService {
       modelId?: string;
       reasoningLevel?: SwarmReasoningLevel;
       position?: number;
+      activeSpecialistHandlesJson?: string | null;
     } = {};
 
     if (params.categoryId !== undefined) {
@@ -278,6 +294,10 @@ export class CollaborationChannelService {
       update.position = normalizeOptionalPosition(params.position);
     }
 
+    if (params.activeSelectedSpecialistHandles !== undefined) {
+      update.activeSpecialistHandlesJson = serializeCollaborationSpecialistHandles(params.activeSelectedSpecialistHandles);
+    }
+
     const nextModelSettings = hasChannelModelUpdate(params)
       ? resolveRequestedChannelModelSettings(existingChannel, params)
       : null;
@@ -305,6 +325,7 @@ export class CollaborationChannelService {
       update.modelId === undefined &&
       update.reasoningLevel === undefined &&
       update.position === undefined &&
+      update.activeSpecialistHandlesJson === undefined &&
       nextSlug === undefined
     ) {
       return existingChannel;
@@ -320,6 +341,9 @@ export class CollaborationChannelService {
         ...(update.modelId !== undefined ? { modelId: update.modelId } : {}),
         ...(update.reasoningLevel !== undefined ? { modelThinkingLevel: update.reasoningLevel } : {}),
         ...(update.position !== undefined ? { position: update.position } : {}),
+        ...(update.activeSpecialistHandlesJson !== undefined
+          ? { activeSpecialistHandlesJson: update.activeSpecialistHandlesJson }
+          : {}),
         updatedAt: new Date().toISOString(),
       });
       if (!updated) {
@@ -416,6 +440,7 @@ export class CollaborationChannelService {
     aiEnabled: boolean;
     modelId: string | null;
     modelThinkingLevel: string | null;
+    activeSpecialistHandlesJson: string | null;
     position: number;
     archived: boolean;
     archivedAt: string | null;
@@ -428,6 +453,13 @@ export class CollaborationChannelService {
     updatedAt: string;
   }): CollaborationChannel {
     this.assertBackingSession(record);
+    const activeSelectedSpecialistHandles = parseCollaborationSpecialistHandlesJson(
+      record.activeSpecialistHandlesJson,
+    );
+    const missingSelectedSpecialistHandles = findMissingCollaborationSpecialistHandles(
+      activeSelectedSpecialistHandles,
+      this.options.availableGlobalSpecialistHandles?.(),
+    );
 
     return {
       channelId: record.channelId,
@@ -442,6 +474,8 @@ export class CollaborationChannelService {
       ...(normalizeChannelReasoningLevel(record.modelThinkingLevel)
         ? { reasoningLevel: normalizeChannelReasoningLevel(record.modelThinkingLevel) }
         : {}),
+      activeSelectedSpecialistHandles,
+      ...(missingSelectedSpecialistHandles ? { missingSelectedSpecialistHandles } : {}),
       position: record.position,
       archived: record.archived,
       ...(record.archivedAt ? { archivedAt: record.archivedAt } : {}),

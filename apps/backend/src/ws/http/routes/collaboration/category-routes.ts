@@ -209,6 +209,7 @@ function parseCreateCategoryBody(body: unknown): {
   channelCreationDefaults?: CollaborationCategory["channelCreationDefaults"] | null;
   defaultModelId?: string | null;
   defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
+  defaultSelectedSpecialistHandles?: string[];
 } {
   const parsed = parseCategoryBody(body);
   if (!parsed.name) {
@@ -220,6 +221,9 @@ function parseCreateCategoryBody(body: unknown): {
     ...(parsed.channelCreationDefaults !== undefined ? { channelCreationDefaults: parsed.channelCreationDefaults } : {}),
     ...(parsed.defaultModelId !== undefined ? { defaultModelId: parsed.defaultModelId } : {}),
     ...(parsed.defaultReasoningLevel !== undefined ? { defaultReasoningLevel: parsed.defaultReasoningLevel } : {}),
+    ...(parsed.defaultSelectedSpecialistHandles !== undefined
+      ? { defaultSelectedSpecialistHandles: parsed.defaultSelectedSpecialistHandles }
+      : {}),
   };
 }
 
@@ -228,6 +232,7 @@ function parseUpdateCategoryBody(body: unknown): {
   channelCreationDefaults?: CollaborationCategory["channelCreationDefaults"] | null;
   defaultModelId?: string | null;
   defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
+  defaultSelectedSpecialistHandles?: string[];
 } {
   return parseCategoryBody(body);
 }
@@ -237,6 +242,7 @@ function parseCategoryBody(body: unknown): {
   channelCreationDefaults?: CollaborationCategory["channelCreationDefaults"] | null;
   defaultModelId?: string | null;
   defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
+  defaultSelectedSpecialistHandles?: string[];
 } {
   const input = expectObjectBody(body);
   const parsed: {
@@ -244,6 +250,7 @@ function parseCategoryBody(body: unknown): {
     channelCreationDefaults?: CollaborationCategory["channelCreationDefaults"] | null;
     defaultModelId?: string | null;
     defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
+    defaultSelectedSpecialistHandles?: string[];
   } = {};
 
   if (input.name !== undefined) {
@@ -269,6 +276,10 @@ function parseCategoryBody(body: unknown): {
         "defaultReasoningLevel",
       );
     }
+  }
+
+  if (input.defaultSelectedSpecialistHandles !== undefined) {
+    parsed.defaultSelectedSpecialistHandles = parseHandleArray(input.defaultSelectedSpecialistHandles, "defaultSelectedSpecialistHandles");
   }
 
   if (input.channelCreationDefaults !== undefined) {
@@ -298,4 +309,17 @@ function parseCategoryBody(body: unknown): {
   }
 
   return parsed;
+}
+
+function parseHandleArray(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an array when provided`);
+  }
+
+  return value.map((entry) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw new Error(`${fieldName} must contain only non-empty strings`);
+    }
+    return entry.trim();
+  });
 }

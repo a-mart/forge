@@ -3,6 +3,11 @@ import type { CollaborationCategory } from "@forge/protocol";
 import { inferSwarmModelPresetFromDescriptor, resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../swarm/types.js";
 import type { CollaborationDbHelpers } from "./collab-db-helpers.js";
+import {
+  findMissingCollaborationSpecialistHandles,
+  parseCollaborationSpecialistHandlesJson,
+  serializeCollaborationSpecialistHandles,
+} from "./specialist-selection.js";
 
 export interface CreateCollaborationCategoryParams {
   workspaceId: string;
@@ -13,6 +18,7 @@ export interface CreateCollaborationCategoryParams {
   } | null;
   defaultModelId?: string | null;
   defaultReasoningLevel?: SwarmReasoningLevel | null;
+  defaultSelectedSpecialistHandles?: string[];
   position?: number;
 }
 
@@ -24,6 +30,7 @@ export interface UpdateCollaborationCategoryParams {
   } | null;
   defaultModelId?: string | null;
   defaultReasoningLevel?: SwarmReasoningLevel | null;
+  defaultSelectedSpecialistHandles?: string[];
 }
 
 export interface ReorderCollaborationCategoriesParams {
@@ -45,6 +52,10 @@ export class CollaborationCategoryServiceError extends Error {
   }
 }
 
+export interface CollaborationCategoryServiceOptions {
+  availableGlobalSpecialistHandles?: () => Iterable<string> | undefined;
+}
+
 export class CollaborationCategoryService {
   constructor(
     private readonly dbHelpers: Pick<
@@ -57,12 +68,13 @@ export class CollaborationCategoryService {
       | "updateCategory"
       | "deleteCategory"
     >,
+    private readonly options: CollaborationCategoryServiceOptions = {},
   ) {}
 
   listCategories(workspaceId: string): CollaborationCategory[] {
     const normalizedWorkspaceId = normalizeRequiredString(workspaceId, "workspaceId");
     this.requireWorkspace(normalizedWorkspaceId);
-    return this.dbHelpers.listCategories(normalizedWorkspaceId).map(toCategoryDto);
+    return this.dbHelpers.listCategories(normalizedWorkspaceId).map((record) => toCategoryDto(record, this.options));
   }
 
   createCategory(params: CreateCollaborationCategoryParams): CollaborationCategory {
@@ -82,10 +94,14 @@ export class CollaborationCategoryService {
           defaultModelId: defaults?.model.modelId ?? null,
           defaultModelThinkingLevel: defaults?.model.thinkingLevel ?? null,
           defaultCwd: defaults?.cwd ?? null,
+          defaultSpecialistHandlesJson: serializeCollaborationSpecialistHandles(
+            params.defaultSelectedSpecialistHandles ?? parseCollaborationSpecialistHandlesJson(null),
+          ),
           position: normalizeOptionalPosition(params.position) ?? nextCategoryPosition(categories),
           createdAt: now,
           updatedAt: now,
         }),
+        this.options,
       );
     } catch (error) {
       throw mapCategoryPersistenceError(error, normalizedWorkspaceId);
@@ -101,6 +117,7 @@ export class CollaborationCategoryService {
       defaultModelId?: string | null;
       defaultModelThinkingLevel?: string | null;
       defaultCwd?: string | null;
+      defaultSpecialistHandlesJson?: string | null;
     } = {};
 
     if (params.name !== undefined) {
@@ -115,14 +132,19 @@ export class CollaborationCategoryService {
       update.defaultCwd = defaults?.cwd ?? null;
     }
 
+    if (params.defaultSelectedSpecialistHandles !== undefined) {
+      update.defaultSpecialistHandlesJson = serializeCollaborationSpecialistHandles(params.defaultSelectedSpecialistHandles);
+    }
+
     if (
       update.name === undefined &&
       update.defaultModelProvider === undefined &&
       update.defaultModelId === undefined &&
       update.defaultModelThinkingLevel === undefined &&
-      update.defaultCwd === undefined
+      update.defaultCwd === undefined &&
+      update.defaultSpecialistHandlesJson === undefined
     ) {
-      return toCategoryDto(existing);
+      return toCategoryDto(existing, this.options);
     }
 
     try {
@@ -136,7 +158,7 @@ export class CollaborationCategoryService {
           `Unknown collaboration category: ${normalizedCategoryId}`,
         );
       }
-      return toCategoryDto(updated);
+      return toCategoryDto(updated, this.options);
     } catch (error) {
       throw mapCategoryPersistenceError(error, existing.workspaceId);
     }
@@ -195,7 +217,7 @@ export class CollaborationCategoryService {
       });
     })();
 
-    return this.dbHelpers.listCategories(normalizedWorkspaceId).map(toCategoryDto);
+    return this.dbHelpers.listCategories(normalizedWorkspaceId).map((record) => toCategoryDto(record, this.options));
   }
 
   private requireWorkspace(workspaceId: string) {
@@ -233,10 +255,18 @@ function toCategoryDto(record: {
   defaultCwd: string | null;
   position: number;
   createdAt: string;
+  defaultSpecialistHandlesJson: string | null;
   updatedAt: string;
-}): CollaborationCategory {
+}, options?: CollaborationCategoryServiceOptions): CollaborationCategory {
   const model = toCategoryModelDescriptor(record);
   const defaultModelId = model ? inferSwarmModelPresetFromDescriptor(model) : undefined;
+  const defaultSelectedSpecialistHandles = parseCollaborationSpecialistHandlesJson(
+    record.defaultSpecialistHandlesJson,
+  );
+  const missingDefaultSpecialistHandles = findMissingCollaborationSpecialistHandles(
+    defaultSelectedSpecialistHandles,
+    options?.availableGlobalSpecialistHandles?.(),
+  );
 
   return {
     categoryId: record.categoryId,
@@ -250,6 +280,8 @@ function toCategoryDto(record: {
           },
         }
       : {}),
+    defaultSelectedSpecialistHandles,
+    ...(missingDefaultSpecialistHandles ? { missingDefaultSpecialistHandles } : {}),
     ...(defaultModelId ? { defaultModelId } : {}),
     ...(model ? { defaultReasoningLevel: normalizeReasoningLevel(model.thinkingLevel) } : {}),
     position: record.position,
