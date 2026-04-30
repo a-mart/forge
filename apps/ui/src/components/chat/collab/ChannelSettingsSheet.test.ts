@@ -52,6 +52,7 @@ const channel: CollaborationChannel = {
   name: 'engineering',
   slug: 'engineering',
   aiEnabled: true,
+  activeSelectedSpecialistHandles: [],
   position: 0,
   archived: false,
   lastMessageSeq: 1,

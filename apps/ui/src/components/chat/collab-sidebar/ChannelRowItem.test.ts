@@ -19,6 +19,7 @@ const channel: CollaborationChannel = {
   name: 'support',
   slug: 'support',
   aiEnabled: true,
+  activeSelectedSpecialistHandles: [],
   position: 0,
   archived: false,
   lastMessageSeq: 2,

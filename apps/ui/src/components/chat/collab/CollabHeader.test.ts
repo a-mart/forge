@@ -34,6 +34,7 @@ const channel: CollaborationChannel = {
   name: 'general',
   slug: 'general',
   aiEnabled: false,
+  activeSelectedSpecialistHandles: [],
   position: 0,
   archived: false,
   lastMessageSeq: 0,
