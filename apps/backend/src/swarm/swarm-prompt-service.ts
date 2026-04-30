@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { PromptPreviewResponse, PromptPreviewSection } from "@forge/protocol";
+import type { PromptPreviewResponse, PromptPreviewSection, SpecialistTargetSpace } from "@forge/protocol";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
 import {
   getCommonKnowledgePath,
@@ -84,7 +84,7 @@ interface ResolvedSpecialistDefinitionLike {
 }
 
 interface SpecialistRegistryModuleLike {
-  resolveRoster(profileId: string): Promise<ResolvedSpecialistDefinitionLike[]>;
+  resolveRoster(profileId: string, targetSpace?: SpecialistTargetSpace): Promise<ResolvedSpecialistDefinitionLike[]>;
   generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[]): string;
   getSpecialistsEnabled(): Promise<boolean>;
   legacyModelRoutingGuidance: string;
@@ -222,7 +222,7 @@ export class SwarmPromptService {
         : projectAgentPrompt
           ? Promise.resolve(projectAgentPrompt)
           : this.options.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
-      specialistRegistry.resolveRoster(profileId),
+      specialistRegistry.resolveRoster(profileId, this.resolveSpecialistTargetSpace(descriptor)),
       specialistRegistry.getSpecialistsEnabled(),
     ]);
 
@@ -329,7 +329,7 @@ export class SwarmPromptService {
     if (specialistId) {
       try {
         const specialistRegistry = await this.options.loadSpecialistRegistryModule();
-        const roster = await specialistRegistry.resolveRoster(profileId);
+        const roster = await specialistRegistry.resolveRoster(profileId, this.resolveSpecialistTargetSpace(descriptor));
         const specialist = roster.find((entry) => entry.specialistId === specialistId);
         const specialistPrompt = specialist?.promptBody?.trim();
         if (specialistPrompt) {
@@ -370,6 +370,15 @@ export class SwarmPromptService {
       });
       return DEFAULT_WORKER_SYSTEM_PROMPT;
     }
+  }
+
+  private resolveSpecialistTargetSpace(descriptor: AgentDescriptor): SpecialistTargetSpace {
+    if (descriptor.role === "manager") {
+      return isCollabSession(descriptor) ? "collaboration" : "builder";
+    }
+
+    const managerDescriptor = this.options.descriptors.get(descriptor.managerId);
+    return managerDescriptor && isCollabSession(managerDescriptor) ? "collaboration" : "builder";
   }
 
   injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string {

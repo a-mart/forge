@@ -223,7 +223,7 @@ describe('specialist write isolation', () => {
     })
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/settings/specialists/backend?profileId=profile-1',
+      'https://collab.example.com/api/settings/specialists/backend?profileId=profile-1&targetSpace=collaboration',
       expect.objectContaining({ method: 'PUT', credentials: 'include' }),
     )
   })
@@ -244,7 +244,7 @@ describe('specialist write isolation', () => {
     })
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      'http://127.0.0.1:47187/api/settings/specialists/backend?profileId=profile-1',
+      'http://127.0.0.1:47187/api/settings/specialists/backend?profileId=profile-1&targetSpace=builder',
       expect.objectContaining({ method: 'PUT', credentials: 'same-origin' }),
     )
   })
@@ -256,7 +256,7 @@ describe('specialist write isolation', () => {
     await deleteSpecialist(collabClient(), 'profile-1', 'backend')
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/settings/specialists/backend?profileId=profile-1',
+      'https://collab.example.com/api/settings/specialists/backend?profileId=profile-1&targetSpace=collaboration',
       expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
     )
   })
@@ -268,7 +268,7 @@ describe('specialist write isolation', () => {
     await deleteSharedSpecialist(builderClient(), 'backend')
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      'http://127.0.0.1:47187/api/settings/specialists/backend',
+      'http://127.0.0.1:47187/api/settings/specialists/backend?targetSpace=builder',
       expect.objectContaining({ method: 'DELETE', credentials: 'same-origin' }),
     )
   })

@@ -1,4 +1,4 @@
-import type { ManagerExactModelSelection } from "@forge/protocol";
+import type { ManagerExactModelSelection, SpecialistTargetSpace } from "@forge/protocol";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
@@ -32,7 +32,8 @@ import {
   normalizeOptionalModelId,
   normalizeThinkingLevelForProvider,
   resolveNextCapacityFallbackModelId,
-  shouldRetrySpecialistSpawnWithFallback
+  shouldRetrySpecialistSpawnWithFallback,
+  isCollabSession
 } from "./swarm-manager-utils.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 
@@ -104,7 +105,10 @@ export interface SwarmAgentLifecycleServiceOptions {
     normalizedAgentId: string,
     profileId: string
   ) => Promise<string | undefined>;
-  resolveSpecialistRosterForProfile: (profileId: string) => Promise<ResolvedSpecialistDefinitionLike[]>;
+  resolveSpecialistRosterForProfile: (
+    profileId: string,
+    targetSpace?: SpecialistTargetSpace
+  ) => Promise<ResolvedSpecialistDefinitionLike[]>;
   normalizeSpecialistHandle: (value: string) => Promise<string | undefined>;
   resolveSystemPromptForDescriptor: (descriptor: AgentDescriptor) => Promise<string>;
   injectWorkerIdentityContext: (descriptor: AgentDescriptor, systemPrompt: string) => string;
@@ -314,7 +318,10 @@ export class SwarmAgentLifecycleService {
     let webSearch = false;
 
     if (requestedSpecialistId) {
-      const roster = await this.options.resolveSpecialistRosterForProfile(managerProfileId);
+      const roster = await this.options.resolveSpecialistRosterForProfile(
+        managerProfileId,
+        isCollabSession(manager) ? "collaboration" : "builder"
+      );
       specialist = roster.find((entry) => entry.specialistId === requestedSpecialistId);
       if (!specialist) {
         throw new Error(
@@ -877,8 +884,11 @@ export class SwarmAgentLifecycleService {
 
   async notifySpecialistRosterChanged(profileId: string): Promise<void> {
     try {
-      const roster = await this.options.resolveSpecialistRosterForProfile(profileId);
-      await this.syncWorkerSpecialistMetadata(profileId, roster);
+      const [builderRoster, collaborationRoster] = await Promise.all([
+        this.options.resolveSpecialistRosterForProfile(profileId, "builder"),
+        this.options.resolveSpecialistRosterForProfile(profileId, "collaboration"),
+      ]);
+      await this.syncWorkerSpecialistMetadata(profileId, [...builderRoster, ...collaborationRoster]);
     } catch (error) {
       this.options.logDebug("specialist:roster_change:sync:error", {
         profileId,

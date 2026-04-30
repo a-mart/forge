@@ -1,6 +1,7 @@
 import type {
   ManagerReasoningLevel,
   ResolvedSpecialistDefinition,
+  SpecialistTargetSpace,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 import { createBuilderSettingsApiClient } from './settings-api-client'
@@ -18,7 +19,7 @@ export interface SaveSpecialistPayload {
   fallbackReasoningLevel?: ManagerReasoningLevel
   pinned?: boolean
   webSearch?: boolean
-  targetSpace?: Array<'builder' | 'collaboration'>
+  targetSpace?: SpecialistTargetSpace[]
   promptBody: string
 }
 
@@ -28,9 +29,19 @@ function resolveClient(clientOrWsUrl: SettingsApiClient | string | undefined): S
     : clientOrWsUrl
 }
 
-function buildSpecialistPath(profileId?: string, pathSuffix = ''): string {
-  const params = profileId ? new URLSearchParams({ profileId }) : undefined
-  const query = params ? `?${params}` : ''
+function inferTargetSpace(client: SettingsApiClient): SpecialistTargetSpace {
+  return client.target.kind === 'collab' ? 'collaboration' : 'builder'
+}
+
+function buildSpecialistPath(
+  profileId?: string,
+  pathSuffix = '',
+  targetSpace?: SpecialistTargetSpace,
+): string {
+  const params = new URLSearchParams()
+  if (profileId) params.set('profileId', profileId)
+  if (targetSpace) params.set('targetSpace', targetSpace)
+  const query = params.size > 0 ? `?${params}` : ''
   return `/api/settings/specialists${pathSuffix}${query}`
 }
 
@@ -68,8 +79,7 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
     typeof specialist.promptBody === 'string' &&
     (specialist.sourceKind === 'builtin' ||
       specialist.sourceKind === 'global' ||
-      specialist.sourceKind === 'profile' ||
-      specialist.sourceKind === 'channel') &&
+      specialist.sourceKind === 'profile') &&
     typeof specialist.available === 'boolean' &&
     (specialist.availabilityCode === 'ok' ||
       specialist.availabilityCode === 'invalid_model' ||
@@ -84,7 +94,7 @@ export async function fetchSpecialists(
   profileId: string,
 ): Promise<ResolvedSpecialistDefinition[]> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(profileId)
+  const path = buildSpecialistPath(profileId, '', inferTargetSpace(client))
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { specialists?: unknown }
@@ -98,7 +108,7 @@ export async function saveSpecialist(
   data: SaveSpecialistPayload,
 ): Promise<void> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(profileId, `/${encodeURIComponent(handle)}`)
+  const path = buildSpecialistPath(profileId, `/${encodeURIComponent(handle)}`, inferTargetSpace(client))
   const response = await client.fetch(path, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -113,7 +123,7 @@ export async function deleteSpecialist(
   handle: string,
 ): Promise<void> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(profileId, `/${encodeURIComponent(handle)}`)
+  const path = buildSpecialistPath(profileId, `/${encodeURIComponent(handle)}`, inferTargetSpace(client))
   const response = await client.fetch(path, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
@@ -123,7 +133,7 @@ export async function fetchRosterPrompt(
   profileId: string,
 ): Promise<string> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(profileId, '/roster-prompt')
+  const path = buildSpecialistPath(profileId, '/roster-prompt', inferTargetSpace(client))
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { markdown?: unknown }
@@ -134,7 +144,7 @@ export async function fetchSharedSpecialists(
   clientOrWsUrl: SettingsApiClient | string | undefined,
 ): Promise<ResolvedSpecialistDefinition[]> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath()
+  const path = buildSpecialistPath(undefined, '', inferTargetSpace(client))
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { specialists?: unknown }
@@ -147,7 +157,7 @@ export async function saveSharedSpecialist(
   data: SaveSpecialistPayload,
 ): Promise<void> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(undefined, `/${encodeURIComponent(handle)}`)
+  const path = buildSpecialistPath(undefined, `/${encodeURIComponent(handle)}`, inferTargetSpace(client))
   const response = await client.fetch(path, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -161,7 +171,7 @@ export async function deleteSharedSpecialist(
   handle: string,
 ): Promise<void> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(undefined, `/${encodeURIComponent(handle)}`)
+  const path = buildSpecialistPath(undefined, `/${encodeURIComponent(handle)}`, inferTargetSpace(client))
   const response = await client.fetch(path, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }

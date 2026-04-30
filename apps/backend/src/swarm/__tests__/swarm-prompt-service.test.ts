@@ -246,6 +246,110 @@ describe("SwarmPromptService", () => {
     expect(resolved).toContain("Legacy routing guidance for tests.");
   });
 
+  it("buildResolvedManagerPrompt resolves collaboration specialist roster for collab sessions", async () => {
+    const { config } = await makeConfig();
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      sessionSurface: "collab",
+      collab: { workspaceId: "workspace-1", channelId: "channel-1" },
+    });
+    const profiles = new Map<string, ManagerProfile>([["manager", createProfile("manager")]]);
+    const descriptors = new Map<string, AgentDescriptor>([["manager", descriptor]]);
+    const promptRegistry = new FileBackedPromptRegistry({
+      dataDir: config.paths.dataDir,
+      repoDir: config.paths.rootDir,
+      builtinArchetypesDir: BUILTIN_ARCHETYPES,
+      builtinOperationalDir: BUILTIN_OPERATIONAL,
+    });
+    const specialistRegistry = {
+      ...specialistRegistryStub(),
+      resolveRoster: vi.fn(async (_profileId: string, targetSpace?: string) =>
+        targetSpace === "collaboration"
+          ? [{ specialistId: "collab-specialist", promptBody: "Collab prompt" }]
+          : [{ specialistId: "builder-specialist", promptBody: "Builder prompt" }],
+      ),
+      generateRosterBlock: vi.fn((roster: Array<{ specialistId: string }>) =>
+        roster.map((entry) => entry.specialistId).join("\n"),
+      ),
+      getSpecialistsEnabled: vi.fn(async () => true),
+    };
+
+    const service = new SwarmPromptService({
+      config,
+      descriptors,
+      profiles,
+      promptRegistry,
+      skillMetadataService: {} as never,
+      getAgentMemoryPath: () => "/tmp/memory.md",
+      ensureAgentMemoryFile: async () => {},
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => "manager",
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [descriptor],
+      loadSpecialistRegistryModule: async () => specialistRegistry,
+      getIntegrationContext: () => undefined,
+      logDebug: () => {},
+    });
+
+    const resolved = await service.buildResolvedManagerPrompt(descriptor);
+    expect(specialistRegistry.resolveRoster).toHaveBeenCalledWith("manager", "collaboration");
+    expect(resolved).toContain("collab-specialist");
+    expect(resolved).not.toContain("builder-specialist");
+  });
+
+  it("resolveSystemPromptForDescriptor resolves specialist prompts in collaboration space for collab workers", async () => {
+    const { config } = await makeConfig();
+    const manager = createManagerDescriptor(config, repoRoot, {
+      sessionSurface: "collab",
+      collab: { workspaceId: "workspace-1", channelId: "channel-1" },
+    });
+    const worker: AgentDescriptor = {
+      ...createManagerDescriptor(config, repoRoot, { agentId: "worker", managerId: manager.agentId, profileId: "manager" }),
+      role: "worker",
+      specialistId: "collab-specialist",
+    };
+    const profiles = new Map<string, ManagerProfile>([["manager", createProfile("manager")]]);
+    const descriptors = new Map<string, AgentDescriptor>([
+      [manager.agentId, manager],
+      [worker.agentId, worker],
+    ]);
+    const promptRegistry = new FileBackedPromptRegistry({
+      dataDir: config.paths.dataDir,
+      repoDir: config.paths.rootDir,
+      builtinArchetypesDir: BUILTIN_ARCHETYPES,
+      builtinOperationalDir: BUILTIN_OPERATIONAL,
+    });
+    const specialistRegistry = {
+      ...specialistRegistryStub(),
+      resolveRoster: vi.fn(async (_profileId: string, targetSpace?: string) =>
+        targetSpace === "collaboration"
+          ? [{ specialistId: "collab-specialist", promptBody: "Collaboration worker prompt" }]
+          : [{ specialistId: "collab-specialist", promptBody: "Builder worker prompt" }],
+      ),
+    };
+
+    const service = new SwarmPromptService({
+      config,
+      descriptors,
+      profiles,
+      promptRegistry,
+      skillMetadataService: {} as never,
+      getAgentMemoryPath: () => "/tmp/memory.md",
+      ensureAgentMemoryFile: async () => {},
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => "manager",
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [manager],
+      loadSpecialistRegistryModule: async () => specialistRegistry,
+      getIntegrationContext: () => undefined,
+      logDebug: () => {},
+    });
+
+    await expect(service.resolveSystemPromptForDescriptor(worker)).resolves.toBe("Collaboration worker prompt");
+    expect(specialistRegistry.resolveRoster).toHaveBeenCalledWith("manager", "collaboration");
+  });
+
   it("previewManagerSystemPromptForAgent uses the requested collab session and appends session context overlays", async () => {
     const { config } = await makeConfig();
     const dataDir = config.paths.dataDir;

@@ -4,7 +4,7 @@ import { appendFile, copyFile, mkdir, open, readdir, readFile, writeFile } from 
 import { dirname, join } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
-import { isSystemProfile } from "@forge/protocol";
+import { isSystemProfile, type SpecialistTargetSpace } from "@forge/protocol";
 import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
@@ -316,7 +316,7 @@ interface ResolvedSpecialistDefinitionLike {
 }
 
 interface SpecialistRegistryModule {
-  resolveRoster(profileId: string): Promise<ResolvedSpecialistDefinitionLike[]>;
+  resolveRoster(profileId: string, targetSpace?: SpecialistTargetSpace): Promise<ResolvedSpecialistDefinitionLike[]>;
   generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[]): string;
   normalizeSpecialistHandle(value: string): string;
   getSpecialistsEnabled(): Promise<boolean>;
@@ -1086,7 +1086,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       runtimeTokensByAgentId: this.runtimeTokensByAgentId,
       workerHealthService: this.workerHealthService,
       now: this.now,
-      resolveSpecialistRosterForProfile: (profileId) => this.resolveSpecialistRosterForProfile(profileId),
+      resolveSpecialistRosterForProfile: (profileId, targetSpace) => this.resolveSpecialistRosterForProfile(profileId, targetSpace),
       resolveSpawnModelWithCapacityFallback: (model) => this.resolveSpawnModelWithCapacityFallback(model),
       resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor),
       injectWorkerIdentityContext: (descriptor, systemPrompt) =>
@@ -1308,7 +1308,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       getManagedModelProviderAvailability: () => getManagedModelProviderCredentialAvailability(this.config),
       resolveSpawnWorkerArchetypeId: (input, normalizedAgentId, profileId) =>
         this.resolveSpawnWorkerArchetypeId(input, normalizedAgentId, profileId),
-      resolveSpecialistRosterForProfile: (profileId) => this.resolveSpecialistRosterForProfile(profileId),
+      resolveSpecialistRosterForProfile: (profileId, targetSpace) => this.resolveSpecialistRosterForProfile(profileId, targetSpace),
       normalizeSpecialistHandle: async (value) => {
         const specialistModule = await this.loadSpecialistRegistryModule();
         return specialistModule.normalizeSpecialistHandle(value) || undefined;
@@ -5354,8 +5354,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!this.specialistRegistryModulePromise) {
       const dataDir = this.config.paths.dataDir;
       this.specialistRegistryModulePromise = Promise.resolve({
-        resolveRoster: (profileId: string) =>
-          specialistResolveRoster(profileId, dataDir) as Promise<ResolvedSpecialistDefinitionLike[]>,
+        resolveRoster: (profileId: string, targetSpace?: SpecialistTargetSpace) =>
+          specialistResolveRoster(profileId, dataDir, targetSpace) as Promise<ResolvedSpecialistDefinitionLike[]>,
         generateRosterBlock: specialistGenerateRosterBlock as (roster: ResolvedSpecialistDefinitionLike[]) => string,
         normalizeSpecialistHandle: specialistNormalizeSpecialistHandle,
         getSpecialistsEnabled: () => specialistGetSpecialistsEnabled(dataDir),
@@ -5367,10 +5367,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async resolveSpecialistRosterForProfile(
-    profileId: string
+    profileId: string,
+    targetSpace: SpecialistTargetSpace = "builder"
   ): Promise<ResolvedSpecialistDefinitionLike[]> {
     const specialistRegistry = await this.loadSpecialistRegistryModule();
-    return specialistRegistry.resolveRoster(profileId);
+    return specialistRegistry.resolveRoster(profileId, targetSpace);
   }
 
   async resolveProjectAgentSystemPromptOverride(

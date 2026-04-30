@@ -1,3 +1,4 @@
+import type { SpecialistTargetSpace } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import { inferProviderFromModelId } from "./model-presets.js";
 import type {
@@ -19,7 +20,8 @@ import {
   normalizeOptionalAgentId,
   normalizeThinkingLevelForProvider,
   previewForLog,
-  shouldRetrySpecialistSpawnWithFallback
+  shouldRetrySpecialistSpawnWithFallback,
+  isCollabSession
 } from "./swarm-manager-utils.js";
 import type { SwarmWorkerHealthService } from "./swarm-worker-health-service.js";
 
@@ -52,7 +54,10 @@ export interface SwarmSpecialistFallbackManagerOptions {
   runtimeTokensByAgentId: Map<string, number>;
   workerHealthService: SwarmWorkerHealthService;
   now: () => string;
-  resolveSpecialistRosterForProfile(profileId: string): Promise<ResolvedSpecialistDefinitionLike[]>;
+  resolveSpecialistRosterForProfile(
+    profileId: string,
+    targetSpace?: SpecialistTargetSpace
+  ): Promise<ResolvedSpecialistDefinitionLike[]>;
   resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor;
   resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string>;
   injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string;
@@ -435,7 +440,11 @@ export class SwarmSpecialistFallbackManager {
       return undefined;
     }
 
-    const roster = await this.options.resolveSpecialistRosterForProfile(descriptor.profileId);
+    const managerDescriptor = this.options.descriptors.get(descriptor.managerId);
+    const roster = await this.options.resolveSpecialistRosterForProfile(
+      descriptor.profileId,
+      managerDescriptor && isCollabSession(managerDescriptor) ? "collaboration" : "builder"
+    );
     const specialist = roster.find((entry) => entry.specialistId === specialistId);
     if (!specialist?.fallbackModelId) {
       return undefined;

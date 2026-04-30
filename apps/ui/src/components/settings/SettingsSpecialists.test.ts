@@ -321,6 +321,37 @@ describe('SettingsSpecialists', () => {
       expect(bodyText).toContain('Save without pinning')
     })
 
+    it('preserves targetSpace when saving an existing specialist', async () => {
+      const spec = makeSpecialist({ pinned: true, targetSpace: ['collaboration'] })
+      specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([spec])
+      specialistsApiMock.saveSharedSpecialist.mockResolvedValue(undefined)
+
+      renderSpecialists([spec])
+      await flush()
+      await flush()
+
+      const card = container.querySelector('[role="button"]')
+      flushSync(() => {
+        fireEvent.click(card!)
+      })
+      await flush()
+
+      const saveBtn = Array.from(container.querySelectorAll('button')).find(
+        (btn) => btn.textContent?.trim() === 'Save',
+      )
+      flushSync(() => {
+        fireEvent.click(saveBtn!)
+      })
+
+      for (let i = 0; i < 6; i++) await flush()
+
+      expect(specialistsApiMock.saveSharedSpecialist).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        'backend',
+        expect.objectContaining({ targetSpace: ['collaboration'] }),
+      )
+    })
+
     it('saves directly when specialist is pinned', async () => {
       const spec = makeSpecialist({ pinned: true })
       specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([spec])

@@ -224,6 +224,14 @@ async function handleSpecialistRequest(
 
   const dataDir = swarmManager.getConfig().paths.dataDir;
   const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;
+  let targetSpace: SpecialistTargetSpace;
+  try {
+    targetSpace = parseTargetSpaceQuery(requestUrl);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendJson(response, 400, { error: message });
+    return;
+  }
   const relativePath = requestUrl.pathname.slice(SPECIALISTS_ENDPOINT_PATH.length);
 
   // GET /api/settings/specialists/template — returns worker.md content (no profileId required)
@@ -255,7 +263,7 @@ async function handleSpecialistRequest(
     // GET /api/settings/specialists — returns shared/global specialists only
     if (request.method === "GET" && relativePath === "") {
       try {
-        const specialists = await resolveSharedRoster(dataDir, "builder");
+        const specialists = await resolveSharedRoster(dataDir, targetSpace);
         const sanitized = specialists.map(({ sourcePath: _, ...rest }) => rest);
         sendJson(response, 200, { specialists: sanitized });
       } catch (error) {
@@ -283,7 +291,7 @@ async function handleSpecialistRequest(
     if (request.method === "PUT") {
       try {
         const body = await readJsonBody(request);
-        const data = parseSaveSpecialistBody(body);
+        const data = parseSaveSpecialistBody(body, targetSpace);
         await saveSharedSpecialist(dataDir, handle, data);
         await notifyGlobalSpecialistMutation({ swarmManager, broadcastEvent, dataDir });
         sendJson(response, 200, { ok: true });
@@ -317,7 +325,7 @@ async function handleSpecialistRequest(
   // GET /api/settings/specialists/roster-prompt?profileId=X
   if (request.method === "GET" && relativePath === ROSTER_PROMPT_SUFFIX) {
     try {
-      const roster = await resolveRoster(profileId, dataDir);
+      const roster = await resolveRoster(profileId, dataDir, targetSpace);
       const markdown = generateRosterBlock(roster);
       sendJson(response, 200, { markdown });
     } catch (error) {
@@ -330,7 +338,7 @@ async function handleSpecialistRequest(
   // GET /api/settings/specialists?profileId=X
   if (request.method === "GET" && relativePath === "") {
     try {
-      const specialists = await resolveRoster(profileId, dataDir);
+      const specialists = await resolveRoster(profileId, dataDir, targetSpace);
       // Strip sourcePath — it's a server filesystem detail the UI doesn't need.
       const sanitized = specialists.map(({ sourcePath: _, ...rest }) => rest);
       sendJson(response, 200, { specialists: sanitized });
@@ -360,7 +368,7 @@ async function handleSpecialistRequest(
     try {
       requireNonSystemProfile(profileId, profiles);
       const body = await readJsonBody(request);
-      const data = parseSaveSpecialistBody(body);
+      const data = parseSaveSpecialistBody(body, targetSpace);
       await saveProfileSpecialist(dataDir, profileId, handle, data);
       await notifySpecialistRosterMutation({
         swarmManager,
@@ -406,12 +414,16 @@ async function notifySpecialistRosterMutation(options: {
   profileId: string;
 }): Promise<void> {
   const { swarmManager, broadcastEvent, dataDir, profileId } = options;
-  const roster = await resolveRoster(profileId, dataDir);
+  const [builderRoster, collaborationRoster] = await Promise.all([
+    resolveRoster(profileId, dataDir, "builder"),
+    resolveRoster(profileId, dataDir, "collaboration"),
+  ]);
+  const specialistIds = [...new Set([...builderRoster, ...collaborationRoster].map((entry) => entry.specialistId))];
 
   broadcastEvent({
     type: "specialist_roster_changed",
     profileId,
-    specialistIds: roster.map((entry) => entry.specialistId),
+    specialistIds,
     updatedAt: new Date().toISOString(),
   });
 
@@ -437,7 +449,21 @@ async function notifyGlobalSpecialistMutation(options: {
   }
 }
 
-function parseSaveSpecialistBody(value: unknown): SaveSpecialistRequest {
+function parseTargetSpaceQuery(requestUrl: URL): SpecialistTargetSpace {
+  const raw = requestUrl.searchParams.get("targetSpace")?.trim();
+  if (raw === undefined || raw.length === 0) {
+    return "builder";
+  }
+  if (raw === "builder" || raw === "collaboration") {
+    return raw;
+  }
+  throw new Error("targetSpace query must be builder or collaboration");
+}
+
+function parseSaveSpecialistBody(
+  value: unknown,
+  fallbackTargetSpace: SpecialistTargetSpace,
+): SaveSpecialistRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Request body must be a JSON object");
   }
@@ -457,7 +483,7 @@ function parseSaveSpecialistBody(value: unknown): SaveSpecialistRequest {
     fallbackReasoningLevel: readOptionalStringField(obj, "fallbackReasoningLevel"),
     pinned: readOptionalBooleanField(obj, "pinned"),
     webSearch: readOptionalBooleanField(obj, "webSearch"),
-    targetSpace: readOptionalTargetSpaceField(obj, "targetSpace"),
+    targetSpace: readOptionalTargetSpaceField(obj, "targetSpace") ?? [fallbackTargetSpace],
     promptBody: readRequiredStringField(obj, "promptBody"),
   };
 }

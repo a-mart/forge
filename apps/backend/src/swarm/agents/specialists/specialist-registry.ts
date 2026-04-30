@@ -29,6 +29,8 @@ const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const CACHE_KEY_SEPARATOR = "\u0000";
 const SPECIALISTS_ENABLED_FILENAME = "specialists-enabled.json";
 const REMOVED_BUILTIN_SPECIALIST_FILES = new Set(["app-runtime.md"]);
+export const SPECIALIST_TARGET_SPACE_FRONTMATTER_KEY = "TargetSpace";
+const LEGACY_SPECIALIST_TARGET_SPACE_FRONTMATTER_KEY = "targetSpace";
 const DEFAULT_SPECIALIST_TARGET_SPACE: SpecialistTargetSpace[] = ["builder"];
 
 function formatPresetList(entries: string[]): string {
@@ -145,9 +147,13 @@ export async function parseSpecialistFile(filePath: string): Promise<ParsedSpeci
   return parseSpecialistMarkdown(markdown);
 }
 
-export async function resolveRoster(profileId: string, dataDir: string): Promise<ResolvedSpecialistDefinition[]> {
+export async function resolveRoster(
+  profileId: string,
+  dataDir: string,
+  targetSpace: SpecialistTargetSpace = "builder",
+): Promise<ResolvedSpecialistDefinition[]> {
   const normalizedProfileId = sanitizePathSegment(profileId);
-  const cacheKey = getRosterCacheKey(dataDir, normalizedProfileId);
+  const cacheKey = getRosterCacheKey(dataDir, normalizedProfileId, targetSpace);
   const cached = rosterCache.get(cacheKey);
   if (cached) {
     return cloneRosterEntries(cached);
@@ -157,8 +163,8 @@ export async function resolveRoster(profileId: string, dataDir: string): Promise
   const profileDir = getProfileSpecialistsDir(dataDir, normalizedProfileId);
 
   const [sharedByHandle, profileByHandle] = await Promise.all([
-    resolveDirectorySpecialists(sharedDir, "shared", "builder"),
-    resolveDirectorySpecialists(profileDir, "profile", "builder"),
+    resolveDirectorySpecialists(sharedDir, "shared", targetSpace),
+    resolveDirectorySpecialists(profileDir, "profile", targetSpace),
   ]);
 
   const allHandles = [...new Set([...sharedByHandle.keys(), ...profileByHandle.keys()])].sort();
@@ -239,8 +245,8 @@ function cloneRosterEntries(roster: ResolvedSpecialistDefinition[]): ResolvedSpe
   return roster.map((entry) => ({ ...entry }));
 }
 
-function getRosterCacheKey(dataDir: string, profileId: string): string {
-  return `${dataDir}${CACHE_KEY_SEPARATOR}${profileId}`;
+function getRosterCacheKey(dataDir: string, profileId: string, targetSpace: SpecialistTargetSpace): string {
+  return `${dataDir}${CACHE_KEY_SEPARATOR}${profileId}${CACHE_KEY_SEPARATOR}${targetSpace}`;
 }
 
 export function generateRosterBlock(roster: ResolvedSpecialistDefinition[]): string {
@@ -282,6 +288,12 @@ export function generateRosterBlock(roster: ResolvedSpecialistDefinition[]): str
 }
 
 export interface SeedBuiltinsOptions {
+  /**
+   * Deprecated compatibility option. Builtin specialist seeding is intentionally
+   * target-space agnostic: shared storage is the union used by Builder and the
+   * collaboration server, and each file's TargetSpace frontmatter controls
+   * runtime visibility.
+   */
   runtimeTarget?: RuntimeTarget;
 }
 
@@ -515,7 +527,7 @@ export function invalidateSpecialistCache(profileId?: string): void {
 
   const normalizedProfileId = sanitizePathSegment(profileId);
   for (const key of rosterCache.keys()) {
-    if (key.endsWith(`${CACHE_KEY_SEPARATOR}${normalizedProfileId}`)) {
+    if (key.includes(`${CACHE_KEY_SEPARATOR}${normalizedProfileId}${CACHE_KEY_SEPARATOR}`)) {
       rosterCache.delete(key);
     }
   }
@@ -564,7 +576,10 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   const builtin = parseOptionalBoolean(frontmatterValues.builtin);
   const pinned = parseOptionalBoolean(frontmatterValues.pinned);
   const webSearch = parseOptionalBoolean(frontmatterValues.webSearch);
-  const targetSpace = parseTargetSpace(frontmatterValues.TargetSpace);
+  const targetSpace = parseTargetSpace(
+    frontmatterValues[SPECIALIST_TARGET_SPACE_FRONTMATTER_KEY] ??
+      frontmatterValues[LEGACY_SPECIALIST_TARGET_SPACE_FRONTMATTER_KEY],
+  );
 
   if (frontmatterValues.enabled !== undefined && enabled === undefined) {
     return null;
@@ -819,7 +834,7 @@ function toResolvedSpecialistDefinition(options: {
   specialistId: string;
   frontmatter: SpecialistFrontmatter;
   body: string;
-  sourceKind: "builtin" | "global" | "profile" | "channel";
+  sourceKind: "builtin" | "global" | "profile";
   sourcePath: string;
   shadowsGlobal: boolean;
 }): ResolvedSpecialistDefinition {
@@ -881,7 +896,7 @@ function serializeSpecialistFile(frontmatter: SpecialistFrontmatter, body: strin
     `enabled: ${frontmatter.enabled ? "true" : "false"}`,
     `whenToUse: ${quoteYamlString(frontmatter.whenToUse)}`,
     `modelId: ${quoteYamlString(frontmatter.modelId)}`,
-    `TargetSpace: [${frontmatter.targetSpace.join(", ")}]`,
+    `${SPECIALIST_TARGET_SPACE_FRONTMATTER_KEY}: [${frontmatter.targetSpace.join(", ")}]`,
   ];
 
   if (frontmatter.provider) {

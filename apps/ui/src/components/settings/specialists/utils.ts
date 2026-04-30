@@ -137,6 +137,7 @@ export function specialistToEditState(
     fallbackReasoningLevel: specialist.fallbackReasoningLevel ?? '',
     pinned: specialist.pinned,
     webSearch: specialist.webSearch ?? false,
+    targetSpace: [...specialist.targetSpace],
     promptBody: specialist.promptBody,
   }
 }
@@ -176,6 +177,7 @@ export function toSaveSpecialistPayload(state: CardEditState): SaveSpecialistPay
     fallbackReasoningLevel: normalizedFallbackModelId ? normalizedFallbackReasoningLevel : undefined,
     pinned: state.pinned,
     webSearch: state.webSearch,
+    targetSpace: [...state.targetSpace],
     promptBody: state.promptBody,
   }
 }

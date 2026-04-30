@@ -105,6 +105,32 @@ describe("specialist routes", () => {
     });
   });
 
+  it("lists global specialists using explicit collaboration targetSpace", async () => {
+    specialistRegistryState.resolveSharedRoster.mockResolvedValueOnce([
+      {
+        specialistId: "collab-specialist",
+        displayName: "Collab",
+        enabled: true,
+        sourcePath: "/tmp/global/collab.md",
+      },
+    ]);
+
+    const server = await createSpecialistRouteTestServer();
+    const response = await fetch(`${server.baseUrl}/api/settings/specialists?targetSpace=collaboration`);
+
+    expect(response.status).toBe(200);
+    expect(specialistRegistryState.resolveSharedRoster).toHaveBeenCalledWith("/tmp/data", "collaboration");
+    await expect(response.json()).resolves.toEqual({
+      specialists: [
+        {
+          specialistId: "collab-specialist",
+          displayName: "Collab",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
   it("returns 404 for unknown profile-scoped specialist requests", async () => {
     const server = await createSpecialistRouteTestServer({
       profiles: [{ profileId: "alpha", displayName: "Alpha" }],
@@ -158,6 +184,25 @@ describe("specialist routes", () => {
     const promptResponse = await fetch(`${server.baseUrl}/api/settings/specialists/roster-prompt?profileId=alpha`);
     expect(promptResponse.status).toBe(200);
     await expect(promptResponse.json()).resolves.toEqual({ markdown: "## Specialists\n- backend\n" });
+  });
+
+  it("saves global specialists with targetSpace from explicit query when body omits it", async () => {
+    const server = await createSpecialistRouteTestServer({
+      profiles: [{ profileId: "alpha", displayName: "Alpha" }],
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/settings/specialists/collab?targetSpace=collaboration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...validSpecialistPayload(), targetSpace: undefined }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(specialistRegistryState.saveSharedSpecialist).toHaveBeenCalledWith(
+      "/tmp/data",
+      "collab",
+      expect.objectContaining({ targetSpace: ["collaboration"] }),
+    );
   });
 
   it("saves global specialists and notifies every profile", async () => {

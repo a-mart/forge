@@ -2,6 +2,7 @@ import type {
   ManagerReasoningLevel,
   ModelPresetInfo,
   ResolvedSpecialistDefinition,
+  SpecialistTargetSpace,
 } from '@forge/protocol'
 import type { SelectableModel } from '@/lib/model-preset'
 
@@ -75,6 +76,7 @@ export interface CardEditState {
   fallbackReasoningLevel: string
   pinned: boolean
   webSearch: boolean
+  targetSpace: SpecialistTargetSpace[]
   promptBody: string
 }
 

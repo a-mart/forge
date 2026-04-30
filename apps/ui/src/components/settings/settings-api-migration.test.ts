@@ -351,8 +351,34 @@ describe('specialists-api via client', () => {
     await fetchSpecialists(client, 'profile-1')
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/settings/specialists?profileId=profile-1',
+      'https://collab.example.com/api/settings/specialists?profileId=profile-1&targetSpace=collaboration',
       expect.objectContaining({ cache: 'no-store', credentials: 'include' }),
+    )
+  })
+
+  it('saves shared specialists through collab client with collaboration targetSpace query and preserved payload', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ ok: true }))
+    const { saveSharedSpecialist } = await import('./specialists-api')
+    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
+
+    await saveSharedSpecialist(client, 'handoff', {
+      displayName: 'Handoff',
+      color: '#2563eb',
+      enabled: true,
+      whenToUse: 'Collaboration handoffs',
+      modelId: 'gpt-5.3-codex',
+      provider: 'openai-codex',
+      targetSpace: ['collaboration'],
+      promptBody: 'Prompt',
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://collab.example.com/api/settings/specialists/handoff?targetSpace=collaboration',
+      expect.objectContaining({
+        method: 'PUT',
+        credentials: 'include',
+        body: expect.stringContaining('"targetSpace":["collaboration"]'),
+      }),
     )
   })
 })
