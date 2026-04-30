@@ -1,5 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { MANAGER_REASONING_LEVELS, type ManagerReasoningLevel, type ModelPresetInfo, type ServerEvent } from "@forge/protocol";
+import {
+  MANAGER_REASONING_LEVELS,
+  type ManagerReasoningLevel,
+  type ModelPresetInfo,
+  type ServerEvent,
+  type SpecialistTargetSpace,
+} from "@forge/protocol";
 import {
   deleteProfileSpecialist,
   deleteSharedSpecialist,
@@ -249,7 +255,7 @@ async function handleSpecialistRequest(
     // GET /api/settings/specialists — returns shared/global specialists only
     if (request.method === "GET" && relativePath === "") {
       try {
-        const specialists = await resolveSharedRoster(dataDir);
+        const specialists = await resolveSharedRoster(dataDir, "builder");
         const sanitized = specialists.map(({ sourcePath: _, ...rest }) => rest);
         sendJson(response, 200, { specialists: sanitized });
       } catch (error) {
@@ -451,6 +457,7 @@ function parseSaveSpecialistBody(value: unknown): SaveSpecialistRequest {
     fallbackReasoningLevel: readOptionalStringField(obj, "fallbackReasoningLevel"),
     pinned: readOptionalBooleanField(obj, "pinned"),
     webSearch: readOptionalBooleanField(obj, "webSearch"),
+    targetSpace: readOptionalTargetSpaceField(obj, "targetSpace"),
     promptBody: readRequiredStringField(obj, "promptBody"),
   };
 }
@@ -497,6 +504,32 @@ function readOptionalBooleanField(obj: Record<string, unknown>, key: string): bo
   }
 
   return value;
+}
+
+function readOptionalTargetSpaceField(
+  obj: Record<string, unknown>,
+  key: string,
+): SpecialistTargetSpace[] | undefined {
+  const value = obj[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be an array when provided`);
+  }
+
+  const spaces: SpecialistTargetSpace[] = [];
+  for (const entry of value) {
+    if (entry !== "builder" && entry !== "collaboration") {
+      throw new Error(`${key} entries must be builder or collaboration`);
+    }
+    if (!spaces.includes(entry)) {
+      spaces.push(entry);
+    }
+  }
+
+  return spaces;
 }
 
 function parseHandleFromRelativePath(relativePath: string): string | null {

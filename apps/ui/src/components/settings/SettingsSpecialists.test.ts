@@ -72,6 +72,7 @@ function makeSpecialist(
     reasoningLevel: 'high',
     builtin: true,
     pinned: false,
+    targetSpace: ['builder'],
     promptBody: 'You are a backend specialist.',
     sourceKind: 'builtin',
     available: true,

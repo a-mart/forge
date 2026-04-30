@@ -18,6 +18,7 @@ export interface SaveSpecialistPayload {
   fallbackReasoningLevel?: ManagerReasoningLevel
   pinned?: boolean
   webSearch?: boolean
+  targetSpace?: Array<'builder' | 'collaboration'>
   promptBody: string
 }
 
@@ -62,8 +63,13 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
     typeof specialist.builtin === 'boolean' &&
     typeof specialist.pinned === 'boolean' &&
     (specialist.webSearch === undefined || typeof specialist.webSearch === 'boolean') &&
+    Array.isArray(specialist.targetSpace) &&
+    specialist.targetSpace.every((space) => space === 'builder' || space === 'collaboration') &&
     typeof specialist.promptBody === 'string' &&
-    (specialist.sourceKind === 'builtin' || specialist.sourceKind === 'global' || specialist.sourceKind === 'profile') &&
+    (specialist.sourceKind === 'builtin' ||
+      specialist.sourceKind === 'global' ||
+      specialist.sourceKind === 'profile' ||
+      specialist.sourceKind === 'channel') &&
     typeof specialist.available === 'boolean' &&
     (specialist.availabilityCode === 'ok' ||
       specialist.availabilityCode === 'invalid_model' ||

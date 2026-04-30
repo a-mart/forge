@@ -4,6 +4,7 @@ color: "#0d9488"
 enabled: true
 whenToUse: Web research, fact-checking, real-time information lookup, social media analysis, trend analysis, sentiment tracking, breaking news, expert opinions from X/Twitter, current events. Uses xAI native web search and X search for real-time results plus Brave Search for deep/authoritative sources.
 modelId: grok-4.20-0309-reasoning
+TargetSpace: [builder]
 reasoningLevel: medium
 fallbackModelId: grok-4
 builtin: true

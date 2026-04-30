@@ -4,6 +4,7 @@ color: "#7c3aed"
 enabled: true
 whenToUse: Task breakdown, implementation planning, design docs, sequencing, risk analysis, discovery investigations. Not for implementation or code changes — output is plans and analysis only.
 modelId: gpt-5.5
+TargetSpace: [builder]
 reasoningLevel: high
 fallbackModelId: claude-opus-4-6
 fallbackReasoningLevel: high

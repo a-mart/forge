@@ -4,6 +4,7 @@ color: "#ec4899"
 enabled: true
 whenToUse: Frontend implementation, UI components, layout, styling, responsive design, accessibility. Not for backend logic, server routes, or data model changes.
 modelId: claude-opus-4-6
+TargetSpace: [builder]
 reasoningLevel: high
 fallbackModelId: gpt-5.4
 fallbackReasoningLevel: high

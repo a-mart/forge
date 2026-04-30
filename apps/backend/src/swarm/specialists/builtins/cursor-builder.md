@@ -4,6 +4,7 @@ color: "#7C3AED"
 enabled: false
 whenToUse: "Medium-complexity implementation tasks across backend and frontend. Fast iterative edits, command execution, and repo-local coding. Not for deep architecture design, final code review, or broad research."
 modelId: "default"
+TargetSpace: [builder]
 provider: "cursor-acp"
 reasoningLevel: "medium"
 fallbackModelId: "gpt-5.4"

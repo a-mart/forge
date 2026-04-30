@@ -3,12 +3,12 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Dirent } from "node:fs";
 import type { RuntimeTarget } from "../../../runtime-target.js";
-import { isCollaborationServerRuntimeTarget } from "../../../runtime-target.js";
 import {
   FORGE_MODEL_CATALOG,
   getCatalogFamily,
   getCatalogModelsByFamily,
   type ResolvedSpecialistDefinition,
+  type SpecialistTargetSpace,
 } from "@forge/protocol";
 import {
   inferProviderFromModelId,
@@ -29,16 +29,7 @@ const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const CACHE_KEY_SEPARATOR = "\u0000";
 const SPECIALISTS_ENABLED_FILENAME = "specialists-enabled.json";
 const REMOVED_BUILTIN_SPECIALIST_FILES = new Set(["app-runtime.md"]);
-const COLLABORATION_SERVER_BUILTIN_SPECIALIST_FILES = new Set([
-  "backend.md",
-  "code-reviewer-2.md",
-  "code-reviewer.md",
-  "doc-writer.md",
-  "frontend.md",
-  "planner.md",
-  "researcher.md",
-  "scout.md",
-]);
+const DEFAULT_SPECIALIST_TARGET_SPACE: SpecialistTargetSpace[] = ["builder"];
 
 function formatPresetList(entries: string[]): string {
   if (entries.length === 0) {
@@ -114,6 +105,7 @@ export interface SpecialistFrontmatter {
   builtin: boolean;
   pinned: boolean;
   webSearch: boolean;
+  targetSpace: SpecialistTargetSpace[];
 }
 
 export interface SaveSpecialistRequest {
@@ -129,6 +121,7 @@ export interface SaveSpecialistRequest {
   fallbackReasoningLevel?: string;
   pinned?: boolean;
   webSearch?: boolean;
+  targetSpace?: SpecialistTargetSpace[];
   promptBody: string;
 }
 
@@ -164,8 +157,8 @@ export async function resolveRoster(profileId: string, dataDir: string): Promise
   const profileDir = getProfileSpecialistsDir(dataDir, normalizedProfileId);
 
   const [sharedByHandle, profileByHandle] = await Promise.all([
-    resolveDirectorySpecialists(sharedDir, "shared"),
-    resolveDirectorySpecialists(profileDir, "profile"),
+    resolveDirectorySpecialists(sharedDir, "shared", "builder"),
+    resolveDirectorySpecialists(profileDir, "profile", "builder"),
   ]);
 
   const allHandles = [...new Set([...sharedByHandle.keys(), ...profileByHandle.keys()])].sort();
@@ -191,6 +184,7 @@ export async function resolveRoster(profileId: string, dataDir: string): Promise
 async function resolveDirectorySpecialists(
   directoryPath: string,
   scope: "shared" | "profile",
+  targetSpace?: SpecialistTargetSpace,
 ): Promise<Map<string, ResolvedSpecialistDefinition>> {
   const files = (await listMarkdownFiles(directoryPath)).filter(
     (file) => !REMOVED_BUILTIN_SPECIALIST_FILES.has(file.name)
@@ -206,7 +200,7 @@ async function resolveDirectorySpecialists(
     handles.map(async ({ file, handle }) => {
       const filePath = join(directoryPath, file.name);
       const parsed = await parseSpecialistFile(filePath);
-      if (!parsed) {
+      if (!parsed || (targetSpace && !parsed.frontmatter.targetSpace.includes(targetSpace))) {
         return null;
       }
 
@@ -297,10 +291,8 @@ export async function seedBuiltins(dataDir: string, options: SeedBuiltinsOptions
 
   await mkdir(sharedDir, { recursive: true });
 
-  const builtinFiles = filterBuiltinFilesForRuntimeTarget(
-    await listMarkdownFiles(builtinDir),
-    options.runtimeTarget,
-  );
+  void options.runtimeTarget;
+  const builtinFiles = await listMarkdownFiles(builtinDir);
 
   for (const removedFile of REMOVED_BUILTIN_SPECIALIST_FILES) {
     await unlink(join(sharedDir, removedFile)).catch((error) => {
@@ -352,14 +344,6 @@ export async function seedBuiltins(dataDir: string, options: SeedBuiltinsOptions
   }
 
   invalidateSpecialistCache();
-}
-
-function filterBuiltinFilesForRuntimeTarget(files: Dirent[], runtimeTarget: RuntimeTarget | undefined): Dirent[] {
-  if (!runtimeTarget || !isCollaborationServerRuntimeTarget(runtimeTarget)) {
-    return files;
-  }
-
-  return files.filter((file) => COLLABORATION_SERVER_BUILTIN_SPECIALIST_FILES.has(file.name));
 }
 
 export async function getSpecialistsEnabled(dataDir: string): Promise<boolean> {
@@ -445,9 +429,12 @@ export async function deleteProfileSpecialist(dataDir: string, profileId: string
   invalidateSpecialistCache(normalizedProfileId);
 }
 
-export async function resolveSharedRoster(dataDir: string): Promise<ResolvedSpecialistDefinition[]> {
+export async function resolveSharedRoster(
+  dataDir: string,
+  targetSpace?: SpecialistTargetSpace,
+): Promise<ResolvedSpecialistDefinition[]> {
   const sharedDir = getSharedSpecialistsDir(dataDir);
-  const byHandle = await resolveDirectorySpecialists(sharedDir, "shared");
+  const byHandle = await resolveDirectorySpecialists(sharedDir, "shared", targetSpace);
   const sorted = [...byHandle.values()].sort((a, b) => a.specialistId.localeCompare(b.specialistId));
   return sorted;
 }
@@ -577,6 +564,7 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   const builtin = parseOptionalBoolean(frontmatterValues.builtin);
   const pinned = parseOptionalBoolean(frontmatterValues.pinned);
   const webSearch = parseOptionalBoolean(frontmatterValues.webSearch);
+  const targetSpace = parseTargetSpace(frontmatterValues.TargetSpace);
 
   if (frontmatterValues.enabled !== undefined && enabled === undefined) {
     return null;
@@ -591,6 +579,10 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   }
 
   if (frontmatterValues.webSearch !== undefined && webSearch === undefined) {
+    return null;
+  }
+
+  if (targetSpace === undefined) {
     return null;
   }
 
@@ -627,6 +619,7 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
       builtin: builtin ?? false,
       pinned: pinned ?? false,
       webSearch: webSearch ?? false,
+      targetSpace,
     },
     body,
   };
@@ -684,6 +677,11 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
       ? fallbackReasoningLevel
       : undefined;
 
+  const targetSpace = normalizeTargetSpace(data.targetSpace);
+  if (!targetSpace) {
+    throw new Error("targetSpace must contain builder and/or collaboration");
+  }
+
   return {
     displayName,
     color,
@@ -699,6 +697,7 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     builtin: false,
     pinned: data.pinned ?? false,
     webSearch: normalizeWebSearchForModelId(provider, modelId, data.webSearch === true),
+    targetSpace,
   };
 }
 
@@ -744,6 +743,44 @@ function parseOptionalString(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function parseTargetSpace(value: string | undefined): SpecialistTargetSpace[] | undefined {
+  if (value === undefined) {
+    return [...DEFAULT_SPECIALIST_TARGET_SPACE];
+  }
+
+  const rawEntries = value.trim().startsWith("[") && value.trim().endsWith("]")
+    ? value.trim().slice(1, -1).split(",")
+    : [value];
+
+  const entries = rawEntries
+    .map((entry) => parseYamlStringValue(entry).trim())
+    .filter((entry) => entry.length > 0);
+
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  return normalizeTargetSpace(entries);
+}
+
+function normalizeTargetSpace(values: readonly string[] | undefined): SpecialistTargetSpace[] | undefined {
+  if (!values) {
+    return [...DEFAULT_SPECIALIST_TARGET_SPACE];
+  }
+
+  const normalized: SpecialistTargetSpace[] = [];
+  for (const value of values) {
+    if (value !== "builder" && value !== "collaboration") {
+      return undefined;
+    }
+    if (!normalized.includes(value)) {
+      normalized.push(value);
+    }
+  }
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function parseOptionalBoolean(value: string | undefined): boolean | undefined {
   if (value === undefined) {
     return undefined;
@@ -782,7 +819,7 @@ function toResolvedSpecialistDefinition(options: {
   specialistId: string;
   frontmatter: SpecialistFrontmatter;
   body: string;
-  sourceKind: "builtin" | "global" | "profile";
+  sourceKind: "builtin" | "global" | "profile" | "channel";
   sourcePath: string;
   shadowsGlobal: boolean;
 }): ResolvedSpecialistDefinition {
@@ -825,6 +862,7 @@ function toResolvedSpecialistDefinition(options: {
     builtin: options.frontmatter.builtin,
     pinned: options.frontmatter.pinned,
     webSearch,
+    targetSpace: [...options.frontmatter.targetSpace],
     promptBody: options.body,
     sourceKind: options.sourceKind,
     sourcePath: options.sourcePath,
@@ -843,6 +881,7 @@ function serializeSpecialistFile(frontmatter: SpecialistFrontmatter, body: strin
     `enabled: ${frontmatter.enabled ? "true" : "false"}`,
     `whenToUse: ${quoteYamlString(frontmatter.whenToUse)}`,
     `modelId: ${quoteYamlString(frontmatter.modelId)}`,
+    `TargetSpace: [${frontmatter.targetSpace.join(", ")}]`,
   ];
 
   if (frontmatter.provider) {

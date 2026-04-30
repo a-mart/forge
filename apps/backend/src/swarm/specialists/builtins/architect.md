@@ -4,6 +4,7 @@ color: "#f59e0b"
 enabled: true
 whenToUse: Complex architecture, system design, high-risk multi-file refactors, cross-cutting changes, deep debugging. Not for routine single-file edits, quick lookups, or documentation.
 modelId: gpt-5.5
+TargetSpace: [builder]
 reasoningLevel: xhigh
 fallbackModelId: claude-opus-4-6
 fallbackReasoningLevel: high

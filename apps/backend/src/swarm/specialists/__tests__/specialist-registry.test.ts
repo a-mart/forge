@@ -152,6 +152,91 @@ describe("specialist-registry", () => {
     expect(parsed?.frontmatter.webSearch).toBe(true);
   });
 
+  it("parses exact TargetSpace frontmatter from inline array and scalar forms", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const arrayPath = join(root, "dual.md");
+    const scalarPath = join(root, "collab.md");
+
+    await writeFile(
+      arrayPath,
+      [
+        "---",
+        "displayName: Dual Specialist",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Dual-space tasks",
+        "modelId: gpt-5.3-codex",
+        "TargetSpace: [builder, collaboration]",
+        "---",
+        "",
+        "Dual body.",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      scalarPath,
+      [
+        "---",
+        "displayName: Collab Specialist",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Collaboration tasks",
+        "modelId: gpt-5.3-codex",
+        "TargetSpace: collaboration",
+        "---",
+        "",
+        "Collab body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    expect((await parseSpecialistFile(arrayPath))?.frontmatter.targetSpace).toEqual(["builder", "collaboration"]);
+    expect((await parseSpecialistFile(scalarPath))?.frontmatter.targetSpace).toEqual(["collaboration"]);
+  });
+
+  it("defaults missing TargetSpace frontmatter to builder for legacy compatibility", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const filePath = join(root, "legacy-target-space.md");
+
+    await writeFile(
+      filePath,
+      [
+        "---",
+        "displayName: Legacy Target Specialist",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Legacy tasks",
+        "modelId: gpt-5.3-codex",
+        "---",
+        "",
+        "Legacy body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    expect((await parseSpecialistFile(filePath))?.frontmatter.targetSpace).toEqual(["builder"]);
+  });
+
+  it("serializes exact TargetSpace frontmatter when saving", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const specialistPath = join(dataDir, "shared", "specialists", "dual-specialist.md");
+
+    await saveSharedSpecialist(dataDir, "dual-specialist", {
+      displayName: "Dual Specialist",
+      color: "#123abc",
+      enabled: true,
+      whenToUse: "Dual tasks",
+      modelId: "gpt-5.4",
+      targetSpace: ["builder", "collaboration"],
+      promptBody: "Dual prompt body",
+    });
+
+    const markdown = await readFile(specialistPath, "utf8");
+    expect(markdown).toContain("TargetSpace: [builder, collaboration]");
+    expect(markdown).not.toContain("targetSpace:");
+  });
+
   it("defaults webSearch frontmatter to false when omitted", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const filePath = join(root, "default-web-search.md");
@@ -419,6 +504,7 @@ describe("specialist-registry", () => {
         reasoningLevel: "high",
         builtin: true,
         pinned: false,
+        targetSpace: ["builder"],
         promptBody: "Prompt",
         sourceKind: "builtin",
         available: true,
@@ -435,6 +521,7 @@ describe("specialist-registry", () => {
         provider: "openai-codex",
         builtin: false,
         pinned: false,
+        targetSpace: ["builder"],
         promptBody: "Prompt",
         sourceKind: "global",
         available: true,
@@ -451,6 +538,7 @@ describe("specialist-registry", () => {
         provider: "unknown",
         builtin: false,
         pinned: false,
+        targetSpace: ["builder"],
         promptBody: "Prompt",
         sourceKind: "global",
         available: false,
@@ -615,28 +703,48 @@ describe("specialist-registry", () => {
     expect(rosterBlock).not.toContain("`cursor-builder`");
   });
 
-  it("seeds a curated builtin subset for collaboration-server runtime", async () => {
+  it("seeds the union of builder and collaboration builtins for collaboration-server runtime", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
 
     await seedBuiltins(dataDir, { runtimeTarget: "collaboration-server" });
 
-    const roster = await resolveSharedRoster(dataDir);
-    const handles = roster.map((entry) => entry.specialistId).sort();
+    const allRoster = await resolveSharedRoster(dataDir);
+    const allHandles = allRoster.map((entry) => entry.specialistId).sort();
+    const builderHandles = (await resolveSharedRoster(dataDir, "builder")).map((entry) => entry.specialistId).sort();
+    const collaborationHandles = (await resolveSharedRoster(dataDir, "collaboration"))
+      .map((entry) => entry.specialistId)
+      .sort();
 
-    expect(handles).toEqual([
+    expect(allHandles).toEqual([
+      "architect",
       "backend",
       "code-reviewer",
       "code-reviewer-2",
+      "collab-doc-writer",
+      "collab-planner",
+      "collab-researcher",
+      "collab-reviewer",
+      "collab-scout",
+      "cursor-builder",
       "doc-writer",
       "frontend",
       "planner",
       "researcher",
       "scout",
+      "web-researcher",
     ].sort());
-    expect(handles).not.toContain("architect");
-    expect(handles).not.toContain("cursor-builder");
-    expect(handles).not.toContain("web-researcher");
+    expect(builderHandles).toContain("backend");
+    expect(builderHandles).toContain("architect");
+    expect(builderHandles).not.toContain("collab-planner");
+    expect(collaborationHandles).toEqual([
+      "collab-doc-writer",
+      "collab-planner",
+      "collab-researcher",
+      "collab-reviewer",
+      "collab-scout",
+    ].sort());
+    expect(allHandles).not.toContain("collab-builder");
   });
 
   it("skips overwriting pinned builtin files during seeding", async () => {
@@ -1042,6 +1150,7 @@ describe("specialist-registry", () => {
         fallbackReasoningLevel: "medium",
         builtin: true,
         pinned: false,
+        targetSpace: ["builder"],
         promptBody: "Prompt",
         sourceKind: "builtin",
         available: true,
@@ -1069,6 +1178,7 @@ describe("specialist-registry", () => {
         builtin: false,
         pinned: false,
         webSearch: true,
+        targetSpace: ["builder"],
         promptBody: "Prompt",
         sourceKind: "global",
         available: true,

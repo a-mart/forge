@@ -4,6 +4,7 @@ color: "#8b5cf6"
 enabled: true
 whenToUse: Documentation, README updates, release notes, UX copy, technical writing, migration guides, design docs. Not for code implementation, debugging, or code review.
 modelId: claude-sonnet-4-5-20250929
+TargetSpace: [builder]
 reasoningLevel: medium
 fallbackModelId: gpt-5.4-mini
 fallbackReasoningLevel: medium

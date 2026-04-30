@@ -4,6 +4,7 @@ color: "#10b981"
 enabled: true
 whenToUse: Code review, bug hunting, correctness verification, contract validation, edge case analysis. Not for implementation, planning, or design/style reviews — use Code Reviewer 2 for maintainability concerns.
 modelId: gpt-5.4
+TargetSpace: [builder]
 reasoningLevel: high
 fallbackModelId: claude-opus-4-6
 fallbackReasoningLevel: high

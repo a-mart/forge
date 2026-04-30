@@ -1,4 +1,5 @@
-export type SpecialistSourceKind = 'builtin' | 'global' | 'profile'
+export type SpecialistSourceKind = 'builtin' | 'global' | 'profile' | 'channel'
+export type SpecialistTargetSpace = 'builder' | 'collaboration'
 export type SpecialistAvailabilityCode = 'ok' | 'invalid_model' | 'missing_auth'
 
 export interface ResolvedSpecialistDefinition {
@@ -16,6 +17,7 @@ export interface ResolvedSpecialistDefinition {
   builtin: boolean
   pinned: boolean
   webSearch?: boolean
+  targetSpace: SpecialistTargetSpace[]
   promptBody: string
   sourceKind: SpecialistSourceKind
   sourcePath?: string

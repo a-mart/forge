@@ -4,6 +4,7 @@ color: "#2563eb"
 enabled: true
 whenToUse: Backend/core implementation, TypeScript refactors, debugging server routes, data model work, test fixes. Not for UI/frontend work, documentation, or pure planning tasks.
 modelId: gpt-5.4
+TargetSpace: [builder]
 reasoningLevel: high
 fallbackModelId: claude-opus-4-6
 fallbackReasoningLevel: high
