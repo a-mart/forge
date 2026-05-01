@@ -6,13 +6,14 @@ import {
   type RuntimeExtensionMetadata,
   type RuntimeExtensionSource
 } from "@forge/protocol";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model, Transport } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   DefaultResourceLoader,
   compact as runPiCompaction,
   createAgentSession,
   ModelRegistry,
+  SettingsManager,
   type AgentSession,
   type ExtensionFactory,
   type LoadExtensionsResult
@@ -278,6 +279,7 @@ export class RuntimeFactory {
     }
 
     const model = this.resolveModel(modelRegistry, descriptor.model);
+    const settingsManager = this.createRuntimeSettingsManager(descriptor, runtimeAgentDir, model);
 
     const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
       context: `runtime:create:pi:${descriptor.agentId}`,
@@ -311,6 +313,7 @@ export class RuntimeFactory {
       thinkingLevel: thinkingLevel as any,
       sessionManager,
       resourceLoader,
+      ...(settingsManager ? { settingsManager } : {}),
       customTools: swarmTools
     });
 
@@ -415,6 +418,27 @@ export class RuntimeFactory {
     }
 
     return runtime;
+  }
+
+  private createRuntimeSettingsManager(
+    descriptor: AgentDescriptor,
+    runtimeAgentDir: string,
+    model: Model<any>
+  ): SettingsManager | undefined {
+    const transport = resolveOpenAICodexTransport(model);
+    if (!transport) {
+      return undefined;
+    }
+
+    const settingsManager = SettingsManager.create(descriptor.cwd, runtimeAgentDir);
+    settingsManager.applyOverrides({ transport });
+    this.deps.logDebug("runtime:pi:openai_codex_transport", {
+      agentId: descriptor.agentId,
+      transport,
+      model: model.id,
+      provider: model.provider
+    });
+    return settingsManager;
   }
 
   private async createClaudeRuntimeForDescriptor(
@@ -1016,6 +1040,28 @@ function previewForLog(text: string, maxLength = 160): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
+}
+
+export function resolveOpenAICodexTransport(model: Pick<Model<any>, "provider" | "api">): Transport | undefined {
+  const provider = String(model.provider ?? "").toLowerCase();
+  const api = String(model.api ?? "").toLowerCase();
+  if (provider !== "openai-codex" && api !== "openai-codex-responses") {
+    return undefined;
+  }
+
+  const rawTransport = process.env.FORGE_OPENAI_CODEX_TRANSPORT?.trim().toLowerCase();
+  switch (rawTransport) {
+    case undefined:
+    case "":
+      return "sse";
+    case "sse":
+    case "websocket":
+    case "websocket-cached":
+    case "auto":
+      return rawTransport;
+    default:
+      return "sse";
+  }
 }
 
 function cloneRuntimeDescriptor(descriptor: AgentDescriptor): AgentDescriptor {

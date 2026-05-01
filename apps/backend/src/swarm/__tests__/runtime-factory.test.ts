@@ -36,6 +36,8 @@ const piCodingAgentMockState = vi.hoisted(() => ({
   modelRegistryFind: vi.fn(),
   modelRegistryGetAll: vi.fn(),
   defaultResourceLoaderCtor: vi.fn(),
+  settingsManagerCreate: vi.fn(),
+  settingsManagerApplyOverrides: vi.fn(),
 }));
 
 const claudeRuntimeMockState = vi.hoisted(() => ({
@@ -79,6 +81,14 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   },
   createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
   compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
+  SettingsManager: {
+    create: (...args: unknown[]) => {
+      piCodingAgentMockState.settingsManagerCreate(...args)
+      return {
+        applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+      }
+    },
+  },
   ModelRegistry: {
     create: (...args: unknown[]) => {
       piCodingAgentMockState.modelRegistryCreateArgs(...args)
@@ -375,6 +385,9 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.modelRegistryFind.mockReset();
     piCodingAgentMockState.modelRegistryGetAll.mockReset();
     piCodingAgentMockState.defaultResourceLoaderCtor.mockReset();
+    piCodingAgentMockState.settingsManagerCreate.mockReset();
+    piCodingAgentMockState.settingsManagerApplyOverrides.mockReset();
+    delete process.env.FORGE_OPENAI_CODEX_TRANSPORT;
     claudeRuntimeMockState.constructorArgs = [];
     claudeRuntimeMockState.constructImpl = undefined;
     claudeRuntimeMockState.createMcpBridge.mockReset();
@@ -573,6 +586,118 @@ describe("RuntimeFactory", () => {
         }),
       }),
     );
+  });
+
+  it("applies OpenAI Codex transport settings from environment overrides", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({
+      id: "gpt-5.4-mini",
+      name: "GPT-5.4 mini",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 1000,
+    });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    process.env.FORGE_OPENAI_CODEX_TRANSPORT = "websocket-cached";
+
+    const factory = createFactory(rootDir);
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
+
+    expect(piCodingAgentMockState.settingsManagerCreate).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining("agent"),
+    );
+    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({
+      transport: "websocket-cached",
+    });
+    expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settingsManager: expect.any(Object),
+      }),
+    );
+  });
+
+  it("keeps non-Codex Pi runtimes on their existing settings path", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({
+      id: "grok-4",
+      name: "Grok 4",
+      api: "openai-responses",
+      provider: "xai",
+      baseUrl: "https://api.x.ai/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 1000,
+    });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    process.env.FORGE_OPENAI_CODEX_TRANSPORT = "websocket-cached";
+
+    const factory = createFactory(rootDir);
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: { provider: "xai", modelId: "grok-4", thinkingLevel: "high" },
+      }),
+      "system prompt",
+    );
+
+    expect(piCodingAgentMockState.settingsManagerCreate).not.toHaveBeenCalled();
+    expect(piCodingAgentMockState.settingsManagerApplyOverrides).not.toHaveBeenCalled();
+    expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledWith(
+      expect.not.objectContaining({ settingsManager: expect.any(Object) }),
+    );
+  });
+
+  it.each([
+    [undefined, "unset"],
+    ["invalid-transport", "invalid"],
+  ])("defaults OpenAI Codex transport to SSE for behavior compatibility when env is %s", async (transportEnv) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({
+      id: "gpt-5.4-mini",
+      name: "GPT-5.4 mini",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 1000,
+    });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    if (transportEnv) {
+      process.env.FORGE_OPENAI_CODEX_TRANSPORT = transportEnv;
+    }
+
+    const factory = createFactory(rootDir);
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
+
+    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({ transport: "sse" });
   });
 
   it("fails fast when the generated Pi projection file is missing", async () => {

@@ -36,6 +36,7 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `XAI_API_KEY` | — | API key for xAI/Grok models (when using external API key mode). |
+| `FORGE_OPENAI_CODEX_TRANSPORT` | `sse` | Transport override for OpenAI Codex Responses models. Supported values: `sse`, `websocket`, `websocket-cached`, and `auto`. |
 
 ### Collaboration
 

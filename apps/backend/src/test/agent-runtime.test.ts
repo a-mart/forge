@@ -1,6 +1,15 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { AgentRuntime } from '../swarm/agent-runtime.js'
 import type { AgentDescriptor } from '../swarm/types.js'
+
+const openAICodexResponsesMockState = vi.hoisted(() => ({
+  closeOpenAICodexWebSocketSessions: vi.fn(),
+}))
+
+vi.mock('@mariozechner/pi-ai/openai-codex-responses', () => ({
+  closeOpenAICodexWebSocketSessions: (...args: unknown[]) =>
+    openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions(...args),
+}))
 
 class FakeSession {
   isStreaming = false
@@ -15,6 +24,16 @@ class FakeSession {
   listener: ((event: any) => void) | undefined
   contextUsageCalls = 0
   contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined
+  model = { provider: 'openai-codex' }
+  modelRegistry: any = { authStorage: { set: vi.fn() } }
+  sessionId = 'fake-session-id'
+  shutdownEvents: any[] = []
+  extensionRunner = {
+    hasHandlers: (eventName: string) => eventName === 'session_shutdown',
+    emit: async (event: any) => {
+      this.shutdownEvents.push(event)
+    },
+  }
 
   async prompt(message: string, options?: { images?: Array<{ type: string }> }): Promise<void> {
     this.promptCalls.push(message)
@@ -109,6 +128,9 @@ async function waitForCondition(
 }
 
 describe('AgentRuntime', () => {
+  beforeEach(() => {
+    openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockReset()
+  })
   it('queues steer for all messages when runtime is busy', async () => {
     const session = new FakeSession()
 
@@ -804,7 +826,179 @@ describe('AgentRuntime', () => {
 
     expect(session.abortCalls).toBe(1)
     expect(session.disposeCalls).toBe(1)
+    expect(session.shutdownEvents).toEqual([{ type: 'session_shutdown', reason: 'quit' }])
     expect(runtime.getStatus()).toBe('terminated')
+  })
+
+  it('emits reload session shutdown metadata when recycling or replacing the runtime', async () => {
+    const recycleSession = new FakeSession()
+    const recycleRuntime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: recycleSession as any,
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    await recycleRuntime.recycle()
+
+    expect(recycleSession.shutdownEvents).toEqual([{ type: 'session_shutdown', reason: 'reload' }])
+    expect(recycleSession.disposeCalls).toBe(1)
+
+    const replacementSession = new FakeSession()
+    const replacementRuntime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: replacementSession as any,
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    await replacementRuntime.shutdownForReplacement()
+
+    expect(replacementSession.shutdownEvents).toEqual([{ type: 'session_shutdown', reason: 'reload' }])
+    expect(replacementSession.disposeCalls).toBe(1)
+  })
+
+  it('closes OpenAI Codex websocket cache on runtime dispose', async () => {
+    const session = new FakeSession()
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    await runtime.terminate({ abort: false })
+
+    expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).toHaveBeenCalledWith('fake-session-id')
+  })
+
+  it('does not close OpenAI Codex websocket cache for no-op pooled auth reconcile', async () => {
+    const session = new FakeSession()
+    const authValues = new Map<string, any>([
+      ['openai-codex', { type: 'oauth', access: 'token', accountId: 'acct_1' }],
+    ])
+    session.modelRegistry = {
+      authStorage: {
+        get: vi.fn((key: string) => authValues.get(key)),
+        set: vi.fn((key: string, value: any) => authValues.set(key, value)),
+      },
+    }
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    runtime.pooledCredentialId = 'cred_primary'
+    runtime.pooledCredentialProvider = 'openai-codex'
+    runtime.credentialPoolService = {
+      buildRuntimeAuthData: vi.fn(async () => ({
+        'openai-codex': { type: 'oauth', access: 'token', accountId: 'acct_1' },
+      })),
+    } as any
+    ;(runtime as any).lastActivityAtMs = Date.now() - 120_000
+
+    await (runtime as any).reconcilePooledAuthBeforeDispatch()
+
+    expect(session.modelRegistry.authStorage.set).toHaveBeenCalledWith('openai-codex', {
+      type: 'oauth',
+      access: 'token',
+      accountId: 'acct_1',
+    })
+    expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).not.toHaveBeenCalled()
+  })
+
+  it('closes OpenAI Codex websocket cache when pooled credential id or material changes', async () => {
+    const session = new FakeSession()
+    const authValues = new Map<string, any>([
+      ['openai-codex', { type: 'oauth', access: 'token', accountId: 'acct_1' }],
+    ])
+    session.modelRegistry = {
+      authStorage: {
+        get: vi.fn((key: string) => authValues.get(key)),
+        set: vi.fn((key: string, value: any) => authValues.set(key, value)),
+      },
+    }
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    runtime.pooledCredentialId = 'cred_primary'
+    runtime.pooledCredentialProvider = 'openai-codex'
+
+    await (runtime as any).applyPooledRuntimeAuth('openai-codex', 'cred_second', {
+      'openai-codex': { type: 'oauth', access: 'token-2', accountId: 'acct_2' },
+    })
+
+    expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).toHaveBeenCalledWith('fake-session-id')
+
+    openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockClear()
+    runtime.pooledCredentialId = 'cred_second'
+    runtime.pooledCredentialProvider = 'openai-codex'
+    runtime.credentialPoolService = {
+      buildRuntimeAuthData: vi.fn(async () => ({
+        'openai-codex': { type: 'oauth', access: 'token-3', accountId: 'acct_2' },
+      })),
+    } as any
+    ;(runtime as any).lastActivityAtMs = Date.now() - 120_000
+
+    await (runtime as any).reconcilePooledAuthBeforeDispatch()
+
+    expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).toHaveBeenCalledWith('fake-session-id')
+  })
+
+  it('does not close OpenAI Codex websocket cache for Anthropic pooled credential rotation', async () => {
+    const session = new FakeSession()
+    session.model = { provider: 'anthropic' }
+    const descriptor = makeDescriptor()
+    descriptor.model = { provider: 'anthropic', modelId: 'claude-opus-4.7', thinkingLevel: 'high' }
+    const runtime = new AgentRuntime({
+      descriptor,
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    runtime.pooledCredentialId = 'cred_primary'
+    runtime.pooledCredentialProvider = 'anthropic'
+    await (runtime as any).applyPooledRuntimeAuth('anthropic', 'cred_second', {
+      anthropic: { type: 'oauth', access: 'token-2' },
+    })
+
+    expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).not.toHaveBeenCalled()
+  })
+
+  it('forwards only explicitly supported Pi session events', async () => {
+    const session = new FakeSession()
+    const forwardedEvents: any[] = []
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onSessionEvent: (_agentId, event) => {
+          forwardedEvents.push(event)
+        },
+      },
+    })
+
+    await (runtime as any).handleEvent({ type: 'turn_start' })
+    await (runtime as any).handleEvent({ type: 'queue_update', steering: [], followUp: [] })
+    await (runtime as any).handleEvent({ type: 'session_info_changed', name: 'Renamed session' })
+    await (runtime as any).handleEvent({ type: 'thinking_level_changed', level: 'high' })
+    await (runtime as any).handleEvent({ type: 'future_pi_event', payload: true })
+
+    expect(forwardedEvents).toEqual([{ type: 'turn_start' }])
   })
 
   it('bounds stopInFlight when session abort never resolves', async () => {

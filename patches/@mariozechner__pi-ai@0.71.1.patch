@@ -1,10 +1,10 @@
 diff --git a/dist/providers/openai-completions.js b/dist/providers/openai-completions.js
-index dd760dcd7b9cccf454dbdb96e8ceb3428b11c4bd..b85debc32443b54f1af6f30b002cfc72ceff3498 100644
+index 34ba15a..eeb4937 100644
 --- a/dist/providers/openai-completions.js
 +++ b/dist/providers/openai-completions.js
-@@ -535,6 +535,13 @@ export function convertMessages(model, context, compat) {
-                     assistantMsg.reasoning_details = reasoningDetails;
-                 }
+@@ -680,6 +680,13 @@ export function convertMessages(model, context, compat) {
+                 assistantMsg.reasoning_content === undefined) {
+                 assistantMsg.reasoning_content = "";
              }
 +            // Ensure assistant messages with tool calls always have non-null, non-empty content.
 +            // Some providers (notably xAI) reject content: null or "" even when tool_calls are
@@ -17,10 +17,10 @@ index dd760dcd7b9cccf454dbdb96e8ceb3428b11c4bd..b85debc32443b54f1af6f30b002cfc72
              // Some providers require "either content or tool_calls, but not none".
              // Other providers also don't accept empty assistant messages.
 diff --git a/dist/providers/openai-responses-shared.js b/dist/providers/openai-responses-shared.js
-index ab14b5f60bc9ee9ad57548ce9fc6ec15f3038f99..bfb675c4212f20bd7b2eac56284b4fdc388efc7c 100644
+index 3081455..f48eddb 100644
 --- a/dist/providers/openai-responses-shared.js
 +++ b/dist/providers/openai-responses-shared.js
-@@ -109,15 +109,27 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+@@ -106,15 +106,27 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
              const isDifferentModel = assistantMsg.model !== model.id &&
                  assistantMsg.provider === model.provider &&
                  assistantMsg.api === model.api;
@@ -49,7 +49,7 @@ index ab14b5f60bc9ee9ad57548ce9fc6ec15f3038f99..bfb675c4212f20bd7b2eac56284b4fdc
                      const parsedSignature = parseTextSignature(textBlock.textSignature);
                      // OpenAI requires id to be max 64 characters
                      let msgId = parsedSignature?.id;
-@@ -130,11 +142,12 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+@@ -127,11 +139,12 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
                      output.push({
                          type: "message",
                          role: "assistant",
@@ -63,7 +63,7 @@ index ab14b5f60bc9ee9ad57548ce9fc6ec15f3038f99..bfb675c4212f20bd7b2eac56284b4fdc
                  }
                  else if (block.type === "toolCall") {
                      const toolCall = block;
-@@ -153,8 +166,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+@@ -150,8 +163,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
                          name: toolCall.name,
                          arguments: JSON.stringify(toolCall.arguments),
                      });

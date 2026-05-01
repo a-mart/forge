@@ -3,6 +3,7 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentSession, AgentSessionEvent, AuthCredential } from "@mariozechner/pi-coding-agent";
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
+import { closeOpenAICodexWebSocketSessions } from "@mariozechner/pi-ai/openai-codex-responses";
 import {
   buildRuntimeMessageKey,
   classifyRuntimeCapacityError,
@@ -22,6 +23,7 @@ import type {
   RuntimeImageAttachment,
   RuntimeErrorEvent,
   RuntimeSessionEvent,
+  RuntimeSessionMessage,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
   SmartCompactOptions,
@@ -63,6 +65,37 @@ const MAX_RECOVERY_BUFFERED_MESSAGES = 25;
 const DEFAULT_ABORT_TIMEOUT_MS = 5_000;
 const POOLED_AUTH_RECONCILE_IDLE_MS = 60_000;
 
+type PiSessionShutdownReason = "quit" | "reload" | "new" | "resume" | "fork";
+
+interface PiSessionShutdownMetadata {
+  reason: PiSessionShutdownReason;
+  targetSessionFile?: string;
+}
+
+function fingerprintAuthCredential(credential: AuthCredential | undefined): string | undefined {
+  if (!credential) {
+    return undefined;
+  }
+
+  return stableStringify(credential);
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
 export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInput } from "../runtime-contracts.js";
 
 export class AgentRuntime implements SwarmAgentRuntime {
@@ -73,6 +106,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   pooledCredentialId: string | undefined;
   pooledCredentialProvider: string | undefined;
   credentialPoolService: CredentialPoolService | undefined;
+
+  private pooledCredentialFingerprint: string | undefined;
 
   private readonly session: AgentSession;
   private readonly callbacks: SwarmRuntimeCallbacks;
@@ -155,8 +190,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return undefined;
     }
 
-    const state = this.session.state as { messages?: unknown[] } | undefined;
-    const stateMessages = Array.isArray(state?.messages) ? (structuredClone(state.messages) as EmergencyContextTrimMessage[]) : [];
+    const stateMessages = structuredClone(this.getSessionAgentMessages()) as EmergencyContextTrimMessage[];
     this.preparedSpecialistFallbackSessionMessages = stateMessages;
 
     this.pruneFailedTurnForReplay(replayMessages);
@@ -244,7 +278,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     }
 
-    await this.disposeSessionResources();
+    await this.disposeSessionResources({ reason: "quit" });
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
     this.descriptor.updatedAt = this.now();
@@ -261,7 +295,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
     this.lastContextBudgetCheckAtMs = 0;
-    await this.disposeSessionResources();
+    await this.disposeSessionResources({ reason: "reload" });
   }
 
   async recycle(): Promise<void> {
@@ -274,7 +308,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
     this.lastContextBudgetCheckAtMs = 0;
-    await this.disposeSessionResources();
+    await this.disposeSessionResources({ reason: "reload" });
   }
 
   async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
@@ -329,14 +363,18 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
   }
 
-  private async disposeSessionResources(): Promise<void> {
+  private async disposeSessionResources(shutdown: PiSessionShutdownMetadata): Promise<void> {
     try {
       // NOTE: Uses the public AgentSession.extensionRunner API
-      // (verified against @mariozechner/pi-coding-agent@0.55.0).
+      // (verified against @mariozechner/pi-coding-agent@0.71.1).
       // The try/catch ensures this remains safe against Pi version changes.
       const runner = this.session.extensionRunner;
       if (runner?.hasHandlers("session_shutdown")) {
-        await runner.emit({ type: "session_shutdown" });
+        await runner.emit({
+          type: "session_shutdown",
+          reason: shutdown.reason,
+          ...(shutdown.targetSessionFile ? { targetSessionFile: shutdown.targetSessionFile } : {})
+        });
       }
     } catch (error) {
       this.logRuntimeError("interrupt", error, {
@@ -344,6 +382,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       });
     }
 
+    this.closeStaleOpenAICodexWebSocketSession("dispose_session_resources");
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.session.dispose();
@@ -1041,9 +1080,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
     return Date.now() - this.lastActivityAtMs >= POOLED_AUTH_RECONCILE_IDLE_MS;
   }
 
-  private getRuntimeAuthStorage(): { set: (key: string, value: AuthCredential) => void } | undefined {
+  private getRuntimeAuthStorage():
+    | { get?: (key: string) => AuthCredential | undefined; set: (key: string, value: AuthCredential) => void }
+    | undefined {
     const modelRegistry = this.session.modelRegistry as
-      | { authStorage?: { set: (key: string, value: AuthCredential) => void } }
+      | { authStorage?: { get?: (key: string) => AuthCredential | undefined; set: (key: string, value: AuthCredential) => void } }
       | undefined;
     return modelRegistry?.authStorage;
   }
@@ -1060,6 +1101,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
       throw new Error(`Missing runtime auth storage for pooled provider: ${provider}`);
     }
 
+    const previousCredentialId = this.pooledCredentialId;
+    const previousCredential = authStorage.get?.(provider);
+    const previousFingerprint = this.pooledCredentialFingerprint ?? fingerprintAuthCredential(previousCredential);
+    const nextFingerprint = fingerprintAuthCredential(credential);
+
     authStorage.set(provider, credential);
     if (options?.markUsed) {
       await this.credentialPoolService?.markUsed(provider, credentialId);
@@ -1067,6 +1113,32 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     this.pooledCredentialId = credentialId;
     this.pooledCredentialProvider = provider;
+    this.pooledCredentialFingerprint = nextFingerprint;
+    if (
+      provider === "openai-codex" &&
+      previousCredentialId &&
+      (previousCredentialId !== credentialId ||
+        (previousFingerprint !== undefined && previousFingerprint !== nextFingerprint))
+    ) {
+      this.closeStaleOpenAICodexWebSocketSession("pooled_auth_changed");
+    }
+  }
+
+  private closeStaleOpenAICodexWebSocketSession(stage: string): void {
+    const provider = normalizeProviderId(this.pooledCredentialProvider ?? this.session.model?.provider ?? this.descriptor.model.provider);
+    if (provider !== "openai-codex") {
+      return;
+    }
+
+    try {
+      closeOpenAICodexWebSocketSessions(this.session.sessionId);
+    } catch (error) {
+      this.logRuntimeError("interrupt", error, {
+        stage: `${stage}:close_openai_codex_websocket_failed`,
+        sessionId: this.session.sessionId,
+        provider
+      });
+    }
   }
 
   private async rotateToNextHealthyCredential(
@@ -1476,15 +1548,39 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    const messages = this.session.state.messages;
+    const messages = this.getSessionAgentMessages();
     const lastMessage = messages[messages.length - 1];
     if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
       this.replaceSessionAgentMessages(messages.slice(0, -1));
     }
   }
 
+  private getSessionAgentMessages(): Array<Record<string, any>> {
+    const state = this.session.state as { messages?: unknown[] } | undefined;
+    if (Array.isArray(state?.messages)) {
+      return state.messages.filter(isRecordLikeMessage);
+    }
+
+    const sessionMessages = (this.session as { messages?: unknown[] }).messages;
+    if (Array.isArray(sessionMessages)) {
+      return sessionMessages.filter(isRecordLikeMessage);
+    }
+
+    return [];
+  }
+
   private replaceSessionAgentMessages(messages: unknown[]): void {
-    (this.session.state as { messages: unknown[] }).messages = messages;
+    const nextMessages = [...messages];
+    const state = this.session.state as { messages?: unknown[] } | undefined;
+    if (state && "messages" in state) {
+      state.messages = nextMessages;
+      return;
+    }
+
+    this.logRuntimeError("compaction", new Error("Unable to replace Pi session messages: writable session.state.messages is unavailable"), {
+      stage: "replace_session_agent_messages_unavailable",
+      messageCount: nextMessages.length
+    });
   }
 
   private consumePendingMessage(messageKey: string): PendingDelivery | undefined {
@@ -1550,8 +1646,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private pruneFailedTurnForReplay(replayMessages: RuntimeUserMessage[]): void {
-    const state = this.session.state as { messages?: unknown[] } | undefined;
-    const stateMessages = Array.isArray(state?.messages) ? [...state.messages] : [];
+    const stateMessages = this.getSessionAgentMessages();
     if (stateMessages.length === 0 || replayMessages.length === 0) {
       return;
     }
@@ -1809,17 +1904,20 @@ function cloneRuntimeUserMessage(message: RuntimeUserMessage | undefined): Runti
   };
 }
 
+function isRecordLikeMessage(message: unknown): message is Record<string, any> {
+  return !!message && typeof message === "object";
+}
+
 function isAssistantErrorLike(message: unknown): boolean {
-  if (!message || typeof message !== "object") {
+  if (!isRecordLikeMessage(message)) {
     return false;
   }
 
-  const candidate = message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
-  if (candidate.role !== "assistant") {
+  if (message.role !== "assistant") {
     return false;
   }
 
-  return candidate.stopReason === "error" || typeof candidate.errorMessage === "string";
+  return message.stopReason === "error" || typeof message.errorMessage === "string";
 }
 
 function extractRuntimeMessageKeyFromSessionMessage(message: unknown): string | undefined {
@@ -1936,6 +2034,50 @@ function getPooledProviderLabel(provider: string | undefined): string {
 
 function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionEvent | null {
   switch (event.type) {
+    case "agent_start":
+    case "agent_end":
+    case "turn_start":
+      return { type: event.type };
+
+    case "turn_end":
+      return {
+        type: "turn_end",
+        toolResults: event.toolResults
+      };
+
+    case "message_start":
+    case "message_update":
+    case "message_end":
+      return {
+        type: event.type,
+        message: event.message as RuntimeSessionMessage
+      };
+
+    case "tool_execution_start":
+      return {
+        type: "tool_execution_start",
+        toolName: event.toolName,
+        toolCallId: event.toolCallId,
+        args: event.args
+      };
+
+    case "tool_execution_update":
+      return {
+        type: "tool_execution_update",
+        toolName: event.toolName,
+        toolCallId: event.toolCallId,
+        partialResult: event.partialResult
+      };
+
+    case "tool_execution_end":
+      return {
+        type: "tool_execution_end",
+        toolName: event.toolName,
+        toolCallId: event.toolCallId,
+        result: event.result,
+        isError: event.isError
+      };
+
     case "compaction_start":
       if (event.reason === "manual") {
         return null;
@@ -1957,7 +2099,29 @@ function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionE
         ...(typeof event.errorMessage === "string" ? { errorMessage: event.errorMessage } : {})
       };
 
+    case "auto_retry_start":
+      return {
+        type: "auto_retry_start",
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        errorMessage: event.errorMessage
+      };
+
+    case "auto_retry_end":
+      return {
+        type: "auto_retry_end",
+        success: event.success,
+        attempt: event.attempt,
+        ...(typeof event.finalError === "string" ? { finalError: event.finalError } : {})
+      };
+
+    case "queue_update":
+    case "session_info_changed":
+    case "thinking_level_changed":
+      return null;
+
     default:
-      return event as RuntimeSessionEvent;
+      return null;
   }
 }

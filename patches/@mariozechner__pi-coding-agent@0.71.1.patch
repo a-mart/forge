@@ -1,8 +1,8 @@
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
-index 9fa4cf9cef443f286e80dd54f5a8deaec0ea96b3..1cc6d1382a5b25001ef3c943b699ed66f2f0aebd 100644
+index 27aa76b..0b0458f 100644
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
-@@ -1436,9 +1436,16 @@ export class AgentSession {
+@@ -1471,9 +1471,16 @@ export class AgentSession {
       * Internal: Run auto-compaction with events.
       */
      async _runAutoCompaction(reason, willRetry) {
@@ -20,7 +20,7 @@ index 9fa4cf9cef443f286e80dd54f5a8deaec0ea96b3..1cc6d1382a5b25001ef3c943b699ed66
          try {
              if (!this.model) {
                  this._emit({
-@@ -1482,7 +1489,7 @@ export class AgentSession {
+@@ -1517,7 +1524,7 @@ export class AgentSession {
                      preparation,
                      branchEntries: pathEntries,
                      customInstructions: undefined,
@@ -29,12 +29,12 @@ index 9fa4cf9cef443f286e80dd54f5a8deaec0ea96b3..1cc6d1382a5b25001ef3c943b699ed66
                  }));
                  if (extensionResult?.cancel) {
                      this._emit({
-@@ -1512,13 +1519,13 @@ export class AgentSession {
+@@ -1547,13 +1554,13 @@ export class AgentSession {
              }
              else {
                  // Generate compaction result
--                const compactResult = await compact(preparation, this.model, apiKey, headers, undefined, this._autoCompactionAbortController.signal);
-+                const compactResult = await compact(preparation, this.model, apiKey, headers, undefined, localAbortController.signal);
+-                const compactResult = await compact(preparation, this.model, apiKey, headers, undefined, this._autoCompactionAbortController.signal, this.thinkingLevel);
++                const compactResult = await compact(preparation, this.model, apiKey, headers, undefined, localAbortController.signal, this.thinkingLevel);
                  summary = compactResult.summary;
                  firstKeptEntryId = compactResult.firstKeptEntryId;
                  tokensBefore = compactResult.tokensBefore;
@@ -45,7 +45,7 @@ index 9fa4cf9cef443f286e80dd54f5a8deaec0ea96b3..1cc6d1382a5b25001ef3c943b699ed66
                  this._emit({
                      type: "compaction_end",
                      reason,
-@@ -1580,7 +1587,10 @@ export class AgentSession {
+@@ -1615,7 +1622,10 @@ export class AgentSession {
              });
          }
          finally {
