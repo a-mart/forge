@@ -377,8 +377,14 @@ describe("collaboration auth DB", () => {
     database.exec(requireMigrationSql("0001-better-auth-base.sql"));
     database.exec(requireMigrationSql("0002-collaboration-user.sql"));
     database.exec(requireMigrationSql("0003-collaboration-invite.sql"));
-    database.exec(requireMigrationSql("0004-collaboration-workspace.sql"));
+    database.exec(LEGACY_0004_COLLABORATION_WORKSPACE_SQL);
     database.exec(requireMigrationSql("0005-collaboration-audit-log.sql"));
+    database.exec(`
+      ALTER TABLE collab_category ADD COLUMN default_model_provider TEXT;
+      ALTER TABLE collab_category ADD COLUMN default_model_thinking_level TEXT;
+      ALTER TABLE collab_category ADD COLUMN default_cwd TEXT;
+      ALTER TABLE collab_channel ADD COLUMN model_thinking_level TEXT;
+    `);
     database.exec(`
       CREATE TABLE IF NOT EXISTS _forge_collaboration_migrations (
         name TEXT PRIMARY KEY,
@@ -389,9 +395,12 @@ describe("collaboration auth DB", () => {
     const insertAppliedMigration = database.prepare(
       `INSERT INTO _forge_collaboration_migrations (name, applied_at) VALUES (?, ?)`,
     );
-    for (const migrationName of EXPECTED_MIGRATIONS.slice(0, 5)) {
+    for (const migrationName of EXPECTED_MIGRATIONS.slice(0, 7)) {
       insertAppliedMigration.run(migrationName, "2026-04-28T00:00:00.000Z");
     }
+
+    expect(listTableColumns(database, "collab_category")).not.toContain("default_specialist_handles_json");
+    expect(listTableColumns(database, "collab_channel")).not.toContain("active_specialist_handles_json");
 
     database.prepare(
       `INSERT INTO collab_workspace (
@@ -518,7 +527,126 @@ describe("collaboration auth DB", () => {
     await expect(runCollaborationAuthMigrations(config)).resolves.toBeUndefined();
   });
 
-  it("rejects invalid specialist selection JSON without recording the migration", async () => {
+  it("preserves explicit empty and missing specialist selections when a backfill reruns", async () => {
+    const config = await createFreshTestConfig();
+    const database = await openMigratedDatabase(config);
+
+    database.prepare(
+      `INSERT INTO collab_workspace (
+         workspace_id,
+         backing_profile_id,
+         display_name,
+         description,
+         ai_display_name,
+         created_by_user_id,
+         default_model_provider,
+         default_model_id,
+         default_model_thinking_level,
+         default_cwd,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "workspace-preserve-selections",
+      "_collaboration",
+      "Workspace",
+      null,
+      null,
+      null,
+      "openai-codex",
+      "gpt-5.3-codex",
+      "xhigh",
+      "/repo",
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+
+    const explicitEmptyJson = JSON.stringify([]);
+    const missingHandleJson = JSON.stringify(["missing-selected-specialist"]);
+    database.prepare(
+      `INSERT INTO collab_category (
+         category_id,
+         workspace_id,
+         name,
+         default_specialist_handles_json,
+         position,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "category-empty",
+      "workspace-preserve-selections",
+      "Explicit Empty",
+      explicitEmptyJson,
+      0,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+    database.prepare(
+      `INSERT INTO collab_channel (
+         channel_id,
+         workspace_id,
+         category_id,
+         backing_session_agent_id,
+         name,
+         slug,
+         description,
+         ai_enabled,
+         model_id,
+         active_specialist_handles_json,
+         position,
+         archived,
+         archived_at,
+         archived_by_user_id,
+         created_by_user_id,
+         last_message_seq,
+         last_message_id,
+         last_message_at,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "channel-missing",
+      "workspace-preserve-selections",
+      "category-empty",
+      "session-missing",
+      "Missing Handle",
+      "missing-handle",
+      null,
+      1,
+      null,
+      missingHandleJson,
+      0,
+      0,
+      null,
+      null,
+      null,
+      0,
+      null,
+      null,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+    database.prepare("DELETE FROM _forge_collaboration_migrations WHERE name = ?").run("0008-collab-specialist-selections.sql");
+
+    await runCollaborationAuthMigrations(config);
+
+    expect(
+      database.prepare<[], { value: string }>(
+        `SELECT default_specialist_handles_json AS value FROM collab_category WHERE category_id = 'category-empty'`,
+      ).get()?.value,
+    ).toBe(explicitEmptyJson);
+    expect(
+      database.prepare<[], { value: string }>(
+        `SELECT active_specialist_handles_json AS value FROM collab_channel WHERE channel_id = 'channel-missing'`,
+      ).get()?.value,
+    ).toBe(missingHandleJson);
+  });
+
+  it("rejects invalid specialist selection JSON without recording the migration or leaving partial backfills", async () => {
     const config = await createFreshTestConfig();
     const database = await getOrCreateCollaborationAuthDb(config);
 
@@ -565,11 +693,77 @@ describe("collaboration auth DB", () => {
        )
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(
+      "category-null-before-failure",
+      "workspace-invalid-json",
+      "Null Before Failure",
+      null,
+      0,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+    database.prepare(
+      `INSERT INTO collab_category (
+         category_id,
+         workspace_id,
+         name,
+         default_specialist_handles_json,
+         position,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
       "category-invalid-json",
       "workspace-invalid-json",
       "Invalid JSON",
       "not-json",
+      1,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+    database.prepare(
+      `INSERT INTO collab_channel (
+         channel_id,
+         workspace_id,
+         category_id,
+         backing_session_agent_id,
+         name,
+         slug,
+         description,
+         ai_enabled,
+         model_id,
+         active_specialist_handles_json,
+         position,
+         archived,
+         archived_at,
+         archived_by_user_id,
+         created_by_user_id,
+         last_message_seq,
+         last_message_id,
+         last_message_at,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "channel-null-before-failure",
+      "workspace-invalid-json",
+      "category-invalid-json",
+      "session-null-before-failure",
+      "Null Before Failure",
+      "null-before-failure",
+      null,
+      1,
+      null,
+      null,
       0,
+      0,
+      null,
+      null,
+      null,
+      0,
+      null,
+      null,
       "2026-04-28T00:00:00.000Z",
       "2026-04-28T00:00:00.000Z",
     );
@@ -581,6 +775,19 @@ describe("collaboration auth DB", () => {
       .prepare<[string], { name: string }>("SELECT name FROM _forge_collaboration_migrations WHERE name = ?")
       .get("0008-collab-specialist-selections.sql");
     expect(applied).toBeUndefined();
+    expect(
+      database.prepare<[], { value: string | null }>(
+        `SELECT default_specialist_handles_json AS value FROM collab_category WHERE category_id = 'category-null-before-failure'`,
+      ).get()?.value,
+    ).toBeNull();
+    expect(
+      database.prepare<[], { value: string | null }>(
+        `SELECT active_specialist_handles_json AS value FROM collab_channel WHERE channel_id = 'channel-null-before-failure'`,
+      ).get()?.value,
+    ).toBeNull();
+
+    const backups = await readdir(join(dirname(config.paths.collaborationAuthDbPath!), "backups"));
+    expect(backups.some((name) => name.endsWith("0008-collab-specialist-selections.sql.db"))).toBe(true);
   });
 
   it("supports inserting and querying collaboration workspace and category defaults metadata", async () => {
