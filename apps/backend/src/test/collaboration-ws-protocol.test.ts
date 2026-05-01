@@ -2,10 +2,13 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+  AgentToolCallEvent,
   CollaborationBootstrapEvent,
+  CollaborationChannel,
   CollaborationChannelActivityUpdatedEvent,
   CollaborationChannelMessageEvent,
   CollaborationReadStateUpdatedEvent,
+  ConversationMessageEvent,
   ServerEvent,
 } from "@forge/protocol";
 import { WebSocket, type RawData } from "ws";
@@ -231,7 +234,7 @@ async function createChannel(
     selectedGlobalSpecialistHandles?: string[];
     activeSelectedSpecialistHandles?: string[];
   },
-): Promise<{ channelId: string; workspaceId: string; name: string }> {
+): Promise<CollaborationChannel> {
   const response = await fetch(`${baseUrl}/api/collaboration/channels`, {
     method: "POST",
     headers: {
@@ -243,7 +246,7 @@ async function createChannel(
   expect(response.status).toBe(200);
   const payload = await response.json() as {
     ok: true;
-    channel: { channelId: string; workspaceId: string; name: string };
+    channel: CollaborationChannel;
   };
   expect(payload.ok).toBe(true);
   return payload.channel;
@@ -652,6 +655,196 @@ describe("collaboration websocket protocol", () => {
         event.readState.lastReadMessageSeq >= ownReadEvent.readState.lastReadMessageSeq,
     ) as CollaborationReadStateUpdatedEvent;
     expect(markedReadEvent.readState.unreadCount).toBe(0);
+  });
+
+  it("scopes channel subscriptions, message fanout, read state, and bootstrap unread counts across users", async () => {
+    const { server, baseUrl } = await startCollaborationServer();
+    const adminCookie = await login(baseUrl);
+    const memberCookie = await createMember(baseUrl, adminCookie);
+    const channelA = await createChannel(baseUrl, adminCookie, { name: "Ops A", aiEnabled: false });
+    const channelB = await createChannel(baseUrl, adminCookie, { name: "Ops B", aiEnabled: false });
+    const adminWs = await openAuthenticatedWs(baseUrl, adminCookie);
+    const memberWs = await openAuthenticatedWs(baseUrl, memberCookie);
+
+    adminWs.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channelA.channelId }));
+    memberWs.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channelA.channelId }));
+    await Promise.all([
+      adminWs.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channelA.channelId),
+      memberWs.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channelA.channelId),
+    ]);
+
+    adminWs.socket.send(JSON.stringify({
+      type: "collab_user_message",
+      channelId: channelA.channelId,
+      content: "Visible while both users are in A",
+    }));
+    await Promise.all([
+      adminWs.waitForEvent(
+        "collab_channel_message",
+        (event) => event.channelId === channelA.channelId && event.message.text === "Visible while both users are in A",
+      ),
+      memberWs.waitForEvent(
+        "collab_channel_message",
+        (event) => event.channelId === channelA.channelId && event.message.text === "Visible while both users are in A",
+      ),
+      memberWs.waitForEvent(
+        "collab_read_state_updated",
+        (event) => event.channelId === channelA.channelId && event.readState.unreadCount === 0,
+      ),
+    ]);
+
+    memberWs.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channelB.channelId }));
+    await memberWs.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channelB.channelId);
+
+    adminWs.socket.send(JSON.stringify({
+      type: "collab_user_message",
+      channelId: channelA.channelId,
+      content: "Unread while member is in B",
+    }));
+    await adminWs.waitForEvent(
+      "collab_channel_message",
+      (event) => event.channelId === channelA.channelId && event.message.text === "Unread while member is in B",
+    );
+    const userMessageActivity = await memberWs.waitForEvent(
+      "collab_channel_activity_updated",
+      (event) => event.channelId === channelA.channelId && event.unreadCount === 1,
+    );
+    expect(userMessageActivity.lastMessageSeq).toBeGreaterThan(0);
+    await expectNoSocketEvent(
+      memberWs,
+      "collab_channel_message",
+      (event) => event.channelId === channelA.channelId && event.message.text === "Unread while member is in B",
+    );
+
+    const swarmManager = (server as unknown as {
+      swarmManager: {
+        conversationProjector: {
+          emitConversationMessage(event: ConversationMessageEvent): void;
+        };
+      };
+    }).swarmManager;
+    const runtimeAssistantMessage: ConversationMessageEvent = {
+      type: "conversation_message",
+      agentId: channelA.sessionAgentId,
+      id: "runtime-assistant-message",
+      role: "assistant",
+      text: "Runtime assistant update",
+      timestamp: new Date().toISOString(),
+      source: "speak_to_user",
+    };
+    swarmManager.conversationProjector.emitConversationMessage(runtimeAssistantMessage);
+
+    await adminWs.waitForEvent(
+      "collab_channel_message",
+      (event) => event.channelId === channelA.channelId && event.message.text === runtimeAssistantMessage.text,
+    );
+    const runtimeActivity = await memberWs.waitForEvent(
+      "collab_channel_activity_updated",
+      (event) => event.channelId === channelA.channelId && event.unreadCount === 2,
+    );
+    expect(runtimeActivity.lastMessageSeq).toBeGreaterThan(userMessageActivity.lastMessageSeq);
+    await expectNoSocketEvent(
+      memberWs,
+      "collab_channel_message",
+      (event) => event.channelId === channelA.channelId && event.message.text === runtimeAssistantMessage.text,
+    );
+
+    const reconnectedMemberWs = await openAuthenticatedWs(baseUrl, memberCookie);
+    reconnectedMemberWs.socket.send(JSON.stringify({ type: "collab_bootstrap" }));
+    const reconnectedBootstrap = await reconnectedMemberWs.waitForEvent("collab_bootstrap") as CollaborationBootstrapEvent;
+    expect(reconnectedBootstrap.channels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: channelA.channelId,
+          readState: expect.objectContaining({ unreadCount: 2 }),
+        }),
+        expect.objectContaining({
+          channelId: channelB.channelId,
+          readState: expect.objectContaining({ unreadCount: 0 }),
+        }),
+      ]),
+    );
+
+    reconnectedMemberWs.socket.send(JSON.stringify({ type: "collab_mark_channel_read", channelId: channelA.channelId }));
+    const markedRead = await Promise.all([
+      memberWs.waitForEvent(
+        "collab_read_state_updated",
+        (event) =>
+          event.channelId === channelA.channelId &&
+          event.readState.unreadCount === 0 &&
+          event.readState.lastReadMessageSeq === runtimeActivity.lastMessageSeq,
+      ),
+      reconnectedMemberWs.waitForEvent(
+        "collab_read_state_updated",
+        (event) =>
+          event.channelId === channelA.channelId &&
+          event.readState.unreadCount === 0 &&
+          event.readState.lastReadMessageSeq === runtimeActivity.lastMessageSeq,
+      ),
+    ]);
+    expect(markedRead[0].readState.lastReadMessageSeq).toBe(runtimeActivity.lastMessageSeq);
+    expect(markedRead[1].readState.lastReadMessageSeq).toBe(runtimeActivity.lastMessageSeq);
+  });
+
+  it("keeps live worker activity and reconnect activity snapshots shape-compatible", async () => {
+    const { server, baseUrl } = await startCollaborationServer();
+    const cookie = await login(baseUrl);
+    const channel = await createChannel(baseUrl, cookie, { name: "Runtime", aiEnabled: false });
+    const liveWs = await openAuthenticatedWs(baseUrl, cookie);
+
+    liveWs.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channel.channelId }));
+    await liveWs.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channel.channelId);
+    await liveWs.waitForEvent("collab_session_activity_snapshot", (event) => event.channelId === channel.channelId);
+
+    const swarmManager = (server as unknown as {
+      swarmManager: {
+        conversationProjector: {
+          emitAgentToolCall(event: AgentToolCallEvent): void;
+        };
+      };
+    }).swarmManager;
+    const liveToolCall: AgentToolCallEvent = {
+      type: "agent_tool_call",
+      agentId: channel.sessionAgentId,
+      actorAgentId: "worker-runtime-validator",
+      timestamp: new Date().toISOString(),
+      kind: "tool_execution_start",
+      toolName: "read",
+      toolCallId: "tool-call-runtime-validation",
+      text: JSON.stringify({ path: "README.md" }),
+    };
+
+    swarmManager.conversationProjector.emitAgentToolCall(liveToolCall);
+
+    const liveActivity = await liveWs.waitForEvent(
+      "collab_session_activity",
+      (event) =>
+        event.channelId === channel.channelId &&
+        event.activity.type === "agent_tool_call" &&
+        event.activity.toolCallId === liveToolCall.toolCallId,
+    );
+    expect(liveActivity).toMatchObject({
+      channelId: channel.channelId,
+      sessionAgentId: channel.sessionAgentId,
+      activity: liveToolCall,
+    });
+
+    const replayWs = await openAuthenticatedWs(baseUrl, cookie);
+    replayWs.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channel.channelId }));
+    await replayWs.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channel.channelId);
+    const replaySnapshot = await replayWs.waitForEvent(
+      "collab_session_activity_snapshot",
+      (event) =>
+        event.channelId === channel.channelId &&
+        event.activity.some(
+          (activity) => activity.type === "agent_tool_call" && activity.toolCallId === liveToolCall.toolCallId,
+        ),
+    );
+    expect(replaySnapshot).toMatchObject({
+      channelId: channel.channelId,
+      sessionAgentId: channel.sessionAgentId,
+    });
+    expect(replaySnapshot.activity).toEqual(expect.arrayContaining([liveActivity.activity]));
   });
 
   it("fans out HTTP channel/category mutations to authenticated websocket clients without leaking prompt overlays", async () => {
