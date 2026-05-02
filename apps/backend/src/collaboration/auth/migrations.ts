@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS collab_category (
   default_model_thinking_level TEXT,
   default_cwd TEXT,
   default_specialist_handles_json TEXT,
+  default_skill_handles_json TEXT,
   position INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -165,6 +166,7 @@ CREATE TABLE IF NOT EXISTS collab_channel (
   model_id TEXT,
   model_thinking_level TEXT,
   active_specialist_handles_json TEXT,
+  active_skill_handles_json TEXT,
   position INTEGER NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT,
@@ -272,6 +274,16 @@ CREATE INDEX IF NOT EXISTS collaboration_audit_log_target_invite_id_idx ON colla
       validateCollaborationSpecialistSelectionMigration(database);
     },
   },
+  {
+    name: "0009-collab-skill-selections.sql",
+    backupBeforeApply: true,
+    apply: (database) => {
+      addColumnIfMissing(database, "collab_category", "default_skill_handles_json", "TEXT");
+      addColumnIfMissing(database, "collab_channel", "active_skill_handles_json", "TEXT");
+
+      validateCollaborationSkillSelectionMigration(database);
+    },
+  },
 ];
 
 function addColumnIfMissing(
@@ -312,6 +324,30 @@ function validateCollaborationSpecialistSelectionMigration(database: Database.Da
   validateJsonArrayColumn(database, "collab_channel", "channel_id", "active_specialist_handles_json");
 }
 
+function validateCollaborationSkillSelectionMigration(database: Database.Database): void {
+  requireColumn(database, "collab_category", "default_skill_handles_json");
+  requireColumn(database, "collab_channel", "active_skill_handles_json");
+
+  const quickCheck = database.pragma("quick_check", { simple: true });
+  if (quickCheck !== "ok") {
+    throw new Error(`Collaboration DB quick_check failed: ${String(quickCheck)}`);
+  }
+
+  const foreignKeyFailures = database.pragma("foreign_key_check") as unknown[];
+  if (foreignKeyFailures.length > 0) {
+    throw new Error(`Collaboration DB foreign_key_check failed for ${foreignKeyFailures.length} row(s)`);
+  }
+
+  validateJsonArrayColumn(database, "collab_category", "category_id", "default_skill_handles_json", {
+    label: "skill",
+    allowNull: true,
+  });
+  validateJsonArrayColumn(database, "collab_channel", "channel_id", "active_skill_handles_json", {
+    label: "skill",
+    allowNull: true,
+  });
+}
+
 function requireColumn(database: Database.Database, tableName: string, columnName: string): void {
   const hasColumn = database
     .prepare<[], { name: string }>(`PRAGMA table_info(${quoteSqliteIdentifier(tableName)})`)
@@ -328,6 +364,7 @@ function validateJsonArrayColumn(
   tableName: string,
   idColumnName: string,
   jsonColumnName: string,
+  options: { label: string; allowNull: boolean } = { label: "specialist", allowNull: false },
 ): void {
   const rows = database
     .prepare<[], { row_id: string; handles_json: string | null }>(
@@ -339,10 +376,10 @@ function validateJsonArrayColumn(
 
   for (const row of rows) {
     try {
-      parseMigration0008SpecialistHandlesJson(row.handles_json, []);
+      parseMigrationJsonHandleArray(row.handles_json, options);
     } catch (error) {
       throw new Error(
-        `Invalid collaboration specialist handle JSON in ${tableName}.${jsonColumnName} for ${row.row_id}: ${
+        `Invalid collaboration ${options.label} handle JSON in ${tableName}.${jsonColumnName} for ${row.row_id}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -350,23 +387,26 @@ function validateJsonArrayColumn(
   }
 }
 
-function parseMigration0008SpecialistHandlesJson(
+function parseMigrationJsonHandleArray(
   value: string | null | undefined,
-  fallback: readonly string[] = MIGRATION_0008_DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES,
+  options: { label: string; allowNull: boolean },
 ): string[] {
   if (value == null) {
-    return [...fallback];
+    if (options.allowNull) {
+      return [];
+    }
+    throw new Error(`${options.label} handles JSON cannot be null`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch (error) {
-    throw new Error(`Invalid specialist handles JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Invalid ${options.label} handles JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   if (!Array.isArray(parsed)) {
-    throw new Error("specialist handles JSON must be an array");
+    throw new Error(`${options.label} handles JSON must be an array`);
   }
 
   return normalizeMigration0008SpecialistHandles(parsed);

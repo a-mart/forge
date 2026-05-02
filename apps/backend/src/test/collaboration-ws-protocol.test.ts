@@ -233,6 +233,12 @@ async function createChannel(
     aiEnabled?: boolean;
     selectedGlobalSpecialistHandles?: string[];
     activeSelectedSpecialistHandles?: string[];
+    activeSkillSelection?: {
+      mode: "all";
+    } | {
+      mode: "custom";
+      savedSelectedSkillHandles: string[];
+    };
   },
 ): Promise<CollaborationChannel> {
   const response = await fetch(`${baseUrl}/api/collaboration/channels`, {
@@ -579,12 +585,24 @@ describe("collaboration websocket protocol", () => {
       body: JSON.stringify({
         name: "Missing defaults",
         defaultSelectedSpecialistHandles: ["missing-default-specialist"],
+        defaultSkillSelection: {
+          mode: "custom",
+          savedSelectedSkillHandles: ["memory", "brave-search", "missing-default-skill"],
+        },
       }),
     });
     expect(missingDefaultCategoryResponse.status).toBe(200);
     const missingDefaultCategory = (await missingDefaultCategoryResponse.json() as {
       category: { categoryId: string };
     }).category;
+    const skillChannel = await createChannel(baseUrl, cookie, {
+      name: "Skills",
+      aiEnabled: false,
+      activeSkillSelection: {
+        mode: "custom",
+        savedSelectedSkillHandles: ["memory", "brave-search", "missing-channel-skill"],
+      },
+    });
     const ws = await openAuthenticatedWs(baseUrl, cookie);
 
     ws.socket.send(JSON.stringify({ type: "collab_bootstrap" }));
@@ -605,6 +623,27 @@ describe("collaboration websocket protocol", () => {
         expect.objectContaining({
           categoryId: missingDefaultCategory.categoryId,
           missingDefaultSpecialistHandles: ["missing-default-specialist"],
+          defaultSkillSelection: expect.objectContaining({
+            mode: "custom",
+            savedSelectedSkillHandles: ["brave-search", "missing-default-skill"],
+            resolvedSkillHandles: ["brave-search"],
+            alwaysOnSkillHandles: ["memory"],
+            missingSkillHandles: ["missing-default-skill"],
+          }),
+        }),
+      ]),
+    );
+    expect(bootstrap.channels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: skillChannel.channelId,
+          activeSkillSelection: expect.objectContaining({
+            mode: "custom",
+            savedSelectedSkillHandles: ["brave-search", "missing-channel-skill"],
+            resolvedSkillHandles: ["brave-search"],
+            alwaysOnSkillHandles: ["memory"],
+            missingSkillHandles: ["missing-channel-skill"],
+          }),
         }),
       ]),
     );
@@ -612,6 +651,20 @@ describe("collaboration websocket protocol", () => {
     ws.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channel.channelId }));
     const ready = await ws.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channel.channelId);
     expect(ready.channel.channelId).toBe(channel.channelId);
+    ws.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: skillChannel.channelId }));
+    const skillReady = await ws.waitForEvent(
+      "collab_channel_ready",
+      (event) => event.channel.channelId === skillChannel.channelId,
+    );
+    expect(skillReady.channel.activeSkillSelection).toEqual(expect.objectContaining({
+      mode: "custom",
+      savedSelectedSkillHandles: ["brave-search", "missing-channel-skill"],
+      resolvedSkillHandles: ["brave-search"],
+      alwaysOnSkillHandles: ["memory"],
+      missingSkillHandles: ["missing-channel-skill"],
+    }));
+    ws.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channel.channelId }));
+    await ws.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channel.channelId);
     const history = await ws.waitForEvent("collab_channel_history", (event) => event.channelId === channel.channelId);
     expect(history.messages).toEqual([]);
     const workers = await ws.waitForEvent(
@@ -655,7 +708,7 @@ describe("collaboration websocket protocol", () => {
         event.readState.lastReadMessageSeq >= ownReadEvent.readState.lastReadMessageSeq,
     ) as CollaborationReadStateUpdatedEvent;
     expect(markedReadEvent.readState.unreadCount).toBe(0);
-  });
+  }, 10_000);
 
   it("scopes channel subscriptions, message fanout, read state, and bootstrap unread counts across users", async () => {
     const { server, baseUrl } = await startCollaborationServer();

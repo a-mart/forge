@@ -227,6 +227,10 @@ describe("collaboration HTTP routes", () => {
         name: "Planning",
         defaultModelId: "pi-opus",
         defaultReasoningLevel: "low",
+        defaultSkillSelection: {
+          mode: "custom",
+          savedSelectedSkillHandles: ["brave-search", "missing-skill"],
+        },
       }),
     });
     expect(createCategoryResponse.status).toBe(200);
@@ -238,12 +242,24 @@ describe("collaboration HTTP routes", () => {
         defaultModelId?: string;
         defaultReasoningLevel?: string;
         channelCreationDefaults?: { model: { thinkingLevel: string } };
+        defaultSkillSelection?: {
+          mode: string;
+          savedSelectedSkillHandles: string[];
+          resolvedSkillHandles: string[];
+          missingSkillHandles?: string[];
+        };
       };
     };
     expect(createCategoryBody.category.name).toBe("Planning");
     expect(createCategoryBody.category.defaultModelId).toBe("pi-opus");
     expect(createCategoryBody.category.defaultReasoningLevel).toBe("low");
     expect(createCategoryBody.category.channelCreationDefaults?.model.thinkingLevel).toBe("low");
+    expect(createCategoryBody.category.defaultSkillSelection).toMatchObject({
+      mode: "custom",
+      savedSelectedSkillHandles: ["brave-search", "missing-skill"],
+      resolvedSkillHandles: ["brave-search"],
+      missingSkillHandles: ["missing-skill"],
+    });
 
     const missingDefaultsCategoryResponse = await fetch(`${baseUrl}/api/collaboration/categories`, {
       method: "POST",
@@ -287,6 +303,11 @@ describe("collaboration HTTP routes", () => {
           channelCreationDefaults: expect.objectContaining({
             model: expect.objectContaining({ thinkingLevel: "low" }),
           }),
+          defaultSkillSelection: expect.objectContaining({
+            mode: "custom",
+            savedSelectedSkillHandles: ["brave-search", "missing-skill"],
+            missingSkillHandles: ["missing-skill"],
+          }),
         }),
         expect.objectContaining({
           name: "Missing defaults",
@@ -294,6 +315,46 @@ describe("collaboration HTTP routes", () => {
         }),
       ],
     });
+
+    const resetCategorySkillDefaultsResponse = await fetch(
+      `${baseUrl}/api/collaboration/categories/${encodeURIComponent(createCategoryBody.category.categoryId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({ defaultSkillSelection: { mode: "all" } }),
+      },
+    );
+    expect(resetCategorySkillDefaultsResponse.status).toBe(200);
+    await expect(resetCategorySkillDefaultsResponse.json()).resolves.toMatchObject({
+      ok: true,
+      category: expect.objectContaining({
+        defaultSkillSelection: expect.objectContaining({
+          mode: "all",
+          savedSelectedSkillHandles: [],
+        }),
+      }),
+    });
+
+    const restoreCategorySkillDefaultsResponse = await fetch(
+      `${baseUrl}/api/collaboration/categories/${encodeURIComponent(createCategoryBody.category.categoryId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({
+          defaultSkillSelection: {
+            mode: "custom",
+            savedSelectedSkillHandles: ["brave-search", "missing-skill"],
+          },
+        }),
+      },
+    );
+    expect(restoreCategorySkillDefaultsResponse.status).toBe(200);
 
     const reorderCategoriesResponse = await fetch(`${baseUrl}/api/collaboration/categories/reorder`, {
       method: "POST",
@@ -353,12 +414,24 @@ describe("collaboration HTTP routes", () => {
         selectedGlobalSpecialistHandles: string[];
         activeSelectedSpecialistHandles: string[];
         missingSelectedSpecialistHandles?: string[];
+        activeSkillSelection?: {
+          mode: string;
+          savedSelectedSkillHandles: string[];
+          resolvedSkillHandles: string[];
+          missingSkillHandles?: string[];
+        };
       };
     };
     expect(createChannelBody.channel.description).toBe("Primary room");
     expect(createChannelBody.channel.selectedGlobalSpecialistHandles).toEqual(["global-collab", "missing-selected-specialist"]);
     expect(createChannelBody.channel.activeSelectedSpecialistHandles).toEqual(["global-collab", "missing-selected-specialist"]);
     expect(createChannelBody.channel.missingSelectedSpecialistHandles).toEqual(["missing-selected-specialist"]);
+    expect(createChannelBody.channel.activeSkillSelection).toMatchObject({
+      mode: "custom",
+      savedSelectedSkillHandles: ["brave-search", "missing-skill"],
+      resolvedSkillHandles: ["brave-search"],
+      missingSkillHandles: ["missing-skill"],
+    });
     expect(createChannelBody.channel.modelId).toBe("pi-opus");
     expect(createChannelBody.channel.reasoningLevel).toBe("low");
     await expect(readStoredChannelModel(config.paths.agentsStoreFile, createChannelBody.channel.sessionAgentId)).resolves.toMatchObject({
@@ -382,6 +455,11 @@ describe("collaboration HTTP routes", () => {
           reasoningLevel: "low",
           selectedGlobalSpecialistHandles: ["global-collab", "missing-selected-specialist"],
           missingSelectedSpecialistHandles: ["missing-selected-specialist"],
+          activeSkillSelection: expect.objectContaining({
+            mode: "custom",
+            savedSelectedSkillHandles: ["brave-search", "missing-skill"],
+            missingSkillHandles: ["missing-skill"],
+          }),
         }),
       ],
     });
@@ -404,6 +482,98 @@ describe("collaboration HTTP routes", () => {
     );
     expect(memberRosterPromptResponse.status).toBe(403);
     await expect(memberRosterPromptResponse.json()).resolves.toEqual({ error: "Admin access required" });
+
+    const memberSkillSelectionResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/skills/selection`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: memberCookieHeader,
+        },
+        body: JSON.stringify({ mode: "all" }),
+      },
+    );
+    expect(memberSkillSelectionResponse.status).toBe(403);
+    await expect(memberSkillSelectionResponse.json()).resolves.toEqual({ error: "Admin access required" });
+
+    const updateSkillSelectionResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/skills/selection`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({
+          activeSkillSelection: {
+            mode: "custom",
+            savedSelectedSkillHandles: ["agent-browser", "missing-skill-2"],
+          },
+        }),
+      },
+    );
+    expect(updateSkillSelectionResponse.status).toBe(200);
+    await expect(updateSkillSelectionResponse.json()).resolves.toMatchObject({
+      ok: true,
+      channel: expect.objectContaining({
+        activeSkillSelection: expect.objectContaining({
+          mode: "custom",
+          savedSelectedSkillHandles: ["agent-browser", "missing-skill-2"],
+          resolvedSkillHandles: ["agent-browser"],
+          missingSkillHandles: ["missing-skill-2"],
+        }),
+      }),
+    });
+
+    const resetSkillSelectionResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/skills/selection`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({ mode: "all" }),
+      },
+    );
+    expect(resetSkillSelectionResponse.status).toBe(200);
+    await expect(resetSkillSelectionResponse.json()).resolves.toMatchObject({
+      ok: true,
+      channel: expect.objectContaining({
+        activeSkillSelection: expect.objectContaining({
+          mode: "all",
+          savedSelectedSkillHandles: [],
+        }),
+      }),
+    });
+
+    const patchSkillSelectionResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({
+          activeSkillSelection: {
+            mode: "custom",
+            savedSelectedSkillHandles: ["brave-search", "missing-skill"],
+          },
+        }),
+      },
+    );
+    expect(patchSkillSelectionResponse.status).toBe(200);
+    await expect(patchSkillSelectionResponse.json()).resolves.toMatchObject({
+      ok: true,
+      channel: expect.objectContaining({
+        activeSkillSelection: expect.objectContaining({
+          mode: "custom",
+          savedSelectedSkillHandles: ["brave-search", "missing-skill"],
+        }),
+      }),
+    });
 
     const saveChannelSpecialistResponse = await fetch(
       `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/specialists/global-collab`,

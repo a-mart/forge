@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import type { CollaborationChannel } from "@forge/protocol";
+import type { CollaborationChannel, CollaborationSkillSelectionInput, CollaborationSkillSelectionState } from "@forge/protocol";
 import { getSessionContextDir } from "../swarm/data-paths.js";
 import {
   inferSwarmModelPresetFromDescriptor,
@@ -19,6 +19,14 @@ import {
   parseCollaborationSpecialistHandlesJson,
   serializeCollaborationSpecialistHandles,
 } from "./specialist-selection.js";
+import {
+  COLLABORATION_ALWAYS_ON_SKILL_HANDLES,
+  findMissingCollaborationSkillHandles,
+  normalizeCollaborationOptionalSkillHandles,
+  normalizeCollaborationSkillHandle,
+  parseCollaborationSkillHandlesJson,
+  serializeCollaborationSkillSelectionInput,
+} from "./skill-selection.js";
 import {
   createCollaborationChannelSessionAgentId,
   ensureCollaborationChannelWorkingDir,
@@ -71,6 +79,7 @@ export interface CreateCollaborationChannelParams {
   position?: number;
   createdByUserId?: string | null;
   activeSelectedSpecialistHandles?: string[];
+  activeSkillSelection?: CollaborationSkillSelectionInput;
 }
 
 export interface UpdateCollaborationChannelParams {
@@ -82,6 +91,7 @@ export interface UpdateCollaborationChannelParams {
   reasoningLevel?: SwarmReasoningLevel | null;
   position?: number;
   activeSelectedSpecialistHandles?: string[];
+  activeSkillSelection?: CollaborationSkillSelectionInput;
 }
 
 export interface ListCollaborationChannelsParams {
@@ -113,6 +123,7 @@ export class CollaborationChannelServiceError extends Error {
 
 export interface CollaborationChannelServiceOptions {
   availableGlobalSpecialistHandles?: () => Iterable<string> | undefined;
+  availableGlobalSkillHandles?: () => Iterable<string> | undefined;
 }
 
 export class CollaborationChannelService {
@@ -154,6 +165,9 @@ export class CollaborationChannelService {
     const defaultModelPreset = inferSwarmModelPresetFromDescriptor(defaultModel);
     const activeSelectedSpecialistHandles = params.activeSelectedSpecialistHandles ??
       parseCollaborationSpecialistHandlesJson(category?.defaultSpecialistHandlesJson ?? null);
+    const activeSkillHandlesJson = params.activeSkillSelection !== undefined
+      ? serializeCollaborationSkillSelectionInput(params.activeSkillSelection)
+      : category?.defaultSkillHandlesJson ?? null;
 
     let createdSessionAgentId: string | undefined;
 
@@ -198,6 +212,7 @@ export class CollaborationChannelService {
         modelId: defaultModelPreset ?? null,
         modelThinkingLevel: normalizeChannelReasoningLevel(defaultModel.thinkingLevel) ?? defaultModel.thinkingLevel,
         activeSpecialistHandlesJson: serializeCollaborationSpecialistHandles(activeSelectedSpecialistHandles),
+        activeSkillHandlesJson,
         position,
         createdByUserId: normalizeOptionalString(params.createdByUserId) ?? null,
         createdAt: now,
@@ -265,6 +280,7 @@ export class CollaborationChannelService {
       reasoningLevel?: SwarmReasoningLevel;
       position?: number;
       activeSpecialistHandlesJson?: string | null;
+      activeSkillHandlesJson?: string | null;
     } = {};
 
     if (params.categoryId !== undefined) {
@@ -298,6 +314,10 @@ export class CollaborationChannelService {
       update.activeSpecialistHandlesJson = serializeCollaborationSpecialistHandles(params.activeSelectedSpecialistHandles);
     }
 
+    if (params.activeSkillSelection !== undefined) {
+      update.activeSkillHandlesJson = serializeCollaborationSkillSelectionInput(params.activeSkillSelection);
+    }
+
     const nextModelSettings = hasChannelModelUpdate(params)
       ? resolveRequestedChannelModelSettings(existingChannel, params)
       : null;
@@ -326,6 +346,7 @@ export class CollaborationChannelService {
       update.reasoningLevel === undefined &&
       update.position === undefined &&
       update.activeSpecialistHandlesJson === undefined &&
+      update.activeSkillHandlesJson === undefined &&
       nextSlug === undefined
     ) {
       return existingChannel;
@@ -343,6 +364,9 @@ export class CollaborationChannelService {
         ...(update.position !== undefined ? { position: update.position } : {}),
         ...(update.activeSpecialistHandlesJson !== undefined
           ? { activeSpecialistHandlesJson: update.activeSpecialistHandlesJson }
+          : {}),
+        ...(update.activeSkillHandlesJson !== undefined
+          ? { activeSkillHandlesJson: update.activeSkillHandlesJson }
           : {}),
         updatedAt: new Date().toISOString(),
       });
@@ -441,6 +465,7 @@ export class CollaborationChannelService {
     modelId: string | null;
     modelThinkingLevel: string | null;
     activeSpecialistHandlesJson: string | null;
+    activeSkillHandlesJson: string | null;
     position: number;
     archived: boolean;
     archivedAt: string | null;
@@ -460,6 +485,10 @@ export class CollaborationChannelService {
       activeSelectedSpecialistHandles,
       this.options.availableGlobalSpecialistHandles?.(),
     );
+    const activeSkillSelection = toSkillSelectionState(
+      record.activeSkillHandlesJson,
+      this.options.availableGlobalSkillHandles?.(),
+    );
 
     return {
       channelId: record.channelId,
@@ -477,6 +506,7 @@ export class CollaborationChannelService {
       selectedGlobalSpecialistHandles: activeSelectedSpecialistHandles,
       activeSelectedSpecialistHandles,
       ...(missingSelectedSpecialistHandles ? { missingSelectedSpecialistHandles } : {}),
+      activeSkillSelection,
       position: record.position,
       archived: record.archived,
       ...(record.archivedAt ? { archivedAt: record.archivedAt } : {}),
@@ -638,6 +668,40 @@ export class CollaborationChannelService {
       // Best-effort cleanup only.
     }
   }
+}
+
+function toSkillSelectionState(
+  selectionJson: string | null,
+  availableHandles: Iterable<string> | undefined,
+): CollaborationSkillSelectionState {
+  const parsed = parseCollaborationSkillHandlesJson(selectionJson);
+  const alwaysOnSkillHandles: string[] = [...COLLABORATION_ALWAYS_ON_SKILL_HANDLES];
+  if (parsed === null) {
+    const resolvedSkillHandles = availableHandles
+      ? [...availableHandles]
+          .map(normalizeCollaborationSkillHandle)
+          .filter((handle) => handle && !alwaysOnSkillHandles.includes(handle))
+      : [];
+    return {
+      mode: "all",
+      savedSelectedSkillHandles: [],
+      resolvedSkillHandles,
+      alwaysOnSkillHandles,
+    };
+  }
+
+  const savedOptionalHandles = normalizeCollaborationOptionalSkillHandles(parsed);
+  const missingSkillHandles = findMissingCollaborationSkillHandles(savedOptionalHandles, availableHandles);
+  const missingSet = new Set(missingSkillHandles ?? []);
+  return {
+    mode: "custom",
+    savedSelectedSkillHandles: savedOptionalHandles,
+    resolvedSkillHandles: availableHandles
+      ? savedOptionalHandles.filter((handle) => !missingSet.has(handle))
+      : savedOptionalHandles,
+    alwaysOnSkillHandles,
+    ...(missingSkillHandles ? { missingSkillHandles } : {}),
+  };
 }
 
 function resolveChannelModel(

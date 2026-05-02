@@ -751,15 +751,20 @@ describe("ProviderUsageService", () => {
     const historyFilePath = makeHistoryFilePath();
     const windowSeconds = 7 * 24 * 60 * 60;
     const accountKey = "test-account";
+    const nowMs = Date.now();
+    const latestBase = nowMs - (7 * 24 * 60 * 60 * 1000);
+    const baseMinuteMs = latestBase - (latestBase % (60 * 1000));
+    const current745Ms = baseMinuteMs - (baseMinuteMs % (24 * 60 * 60 * 1000)) + ((7 * 60) + 45) * 60 * 1000;
+    const current746Ms = current745Ms + (60 * 1000);
     const resetTimesMs = [
-      Date.parse("2026-03-11T07:45:00.000Z"),
-      Date.parse("2026-03-11T07:46:00.000Z"),
-      Date.parse("2026-03-18T07:45:00.000Z"),
-      Date.parse("2026-03-18T07:46:00.000Z"),
-      Date.parse("2026-03-25T07:45:00.000Z"),
-      Date.parse("2026-03-25T07:46:00.000Z"),
-      Date.parse("2026-04-01T07:45:00.000Z"),
-      Date.parse("2026-04-01T07:46:00.000Z")
+      current745Ms - (3 * windowSeconds * 1000),
+      current746Ms - (3 * windowSeconds * 1000),
+      current745Ms - (2 * windowSeconds * 1000),
+      current746Ms - (2 * windowSeconds * 1000),
+      current745Ms - (1 * windowSeconds * 1000),
+      current746Ms - (1 * windowSeconds * 1000),
+      current745Ms,
+      current746Ms,
     ];
 
     await writeFile(
@@ -778,14 +783,14 @@ describe("ProviderUsageService", () => {
 
     expect(dataset?.weeks).toHaveLength(8);
 
-    const currentResetAtMs = Date.parse("2026-04-08T07:46:00.000Z");
-    const nowMs = currentResetAtMs - (2 * 24 * 60 * 60 * 1000);
+    const currentResetAtMs = current746Ms + (windowSeconds * 1000);
+    const evaluationNowMs = currentResetAtMs - (2 * 24 * 60 * 60 * 1000);
     const pace = evaluateHistoricalProviderUsagePace({
       percent: 58,
       resetInfo: "2.0d",
       resetAtMs: currentResetAtMs,
       windowSeconds
-    }, nowMs, dataset);
+    }, evaluationNowMs, dataset);
 
     expect(pace).toBeDefined();
     expect(pace?.mode).toBe("historical");
@@ -795,10 +800,14 @@ describe("ProviderUsageService", () => {
     const historyFilePath = makeHistoryFilePath();
     const windowSeconds = 7 * 24 * 60 * 60;
     const accountKey = "test-account";
+    const nowMs = Date.now();
+    const latestBase = nowMs - (7 * 24 * 60 * 60 * 1000);
+    const baseMinuteMs = latestBase - (latestBase % (60 * 1000));
+    const current746Ms = baseMinuteMs - (baseMinuteMs % (24 * 60 * 60 * 1000)) + ((7 * 60) + 46) * 60 * 1000;
     const resetTimesMs = [
-      Date.parse("2026-03-11T07:46:00.000Z"),
-      Date.parse("2026-03-18T07:46:00.000Z"),
-      Date.parse("2026-03-25T07:46:00.000Z")
+      current746Ms - (2 * windowSeconds * 1000),
+      current746Ms - (1 * windowSeconds * 1000),
+      current746Ms,
     ];
 
     await writeFile(
@@ -814,7 +823,7 @@ describe("ProviderUsageService", () => {
 
     const store = new ProviderUsageHistoryStore(historyFilePath);
     const dataset = await store.loadDataset("openai", accountKey);
-    const currentResetAtMs = Date.parse("2026-04-01T07:46:00.000Z");
+    const currentResetAtMs = current746Ms + (windowSeconds * 1000);
 
     const midweekNowMs = currentResetAtMs - (2 * 24 * 60 * 60 * 1000);
     const midweekPace = evaluateHistoricalProviderUsagePace({

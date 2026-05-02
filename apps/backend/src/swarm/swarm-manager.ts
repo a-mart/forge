@@ -131,7 +131,8 @@ import { getManagedModelProviderCredentialAvailability, SecretsEnvService } from
 import { SwarmMemoryMergeService, type SessionMemoryMergeAuditEntry } from "./swarm-memory-merge-service.js";
 import { SwarmSessionMetaService, type SessionMemoryMergeAttemptMetaUpdate } from "./swarm-session-meta-service.js";
 import { SkillFileService } from "./skill-file-service.js";
-import { SkillMetadataService } from "./skill-metadata-service.js";
+import { SkillMetadataService, type SkillMetadata } from "./skill-metadata-service.js";
+import { resolveCollaborationSkillRoster } from "./skills/collaboration-skill-resolver.js";
 import { SwarmChoiceService } from "./swarm-choice-service.js";
 import { SwarmCortexService } from "./swarm-cortex-service.js";
 import { SwarmPromptService } from "./swarm-prompt-service.js";
@@ -188,6 +189,7 @@ import {
 } from "./agent-state-machine.js";
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import { parseCollaborationSpecialistHandlesJson } from "../collaboration/specialist-selection.js";
+import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type {
   RuntimeImageAttachment,
   RuntimeCreationOptions,
@@ -240,6 +242,7 @@ import {
   formatBinaryAttachmentForPrompt,
   formatInboundUserMessageForManager,
   formatTextAttachmentForPrompt,
+  getCollabSessionInfo,
   isCollabSession,
   isEnoentError,
   isRecord,
@@ -1290,6 +1293,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       getSessionsForProfile: (profileId) => this.getBuilderSessionsForProfile(profileId),
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
       resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
+      resolveSkillRosterForDescriptor: (descriptor) => this.resolveSkillRosterForDescriptor(descriptor),
       getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
     });
@@ -4214,6 +4218,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.settingsService.listSkillMetadata(profileId);
   }
 
+  getCollaborationGlobalSkillHandles(): Iterable<string> {
+    return this.skillMetadataService.getSkillMetadata().map((skill) => skill.directoryName);
+  }
+
   async listSkillFiles(skillId: string, relativePath = ""): Promise<SkillFilesResponse> {
     return this.settingsService.listSkillFiles(skillId, relativePath);
   }
@@ -5370,19 +5378,83 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return this.resolveSpecialistRosterForProfile(manager.profileId ?? manager.agentId, targetSpace);
     }
 
-    const dbHelpers = await createCollaborationDbHelpers(this.config);
-    const channel = dbHelpers.getChannel(channelId);
-    if (!channel) {
+    if (!isCollaborationServerRuntimeTarget(this.config.runtimeTarget)) {
       return specialistResolveCollaborationChannelRoster(this.config.paths.dataDir, {
         sessionAgentId: manager.agentId,
         selectedGlobalHandles: [],
       }) as Promise<ResolvedSpecialistDefinitionLike[]>;
     }
 
-    return specialistResolveCollaborationChannelRoster(this.config.paths.dataDir, {
-      sessionAgentId: channel.backingSessionAgentId,
-      selectedGlobalHandles: parseCollaborationSpecialistHandlesJson(channel.activeSpecialistHandlesJson),
-    }) as Promise<ResolvedSpecialistDefinitionLike[]>;
+    try {
+      const dbHelpers = await createCollaborationDbHelpers(this.config);
+      const channel = dbHelpers.getChannel(channelId);
+      if (!channel) {
+        return specialistResolveCollaborationChannelRoster(this.config.paths.dataDir, {
+          sessionAgentId: manager.agentId,
+          selectedGlobalHandles: [],
+        }) as Promise<ResolvedSpecialistDefinitionLike[]>;
+      }
+
+      return specialistResolveCollaborationChannelRoster(this.config.paths.dataDir, {
+        sessionAgentId: channel.backingSessionAgentId,
+        selectedGlobalHandles: parseCollaborationSpecialistHandlesJson(channel.activeSpecialistHandlesJson),
+      }) as Promise<ResolvedSpecialistDefinitionLike[]>;
+    } catch (error) {
+      this.logDebug("collaboration:specialists:resolve_error", {
+        agentId: manager.agentId,
+        channelId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return specialistResolveCollaborationChannelRoster(this.config.paths.dataDir, {
+        sessionAgentId: manager.agentId,
+        selectedGlobalHandles: [],
+      }) as Promise<ResolvedSpecialistDefinitionLike[]>;
+    }
+  }
+
+  private async resolveSkillRosterForDescriptor(descriptor: AgentDescriptor): Promise<SkillMetadata[] | null> {
+    const managerDescriptor = descriptor.role === "manager"
+      ? descriptor
+      : this.descriptors.get(descriptor.managerId);
+    const collabInfo = getCollabSessionInfo(managerDescriptor);
+    if (!managerDescriptor || managerDescriptor.role !== "manager" || !collabInfo) {
+      return null;
+    }
+
+    try {
+      const dbHelpers = await createCollaborationDbHelpers(this.config);
+      const channel = dbHelpers.getChannel(collabInfo.channelId);
+      if (!channel) {
+        this.logDebug("collaboration:skills:channel_missing", {
+          agentId: descriptor.agentId,
+          managerId: managerDescriptor.agentId,
+          channelId: collabInfo.channelId,
+        });
+        const closedRoster = await resolveCollaborationSkillRoster({
+          selectionJson: "[]",
+          skillMetadataService: this.skillMetadataService,
+        });
+        return closedRoster.skills;
+      }
+
+      const roster = await resolveCollaborationSkillRoster({
+        selectionJson: channel.activeSkillHandlesJson,
+        skillMetadataService: this.skillMetadataService,
+      });
+      return roster.skills;
+    } catch (error) {
+      this.logDebug("collaboration:skills:resolve_error", {
+        agentId: descriptor.agentId,
+        managerId: managerDescriptor.agentId,
+        channelId: collabInfo.channelId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      const closedRoster = await resolveCollaborationSkillRoster({
+        selectionJson: "[]",
+        skillMetadataService: this.skillMetadataService,
+      });
+      return closedRoster.skills;
+    }
   }
 
   async resolveProjectAgentSystemPromptOverride(

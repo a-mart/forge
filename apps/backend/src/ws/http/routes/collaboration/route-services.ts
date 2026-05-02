@@ -31,6 +31,7 @@ import {
   getCachedSharedSpecialistHandles,
   resolveSharedRoster,
 } from "../../../../swarm/specialists/specialist-registry.js";
+import { createCollaborationSkillHandleProvider } from "../../../../collaboration/skill-handle-provider.js";
 import type { SwarmConfig } from "../../../../swarm/types.js";
 import type {
   CollaborationCategory,
@@ -67,6 +68,7 @@ export interface CollaborationRouteSwarmManager
   extends CollaborationWorkspaceServiceSwarmManager,
     CollaborationChannelServiceSwarmManager {
   previewManagerSystemPromptForAgent?: (agentId: string) => Promise<PromptPreviewResponse>;
+  getCollaborationGlobalSkillHandles?: () => Iterable<string>;
 }
 
 export interface CollaborationRouteContext {
@@ -98,7 +100,13 @@ async function createCollaborationRouteServices(
   ]);
   const database = dbHelpers.database;
   const auditService = new CollaborationAuditService(database);
-  const availableGlobalSpecialistHandles = await resolveAvailableGlobalCollaborationSpecialistHandles(context.config.paths.dataDir);
+  const [availableGlobalSpecialistHandles, availableGlobalSkillHandles] = await Promise.all([
+    resolveAvailableGlobalCollaborationSpecialistHandles(context.config.paths.dataDir),
+    createCollaborationSkillHandleProvider({
+      config: context.config,
+      source: context.swarmManager,
+    }),
+  ]);
 
   return {
     authService,
@@ -110,11 +118,13 @@ async function createCollaborationRouteServices(
     channelService: new CollaborationChannelService(dbHelpers, context.swarmManager, context.config.paths.dataDir, {
       availableGlobalSpecialistHandles: () =>
         getCachedSharedSpecialistHandles(context.config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+      availableGlobalSkillHandles,
     }),
     promptOverlayService: new ChannelPromptOverlayService(dbHelpers, context.config.paths.dataDir),
     categoryService: new CollaborationCategoryService(dbHelpers, {
       availableGlobalSpecialistHandles: () =>
         getCachedSharedSpecialistHandles(context.config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+      availableGlobalSkillHandles,
     }),
     broadcasts: context.broadcasts ?? null,
   };

@@ -1,5 +1,6 @@
 import type { AgentDescriptor as ProtocolAgentDescriptor } from '@forge/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { createTempConfig, type TempConfigHandle, TestSwarmManager as TestSwarmManagerBase, bootWithDefaultManager } from '../test-support/index.js'
 import { readSessionMeta } from '../swarm/session-manifest.js'
@@ -227,6 +228,7 @@ describe('collaboration session surface metadata', () => {
       }),
     ).rejects.toThrow(`runtime unavailable for ${created.sessionAgent.agentId}`)
     expect(manager.runtimeCreateCalls).toEqual([created.sessionAgent.agentId])
+    expect(existsSync(manager.getConfig().paths.collaborationAuthDbPath)).toBe(false)
   })
 
   it('does not let returned collab metadata mutation leak back into the live session descriptor', async () => {

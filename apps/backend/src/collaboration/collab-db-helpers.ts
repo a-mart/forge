@@ -26,6 +26,7 @@ interface CollaborationCategoryRow {
   default_model_thinking_level: string | null;
   default_cwd: string | null;
   default_specialist_handles_json: string | null;
+  default_skill_handles_json: string | null;
   position: number;
   created_at: string;
   updated_at: string;
@@ -43,6 +44,7 @@ interface CollaborationChannelRow {
   model_id: string | null;
   model_thinking_level: string | null;
   active_specialist_handles_json: string | null;
+  active_skill_handles_json: string | null;
   position: number;
   archived: number;
   archived_at: string | null;
@@ -88,6 +90,7 @@ export interface CollaborationCategoryRecord extends CollaborationWorkspaceDefau
   workspaceId: string;
   name: string;
   defaultSpecialistHandlesJson: string | null;
+  defaultSkillHandlesJson: string | null;
   position: number;
   createdAt: string;
   updatedAt: string;
@@ -105,6 +108,7 @@ export interface CollaborationChannelRecord {
   modelId: string | null;
   modelThinkingLevel: string | null;
   activeSpecialistHandlesJson: string | null;
+  activeSkillHandlesJson: string | null;
   position: number;
   archived: boolean;
   archivedAt: string | null;
@@ -147,6 +151,7 @@ export interface CreateCollaborationCategoryInput extends CollaborationWorkspace
   workspaceId: string;
   name: string;
   defaultSpecialistHandlesJson?: string | null;
+  defaultSkillHandlesJson?: string | null;
   position: number;
   createdAt: string;
   updatedAt: string;
@@ -155,6 +160,7 @@ export interface CreateCollaborationCategoryInput extends CollaborationWorkspace
 export interface UpdateCollaborationCategoryInput extends Partial<CollaborationWorkspaceDefaultsRecord> {
   name?: string;
   defaultSpecialistHandlesJson?: string | null;
+  defaultSkillHandlesJson?: string | null;
   position?: number;
   updatedAt: string;
 }
@@ -171,6 +177,7 @@ export interface CreateCollaborationChannelInput {
   modelId?: string | null;
   modelThinkingLevel?: string | null;
   activeSpecialistHandlesJson?: string | null;
+  activeSkillHandlesJson?: string | null;
   position: number;
   archived?: boolean;
   archivedAt?: string | null;
@@ -192,6 +199,7 @@ export interface UpdateCollaborationChannelInput {
   modelId?: string | null;
   modelThinkingLevel?: string | null;
   activeSpecialistHandlesJson?: string | null;
+  activeSkillHandlesJson?: string | null;
   position?: number;
   archived?: boolean;
   archivedAt?: string | null;
@@ -336,11 +344,12 @@ export class CollaborationDbHelpers {
          default_model_thinking_level,
          default_cwd,
          default_specialist_handles_json,
+         default_skill_handles_json,
          position,
          created_at,
          updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.categoryId,
       input.workspaceId,
@@ -350,6 +359,7 @@ export class CollaborationDbHelpers {
       normalizeNullableString(input.defaultModelThinkingLevel),
       normalizeNullableString(input.defaultCwd),
       input.defaultSpecialistHandlesJson ?? null,
+      input.defaultSkillHandlesJson ?? null,
       input.position,
       input.createdAt,
       input.updatedAt,
@@ -372,6 +382,7 @@ export class CollaborationDbHelpers {
            default_model_thinking_level = ?,
            default_cwd = ?,
            default_specialist_handles_json = ?,
+           default_skill_handles_json = ?,
            position = ?,
            updated_at = ?
        WHERE category_id = ?`,
@@ -392,6 +403,9 @@ export class CollaborationDbHelpers {
       input.defaultSpecialistHandlesJson !== undefined
         ? input.defaultSpecialistHandlesJson
         : existing.defaultSpecialistHandlesJson,
+      input.defaultSkillHandlesJson !== undefined
+        ? input.defaultSkillHandlesJson
+        : existing.defaultSkillHandlesJson,
       input.position ?? existing.position,
       input.updatedAt,
       categoryId,
@@ -448,6 +462,7 @@ export class CollaborationDbHelpers {
          model_id,
          model_thinking_level,
          active_specialist_handles_json,
+         active_skill_handles_json,
          position,
          archived,
          archived_at,
@@ -459,7 +474,7 @@ export class CollaborationDbHelpers {
          created_at,
          updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.channelId,
       input.workspaceId,
@@ -472,6 +487,7 @@ export class CollaborationDbHelpers {
       normalizeNullableString(input.modelId ?? null),
       normalizeNullableString(input.modelThinkingLevel ?? null),
       input.activeSpecialistHandlesJson ?? null,
+      input.activeSkillHandlesJson ?? null,
       input.position,
       input.archived ? 1 : 0,
       input.archivedAt ?? null,
@@ -503,6 +519,7 @@ export class CollaborationDbHelpers {
            model_id = ?,
            model_thinking_level = ?,
            active_specialist_handles_json = ?,
+           active_skill_handles_json = ?,
            position = ?,
            archived = ?,
            archived_at = ?,
@@ -525,6 +542,9 @@ export class CollaborationDbHelpers {
       input.activeSpecialistHandlesJson !== undefined
         ? input.activeSpecialistHandlesJson
         : existing.activeSpecialistHandlesJson,
+      input.activeSkillHandlesJson !== undefined
+        ? input.activeSkillHandlesJson
+        : existing.activeSkillHandlesJson,
       input.position ?? existing.position,
       input.archived !== undefined ? (input.archived ? 1 : 0) : (existing.archived ? 1 : 0),
       input.archivedAt !== undefined ? input.archivedAt : existing.archivedAt,
@@ -640,6 +660,7 @@ const categorySelectSql = `SELECT category_id,
   default_model_thinking_level,
   default_cwd,
   default_specialist_handles_json,
+  default_skill_handles_json,
   position,
   created_at,
   updated_at
@@ -656,6 +677,7 @@ const channelSelectSql = `SELECT channel_id,
   model_id,
   model_thinking_level,
   active_specialist_handles_json,
+  active_skill_handles_json,
   position,
   archived,
   archived_at,
@@ -704,6 +726,7 @@ function mapCategoryRow(row: CollaborationCategoryRow): CollaborationCategoryRec
     defaultModelThinkingLevel: row.default_model_thinking_level,
     defaultCwd: row.default_cwd,
     defaultSpecialistHandlesJson: row.default_specialist_handles_json,
+    defaultSkillHandlesJson: row.default_skill_handles_json,
     position: row.position,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -723,6 +746,7 @@ function mapChannelRow(row: CollaborationChannelRow): CollaborationChannelRecord
     modelId: row.model_id,
     modelThinkingLevel: row.model_thinking_level,
     activeSpecialistHandlesJson: row.active_specialist_handles_json,
+    activeSkillHandlesJson: row.active_skill_handles_json,
     position: row.position,
     archived: row.archived === 1,
     archivedAt: row.archived_at,

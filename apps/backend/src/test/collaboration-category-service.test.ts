@@ -26,8 +26,10 @@ async function createCategoryHarness() {
   await runCollaborationAuthMigrations(handle.config);
   const dbHelpers = await createCollaborationDbHelpers(handle.config);
   const availableHandles = new Set<string>([...DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES, "custom-collab"]);
+  const availableSkillHandles = new Set<string>(["memory", "browser", "search"]);
   const service = new CollaborationCategoryService(dbHelpers, {
     availableGlobalSpecialistHandles: () => availableHandles,
+    availableGlobalSkillHandles: () => availableSkillHandles,
   });
   const now = new Date().toISOString();
   const workspace = dbHelpers.createWorkspace({
@@ -42,7 +44,7 @@ async function createCategoryHarness() {
     updatedAt: now,
   });
 
-  return { config: handle.config, dbHelpers, service, workspace, availableHandles };
+  return { config: handle.config, dbHelpers, service, workspace, availableHandles, availableSkillHandles };
 }
 
 describe("collaboration category service", () => {
@@ -68,6 +70,51 @@ describe("collaboration category service", () => {
     });
     expect(updated.defaultSelectedSpecialistHandles).toEqual(["custom-collab", "missing-specialist"]);
     expect(updated.missingDefaultSpecialistHandles).toEqual(["missing-specialist"]);
+  });
+
+  it("persists skill selection state with null all, custom empty, and preserved missing handles", async () => {
+    const { dbHelpers, service, workspace } = await createCategoryHarness();
+
+    const defaulted = service.createCategory({
+      workspaceId: workspace.workspaceId,
+      name: "Default skills",
+    });
+    expect(defaulted.defaultSkillSelection).toEqual({
+      mode: "all",
+      savedSelectedSkillHandles: [],
+      resolvedSkillHandles: ["browser", "search"],
+      alwaysOnSkillHandles: ["memory"],
+    });
+    expect(dbHelpers.getCategory(defaulted.categoryId)?.defaultSkillHandlesJson).toBeNull();
+
+    const empty = service.updateCategory(defaulted.categoryId, {
+      defaultSkillSelection: { mode: "custom", savedSelectedSkillHandles: [] },
+    });
+    expect(empty.defaultSkillSelection).toEqual({
+      mode: "custom",
+      savedSelectedSkillHandles: [],
+      resolvedSkillHandles: [],
+      alwaysOnSkillHandles: ["memory"],
+    });
+    expect(dbHelpers.getCategory(defaulted.categoryId)?.defaultSkillHandlesJson).toBe("[]");
+
+    const custom = service.updateCategory(defaulted.categoryId, {
+      defaultSkillSelection: { mode: "custom", savedSelectedSkillHandles: ["memory", "Search", "missing-skill", "search"] },
+    });
+    expect(custom.defaultSkillSelection).toEqual({
+      mode: "custom",
+      savedSelectedSkillHandles: ["search", "missing-skill"],
+      resolvedSkillHandles: ["search"],
+      alwaysOnSkillHandles: ["memory"],
+      missingSkillHandles: ["missing-skill"],
+    });
+    expect(dbHelpers.getCategory(defaulted.categoryId)?.defaultSkillHandlesJson).toBe(JSON.stringify(["search", "missing-skill"]));
+
+    const allAgain = service.updateCategory(defaulted.categoryId, {
+      defaultSkillSelection: { mode: "all" },
+    });
+    expect(allAgain.defaultSkillSelection?.mode).toBe("all");
+    expect(dbHelpers.getCategory(defaulted.categoryId)?.defaultSkillHandlesJson).toBeNull();
   });
 
   it("persists reasoning defaults and preserves them across same-model updates", async () => {

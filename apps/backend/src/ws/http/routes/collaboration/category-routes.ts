@@ -1,4 +1,4 @@
-import type { CollaborationCategory } from "@forge/protocol";
+import type { CollaborationCategory, CollaborationSkillSelectionInput } from "@forge/protocol";
 import { parseSwarmReasoningLevel } from "../../../../swarm/model-presets.js";
 import type { CollaborationReadinessRequestService } from "../../../../collaboration/readiness-service.js";
 import type { HttpRoute } from "../../shared/http-route.js";
@@ -210,6 +210,7 @@ function parseCreateCategoryBody(body: unknown): {
   defaultModelId?: string | null;
   defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
   defaultSelectedSpecialistHandles?: string[];
+  defaultSkillSelection?: CollaborationSkillSelectionInput;
 } {
   const parsed = parseCategoryBody(body);
   if (!parsed.name) {
@@ -224,6 +225,9 @@ function parseCreateCategoryBody(body: unknown): {
     ...(parsed.defaultSelectedSpecialistHandles !== undefined
       ? { defaultSelectedSpecialistHandles: parsed.defaultSelectedSpecialistHandles }
       : {}),
+    ...(parsed.defaultSkillSelection !== undefined
+      ? { defaultSkillSelection: parsed.defaultSkillSelection }
+      : {}),
   };
 }
 
@@ -233,6 +237,7 @@ function parseUpdateCategoryBody(body: unknown): {
   defaultModelId?: string | null;
   defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
   defaultSelectedSpecialistHandles?: string[];
+  defaultSkillSelection?: CollaborationSkillSelectionInput;
 } {
   return parseCategoryBody(body);
 }
@@ -243,6 +248,7 @@ function parseCategoryBody(body: unknown): {
   defaultModelId?: string | null;
   defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
   defaultSelectedSpecialistHandles?: string[];
+  defaultSkillSelection?: CollaborationSkillSelectionInput;
 } {
   const input = expectObjectBody(body);
   const parsed: {
@@ -251,6 +257,7 @@ function parseCategoryBody(body: unknown): {
     defaultModelId?: string | null;
     defaultReasoningLevel?: CollaborationCategory["defaultReasoningLevel"] | null;
     defaultSelectedSpecialistHandles?: string[];
+    defaultSkillSelection?: CollaborationSkillSelectionInput;
   } = {};
 
   if (input.name !== undefined) {
@@ -280,6 +287,10 @@ function parseCategoryBody(body: unknown): {
 
   if (input.defaultSelectedSpecialistHandles !== undefined) {
     parsed.defaultSelectedSpecialistHandles = parseHandleArray(input.defaultSelectedSpecialistHandles, "defaultSelectedSpecialistHandles");
+  }
+
+  if (input.defaultSkillSelection !== undefined) {
+    parsed.defaultSkillSelection = parseSkillSelectionInput(input.defaultSkillSelection, "defaultSkillSelection");
   }
 
   if (input.channelCreationDefaults !== undefined) {
@@ -322,4 +333,23 @@ function parseHandleArray(value: unknown, fieldName: string): string[] {
     }
     return entry.trim();
   });
+}
+
+function parseSkillSelectionInput(value: unknown, fieldName: string): CollaborationSkillSelectionInput {
+  const input = expectObjectBody(value);
+  if (input.mode === "all") {
+    return { mode: "all" };
+  }
+
+  if (input.mode !== "custom") {
+    throw new Error(`${fieldName}.mode must be 'all' or 'custom'`);
+  }
+
+  return {
+    mode: "custom",
+    savedSelectedSkillHandles: parseHandleArray(
+      input.savedSelectedSkillHandles,
+      `${fieldName}.savedSelectedSkillHandles`,
+    ),
+  };
 }

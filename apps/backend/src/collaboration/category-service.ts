@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CollaborationCategory } from "@forge/protocol";
+import type { CollaborationCategory, CollaborationSkillSelectionInput, CollaborationSkillSelectionState } from "@forge/protocol";
 import { inferSwarmModelPresetFromDescriptor, resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../swarm/types.js";
 import type { CollaborationDbHelpers } from "./collab-db-helpers.js";
@@ -8,6 +8,13 @@ import {
   parseCollaborationSpecialistHandlesJson,
   serializeCollaborationSpecialistHandles,
 } from "./specialist-selection.js";
+import {
+  COLLABORATION_ALWAYS_ON_SKILL_HANDLES,
+  findMissingCollaborationSkillHandles,
+  normalizeCollaborationOptionalSkillHandles,
+  parseCollaborationSkillHandlesJson,
+  serializeCollaborationSkillSelectionInput,
+} from "./skill-selection.js";
 
 export interface CreateCollaborationCategoryParams {
   workspaceId: string;
@@ -19,6 +26,7 @@ export interface CreateCollaborationCategoryParams {
   defaultModelId?: string | null;
   defaultReasoningLevel?: SwarmReasoningLevel | null;
   defaultSelectedSpecialistHandles?: string[];
+  defaultSkillSelection?: CollaborationSkillSelectionInput;
   position?: number;
 }
 
@@ -31,6 +39,7 @@ export interface UpdateCollaborationCategoryParams {
   defaultModelId?: string | null;
   defaultReasoningLevel?: SwarmReasoningLevel | null;
   defaultSelectedSpecialistHandles?: string[];
+  defaultSkillSelection?: CollaborationSkillSelectionInput;
 }
 
 export interface ReorderCollaborationCategoriesParams {
@@ -54,6 +63,7 @@ export class CollaborationCategoryServiceError extends Error {
 
 export interface CollaborationCategoryServiceOptions {
   availableGlobalSpecialistHandles?: () => Iterable<string> | undefined;
+  availableGlobalSkillHandles?: () => Iterable<string> | undefined;
 }
 
 export class CollaborationCategoryService {
@@ -97,6 +107,7 @@ export class CollaborationCategoryService {
           defaultSpecialistHandlesJson: serializeCollaborationSpecialistHandles(
             params.defaultSelectedSpecialistHandles ?? parseCollaborationSpecialistHandlesJson(null),
           ),
+          defaultSkillHandlesJson: serializeCollaborationSkillSelectionInput(params.defaultSkillSelection) ?? null,
           position: normalizeOptionalPosition(params.position) ?? nextCategoryPosition(categories),
           createdAt: now,
           updatedAt: now,
@@ -118,6 +129,7 @@ export class CollaborationCategoryService {
       defaultModelThinkingLevel?: string | null;
       defaultCwd?: string | null;
       defaultSpecialistHandlesJson?: string | null;
+      defaultSkillHandlesJson?: string | null;
     } = {};
 
     if (params.name !== undefined) {
@@ -136,13 +148,18 @@ export class CollaborationCategoryService {
       update.defaultSpecialistHandlesJson = serializeCollaborationSpecialistHandles(params.defaultSelectedSpecialistHandles);
     }
 
+    if (params.defaultSkillSelection !== undefined) {
+      update.defaultSkillHandlesJson = serializeCollaborationSkillSelectionInput(params.defaultSkillSelection);
+    }
+
     if (
       update.name === undefined &&
       update.defaultModelProvider === undefined &&
       update.defaultModelId === undefined &&
       update.defaultModelThinkingLevel === undefined &&
       update.defaultCwd === undefined &&
-      update.defaultSpecialistHandlesJson === undefined
+      update.defaultSpecialistHandlesJson === undefined &&
+      update.defaultSkillHandlesJson === undefined
     ) {
       return toCategoryDto(existing, this.options);
     }
@@ -256,6 +273,7 @@ function toCategoryDto(record: {
   position: number;
   createdAt: string;
   defaultSpecialistHandlesJson: string | null;
+  defaultSkillHandlesJson: string | null;
   updatedAt: string;
 }, options?: CollaborationCategoryServiceOptions): CollaborationCategory {
   const model = toCategoryModelDescriptor(record);
@@ -266,6 +284,10 @@ function toCategoryDto(record: {
   const missingDefaultSpecialistHandles = findMissingCollaborationSpecialistHandles(
     defaultSelectedSpecialistHandles,
     options?.availableGlobalSpecialistHandles?.(),
+  );
+  const defaultSkillSelection = toSkillSelectionState(
+    record.defaultSkillHandlesJson,
+    options?.availableGlobalSkillHandles?.(),
   );
 
   return {
@@ -282,11 +304,46 @@ function toCategoryDto(record: {
       : {}),
     defaultSelectedSpecialistHandles,
     ...(missingDefaultSpecialistHandles ? { missingDefaultSpecialistHandles } : {}),
+    defaultSkillSelection,
     ...(defaultModelId ? { defaultModelId } : {}),
     ...(model ? { defaultReasoningLevel: normalizeReasoningLevel(model.thinkingLevel) } : {}),
     position: record.position,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+  };
+}
+
+function toSkillSelectionState(
+  selectionJson: string | null,
+  availableHandles: Iterable<string> | undefined,
+): CollaborationSkillSelectionState {
+  const parsed = parseCollaborationSkillHandlesJson(selectionJson);
+  const alwaysOnSkillHandles: string[] = [...COLLABORATION_ALWAYS_ON_SKILL_HANDLES];
+  if (parsed === null) {
+    const resolvedSkillHandles = availableHandles
+      ? [...availableHandles]
+          .map((handle) => handle.trim().toLowerCase())
+          .filter((handle) => handle && !alwaysOnSkillHandles.includes(handle))
+      : [];
+    return {
+      mode: "all",
+      savedSelectedSkillHandles: [],
+      resolvedSkillHandles,
+      alwaysOnSkillHandles,
+    };
+  }
+
+  const savedOptionalHandles = normalizeCollaborationOptionalSkillHandles(parsed);
+  const missingSkillHandles = findMissingCollaborationSkillHandles(savedOptionalHandles, availableHandles);
+  const missingSet = new Set(missingSkillHandles ?? []);
+  return {
+    mode: "custom",
+    savedSelectedSkillHandles: savedOptionalHandles,
+    resolvedSkillHandles: availableHandles
+      ? savedOptionalHandles.filter((handle) => !missingSet.has(handle))
+      : savedOptionalHandles,
+    alwaysOnSkillHandles,
+    ...(missingSkillHandles ? { missingSkillHandles } : {}),
   };
 }
 

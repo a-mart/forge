@@ -16,7 +16,9 @@ import {
   SettingsManager,
   type AgentSession,
   type ExtensionFactory,
-  type LoadExtensionsResult
+  type LoadExtensionsResult,
+  type ResourceDiagnostic,
+  type Skill
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "../agent-runtime.js";
 import { buildCreateProjectAgentTool } from "../agent-creator-tool.js";
@@ -46,7 +48,7 @@ import { normalizeArchetypeId } from "../prompt-registry.js";
 import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
 import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
 import { modelCatalogService } from "../model-catalog-service.js";
-import { resolveExactModel } from "../swarm-manager-utils.js";
+import { isCollabSession, resolveExactModel } from "../swarm-manager-utils.js";
 import {
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,
@@ -62,6 +64,7 @@ import type {
   AgentStatus,
   SwarmConfig
 } from "../types.js";
+import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 
 interface RuntimeFactoryDependencies {
   host: SwarmToolHost;
@@ -76,6 +79,7 @@ interface RuntimeFactoryDependencies {
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
+    skillMetadata: SkillMetadata[];
   }>;
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
   buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
@@ -149,6 +153,10 @@ export class RuntimeFactory {
 
     const sessionDescriptor = this.deps.getAgentDescriptor?.(descriptor.managerId);
     return sessionDescriptor?.role === "manager" ? sessionDescriptor : undefined;
+  }
+
+  private isCollaborationRuntimeDescriptor(descriptor: AgentDescriptor): boolean {
+    return isCollabSession(this.getForgeSessionDescriptor(descriptor));
   }
 
   private async createPiRuntimeForDescriptor(
@@ -235,10 +243,14 @@ export class RuntimeFactory {
           })
         : undefined
     });
+    const isCollaborationRuntime = this.isCollaborationRuntimeDescriptor(descriptor);
     const additionalSkillPaths = [
       ...memoryResources.additionalSkillPaths,
-      ...(dirHasFiles(profilePiSkillsDir) ? [profilePiSkillsDir] : [])
+      ...(!isCollaborationRuntime && dirHasFiles(profilePiSkillsDir) ? [profilePiSkillsDir] : [])
     ];
+    const skillsOverride = isCollaborationRuntime
+      ? buildCollaborationSkillsOverride(memoryResources.skillMetadata)
+      : undefined;
     const additionalExtensionPaths = dirHasFiles(profilePiExtensionsDir) ? [profilePiExtensionsDir] : [];
     const additionalPromptTemplatePaths = dirHasFiles(profilePiPromptsDir) ? [profilePiPromptsDir] : [];
     const additionalThemePaths = dirHasFiles(profilePiThemesDir) ? [profilePiThemesDir] : [];
@@ -253,6 +265,7 @@ export class RuntimeFactory {
             additionalThemePaths,
             agentsFilesOverride: applyRuntimeContext,
             extensionFactories,
+            ...(skillsOverride ? { skillsOverride } : {}),
             // Manager prompt comes from the archetype prompt registry.
             systemPrompt,
             appendSystemPromptOverride: () => []
@@ -266,6 +279,7 @@ export class RuntimeFactory {
             additionalThemePaths,
             agentsFilesOverride: applyRuntimeContext,
             extensionFactories,
+            ...(skillsOverride ? { skillsOverride } : {}),
             appendSystemPromptOverride: (base) => [...base, systemPrompt]
           });
 
@@ -1034,6 +1048,55 @@ function dirHasFiles(dirPath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function buildCollaborationSkillsOverride(skillMetadata: SkillMetadata[]) {
+  const allowedByHandle = new Map<string, SkillMetadata[]>();
+  for (const skill of skillMetadata) {
+    const handle = normalizeSkillHandle(skill.directoryName);
+    allowedByHandle.set(handle, [...(allowedByHandle.get(handle) ?? []), skill]);
+  }
+
+  return (current: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => ({
+    skills: current.skills.filter((skill) => {
+      const skillHandle = getPiSkillDirectoryHandle(skill);
+      if (!skillHandle) {
+        return false;
+      }
+
+      const allowedSkills = allowedByHandle.get(skillHandle) ?? [];
+      return allowedSkills.some(
+        (allowedSkill) =>
+          skillPathMatches(skill.filePath, allowedSkill.path) || skillPathMatches(skill.baseDir, allowedSkill.rootPath)
+      );
+    }),
+    diagnostics: current.diagnostics,
+  });
+}
+
+function getPiSkillDirectoryHandle(skill: Skill): string | undefined {
+  const candidates = [skill.baseDir, skill.filePath ? dirname(skill.filePath) : undefined];
+
+  for (const candidate of candidates) {
+    const handle = normalizeSkillHandle(basename(candidate ?? ""));
+    if (handle.length > 0) {
+      return handle;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeSkillHandle(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function skillPathMatches(actual: string | undefined, expected: string): boolean {
+  if (!actual) {
+    return false;
+  }
+
+  return resolve(actual) === resolve(expected);
 }
 
 function previewForLog(text: string, maxLength = 160): string {

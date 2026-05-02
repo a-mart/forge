@@ -33,6 +33,7 @@ const EXPECTED_MIGRATIONS = [
   "0006-collab-category-defaults-upgrade.sql",
   "0007-collab-channel-reasoning.sql",
   "0008-collab-specialist-selections.sql",
+  "0009-collab-skill-selections.sql",
 ] as const;
 
 const EXPECTED_MIGRATION_0008_DEFAULT_SPECIALIST_HANDLES = [
@@ -507,6 +508,8 @@ describe("collaboration auth DB", () => {
 
     expect(listTableColumns(database, "collab_category")).toContain("default_specialist_handles_json");
     expect(listTableColumns(database, "collab_channel")).toContain("active_specialist_handles_json");
+    expect(listTableColumns(database, "collab_category")).toContain("default_skill_handles_json");
+    expect(listTableColumns(database, "collab_channel")).toContain("active_skill_handles_json");
 
     const defaultHandlesJson = JSON.stringify([...EXPECTED_MIGRATION_0008_DEFAULT_SPECIALIST_HANDLES]);
     expect(
@@ -519,9 +522,20 @@ describe("collaboration auth DB", () => {
         `SELECT active_specialist_handles_json AS value FROM collab_channel WHERE channel_id = 'channel-1'`,
       ).get()?.value,
     ).toBe(defaultHandlesJson);
+    expect(
+      database.prepare<[], { value: string | null }>(
+        `SELECT default_skill_handles_json AS value FROM collab_category WHERE category_id = 'category-1'`,
+      ).get()?.value,
+    ).toBeNull();
+    expect(
+      database.prepare<[], { value: string | null }>(
+        `SELECT active_skill_handles_json AS value FROM collab_channel WHERE channel_id = 'channel-1'`,
+      ).get()?.value,
+    ).toBeNull();
 
     const backups = await readdir(join(dirname(config.paths.collaborationAuthDbPath!), "backups"));
     expect(backups.some((name) => name.endsWith("0008-collab-specialist-selections.sql.db"))).toBe(true);
+    expect(backups.some((name) => name.endsWith("0009-collab-skill-selections.sql.db"))).toBe(true);
 
     closeCollaborationAuthDb(config);
     await expect(runCollaborationAuthMigrations(config)).resolves.toBeUndefined();
@@ -788,6 +802,192 @@ describe("collaboration auth DB", () => {
 
     const backups = await readdir(join(dirname(config.paths.collaborationAuthDbPath!), "backups"));
     expect(backups.some((name) => name.endsWith("0008-collab-specialist-selections.sql.db"))).toBe(true);
+  });
+
+  it("preserves nullable and explicit collaboration skill selections when migration reruns", async () => {
+    const config = await createFreshTestConfig();
+    const database = await openMigratedDatabase(config);
+
+    database.prepare(
+      `INSERT INTO collab_workspace (
+         workspace_id,
+         backing_profile_id,
+         display_name,
+         description,
+         ai_display_name,
+         created_by_user_id,
+         default_model_provider,
+         default_model_id,
+         default_model_thinking_level,
+         default_cwd,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "workspace-skill-selections",
+      "_collaboration",
+      "Workspace",
+      null,
+      null,
+      null,
+      "openai-codex",
+      "gpt-5.3-codex",
+      "xhigh",
+      "/repo",
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+
+    const explicitEmptyJson = JSON.stringify([]);
+    const missingHandleJson = JSON.stringify(["missing-skill"]);
+    database.prepare(
+      `INSERT INTO collab_category (
+         category_id,
+         workspace_id,
+         name,
+         default_skill_handles_json,
+         position,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "category-skill-empty",
+      "workspace-skill-selections",
+      "Explicit Empty",
+      explicitEmptyJson,
+      0,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+    database.prepare(
+      `INSERT INTO collab_channel (
+         channel_id,
+         workspace_id,
+         category_id,
+         backing_session_agent_id,
+         name,
+         slug,
+         description,
+         ai_enabled,
+         model_id,
+         active_skill_handles_json,
+         position,
+         archived,
+         archived_at,
+         archived_by_user_id,
+         created_by_user_id,
+         last_message_seq,
+         last_message_id,
+         last_message_at,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "channel-skill-missing",
+      "workspace-skill-selections",
+      "category-skill-empty",
+      "session-skill-missing",
+      "Missing Skill",
+      "missing-skill",
+      null,
+      1,
+      null,
+      missingHandleJson,
+      0,
+      0,
+      null,
+      null,
+      null,
+      0,
+      null,
+      null,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+    database.prepare("DELETE FROM _forge_collaboration_migrations WHERE name = ?").run("0009-collab-skill-selections.sql");
+
+    await runCollaborationAuthMigrations(config);
+
+    expect(
+      database.prepare<[], { value: string }>(
+        `SELECT default_skill_handles_json AS value FROM collab_category WHERE category_id = 'category-skill-empty'`,
+      ).get()?.value,
+    ).toBe(explicitEmptyJson);
+    expect(
+      database.prepare<[], { value: string }>(
+        `SELECT active_skill_handles_json AS value FROM collab_channel WHERE channel_id = 'channel-skill-missing'`,
+      ).get()?.value,
+    ).toBe(missingHandleJson);
+  });
+
+  it("rejects invalid skill selection JSON without recording migration", async () => {
+    const config = await createFreshTestConfig();
+    const database = await openMigratedDatabase(config);
+
+    database.prepare(
+      `INSERT INTO collab_workspace (
+         workspace_id,
+         backing_profile_id,
+         display_name,
+         description,
+         ai_display_name,
+         created_by_user_id,
+         default_model_provider,
+         default_model_id,
+         default_model_thinking_level,
+         default_cwd,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "workspace-invalid-skill-json",
+      "_collaboration",
+      "Workspace",
+      null,
+      null,
+      null,
+      "openai-codex",
+      "gpt-5.3-codex",
+      "xhigh",
+      "/repo",
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+    database.prepare(
+      `INSERT INTO collab_category (
+         category_id,
+         workspace_id,
+         name,
+         default_skill_handles_json,
+         position,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "category-invalid-skill-json",
+      "workspace-invalid-skill-json",
+      "Invalid Skill JSON",
+      JSON.stringify(["ok", 42]),
+      0,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+    database.prepare("DELETE FROM _forge_collaboration_migrations WHERE name = ?").run("0009-collab-skill-selections.sql");
+
+    await expect(runCollaborationAuthMigrations(config)).rejects.toThrow("Invalid collaboration skill handle JSON");
+
+    const applied = database
+      .prepare<[string], { name: string }>("SELECT name FROM _forge_collaboration_migrations WHERE name = ?")
+      .get("0009-collab-skill-selections.sql");
+    expect(applied).toBeUndefined();
+
+    const backups = await readdir(join(dirname(config.paths.collaborationAuthDbPath!), "backups"));
+    expect(backups.some((name) => name.endsWith("0009-collab-skill-selections.sql.db"))).toBe(true);
   });
 
   it("supports inserting and querying collaboration workspace and category defaults metadata", async () => {

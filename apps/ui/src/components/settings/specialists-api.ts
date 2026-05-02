@@ -1,6 +1,7 @@
 import type {
   CollaborationCategory,
   CollaborationChannel,
+  CollaborationSkillSelectionInput,
   ManagerReasoningLevel,
   ResolvedSpecialistDefinition,
   SpecialistTargetSpace,
@@ -343,4 +344,59 @@ export async function fetchCollabChannels(
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { channels?: unknown }
   return Array.isArray(payload.channels) ? payload.channels as CollaborationChannel[] : []
+}
+
+/* ------------------------------------------------------------------ */
+/*  Channel skill selection API helpers                                */
+/* ------------------------------------------------------------------ */
+
+export async function updateChannelSkillSelection(
+  clientOrWsUrl: SettingsApiClient | string | undefined,
+  channelId: string,
+  selection: CollaborationSkillSelectionInput,
+): Promise<CollaborationChannel> {
+  const client = resolveClient(clientOrWsUrl)
+  const path = `/api/collaboration/channels/${encodeURIComponent(channelId)}/skills/selection`
+  const response = await client.fetch(path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ activeSkillSelection: selection }),
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { channel?: CollaborationChannel }
+  if (!payload.channel) throw new Error('Backend did not return updated channel')
+  return payload.channel
+}
+
+export async function updateCategoryDefaultSkillSelection(
+  clientOrWsUrl: SettingsApiClient | string | undefined,
+  categoryId: string,
+  selection: CollaborationSkillSelectionInput,
+): Promise<CollaborationCategory> {
+  const client = resolveClient(clientOrWsUrl)
+  const path = `/api/collaboration/categories/${encodeURIComponent(categoryId)}`
+  const response = await client.fetch(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ defaultSkillSelection: selection }),
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { category?: CollaborationCategory }
+  if (!payload.category) throw new Error('Backend did not return updated category')
+  return payload.category
+}
+
+/* ------------------------------------------------------------------ */
+/*  Skill inventory for collaboration                                  */
+/* ------------------------------------------------------------------ */
+
+export async function fetchCollabSkillInventory(
+  clientOrWsUrl: SettingsApiClient | string | undefined,
+): Promise<import('@forge/protocol').SkillInventoryEntry[]> {
+  const client = resolveClient(clientOrWsUrl)
+  const response = await client.fetch('/api/settings/skills', { cache: 'no-store' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { skills?: unknown }
+  if (!payload || !Array.isArray(payload.skills)) return []
+  return payload.skills as import('@forge/protocol').SkillInventoryEntry[]
 }

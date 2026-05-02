@@ -1,4 +1,4 @@
-import type { CollaborationChannelPromptPreviewResponse, PromptPreviewResponse } from "@forge/protocol";
+import type { CollaborationChannelPromptPreviewResponse, CollaborationSkillSelectionInput, PromptPreviewResponse } from "@forge/protocol";
 import { parseSwarmReasoningLevel } from "../../../../swarm/model-presets.js";
 import {
   deleteChannelSpecialist,
@@ -46,6 +46,9 @@ const COLLABORATION_CHANNEL_SPECIALISTS_ROSTER_PROMPT_ENDPOINT_PATTERN =
 const COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_ENDPOINT_PATTERN =
   /^\/api\/collaboration\/channels\/([^/]+)\/specialists\/selection$/;
 const COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_METHODS = "PUT, OPTIONS";
+const COLLABORATION_CHANNEL_SKILLS_SELECTION_ENDPOINT_PATTERN =
+  /^\/api\/collaboration\/channels\/([^/]+)\/skills\/selection$/;
+const COLLABORATION_CHANNEL_SKILLS_SELECTION_METHODS = "PUT, OPTIONS";
 const COLLABORATION_CHANNEL_ARCHIVE_ENDPOINT_PATTERN =
   /^\/api\/collaboration\/channels\/([^/]+)\/archive$/;
 const COLLABORATION_CHANNEL_ARCHIVE_METHODS = "POST, OPTIONS";
@@ -280,6 +283,9 @@ export function createCollaborationChannelRoutes(options: {
           if (update.activeSelectedSpecialistHandles !== undefined) {
             await notifyChannelSpecialistMutation(options.swarmManager, channel.sessionAgentId);
           }
+          if (update.activeSkillSelection !== undefined) {
+            await notifyChannelSkillSelectionMutation(options.swarmManager, channel.sessionAgentId);
+          }
           broadcasts?.broadcastChannelUpdated(
             attachEffectiveChannelModelSettings(options.swarmManager, channelService.getChannel(channel.channelId)),
           );
@@ -424,6 +430,50 @@ export function createCollaborationChannelRoutes(options: {
         } catch (error) {
           sendJson(response, mapCollaborationChannelErrorStatus(error), {
             error: error instanceof Error ? error.message : "Unable to update channel specialist selection",
+          });
+        }
+      },
+    },
+    {
+      methods: COLLABORATION_CHANNEL_SKILLS_SELECTION_METHODS,
+      matches: (pathname) => COLLABORATION_CHANNEL_SKILLS_SELECTION_ENDPOINT_PATTERN.test(pathname),
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, COLLABORATION_CHANNEL_SKILLS_SELECTION_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+        applyCorsHeaders(request, response, COLLABORATION_CHANNEL_SKILLS_SELECTION_METHODS);
+        if (request.method !== "PUT") {
+          response.setHeader("Allow", COLLABORATION_CHANNEL_SKILLS_SELECTION_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+        const channelId = parseSinglePathId(requestUrl.pathname, COLLABORATION_CHANNEL_SKILLS_SELECTION_ENDPOINT_PATTERN);
+        if (!channelId) {
+          sendJson(response, 400, { error: "Missing channelId" });
+          return;
+        }
+        const adminContext = await requireAdminRequestContext(request, response, options.getServices);
+        if (!adminContext) {
+          return;
+        }
+        void adminContext;
+        try {
+          const body = expectObjectBody(await readJsonBody(request));
+          const activeSkillSelection = parseSkillSelectionInput(
+            body.activeSkillSelection ?? body,
+            body.activeSkillSelection !== undefined ? "activeSkillSelection" : "skillSelection",
+          );
+          const { channelService, broadcasts } = await options.getServices();
+          const channel = channelService.updateChannel(channelId, { activeSkillSelection });
+          await notifyChannelSkillSelectionMutation(options.swarmManager, channel.sessionAgentId);
+          broadcasts?.broadcastChannelUpdated(attachEffectiveChannelModelSettings(options.swarmManager, channel));
+          sendJson(response, 200, { ok: true, channel });
+        } catch (error) {
+          sendJson(response, mapCollaborationChannelErrorStatus(error), {
+            error: error instanceof Error ? error.message : "Unable to update channel skill selection",
           });
         }
       },
@@ -616,6 +666,13 @@ async function notifyChannelSpecialistMutation(
   await recycleCollaborationBackingSessionRuntime(swarmManager, backingSessionAgentId);
 }
 
+async function notifyChannelSkillSelectionMutation(
+  swarmManager: CollaborationRouteSwarmManager | undefined,
+  backingSessionAgentId: string,
+): Promise<void> {
+  await recycleCollaborationBackingSessionRuntime(swarmManager, backingSessionAgentId);
+}
+
 async function recycleCollaborationBackingSessionRuntime(
   swarmManager: CollaborationRouteSwarmManager | undefined,
   backingSessionAgentId: string,
@@ -663,6 +720,7 @@ function parseCreateChannelBody(body: unknown): {
   description?: string | null;
   aiEnabled?: boolean;
   activeSelectedSpecialistHandles?: string[];
+  activeSkillSelection?: CollaborationSkillSelectionInput;
 } {
   const input = expectObjectBody(body);
   const name = requireStringField(input.name, "name");
@@ -687,6 +745,9 @@ function parseCreateChannelBody(body: unknown): {
           ),
         }
       : {}),
+    ...(input.activeSkillSelection !== undefined
+      ? { activeSkillSelection: parseSkillSelectionInput(input.activeSkillSelection, "activeSkillSelection") }
+      : {}),
   };
 }
 
@@ -700,6 +761,7 @@ function parseUpdateChannelBody(body: unknown): {
   promptOverlay?: string | null;
   position?: number;
   activeSelectedSpecialistHandles?: string[];
+  activeSkillSelection?: CollaborationSkillSelectionInput;
 } {
   const input = expectObjectBody(body);
   const parsed: {
@@ -712,6 +774,7 @@ function parseUpdateChannelBody(body: unknown): {
     promptOverlay?: string | null;
     position?: number;
     activeSelectedSpecialistHandles?: string[];
+    activeSkillSelection?: CollaborationSkillSelectionInput;
   } = {};
 
   if (input.name !== undefined) {
@@ -761,6 +824,10 @@ function parseUpdateChannelBody(body: unknown): {
     );
   }
 
+  if (input.activeSkillSelection !== undefined) {
+    parsed.activeSkillSelection = parseSkillSelectionInput(input.activeSkillSelection, "activeSkillSelection");
+  }
+
   return parsed;
 }
 
@@ -775,6 +842,25 @@ function parseHandleArray(value: unknown, fieldName: string): string[] {
     }
     return entry.trim();
   });
+}
+
+function parseSkillSelectionInput(value: unknown, fieldName: string): CollaborationSkillSelectionInput {
+  const input = expectObjectBody(value);
+  if (input.mode === "all") {
+    return { mode: "all" };
+  }
+
+  if (input.mode !== "custom") {
+    throw new Error(`${fieldName}.mode must be 'all' or 'custom'`);
+  }
+
+  return {
+    mode: "custom",
+    savedSelectedSkillHandles: parseHandleArray(
+      input.savedSelectedSkillHandles,
+      `${fieldName}.savedSelectedSkillHandles`,
+    ),
+  };
 }
 
 function requireStringField(value: unknown, fieldName: string): string {

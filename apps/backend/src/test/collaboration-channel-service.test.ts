@@ -67,11 +67,13 @@ async function createChannelHarness() {
   };
 
   const availableHandles = new Set<string>([...DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES, "custom-collab"]);
+  const availableSkillHandles = new Set<string>(["memory", "browser", "search"]);
   const service = new CollaborationChannelService(dbHelpers, manager, handle.config.paths.dataDir, {
     availableGlobalSpecialistHandles: () => availableHandles,
+    availableGlobalSkillHandles: () => availableSkillHandles,
   });
 
-  return { config: handle.config, dbHelpers, service, workspace, availableHandles };
+  return { config: handle.config, dbHelpers, service, workspace, availableHandles, availableSkillHandles };
 }
 
 describe("collaboration channel service", () => {
@@ -100,6 +102,78 @@ describe("collaboration channel service", () => {
 
     expect(channel.activeSelectedSpecialistHandles).toEqual(["custom-collab", "missing-specialist"]);
     expect(channel.missingSelectedSpecialistHandles).toEqual(["missing-specialist"]);
+  });
+
+  it("copies category skill defaults as raw saved state and supports explicit channel overrides", async () => {
+    const { dbHelpers, service, workspace } = await createChannelHarness();
+    const now = new Date().toISOString();
+    const allCategory = dbHelpers.createCategory({
+      categoryId: "category-skills-all",
+      workspaceId: workspace.workspaceId,
+      name: "All Skills",
+      defaultModelProvider: null,
+      defaultModelId: null,
+      defaultModelThinkingLevel: null,
+      defaultCwd: null,
+      defaultSpecialistHandlesJson: JSON.stringify(DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES),
+      defaultSkillHandlesJson: null,
+      position: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const customCategory = dbHelpers.createCategory({
+      categoryId: "category-skills-custom",
+      workspaceId: workspace.workspaceId,
+      name: "Custom Skills",
+      defaultModelProvider: null,
+      defaultModelId: null,
+      defaultModelThinkingLevel: null,
+      defaultCwd: null,
+      defaultSpecialistHandlesJson: JSON.stringify(DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES),
+      defaultSkillHandlesJson: JSON.stringify(["search", "missing-skill"]),
+      position: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const allChannel = await service.createChannel({
+      workspaceId: workspace.workspaceId,
+      categoryId: allCategory.categoryId,
+      name: "All channel",
+    });
+    expect(allChannel.activeSkillSelection?.mode).toBe("all");
+    expect(dbHelpers.getChannel(allChannel.channelId)?.activeSkillHandlesJson).toBeNull();
+
+    const customChannel = await service.createChannel({
+      workspaceId: workspace.workspaceId,
+      categoryId: customCategory.categoryId,
+      name: "Custom channel",
+    });
+    expect(customChannel.activeSkillSelection).toEqual({
+      mode: "custom",
+      savedSelectedSkillHandles: ["search", "missing-skill"],
+      resolvedSkillHandles: ["search"],
+      alwaysOnSkillHandles: ["memory"],
+      missingSkillHandles: ["missing-skill"],
+    });
+    expect(dbHelpers.getChannel(customChannel.channelId)?.activeSkillHandlesJson).toBe(JSON.stringify(["search", "missing-skill"]));
+
+    const explicitEmpty = await service.createChannel({
+      workspaceId: workspace.workspaceId,
+      categoryId: customCategory.categoryId,
+      name: "Explicit empty",
+      activeSkillSelection: { mode: "custom", savedSelectedSkillHandles: ["memory"] },
+    });
+    expect(explicitEmpty.activeSkillSelection?.mode).toBe("custom");
+    expect(explicitEmpty.activeSkillSelection?.savedSelectedSkillHandles).toEqual([]);
+    expect(dbHelpers.getChannel(explicitEmpty.channelId)?.activeSkillHandlesJson).toBe("[]");
+
+    const resetCopy = service.updateChannel(explicitEmpty.channelId, {
+      activeSkillSelection: customChannel.activeSkillSelection?.mode === "custom"
+        ? { mode: "custom", savedSelectedSkillHandles: customChannel.activeSkillSelection.savedSelectedSkillHandles }
+        : { mode: "all" },
+    });
+    expect(resetCopy.activeSkillSelection?.savedSelectedSkillHandles).toEqual(["search", "missing-skill"]);
   });
 
   it("preserves explicit empty and missing active selected specialist handles", async () => {

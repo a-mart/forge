@@ -17,6 +17,7 @@ import {
   getOrCreateCollaborationBetterAuthService,
 } from "../collaboration/auth/better-auth-service.js";
 import { CollaborationChannelMessageService } from "../collaboration/channel-message-service.js";
+import { createCollaborationSkillHandleProvider } from "../collaboration/skill-handle-provider.js";
 import { CollaborationChannelService } from "../collaboration/channel-service.js";
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import type { CollaborationReadinessRequestService } from "../collaboration/readiness-service.js";
@@ -545,11 +546,19 @@ export class WsHandler {
       getOrCreateCollaborationBetterAuthService(config),
     ]);
 
-    const availableGlobalSpecialistHandles = (await resolveSharedRoster(config.paths.dataDir, "collaboration"))
-      .map((entry) => entry.specialistId);
+    const [availableGlobalSpecialistHandles, availableGlobalSkillHandles] = await Promise.all([
+      resolveSharedRoster(config.paths.dataDir, "collaboration").then((roster) =>
+        roster.map((entry) => entry.specialistId),
+      ),
+      createCollaborationSkillHandleProvider({
+        config,
+        source: this.swarmManager,
+      }),
+    ]);
     const channelService = new CollaborationChannelService(dbHelpers, this.swarmManager, config.paths.dataDir, {
       availableGlobalSpecialistHandles: () =>
         getCachedSharedSpecialistHandles(config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+      availableGlobalSkillHandles,
     });
     const userService = new CollaborationUserService(dbHelpers.database, authService);
     return new CollaborationChannelMessageService(this.swarmManager, channelService, dbHelpers, userService);

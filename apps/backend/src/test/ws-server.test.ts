@@ -23,10 +23,19 @@ async function waitForEvent(
   predicate: (event: ServerEvent) => boolean,
   timeoutMs = 2000,
 ): Promise<ServerEvent> {
+  return waitForEventAfter(events, 0, predicate, timeoutMs)
+}
+
+async function waitForEventAfter(
+  events: ServerEvent[],
+  startIndex: number,
+  predicate: (event: ServerEvent) => boolean,
+  timeoutMs = 2000,
+): Promise<ServerEvent> {
   const started = Date.now()
 
   while (Date.now() - started < timeoutMs) {
-    const found = events.find(predicate)
+    const found = events.slice(startIndex).find(predicate)
     if (found) return found
 
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -2647,12 +2656,16 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('supports deleting the selected last manager and creating a replacement manager', async () => {
+  it('supports deleting the selected manager session', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
+    const defaultManager = await bootWithDefaultManager(manager, config)
+    const secondary = await manager.createManager(defaultManager.agentId, {
+      name: 'Selected Manager',
+      cwd: config.defaultCwd,
+    })
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -2670,38 +2683,109 @@ describe('SwarmWebSocketServer', () => {
     })
 
     await once(client, 'open')
-    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
-    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: secondary.agentId }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === secondary.agentId)
 
-    client.send(JSON.stringify({ type: 'delete_manager', managerId: 'manager' }))
+    client.send(JSON.stringify({ type: 'delete_manager', managerId: secondary.agentId }))
 
     const deletedEvent = await waitForEvent(
       events,
-      (event) => event.type === 'manager_deleted' && event.managerId === 'manager',
+      (event) => event.type === 'manager_deleted' && event.managerId === secondary.agentId,
     )
     expect(deletedEvent.type).toBe('manager_deleted')
 
+    const fallbackReadyEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'ready' && event.subscribedAgentId === defaultManager.agentId,
+    )
+    expect(fallbackReadyEvent.type).toBe('ready')
+
     const postDeleteSnapshot = await waitForEvent(
       events,
-      (event) => event.type === 'agents_snapshot' && event.agents.length === 0,
+      (event) => event.type === 'agents_snapshot' && event.agents.every((agent) => agent.agentId !== secondary.agentId),
     )
     expect(postDeleteSnapshot.type).toBe('agents_snapshot')
+
+    expect(manager.listAgents().some((agent) => agent.agentId === secondary.agentId)).toBe(false)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('allows the same socket to create a replacement after deleting the last manager', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    config.cortexEnabled = false
+
+    const manager = new TestSwarmManager(config)
+    const defaultManager = await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: defaultManager.agentId }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === defaultManager.agentId)
+
+    client.send(
+      JSON.stringify({
+        type: 'delete_manager',
+        managerId: defaultManager.agentId,
+        requestId: 'delete-last-manager',
+      }),
+    )
+
+    const deletedEvent = await waitForEvent(
+      events,
+      (event) =>
+        event.type === 'manager_deleted' &&
+        event.managerId === defaultManager.agentId &&
+        event.requestId === 'delete-last-manager',
+    )
+    expect(deletedEvent.type).toBe('manager_deleted')
+    expect(manager.listAgents().some((agent) => agent.role === 'manager')).toBe(false)
+
+    const pingStartIndex = events.length
+    client.send(JSON.stringify({ type: 'ping' }))
+    const staleSubscriptionReadyEvent = await waitForEventAfter(
+      events,
+      pingStartIndex,
+      (event) => event.type === 'ready' && event.subscribedAgentId === defaultManager.agentId,
+    )
+    expect(staleSubscriptionReadyEvent.type).toBe('ready')
 
     client.send(
       JSON.stringify({
         type: 'create_manager',
-        name: 'Recovered Manager',
+        name: 'Replacement Manager',
         cwd: config.defaultCwd,
+        requestId: 'create-replacement-after-last-delete',
       }),
     )
 
-    const recreatedEvent = await waitForEvent(
+    const replacementCreatedEvent = await waitForEvent(
       events,
-      (event) => event.type === 'manager_created' && event.manager.agentId === 'recovered-manager',
+      (event) => event.type === 'manager_created' && event.requestId === 'create-replacement-after-last-delete',
     )
-    expect(recreatedEvent.type).toBe('manager_created')
-
-    expect(manager.listAgents().some((agent) => agent.agentId === 'recovered-manager')).toBe(true)
+    expect(replacementCreatedEvent.type).toBe('manager_created')
+    if (replacementCreatedEvent.type === 'manager_created') {
+      expect(replacementCreatedEvent.manager.role).toBe('manager')
+      expect(replacementCreatedEvent.manager.agentId).not.toBe(defaultManager.agentId)
+      expect(manager.listAgents().some((agent) => agent.agentId === replacementCreatedEvent.manager.agentId)).toBe(true)
+    }
 
     client.close()
     await once(client, 'close')
@@ -2942,7 +3026,7 @@ describe('SwarmWebSocketServer', () => {
     expect(profilesEvent.type).toBe('profiles_snapshot')
     if (profilesEvent.type === 'profiles_snapshot') {
       expect(profilesEvent.profiles.some((profile) => profile.profileId === 'manager')).toBe(true)
-      expect(profilesEvent.profiles.some((profile) => profile.profileId === 'cortex')).toBe(false)
+      expect(profilesEvent.profiles.some((profile) => profile.profileId === 'cortex')).toBe(true)
     }
 
     client.close()
