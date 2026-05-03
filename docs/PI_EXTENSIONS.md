@@ -351,45 +351,11 @@ Set `FORGE_DEBUG=true` in your `.env` to enable extension tool-call logging. Thi
 
 ## Model Catalog Integration
 
-Forge's model catalog system handles provider-specific behaviors and API protocol mappings. This includes:
+Forge's model catalog system handles provider-specific behaviors and API protocol mappings. The current production web research path is the built-in `web-researcher`, which uses Brave-backed guidance on OpenAI Codex `gpt-5.4-mini`.
 
-- **xAI/Grok models** — automatically use OpenAI's Responses API (not Chat Completions) for Pi compatibility
-- **Native web search** — xAI models support native `web_search` and `x_search` tools when enabled per specialist
-- **Request behavior adapters** — provider-specific quirks (reasoning effort stripping, tool injection) are handled by the model catalog at request time
+`apps/backend/src/swarm/model-catalog-request-behaviors.ts` covers request-time provider quirks. xAI native web/X search is not a current production capability; if it returns, it should be documented as a future or experimental adapter path rather than a built-in behavior.
 
-These behaviors are not extensions — they're built into the model catalog layer (see `apps/backend/src/swarm/model-catalog-request-behaviors.ts`).
-
-**Native search activation:**
-
-Native search is controlled per specialist via the `webSearch: true` frontmatter field:
-
-```markdown
----
-displayName: Research Assistant
-modelId: grok-4
-webSearch: true
----
-Your specialist prompt...
-```
-
-When `webSearch` is enabled:
-- Forge injects `{ type: "web_search" }` and `{ type: "x_search" }` into the tools array for every API call
-- Citations appear as inline markdown links in Grok's responses, including webpage and X post/profile URLs when used
-- The toggle is visible in the specialist settings UI (Grok models only)
-- For non-Grok models, the setting is coerced to `false` and the toggle is hidden
-
-**Ad-hoc usage:**
-
-The `spawn_agent` tool also supports `webSearch: true` for one-off Grok workers:
-
-```typescript
-spawn_agent({
-  role: "worker",
-  modelId: "grok-4",
-  webSearch: true,
-  instructions: "Research recent developments in quantum computing"
-})
-```
+For current research tasks, use `web-researcher` instead of relying on xAI/Grok native search claims.
 
 For full model catalog documentation, see [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) and [docs/SPECIALISTS.md](SPECIALISTS.md).
 

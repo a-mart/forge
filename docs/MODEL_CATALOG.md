@@ -30,7 +30,7 @@ Forge owns model metadata end-to-end:
 3. Backend merges catalog + overrides.
 4. Backend generates a Pi-compatible projection at `~/.forge/shared/cache/generated/pi-models.json`.
 5. Every Pi `ModelRegistry` is constructed with that generated projection path.
-6. Request-time provider quirks (currently xAI Responses shaping + native search injection) are handled by `apps/backend/src/swarm/model-catalog-request-behaviors.ts`.
+6. Request-time provider quirks are handled by `apps/backend/src/swarm/model-catalog-request-behaviors.ts`. xAI native search is future/experimental pending a dedicated adapter; it is not a current production path.
 
 ## Override semantics
 

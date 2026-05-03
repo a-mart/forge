@@ -551,20 +551,11 @@ If a project agent has the **Can create sessions** toggle enabled in its setting
 
 ## Model and fallback
 
-Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Built-in specialists generally use cross-vendor fallbacks when practical, while specialists with defining provider-native capabilities like \`web-researcher\` may intentionally stay on the same provider. Expand the fallback section to configure it.
+Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Built-in specialists generally use cross-vendor fallbacks when practical. The built-in \`web-researcher\` follows normal fallback/model config semantics and uses Brave-backed research guidance on OpenAI Codex \`gpt-5.4-mini\`. Expand the fallback section to configure it.
 
-## Native search (web + X) (Grok models only)
+## Specialist web research
 
-Specialists using xAI Grok models can enable native search. When enabled, Forge gives the model access to xAI's built-in web and X search tools for current information, public social discussion, and inline citations.
-
-The native search toggle appears in the specialist editor only when a Grok model is selected. For other models, the setting is hidden and ignored.
-
-To enable native search:
-1. Select a Grok model (e.g., grok-4, grok-4.20).
-2. Find the Native Search toggle below the fallback settings.
-3. Toggle it on and save.
-
-Native search can also be enabled for one-off workers using the \`spawn_agent\` tool with the \`webSearch: true\` parameter.
+Forge's current production web research path is the built-in \`web-researcher\`, which uses Brave-backed research guidance. xAI native web/X search is not a current production path unless a future adapter enables it.
 
 ## Pinning
 
