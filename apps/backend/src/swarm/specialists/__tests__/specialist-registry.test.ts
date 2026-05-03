@@ -805,10 +805,11 @@ describe("specialist-registry", () => {
       sourceKind: "builtin",
     });
     expect(byId.get("web-researcher")).toMatchObject({
-      provider: "xai",
-      fallbackProvider: "xai",
-      fallbackModelId: "grok-4",
+      provider: "openai-codex",
+      modelId: "gpt-5.4-mini",
     });
+    expect(byId.get("web-researcher")?.fallbackProvider).toBeUndefined();
+    expect(byId.get("web-researcher")?.fallbackModelId).toBeUndefined();
 
     const rosterBlock = generateRosterBlock(roster);
     expect(rosterBlock).not.toContain("`cursor-builder`");
