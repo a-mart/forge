@@ -370,6 +370,45 @@ describe("SwarmAgentLifecycleService", () => {
     expect(pending.has("m1")).toBe(true);
   });
 
+  it("applyManagerRuntimeRecyclePolicy defers while recovery grace is active", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const recycle = vi.fn().mockResolvedValue(undefined);
+    const runtimes = new Map([
+      [
+        manager.agentId,
+        makeRuntimeStub({
+          descriptor: manager,
+          recycle,
+          isContextRecoveryInProgress: () => false,
+          isContextRecoveryActive: () => true
+        })
+      ]
+    ]);
+    const pending = new Set<string>();
+    const pendingReasons = new Map<string, "cwd_change">();
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        pendingManagerRuntimeRecycleAgentIds: pending,
+        pendingManagerRuntimeRecycleReasonsByAgentId: pendingReasons
+      })
+    );
+
+    const result = await svc.applyManagerRuntimeRecyclePolicy("m1", "cwd_change");
+    expect(result).toBe("deferred");
+    expect(recycle).not.toHaveBeenCalled();
+    expect(pending.has("m1")).toBe(true);
+  });
+
   it("applyManagerRuntimeRecyclePolicy recycles immediately when idle and clears pending state", async () => {
     const manager = createAgentDescriptor({
       agentId: "m1",

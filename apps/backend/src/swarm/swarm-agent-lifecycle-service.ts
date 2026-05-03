@@ -1239,7 +1239,7 @@ export class SwarmAgentLifecycleService {
       descriptor.status === "idle" &&
       runtime.getStatus() === "idle" &&
       runtime.getPendingCount() === 0 &&
-      !runtime.isContextRecoveryInProgress?.()
+      !(runtime.isContextRecoveryActive?.() ?? runtime.isContextRecoveryInProgress?.())
     );
   }
 

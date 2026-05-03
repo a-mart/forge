@@ -42,7 +42,8 @@ import {
   extractMessageErrorMessage,
   extractMessageStopReason,
   extractMessageText,
-  extractRole
+  extractRole,
+  isAbortLikeErrorMessage
 } from "./message-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
@@ -154,7 +155,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     descriptor: AgentDescriptor,
     source: "agent_end" | "status_idle" | "deferred"
   ): Promise<void>;
-  isRuntimeInContextRecovery(agentId: string): boolean;
+  isRuntimeRecoveryActive(agentId: string): boolean;
   incrementSessionCompactionCount(
     profileId: string,
     sessionId: string,
@@ -185,6 +186,7 @@ export class SwarmRuntimeController {
 
   private specialistFallbackManager: SwarmSpecialistFallbackManager | null = null;
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
+  private readonly recoveryAbortedWorkerTurnAgentIds = new Set<string>();
   private readonly intentionallyStoppedRuntimeTokensByAgentId = new Map<string, Set<number>>();
   private nextRuntimeToken = 1;
   private readonly runtimeFactory: RuntimeFactory;
@@ -501,7 +503,7 @@ export class SwarmRuntimeController {
         this.removeWorkerFromWatchdogBatchQueues(agentId);
       } else if (nextStatus === "idle" && pendingCount === 0) {
         const watchdogState = this.workerWatchdogState.get(agentId);
-        if (watchdogState?.hadStreamingThisTurn) {
+        if (watchdogState?.hadStreamingThisTurn && !this.shouldSuppressWorkerIdleFinalization(descriptor)) {
           await this.finalizeWorkerIdleTurn(agentId, descriptor, "status_idle");
         }
       }
@@ -549,6 +551,18 @@ export class SwarmRuntimeController {
         extractMessageErrorMessage(event.message) ??
         extractMessageText(event.message) ??
         "Unknown runtime error";
+      const parentRecoveryActive = descriptor.managerId
+        ? this.host.isRuntimeRecoveryActive(descriptor.managerId)
+        : false;
+      if (
+        extractRole(event.message) === "assistant" &&
+        isAbortLikeErrorMessage(errorText) &&
+        (this.host.isRuntimeRecoveryActive(agentId) || parentRecoveryActive)
+      ) {
+        this.recoveryAbortedWorkerTurnAgentIds.add(agentId);
+        return;
+      }
+
       this.host.maybeRecordModelCapacityBlock(agentId, descriptor, {
         phase: "prompt_start",
         message: errorText
@@ -572,9 +586,10 @@ export class SwarmRuntimeController {
     const isContextRecoveryAbort =
       !shouldSurfaceManualStopNotice &&
       descriptor?.role === "manager" &&
-      this.host.isRuntimeInContextRecovery(agentId) &&
+      this.host.isRuntimeRecoveryActive(agentId) &&
       event.type === "message_end" &&
-      extractMessageStopReason(event.message) === "error";
+      extractMessageStopReason(event.message) === "error" &&
+      isAbortLikeErrorMessage(extractMessageErrorMessage(event.message) ?? extractMessageText(event.message));
 
     const effectiveEvent = (shouldSurfaceManualStopNotice || isContextRecoveryAbort)
       ? this.host.stripManagerAbortErrorFromEvent(event)
@@ -798,7 +813,7 @@ export class SwarmRuntimeController {
       return;
     }
 
-    if (this.host.isRuntimeInContextRecovery(agentId)) {
+    if (this.shouldSuppressWorkerIdleFinalization(descriptor)) {
       const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
       watchdogState.turnSeq += 1;
       watchdogState.reportedThisTurn = false;
@@ -810,10 +825,15 @@ export class SwarmRuntimeController {
 
       this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
       this.clearWatchdogTimer(agentId);
+      this.recoveryAbortedWorkerTurnAgentIds.delete(agentId);
       return;
     }
 
     await this.finalizeWorkerIdleTurn(agentId, descriptor, "agent_end");
+  }
+
+  private shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {
+    return this.recoveryAbortedWorkerTurnAgentIds.has(descriptor.agentId) || this.host.isRuntimeRecoveryActive(descriptor.agentId);
   }
 
   private get descriptors(): Map<string, AgentDescriptor> {

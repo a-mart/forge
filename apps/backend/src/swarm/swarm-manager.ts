@@ -1084,6 +1084,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolvePromptWithFallback: (category, promptId, profileId, fallback) =>
         this.resolvePromptWithFallback(category, promptId, profileId, fallback),
       isRuntimeInContextRecovery: (agentId) => this.isRuntimeInContextRecovery(agentId),
+      isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.specialistFallbackManager = new SwarmSpecialistFallbackManager({
@@ -5915,6 +5916,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private isRuntimeInContextRecovery(agentId: string): boolean {
     const runtime = this.runtimes.get(agentId);
     return Boolean(runtime?.isContextRecoveryInProgress?.());
+  }
+
+  private isRuntimeRecoveryActive(agentId: string): boolean {
+    const runtime = this.runtimes.get(agentId);
+    return Boolean(runtime?.isContextRecoveryActive?.() ?? runtime?.isContextRecoveryInProgress?.());
   }
 
   private markPendingManualManagerStopNotice(agentId: string): void {

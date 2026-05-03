@@ -589,6 +589,16 @@ describe("mid-turn context guard", () => {
     expect(runtime.getPendingCount()).toBe(3);
   });
 
+  it("keeps public recovery strict while internal active includes grace", () => {
+    const { runtime } = createRuntime();
+
+    (runtime as any).contextRecoveryInProgress = false;
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
+
+    expect(runtime.isContextRecoveryInProgress()).toBe(false);
+    expect(runtime.isContextRecoveryActive()).toBe(true);
+  });
+
   it("smartCompact skips the resume prompt for idle/manual compaction when requested", async () => {
     const { runtime, session } = createRuntime();
     session.isStreaming = false;
@@ -1040,6 +1050,29 @@ describe("mid-turn context guard", () => {
     const guardSpy = vi.spyOn(runtime as any, "runContextGuard").mockResolvedValue(undefined);
     (runtime as any).checkContextBudget();
     expect(guardSpy).not.toHaveBeenCalled();
+  });
+
+  it("handleAutoCompactionEndEvent recovers errors from its owned auto-compaction start", async () => {
+    const { runtime } = createRuntime();
+    const retrySpy = vi
+      .spyOn(runtime as any, "retryCompactionOnceAfterAutoFailure")
+      .mockResolvedValue({ recovered: true });
+
+    (runtime as any).latestAutoCompactionReason = "overflow";
+    (runtime as any).autoCompactionRecoveryInProgress = true;
+    (runtime as any).contextRecoveryInProgress = true;
+
+    await (runtime as any).handleAutoCompactionEndEvent({
+      type: "auto_compaction_end",
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: "compact failed"
+    });
+
+    expect(retrySpy).toHaveBeenCalledTimes(1);
+    expect((runtime as any).contextRecoveryInProgress).toBe(false);
+    expect((runtime as any).contextRecoveryGraceUntilMs).toBeGreaterThan(Date.now());
   });
 
   it("handleAutoCompactionEndEvent skips late errors during recovery grace period", async () => {

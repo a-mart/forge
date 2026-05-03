@@ -522,7 +522,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
   }
 
-  private isContextRecoveryActive(): boolean {
+  isContextRecoveryActive(): boolean {
     return this.contextRecoveryInProgress || Date.now() < this.contextRecoveryGraceUntilMs;
   }
 
@@ -1388,7 +1388,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    if (this.isContextRecoveryActive()) {
+    const ownsAutoCompactionRecovery = this.autoCompactionRecoveryInProgress;
+    if (this.isContextRecoveryActive() && !ownsAutoCompactionRecovery) {
       this.logRuntimeError("compaction", new Error(autoCompactionError), {
         recoveryStage: "auto_compaction_skipped",
         reason: this.contextRecoveryInProgress ? "recovery_already_in_progress" : "recovery_grace_period"
@@ -1398,7 +1399,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    this.beginAutoCompactionRecovery();
+    if (!ownsAutoCompactionRecovery) {
+      this.beginAutoCompactionRecovery();
+    }
 
     try {
       const baseDetails = {
