@@ -37,4 +37,25 @@ describe('resolveBackendWsUrlFromLocation', () => {
       ),
     ).toBe('ws://localhost:3000')
   })
+
+  it('envUrl takes priority over port heuristic (electron dev browser access)', () => {
+    // When VITE_FORGE_WS_URL is set (e.g. during dev:electron), the env var
+    // should override the port-based heuristic so browser access at 47188
+    // connects to the Electron backend on 47287.
+    expect(
+      resolveBackendWsUrlFromLocation(
+        { protocol: 'http:', hostname: '127.0.0.1', port: '47188' },
+        { envUrl: 'ws://127.0.0.1:47287', webBaseMode: 'auto' },
+      ),
+    ).toBe('ws://127.0.0.1:47287')
+  })
+
+  it('electronWsUrl takes priority over envUrl', () => {
+    expect(
+      resolveBackendWsUrlFromLocation(
+        { protocol: 'http:', hostname: '127.0.0.1', port: '47188' },
+        { electronWsUrl: 'ws://127.0.0.1:47287', envUrl: 'ws://127.0.0.1:9999' },
+      ),
+    ).toBe('ws://127.0.0.1:47287')
+  })
 })
