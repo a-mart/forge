@@ -15,6 +15,25 @@ async function writeMeta(
   await writeFile(join(metaDir, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
 }
 
+function jsonlLine(value: unknown): string {
+  return `${JSON.stringify(value)}\n`
+}
+
+function conversationEntryWrapper(data: unknown): string {
+  return jsonlLine({ type: 'custom', customType: 'swarm_conversation_entry', data })
+}
+
+function conversationEntryLine(text: string): string {
+  return conversationEntryWrapper({
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'user',
+      text,
+      timestamp: '2026-03-01T00:00:00.000Z',
+      source: 'user_input',
+  })
+}
+
 async function writeSessionFile(
   dataDir: string,
   profileId: string,
@@ -56,7 +75,7 @@ describe('cortex-scan script', () => {
 
     const result = await scanCortexReviewStatus(dataDir)
 
-    expect(result.sessions).toEqual([
+    expect(result.sessions).toMatchObject([
       {
         profileId: 'alpha',
         sessionId: 'alpha--s1',
@@ -101,7 +120,7 @@ describe('cortex-scan script', () => {
       },
     ])
 
-    expect(result.summary).toEqual({
+    expect(result.summary).toMatchObject({
       needsReview: 1,
       upToDate: 1,
       excluded: 0,
@@ -141,7 +160,7 @@ describe('cortex-scan script', () => {
 
     expect(output).toContain('Sessions needing attention:')
 
-    const neverReviewedIndex = output.indexOf('project-a/project-a--s1: 1,200 new bytes (never reviewed)')
+    const neverReviewedIndex = output.indexOf('project-a/project-a--s1: 1,200 unknown transcript records after watermark')
     const compactedIndex = output.indexOf(
       'project-b/project-b--s1: needs re-review (compacted: reviewed 500 > current 300; last reviewed: 2026-03-02)',
     )
@@ -172,7 +191,7 @@ describe('cortex-scan script', () => {
 
     const result = await scanCortexReviewStatus(dataDir)
 
-    expect(result.sessions).toEqual([
+    expect(result.sessions).toMatchObject([
       {
         profileId: 'alpha',
         sessionId: 'alpha--s1',
@@ -217,7 +236,7 @@ describe('cortex-scan script', () => {
       },
     ])
 
-    expect(result.summary).toEqual({
+    expect(result.summary).toMatchObject({
       needsReview: 0,
       upToDate: 1,
       excluded: 1,
@@ -256,7 +275,7 @@ describe('cortex-scan script', () => {
 
     const result = await scanCortexReviewStatus(dataDir)
 
-    expect(result.sessions).toEqual([
+    expect(result.sessions).toMatchObject([
       {
         profileId: 'alpha',
         sessionId: 'alpha--s1',
@@ -280,7 +299,7 @@ describe('cortex-scan script', () => {
       },
     ])
 
-    expect(result.summary).toEqual({
+    expect(result.summary).toMatchObject({
       needsReview: 0,
       upToDate: 0,
       excluded: 1,
@@ -318,7 +337,7 @@ describe('cortex-scan script', () => {
 
     const result = await scanCortexReviewStatus(dataDir)
 
-    expect(result.sessions).toEqual([
+    expect(result.sessions).toMatchObject([
       {
         profileId: 'alpha',
         sessionId: 'alpha--s1',
@@ -402,7 +421,7 @@ describe('cortex-scan script', () => {
 
     const result = await scanCortexReviewStatus(dataDir)
 
-    expect(result.sessions).toEqual([
+    expect(result.sessions).toMatchObject([
       {
         profileId: 'alpha',
         sessionId: 'alpha--s1',
@@ -512,6 +531,154 @@ describe('cortex-scan script', () => {
 
     expect(result.sessions[0]?.feedbackTimestampDrift).toBe(true)
     expect(result.sessions[0]?.status).toBe('needs-review')
+  })
+
+  it('ignores allowlisted internal-only transcript growth while preserving raw byte fields', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+    const profileId = 'alpha'
+    const sessionId = 'alpha--internal'
+    const reviewed = jsonlLine({ type: 'session', id: 's1' })
+    const internalTail =
+      jsonlLine({ type: 'custom', customType: 'swarm_model_change_continuity_request', data: { reason: 'switch' } }) +
+      jsonlLine({ type: 'custom', customType: 'swarm_model_change_continuity_applied', data: { ok: true } })
+    const reviewedBytes = Buffer.byteLength(reviewed, 'utf8')
+    await writeSessionFile(dataDir, profileId, sessionId, 'session.jsonl', reviewed + internalTail)
+    await writeMeta(dataDir, profileId, sessionId, {
+      profileId,
+      sessionId,
+      cortexReviewedBytes: reviewedBytes,
+      cortexReviewedAt: '2026-03-01T00:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+    expect(result.sessions[0]).toMatchObject({
+      deltaBytes: Buffer.byteLength(internalTail, 'utf8'),
+      ignoredInternalTranscriptDeltaBytes: Buffer.byteLength(internalTail, 'utf8'),
+      reviewableTranscriptDeltaBytes: 0,
+      unknownTranscriptDeltaBytes: 0,
+      malformedTranscriptDeltaBytes: 0,
+      status: 'up-to-date',
+    })
+    expect(result.summary).toMatchObject({
+      needsReview: 0,
+      sessionsWithTranscriptDrift: 0,
+      attentionBytes: 0,
+      ignoredInternalTranscriptDeltaBytes: Buffer.byteLength(internalTail, 'utf8'),
+    })
+  })
+
+  it('treats mixed reviewable and internal transcript growth as reviewable drift only', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+    const profileId = 'alpha'
+    const sessionId = 'alpha--mixed'
+    const reviewed = jsonlLine({ type: 'session', id: 's1' })
+    const internalTail = jsonlLine({ type: 'custom', customType: 'swarm_model_change_continuity_request', data: { reason: 'switch' } })
+    const reviewableTail = conversationEntryLine('remember this preference')
+    const reviewedBytes = Buffer.byteLength(reviewed, 'utf8')
+    await writeSessionFile(dataDir, profileId, sessionId, 'session.jsonl', reviewed + internalTail + reviewableTail)
+    await writeMeta(dataDir, profileId, sessionId, {
+      profileId,
+      sessionId,
+      cortexReviewedBytes: reviewedBytes,
+      cortexReviewedAt: '2026-03-01T00:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+    expect(result.sessions[0]).toMatchObject({
+      ignoredInternalTranscriptDeltaBytes: Buffer.byteLength(internalTail, 'utf8'),
+      reviewableTranscriptDeltaBytes: Buffer.byteLength(reviewableTail, 'utf8'),
+      status: 'needs-review',
+    })
+    expect(result.summary.attentionBytes).toBe(Buffer.byteLength(reviewableTail, 'utf8'))
+  })
+
+  it('excludes non-durable conversation logs and tool execution updates from reviewable transcript drift', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+    const profileId = 'alpha'
+    const sessionId = 'alpha--non-durable'
+    const reviewed = jsonlLine({ type: 'session', id: 's1' })
+    const conversationLog = conversationEntryWrapper({
+      type: 'conversation_log',
+      agentId: 'manager',
+      timestamp: '2026-03-01T00:00:00.000Z',
+      source: 'runtime_log',
+      kind: 'message_start',
+      role: 'assistant',
+      text: 'thinking',
+    })
+    const toolUpdate = conversationEntryWrapper({
+      type: 'agent_tool_call',
+      agentId: 'manager',
+      actorAgentId: 'worker-a',
+      timestamp: '2026-03-01T00:00:00.000Z',
+      kind: 'tool_execution_update',
+      toolName: 'bash',
+      toolCallId: 'tool-1',
+      text: 'partial',
+    })
+    const reviewedBytes = Buffer.byteLength(reviewed, 'utf8')
+    await writeSessionFile(dataDir, profileId, sessionId, 'session.jsonl', reviewed + conversationLog + toolUpdate)
+    await writeMeta(dataDir, profileId, sessionId, {
+      profileId,
+      sessionId,
+      cortexReviewedBytes: reviewedBytes,
+      cortexReviewedAt: '2026-03-01T00:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+    expect(result.sessions[0]).toMatchObject({
+      reviewableTranscriptDeltaBytes: 0,
+      unknownTranscriptDeltaBytes: 0,
+      malformedTranscriptDeltaBytes: 0,
+      status: 'up-to-date',
+    })
+    expect(result.summary).toMatchObject({ needsReview: 0, sessionsWithTranscriptDrift: 0, attentionBytes: 0 })
+  })
+
+  it('fails safe on unknown custom and malformed post-watermark transcript records', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+    const profileId = 'alpha'
+    const sessionId = 'alpha--unknown'
+    const reviewed = jsonlLine({ type: 'session', id: 's1' })
+    const unknownTail = jsonlLine({ type: 'custom', customType: 'future_runtime_state', data: { value: true } })
+    const malformedTail = '{not-json}\n'
+    const reviewedBytes = Buffer.byteLength(reviewed, 'utf8')
+    await writeSessionFile(dataDir, profileId, sessionId, 'session.jsonl', reviewed + unknownTail + malformedTail)
+    await writeMeta(dataDir, profileId, sessionId, {
+      profileId,
+      sessionId,
+      cortexReviewedBytes: reviewedBytes,
+      cortexReviewedAt: '2026-03-01T00:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+    expect(result.sessions[0]).toMatchObject({
+      unknownTranscriptDeltaBytes: Buffer.byteLength(unknownTail, 'utf8'),
+      malformedTranscriptDeltaBytes: Buffer.byteLength(malformedTail, 'utf8'),
+      status: 'needs-review',
+    })
+    expect(result.summary.attentionBytes).toBe(Buffer.byteLength(unknownTail + malformedTail, 'utf8'))
+  })
+
+  it('formats reviewable plus unknown transcript drift together in CLI output', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+    const profileId = 'alpha'
+    const sessionId = 'alpha--triage'
+    const reviewed = jsonlLine({ type: 'session', id: 's1' })
+    const reviewableTail = conversationEntryLine('remember this')
+    const unknownTail = jsonlLine({ type: 'custom', customType: 'future_runtime_state', data: { value: true } })
+    const reviewedBytes = Buffer.byteLength(reviewed, 'utf8')
+    await writeSessionFile(dataDir, profileId, sessionId, 'session.jsonl', reviewed + reviewableTail + unknownTail)
+    await writeMeta(dataDir, profileId, sessionId, {
+      profileId,
+      sessionId,
+      cortexReviewedBytes: reviewedBytes,
+      cortexReviewedAt: '2026-03-01T00:00:00.000Z',
+    })
+
+    const output = await runCortexScan(dataDir)
+    expect(output).toContain('new reviewable transcript bytes')
+    expect(output).toContain('unknown transcript records after watermark')
   })
 
   it('treats malformed lastFeedbackAt timestamps as review-needed', async () => {

@@ -941,7 +941,8 @@ describe('SwarmManager', () => {
             entry.scope.mode === 'session' &&
             entry.scope.profileId === 'alpha' &&
             entry.scope.sessionId === 'alpha--s1' &&
-            entry.sessionAgentId !== null,
+            entry.sessionAgentId !== null &&
+            entry.status === 'completed',
         )
       })
 
@@ -960,12 +961,15 @@ describe('SwarmManager', () => {
         sessionAgentId: run.sessionAgentId,
         status: 'interrupted',
         interruptionReason: 'Interrupted by backend restart; request requeued automatically.',
+        successorRunId: resumedRun?.runId,
         scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
       })
       expect(resumedRun).toMatchObject({
         trigger: 'manual',
         status: 'completed',
         requestText: 'Review session alpha/alpha--s1 (memory freshness)',
+        predecessorRunId: run.runId,
+        dispatchState: 'dispatched',
         scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
       })
       expect(resumedRun?.runId).not.toBe(run.runId)

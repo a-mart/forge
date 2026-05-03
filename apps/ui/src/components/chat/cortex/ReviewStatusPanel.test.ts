@@ -643,4 +643,71 @@ describe('ReviewStatusPanel', () => {
 
     expect(reviewRunBodies[0]).toBe(JSON.stringify({ scope: { mode: 'session', profileId: 'gamma', sessionId: 'gamma--s1' } }))
   })
+
+  it('treats internal-only transcript growth as non-actionable', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/cortex/scan')) {
+        return { ok: true, json: async () => ({ scan: { sessions: [{
+          profileId: 'alpha', sessionId: 'alpha--internal', deltaBytes: 128, totalBytes: 228, reviewedBytes: 100,
+          reviewedAt: '2026-03-03T08:00:00.000Z', sliceStartBytes: 100,
+          reviewableTranscriptDeltaBytes: 0, reviewableTranscriptTotalBytes: 0, reviewableTranscriptReviewedBytes: 0,
+          ignoredInternalTranscriptDeltaBytes: 128, unknownTranscriptDeltaBytes: 0, malformedTranscriptDeltaBytes: 0,
+          transcriptCompacted: false, reviewExcluded: false, reviewExcludedAt: null,
+          memoryDeltaBytes: 0, memoryTotalBytes: 0, memoryReviewedBytes: 0, memoryReviewedAt: null,
+          feedbackDeltaBytes: 0, feedbackTotalBytes: 0, feedbackReviewedBytes: 0, feedbackReviewedAt: null,
+          lastFeedbackAt: null, feedbackTimestampDrift: false, status: 'up-to-date' as const,
+        }], summary: {
+          needsReview: 0, upToDate: 1, excluded: 0, totalBytes: 228, reviewedBytes: 100,
+          transcriptTotalBytes: 228, transcriptReviewedBytes: 100, reviewableTranscriptTotalBytes: 0,
+          reviewableTranscriptReviewedBytes: 0, reviewableTranscriptDeltaBytes: 0, ignoredInternalTranscriptDeltaBytes: 128,
+          unknownTranscriptDeltaBytes: 0, malformedTranscriptDeltaBytes: 0, memoryTotalBytes: 0, memoryReviewedBytes: 0,
+          feedbackTotalBytes: 0, feedbackReviewedBytes: 0, attentionBytes: 0, sessionsWithTranscriptDrift: 0,
+          sessionsWithMemoryDrift: 0, sessionsWithFeedbackDrift: 0,
+        } } }) } as Response
+      }
+      if (url.endsWith('/api/cortex/review-runs')) return { ok: true, json: async () => ({ runs: [] }) } as Response
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    globalThis.fetch = fetchMock as typeof fetch
+
+    root = createRoot(container)
+    flushSync(() => root?.render(createElement(ReviewStatusPanel, { wsUrl: 'ws://127.0.0.1:47187', onOpenSession: vi.fn() })))
+    await flushPromises()
+
+    flushSync(() => getByRole(container, 'button', { name: /alpha \(1\)/i }).click())
+    expect(container.textContent).toContain('0 need review')
+    expect(getByText(container, 'Up to date')).toBeTruthy()
+    expect(getByText(container, '128 B internal runtime entries ignored')).toBeTruthy()
+    expect(queryByLabelText(container, 'Review session alpha--internal')).toBeNull()
+    expect(queryByLabelText(container, 'Exclude session alpha--internal from review')).toBeNull()
+  })
+
+  it('sorts recent terminal runs by recency and collapses linked interrupted predecessors', async () => {
+    const runs: CortexReviewRunRecord[] = [
+      { runId: 'review-old-interrupted', trigger: 'manual', scope: { mode: 'all' }, scopeLabel: 'Old interrupted', requestText: 'Review all sessions that need attention', requestedAt: '2026-03-01T00:00:00.000Z', status: 'interrupted', sessionAgentId: 'cortex--old', activeWorkerCount: 0, latestCloseout: null, interruptedAt: '2026-03-01T00:01:00.000Z', interruptionReason: null, successorRunId: 'review-requeued', queuePosition: null, blockedReason: null, scheduleName: null },
+      { runId: 'review-new-completed', trigger: 'manual', scope: { mode: 'all' }, scopeLabel: 'New completed', requestText: 'Review all sessions that need attention', requestedAt: '2026-03-02T00:00:00.000Z', status: 'completed', sessionAgentId: 'cortex--new', activeWorkerCount: 0, latestCloseout: 'done', queuePosition: null, blockedReason: null, scheduleName: null },
+      { runId: 'review-requeued', trigger: 'manual', scope: { mode: 'all' }, scopeLabel: 'Requeued successor', requestText: 'Review all sessions that need attention', requestedAt: '2026-03-01T00:02:00.000Z', status: 'completed', sessionAgentId: 'cortex--successor', activeWorkerCount: 0, latestCloseout: 'requeued done', predecessorRunId: 'review-old-interrupted', queuePosition: null, blockedReason: null, scheduleName: null },
+      { runId: 'review-session-created', trigger: 'manual', scope: { mode: 'all' }, scopeLabel: 'Reserved run', requestText: 'Review all sessions that need attention', requestedAt: '2026-03-03T00:00:00.000Z', status: 'queued', dispatchState: 'session_created', sessionAgentId: 'cortex--reserved', activeWorkerCount: 0, latestCloseout: null, queuePosition: null, blockedReason: null, scheduleName: null },
+    ]
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/cortex/scan')) return { ok: true, json: async () => ({ scan: { sessions: [], summary: { needsReview: 0, upToDate: 0, excluded: 0, totalBytes: 0, reviewedBytes: 0, transcriptTotalBytes: 0, transcriptReviewedBytes: 0, memoryTotalBytes: 0, memoryReviewedBytes: 0, feedbackTotalBytes: 0, feedbackReviewedBytes: 0, attentionBytes: 0, sessionsWithTranscriptDrift: 0, sessionsWithMemoryDrift: 0, sessionsWithFeedbackDrift: 0 } } }) } as Response
+      if (url.endsWith('/api/cortex/review-runs')) return { ok: true, json: async () => ({ runs }) } as Response
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    globalThis.fetch = fetchMock as typeof fetch
+
+    root = createRoot(container)
+    flushSync(() => root?.render(createElement(ReviewStatusPanel, { wsUrl: 'ws://127.0.0.1:47187', onOpenSession: vi.fn() })))
+    await flushPromises()
+
+    expect(container.textContent).toContain('Session created; request dispatch will resume automatically.')
+    expect(container.textContent).toContain('New completed')
+    expect(container.textContent).toContain('Requeued successor')
+    expect(container.textContent).not.toContain('Old interrupted')
+    expect(container.textContent).toContain('Requeued after interrupted run old-inte')
+    expect(container.textContent!.indexOf('New completed')).toBeLessThan(container.textContent!.indexOf('Requeued successor'))
+  })
+
 })

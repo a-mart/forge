@@ -132,7 +132,7 @@ Use this workflow:
 2. Read `{{DELTA_SLICE_PATH}}` with the `read` tool.
 3. If `{{BYTE_OFFSET}}` is 0, you may read the original session file directly.
 
-The file is JSONL. Prioritize `user_message` entries, then explicit decisions or conventions stated elsewhere. Treat assistant behavior that may have been shaped by existing memory as weak evidence.
+The file is JSONL. `{{BYTE_OFFSET}}` is a raw `session.jsonl` byte offset. Ignore allowlisted internal `customType` records such as `swarm_model_change_continuity_request` and `swarm_model_change_continuity_applied`. Only `customType: "swarm_conversation_entry"` data is transcript evidence; unknown custom records are a blocker/unknown signal and must not be silently discarded. Prioritize `user_message` entries, then explicit decisions or conventions stated elsewhere. Treat assistant behavior that may have been shaped by existing memory as weak evidence.
 
 ## Extract only durable signals
 Examples:

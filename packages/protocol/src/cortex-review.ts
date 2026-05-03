@@ -20,6 +20,7 @@ export interface UpdateCortexAutoReviewSettingsResponse {
 
 export type CortexReviewRunTrigger = 'manual' | 'scheduled'
 export type CortexReviewRunStatus = 'queued' | 'running' | 'completed' | 'blocked' | 'stopped' | 'interrupted'
+export type CortexReviewRunDispatchState = 'queued' | 'session_created' | 'dispatched'
 export type CortexReviewRunAxis = 'transcript' | 'memory' | 'feedback'
 export type CortexReviewControlAction = 'exclude' | 'resume'
 
@@ -48,4 +49,11 @@ export interface CortexReviewRunRecord {
   interruptedAt?: string | null
   interruptionReason?: string | null
   scheduleName?: string | null
+  dispatchState?: CortexReviewRunDispatchState | null
+  dispatchStartedAt?: string | null
+  dispatchedAt?: string | null
+  predecessorRunId?: string | null
+  successorRunId?: string | null
+  requeueReason?: string | null
+  dispatchFailureCount?: number | null
 }

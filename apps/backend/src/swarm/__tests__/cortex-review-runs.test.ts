@@ -10,6 +10,7 @@ import {
   buildLiveCortexReviewRunRecord,
   parseCortexReviewRunScopeFromText,
   parseScheduledTaskEnvelope,
+  deriveLiveStatus,
   readStoredCortexReviewRuns
 } from "../cortex-review-runs.js";
 
@@ -117,7 +118,7 @@ describe("cortex-review-runs", () => {
       "utf8"
     );
 
-    await expect(readStoredCortexReviewRuns(dataDir)).resolves.toEqual([
+    await expect(readStoredCortexReviewRuns(dataDir)).resolves.toMatchObject([
       {
         runId: "review-valid",
         trigger: "manual",
@@ -128,5 +129,25 @@ describe("cortex-review-runs", () => {
         sessionAgentId: "cortex--s2"
       }
     ]);
+  });
+
+  it("normalizes old ledger dispatch state without migration", async () => {
+    const queued = {
+      runId: "review-queued",
+      trigger: "manual" as const,
+      scope: { mode: "all" as const },
+      scopeLabel: "All sessions",
+      requestText: "Review all sessions that need attention",
+      requestedAt: "2026-03-17T01:00:00.000Z",
+      sessionAgentId: null,
+    };
+    const dispatched = {
+      ...queued,
+      runId: "review-dispatched",
+      sessionAgentId: "cortex--s2",
+    };
+
+    expect(deriveLiveStatus(queued, undefined, 0)).toBe("queued");
+    expect(deriveLiveStatus(dispatched, undefined, 0)).toBe("completed");
   });
 });

@@ -13,6 +13,7 @@ import {
   parseCortexReviewRunScopeFromText,
   parseScheduledTaskEnvelope,
   readStoredCortexReviewRuns,
+  updateCortexReviewRuns,
   type StoredCortexReviewRun,
 } from "./cortex-review-runs.js";
 import { scanCortexReviewStatus } from "./scripts/cortex-scan.js";
@@ -32,6 +33,7 @@ import { analyzeLatestCortexCloseoutNeed } from "./swarm-manager-utils.js";
 const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_PROFILE_ID = "cortex";
 const CORTEX_REVIEW_RUN_QUEUE_RETRY_MS = 250;
+const CORTEX_REVIEW_DISPATCH_FAILURE_BLOCK_THRESHOLD = 3;
 const CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE = `SYSTEM: Before ending this direct review, publish a concise speak_to_user closeout. State the reviewed scope, whether anything was promoted, which files changed (or NONE), and whether follow-up remains. Report changed files as paths relative to the active data dir only — never absolute host paths. If exact files are uncertain, prefer NONE over guessing. Do this even for a no-op review.`;
 
 export interface SwarmCortexServiceOptions {
@@ -110,19 +112,37 @@ export class SwarmCortexService {
 
     const reconciledAt = this.options.now();
     const interruptionReason = "Interrupted by backend restart; request requeued automatically.";
+    const requeueReason = "backend_restart";
+    const pairByInterruptedRunId = new Map<string, string>();
     const reconciledPairs: Array<{ interruptedRunId: string; requeuedRunId: string; sessionAgentId: string | null }> = [];
 
     for (const stored of interruptedRuns) {
       const requeuedRunId = createCortexReviewRunId();
+      pairByInterruptedRunId.set(stored.runId, requeuedRunId);
+      reconciledPairs.push({
+        interruptedRunId: stored.runId,
+        requeuedRunId,
+        sessionAgentId: stored.sessionAgentId,
+      });
+    }
 
-      await appendCortexReviewRun(this.options.config.paths.dataDir, {
-        ...stored,
-        interruptedAt: reconciledAt,
-        interruptionReason,
+    await updateCortexReviewRuns(this.options.config.paths.dataDir, (runs) => {
+      const nextRuns = runs.map((run) => {
+        const successorRunId = pairByInterruptedRunId.get(run.runId);
+        if (!successorRunId) {
+          return run;
+        }
+        return {
+          ...run,
+          interruptedAt: reconciledAt,
+          interruptionReason,
+          successorRunId,
+          requeueReason,
+        };
       });
 
-      await appendCortexReviewRun(this.options.config.paths.dataDir, {
-        runId: requeuedRunId,
+      const replacements = interruptedRuns.map((stored) => ({
+        runId: pairByInterruptedRunId.get(stored.runId)!,
         trigger: stored.trigger,
         scope: stored.scope,
         scopeLabel: stored.scopeLabel,
@@ -131,19 +151,65 @@ export class SwarmCortexService {
         sessionAgentId: null,
         sourceContext: stored.sourceContext ?? { channel: "web" },
         scheduleName: stored.scheduleName ?? null,
-      });
+        dispatchState: "queued" as const,
+        predecessorRunId: stored.runId,
+        requeueReason,
+      }));
 
-      reconciledPairs.push({
-        interruptedRunId: stored.runId,
-        requeuedRunId,
-        sessionAgentId: stored.sessionAgentId,
-      });
-    }
+      return [...replacements, ...nextRuns];
+    });
 
     console.warn(`[swarm][${reconciledAt}] cortex:review_runs:reconciled_interrupted`, {
       count: reconciledPairs.length,
       runs: reconciledPairs,
     });
+  }
+
+  async recoverIncompleteReviewRunDispatchesForBoot(): Promise<void> {
+    if (!this.options.config.cortexEnabled) {
+      return;
+    }
+
+    await this.attachMarkerBearingOrphanReviewSessions();
+
+    const storedRuns = await readStoredCortexReviewRuns(this.options.config.paths.dataDir);
+    for (const run of storedRuns.slice().reverse()) {
+      if (run.blockedReason || run.interruptedAt || run.dispatchState !== "session_created") {
+        continue;
+      }
+
+      if (!run.sessionAgentId || !this.options.descriptors.has(run.sessionAgentId)) {
+        await updateCortexReviewRuns(this.options.config.paths.dataDir, (runs) => runs.map((entry) =>
+          entry.runId === run.runId
+            ? { ...entry, sessionAgentId: null, dispatchState: "queued", dispatchStartedAt: null }
+            : entry,
+        ));
+        continue;
+      }
+
+      const descriptor = this.options.descriptors.get(run.sessionAgentId);
+      const hasStreamingWork = descriptor?.status === "streaming" || this.options.getWorkersForManager(run.sessionAgentId).some((worker) => worker.status === "streaming");
+      if (hasStreamingWork) {
+        this.options.logDebug("cortex:review_dispatch:session_created_streaming", {
+          runId: run.runId,
+          sessionAgentId: run.sessionAgentId,
+        });
+        continue;
+      }
+
+      try {
+        await this.dispatchReviewRunRequest(run);
+        await appendCortexReviewRun(this.options.config.paths.dataDir, {
+          ...run,
+          dispatchState: "dispatched",
+          dispatchedAt: this.options.now(),
+          dispatchFailureCount: null,
+          sourceContext: run.sourceContext ?? { channel: "web" },
+        });
+      } catch (error) {
+        await this.returnRunToQueueAfterDispatchFailure(run.runId, error);
+      }
+    }
   }
 
   async listReviewRuns(): Promise<CortexReviewRunRecord[]> {
@@ -155,7 +221,7 @@ export class SwarmCortexService {
     const queuedRunIdsByPosition = new Map<string, number>();
 
     storedRuns
-      .filter((stored) => !stored.blockedReason && !stored.sessionAgentId)
+      .filter((stored) => !stored.blockedReason && !stored.interruptedAt && (stored.dispatchState ?? (stored.sessionAgentId ? "dispatched" : "queued")) === "queued" && !stored.sessionAgentId)
       .slice()
       .reverse()
       .forEach((stored, index) => {
@@ -198,7 +264,11 @@ export class SwarmCortexService {
       if (input.trigger === "scheduled" && input.scope.mode === "all") {
         const storedRuns = await readStoredCortexReviewRuns(this.options.config.paths.dataDir);
         const queuedAllScopeRun = storedRuns.find(
-          (stored) => !stored.blockedReason && !stored.interruptedAt && !stored.sessionAgentId && stored.scope.mode === "all",
+          (stored) =>
+            !stored.blockedReason &&
+            !stored.interruptedAt &&
+            (stored.dispatchState ?? (stored.sessionAgentId ? "dispatched" : "queued")) !== "dispatched" &&
+            stored.scope.mode === "all",
         );
 
         if (queuedAllScopeRun) {
@@ -209,7 +279,7 @@ export class SwarmCortexService {
           return;
         }
 
-        const activeReviewSession = this.getActiveReviewSession();
+        const activeReviewSession = await this.getActiveOrReservedReviewSession();
         if (activeReviewSession) {
           const activeAllScopeRun = storedRuns.find(
             (stored) =>
@@ -239,6 +309,7 @@ export class SwarmCortexService {
         requestText: input.requestText?.trim() || buildCortexReviewRunRequestText(input.scope),
         requestedAt: this.options.now(),
         sessionAgentId: null,
+        dispatchState: "queued",
         sourceContext: input.sourceContext ?? { channel: "web" },
         scheduleName: input.scheduleName ?? null,
       });
@@ -397,6 +468,19 @@ export class SwarmCortexService {
     );
   }
 
+  private async getActiveOrReservedReviewSession(): Promise<AgentDescriptor | undefined> {
+    const activeReviewSession = this.getActiveReviewSession();
+    if (activeReviewSession) {
+      return activeReviewSession;
+    }
+
+    const storedRuns = await readStoredCortexReviewRuns(this.options.config.paths.dataDir);
+    const reservedRun = storedRuns.find(
+      (run) => !run.blockedReason && !run.interruptedAt && run.dispatchState === "session_created" && run.sessionAgentId,
+    );
+    return reservedRun?.sessionAgentId ? this.options.descriptors.get(reservedRun.sessionAgentId) : undefined;
+  }
+
   private async getReviewRunByIdOrThrow(runId: string): Promise<CortexReviewRunRecord> {
     const runs = await this.listReviewRuns();
     const run = runs.find((entry) => entry.runId === runId);
@@ -418,23 +502,65 @@ export class SwarmCortexService {
       return null;
     }
 
-    const label = queuedRun.scope.mode === "all"
-      ? "Review Run · Full Queue"
-      : `Review Run · ${queuedRun.scope.profileId}/${queuedRun.scope.sessionId}`;
+    let sessionAgentId = queuedRun.sessionAgentId;
+    let dispatchStartedAt = queuedRun.dispatchStartedAt ?? this.options.now();
 
-    const { sessionAgent } = await this.options.createSession(CORTEX_PROFILE_ID, {
-      label,
-      sessionPurpose: "cortex_review",
-    });
+    if (sessionAgentId) {
+      const existingDescriptor = this.options.descriptors.get(sessionAgentId);
+      if (!existingDescriptor) {
+        await updateCortexReviewRuns(this.options.config.paths.dataDir, (runs) => runs.map((run) =>
+          run.runId === queuedRun.runId
+            ? { ...run, sessionAgentId: null, dispatchState: "queued", dispatchStartedAt: null }
+            : run,
+        ));
+        this.scheduleReviewRunQueueCheck(0);
+        return null;
+      }
+
+      const hasStreamingWork =
+        existingDescriptor.status === "streaming" ||
+        this.options.getWorkersForManager(sessionAgentId).some((worker) => worker.status === "streaming");
+      if (hasStreamingWork) {
+        this.scheduleReviewRunQueueCheck();
+        return null;
+      }
+    } else {
+      const shortRunId = queuedRun.runId.slice(0, 12);
+      const label = queuedRun.scope.mode === "all"
+        ? `Review Run · Full Queue · ${shortRunId}`
+        : `Review Run · ${queuedRun.scope.profileId}/${queuedRun.scope.sessionId} · ${shortRunId}`;
+
+      const { sessionAgent } = await this.options.createSession(CORTEX_PROFILE_ID, {
+        label,
+        sessionPurpose: "cortex_review",
+      });
+      sessionAgentId = sessionAgent.agentId;
+      dispatchStartedAt = this.options.now();
+    }
 
     await appendCortexReviewRun(this.options.config.paths.dataDir, {
       ...queuedRun,
-      sessionAgentId: sessionAgent.agentId,
+      sessionAgentId,
+      dispatchState: "session_created",
+      dispatchStartedAt,
       sourceContext: queuedRun.sourceContext ?? { channel: "web" },
     });
 
-    await this.options.handleUserMessage(queuedRun.requestText, {
-      targetAgentId: sessionAgent.agentId,
+    try {
+      await this.dispatchReviewRunRequest({ ...queuedRun, sessionAgentId });
+    } catch (error) {
+      await this.returnRunToQueueAfterDispatchFailure(queuedRun.runId, error);
+      this.scheduleReviewRunQueueCheck();
+      throw error;
+    }
+
+    await appendCortexReviewRun(this.options.config.paths.dataDir, {
+      ...queuedRun,
+      sessionAgentId,
+      dispatchState: "dispatched",
+      dispatchStartedAt,
+      dispatchedAt: this.options.now(),
+      dispatchFailureCount: null,
       sourceContext: queuedRun.sourceContext ?? { channel: "web" },
     });
 
@@ -446,9 +572,94 @@ export class SwarmCortexService {
     const nextQueued = storedRuns
       .slice()
       .reverse()
-      .find((stored) => !stored.blockedReason && !stored.sessionAgentId);
+      .find(
+        (stored) =>
+          !stored.blockedReason &&
+          !stored.interruptedAt &&
+          ((stored.dispatchState ?? "queued") === "queued" || stored.dispatchState === "session_created"),
+      );
 
     return nextQueued ?? null;
+  }
+
+  private async attachMarkerBearingOrphanReviewSessions(): Promise<void> {
+    const storedRuns = await readStoredCortexReviewRuns(this.options.config.paths.dataDir);
+    const referencedSessionIds = new Set(storedRuns.map((run) => run.sessionAgentId).filter((value): value is string => typeof value === "string"));
+    const queuedRunsById = new Map(
+      storedRuns
+        .filter((run) => !run.blockedReason && !run.interruptedAt && (run.dispatchState ?? "queued") === "queued" && !run.sessionAgentId)
+        .map((run) => [run.runId, run]),
+    );
+
+    const attachments: Array<{ runId: string; sessionAgentId: string }> = [];
+    for (const descriptor of this.options.descriptors.values()) {
+      if (descriptor.role !== "manager" || descriptor.profileId !== CORTEX_PROFILE_ID || descriptor.sessionPurpose !== "cortex_review") {
+        continue;
+      }
+      if (referencedSessionIds.has(descriptor.agentId)) {
+        continue;
+      }
+
+      const marker = `${descriptor.sessionLabel ?? descriptor.displayName ?? ""}`;
+      const run = Array.from(queuedRunsById.values()).find((candidate) => marker.includes(candidate.runId.slice(0, 12)) || marker.includes(candidate.runId));
+      if (!run) {
+        this.options.logDebug("cortex:review_dispatch:orphan_session", {
+          sessionAgentId: descriptor.agentId,
+          label: descriptor.sessionLabel ?? descriptor.displayName,
+        });
+        continue;
+      }
+      attachments.push({ runId: run.runId, sessionAgentId: descriptor.agentId });
+      queuedRunsById.delete(run.runId);
+    }
+
+    if (attachments.length === 0) {
+      return;
+    }
+
+    const dispatchStartedAt = this.options.now();
+    await updateCortexReviewRuns(this.options.config.paths.dataDir, (runs) => runs.map((run) => {
+      const attachment = attachments.find((candidate) => candidate.runId === run.runId);
+      return attachment
+        ? { ...run, sessionAgentId: attachment.sessionAgentId, dispatchState: "session_created", dispatchStartedAt: run.dispatchStartedAt ?? dispatchStartedAt }
+        : run;
+    }));
+  }
+
+  private async dispatchReviewRunRequest(run: StoredCortexReviewRun): Promise<void> {
+    if (!run.sessionAgentId) {
+      throw new Error(`Cortex review run ${run.runId} has no review session to dispatch`);
+    }
+
+    await this.options.handleUserMessage(run.requestText, {
+      targetAgentId: run.sessionAgentId,
+      sourceContext: run.sourceContext ?? { channel: "web" },
+    });
+  }
+
+  private async returnRunToQueueAfterDispatchFailure(runId: string, error: unknown): Promise<void> {
+    this.options.logDebug("cortex:review_dispatch:error", {
+      runId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    await updateCortexReviewRuns(this.options.config.paths.dataDir, (runs) => runs.map((run) => {
+      if (run.runId !== runId) {
+        return run;
+      }
+
+      const dispatchFailureCount = (run.dispatchFailureCount ?? 0) + 1;
+      if (dispatchFailureCount >= CORTEX_REVIEW_DISPATCH_FAILURE_BLOCK_THRESHOLD) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          ...run,
+          dispatchFailureCount,
+          blockedReason: `Review dispatch failed ${dispatchFailureCount} times: ${message}`,
+          dispatchState: "queued",
+        };
+      }
+
+      return { ...run, dispatchFailureCount, dispatchState: "queued" };
+    }));
   }
 
   private clearReviewRunQueueCheck(): void {
