@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createWorkerDescriptor } from "../../test-support/index.js";
 import type { PromptCategory } from "../prompt-registry.js";
 import { SwarmWorkerHealthService, type SwarmWorkerHealthServiceOptions } from "../swarm-worker-health-service.js";
+import type { SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor, ConversationEntryEvent } from "../types.js";
 
 const STALL_NUDGE_THRESHOLD_MS = 5 * 60 * 1000;
@@ -115,6 +116,47 @@ describe("SwarmWorkerHealthService", () => {
     });
 
     await svc.checkForStalledWorkers();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("checkForStalledWorkers honors recovery-active grace even after strict recovery clears", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-20T12:00:00.000Z"));
+
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+
+    const sendMessage = vi.fn();
+    const isRuntimeInContextRecovery = vi.fn(() => false);
+    const isRuntimeRecoveryActive = vi.fn((agentId: string) => agentId === "w1");
+    const svc = new SwarmWorkerHealthService(
+      baseHealthOptions({ descriptors, sendMessage, isRuntimeInContextRecovery, isRuntimeRecoveryActive })
+    );
+
+    svc.workerStallState.set("w1", {
+      lastProgressAt: Date.now() - STALL_NUDGE_THRESHOLD_MS - 60_000,
+      nudgeSent: false,
+      nudgeSentAt: null,
+      lastToolName: null,
+      lastToolInput: null,
+      lastToolOutput: null,
+      lastDetailedReportAt: null
+    });
+
+    await svc.checkForStalledWorkers();
+
+    expect(isRuntimeInContextRecovery).not.toHaveBeenCalled();
+    expect(isRuntimeRecoveryActive).toHaveBeenCalledWith("w1");
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -258,6 +300,50 @@ describe("SwarmWorkerHealthService", () => {
     expect(afterSecond).toBeGreaterThan(afterFirst);
   });
 
+  it("parent recovery alone does not suppress a normal worker completion report", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "streaming"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const runtimeStub = {
+      getStatus: () => "idle",
+      getPendingCount: () => 0
+    } as SwarmAgentRuntime;
+    const runtimes = new Map([
+      [manager.agentId, runtimeStub],
+      [worker.agentId, runtimeStub]
+    ]);
+    const sendMessage = vi.fn(async () => ({}));
+    const isRuntimeRecoveryActive = vi.fn((agentId: string) => agentId === manager.agentId);
+    const svc = new SwarmWorkerHealthService(
+      baseHealthOptions({ descriptors, runtimes, sendMessage, isRuntimeRecoveryActive })
+    );
+
+    await svc.handleRuntimeStatus("w1", worker as AgentDescriptor & { role: "worker" }, "streaming", 0);
+    worker.status = "idle";
+    await svc.handleRuntimeStatus("w1", worker as AgentDescriptor & { role: "worker" }, "idle", 0);
+    await svc.handleRuntimeAgentEnd("w1", worker as AgentDescriptor & { role: "worker" });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toBe("SYSTEM: Worker w1 completed its turn.");
+    expect(svc.watchdogTimers.has("w1")).toBe(false);
+    expect(svc.workerWatchdogState.get("w1")).toEqual(
+      expect.objectContaining({
+        turnSeq: 1,
+        hadStreamingThisTurn: false,
+        lastFinalizedTurnSeq: 1
+      })
+    );
+  });
+
   it("handleRuntimeStatus idle transition finalizes the worker idle turn after streaming", async () => {
     vi.useFakeTimers();
     const manager = createAgentDescriptor({
@@ -285,7 +371,7 @@ describe("SwarmWorkerHealthService", () => {
     await vi.advanceTimersByTimeAsync(IDLE_GRACE_MS + BATCH_WINDOW_MS);
   });
 
-  it("idle watchdog batch flush is suppressed while the manager is in context recovery", async () => {
+  it("idle watchdog batch flush still reports while only the manager is in context recovery", async () => {
     vi.useFakeTimers();
 
     const manager = createAgentDescriptor({
@@ -314,6 +400,6 @@ describe("SwarmWorkerHealthService", () => {
 
     recovery = true;
     await vi.advanceTimersByTimeAsync(BATCH_WINDOW_MS);
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 });

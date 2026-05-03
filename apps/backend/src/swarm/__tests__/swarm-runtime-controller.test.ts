@@ -201,7 +201,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     clearWatchdogTimer: vi.fn(),
     removeWorkerFromWatchdogBatchQueues: vi.fn(),
     finalizeWorkerIdleTurn,
-    isRuntimeInContextRecovery: vi.fn(() => false),
+    isRuntimeRecoveryActive: vi.fn(() => false),
     incrementSessionCompactionCount: vi.fn(),
     emitConversationMessage,
     emitStatus,
@@ -392,8 +392,8 @@ describe("SwarmRuntimeController", () => {
     });
     descriptors.set(manager.agentId, { ...manager });
 
-    // Simulate context recovery (smart compaction) in progress
-    (host.isRuntimeInContextRecovery as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    // Simulate context recovery grace/active window (smart compaction) in progress
+    (host.isRuntimeRecoveryActive as ReturnType<typeof vi.fn>).mockReturnValue(true);
     stripManagerAbortErrorFromEvent.mockImplementation((event: RuntimeSessionEvent) => ({
       ...event,
       message: {
@@ -430,6 +430,135 @@ describe("SwarmRuntimeController", () => {
       expect.objectContaining({
         role: "system",
         text: "Session stopped."
+      })
+    );
+  });
+
+  it("finalizes a normal worker completion during parent recovery instead of dropping it", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      captureConversationEventFromRuntime,
+      finalizeWorkerIdleTurn,
+      maybeRecoverWorkerWithSpecialistFallback
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-normal-recovery",
+      role: "manager",
+      managerId: "mgr-normal-recovery",
+      status: "streaming"
+    });
+    const worker = baseDescriptor({
+      agentId: "worker-normal-recovery",
+      role: "worker",
+      managerId: manager.agentId,
+      status: "streaming"
+    });
+    descriptors.set(manager.agentId, manager);
+    descriptors.set(worker.agentId, worker);
+    (host.isRuntimeRecoveryActive as ReturnType<typeof vi.fn>).mockImplementation(
+      (agentId: string) => agentId === manager.agentId
+    );
+    host.workerWatchdogState.set(worker.agentId, {
+      turnSeq: 0,
+      reportedThisTurn: false,
+      pendingReportTurnSeq: null,
+      deferredFinalizeTurnSeq: null,
+      hadStreamingThisTurn: true,
+      lastFinalizedTurnSeq: null
+    });
+
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "completed normally" }],
+        stopReason: "stop"
+      }
+    };
+
+    const token = controller.allocateRuntimeToken(worker.agentId);
+    await controller.handleRuntimeSessionEvent(token, worker.agentId, event);
+    await controller.handleRuntimeStatus(token, worker.agentId, "idle", 0);
+
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, event);
+    expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(
+      worker.agentId,
+      expect.objectContaining({ agentId: worker.agentId }),
+      "status_idle"
+    );
+    expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+  });
+
+  it("suppresses abort-like worker message_end, status-idle, and agent_end during parent recovery", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      captureConversationEventFromRuntime,
+      emitConversationMessage,
+      finalizeWorkerIdleTurn,
+      maybeRecoverWorkerWithSpecialistFallback
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-recovery",
+      role: "manager",
+      managerId: "mgr-recovery",
+      status: "streaming"
+    });
+    const worker = baseDescriptor({
+      agentId: "worker-recovery",
+      role: "worker",
+      managerId: manager.agentId,
+      status: "streaming"
+    });
+    descriptors.set(manager.agentId, manager);
+    descriptors.set(worker.agentId, worker);
+    (host.isRuntimeRecoveryActive as ReturnType<typeof vi.fn>).mockImplementation(
+      (agentId: string) => agentId === manager.agentId
+    );
+
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "partial" }],
+        stopReason: "error",
+        errorMessage: "Request was aborted."
+      }
+    };
+
+    host.workerWatchdogState.set(worker.agentId, {
+      turnSeq: 0,
+      reportedThisTurn: false,
+      pendingReportTurnSeq: null,
+      deferredFinalizeTurnSeq: null,
+      hadStreamingThisTurn: true,
+      lastFinalizedTurnSeq: null
+    });
+
+    const token = controller.allocateRuntimeToken(worker.agentId);
+    await controller.handleRuntimeSessionEvent(token, worker.agentId, event);
+    await controller.handleRuntimeStatus(token, worker.agentId, "idle", 0);
+    await controller.handleRuntimeAgentEnd(token, worker.agentId);
+
+    expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+    expect(finalizeWorkerIdleTurn).not.toHaveBeenCalled();
+    expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+    expect(host.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
+    expect(host.workerWatchdogState.get(worker.agentId)).toEqual(
+      expect.objectContaining({
+        turnSeq: 1,
+        hadStreamingThisTurn: false,
+        lastFinalizedTurnSeq: 1
       })
     );
   });

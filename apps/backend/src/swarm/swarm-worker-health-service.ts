@@ -103,6 +103,7 @@ export interface SwarmWorkerHealthServiceOptions {
     fallback: string
   ): Promise<string>;
   isRuntimeInContextRecovery(agentId: string): boolean;
+  isRuntimeRecoveryActive?(agentId: string): boolean;
   logDebug(message: string, details?: unknown): void;
 }
 
@@ -286,7 +287,7 @@ export class SwarmWorkerHealthService {
       this.removeWorkerFromWatchdogBatchQueues(agentId);
     } else if (nextStatus === "idle" && pendingCount === 0) {
       const watchdogState = this.workerWatchdogState.get(agentId);
-      if (watchdogState?.hadStreamingThisTurn) {
+      if (watchdogState?.hadStreamingThisTurn && !this.isRuntimeRecoveryActive(agentId)) {
         await this.finalizeWorkerIdleTurn(agentId, descriptor, "status_idle");
       }
     }
@@ -296,7 +297,7 @@ export class SwarmWorkerHealthService {
     agentId: string,
     descriptor: AgentDescriptor & { role: "worker" }
   ): Promise<void> {
-    if (this.options.isRuntimeInContextRecovery(agentId)) {
+    if (this.isRuntimeRecoveryActive(agentId)) {
       const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
       watchdogState.turnSeq += 1;
       watchdogState.reportedThisTurn = false;
@@ -677,6 +678,11 @@ export class SwarmWorkerHealthService {
     this.workerStallState.set(agentId, stallState);
   }
 
+  private isRuntimeRecoveryActive(agentId: string): boolean {
+    return this.options.isRuntimeRecoveryActive?.(agentId) ?? this.options.isRuntimeInContextRecovery(agentId);
+  }
+
+
   private async runStalledWorkerCheck(): Promise<void> {
     const now = Date.now();
 
@@ -690,7 +696,7 @@ export class SwarmWorkerHealthService {
         continue;
       }
 
-      if (this.options.isRuntimeInContextRecovery(agentId)) {
+      if (this.isRuntimeRecoveryActive(agentId)) {
         continue;
       }
 
@@ -729,7 +735,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (descriptor.status !== "streaming" || this.options.isRuntimeInContextRecovery(agentId)) {
+    if (descriptor.status !== "streaming" || this.isRuntimeRecoveryActive(agentId)) {
       return;
     }
 
@@ -788,7 +794,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (descriptor.status !== "streaming" || this.options.isRuntimeInContextRecovery(agentId)) {
+    if (descriptor.status !== "streaming" || this.isRuntimeRecoveryActive(agentId)) {
       return;
     }
 
@@ -860,7 +866,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (descriptor.status !== "streaming" || this.options.isRuntimeInContextRecovery(agentId)) {
+    if (descriptor.status !== "streaming" || this.isRuntimeRecoveryActive(agentId)) {
       if (descriptor.status !== "streaming") {
         this.workerStallState.delete(agentId);
         this.workerActivityState.delete(agentId);
@@ -1088,16 +1094,12 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (this.options.isRuntimeInContextRecovery(descriptor.agentId)) {
+    if (this.isRuntimeRecoveryActive(descriptor.agentId)) {
       return;
     }
 
     const parentDescriptor = this.options.descriptors.get(descriptor.managerId);
     if (!parentDescriptor || isNonRunningAgentStatus(parentDescriptor.status)) {
-      return;
-    }
-
-    if (this.options.isRuntimeInContextRecovery(parentDescriptor.agentId)) {
       return;
     }
 
@@ -1147,10 +1149,6 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (this.options.isRuntimeInContextRecovery(managerId)) {
-      return;
-    }
-
     const nowMs = Date.now();
     const eligibleWorkerIds: string[] = [];
 
@@ -1164,7 +1162,7 @@ export class SwarmWorkerHealthService {
         continue;
       }
 
-      if (this.options.isRuntimeInContextRecovery(queuedWorker.workerId)) {
+      if (this.isRuntimeRecoveryActive(queuedWorker.workerId)) {
         continue;
       }
 
@@ -1208,10 +1206,6 @@ export class SwarmWorkerHealthService {
       WORKER_WORD: workerWord,
       WORKER_IDS: workersPreview
     });
-
-    if (this.options.isRuntimeInContextRecovery(managerId)) {
-      return;
-    }
 
     let managerNotified = false;
     try {
