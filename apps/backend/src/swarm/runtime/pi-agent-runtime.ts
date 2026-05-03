@@ -3,7 +3,11 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentSession, AgentSessionEvent, AuthCredential } from "@mariozechner/pi-coding-agent";
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
-import { closeOpenAICodexWebSocketSessions } from "@mariozechner/pi-ai/openai-codex-responses";
+import {
+  closeOpenAICodexWebSocketSessions,
+  getOpenAICodexWebSocketDebugStats,
+  type OpenAICodexWebSocketDebugStats
+} from "@mariozechner/pi-ai/openai-codex-responses";
 import {
   buildRuntimeMessageKey,
   classifyRuntimeCapacityError,
@@ -20,6 +24,8 @@ import {
 import type { CredentialPoolService } from "../credential-pool.js";
 import { transitionAgentStatus } from "../agent-state-machine.js";
 import type {
+  RuntimeCodexTransportDebugDiagnostics,
+  RuntimeCodexTransportDebugStats,
   RuntimeImageAttachment,
   RuntimeErrorEvent,
   RuntimeSessionEvent,
@@ -96,6 +102,32 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function sanitizeOpenAICodexWebSocketDebugStats(
+  stats: OpenAICodexWebSocketDebugStats
+): RuntimeCodexTransportDebugStats {
+  return {
+    requests: readNumber(stats.requests) ?? 0,
+    connectionsCreated: readNumber(stats.connectionsCreated) ?? 0,
+    connectionsReused: readNumber(stats.connectionsReused) ?? 0,
+    cachedContextRequests: readNumber(stats.cachedContextRequests) ?? 0,
+    storeTrueRequests: readNumber(stats.storeTrueRequests) ?? 0,
+    fullContextRequests: readNumber(stats.fullContextRequests) ?? 0,
+    deltaRequests: readNumber(stats.deltaRequests) ?? 0,
+    lastInputItems: readNumber(stats.lastInputItems) ?? 0,
+    ...(typeof stats.lastDeltaInputItems === "number" && Number.isFinite(stats.lastDeltaInputItems)
+      ? { lastDeltaInputItems: stats.lastDeltaInputItems }
+      : {})
+  };
+}
+
 export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInput } from "../runtime-contracts.js";
 
 export class AgentRuntime implements SwarmAgentRuntime {
@@ -166,6 +198,40 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   getSystemPrompt(): string {
     return this.systemPrompt;
+  }
+
+  getCodexTransportDebugDiagnostics(): RuntimeCodexTransportDebugDiagnostics {
+    const sessionId = typeof this.session.sessionId === "string" && this.session.sessionId.length > 0
+      ? this.session.sessionId
+      : undefined;
+    const model = this.session.model;
+    const transport = readString((this.session.agent as { transport?: unknown }).transport);
+    const result: RuntimeCodexTransportDebugDiagnostics = {
+      transport,
+      modelProvider: readString(model?.provider),
+      modelApi: readString(model?.api),
+      piSessionIdPresent: Boolean(sessionId),
+      websocketStatsStatus: sessionId ? "no_stats" : "no_session",
+      directPiSessionStatsStatus: sessionId ? "no_stats" : "no_session"
+    };
+
+    if (!sessionId) {
+      return result;
+    }
+
+    try {
+      const stats = getOpenAICodexWebSocketDebugStats(sessionId);
+      if (stats) {
+        result.websocketStatsStatus = "available";
+        result.directPiSessionStatsStatus = "available";
+        result.websocketStats = sanitizeOpenAICodexWebSocketDebugStats(stats);
+      }
+    } catch {
+      result.websocketStatsStatus = "error";
+      result.directPiSessionStatsStatus = "error";
+    }
+
+    return result;
   }
 
   isStreaming(): boolean {

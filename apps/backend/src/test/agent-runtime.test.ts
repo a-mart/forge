@@ -4,11 +4,14 @@ import type { AgentDescriptor } from '../swarm/types.js'
 
 const openAICodexResponsesMockState = vi.hoisted(() => ({
   closeOpenAICodexWebSocketSessions: vi.fn(),
+  getOpenAICodexWebSocketDebugStats: vi.fn(),
 }))
 
 vi.mock('@mariozechner/pi-ai/openai-codex-responses', () => ({
   closeOpenAICodexWebSocketSessions: (...args: unknown[]) =>
     openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions(...args),
+  getOpenAICodexWebSocketDebugStats: (...args: unknown[]) =>
+    openAICodexResponsesMockState.getOpenAICodexWebSocketDebugStats(...args),
 }))
 
 class FakeSession {
@@ -24,7 +27,8 @@ class FakeSession {
   listener: ((event: any) => void) | undefined
   contextUsageCalls = 0
   contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined
-  model = { provider: 'openai-codex' }
+  agent = { transport: 'websocket-cached' }
+  model = { provider: 'openai-codex', api: 'openai-codex-responses' }
   modelRegistry: any = { authStorage: { set: vi.fn() } }
   sessionId = 'fake-session-id'
   shutdownEvents: any[] = []
@@ -130,7 +134,57 @@ async function waitForCondition(
 describe('AgentRuntime', () => {
   beforeEach(() => {
     openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockReset()
+    openAICodexResponsesMockState.getOpenAICodexWebSocketDebugStats.mockReset()
   })
+
+  it('returns sanitized codex transport debug diagnostics', () => {
+    openAICodexResponsesMockState.getOpenAICodexWebSocketDebugStats.mockReturnValue({
+      requests: 2,
+      connectionsCreated: 1,
+      connectionsReused: 1,
+      cachedContextRequests: 1,
+      storeTrueRequests: 1,
+      fullContextRequests: 1,
+      deltaRequests: 1,
+      lastInputItems: 4,
+      lastDeltaInputItems: 1,
+      lastPreviousResponseId: 'resp_secret',
+    })
+    const session = new FakeSession()
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    const diagnostics = runtime.getCodexTransportDebugDiagnostics()
+
+    expect(openAICodexResponsesMockState.getOpenAICodexWebSocketDebugStats).toHaveBeenCalledWith('fake-session-id')
+    expect(diagnostics).toMatchObject({
+      transport: 'websocket-cached',
+      modelProvider: 'openai-codex',
+      modelApi: 'openai-codex-responses',
+      piSessionIdPresent: true,
+      websocketStatsStatus: 'available',
+      directPiSessionStatsStatus: 'available',
+      websocketStats: {
+        requests: 2,
+        connectionsCreated: 1,
+        connectionsReused: 1,
+        cachedContextRequests: 1,
+        storeTrueRequests: 1,
+        fullContextRequests: 1,
+        deltaRequests: 1,
+        lastInputItems: 4,
+        lastDeltaInputItems: 1,
+      },
+    })
+    expect(JSON.stringify(diagnostics)).not.toContain('lastPreviousResponseId')
+    expect(JSON.stringify(diagnostics)).not.toContain('resp_secret')
+  })
+
   it('queues steer for all messages when runtime is busy', async () => {
     const session = new FakeSession()
 

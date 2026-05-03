@@ -32,6 +32,28 @@ export interface RuntimeStartupRecoveryContext {
   blockText: string;
 }
 
+export interface RuntimeCodexTransportDebugStats {
+  requests: number;
+  connectionsCreated: number;
+  connectionsReused: number;
+  cachedContextRequests: number;
+  storeTrueRequests: number;
+  fullContextRequests: number;
+  deltaRequests: number;
+  lastInputItems: number;
+  lastDeltaInputItems?: number;
+}
+
+export interface RuntimeCodexTransportDebugDiagnostics {
+  transport?: string;
+  modelProvider?: string;
+  modelApi?: string;
+  piSessionIdPresent: boolean;
+  websocketStatsStatus: "not_applicable" | "no_session" | "no_stats" | "available" | "error";
+  directPiSessionStatsStatus: "not_implemented" | "no_session" | "no_stats" | "available" | "error";
+  websocketStats?: RuntimeCodexTransportDebugStats;
+}
+
 export interface RuntimeCreationOptions {
   startupRecoveryContext?: RuntimeStartupRecoveryContext;
 }
@@ -152,6 +174,7 @@ export interface SwarmAgentRuntime {
   getPendingCount(): number;
   getContextUsage(): AgentContextUsage | undefined;
   getSystemPrompt?(): string;
+  getCodexTransportDebugDiagnostics?(): RuntimeCodexTransportDebugDiagnostics;
   setPinnedContent?(content: string | undefined, options?: SetPinnedContentOptions): void | Promise<void>;
   isContextRecoveryInProgress?(): boolean;
   isContextRecoveryActive?(): boolean;

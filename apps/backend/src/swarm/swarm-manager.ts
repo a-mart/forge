@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, writeFile } from "node:fs/promises";
@@ -191,6 +192,7 @@ import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers
 import { parseCollaborationSpecialistHandlesJson } from "../collaboration/specialist-selection.js";
 import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type {
+  RuntimeCodexTransportDebugDiagnostics,
   RuntimeImageAttachment,
   RuntimeCreationOptions,
   RuntimeErrorEvent,
@@ -301,6 +303,25 @@ export interface DispatchRuntimeUserMessageOptions {
   runtimeAttachments?: ConversationAttachment[];
   persistedAttachmentCount?: number;
   delivery?: RequestedDeliveryMode;
+}
+
+export interface CodexTransportDebugAgentDiagnostics {
+  agentId: string;
+  agentIdHash: string;
+  role: AgentDescriptor["role"];
+  status: AgentDescriptor["status"];
+  modelId?: string;
+  provider?: string;
+  api?: string;
+  selectedConfigTransport: "sse" | "websocket" | "websocket-cached" | "auto" | null;
+  runtimeAvailable: boolean;
+  runtimeTransport?: string;
+  runtimeModelProvider?: string;
+  runtimeModelApi?: string;
+  piSessionIdPresent: boolean;
+  websocketStatsStatus: RuntimeCodexTransportDebugDiagnostics["websocketStatsStatus"] | "runtime_inactive" | "not_pi_runtime";
+  directPiSessionStatsStatus: RuntimeCodexTransportDebugDiagnostics["directPiSessionStatsStatus"] | "runtime_inactive" | "not_pi_runtime";
+  websocketStats?: RuntimeCodexTransportDebugDiagnostics["websocketStats"];
 }
 
 interface ResolvedSpecialistDefinitionLike {
@@ -1637,6 +1658,47 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   listAgents(): AgentDescriptor[] {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
+  }
+
+  getCodexTransportDebugDiagnostics(): CodexTransportDebugAgentDiagnostics[] {
+    return this.sortedDescriptors()
+      .filter((descriptor) => isOpenAICodexDescriptor(descriptor))
+      .map((descriptor) => {
+        const runtime = this.runtimes.get(descriptor.agentId);
+        const runtimeDiagnostics = runtime?.runtimeType === "pi"
+          ? runtime.getCodexTransportDebugDiagnostics?.()
+          : undefined;
+        const runtimeAvailable = Boolean(runtime);
+        const websocketStatsStatus = runtime
+          ? runtime.runtimeType === "pi"
+            ? runtimeDiagnostics?.websocketStatsStatus ?? "not_pi_runtime"
+            : "not_pi_runtime"
+          : "runtime_inactive";
+        const directPiSessionStatsStatus = runtime
+          ? runtime.runtimeType === "pi"
+            ? runtimeDiagnostics?.directPiSessionStatsStatus ?? "not_pi_runtime"
+            : "not_pi_runtime"
+          : "runtime_inactive";
+
+        return {
+          agentId: descriptor.agentId,
+          agentIdHash: hashDebugAgentId(descriptor.agentId),
+          role: descriptor.role,
+          status: descriptor.status,
+          modelId: descriptor.model?.modelId,
+          provider: descriptor.model?.provider,
+          api: runtimeDiagnostics?.modelApi,
+          selectedConfigTransport: selectedOpenAICodexTransport(),
+          runtimeAvailable,
+          runtimeTransport: runtimeDiagnostics?.transport,
+          runtimeModelProvider: runtimeDiagnostics?.modelProvider,
+          runtimeModelApi: runtimeDiagnostics?.modelApi,
+          piSessionIdPresent: runtimeDiagnostics?.piSessionIdPresent ?? false,
+          websocketStatsStatus,
+          directPiSessionStatsStatus,
+          ...(runtimeDiagnostics?.websocketStats ? { websocketStats: runtimeDiagnostics.websocketStats } : {})
+        } satisfies CodexTransportDebugAgentDiagnostics;
+      });
   }
 
   updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
@@ -6274,6 +6336,30 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async saveStore(): Promise<void> {
     await this.persistenceService.saveStore();
   }
+}
+
+function isOpenAICodexDescriptor(descriptor: AgentDescriptor): boolean {
+  return String(descriptor.model?.provider ?? "").toLowerCase() === "openai-codex";
+}
+
+function selectedOpenAICodexTransport(): CodexTransportDebugAgentDiagnostics["selectedConfigTransport"] {
+  const rawTransport = process.env.FORGE_OPENAI_CODEX_TRANSPORT?.trim().toLowerCase();
+  switch (rawTransport) {
+    case undefined:
+    case "":
+      return "sse";
+    case "sse":
+    case "websocket":
+    case "websocket-cached":
+    case "auto":
+      return rawTransport;
+    default:
+      return "sse";
+  }
+}
+
+function hashDebugAgentId(agentId: string): string {
+  return createHash("sha256").update(agentId).digest("hex").slice(0, 16);
 }
 
 function isSessionRenameHistoryEntry(value: unknown): value is SessionRenameHistoryEntry {
