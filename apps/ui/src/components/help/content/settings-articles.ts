@@ -526,6 +526,8 @@ Collab Settings supports three scopes:
 
 Channel-local specialists live at \`profiles/_collaboration/sessions/<channelSessionId>/specialists/<handle>.md\` and shadow any global specialist with the same handle inside that channel.
 
+Skill selection uses the same category/channel split, but the skill files stay file-backed. Collaboration only stores selection state in SQLite: \`null\` means load all available optional skills, \`[]\` means an intentional custom empty selection, and always-on skills like \`memory\` cannot be turned off. There is no channel-local skill authoring in V1.
+
 ## Filtering the roster
 
 When you have disabled specialists, a **Hide disabled** checkbox appears next to the toolbar buttons. Check it to filter disabled specialists from all sections. The preference persists across sessions.

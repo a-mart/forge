@@ -1287,7 +1287,7 @@ describe('SwarmManager', () => {
 
     await manager.notifySpecialistRosterChanged('manager')
 
-    expect(notifySpy).toHaveBeenCalledWith('manager')
+    expect(notifySpy).toHaveBeenCalledWith('manager', undefined)
   })
 
   it('allows deleting the default manager when requested', async () => {

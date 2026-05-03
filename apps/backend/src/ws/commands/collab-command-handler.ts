@@ -8,6 +8,7 @@ import {
   type CollaborationDbHelpers,
 } from "../../collaboration/collab-db-helpers.js";
 import { CollaborationCategoryService } from "../../collaboration/category-service.js";
+import { createCollaborationSkillHandleProvider } from "../../collaboration/skill-handle-provider.js";
 import {
   getCachedSharedSpecialistHandles,
   resolveSharedRoster,
@@ -470,8 +471,15 @@ export class CollabCommandHandler {
   private async createServices(): Promise<CollaborationWsServices> {
     const config = this.swarmManager.getConfig();
     const dbHelpers = await createCollaborationDbHelpers(config);
-    const availableGlobalSpecialistHandles = (await resolveSharedRoster(config.paths.dataDir, "collaboration"))
-      .map((entry) => entry.specialistId);
+    const [availableGlobalSpecialistHandles, availableGlobalSkillHandles] = await Promise.all([
+      resolveSharedRoster(config.paths.dataDir, "collaboration").then((roster) =>
+        roster.map((entry) => entry.specialistId),
+      ),
+      createCollaborationSkillHandleProvider({
+        config,
+        source: this.swarmManager,
+      }),
+    ]);
     return {
       dbHelpers,
       workspaceService: new CollaborationWorkspaceService(dbHelpers, this.swarmManager, config),
@@ -482,11 +490,13 @@ export class CollabCommandHandler {
         {
           availableGlobalSpecialistHandles: () =>
             getCachedSharedSpecialistHandles(config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+          availableGlobalSkillHandles,
         },
       ),
       categoryService: new CollaborationCategoryService(dbHelpers, {
         availableGlobalSpecialistHandles: () =>
           getCachedSharedSpecialistHandles(config.paths.dataDir, "collaboration") ?? availableGlobalSpecialistHandles,
+        availableGlobalSkillHandles,
       }),
     };
   }

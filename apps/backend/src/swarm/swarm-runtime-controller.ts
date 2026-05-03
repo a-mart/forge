@@ -3,6 +3,7 @@ import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import { createForgeBindingToken } from "./forge-extension-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
+import type { SkillMetadata } from "./skills/skill-metadata-service.js";
 import { isNonRunningAgentStatus, transitionAgentStatus } from "./agent-state-machine.js";
 import type {
   RuntimeCreationOptions,
@@ -115,6 +116,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
+    skillMetadata: SkillMetadata[];
   }>;
   getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>>;
   resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string>;

@@ -32,6 +32,9 @@ const specialistsApiMock = vi.hoisted(() => ({
   updateCategoryDefaultSpecialists: vi.fn(),
   fetchCollabCategories: vi.fn(),
   fetchCollabChannels: vi.fn(),
+  updateChannelSkillSelection: vi.fn(),
+  updateCategoryDefaultSkillSelection: vi.fn(),
+  fetchCollabSkillInventory: vi.fn(),
 }))
 
 vi.mock('./specialists-api', () => ({
@@ -53,6 +56,9 @@ vi.mock('./specialists-api', () => ({
   updateCategoryDefaultSpecialists: (...args: unknown[]) => specialistsApiMock.updateCategoryDefaultSpecialists(...args),
   fetchCollabCategories: (...args: unknown[]) => specialistsApiMock.fetchCollabCategories(...args),
   fetchCollabChannels: (...args: unknown[]) => specialistsApiMock.fetchCollabChannels(...args),
+  updateChannelSkillSelection: (...args: unknown[]) => specialistsApiMock.updateChannelSkillSelection(...args),
+  updateCategoryDefaultSkillSelection: (...args: unknown[]) => specialistsApiMock.updateCategoryDefaultSkillSelection(...args),
+  fetchCollabSkillInventory: (...args: unknown[]) => specialistsApiMock.fetchCollabSkillInventory(...args),
 }))
 
 vi.mock('@/lib/model-preset', () => ({

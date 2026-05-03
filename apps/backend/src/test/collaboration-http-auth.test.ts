@@ -114,6 +114,9 @@ describe("collaboration HTTP auth middleware", () => {
       classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/specialists/selection", "PUT"),
     ).toBe("admin");
     expect(
+      classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/skills/selection", "PUT"),
+    ).toBe("admin");
+    expect(
       classifyCollaborationHttpRequest("/api/collaboration/channels/channel-1/specialists/local-specialist", "PUT"),
     ).toBe("admin");
     expect(

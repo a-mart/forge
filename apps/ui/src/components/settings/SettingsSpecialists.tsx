@@ -40,7 +40,9 @@ import { RosterPromptDialog } from './specialists/RosterPromptDialog'
 import { PendingSaveDialog } from './specialists/PendingSaveDialog'
 import { CollabSettingsBanner } from './specialists/CollabSettingsBanner'
 import { CategoryDefaultsView } from './specialists/CategoryDefaultsView'
+import { CategorySkillDefaultsView } from './specialists/CategorySkillDefaultsView'
 import { ChannelSpecialistSelection } from './specialists/ChannelSpecialistSelection'
+import { ChannelSkillSelection } from './specialists/ChannelSkillSelection'
 import { fetchCollabCategories, fetchCollabChannels } from './specialists-api'
 
 export { type SettingsSpecialistsProps } from './specialists/types'
@@ -238,6 +240,34 @@ export function SettingsSpecialists({
     void loadSpecialists()
   }, [loadSpecialists])
 
+  /* ---- Channel skill selection state ---- */
+  const selectedChannelDto = isChannel
+    ? collabChannels.find((ch) => ch.channelId === channelId)
+    : undefined
+  const [channelSkillSelection, setChannelSkillSelection] = useState(selectedChannelDto?.activeSkillSelection)
+
+  // Sync skill selection when channel changes
+  useEffect(() => {
+    setChannelSkillSelection(selectedChannelDto?.activeSkillSelection)
+  }, [selectedChannelDto])
+
+  const handleChannelSkillSelectionSaved = useCallback(
+    (updated: { activeSkillSelection?: import('@forge/protocol').CollaborationSkillSelectionState }) => {
+      setChannelSkillSelection(updated.activeSkillSelection)
+      // Also update the channel in the local list so the DTO stays fresh
+      if (channelId && updated.activeSkillSelection) {
+        setCollabChannels((prev) =>
+          prev.map((ch) =>
+            ch.channelId === channelId
+              ? { ...ch, activeSkillSelection: updated.activeSkillSelection }
+              : ch,
+          ),
+        )
+      }
+    },
+    [channelId],
+  )
+
   /* ---- Category defaults saved callback ---- */
   const handleCategoryUpdated = useCallback((updated: CollaborationCategory) => {
     setCollabCategories((prev) =>
@@ -407,14 +437,23 @@ export function SettingsSpecialists({
       {/*  Category Defaults View                                       */}
       {/* ============================================================ */}
       {isCategory && selectedCategory && (
-        <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
-          <CategoryDefaultsView
+        <>
+          <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
+            <CategoryDefaultsView
+              clientOrWsUrl={clientOrWsUrl}
+              category={selectedCategory}
+              specialistChangeKey={specialistChangeKey}
+              onCategoryUpdated={handleCategoryUpdated}
+            />
+          </div>
+
+          <CategorySkillDefaultsView
             clientOrWsUrl={clientOrWsUrl}
             category={selectedCategory}
-            specialistChangeKey={specialistChangeKey}
+            changeKey={specialistChangeKey}
             onCategoryUpdated={handleCategoryUpdated}
           />
-        </div>
+        </>
       )}
 
       {isCategory && !selectedCategory && !loading && (
@@ -427,18 +466,30 @@ export function SettingsSpecialists({
       {/*  Channel View — Selection + Local specialists                 */}
       {/* ============================================================ */}
       {isChannel && (
-        <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
-          {/* Global specialist selection controls */}
-          <ChannelSpecialistSelection
+        <>
+          <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
+            {/* Global specialist selection controls */}
+            <ChannelSpecialistSelection
+              clientOrWsUrl={clientOrWsUrl}
+              channelId={channelId!}
+              channelLabel={selectedChannelLabel}
+              selectedGlobalHandles={selectedGlobalHandles}
+              missingHandles={missingSelectedHandles}
+              specialistChangeKey={specialistChangeKey}
+              onSelectionSaved={handleChannelSelectionSaved}
+            />
+          </div>
+
+          {/* Skill selection controls — not gated by specialistsEnabled (skills load independently) */}
+          <ChannelSkillSelection
             clientOrWsUrl={clientOrWsUrl}
             channelId={channelId!}
             channelLabel={selectedChannelLabel}
-            selectedGlobalHandles={selectedGlobalHandles}
-            missingHandles={missingSelectedHandles}
-            specialistChangeKey={specialistChangeKey}
-            onSelectionSaved={handleChannelSelectionSaved}
+            activeSkillSelection={channelSkillSelection}
+            changeKey={specialistChangeKey}
+            onSelectionSaved={handleChannelSkillSelectionSaved}
           />
-        </div>
+        </>
       )}
 
       {/* Loading / error states (for global, profile, and channel card views) */}

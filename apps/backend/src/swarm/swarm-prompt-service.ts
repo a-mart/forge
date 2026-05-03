@@ -33,7 +33,7 @@ import {
   readPromptFile,
   readReferenceDoc,
 } from "./storage/asset-root-storage.js";
-import type { SkillMetadataService } from "./skill-metadata-service.js";
+import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "./types.js";
 import {
   buildSessionMemoryRuntimeView,
@@ -93,6 +93,7 @@ interface SpecialistRegistryModuleLike {
 interface MemoryRuntimeResources {
   memoryContextFile: { path: string; content: string };
   additionalSkillPaths: string[];
+  skillMetadata: SkillMetadata[];
 }
 
 export interface SwarmPromptServiceOptions {
@@ -113,6 +114,7 @@ export interface SwarmPromptServiceOptions {
     manager: AgentDescriptor,
     targetSpace?: SpecialistTargetSpace,
   ) => Promise<ResolvedSpecialistDefinitionLike[]>;
+  resolveSkillRosterForDescriptor?: (descriptor: AgentDescriptor) => Promise<SkillMetadata[] | null | undefined>;
   getIntegrationContext: (profileId: string) => string | undefined;
   logDebug: (message: string, details?: unknown) => void;
 }
@@ -162,7 +164,7 @@ export class SwarmPromptService {
       this.getMemoryRuntimeResources(descriptor),
       this.getSwarmContextFiles(descriptor.cwd),
     ]);
-    const systemPrompt = this.appendAvailableSkillsBlock(resolvedSystemPrompt);
+    const systemPrompt = await this.appendAvailableSkillsBlock(resolvedSystemPrompt, descriptor);
 
     const sections: PromptPreviewSection[] = [
       {
@@ -404,6 +406,16 @@ export class SwarmPromptService {
     return managerDescriptor && isCollabSession(managerDescriptor) ? "collaboration" : "builder";
   }
 
+  private async resolveSkillMetadataForDescriptor(descriptor: AgentDescriptor): Promise<SkillMetadata[]> {
+    const resolved = await this.options.resolveSkillRosterForDescriptor?.(descriptor);
+    if (resolved) {
+      return resolved;
+    }
+
+    await this.options.skillMetadataService.ensureSkillMetadataLoaded();
+    return this.options.skillMetadataService.getSkillMetadata();
+  }
+
   injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string {
     if (descriptor.role !== "worker") {
       return systemPrompt;
@@ -481,7 +493,7 @@ export class SwarmPromptService {
       }
     }
 
-    await this.options.skillMetadataService.ensureSkillMetadataLoaded();
+    const skillMetadata = await this.resolveSkillMetadataForDescriptor(descriptor);
 
     if (descriptor.role === "manager") {
       await this.options.refreshSessionMetaStats(descriptor);
@@ -494,7 +506,8 @@ export class SwarmPromptService {
         path: memoryFilePath,
         content: memoryContent,
       },
-      additionalSkillPaths: this.options.skillMetadataService.getAdditionalSkillPaths(),
+      additionalSkillPaths: skillMetadata.map((skill) => skill.path),
+      skillMetadata,
     };
   }
 
@@ -555,7 +568,7 @@ export class SwarmPromptService {
       basePrompt: resolvedBasePrompt,
       memoryContextFile: memoryResources.memoryContextFile,
       agentsMdPaths: [...agentsMdPaths, ...swarmContextFiles.map((entry) => entry.path)],
-      availableSkills: this.options.skillMetadataService.getSkillMetadata().map((skill) => ({
+      availableSkills: memoryResources.skillMetadata.map((skill) => ({
         name: skill.skillName,
         description: skill.description ?? "",
         location: skill.path,
@@ -585,7 +598,7 @@ export class SwarmPromptService {
       basePrompt: resolvedBasePrompt,
       memoryContextFile: memoryResources.memoryContextFile,
       agentsMdPaths: [...agentsMdPaths, ...swarmContextFiles.map((entry) => entry.path)],
-      availableSkills: this.options.skillMetadataService.getSkillMetadata().map((skill) => ({
+      availableSkills: memoryResources.skillMetadata.map((skill) => ({
         name: skill.skillName,
         description: skill.description ?? "",
         location: skill.path,
@@ -721,8 +734,8 @@ export class SwarmPromptService {
     return { dir: legacyReferenceDir, docs: legacyDocs };
   }
 
-  private appendAvailableSkillsBlock(systemPrompt: string): string {
-    const allSkillMetadata = this.options.skillMetadataService.getSkillMetadata();
+  private async appendAvailableSkillsBlock(systemPrompt: string, descriptor: AgentDescriptor): Promise<string> {
+    const allSkillMetadata = await this.resolveSkillMetadataForDescriptor(descriptor);
     if (allSkillMetadata.length === 0) {
       return systemPrompt;
     }

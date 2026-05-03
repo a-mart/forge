@@ -117,6 +117,24 @@ export interface CollaborationCategoryChannelCreationDefaults {
   cwd?: string
 }
 
+export type CollaborationSkillSelectionMode = 'all' | 'custom'
+
+export interface CollaborationSkillSelectionState {
+  mode: CollaborationSkillSelectionMode
+  /** Persisted custom optional handles, including handles that are currently missing. Empty for all mode. */
+  savedSelectedSkillHandles: string[]
+  /** Currently resolved optional handles after applying inventory filtering and dropping missing handles. */
+  resolvedSkillHandles: string[]
+  /** Core skills always loaded regardless of mode, e.g. memory. */
+  alwaysOnSkillHandles: string[]
+  /** Saved custom handles that no longer resolve. Only meaningful in custom mode. */
+  missingSkillHandles?: string[]
+}
+
+export type CollaborationSkillSelectionInput =
+  | { mode: 'all' }
+  | { mode: 'custom'; savedSelectedSkillHandles: string[] }
+
 export interface CollaborationCategory {
   categoryId: string
   workspaceId: string
@@ -127,6 +145,8 @@ export interface CollaborationCategory {
   defaultSelectedSpecialistHandles: string[]
   /** Selected default handles that do not currently resolve to global collaboration specialists. */
   missingDefaultSpecialistHandles?: string[]
+  /** Default global collaboration skill selection copied to newly-created channels. */
+  defaultSkillSelection?: CollaborationSkillSelectionState
   /** @deprecated Legacy compatibility field; use channelCreationDefaults.model.modelId instead. */
   defaultModelId?: string
   /** @deprecated Legacy compatibility field; use channelCreationDefaults.model.thinkingLevel instead. */
@@ -154,6 +174,8 @@ export interface CollaborationChannel {
   activeSelectedSpecialistHandles: string[]
   /** Active selected handles that do not currently resolve to global collaboration specialists. */
   missingSelectedSpecialistHandles?: string[]
+  /** Active global collaboration skill selection for this channel. */
+  activeSkillSelection?: CollaborationSkillSelectionState
   position: number
   archived: boolean
   archivedAt?: string

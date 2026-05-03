@@ -79,6 +79,15 @@ export function groupModelsByProvider(
 /*  Handle / naming helpers                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Normalize a collaboration skill handle to match backend storage.
+ * Must stay in sync with `normalizeCollaborationSkillHandle` in
+ * `apps/backend/src/collaboration/skill-selection.ts`.
+ */
+export function normalizeCollabSkillHandle(value: string): string {
+  return value.trim().toLowerCase()
+}
+
 /** Normalize a raw string into a kebab-case handle. */
 export function normalizeHandle(raw: string): string {
   return raw

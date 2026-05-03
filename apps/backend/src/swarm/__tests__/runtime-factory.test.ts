@@ -159,6 +159,7 @@ import { ClaudeSdkUnavailableError, resetClaudeSdkLoaderForTests, setClaudeSdkIm
 import { savePins } from "../message-pins.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { RuntimeFactory } from "../runtime-factory.js";
+import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 
 function createConfig(rootDir: string): SwarmConfig {
@@ -258,6 +259,11 @@ function createFactory(
     forgeExtensionHost?: ForgeExtensionHost;
     getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
     getCredentialPoolService?: () => any;
+    getMemoryRuntimeResources?: (descriptor: AgentDescriptor) => Promise<{
+      memoryContextFile: { path: string; content: string };
+      additionalSkillPaths: string[];
+      skillMetadata: SkillMetadata[];
+    }>;
     buildAcpRuntimeSystemPrompt?: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
     skipProjectionBootstrap?: boolean;
   } = {},
@@ -299,13 +305,14 @@ function createFactory(
     getPiModelsJsonPath: () => projectionPath,
     getAgentDescriptor: overrides.getAgentDescriptor,
     getCredentialPoolService: overrides.getCredentialPoolService,
-    getMemoryRuntimeResources: async () => ({
+    getMemoryRuntimeResources: overrides.getMemoryRuntimeResources ?? (async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),
         content: "",
       },
       additionalSkillPaths: [],
-    }),
+      skillMetadata: [],
+    })),
     getSwarmContextFiles: async () => [],
     buildClaudeRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
     buildAcpRuntimeSystemPrompt:
@@ -372,6 +379,31 @@ function buildExtensionFactories(factory: RuntimeFactory, descriptor: AgentDescr
   ).buildExtensionFactories(descriptor);
 }
 
+function fakeSkillMetadata(directoryName: string, rootPath: string, skillName = directoryName) {
+  return {
+    skillId: directoryName,
+    skillName,
+    directoryName,
+    path: join(rootPath, "SKILL.md"),
+    rootPath,
+    env: [],
+    sourceKind: "machine-local" as const,
+    isInherited: false,
+    isEffective: true,
+  };
+}
+
+function fakePiSkill(name: string, filePath: string, baseDir: string) {
+  return {
+    name,
+    description: name,
+    filePath,
+    baseDir,
+    sourceInfo: {},
+    disableModelInvocation: false,
+  };
+}
+
 describe("RuntimeFactory", () => {
   beforeEach(() => {
     resetClaudeSdkLoaderForTests();
@@ -409,6 +441,104 @@ describe("RuntimeFactory", () => {
     });
     sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReset();
     sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReturnValue({});
+  });
+
+  it("strictly filters Pi runtime skills for collaboration descriptors", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await mkdir(join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill"), { recursive: true });
+    await writeFile(join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill", "SKILL.md"), "# profile", "utf8");
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({
+      id: "gpt-5.4-mini",
+      name: "GPT-5.4 mini",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 1000,
+    });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+
+    const memorySkill = fakeSkillMetadata("memory", join(rootDir, "global", "memory"));
+    const searchSkill = fakeSkillMetadata("brave-search", join(rootDir, "global", "brave-search"));
+    const customSkill = fakeSkillMetadata("stable-custom-handle", join(rootDir, "global", "stable-custom-handle"), "Mutable Display Name");
+    const manager = createManagerDescriptor(rootDir, { sessionSurface: "collab" });
+    const factory = createFactory(rootDir, {
+      getAgentDescriptor: (agentId) => agentId === manager.agentId ? manager : undefined,
+      getMemoryRuntimeResources: async () => ({
+        memoryContextFile: { path: join(rootDir, "memory.md"), content: "" },
+        additionalSkillPaths: [memorySkill.path, searchSkill.path, customSkill.path],
+        skillMetadata: [memorySkill, searchSkill, customSkill],
+      }),
+    });
+
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
+
+    const loaderOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
+      additionalSkillPaths: string[];
+      skillsOverride?: (current: { skills: unknown[]; diagnostics: unknown[] }) => { skills: unknown[]; diagnostics: unknown[] };
+    };
+    expect(loaderOptions.additionalSkillPaths).toEqual([memorySkill.path, searchSkill.path, customSkill.path]);
+    expect(loaderOptions.additionalSkillPaths).not.toContain(join(rootDir, "data", "profiles", "profile-1", "pi", "skills"));
+    expect(loaderOptions.skillsOverride).toEqual(expect.any(Function));
+
+    const bypassSkillPath = join(rootDir, ".pi", "skills", "brave-search", "SKILL.md");
+    const unselectedSkillPath = join(rootDir, "global", "not-selected-bypass", "SKILL.md");
+    const overrideResult = loaderOptions.skillsOverride!({
+      diagnostics: [],
+      skills: [
+        fakePiSkill("memory", memorySkill.path, memorySkill.rootPath),
+        fakePiSkill("brave-search", searchSkill.path, searchSkill.rootPath),
+        fakePiSkill("Mutable Display Name", customSkill.path, customSkill.rootPath),
+        fakePiSkill("brave-search", bypassSkillPath, dirname(bypassSkillPath)),
+        fakePiSkill("Not Selected Display", unselectedSkillPath, dirname(unselectedSkillPath)),
+        fakePiSkill("profile-skill", join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill", "SKILL.md"), join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill")),
+      ],
+    });
+    expect(overrideResult.skills).toEqual([
+      expect.objectContaining({ name: "memory" }),
+      expect.objectContaining({ name: "brave-search", filePath: searchSkill.path }),
+      expect.objectContaining({ name: "Mutable Display Name", filePath: customSkill.path }),
+    ]);
+  });
+
+  it("preserves Builder Pi profile skill directory discovery", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill"), { recursive: true });
+    await writeFile(join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill", "SKILL.md"), "# profile", "utf8");
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({
+      id: "gpt-5.4-mini",
+      name: "GPT-5.4 mini",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 1000,
+    });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const factory = createFactory(rootDir);
+
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
+
+    const loaderOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
+      additionalSkillPaths: string[];
+      skillsOverride?: unknown;
+    };
+    expect(loaderOptions.additionalSkillPaths).toContain(join(rootDir, "data", "profiles", "profile-1", "pi", "skills"));
+    expect(loaderOptions.skillsOverride).toBeUndefined();
   });
 
   it("surfaces Claude SDK installation guidance when the native runtime is unavailable", async () => {

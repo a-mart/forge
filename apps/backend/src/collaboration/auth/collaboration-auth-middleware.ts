@@ -19,6 +19,8 @@ const COLLABORATION_CHANNEL_SPECIALISTS_ROSTER_PROMPT_PATH =
   /^\/api\/collaboration\/channels\/[^/]+\/specialists\/roster-prompt$/;
 const COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_PATH =
   /^\/api\/collaboration\/channels\/[^/]+\/specialists\/selection$/;
+const COLLABORATION_CHANNEL_SKILLS_SELECTION_PATH =
+  /^\/api\/collaboration\/channels\/[^/]+\/skills\/selection$/;
 const COLLABORATION_CHANNEL_SPECIALIST_DETAIL_PATH =
   /^\/api\/collaboration\/channels\/[^/]+\/specialists\/[^/]+$/;
 const COLLABORATION_CATEGORIES_PATH = "/api/collaboration/categories";
@@ -162,6 +164,7 @@ export function classifyCollaborationHttpRequest(
     (normalizedMethod === "GET" && COLLABORATION_CHANNEL_SPECIALISTS_PATH.test(pathname)) ||
     (normalizedMethod === "GET" && COLLABORATION_CHANNEL_SPECIALISTS_ROSTER_PROMPT_PATH.test(pathname)) ||
     (normalizedMethod === "PUT" && COLLABORATION_CHANNEL_SPECIALISTS_SELECTION_PATH.test(pathname)) ||
+    (normalizedMethod === "PUT" && COLLABORATION_CHANNEL_SKILLS_SELECTION_PATH.test(pathname)) ||
     ((normalizedMethod === "PUT" || normalizedMethod === "DELETE") &&
       COLLABORATION_CHANNEL_SPECIALIST_DETAIL_PATH.test(pathname))
   ) {

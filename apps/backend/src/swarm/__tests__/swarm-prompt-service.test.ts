@@ -5,6 +5,7 @@ import { FileBackedPromptRegistry } from "../prompts/prompt-registry.js";
 import { writeProjectAgentRecord } from "../project-agent-storage.js";
 import { writeReferenceDoc } from "../storage/asset-root-storage.js";
 import { SwarmPromptService } from "../swarm-prompt-service.js";
+import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
 import {
   getCommonKnowledgePath,
@@ -111,6 +112,20 @@ function createProfile(defaultSessionAgentId: string): ManagerProfile {
 async function ensureMemoryFile(memoryFilePath: string, content: string): Promise<void> {
   await mkdir(dirname(memoryFilePath), { recursive: true });
   await writeFile(memoryFilePath, content, "utf8");
+}
+
+function fakeSkillMetadata(directoryName: string): SkillMetadata {
+  return {
+    skillId: directoryName,
+    skillName: directoryName,
+    directoryName,
+    path: `/skills/${directoryName}/SKILL.md`,
+    rootPath: `/skills/${directoryName}`,
+    env: [],
+    sourceKind: "builtin",
+    isInherited: false,
+    isEffective: true,
+  };
 }
 
 function specialistRegistryStub() {
@@ -641,6 +656,70 @@ describe("SwarmPromptService", () => {
 
     const files = await service.getSwarmContextFiles(level2);
     expect(files.map((f) => f.content.trim())).toEqual(["root", "level1"]);
+  });
+
+  it("uses descriptor-aware skills for preview, memory resources, Claude, and ACP prompts", async () => {
+    const { config } = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const descriptor = createManagerDescriptor(config, repoRoot, { sessionSurface: "collab" });
+    const profiles = new Map<string, ManagerProfile>([["manager", createProfile("manager")]]);
+    const descriptors = new Map<string, AgentDescriptor>([["manager", descriptor]]);
+    const promptRegistry = new FileBackedPromptRegistry({
+      dataDir,
+      repoDir: config.paths.rootDir,
+      builtinArchetypesDir: BUILTIN_ARCHETYPES,
+      builtinOperationalDir: BUILTIN_OPERATIONAL
+    });
+    await ensureMemoryFile(resolveMemoryFilePath(dataDir, descriptor, undefined), "# Session mem\n");
+    await ensureMemoryFile(getProfileMemoryPath(dataDir, "manager"), "# Profile mem\n");
+    await ensureMemoryFile(getCommonKnowledgePath(dataDir), "");
+
+    const memorySkill = fakeSkillMetadata("memory");
+    const selectedSkill = fakeSkillMetadata("brave-search");
+    const unselectedSkill = fakeSkillMetadata("agent-browser");
+    const service = new SwarmPromptService({
+      config,
+      descriptors,
+      profiles,
+      promptRegistry,
+      skillMetadataService: {
+        ensureSkillMetadataLoaded: async () => {},
+        getSkillMetadata: () => [memorySkill, selectedSkill, unselectedSkill],
+        getAdditionalSkillPaths: () => [memorySkill.path, selectedSkill.path, unselectedSkill.path]
+      } as never,
+      resolveSkillRosterForDescriptor: async () => [memorySkill, selectedSkill],
+      getAgentMemoryPath: () => resolveMemoryFilePath(dataDir, descriptor, undefined),
+      ensureAgentMemoryFile: async (path) => ensureMemoryFile(path, "# m\n"),
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => "manager",
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [descriptor],
+      loadSpecialistRegistryModule: async () => specialistRegistryStub(),
+      getIntegrationContext: () => undefined,
+      logDebug: () => {}
+    });
+
+    const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
+    const systemSection = preview.sections.find((section) => section.label === "System Prompt")?.content ?? "";
+    expect(systemSection).toContain("<name>memory</name>");
+    expect(systemSection).toContain("<name>brave-search</name>");
+    expect(systemSection).not.toContain("agent-browser");
+
+    const resources = await service.getMemoryRuntimeResources(descriptor);
+    expect(resources.additionalSkillPaths).toEqual([memorySkill.path, selectedSkill.path]);
+    expect(resources.skillMetadata.map((skill) => skill.directoryName)).toEqual(["memory", "brave-search"]);
+
+    const claudePrompt = await service.buildClaudeRuntimeSystemPrompt(descriptor, "Base prompt");
+    expect(claudePrompt).toContain("<name>memory</name>");
+    expect(claudePrompt).toContain("<name>brave-search</name>");
+    expect(claudePrompt).not.toContain("agent-browser");
+
+    const acpPrompt = await service.buildAcpRuntimeSystemPrompt(descriptor, "Base prompt");
+    expect(acpPrompt).toContain("<name>memory</name>");
+    expect(acpPrompt).toContain("<name>brave-search</name>");
+    expect(acpPrompt).not.toContain("agent-browser");
+    expect(acpPrompt).toContain("## ACP Runtime");
   });
 
   it("getMemoryRuntimeResources builds composite memory with profile + session and common knowledge", async () => {
