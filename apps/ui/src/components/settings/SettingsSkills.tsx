@@ -10,8 +10,9 @@ interface SettingsSkillsProps {
   wsUrl: string
   apiClient?: SettingsApiClient
   profiles: ManagerProfile[]
+  changeKey?: number
 }
 
-export function SettingsSkills({ wsUrl, apiClient, profiles }: SettingsSkillsProps) {
-  return <SkillsViewer wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} />
+export function SettingsSkills({ wsUrl, apiClient, profiles, changeKey }: SettingsSkillsProps) {
+  return <SkillsViewer wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} changeKey={changeKey} />
 }

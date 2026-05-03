@@ -143,6 +143,12 @@ beforeEach(() => {
   document.body.appendChild(container)
   localStorageMock.clear()
 
+  // Polyfill pointer capture methods missing in jsdom (needed for Radix Select)
+  Element.prototype.hasPointerCapture ??= vi.fn(() => false)
+  Element.prototype.setPointerCapture ??= vi.fn()
+  Element.prototype.releasePointerCapture ??= vi.fn()
+  Element.prototype.scrollIntoView ??= vi.fn()
+
   specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
   specialistsApiMock.setSpecialistsEnabledApi.mockResolvedValue(undefined)
   specialistsApiMock.saveSharedSpecialist.mockResolvedValue(undefined)
@@ -779,5 +785,110 @@ describe('SettingsSpecialists (collab mode)', () => {
     await flush()
 
     expect(container.textContent).toContain('Channel')
+  })
+
+  it('does not render ChannelSkillSelection or CategorySkillDefaultsView in channel scope', async () => {
+    const apiClient = makeCollabApiClient()
+    specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([])
+    specialistsApiMock.fetchChannelSpecialists.mockResolvedValue({
+      specialists: [],
+      selectedGlobalSpecialistHandles: [],
+      missingSelectedSpecialistHandles: [],
+    })
+    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
+    specialistsApiMock.fetchCollabCategories.mockResolvedValue([{
+      categoryId: 'cat-1',
+      workspaceId: 'ws-1',
+      name: 'Engineering',
+      defaultSelectedSpecialistHandles: [],
+      position: 0,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }])
+    specialistsApiMock.fetchCollabChannels.mockResolvedValue([{
+      channelId: 'ch-1',
+      workspaceId: 'ws-1',
+      categoryId: 'cat-1',
+      name: 'backend',
+      archived: false,
+      position: 0,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }])
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsSpecialists, {
+          wsUrl: 'ws://collab.test:47187',
+          apiClient,
+          profiles: [],
+          specialistChangeKey: 0,
+          modelConfigChangeKey: 0,
+          initialChannelId: 'ch-1',
+        }),
+      )
+    })
+    await flush()
+    await flush()
+
+    // Specialists page should NOT render skill selection controls (relocated to Skills page)
+    expect(container.textContent).not.toContain('Skill Selection')
+    expect(container.textContent).not.toContain('Default Skill Selection')
+    // But should still show specialist-related UI
+    expect(container.textContent).toContain('Specialist')
+  })
+
+  it('does not render skill defaults in category scope', async () => {
+    const apiClient = makeCollabApiClient()
+    specialistsApiMock.fetchSharedSpecialists.mockResolvedValue([])
+    specialistsApiMock.fetchSpecialistsEnabled.mockResolvedValue(true)
+    specialistsApiMock.fetchCollabCategories.mockResolvedValue([{
+      categoryId: 'cat-1',
+      workspaceId: 'ws-1',
+      name: 'Engineering',
+      defaultSelectedSpecialistHandles: [],
+      position: 0,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }])
+    specialistsApiMock.fetchCollabChannels.mockResolvedValue([])
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsSpecialists, {
+          wsUrl: 'ws://collab.test:47187',
+          apiClient,
+          profiles: [],
+          specialistChangeKey: 0,
+          modelConfigChangeKey: 0,
+        }),
+      )
+    })
+    await flush()
+    await flush()
+
+    // Switch to category scope
+    const trigger = container.querySelector('[role="combobox"]')
+    flushSync(() => {
+      trigger!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    await flush()
+
+    const options = document.body.querySelectorAll('[role="option"]')
+    const categoryOption = Array.from(options).find(
+      (el) => el.textContent?.includes('Category: Engineering'),
+    )
+    if (categoryOption) {
+      flushSync(() => {
+        categoryOption.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }))
+      })
+      await flush()
+      await flush()
+    }
+
+    // No skill defaults section on Specialists page
+    expect(container.textContent).not.toContain('Default Skill Selection')
   })
 })

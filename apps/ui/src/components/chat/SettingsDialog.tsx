@@ -97,7 +97,7 @@ export function SettingsPanel({
           telegramStatus={telegramStatus}
         />
       )}
-      {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} />}
+      {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} changeKey={specialistChangeKey} />}
       {activeTab === 'prompts' && (
         <SettingsPrompts
           wsUrl={wsUrl}

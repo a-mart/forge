@@ -394,40 +394,39 @@ Forge uses long polling to receive messages. The **poll timeout** (default 25 se
     title: 'Skills Management',
     category: 'settings',
     summary: 'Configure API keys and settings for installed agent skills.',
-    content: `Skills give agents extra capabilities like web search, image generation, and browser automation. The Skills pane shows installed skills and lets you configure their required API keys and settings.
+    content: `Skills give agents extra capabilities like web search, image generation, and browser automation. The Skills page lets you browse installed skills, inspect their files, and configure API keys and settings.
 
-## Skill selector
+## Scope and skill browser
 
-Use the dropdown at the top to filter by skill. Select "All Skills" to see every environment variable across all skills, or pick a specific skill to see only its requirements.
-
-Some skills have a gear icon in the dropdown, which means they have a dedicated configuration panel beyond basic API keys. Select that skill to see its full settings.
+Use the **Configuration scope** dropdown to switch between Global and per-profile skill views. The main area is a master-detail skill browser: a searchable skill list rail on the left, a file tree in the middle, and a file viewer on the right. Select a skill to browse its definition (\`SKILL.md\`), helper scripts, and other files.
 
 ## Environment variables
 
-Each skill declares the environment variables it needs. The pane shows:
+When a skill declares required environment variables, they appear below the browser. The pane shows:
 
 - **Variable name** — the env var key (e.g. \`BRAVE_API_KEY\`)
-- **Status** — "Set" (green) if a value is saved, "Missing" (amber) if not
-- **Required by** — which skill uses this variable
+- **Status** — whether a value is currently saved
 - **Optional** — marked if the skill works without it but gains features with it
 
-To configure a variable:
-
-1. Find the variable row.
-2. Paste the value into the input field.
-3. Click **Save**.
-
-Use the eye icon to toggle visibility. Click **Remove** to delete a saved value.
-
-Most variables have a "Get key" link that opens the provider's signup or key management page.
+To configure a variable, paste the value into the input field and click **Save**. Use the eye icon to toggle visibility, or click **Remove** to delete a saved value.
 
 ## Dedicated skill panels
 
-Skills like Chrome CDP have dedicated configuration UI that appears when you select them. These panels expose settings specific to that skill, like connection targets or scope controls.
+Skills like Chrome CDP have dedicated configuration UI that appears below the browser when selected. These panels expose settings specific to that skill, like connection targets or scope controls.
 
 ## How skills load
 
-Skills are discovered at agent startup from builtin and user directories. You don't need to restart Forge after saving an API key — the key is available to the next agent session that needs it.`,
+Skills are discovered at agent startup from builtin and user directories. You don't need to restart Forge after saving an API key — the key is available to the next agent session that needs it.
+
+## Collaboration skill selection
+
+In Collaboration mode, the Skills page adds category and channel scopes to the scope dropdown. This lets you control which skills are loaded for each collaboration context:
+
+- **Global** — browse all collaboration skills shared across channels.
+- **Category** — set the default skill selection for new channels in that category (all or custom).
+- **Channel** — choose which skills are loaded for a specific channel session.
+
+Skill selection supports two modes: **All skills** (loads every available skill) or **Custom selection** (a curated list you choose). Always-on skills like \`memory\` are always included and cannot be turned off. There is no channel-local skill authoring in V1 — collaboration only stores the selection state.`,
     keywords: [
       'skills',
       'api key',
@@ -438,8 +437,12 @@ Skills are discovered at agent startup from builtin and user directories. You do
       'image generation',
       'configuration',
       'secrets',
+      'collaboration',
+      'channel',
+      'category',
+      'selection',
     ],
-    relatedIds: ['settings-auth', 'settings-extensions'],
+    relatedIds: ['settings-auth', 'settings-extensions', 'settings-specialists'],
     contextKeys: ['settings.skills'],
   },
 
@@ -526,7 +529,7 @@ Collab Settings supports three scopes:
 
 Channel-local specialists live at \`profiles/_collaboration/sessions/<channelSessionId>/specialists/<handle>.md\` and shadow any global specialist with the same handle inside that channel.
 
-Skill selection uses the same category/channel split, but the skill files stay file-backed. Collaboration only stores selection state in SQLite: \`null\` means load all available optional skills, \`[]\` means an intentional custom empty selection, and always-on skills like \`memory\` cannot be turned off. There is no channel-local skill authoring in V1.
+Skill selection (all/custom mode per category or channel) is managed on the **Skills** settings page, not here.
 
 ## Filtering the roster
 

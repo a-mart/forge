@@ -4,7 +4,9 @@ import { FolderOpen, Loader2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -16,7 +18,7 @@ import { SkillFileTree } from './SkillFileTree'
 import { SkillFileViewer } from './SkillFileViewer'
 import { fetchSkillInventory } from './skills-viewer-api'
 import type { SkillInventoryEntry } from './skills-viewer-types'
-import type { ManagerProfile } from '@forge/protocol'
+import type { ManagerProfile, CollaborationCategory, CollaborationChannel } from '@forge/protocol'
 import type { SettingsEnvVariable } from '../settings-types'
 import {
   fetchSettingsEnvVariables,
@@ -27,6 +29,10 @@ import {
 import type { SettingsApiClient } from '../settings-api-client'
 import { SettingsChromeCdp } from '../SettingsChromeCdp'
 import { SkillEnvVariables } from './SkillEnvVariables'
+import { fetchCollabCategories, fetchCollabChannels } from '../specialists-api'
+import { CategorySkillDefaultsView } from '../specialists/CategorySkillDefaultsView'
+import { ChannelSkillSelection } from '../specialists/ChannelSkillSelection'
+import { CollabSettingsBanner } from '../specialists/CollabSettingsBanner'
 
 
 /* ------------------------------------------------------------------ */
@@ -34,6 +40,8 @@ import { SkillEnvVariables } from './SkillEnvVariables'
 /* ------------------------------------------------------------------ */
 
 const SCOPE_GLOBAL = '__global__'
+const COLLAB_CATEGORY_PREFIX = 'category:'
+const COLLAB_CHANNEL_PREFIX = 'channel:'
 
 /** Skills that have a dedicated rich configuration panel. */
 const RICH_CONFIG_SKILLS: Record<
@@ -51,14 +59,86 @@ interface SkillsViewerProps {
   wsUrl: string
   apiClient?: SettingsApiClient
   profiles: ManagerProfile[]
+  changeKey?: number
+  /** Optional initial scope value (e.g. 'channel:ch-1') for testing */
+  initialScope?: string
 }
 
-export function SkillsViewer({ wsUrl, apiClient, profiles }: SkillsViewerProps) {
+export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialScope }: SkillsViewerProps) {
   useHelpContext('settings.skills')
   const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
+  const isCollab = apiClient?.target.kind === 'collab'
 
   /* ---------- Scope ---------- */
-  const [selectedScope, setSelectedScope] = useState<string>(SCOPE_GLOBAL)
+  const [selectedScope, setSelectedScope] = useState<string>(initialScope ?? SCOPE_GLOBAL)
+
+  /* ---------- Collab scope detection ---------- */
+  const isCollabCategory = selectedScope.startsWith(COLLAB_CATEGORY_PREFIX)
+  const isCollabChannel = selectedScope.startsWith(COLLAB_CHANNEL_PREFIX)
+  const collabCategoryId = isCollabCategory ? selectedScope.slice(COLLAB_CATEGORY_PREFIX.length) : undefined
+  const collabChannelId = isCollabChannel ? selectedScope.slice(COLLAB_CHANNEL_PREFIX.length) : undefined
+  const skillLoadScope = (isCollabCategory || isCollabChannel) ? SCOPE_GLOBAL : selectedScope
+
+  /* ---------- Collab data ---------- */
+  const [collabCategories, setCollabCategories] = useState<CollaborationCategory[]>([])
+  const [collabChannels, setCollabChannels] = useState<CollaborationChannel[]>([])
+
+  useEffect(() => {
+    if (!isCollab) return
+    let cancelled = false
+    Promise.all([
+      fetchCollabCategories(clientOrWsUrl),
+      fetchCollabChannels(clientOrWsUrl),
+    ])
+      .then(([categories, channels]) => {
+        if (!cancelled) {
+          setCollabCategories(categories)
+          setCollabChannels(channels.filter((ch) => !ch.archived))
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [isCollab, clientOrWsUrl, changeKey])
+
+  /* ---------- Channel skill selection state ---------- */
+  const selectedChannelDto = isCollabChannel
+    ? collabChannels.find((ch) => ch.channelId === collabChannelId)
+    : undefined
+  const [channelSkillSelection, setChannelSkillSelection] = useState(selectedChannelDto?.activeSkillSelection)
+
+  useEffect(() => {
+    setChannelSkillSelection(selectedChannelDto?.activeSkillSelection)
+  }, [selectedChannelDto])
+
+  const handleChannelSkillSelectionSaved = useCallback(
+    (updated: { activeSkillSelection?: import('@forge/protocol').CollaborationSkillSelectionState }) => {
+      setChannelSkillSelection(updated.activeSkillSelection)
+      if (collabChannelId && updated.activeSkillSelection) {
+        setCollabChannels((prev) =>
+          prev.map((ch) =>
+            ch.channelId === collabChannelId
+              ? { ...ch, activeSkillSelection: updated.activeSkillSelection }
+              : ch,
+          ),
+        )
+      }
+    },
+    [collabChannelId],
+  )
+
+  const handleCategoryUpdated = useCallback((updated: CollaborationCategory) => {
+    setCollabCategories((prev) =>
+      prev.map((c) => (c.categoryId === updated.categoryId ? updated : c)),
+    )
+  }, [])
+
+  const selectedCategory = isCollabCategory
+    ? collabCategories.find((c) => c.categoryId === collabCategoryId)
+    : undefined
+
+  const selectedChannelLabel = isCollabChannel
+    ? collabChannels.find((ch) => ch.channelId === collabChannelId)?.name ?? collabChannelId ?? ''
+    : ''
 
   /* ---------- Skills ---------- */
   const [skills, setSkills] = useState<SkillInventoryEntry[]>([])
@@ -146,8 +226,8 @@ export function SkillsViewer({ wsUrl, apiClient, profiles }: SkillsViewerProps) 
   }, [clientOrWsUrl])
 
   useEffect(() => {
-    void loadSkills(selectedScope)
-  }, [loadSkills, selectedScope])
+    void loadSkills(skillLoadScope)
+  }, [loadSkills, skillLoadScope])
 
   useEffect(() => {
     void loadVariables()
@@ -161,12 +241,13 @@ export function SkillsViewer({ wsUrl, apiClient, profiles }: SkillsViewerProps) 
 
   /* Keep scope valid when profiles change */
   useEffect(() => {
+    if (isCollab) return
     setSelectedScope((prev) => {
       if (prev === SCOPE_GLOBAL) return prev
       if (profiles.some((p) => p.profileId === prev)) return prev
       return SCOPE_GLOBAL
     })
-  }, [profiles])
+  }, [profiles, isCollab])
 
   /* ---------- Skill selection ---------- */
 
@@ -238,22 +319,32 @@ export function SkillsViewer({ wsUrl, apiClient, profiles }: SkillsViewerProps) 
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Collab settings banner */}
+      {isCollab && apiClient && (
+        <CollabSettingsBanner apiClient={apiClient} />
+      )}
+
       {/* Scope selector */}
       <SettingsSection
         label="Skills"
-        description="Browse, inspect, and configure installed skills."
+        description={isCollab
+          ? 'Browse, inspect, and configure installed skills. Select a category or channel to manage skill selection.'
+          : 'Browse, inspect, and configure installed skills.'}
       >
         <div className="flex flex-col gap-1.5">
           <Label className="text-xs font-medium text-muted-foreground">
             Configuration scope
           </Label>
           <Select value={selectedScope} onValueChange={setSelectedScope}>
-            <SelectTrigger className="w-full sm:w-64">
+            <SelectTrigger className="w-full sm:w-72">
               <SelectValue placeholder="Select scope" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={SCOPE_GLOBAL}>Global</SelectItem>
-              {profiles.map((profile) => (
+              <SelectItem value={SCOPE_GLOBAL}>
+                {isCollab ? 'Global Collaboration' : 'Global'}
+              </SelectItem>
+              {/* Builder: show profiles */}
+              {!isCollab && profiles.map((profile) => (
                 <SelectItem
                   key={profile.profileId}
                   value={profile.profileId}
@@ -261,10 +352,65 @@ export function SkillsViewer({ wsUrl, apiClient, profiles }: SkillsViewerProps) 
                   {profile.displayName || profile.profileId}
                 </SelectItem>
               ))}
+              {/* Collab: show categories */}
+              {isCollab && collabCategories.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel className="text-xs">Categories</SelectLabel>
+                  {collabCategories.map((cat) => (
+                    <SelectItem
+                      key={`category:${cat.categoryId}`}
+                      value={`${COLLAB_CATEGORY_PREFIX}${cat.categoryId}`}
+                    >
+                      Category: {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+              {/* Collab: show channels */}
+              {isCollab && collabChannels.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel className="text-xs">Channels</SelectLabel>
+                  {collabChannels.map((ch) => (
+                    <SelectItem
+                      key={`channel:${ch.channelId}`}
+                      value={`${COLLAB_CHANNEL_PREFIX}${ch.channelId}`}
+                    >
+                      #{ch.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
             </SelectContent>
           </Select>
         </div>
       </SettingsSection>
+
+      {/* Collab: Category skill defaults */}
+      {isCollabCategory && selectedCategory && (
+        <CategorySkillDefaultsView
+          clientOrWsUrl={clientOrWsUrl}
+          category={selectedCategory}
+          changeKey={changeKey ?? 0}
+          onCategoryUpdated={handleCategoryUpdated}
+        />
+      )}
+      {isCollabCategory && !selectedCategory && !skillsLoading && (
+        <div className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+          <p className="text-xs text-destructive">Category not found.</p>
+        </div>
+      )}
+
+      {/* Collab: Channel skill selection */}
+      {isCollabChannel && (
+        <ChannelSkillSelection
+          clientOrWsUrl={clientOrWsUrl}
+          channelId={collabChannelId!}
+          channelLabel={selectedChannelLabel}
+          activeSkillSelection={channelSkillSelection}
+          changeKey={changeKey ?? 0}
+          onSelectionSaved={handleChannelSkillSelectionSaved}
+        />
+      )}
 
       {/* Loading state */}
       {skillsLoading && skills.length === 0 && (
@@ -273,10 +419,12 @@ export function SkillsViewer({ wsUrl, apiClient, profiles }: SkillsViewerProps) 
         </div>
       )}
 
-      {/* Empty state for profile scope with no skills */}
+      {/* Empty state for profile scope with no skills (builder only — collab category/channel scopes load global skills) */}
       {!skillsLoading &&
         skills.length === 0 &&
-        selectedScope !== SCOPE_GLOBAL && (
+        selectedScope !== SCOPE_GLOBAL &&
+        !isCollabCategory &&
+        !isCollabChannel && (
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
             <FolderOpen className="mb-2 size-8 text-muted-foreground/40" />
             <p className="text-sm text-muted-foreground">
