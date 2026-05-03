@@ -21,7 +21,7 @@ The builtin manager archetype is intentionally concise and outcome-first in user
 
 Use this public repo/worktree as the active implementation target for collaboration work, including the collaboration server/runtime target, backend auth/DB/routes/WS, UI, protocol, and Docker/full UI serving path. If historical reference is needed, the private `/Users/adam/repos/forge-collab` repo may be consulted as legacy/reference only. Always pass an explicit `cwd` before editing.
 
-For any Collab SQLite schema or migration work, follow [docs/collaboration.md](docs/collaboration.md#collaboration-sqlite-migration-policy). Structured Collab state belongs in SQLite, while user-authored specialist markdown, prompts, and reference docs stay file-backed.
+For any Collab SQLite schema or migration work, follow [docs/collaboration.md](docs/collaboration.md#collaboration-sqlite-migration-policy). Structured Collab state belongs in SQLite, while user-authored specialist markdown, prompts, reference docs, and skill definitions stay file-backed; SQLite stores only structured skill-selection state.
 
 ## Prerequisites
 
