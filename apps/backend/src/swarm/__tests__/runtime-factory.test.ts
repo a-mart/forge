@@ -718,45 +718,48 @@ describe("RuntimeFactory", () => {
     );
   });
 
-  it("applies OpenAI Codex transport settings from environment overrides", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(rootDir, { recursive: true });
-    await seedProjectionFile(rootDir);
+  it.each(["sse", "websocket", "websocket-cached", "auto"] as const)(
+    "applies explicit OpenAI Codex transport override %s from the environment",
+    async (transport) => {
+      const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+      await mkdir(rootDir, { recursive: true });
+      await seedProjectionFile(rootDir);
 
-    piCodingAgentMockState.modelRegistryFind.mockReturnValue({
-      id: "gpt-5.4-mini",
-      name: "GPT-5.4 mini",
-      api: "openai-codex-responses",
-      provider: "openai-codex",
-      baseUrl: "https://chatgpt.com/backend-api",
-      reasoning: true,
-      input: ["text"],
-      cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 1000,
-      maxTokens: 1000,
-    });
-    piCodingAgentMockState.createAgentSession.mockResolvedValue({
-      session: createMockPiSession(),
-      extensionsResult: { extensions: [], errors: [] },
-    });
-    process.env.FORGE_OPENAI_CODEX_TRANSPORT = "websocket-cached";
+      piCodingAgentMockState.modelRegistryFind.mockReturnValue({
+        id: "gpt-5.4-mini",
+        name: "GPT-5.4 mini",
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+        baseUrl: "https://chatgpt.com/backend-api",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 1000,
+        maxTokens: 1000,
+      });
+      piCodingAgentMockState.createAgentSession.mockResolvedValue({
+        session: createMockPiSession(),
+        extensionsResult: { extensions: [], errors: [] },
+      });
+      process.env.FORGE_OPENAI_CODEX_TRANSPORT = transport;
 
-    const factory = createFactory(rootDir);
-    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
+      const factory = createFactory(rootDir);
+      await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
 
-    expect(piCodingAgentMockState.settingsManagerCreate).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.stringContaining("agent"),
-    );
-    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({
-      transport: "websocket-cached",
-    });
-    expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        settingsManager: expect.any(Object),
-      }),
-    );
-  });
+      expect(piCodingAgentMockState.settingsManagerCreate).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining("agent"),
+      );
+      expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({
+        transport,
+      });
+      expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settingsManager: expect.any(Object),
+        }),
+      );
+    },
+  );
 
   it("keeps non-Codex Pi runtimes on their existing settings path", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
@@ -799,7 +802,7 @@ describe("RuntimeFactory", () => {
   it.each([
     [undefined, "unset"],
     ["invalid-transport", "invalid"],
-  ])("defaults OpenAI Codex transport to SSE for behavior compatibility when env is %s", async (transportEnv) => {
+  ])("defaults OpenAI Codex transport to websocket-cached when env is %s", async (transportEnv) => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
     await seedProjectionFile(rootDir);
@@ -827,7 +830,7 @@ describe("RuntimeFactory", () => {
     const factory = createFactory(rootDir);
     await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
 
-    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({ transport: "sse" });
+    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({ transport: "websocket-cached" });
   });
 
   it("fails fast when the generated Pi projection file is missing", async () => {

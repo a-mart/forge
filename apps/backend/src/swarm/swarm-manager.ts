@@ -6360,14 +6360,14 @@ function selectedOpenAICodexTransport(): CodexTransportDebugAgentDiagnostics["se
   switch (rawTransport) {
     case undefined:
     case "":
-      return "sse";
+      return "websocket-cached";
     case "sse":
     case "websocket":
     case "websocket-cached":
     case "auto":
       return rawTransport;
     default:
-      return "sse";
+      return "websocket-cached";
   }
 }
 
