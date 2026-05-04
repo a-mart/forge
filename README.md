@@ -265,7 +265,7 @@ The `.env.example` file documents all available options with comments. Key categ
 - **Core** — host, port, data directory, debug mode
 - **UI** — WebSocket URL override (dev only, production auto-resolves)
 - **Skills** — API keys for Brave Search, Gemini image generation
-- **Agent Runtimes** — Codex API key and binary path
+- **Agent Runtimes** — OpenAI Codex Responses transport (defaults to `websocket-cached`; set `FORGE_OPENAI_CODEX_TRANSPORT=sse` to restore SSE, or use `websocket`, `websocket-cached`, or `auto`), plus optional sanitized transport diagnostics via `FORGE_CODEX_TRANSPORT_DEBUG=1` at `GET /api/debug/codex-transport`
 - **Playwright** — dashboard toggle (macOS/Linux only)
 
 Provider auth for LLM providers (OpenAI, Anthropic, xAI) is configured in the dashboard UI under **Settings → Authentication**, where each row shows the provider label plus an auth-mode badge. OpenAI and Anthropic can use OAuth or API key auth; Claude SDK stays OAuth-only via Claude Code CLI. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
