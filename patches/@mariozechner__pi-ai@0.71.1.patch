@@ -1,3 +1,15 @@
+diff --git a/dist/providers/simple-options.js b/dist/providers/simple-options.js
+index c7cfbfe..3794942 100644
+--- a/dist/providers/simple-options.js
++++ b/dist/providers/simple-options.js
+@@ -5,6 +5,7 @@ export function buildBaseOptions(model, options, apiKey) {
+         maxTokens: options?.maxTokens ?? (model.maxTokens > 0 ? Math.min(model.maxTokens, 32000) : undefined),
+         signal: options?.signal,
+         apiKey: apiKey || options?.apiKey,
++        transport: options?.transport,
+         cacheRetention: options?.cacheRetention,
+         sessionId: options?.sessionId,
+         headers: options?.headers,
 diff --git a/dist/providers/openai-completions.js b/dist/providers/openai-completions.js
 index 34ba15a..eeb4937 100644
 --- a/dist/providers/openai-completions.js
