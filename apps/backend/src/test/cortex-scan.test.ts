@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -633,6 +633,34 @@ describe('cortex-scan script', () => {
       status: 'up-to-date',
     })
     expect(result.summary).toMatchObject({ needsReview: 0, sessionsWithTranscriptDrift: 0, attentionBytes: 0 })
+  })
+
+  it('fails safe without parsing very large post-watermark transcript regions', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+    const profileId = 'alpha'
+    const sessionId = 'alpha--large-delta'
+    const reviewed = jsonlLine({ type: 'session', id: 's1' })
+    const reviewedBytes = Buffer.byteLength(reviewed, 'utf8')
+    await writeSessionFile(dataDir, profileId, sessionId, 'session.jsonl', reviewed)
+    const sessionPath = join(dataDir, 'profiles', profileId, 'sessions', sessionId, 'session.jsonl')
+    const rawTotalBytes = reviewedBytes + 8 * 1024 * 1024 + 1
+    await truncate(sessionPath, rawTotalBytes)
+    await writeMeta(dataDir, profileId, sessionId, {
+      profileId,
+      sessionId,
+      cortexReviewedBytes: reviewedBytes,
+      cortexReviewedAt: '2026-03-01T00:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+
+    expect(result.sessions[0]).toMatchObject({
+      deltaBytes: rawTotalBytes - reviewedBytes,
+      unknownTranscriptDeltaBytes: rawTotalBytes - reviewedBytes,
+      reviewableTranscriptDeltaBytes: 0,
+      malformedTranscriptDeltaBytes: 0,
+      status: 'needs-review',
+    })
   })
 
   it('fails safe on unknown custom and malformed post-watermark transcript records', async () => {

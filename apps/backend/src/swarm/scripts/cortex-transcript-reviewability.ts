@@ -16,6 +16,8 @@ export const IGNORABLE_INTERNAL_CUSTOM_TYPES = new Set<string>([
   "swarm_acp_runtime_state",
 ]);
 
+const MAX_CLASSIFIED_TRANSCRIPT_DELTA_BYTES = 8 * 1024 * 1024;
+
 export interface TranscriptReviewableStats {
   rawTotalBytes: number;
   rawReviewedBytes: number;
@@ -64,10 +66,24 @@ export async function analyzeSessionTranscriptReviewability(options: {
     return stats;
   }
 
-  let pending = Buffer.alloc(0);
-  let lineStartBytes = 0;
+  if (compacted || rawDeltaBytes <= 0) {
+    return stats;
+  }
 
-  for await (const chunk of createReadStream(options.sessionFile)) {
+  if (rawDeltaBytes > MAX_CLASSIFIED_TRANSCRIPT_DELTA_BYTES) {
+    // GET /api/cortex/scan runs in the UI refresh path. Some real data dirs have
+    // multi-GB aggregate transcripts, so classifying very large post-watermark
+    // regions synchronously can make the dashboard look hung after restart. Fail
+    // safe: report the unclassified tail as actionable unknown transcript and let
+    // the actual Cortex review advance the watermark.
+    stats.unknownTranscriptDeltaBytes = rawDeltaBytes;
+    return stats;
+  }
+
+  let pending = Buffer.alloc(0);
+  let lineStartBytes = rawReviewedBytes;
+
+  for await (const chunk of createReadStream(options.sessionFile, { start: rawReviewedBytes })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     pending = pending.length === 0 ? buffer : Buffer.concat([pending, buffer]);
 

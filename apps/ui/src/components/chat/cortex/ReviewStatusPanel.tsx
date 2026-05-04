@@ -532,11 +532,13 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
     return new Set()
   })
   const abortRef = useRef<AbortController | null>(null)
+  const scanInFlightRef = useRef(false)
 
   const doScan = useCallback(() => {
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
+    scanInFlightRef.current = true
 
     setScanState('loading')
     setError(null)
@@ -557,6 +559,13 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
         setError(message)
         setScanState('error')
       })
+      .finally(() => {
+        // Only clear the in-flight flag if this is still the active controller.
+        // A forced refresh replaces abortRef.current before the old promise settles.
+        if (abortRef.current === controller) {
+          scanInFlightRef.current = false
+        }
+      })
   }, [wsUrl])
 
   useEffect(() => {
@@ -568,7 +577,12 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      doScan()
+      // Skip this tick if a scan is already in flight. Without this guard,
+      // a slow backend scan can be aborted and restarted every interval,
+      // creating an infinite loop where scanData never populates.
+      if (!scanInFlightRef.current) {
+        doScan()
+      }
     }, 8000)
 
     return () => {
