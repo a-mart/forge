@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentDescriptor as ProtocolAgentDescriptor,
   CortexReviewRunAxis,
+  CortexReviewRunDispatchState,
   CortexReviewRunRecord,
   CortexReviewRunScope,
   CortexReviewRunStatus,
@@ -35,6 +36,13 @@ export interface StoredCortexReviewRun {
   interruptedAt?: string | null;
   interruptionReason?: string | null;
   scheduleName?: string | null;
+  dispatchState?: CortexReviewRunDispatchState | null;
+  dispatchStartedAt?: string | null;
+  dispatchedAt?: string | null;
+  predecessorRunId?: string | null;
+  successorRunId?: string | null;
+  requeueReason?: string | null;
+  dispatchFailureCount?: number | null;
 }
 
 export interface ParsedScheduledTaskEnvelope {
@@ -77,17 +85,36 @@ export async function appendCortexReviewRun(
   dataDir: string,
   run: StoredCortexReviewRun
 ): Promise<void> {
+  await updateCortexReviewRuns(dataDir, (runs) => [run, ...runs.filter((entry) => entry.runId !== run.runId)]);
+}
+
+export async function updateCortexReviewRuns(
+  dataDir: string,
+  mutator: (runs: StoredCortexReviewRun[]) => StoredCortexReviewRun[]
+): Promise<StoredCortexReviewRun[]> {
   const path = getCortexReviewRunsPath(dataDir);
   await mkdir(dirname(path), { recursive: true });
 
   const current = await readCortexReviewRunsFile(dataDir);
-  const deduped = current.runs.filter((entry) => entry.runId !== run.runId);
+  const mutated = mutator(current.runs.slice());
+  const deduped: StoredCortexReviewRun[] = [];
+  const seenRunIds = new Set<string>();
+  for (const run of mutated) {
+    const normalized = normalizeStoredCortexReviewRun(run);
+    if (seenRunIds.has(normalized.runId)) {
+      continue;
+    }
+    seenRunIds.add(normalized.runId);
+    deduped.push(normalized);
+  }
+
   const next: StoredCortexReviewRunsFile = {
     version: CORTEX_REVIEW_RUNS_FILE_VERSION,
-    runs: [run, ...deduped].slice(0, MAX_STORED_CORTEX_REVIEW_RUNS)
+    runs: deduped.slice(0, MAX_STORED_CORTEX_REVIEW_RUNS)
   };
 
   await writeJsonFileAtomic(path, next);
+  return next.runs;
 }
 
 export async function readStoredCortexReviewRuns(dataDir: string): Promise<StoredCortexReviewRun[]> {
@@ -174,7 +201,14 @@ export function buildLiveCortexReviewRunRecord(options: {
     blockedReason: options.stored.blockedReason ?? null,
     interruptedAt: options.stored.interruptedAt ?? null,
     interruptionReason: options.stored.interruptionReason ?? null,
-    scheduleName: options.stored.scheduleName ?? null
+    scheduleName: options.stored.scheduleName ?? null,
+    dispatchState: options.stored.dispatchState ?? null,
+    dispatchStartedAt: options.stored.dispatchStartedAt ?? null,
+    dispatchedAt: options.stored.dispatchedAt ?? null,
+    predecessorRunId: options.stored.predecessorRunId ?? null,
+    successorRunId: options.stored.successorRunId ?? null,
+    requeueReason: options.stored.requeueReason ?? null,
+    dispatchFailureCount: options.stored.dispatchFailureCount ?? null
   };
 }
 
@@ -187,7 +221,7 @@ async function readCortexReviewRunsFile(dataDir: string): Promise<StoredCortexRe
 
   return {
     version: typeof parsed.version === "number" ? parsed.version : CORTEX_REVIEW_RUNS_FILE_VERSION,
-    runs: parsed.runs.filter(isStoredCortexReviewRun)
+    runs: parsed.runs.filter(isStoredCortexReviewRun).map(normalizeStoredCortexReviewRun)
   };
 }
 
@@ -202,6 +236,10 @@ export function deriveLiveStatus(
 
   if (stored.interruptedAt || stored.interruptionReason) {
     return "interrupted";
+  }
+
+  if ((stored.dispatchState ?? inferDispatchState(stored)) !== "dispatched") {
+    return "queued";
   }
 
   if (!stored.sessionAgentId) {
@@ -278,8 +316,38 @@ function isStoredCortexReviewRun(value: unknown): value is StoredCortexReviewRun
     (candidate.blockedReason === undefined || candidate.blockedReason === null || typeof candidate.blockedReason === "string") &&
     (candidate.interruptedAt === undefined || candidate.interruptedAt === null || typeof candidate.interruptedAt === "string") &&
     (candidate.interruptionReason === undefined || candidate.interruptionReason === null || typeof candidate.interruptionReason === "string") &&
-    (candidate.scheduleName === undefined || candidate.scheduleName === null || typeof candidate.scheduleName === "string")
+    (candidate.scheduleName === undefined || candidate.scheduleName === null || typeof candidate.scheduleName === "string") &&
+    (candidate.dispatchState === undefined || candidate.dispatchState === null || isCortexReviewRunDispatchState(candidate.dispatchState)) &&
+    (candidate.dispatchStartedAt === undefined || candidate.dispatchStartedAt === null || typeof candidate.dispatchStartedAt === "string") &&
+    (candidate.dispatchedAt === undefined || candidate.dispatchedAt === null || typeof candidate.dispatchedAt === "string") &&
+    (candidate.predecessorRunId === undefined || candidate.predecessorRunId === null || typeof candidate.predecessorRunId === "string") &&
+    (candidate.successorRunId === undefined || candidate.successorRunId === null || typeof candidate.successorRunId === "string") &&
+    (candidate.requeueReason === undefined || candidate.requeueReason === null || typeof candidate.requeueReason === "string") &&
+    (candidate.dispatchFailureCount === undefined ||
+      candidate.dispatchFailureCount === null ||
+      (typeof candidate.dispatchFailureCount === "number" && Number.isFinite(candidate.dispatchFailureCount)))
   );
+}
+
+function normalizeStoredCortexReviewRun(run: StoredCortexReviewRun): StoredCortexReviewRun {
+  return {
+    ...run,
+    dispatchState: run.dispatchState ?? inferDispatchState(run),
+    dispatchStartedAt: run.dispatchStartedAt ?? null,
+    dispatchedAt: run.dispatchedAt ?? null,
+    predecessorRunId: run.predecessorRunId ?? null,
+    successorRunId: run.successorRunId ?? null,
+    requeueReason: run.requeueReason ?? null,
+    dispatchFailureCount: run.dispatchFailureCount ?? null,
+  };
+}
+
+function inferDispatchState(run: StoredCortexReviewRun): CortexReviewRunDispatchState {
+  return run.sessionAgentId ? "dispatched" : "queued";
+}
+
+function isCortexReviewRunDispatchState(value: unknown): value is CortexReviewRunDispatchState {
+  return value === "queued" || value === "session_created" || value === "dispatched";
 }
 
 function isCortexReviewRunTrigger(value: unknown): value is CortexReviewRunTrigger {

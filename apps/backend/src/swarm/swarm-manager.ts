@@ -1595,6 +1595,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     // Reordering these calls will silently break interrupted-run detection.
     await this.cortexService.reconcileInterruptedReviewRunsForBoot();
     this.normalizeStreamingStatusesForBoot();
+    await this.cortexService.recoverIncompleteReviewRunDispatchesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
 
     // Reconcile project agent storage: hydrate descriptors from on-disk config,

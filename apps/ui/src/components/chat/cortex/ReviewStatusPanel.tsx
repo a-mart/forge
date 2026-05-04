@@ -32,6 +32,14 @@ interface ScanSession {
   totalBytes: number
   reviewedBytes: number
   reviewedAt: string | null
+  sliceStartBytes?: number
+  reviewableTranscriptDeltaBytes?: number
+  reviewableTranscriptTotalBytes?: number
+  reviewableTranscriptReviewedBytes?: number
+  ignoredInternalTranscriptDeltaBytes?: number
+  unknownTranscriptDeltaBytes?: number
+  malformedTranscriptDeltaBytes?: number
+  transcriptCompacted?: boolean
   reviewExcluded: boolean
   reviewExcludedAt: string | null
   memoryDeltaBytes: number
@@ -58,6 +66,12 @@ interface CortexScanResponse {
       reviewedBytes: number
       transcriptTotalBytes: number
       transcriptReviewedBytes: number
+      reviewableTranscriptTotalBytes?: number
+      reviewableTranscriptReviewedBytes?: number
+      reviewableTranscriptDeltaBytes?: number
+      ignoredInternalTranscriptDeltaBytes?: number
+      unknownTranscriptDeltaBytes?: number
+      malformedTranscriptDeltaBytes?: number
       memoryTotalBytes: number
       memoryReviewedBytes: number
       feedbackTotalBytes: number
@@ -105,12 +119,37 @@ function truncateMiddle(text: string, maxLength = 180): string {
   return `${text.slice(0, maxLength - 1)}…`
 }
 
+function getTranscriptReviewableDelta(result: ScanSession): number {
+  return result.reviewableTranscriptDeltaBytes ?? result.deltaBytes
+}
+
+function getTranscriptUnknownDelta(result: ScanSession): number {
+  return result.unknownTranscriptDeltaBytes ?? 0
+}
+
+function getTranscriptMalformedDelta(result: ScanSession): number {
+  return result.malformedTranscriptDeltaBytes ?? 0
+}
+
+function isTranscriptCompacted(result: ScanSession): boolean {
+  return result.transcriptCompacted ?? result.deltaBytes < 0
+}
+
+function hasActionableTranscriptDrift(result: ScanSession): boolean {
+  return (
+    isTranscriptCompacted(result) ||
+    getTranscriptReviewableDelta(result) > 0 ||
+    getTranscriptUnknownDelta(result) > 0 ||
+    getTranscriptMalformedDelta(result) > 0
+  )
+}
+
 function getSessionStatus(result: ScanSession): ReviewDisplayStatus {
   if (result.reviewExcluded) {
     return 'excluded'
   }
 
-  if (result.deltaBytes < 0 || result.memoryDeltaBytes < 0 || result.feedbackDeltaBytes < 0) {
+  if (isTranscriptCompacted(result) || result.memoryDeltaBytes < 0 || result.feedbackDeltaBytes < 0) {
     return 'compacted'
   }
 
@@ -128,8 +167,15 @@ function getSessionStatus(result: ScanSession): ReviewDisplayStatus {
 function buildSessionReasonPills(result: ScanSession): string[] {
   const reasons: string[] = []
 
-  if (result.deltaBytes < 0) reasons.push('transcript compacted')
-  else if (result.deltaBytes > 0) reasons.push(`${formatBytes(result.deltaBytes)} transcript`)
+  if (isTranscriptCompacted(result)) reasons.push('transcript compacted')
+  else {
+    if (getTranscriptReviewableDelta(result) > 0) reasons.push(`${formatBytes(getTranscriptReviewableDelta(result))} transcript`)
+    if (getTranscriptUnknownDelta(result) > 0) reasons.push(`${formatBytes(getTranscriptUnknownDelta(result))} unknown transcript`)
+    if (getTranscriptMalformedDelta(result) > 0) reasons.push(`${formatBytes(getTranscriptMalformedDelta(result))} malformed transcript`)
+    if (!hasActionableTranscriptDrift(result) && (result.ignoredInternalTranscriptDeltaBytes ?? 0) > 0) {
+      reasons.push(`${formatBytes(result.ignoredInternalTranscriptDeltaBytes ?? 0)} internal runtime entries ignored`)
+    }
+  }
 
   if (result.memoryDeltaBytes < 0) reasons.push('memory compacted')
   else if (result.memoryDeltaBytes > 0) reasons.push(`${formatBytes(result.memoryDeltaBytes)} memory`)
@@ -152,7 +198,7 @@ function buildSessionReasonPills(result: ScanSession): string[] {
 function buildReviewScope(result: ScanSession): CortexReviewRunScope {
   const axes: CortexReviewRunAxis[] = []
 
-  if (result.deltaBytes !== 0) axes.push('transcript')
+  if (hasActionableTranscriptDrift(result)) axes.push('transcript')
   if (result.memoryDeltaBytes !== 0) axes.push('memory')
   if (result.feedbackDeltaBytes !== 0 || result.feedbackTimestampDrift) axes.push('feedback')
 
@@ -342,22 +388,54 @@ function getProfileGroupContentId(profileId: string): string {
   return `cortex-review-profile-${profileId.replace(/[^a-zA-Z0-9_-]+/g, '-')}`
 }
 
-function compareReviewRuns(a: CortexReviewRunRecord, b: CortexReviewRunRecord): number {
-  const statusPriority: Record<CortexReviewRunRecord['status'], number> = {
-    running: 0,
-    blocked: 1,
-    queued: 2,
-    interrupted: 3,
-    stopped: 4,
-    completed: 5,
+interface RecentReviewRunItem {
+  run: CortexReviewRunRecord
+  predecessor?: CortexReviewRunRecord
+}
+
+function isActiveReviewRunStatus(status: CortexReviewRunRecord['status']): boolean {
+  return status === 'running' || status === 'blocked' || status === 'queued'
+}
+
+function getReviewRunEffectiveTime(run: CortexReviewRunRecord): number {
+  const timestamp = run.interruptedAt ?? run.dispatchedAt ?? run.requestedAt
+  const parsed = new Date(timestamp).getTime()
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function compareRecentReviewRunItems(a: RecentReviewRunItem, b: RecentReviewRunItem): number {
+  const activeDiff = Number(isActiveReviewRunStatus(b.run.status)) - Number(isActiveReviewRunStatus(a.run.status))
+  if (activeDiff !== 0) return activeDiff
+
+  return getReviewRunEffectiveTime(b.run) - getReviewRunEffectiveTime(a.run)
+}
+
+function buildRecentRunItems(reviewRuns: CortexReviewRunRecord[]): RecentReviewRunItem[] {
+  const runById = new Map(reviewRuns.map((run) => [run.runId, run]))
+  const collapsedPredecessorIds = new Set<string>()
+  const items: RecentReviewRunItem[] = []
+
+  for (const run of reviewRuns) {
+    const predecessor = run.predecessorRunId
+      ? runById.get(run.predecessorRunId)
+      : reviewRuns.find((candidate) => candidate.successorRunId === run.runId)
+    if (predecessor) {
+      collapsedPredecessorIds.add(predecessor.runId)
+      items.push({ run, predecessor })
+    }
   }
 
-  const priorityDiff = statusPriority[a.status] - statusPriority[b.status]
-  if (priorityDiff !== 0) {
-    return priorityDiff
+  for (const run of reviewRuns) {
+    if (collapsedPredecessorIds.has(run.runId)) continue
+    if (run.predecessorRunId && runById.has(run.predecessorRunId)) continue
+    items.push({ run })
   }
 
-  return new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()
+  return items.sort(compareRecentReviewRunItems).slice(0, 8)
+}
+
+function getShortRunId(runId: string): string {
+  return runId.replace(/^review-/, '').slice(0, 8)
 }
 
 async function fetchScanData(wsUrl: string, signal: AbortSignal): Promise<CortexScanResponse> {
@@ -583,7 +661,7 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
   const attentionBytes = scanData?.scan.summary.attentionBytes ?? 0
   const runningRunCount = reviewRuns.filter((run) => run.status === 'running').length
   const queuedRunCount = reviewRuns.filter((run) => run.status === 'queued').length
-  const recentRuns = useMemo(() => reviewRuns.slice().sort(compareReviewRuns).slice(0, 8), [reviewRuns])
+  const recentRunItems = useMemo(() => buildRecentRunItems(reviewRuns), [reviewRuns])
 
   return (
     <div className="flex h-full flex-col">
@@ -737,7 +815,7 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                       <p className="text-[11px] text-muted-foreground">No review runs recorded yet.</p>
                     ) : (
                       <div className="space-y-2">
-                        {recentRuns.map((run) => (
+                        {recentRunItems.map(({ run, predecessor }) => (
                           <div
                             key={run.runId}
                             className={cn(
@@ -768,17 +846,28 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                                   </p>
                                 ) : run.status === 'queued' ? (
                                   <p className="mt-1 text-[10px] text-muted-foreground">
-                                    {run.queuePosition ? `Waiting in queue (#${run.queuePosition}).` : 'Waiting in queue.'} Starts automatically after the active review finishes.
+                                    {run.dispatchState === 'session_created'
+                                      ? 'Session created; request dispatch will resume automatically.'
+                                      : `${run.queuePosition ? `Waiting in queue (#${run.queuePosition}).` : 'Waiting in queue.'} Starts automatically after the active review finishes.`}
                                   </p>
                                 ) : run.status === 'interrupted' ? (
                                   <p className="mt-1 text-[10px] text-orange-500">
-                                    {run.interruptionReason ?? 'Interrupted by backend restart. A new run was queued automatically.'}
+                                    {run.successorRunId
+                                      ? `Interrupted by backend restart; requeued as ${getShortRunId(run.successorRunId)}.`
+                                      : run.requeueReason
+                                        ? (run.interruptionReason ?? 'Interrupted by backend restart; replacement was requeued.')
+                                        : (run.interruptionReason ?? 'Interrupted by backend restart. No linked replacement is recorded for this run.')}
                                   </p>
                                 ) : run.latestCloseout ? (
                                   <p className="mt-1 text-[10px] text-muted-foreground">{truncateMiddle(run.latestCloseout)}</p>
                                 ) : null}
+                                {predecessor ? (
+                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                    Requeued after interrupted run {getShortRunId(predecessor.runId)}{predecessor.sessionAgentId ? ` (${getShortRunId(predecessor.sessionAgentId)})` : ''}.
+                                  </p>
+                                ) : null}
                               </div>
-                              {run.sessionAgentId ? (
+                              {run.sessionAgentId && run.dispatchState !== 'session_created' ? (
                                 <Button
                                   variant="ghost"
                                   size="sm"

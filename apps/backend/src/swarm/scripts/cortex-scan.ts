@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { analyzeSessionTranscriptReviewability } from "./cortex-transcript-reviewability.js";
 
 export interface ScanSession {
   profileId: string;
@@ -9,6 +10,14 @@ export interface ScanSession {
   totalBytes: number;
   reviewedBytes: number;
   reviewedAt: string | null;
+  sliceStartBytes: number;
+  reviewableTranscriptDeltaBytes: number;
+  reviewableTranscriptTotalBytes: number;
+  reviewableTranscriptReviewedBytes: number;
+  ignoredInternalTranscriptDeltaBytes: number;
+  unknownTranscriptDeltaBytes: number;
+  malformedTranscriptDeltaBytes: number;
+  transcriptCompacted: boolean;
   reviewExcluded: boolean;
   reviewExcludedAt: string | null;
   memoryDeltaBytes: number;
@@ -34,6 +43,12 @@ export interface ScanResult {
     reviewedBytes: number;
     transcriptTotalBytes: number;
     transcriptReviewedBytes: number;
+    reviewableTranscriptTotalBytes: number;
+    reviewableTranscriptReviewedBytes: number;
+    reviewableTranscriptDeltaBytes: number;
+    ignoredInternalTranscriptDeltaBytes: number;
+    unknownTranscriptDeltaBytes: number;
+    malformedTranscriptDeltaBytes: number;
     memoryTotalBytes: number;
     memoryReviewedBytes: number;
     feedbackTotalBytes: number;
@@ -65,6 +80,12 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         reviewedBytes: 0,
         transcriptTotalBytes: 0,
         transcriptReviewedBytes: 0,
+        reviewableTranscriptTotalBytes: 0,
+        reviewableTranscriptReviewedBytes: 0,
+        reviewableTranscriptDeltaBytes: 0,
+        ignoredInternalTranscriptDeltaBytes: 0,
+        unknownTranscriptDeltaBytes: 0,
+        malformedTranscriptDeltaBytes: 0,
         memoryTotalBytes: 0,
         memoryReviewedBytes: 0,
         feedbackTotalBytes: 0,
@@ -119,22 +140,26 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
 
       const sessionId = typeof parsed?.sessionId === "string" ? parsed.sessionId : sessionEntry.name;
 
-      const [actualSessionBytes, actualMemoryBytes, actualFeedbackBytes] = await Promise.all([
-        readExistingFileSize(join(sessionDir, "session.jsonl")),
+      const [actualMemoryBytes, actualFeedbackBytes] = await Promise.all([
         readExistingFileSize(join(sessionDir, "memory.md")),
         readExistingFileSize(join(sessionDir, "feedback.jsonl"))
       ]);
-      const totalBytes = actualSessionBytes ?? parseSessionTotalBytes(parsed?.stats?.sessionFileSize);
-      if (!Number.isFinite(totalBytes)) {
-        continue;
-      }
-
       const reviewedBytes =
         typeof parsed?.cortexReviewedBytes === "number" && Number.isFinite(parsed.cortexReviewedBytes)
           ? parsed.cortexReviewedBytes
           : 0;
+      const transcriptStats = await analyzeSessionTranscriptReviewability({
+        sessionFile: join(sessionDir, "session.jsonl"),
+        rawReviewedBytes: reviewedBytes,
+        fallbackRawTotalBytes: parseSessionTotalBytes(parsed?.stats?.sessionFileSize)
+      });
+      const totalBytes = transcriptStats.rawTotalBytes;
+      if (!Number.isFinite(totalBytes)) {
+        continue;
+      }
+
       const reviewedAt = typeof parsed?.cortexReviewedAt === "string" ? parsed.cortexReviewedAt : null;
-      const deltaBytes = totalBytes - reviewedBytes;
+      const deltaBytes = transcriptStats.rawDeltaBytes;
 
       const memoryTotalBytesRaw = actualMemoryBytes ?? parseSessionTotalBytes(parsed?.stats?.memoryFileSize);
       const memoryTotalBytes = Number.isFinite(memoryTotalBytesRaw) ? memoryTotalBytesRaw : 0;
@@ -162,8 +187,13 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         typeof parsed?.cortexReviewExcludedAt === "string" ? parsed.cortexReviewExcludedAt : null;
       const reviewExcluded = reviewExcludedAt !== null;
 
+      const hasActionableTranscriptDrift =
+        transcriptStats.compacted ||
+        transcriptStats.reviewableTranscriptDeltaBytes > 0 ||
+        transcriptStats.unknownTranscriptDeltaBytes > 0 ||
+        transcriptStats.malformedTranscriptDeltaBytes > 0;
       const status: ScanSession["status"] =
-        deltaBytes === 0 && memoryDeltaBytes === 0 && feedbackDeltaBytes === 0 && !feedbackTimestampDrift
+        !hasActionableTranscriptDrift && memoryDeltaBytes === 0 && feedbackDeltaBytes === 0 && !feedbackTimestampDrift
           ? "up-to-date"
           : !hasPriorReview
             ? "never-reviewed"
@@ -176,6 +206,14 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         totalBytes,
         reviewedBytes,
         reviewedAt,
+        sliceStartBytes: transcriptStats.sliceStartBytes,
+        reviewableTranscriptDeltaBytes: transcriptStats.reviewableTranscriptDeltaBytes,
+        reviewableTranscriptTotalBytes: transcriptStats.reviewableTranscriptTotalBytes,
+        reviewableTranscriptReviewedBytes: transcriptStats.reviewableTranscriptReviewedBytes,
+        ignoredInternalTranscriptDeltaBytes: transcriptStats.ignoredInternalTranscriptDeltaBytes,
+        unknownTranscriptDeltaBytes: transcriptStats.unknownTranscriptDeltaBytes,
+        malformedTranscriptDeltaBytes: transcriptStats.malformedTranscriptDeltaBytes,
+        transcriptCompacted: transcriptStats.compacted,
         reviewExcluded,
         reviewExcludedAt: reviewExcluded ? reviewExcludedAt : null,
         memoryDeltaBytes,
@@ -230,13 +268,22 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
       accumulator.reviewedBytes += session.reviewedBytes;
       accumulator.transcriptTotalBytes += session.totalBytes;
       accumulator.transcriptReviewedBytes += clampReviewedBytes(session.reviewedBytes, session.totalBytes);
+      accumulator.reviewableTranscriptTotalBytes += session.reviewableTranscriptTotalBytes;
+      accumulator.reviewableTranscriptReviewedBytes += clampReviewedBytes(
+        session.reviewableTranscriptReviewedBytes,
+        session.reviewableTranscriptTotalBytes
+      );
+      accumulator.reviewableTranscriptDeltaBytes += session.reviewableTranscriptDeltaBytes;
+      accumulator.ignoredInternalTranscriptDeltaBytes += session.ignoredInternalTranscriptDeltaBytes;
+      accumulator.unknownTranscriptDeltaBytes += session.unknownTranscriptDeltaBytes;
+      accumulator.malformedTranscriptDeltaBytes += session.malformedTranscriptDeltaBytes;
       accumulator.memoryTotalBytes += session.memoryTotalBytes;
       accumulator.memoryReviewedBytes += clampReviewedBytes(session.memoryReviewedBytes, session.memoryTotalBytes);
       accumulator.feedbackTotalBytes += session.feedbackTotalBytes;
       accumulator.feedbackReviewedBytes += clampReviewedBytes(session.feedbackReviewedBytes, session.feedbackTotalBytes);
       accumulator.attentionBytes += getAttentionDeltaBytes(session);
 
-      if (session.deltaBytes !== 0) {
+      if (hasActionableTranscriptDrift(session)) {
         accumulator.sessionsWithTranscriptDrift += 1;
       }
       if (session.memoryDeltaBytes !== 0) {
@@ -256,6 +303,12 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
       reviewedBytes: 0,
       transcriptTotalBytes: 0,
       transcriptReviewedBytes: 0,
+      reviewableTranscriptTotalBytes: 0,
+      reviewableTranscriptReviewedBytes: 0,
+      reviewableTranscriptDeltaBytes: 0,
+      ignoredInternalTranscriptDeltaBytes: 0,
+      unknownTranscriptDeltaBytes: 0,
+      malformedTranscriptDeltaBytes: 0,
       memoryTotalBytes: 0,
       memoryReviewedBytes: 0,
       feedbackTotalBytes: 0,
@@ -321,23 +374,41 @@ function formatNeedsReviewLine(result: ScanSession): string {
     : "memory watermark pending";
 
   if (result.memoryDeltaBytes === 0 && result.feedbackDeltaBytes === 0 && !result.feedbackTimestampDrift) {
-    if (result.deltaBytes < 0) {
+    if (result.transcriptCompacted) {
       return `  ${result.profileId}/${result.sessionId}: needs re-review (compacted: reviewed ${result.reviewedBytes.toLocaleString()} > current ${result.totalBytes.toLocaleString()}; ${reviewedLabel})`;
     }
 
-    if (result.deltaBytes > 0) {
-      return `  ${result.profileId}/${result.sessionId}: ${result.deltaBytes.toLocaleString()} new bytes (${reviewedLabel})`;
+    const transcriptParts: string[] = [];
+    if (result.reviewableTranscriptDeltaBytes > 0) {
+      transcriptParts.push(`${result.reviewableTranscriptDeltaBytes.toLocaleString()} new reviewable transcript bytes`);
+    }
+    if (result.unknownTranscriptDeltaBytes > 0) {
+      transcriptParts.push(`${result.unknownTranscriptDeltaBytes.toLocaleString()} unknown transcript records after watermark`);
+    }
+    if (result.malformedTranscriptDeltaBytes > 0) {
+      transcriptParts.push(`${result.malformedTranscriptDeltaBytes.toLocaleString()} malformed transcript records after watermark`);
+    }
+    if (transcriptParts.length > 0) {
+      return `  ${result.profileId}/${result.sessionId}: ${transcriptParts.join(", ")} (slice offset: ${result.sliceStartBytes.toLocaleString()}; ignored internal: ${result.ignoredInternalTranscriptDeltaBytes.toLocaleString()} bytes; ${reviewedLabel})`;
     }
   }
 
   const parts: string[] = [];
 
-  if (result.deltaBytes < 0) {
+  if (result.transcriptCompacted) {
     parts.push(
       `session compacted (reviewed ${result.reviewedBytes.toLocaleString()} > current ${result.totalBytes.toLocaleString()})`
     );
-  } else if (result.deltaBytes > 0) {
-    parts.push(`${result.deltaBytes.toLocaleString()} new bytes`);
+  } else {
+    if (result.reviewableTranscriptDeltaBytes > 0) {
+      parts.push(`${result.reviewableTranscriptDeltaBytes.toLocaleString()} new reviewable transcript bytes`);
+    }
+    if (result.unknownTranscriptDeltaBytes > 0) {
+      parts.push(`${result.unknownTranscriptDeltaBytes.toLocaleString()} unknown transcript bytes`);
+    }
+    if (result.malformedTranscriptDeltaBytes > 0) {
+      parts.push(`${result.malformedTranscriptDeltaBytes.toLocaleString()} malformed transcript bytes`);
+    }
   }
 
   if (result.memoryDeltaBytes < 0) {
@@ -383,9 +454,20 @@ function getSessionSortRank(result: ScanSession): number {
 
 function getAttentionDeltaBytes(result: ScanSession): number {
   return (
-    Math.max(result.deltaBytes, 0) +
+    Math.max(result.reviewableTranscriptDeltaBytes, 0) +
+    Math.max(result.unknownTranscriptDeltaBytes, 0) +
+    Math.max(result.malformedTranscriptDeltaBytes, 0) +
     Math.max(result.memoryDeltaBytes, 0) +
     Math.max(result.feedbackDeltaBytes, 0)
+  );
+}
+
+function hasActionableTranscriptDrift(result: ScanSession): boolean {
+  return (
+    result.transcriptCompacted ||
+    result.reviewableTranscriptDeltaBytes > 0 ||
+    result.unknownTranscriptDeltaBytes > 0 ||
+    result.malformedTranscriptDeltaBytes > 0
   );
 }
 
