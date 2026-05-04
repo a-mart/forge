@@ -337,3 +337,155 @@ export function previewForLog(text: string, maxLength = 160): string {
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
 }
+
+export interface OpenAICodexWebSocketConstructorDiagnostics {
+  enabled: boolean;
+  installed: boolean;
+  installError?: string;
+  constructorCalls: number;
+  constructorErrors: number;
+  sendCalls: number;
+  closeCalls: number;
+  lastConstructorAt?: string;
+  lastSendAt?: string;
+  lastCloseAt?: string;
+  lastUrlHost?: string;
+  lastUrlPath?: string;
+}
+
+type DiagnosticWebSocketConstructor = new (url: string | URL, protocols?: unknown) => DiagnosticWebSocket;
+type DiagnosticWebSocket = { send?: (...args: unknown[]) => unknown; close?: (...args: unknown[]) => unknown; [key: string]: unknown };
+
+const OPENAI_CODEX_WEBSOCKET_DIAGNOSTIC_MARKER = Symbol.for("forge.openaiCodexWebSocketDiagnostics.wrapper");
+const openAICodexWebSocketDiagnostics: OpenAICodexWebSocketConstructorDiagnostics = {
+  enabled: false,
+  installed: false,
+  constructorCalls: 0,
+  constructorErrors: 0,
+  sendCalls: 0,
+  closeCalls: 0,
+};
+let originalDiagnosticWebSocket: unknown;
+
+export function isOpenAICodexWebSocketDiagnosticsEnabled(): boolean {
+  const raw = process.env.FORGE_CODEX_TRANSPORT_DEBUG;
+  if (raw === undefined) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized !== "" && normalized !== "0" && normalized !== "false" && normalized !== "no" && normalized !== "off";
+}
+
+export function installOpenAICodexWebSocketDiagnostics(): void {
+  openAICodexWebSocketDiagnostics.enabled = isOpenAICodexWebSocketDiagnosticsEnabled();
+  if (!openAICodexWebSocketDiagnostics.enabled || openAICodexWebSocketDiagnostics.installed) return;
+  const current = globalThis.WebSocket as unknown;
+  if (typeof current !== "function") {
+    openAICodexWebSocketDiagnostics.installError = "global_websocket_unavailable";
+    return;
+  }
+  if (typeof current === "function" && Boolean((current as unknown as Record<PropertyKey, unknown>)[OPENAI_CODEX_WEBSOCKET_DIAGNOSTIC_MARKER])) {
+    openAICodexWebSocketDiagnostics.installed = true;
+    return;
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+  if (descriptor && descriptor.writable === false && descriptor.set === undefined) {
+    openAICodexWebSocketDiagnostics.installError = "global_websocket_not_writable";
+    return;
+  }
+  originalDiagnosticWebSocket = current;
+  const OriginalCtor = current as DiagnosticWebSocketConstructor;
+  const WrappedWebSocket = function ForgeOpenAICodexDiagnosticWebSocket(this: DiagnosticWebSocket, url: string | URL, protocols?: unknown) {
+    const codexUrl = readOpenAICodexWebSocketUrl(url);
+    if (!codexUrl) {
+      return new OriginalCtor(url, protocols);
+    }
+
+    openAICodexWebSocketDiagnostics.constructorCalls++;
+    openAICodexWebSocketDiagnostics.lastConstructorAt = new Date().toISOString();
+    openAICodexWebSocketDiagnostics.lastUrlHost = codexUrl.host;
+    openAICodexWebSocketDiagnostics.lastUrlPath = codexUrl.pathname;
+
+    let socket: DiagnosticWebSocket;
+    try {
+      socket = new OriginalCtor(url, protocols);
+    } catch (error) {
+      openAICodexWebSocketDiagnostics.constructorErrors++;
+      throw error;
+    }
+    wrapOpenAICodexWebSocketMethod(socket, "send");
+    wrapOpenAICodexWebSocketMethod(socket, "close");
+    return socket;
+  } as unknown as DiagnosticWebSocketConstructor;
+  try {
+    Object.setPrototypeOf(WrappedWebSocket, OriginalCtor);
+    WrappedWebSocket.prototype = OriginalCtor.prototype;
+    copyOpenAICodexWebSocketStaticProperties(OriginalCtor, WrappedWebSocket);
+    Object.defineProperty(WrappedWebSocket, OPENAI_CODEX_WEBSOCKET_DIAGNOSTIC_MARKER, { value: true });
+    globalThis.WebSocket = WrappedWebSocket as unknown as typeof globalThis.WebSocket;
+    openAICodexWebSocketDiagnostics.installed = true;
+    openAICodexWebSocketDiagnostics.installError = undefined;
+  } catch (error) {
+    openAICodexWebSocketDiagnostics.installError = error instanceof Error ? error.message : String(error);
+    if (originalDiagnosticWebSocket) globalThis.WebSocket = originalDiagnosticWebSocket as typeof globalThis.WebSocket;
+  }
+}
+
+export function getOpenAICodexWebSocketConstructorDiagnostics(): OpenAICodexWebSocketConstructorDiagnostics {
+  openAICodexWebSocketDiagnostics.enabled = isOpenAICodexWebSocketDiagnosticsEnabled();
+  return { ...openAICodexWebSocketDiagnostics };
+}
+
+export function resetOpenAICodexWebSocketConstructorDiagnosticsForTest(): void {
+  openAICodexWebSocketDiagnostics.enabled = false;
+  openAICodexWebSocketDiagnostics.installed = false;
+  openAICodexWebSocketDiagnostics.installError = undefined;
+  openAICodexWebSocketDiagnostics.constructorCalls = 0;
+  openAICodexWebSocketDiagnostics.constructorErrors = 0;
+  openAICodexWebSocketDiagnostics.sendCalls = 0;
+  openAICodexWebSocketDiagnostics.closeCalls = 0;
+  openAICodexWebSocketDiagnostics.lastConstructorAt = undefined;
+  openAICodexWebSocketDiagnostics.lastSendAt = undefined;
+  openAICodexWebSocketDiagnostics.lastCloseAt = undefined;
+  openAICodexWebSocketDiagnostics.lastUrlHost = undefined;
+  openAICodexWebSocketDiagnostics.lastUrlPath = undefined;
+  if (originalDiagnosticWebSocket) {
+    globalThis.WebSocket = originalDiagnosticWebSocket as typeof globalThis.WebSocket;
+    originalDiagnosticWebSocket = undefined;
+  }
+}
+
+function readOpenAICodexWebSocketUrl(value: string | URL): URL | undefined {
+  let url: URL;
+  try {
+    url = value instanceof URL ? value : new URL(String(value));
+  } catch {
+    return undefined;
+  }
+  const host = url.host.toLowerCase();
+  const path = url.pathname.toLowerCase();
+  return host === "chatgpt.com" && path === "/backend-api/codex/responses" ? url : undefined;
+}
+
+function wrapOpenAICodexWebSocketMethod(socket: DiagnosticWebSocket, method: "send" | "close"): void {
+  const original = socket[method];
+  if (typeof original !== "function") return;
+  socket[method] = function wrappedCodexWebSocketMethod(this: DiagnosticWebSocket, ...args: unknown[]) {
+    const timestamp = new Date().toISOString();
+    if (method === "send") {
+      openAICodexWebSocketDiagnostics.sendCalls++;
+      openAICodexWebSocketDiagnostics.lastSendAt = timestamp;
+    } else {
+      openAICodexWebSocketDiagnostics.closeCalls++;
+      openAICodexWebSocketDiagnostics.lastCloseAt = timestamp;
+    }
+    return original.apply(this, args);
+  };
+}
+
+function copyOpenAICodexWebSocketStaticProperties(source: DiagnosticWebSocketConstructor, target: DiagnosticWebSocketConstructor): void {
+  for (const key of Reflect.ownKeys(source)) {
+    if (["length", "name", "prototype"].includes(String(key))) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (descriptor) Object.defineProperty(target, key, descriptor);
+  }
+}
+

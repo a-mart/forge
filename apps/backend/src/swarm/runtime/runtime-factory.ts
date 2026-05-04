@@ -35,6 +35,7 @@ import { wrapForgeToolsWithExtensionHooks } from "../forge-instrumented-tools.js
 import { buildForgePiToolBridgeExtensionFactory } from "../forge-pi-tool-bridge.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import { createAcpMcpToolBridge } from "./acp/acp-mcp-tool-bridge.js";
+import { installOpenAICodexWebSocketDiagnostics } from "../runtime-utils.js";
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
@@ -293,6 +294,9 @@ export class RuntimeFactory {
     }
 
     const model = this.resolveModel(modelRegistry, descriptor.model);
+    if (isOpenAICodexModel(model)) {
+      installOpenAICodexWebSocketDiagnostics();
+    }
     const settingsManager = this.createRuntimeSettingsManager(descriptor, runtimeAgentDir, model);
 
     const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
@@ -1105,10 +1109,14 @@ function previewForLog(text: string, maxLength = 160): string {
   return `${normalized.slice(0, maxLength)}...`;
 }
 
-export function resolveOpenAICodexTransport(model: Pick<Model<any>, "provider" | "api">): Transport | undefined {
+function isOpenAICodexModel(model: Pick<Model<any>, "provider" | "api">): boolean {
   const provider = String(model.provider ?? "").toLowerCase();
   const api = String(model.api ?? "").toLowerCase();
-  if (provider !== "openai-codex" && api !== "openai-codex-responses") {
+  return provider === "openai-codex" || api === "openai-codex-responses";
+}
+
+export function resolveOpenAICodexTransport(model: Pick<Model<any>, "provider" | "api">): Transport | undefined {
+  if (!isOpenAICodexModel(model)) {
     return undefined;
   }
 

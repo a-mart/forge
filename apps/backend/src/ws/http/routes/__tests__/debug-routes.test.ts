@@ -7,12 +7,14 @@ import {
   makeP0HttpRouteTempConfig as makeTempConfig,
   parseP0HttpRouteJsonResponse as parseJsonResponse,
 } from '../../../../test-support/ws-integration-harness.js'
+import { resetOpenAICodexWebSocketConstructorDiagnosticsForTest } from '../../../../swarm/runtime-utils.js'
 import { SwarmWebSocketServer } from '../../../server.js'
 
 afterEach(() => {
   vi.restoreAllMocks()
   delete process.env.FORGE_CODEX_TRANSPORT_DEBUG
   delete process.env.FORGE_OPENAI_CODEX_TRANSPORT
+  resetOpenAICodexWebSocketConstructorDiagnosticsForTest()
 })
 
 describe('SwarmWebSocketServer P0 endpoints', () => {
@@ -111,6 +113,14 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
 
       expect(payload.status).toBe(200)
       expect(payload.json.env).toEqual({ FORGE_OPENAI_CODEX_TRANSPORT: 'invalid' })
+      expect(payload.json.websocketConstructorDiagnostics).toMatchObject({
+        enabled: true,
+        constructorCalls: expect.any(Number),
+        sendCalls: expect.any(Number),
+        closeCalls: expect.any(Number),
+      })
+      expect(JSON.stringify(payload.json.websocketConstructorDiagnostics)).not.toContain('codexConstructorCalls')
+      expect(JSON.stringify(payload.json.websocketConstructorDiagnostics)).not.toContain('codexSendCalls')
       expect(payload.json.agents).toHaveLength(1)
       expect(payload.json.agents[0]).toMatchObject({
         agentId: 'manager',

@@ -1,4 +1,9 @@
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
+import {
+  getOpenAICodexWebSocketConstructorDiagnostics,
+  installOpenAICodexWebSocketDiagnostics,
+  type OpenAICodexWebSocketConstructorDiagnostics
+} from "../../../swarm/runtime-utils.js";
 import type { SidebarPerfRecentSamples } from "../../../stats/sidebar-perf-types.js";
 import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
@@ -21,6 +26,7 @@ interface CodexTransportDebugResponse {
   env: {
     FORGE_OPENAI_CODEX_TRANSPORT: "sse" | "websocket" | "websocket-cached" | "auto" | "invalid" | null;
   };
+  websocketConstructorDiagnostics: OpenAICodexWebSocketConstructorDiagnostics;
   agents: ReturnType<SwarmManager["getCodexTransportDebugDiagnostics"]>;
 }
 
@@ -55,12 +61,14 @@ export function createDebugRoutes(options: { swarmManager: SwarmManager }): Http
         }
 
         applyCorsHeaders(request, response, methods);
+        installOpenAICodexWebSocketDiagnostics();
 
         const payload: CodexTransportDebugResponse = {
           schemaVersion: CODEX_TRANSPORT_SCHEMA_VERSION,
           env: {
             FORGE_OPENAI_CODEX_TRANSPORT: sanitizeConfiguredCodexTransport(),
           },
+          websocketConstructorDiagnostics: getOpenAICodexWebSocketConstructorDiagnostics(),
           agents: swarmManager.getCodexTransportDebugDiagnostics(),
         };
 
