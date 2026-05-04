@@ -76,7 +76,11 @@ export function CortexSection({
   // Activity
   const activeReviewRunCount = reviewRunSessions.filter((session) => {
     const reviewStatus = getAgentLiveStatus(session.sessionAgent, statuses).status
-    return reviewStatus === 'streaming' || session.workers.some((worker) => getAgentLiveStatus(worker, statuses).status === 'streaming')
+    if (reviewStatus === 'streaming') return true
+    // Check loaded workers first, then fall back to descriptor's activeWorkerCount
+    // (workers for hidden review sessions are never lazy-loaded into the tree)
+    if (session.workers.some((worker) => getAgentLiveStatus(worker, statuses).status === 'streaming')) return true
+    return (session.sessionAgent.activeWorkerCount ?? 0) > 0
   }).length
   const activeSessionCount = visibleSessions.filter((s) => isSessionRunning(s.sessionAgent)).length
 

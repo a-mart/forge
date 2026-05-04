@@ -4871,7 +4871,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    if (this.hasCortexDescriptor()) {
+    if (this.hasCortexRootDescriptor()) {
       const existingProfile = this.profiles.get(CORTEX_PROFILE_ID);
       if (existingProfile && existingProfile.profileType !== "system") {
         this.profiles.set(CORTEX_PROFILE_ID, {
@@ -4893,7 +4893,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const createdAt = this.now();
 
-    const defaultModel = resolveModelDescriptorFromPreset(this.defaultModelPreset);
+    const existingProfile = this.profiles.get(CORTEX_PROFILE_ID);
+    const defaultModel = existingProfile?.defaultModel
+      ? { ...existingProfile.defaultModel }
+      : resolveModelDescriptorFromPreset(this.defaultModelPreset);
 
     const descriptor: AgentDescriptor = {
       agentId: CORTEX_PROFILE_ID,
@@ -4911,15 +4914,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sessionFile: getSessionFilePath(this.config.paths.dataDir, CORTEX_PROFILE_ID, CORTEX_PROFILE_ID)
     };
 
-    const profile: ManagerProfile = {
-      profileId: CORTEX_PROFILE_ID,
-      displayName: CORTEX_DISPLAY_NAME,
-      defaultSessionAgentId: CORTEX_PROFILE_ID,
-      defaultModel: { ...defaultModel },
-      createdAt,
-      updatedAt: createdAt,
-      profileType: "system"
-    };
+    const profile: ManagerProfile = existingProfile
+      ? {
+          ...existingProfile,
+          defaultSessionAgentId: CORTEX_PROFILE_ID,
+          defaultModel: { ...existingProfile.defaultModel },
+          profileType: "system",
+        }
+      : {
+          profileId: CORTEX_PROFILE_ID,
+          displayName: CORTEX_DISPLAY_NAME,
+          defaultSessionAgentId: CORTEX_PROFILE_ID,
+          defaultModel: { ...defaultModel },
+          createdAt,
+          updatedAt: createdAt,
+          profileType: "system"
+        };
 
     this.descriptors.set(descriptor.agentId, descriptor);
     this.profiles.set(profile.profileId, profile);
@@ -4950,14 +4960,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
   }
 
-  private hasCortexDescriptor(): boolean {
-    for (const descriptor of this.descriptors.values()) {
-      if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
-        return true;
-      }
-    }
-
-    return false;
+  private hasCortexRootDescriptor(): boolean {
+    const descriptor = this.descriptors.get(CORTEX_PROFILE_ID);
+    return Boolean(
+      descriptor &&
+      descriptor.role === "manager" &&
+      descriptor.profileId === CORTEX_PROFILE_ID &&
+      normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID &&
+      descriptor.sessionPurpose !== "cortex_review" &&
+      descriptor.sessionPurpose !== "agent_creator"
+    );
   }
 
   private async ensureCommonKnowledgeFile(): Promise<void> {

@@ -449,6 +449,66 @@ describe('SwarmManager', () => {
     expect(manager.runtimeByAgentId.size).toBe(0)
   })
 
+  it('recreates the Cortex root session when only review-run Cortex descriptors remain on boot', async () => {
+    const config = await makeTempConfig()
+    const createdAt = '2026-03-27T00:00:00.000Z'
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify({
+        agents: [
+          {
+            agentId: 'cortex--review',
+            displayName: 'Review Run',
+            role: 'manager',
+            managerId: 'cortex--review',
+            profileId: 'cortex',
+            archetypeId: 'cortex',
+            sessionPurpose: 'cortex_review',
+            status: 'streaming',
+            createdAt,
+            updatedAt: createdAt,
+            cwd: config.defaultCwd,
+            model: config.defaultModel,
+            sessionFile: join(config.paths.sessionsDir, 'cortex--review.jsonl'),
+          },
+        ],
+        profiles: [
+          {
+            profileId: 'cortex',
+            displayName: 'Cortex',
+            defaultSessionAgentId: 'cortex--review',
+            defaultModel: config.defaultModel,
+            createdAt,
+            updatedAt: createdAt,
+            profileType: 'system',
+          },
+        ],
+      }, null, 2)}\n`,
+      'utf8',
+    )
+    const manager = new TestSwarmManager(config)
+
+    await manager.boot()
+
+    const cortexRoot = manager.getAgent('cortex')
+    expect(cortexRoot).toMatchObject({
+      agentId: 'cortex',
+      role: 'manager',
+      archetypeId: 'cortex',
+      profileId: 'cortex',
+    })
+    expect(cortexRoot?.sessionPurpose).toBeUndefined()
+    expect(manager.getAgent('cortex--review')).toMatchObject({
+      agentId: 'cortex--review',
+      sessionPurpose: 'cortex_review',
+      status: 'idle',
+    })
+    expect(manager.listProfiles().find((profile) => profile.profileId === 'cortex')).toMatchObject({
+      defaultSessionAgentId: 'cortex',
+      profileType: 'system',
+    })
+  })
+
   it('prunes persisted Cortex state on boot when Cortex is disabled', async () => {
     const config = await makeTempConfig()
     config.cortexEnabled = false
