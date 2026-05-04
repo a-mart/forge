@@ -1,15 +1,15 @@
 # Cortex Review Runs
 
-Cortex Review is the backlog/knowledge-review surface for session drift. It scans transcript, memory, and feedback deltas, then lets you launch focused reviews from the dashboard.
+Cortex Review is the backlog/knowledge-review surface for session drift. It uses raw JSONL/session byte growth as a pre-scan signal, then reviews only reviewable transcript drift plus memory and feedback deltas from the dashboard.
 
 ## Automatic scheduled reviews
 
-Cortex runs automatic periodic reviews by default. Every 2 hours (configurable), the scheduler checks all sessions for changes and runs reviews only when something needs attention.
+Cortex runs automatic periodic reviews by default. Every 2 hours (configurable), the scheduler does a lightweight pre-scan of all sessions for raw JSONL/session byte growth, then runs reviews only when reviewable transcript drift or other reviewable changes need attention.
 
 **Key behaviors:**
 
 - **Enabled by default** — no setup required. Fresh installs start with automatic reviews on a 2-hour interval.
-- **Zero cost when nothing changed** — a deterministic pre-check (`scanCortexReviewStatus()`) runs before creating any LLM session. If all sessions are up to date, no tokens are spent.
+- **Zero cost when nothing changed** — a deterministic pre-check (`scanCortexReviewStatus()`) runs before creating any LLM session. Raw JSONL/session growth is only a pre-scan signal; if no reviewable drift is found, no tokens are spent.
 - **Deduplication** — if a review is already queued or running, duplicate scheduled runs are coalesced instead of piling up.
 - **Configurable in Settings** — toggle on/off and adjust the interval (15m, 30m, 1h, 2h, 4h, 8h, 12h, 24h) under **Settings → General**.
 - **Persisted config** — settings live at `shared/config/cortex-auto-review.json` in your data directory. The schedule entry is managed in the Cortex profile's `schedules.json` with ID `cortex-auto-review`.

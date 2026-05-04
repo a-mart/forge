@@ -14,7 +14,7 @@ export const cortexArticles: HelpArticle[] = [
 Cortex handles three things:
 
 - **Knowledge management.** It maintains a shared knowledge base that all your manager sessions can read. This includes common facts, workflow preferences, and technical standards that Cortex extracts from your sessions over time.
-- **Session reviews.** Cortex periodically scans sessions for unreviewed content — new transcript data, memory changes, or feedback you've left. When it finds something, it can run a review to extract useful patterns and update knowledge.
+- **Session reviews.** Cortex periodically scans sessions for unreviewed content. Raw JSONL/session growth is used as a pre-scan signal, then Cortex reviews reviewable transcript drift, memory changes, or feedback you've left. Allowlisted internal/custom/system entries are ignored when measuring reviewable transcript drift, while unknown or malformed drift is surfaced. When it finds something, it can run a review to extract useful patterns and update knowledge.
 - **Onboarding.** On first launch, Cortex captures basic preferences (your name, technical level, and communication style) so managers can respond naturally from the start.
 
 ## The Cortex dashboard
@@ -109,8 +109,8 @@ Knowledge changes when Cortex completes a review run. It reads session transcrip
 
 When auto-review is enabled, Cortex runs on a schedule (configurable in Settings > General). Each cycle, it:
 
-1. **Scans all sessions** across profiles, comparing current transcript size, memory, and feedback against what was last reviewed.
-2. **Identifies drift.** Sessions with new transcript data, changed memory, or new feedback are flagged as needing review.
+1. **Scans all sessions** across profiles, using raw JSONL/session growth as a pre-scan signal and comparing reviewable transcript drift, memory, and feedback against what was last reviewed.
+2. **Identifies drift.** Sessions with reviewable transcript drift, changed memory, or new feedback are flagged as needing review. Allowlisted internal/custom/system entries are excluded from transcript drift, while unknown or malformed drift is surfaced.
 3. **Skips unchanged sessions.** If nothing has changed since the last review, Cortex does nothing. This prevents unnecessary work.
 4. **Runs review sessions** for anything that needs attention. Each review is a real Cortex session that reads the changed content and updates knowledge files.
 

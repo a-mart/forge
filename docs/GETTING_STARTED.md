@@ -358,7 +358,7 @@ This meta-learning loop is subtle but effective. After a few weeks of usage, you
 
 The **Review** tab is where Cortex processes your sessions. Every session you work in appears here as a reviewable item. Cortex can analyze the conversation, your feedback, and the outcomes to extract learning.
 
-**Automatic reviews:** By default, Forge runs automatic Cortex reviews every 2 hours. These check all sessions for changes (transcript, memory, feedback) and only run reviews when something needs attention. If nothing changed, no tokens are spent. You can adjust the interval or turn this off in **Settings → General**.
+**Automatic reviews:** By default, Forge runs automatic Cortex reviews every 2 hours. Raw session JSONL growth is only a pre-scan signal: Cortex uses it to decide which sessions to inspect, then only runs reviews when reviewable transcript drift, memory, or feedback has actually changed. Internal, custom, and other allowlisted system entries are filtered out of reviewable transcript drift, while unknown or malformed drift is surfaced. If nothing changed, no tokens are spent. You can adjust the interval or turn this off in **Settings → General**.
 
 **Running reviews manually:**
 - **Review All** — Queues all pending sessions for review. They execute one at a time (single concurrency) so they don't overwhelm your system.

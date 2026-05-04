@@ -28,7 +28,7 @@ To opt out, set \`FORGE_TELEMETRY=false\` in your environment. There is no telem
 
 Cortex is Forge's self-improvement system. When automatic reviews are enabled, Cortex periodically checks your sessions and updates knowledge, memory, and reference docs. You can set the review interval from every 15 minutes up to every 24 hours. Disable it entirely if you want to run reviews manually.
 
-Cortex only reviews sessions that have changed since the last check, so frequent intervals do not waste resources.
+Only reviewable transcript drift drives reviews; raw JSONL growth alone and internal/system entries do not.
 
 ## Experimental Features
 
