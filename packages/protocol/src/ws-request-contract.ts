@@ -1,0 +1,61 @@
+import type { ClientCommand } from './client-commands.js'
+import type { ServerEvent } from './server-events.js'
+
+export type WsRequestIdPolicy = {
+  ui: 'required'
+  wire: 'optional'
+}
+
+export type WsRequestContract<
+  CommandType extends Extract<ClientCommand['type'], string> = Extract<ClientCommand['type'], string>,
+  SuccessEventType extends Extract<ServerEvent['type'], string> = Extract<ServerEvent['type'], string>,
+> = {
+  commandType: CommandType
+  resultFamily: string
+  requestId: WsRequestIdPolicy
+  successEvents: readonly SuccessEventType[]
+  errorCodeFragments: readonly string[]
+}
+
+type DirectoryCommandType = Extract<ClientCommand['type'], 'list_directories' | 'validate_directory' | 'pick_directory'>
+type DirectorySuccessEventType = Extract<ServerEvent['type'], 'directories_listed' | 'directory_validated' | 'directory_picked'>
+
+export const WS_REQUEST_CONTRACTS = [
+  {
+    commandType: 'list_directories',
+    resultFamily: 'directory_listing',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['directories_listed'],
+    errorCodeFragments: ['list_directories'],
+  },
+  {
+    commandType: 'validate_directory',
+    resultFamily: 'directory_validation',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['directory_validated'],
+    errorCodeFragments: ['validate_directory'],
+  },
+  {
+    commandType: 'pick_directory',
+    resultFamily: 'directory_picker',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['directory_picked'],
+    errorCodeFragments: ['pick_directory'],
+  },
+] as const satisfies readonly WsRequestContract<DirectoryCommandType, DirectorySuccessEventType>[]
+
+export type WsRequestContractType = (typeof WS_REQUEST_CONTRACTS)[number]['commandType']
+
+export const WS_REQUEST_CONTRACT_TYPES = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
+
+export function getWsRequestContract(commandType: WsRequestContractType): (typeof WS_REQUEST_CONTRACTS)[number] {
+  const contract = WS_REQUEST_CONTRACTS.find((candidate) => candidate.commandType === commandType)
+  if (!contract) {
+    throw new Error(`Unknown WebSocket request contract: ${commandType}`)
+  }
+  return contract
+}
+
+export function getWsRequestErrorCodeFragments(commandType: WsRequestContractType): readonly string[] {
+  return getWsRequestContract(commandType).errorCodeFragments
+}

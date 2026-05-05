@@ -1,3 +1,4 @@
+import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
 import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
 import type { AgentActivityEntry } from '../ws-state'
 import type { WsRequestErrorHint, WsRequestType } from './types'
@@ -35,9 +36,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = [
   'delete_project_agent_reference',
   'request_project_agent_recommendations',
   'get_session_workers',
-  'list_directories',
-  'validate_directory',
-  'pick_directory',
+  ...WS_REQUEST_CONTRACTS.map((contract) => contract.commandType),
 ]
 
 export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = [
@@ -66,9 +65,9 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = [
   { requestType: 'delete_project_agent_reference', codeFragment: 'project_agent_reference_deleted' },
   { requestType: 'request_project_agent_recommendations', codeFragment: 'project_agent_recommendations' },
   { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
-  { requestType: 'list_directories', codeFragment: 'list_directories' },
-  { requestType: 'validate_directory', codeFragment: 'validate_directory' },
-  { requestType: 'pick_directory', codeFragment: 'pick_directory' },
+  ...WS_REQUEST_CONTRACTS.flatMap((contract) =>
+    contract.errorCodeFragments.map((codeFragment) => ({ requestType: contract.commandType, codeFragment })),
+  ),
 ]
 
 export function isManagerAgent(agent: AgentDescriptor): boolean {

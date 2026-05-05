@@ -9,7 +9,10 @@ import {
   getCreateManagerFamilies,
   getSpecialistFamilies,
   inferCatalogFamily,
+  getWsRequestContract,
   isCatalogModelId,
+  WS_REQUEST_CONTRACT_TYPES,
+  WS_REQUEST_CONTRACTS,
 } from '../index.js'
 import type {
   AgentDescriptor,
@@ -275,6 +278,19 @@ describe('protocol root barrel contract', () => {
     expect(getSpecialistFamilies().some((family) => family.familyId === 'pi-opus')).toBe(true)
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4')).toBe('pi-5.4')
     expect(isCatalogModelId('gpt-5.4')).toBe(true)
+  })
+
+  it('exports minimal directory WebSocket request contracts from the root barrel', () => {
+    expect(WS_REQUEST_CONTRACT_TYPES).toEqual(['list_directories', 'validate_directory', 'pick_directory'])
+    expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
+    expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
+    expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.wire === 'optional')).toBe(true)
+    expect(getWsRequestContract('list_directories')).toMatchObject({
+      commandType: 'list_directories',
+      resultFamily: 'directory_listing',
+      successEvents: ['directories_listed'],
+      errorCodeFragments: ['list_directories'],
+    })
   })
 
   it('exports representative collaboration, terminal, and specialist contracts from the root barrel', () => {

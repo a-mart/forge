@@ -1,3 +1,4 @@
+import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import { extractRequestId, parseClientCommand } from '../ws/ws-command-parser.js'
 
@@ -27,6 +28,26 @@ describe('ws command parser session commands', () => {
         requestId: 'req-1',
       },
     })
+  })
+
+  it('parses directory request contracts while preserving optional wire requestId', () => {
+    const payloadByType = {
+      list_directories: { type: 'list_directories', path: '/tmp/project' },
+      validate_directory: { type: 'validate_directory', path: '/tmp/project' },
+      pick_directory: { type: 'pick_directory', defaultPath: '/tmp/project' },
+    } as const
+
+    for (const contract of WS_REQUEST_CONTRACTS) {
+      const basePayload = payloadByType[contract.commandType]
+      expect(parseJsonCommand({ ...basePayload, requestId: 'request-1' })).toEqual({
+        ok: true,
+        command: { ...basePayload, requestId: 'request-1' },
+      })
+      expect(parseJsonCommand(basePayload)).toEqual({
+        ok: true,
+        command: { ...basePayload, requestId: undefined },
+      })
+    }
   })
 
   it('parses subscribe messageCount', () => {

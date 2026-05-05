@@ -1,6 +1,7 @@
+import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ManagerWsClient } from './ws-client'
-import { REQUEST_TIMEOUT_MS } from './ws-client/runtime-types'
+import { REQUEST_TIMEOUT_MS, WS_REQUEST_ERROR_HINTS, WS_REQUEST_TYPES } from './ws-client/runtime-types'
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
 
@@ -66,6 +67,20 @@ describe('ManagerWsClient', () => {
     ;(globalThis as any).WebSocket = originalWebSocket
     ;(globalThis as any).window = originalWindow
     ;(globalThis as any).document = originalDocument
+  })
+
+  it('keeps directory promise request policy aligned with protocol contracts', () => {
+    const contractTypes = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
+
+    expect(contractTypes).toEqual(['list_directories', 'validate_directory', 'pick_directory'])
+    expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
+    expect(
+      WS_REQUEST_CONTRACTS.every((contract) =>
+        contract.errorCodeFragments.every((codeFragment) =>
+          WS_REQUEST_ERROR_HINTS.some((hint) => hint.requestType === contract.commandType && hint.codeFragment === codeFragment),
+        ),
+      ),
+    ).toBe(true)
   })
 
   it('subscribes on connect and sends user_message commands to the active agent', () => {
