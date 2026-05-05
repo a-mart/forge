@@ -31,6 +31,7 @@ const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
+const STOP_SESSION_CONTRACT = getWsRequestContract('stop_session')
 const RESUME_SESSION_CONTRACT = getWsRequestContract('resume_session')
 const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_PROFILE_CONTRACT.commandType,
@@ -38,6 +39,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   PIN_SESSION_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
+  STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
 ])
 const NON_LEGACY_POSITION_CONTRACTS = WS_REQUEST_CONTRACTS.filter(
@@ -63,6 +65,10 @@ const CLEAR_SESSION_ERROR_HINTS = CLEAR_SESSION_CONTRACT.errorCodeFragments.map(
   requestType: CLEAR_SESSION_CONTRACT.commandType,
   codeFragment,
 }))
+const STOP_SESSION_ERROR_HINTS = STOP_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: STOP_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
 const RESUME_SESSION_ERROR_HINTS = RESUME_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: RESUME_SESSION_CONTRACT.commandType,
   codeFragment,
@@ -76,7 +82,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   'stop_all_agents',
   'create_session',
-  'stop_session',
+  STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
   'delete_session',
   CLEAR_SESSION_CONTRACT.commandType,
@@ -104,7 +110,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   ...UPDATE_MANAGER_CWD_ERROR_HINTS,
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
   { requestType: 'create_session', codeFragment: 'create_session' },
-  { requestType: 'stop_session', codeFragment: 'stop_session' },
+  ...STOP_SESSION_ERROR_HINTS,
   ...RESUME_SESSION_ERROR_HINTS,
   { requestType: 'delete_session', codeFragment: 'delete_session' },
   ...CLEAR_SESSION_ERROR_HINTS,

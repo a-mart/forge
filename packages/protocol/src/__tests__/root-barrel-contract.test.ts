@@ -292,6 +292,7 @@ describe('protocol root barrel contract', () => {
       'pin_session',
       'update_manager_cwd',
       'clear_session',
+      'stop_session',
       'resume_session',
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
@@ -338,6 +339,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_clear',
       successEvents: ['session_cleared'],
       errorCodeFragments: ['clear_session'],
+    })
+    expect(getWsRequestContract('stop_session')).toMatchObject({
+      commandType: 'stop_session',
+      resultFamily: 'session_stop',
+      successEvents: ['session_stopped'],
+      errorCodeFragments: ['stop_session'],
     })
     expect(getWsRequestContract('resume_session')).toMatchObject({
       commandType: 'resume_session',

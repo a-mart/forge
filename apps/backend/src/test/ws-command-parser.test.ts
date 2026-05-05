@@ -41,6 +41,7 @@ describe('ws command parser session commands', () => {
       pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
       clear_session: { type: 'clear_session', agentId: 'session-a' },
+      stop_session: { type: 'stop_session', agentId: 'session-a' },
       resume_session: { type: 'resume_session', agentId: 'session-a' },
     } as const
 
@@ -97,6 +98,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'clear_session', agentId: 'session-a', requestId: 123 })).toEqual({
       ok: false,
       error: 'clear_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'stop_session', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'stop_session', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'stop_session', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'stop_session.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'resume_session', agentId: 'session-a' })).toEqual({
       ok: true,

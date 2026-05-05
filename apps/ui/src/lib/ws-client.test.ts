@@ -82,6 +82,7 @@ describe('ManagerWsClient', () => {
       'pin_session',
       'update_manager_cwd',
       'clear_session',
+      'stop_session',
       'resume_session',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
@@ -1201,6 +1202,71 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(updatePromise).rejects.toThrow('update_manager_cwd_failed: Cwd update rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends stop_session commands and resolves session_stopped events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const stopPromise = client.stopSession(' session-a ')
+    const stopPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(stopPayload).toMatchObject({
+      type: 'stop_session',
+      agentId: 'session-a',
+    })
+    expect(typeof stopPayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_stopped',
+      requestId: stopPayload.requestId,
+      agentId: 'session-a',
+      profileId: 'profile-a',
+      terminatedWorkerIds: ['worker-a'],
+    })
+
+    await expect(stopPromise).resolves.toEqual({ agentId: 'session-a' })
+
+    client.destroy()
+  })
+
+  it('rejects stop_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const stopPromise = client.stopSession('session-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'stop_session_failed',
+      message: 'Stop rejected for testing.',
+    })
+
+    await expect(stopPromise).rejects.toThrow('stop_session_failed: Stop rejected for testing.')
 
     client.destroy()
   })
