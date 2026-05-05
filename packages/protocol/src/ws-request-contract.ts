@@ -28,6 +28,7 @@ type ContractCommandType = Extract<
   | 'pin_session'
   | 'update_manager_cwd'
   | 'clear_session'
+  | 'resume_session'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
@@ -40,6 +41,7 @@ type ContractSuccessEventType = Extract<
   | 'session_pinned'
   | 'manager_cwd_updated'
   | 'session_cleared'
+  | 'session_resumed'
 >
 
 export const WS_REQUEST_CONTRACTS = [
@@ -105,6 +107,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_cleared'],
     errorCodeFragments: ['clear_session'],
+  },
+  {
+    commandType: 'resume_session',
+    resultFamily: 'session_resume',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_resumed'],
+    errorCodeFragments: ['resume_session'],
   },
 ] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 

@@ -82,6 +82,7 @@ describe('ManagerWsClient', () => {
       'pin_session',
       'update_manager_cwd',
       'clear_session',
+      'resume_session',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1200,6 +1201,70 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(updatePromise).rejects.toThrow('update_manager_cwd_failed: Cwd update rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends resume_session commands and resolves session_resumed events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const resumePromise = client.resumeSession(' session-a ')
+    const resumePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(resumePayload).toMatchObject({
+      type: 'resume_session',
+      agentId: 'session-a',
+    })
+    expect(typeof resumePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_resumed',
+      requestId: resumePayload.requestId,
+      agentId: 'session-a',
+      profileId: 'profile-a',
+    })
+
+    await expect(resumePromise).resolves.toEqual({ agentId: 'session-a' })
+
+    client.destroy()
+  })
+
+  it('rejects resume_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const resumePromise = client.resumeSession('session-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'resume_session_failed',
+      message: 'Resume rejected for testing.',
+    })
+
+    await expect(resumePromise).rejects.toThrow('resume_session_failed: Resume rejected for testing.')
 
     client.destroy()
   })

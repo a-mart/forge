@@ -31,12 +31,14 @@ const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
+const RESUME_SESSION_CONTRACT = getWsRequestContract('resume_session')
 const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_PROFILE_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
+  RESUME_SESSION_CONTRACT.commandType,
 ])
 const NON_LEGACY_POSITION_CONTRACTS = WS_REQUEST_CONTRACTS.filter(
   (contract) => !LEGACY_POSITION_CONTRACT_TYPES.has(contract.commandType),
@@ -61,6 +63,10 @@ const CLEAR_SESSION_ERROR_HINTS = CLEAR_SESSION_CONTRACT.errorCodeFragments.map(
   requestType: CLEAR_SESSION_CONTRACT.commandType,
   codeFragment,
 }))
+const RESUME_SESSION_ERROR_HINTS = RESUME_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: RESUME_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
 
 export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'create_manager',
@@ -71,7 +77,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'stop_all_agents',
   'create_session',
   'stop_session',
-  'resume_session',
+  RESUME_SESSION_CONTRACT.commandType,
   'delete_session',
   CLEAR_SESSION_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
@@ -99,7 +105,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
   { requestType: 'create_session', codeFragment: 'create_session' },
   { requestType: 'stop_session', codeFragment: 'stop_session' },
-  { requestType: 'resume_session', codeFragment: 'resume_session' },
+  ...RESUME_SESSION_ERROR_HINTS,
   { requestType: 'delete_session', codeFragment: 'delete_session' },
   ...CLEAR_SESSION_ERROR_HINTS,
   ...RENAME_SESSION_ERROR_HINTS,
