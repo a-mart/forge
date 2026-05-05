@@ -81,6 +81,7 @@ describe('ManagerWsClient', () => {
       'rename_session',
       'pin_session',
       'update_manager_cwd',
+      'create_session',
       'stop_session',
       'resume_session',
       'delete_session',
@@ -1203,6 +1204,98 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(updatePromise).rejects.toThrow('update_manager_cwd_failed: Cwd update rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends create_session commands and resolves session_created events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const createPromise = client.createSession(' profile-a ', ' New Session ', {
+      sessionPurpose: 'agent_creator',
+      label: 'Agent Creator',
+    })
+    const createPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(createPayload).toMatchObject({
+      type: 'create_session',
+      profileId: 'profile-a',
+      name: 'New Session',
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+    expect(typeof createPayload.requestId).toBe('string')
+
+    const profile = {
+      profileId: 'profile-a',
+      displayName: 'Profile A',
+      defaultSessionAgentId: 'session-a',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.4', thinkingLevel: 'xhigh' },
+      createdAt: '2026-05-05T00:00:00.000Z',
+      updatedAt: '2026-05-05T00:00:00.000Z',
+    }
+    const sessionAgent = {
+      agentId: 'session-a',
+      managerId: 'session-a',
+      displayName: 'New Session',
+      role: 'manager',
+      status: 'idle',
+      createdAt: '2026-05-05T00:00:00.000Z',
+      updatedAt: '2026-05-05T00:00:00.000Z',
+      cwd: '/tmp/project',
+      model: { provider: 'openai-codex', modelId: 'gpt-5.4', thinkingLevel: 'xhigh' },
+      sessionFile: '/tmp/session.jsonl',
+      profileId: 'profile-a',
+    }
+
+    emitServerEvent(socket, {
+      type: 'session_created',
+      requestId: createPayload.requestId,
+      profile,
+      sessionAgent,
+    })
+
+    await expect(createPromise).resolves.toEqual({ profileId: 'profile-a', sessionAgent })
+
+    client.destroy()
+  })
+
+  it('rejects create_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const createPromise = client.createSession('profile-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'CREATE_SESSION_FAILED',
+      message: 'Create rejected for testing.',
+    })
+
+    await expect(createPromise).rejects.toThrow('CREATE_SESSION_FAILED: Create rejected for testing.')
 
     client.destroy()
   })

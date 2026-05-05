@@ -27,6 +27,7 @@ type ContractCommandType = Extract<
   | 'rename_session'
   | 'pin_session'
   | 'update_manager_cwd'
+  | 'create_session'
   | 'stop_session'
   | 'resume_session'
   | 'delete_session'
@@ -42,6 +43,7 @@ type ContractSuccessEventType = Extract<
   | 'session_renamed'
   | 'session_pinned'
   | 'manager_cwd_updated'
+  | 'session_created'
   | 'session_stopped'
   | 'session_resumed'
   | 'session_deleted'
@@ -104,6 +106,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['manager_cwd_updated'],
     errorCodeFragments: ['update_manager_cwd'],
+  },
+  {
+    commandType: 'create_session',
+    resultFamily: 'session_create',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_created'],
+    errorCodeFragments: ['create_session'],
   },
   {
     commandType: 'stop_session',

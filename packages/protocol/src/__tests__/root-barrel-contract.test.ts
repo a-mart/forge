@@ -291,6 +291,7 @@ describe('protocol root barrel contract', () => {
       'rename_session',
       'pin_session',
       'update_manager_cwd',
+      'create_session',
       'stop_session',
       'resume_session',
       'delete_session',
@@ -334,6 +335,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'manager_cwd_update',
       successEvents: ['manager_cwd_updated'],
       errorCodeFragments: ['update_manager_cwd'],
+    })
+    expect(getWsRequestContract('create_session')).toMatchObject({
+      commandType: 'create_session',
+      resultFamily: 'session_create',
+      successEvents: ['session_created'],
+      errorCodeFragments: ['create_session'],
     })
     expect(getWsRequestContract('clear_session')).toMatchObject({
       commandType: 'clear_session',

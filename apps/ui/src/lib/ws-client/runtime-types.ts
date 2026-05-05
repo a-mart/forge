@@ -30,6 +30,7 @@ const RENAME_PROFILE_CONTRACT = getWsRequestContract('rename_profile')
 const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
+const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
 const STOP_SESSION_CONTRACT = getWsRequestContract('stop_session')
 const RESUME_SESSION_CONTRACT = getWsRequestContract('resume_session')
@@ -39,6 +40,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
+  CREATE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
   STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
@@ -61,6 +63,10 @@ const PIN_SESSION_ERROR_HINTS = PIN_SESSION_CONTRACT.errorCodeFragments.map((cod
 }))
 const UPDATE_MANAGER_CWD_ERROR_HINTS = UPDATE_MANAGER_CWD_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: UPDATE_MANAGER_CWD_CONTRACT.commandType,
+  codeFragment,
+}))
+const CREATE_SESSION_ERROR_HINTS = CREATE_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: CREATE_SESSION_CONTRACT.commandType,
   codeFragment,
 }))
 const CLEAR_SESSION_ERROR_HINTS = CLEAR_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -87,7 +93,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'update_manager_model',
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   'stop_all_agents',
-  'create_session',
+  CREATE_SESSION_CONTRACT.commandType,
   STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
   DELETE_SESSION_CONTRACT.commandType,
@@ -115,7 +121,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'update_manager_model', codeFragment: 'update_manager_model' },
   ...UPDATE_MANAGER_CWD_ERROR_HINTS,
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
-  { requestType: 'create_session', codeFragment: 'create_session' },
+  ...CREATE_SESSION_ERROR_HINTS,
   ...STOP_SESSION_ERROR_HINTS,
   ...RESUME_SESSION_ERROR_HINTS,
   ...DELETE_SESSION_ERROR_HINTS,
