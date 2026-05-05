@@ -290,6 +290,7 @@ describe('protocol root barrel contract', () => {
       'rename_profile',
       'rename_session',
       'pin_session',
+      'update_session_model',
       'update_manager_cwd',
       'create_session',
       'stop_session',
@@ -329,6 +330,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_pin',
       successEvents: ['session_pinned'],
       errorCodeFragments: ['pin_session'],
+    })
+    expect(getWsRequestContract('update_session_model')).toMatchObject({
+      commandType: 'update_session_model',
+      resultFamily: 'session_model_update',
+      successEvents: ['session_model_updated'],
+      errorCodeFragments: ['update_session_model'],
     })
     expect(getWsRequestContract('update_manager_cwd')).toMatchObject({
       commandType: 'update_manager_cwd',

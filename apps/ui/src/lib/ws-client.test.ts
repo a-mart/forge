@@ -80,6 +80,7 @@ describe('ManagerWsClient', () => {
       'rename_profile',
       'rename_session',
       'pin_session',
+      'update_session_model',
       'update_manager_cwd',
       'create_session',
       'stop_session',
@@ -1775,6 +1776,73 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(pinPromise).rejects.toThrow('pin_session_failed: Pin rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends update_session_model commands and resolves session_model_updated events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const updatePromise = client.updateSessionModel('session-a', 'inherit')
+    const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(updatePayload).toMatchObject({
+      type: 'update_session_model',
+      sessionAgentId: 'session-a',
+      mode: 'inherit',
+    })
+    expect(typeof updatePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_model_updated',
+      requestId: updatePayload.requestId,
+      sessionAgentId: 'session-a',
+      mode: 'inherit',
+      model: { provider: 'openai-codex', modelId: 'gpt-5.4' },
+      reasoningLevel: 'xhigh',
+    })
+
+    await expect(updatePromise).resolves.toEqual({ sessionAgentId: 'session-a', mode: 'inherit' })
+
+    client.destroy()
+  })
+
+  it('rejects update_session_model via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const updatePromise = client.updateSessionModel('session-a', 'inherit')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'UPDATE_SESSION_MODEL_FAILED',
+      message: 'Update session model rejected for testing.',
+    })
+
+    await expect(updatePromise).rejects.toThrow('UPDATE_SESSION_MODEL_FAILED: Update session model rejected for testing.')
 
     client.destroy()
   })

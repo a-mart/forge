@@ -29,6 +29,7 @@ function uniqueErrorHints(errorHints: readonly WsRequestErrorHint[]): WsRequestE
 const RENAME_PROFILE_CONTRACT = getWsRequestContract('rename_profile')
 const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
+const UPDATE_SESSION_MODEL_CONTRACT = getWsRequestContract('update_session_model')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
@@ -39,6 +40,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_PROFILE_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
+  UPDATE_SESSION_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   CREATE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
@@ -59,6 +61,10 @@ const RENAME_SESSION_ERROR_HINTS = RENAME_SESSION_CONTRACT.errorCodeFragments.ma
 }))
 const PIN_SESSION_ERROR_HINTS = PIN_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: PIN_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const UPDATE_SESSION_MODEL_ERROR_HINTS = UPDATE_SESSION_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_SESSION_MODEL_CONTRACT.commandType,
   codeFragment,
 }))
 const UPDATE_MANAGER_CWD_ERROR_HINTS = UPDATE_MANAGER_CWD_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -100,7 +106,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   CLEAR_SESSION_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
-  'update_session_model',
+  UPDATE_SESSION_MODEL_CONTRACT.commandType,
   RENAME_PROFILE_CONTRACT.commandType,
   'fork_session',
   'merge_session_memory',
@@ -128,7 +134,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   ...CLEAR_SESSION_ERROR_HINTS,
   ...RENAME_SESSION_ERROR_HINTS,
   ...PIN_SESSION_ERROR_HINTS,
-  { requestType: 'update_session_model', codeFragment: 'update_session_model' },
+  ...UPDATE_SESSION_MODEL_ERROR_HINTS,
   ...RENAME_PROFILE_ERROR_HINTS,
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },

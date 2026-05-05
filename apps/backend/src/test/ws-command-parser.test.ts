@@ -39,6 +39,7 @@ describe('ws command parser session commands', () => {
       rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },
       rename_session: { type: 'rename_session', agentId: 'session-a', label: 'Session A' },
       pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
+      update_session_model: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' },
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
       create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
       stop_session: { type: 'stop_session', agentId: 'session-a' },
@@ -84,6 +85,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'pin_session', agentId: 'session-a', pinned: false, requestId: 123 })).toEqual({
       ok: false,
       error: 'pin_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' })).toEqual({
+      ok: true,
+      command: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit', model: undefined, reasoningLevel: undefined, modelSelection: undefined, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'update_session_model.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' })).toEqual({
       ok: true,
@@ -825,6 +834,7 @@ describe('ws command parser session commands', () => {
       { type: 'clear_session', agentId: 'manager--s2', requestId: 'req-clear' },
       { type: 'rename_session', agentId: 'manager--s2', label: 'Renamed', requestId: 'req-rename' },
       { type: 'pin_session', agentId: 'manager--s2', pinned: true, requestId: 'req-pin' },
+      { type: 'update_session_model', sessionAgentId: 'manager--s2', mode: 'inherit', requestId: 'req-session-model' },
       {
         type: 'set_session_project_agent',
         agentId: 'manager--s2',

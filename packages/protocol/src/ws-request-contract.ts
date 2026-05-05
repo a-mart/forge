@@ -26,6 +26,7 @@ type ContractCommandType = Extract<
   | 'rename_profile'
   | 'rename_session'
   | 'pin_session'
+  | 'update_session_model'
   | 'update_manager_cwd'
   | 'create_session'
   | 'stop_session'
@@ -42,6 +43,7 @@ type ContractSuccessEventType = Extract<
   | 'profile_renamed'
   | 'session_renamed'
   | 'session_pinned'
+  | 'session_model_updated'
   | 'manager_cwd_updated'
   | 'session_created'
   | 'session_stopped'
@@ -99,6 +101,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_pinned'],
     errorCodeFragments: ['pin_session'],
+  },
+  {
+    commandType: 'update_session_model',
+    resultFamily: 'session_model_update',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_model_updated'],
+    errorCodeFragments: ['update_session_model'],
   },
   {
     commandType: 'update_manager_cwd',

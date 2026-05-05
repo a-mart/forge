@@ -59,6 +59,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "clear_session":
     case "rename_session":
     case "pin_session":
+    case "update_session_model":
     case "set_session_project_agent":
     case "get_project_agent_config":
     case "list_project_agent_references":
