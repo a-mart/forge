@@ -27,9 +27,10 @@ type ContractCommandType = Extract<
   | 'rename_session'
   | 'pin_session'
   | 'update_manager_cwd'
-  | 'clear_session'
   | 'stop_session'
   | 'resume_session'
+  | 'delete_session'
+  | 'clear_session'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
@@ -41,9 +42,10 @@ type ContractSuccessEventType = Extract<
   | 'session_renamed'
   | 'session_pinned'
   | 'manager_cwd_updated'
-  | 'session_cleared'
   | 'session_stopped'
   | 'session_resumed'
+  | 'session_deleted'
+  | 'session_cleared'
 >
 
 export const WS_REQUEST_CONTRACTS = [
@@ -104,13 +106,6 @@ export const WS_REQUEST_CONTRACTS = [
     errorCodeFragments: ['update_manager_cwd'],
   },
   {
-    commandType: 'clear_session',
-    resultFamily: 'session_clear',
-    requestId: { ui: 'required', wire: 'optional' },
-    successEvents: ['session_cleared'],
-    errorCodeFragments: ['clear_session'],
-  },
-  {
     commandType: 'stop_session',
     resultFamily: 'session_stop',
     requestId: { ui: 'required', wire: 'optional' },
@@ -123,6 +118,20 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_resumed'],
     errorCodeFragments: ['resume_session'],
+  },
+  {
+    commandType: 'delete_session',
+    resultFamily: 'session_delete',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_deleted'],
+    errorCodeFragments: ['delete_session'],
+  },
+  {
+    commandType: 'clear_session',
+    resultFamily: 'session_clear',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_cleared'],
+    errorCodeFragments: ['clear_session'],
   },
 ] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 

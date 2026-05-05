@@ -291,9 +291,10 @@ describe('protocol root barrel contract', () => {
       'rename_session',
       'pin_session',
       'update_manager_cwd',
-      'clear_session',
       'stop_session',
       'resume_session',
+      'delete_session',
+      'clear_session',
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
@@ -351,6 +352,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_resume',
       successEvents: ['session_resumed'],
       errorCodeFragments: ['resume_session'],
+    })
+    expect(getWsRequestContract('delete_session')).toMatchObject({
+      commandType: 'delete_session',
+      resultFamily: 'session_delete',
+      successEvents: ['session_deleted'],
+      errorCodeFragments: ['delete_session'],
     })
   })
 

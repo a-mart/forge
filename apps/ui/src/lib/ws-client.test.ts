@@ -81,9 +81,10 @@ describe('ManagerWsClient', () => {
       'rename_session',
       'pin_session',
       'update_manager_cwd',
-      'clear_session',
       'stop_session',
       'resume_session',
+      'delete_session',
+      'clear_session',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1331,6 +1332,71 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(resumePromise).rejects.toThrow('resume_session_failed: Resume rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends delete_session commands and resolves session_deleted events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const deletePromise = client.deleteSession(' session-a ')
+    const deletePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(deletePayload).toMatchObject({
+      type: 'delete_session',
+      agentId: 'session-a',
+    })
+    expect(typeof deletePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_deleted',
+      requestId: deletePayload.requestId,
+      agentId: 'session-a',
+      profileId: 'profile-a',
+      terminatedWorkerIds: ['worker-a'],
+    })
+
+    await expect(deletePromise).resolves.toEqual({ agentId: 'session-a' })
+
+    client.destroy()
+  })
+
+  it('rejects delete_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const deletePromise = client.deleteSession('session-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'delete_session_failed',
+      message: 'Delete rejected for testing.',
+    })
+
+    await expect(deletePromise).rejects.toThrow('delete_session_failed: Delete rejected for testing.')
 
     client.destroy()
   })

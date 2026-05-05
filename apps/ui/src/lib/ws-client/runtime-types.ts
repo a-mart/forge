@@ -33,6 +33,7 @@ const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
 const STOP_SESSION_CONTRACT = getWsRequestContract('stop_session')
 const RESUME_SESSION_CONTRACT = getWsRequestContract('resume_session')
+const DELETE_SESSION_CONTRACT = getWsRequestContract('delete_session')
 const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_PROFILE_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
@@ -41,6 +42,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   CLEAR_SESSION_CONTRACT.commandType,
   STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
+  DELETE_SESSION_CONTRACT.commandType,
 ])
 const NON_LEGACY_POSITION_CONTRACTS = WS_REQUEST_CONTRACTS.filter(
   (contract) => !LEGACY_POSITION_CONTRACT_TYPES.has(contract.commandType),
@@ -73,6 +75,10 @@ const RESUME_SESSION_ERROR_HINTS = RESUME_SESSION_CONTRACT.errorCodeFragments.ma
   requestType: RESUME_SESSION_CONTRACT.commandType,
   codeFragment,
 }))
+const DELETE_SESSION_ERROR_HINTS = DELETE_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: DELETE_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
 
 export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'create_manager',
@@ -84,7 +90,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'create_session',
   STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
-  'delete_session',
+  DELETE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
@@ -112,7 +118,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'create_session', codeFragment: 'create_session' },
   ...STOP_SESSION_ERROR_HINTS,
   ...RESUME_SESSION_ERROR_HINTS,
-  { requestType: 'delete_session', codeFragment: 'delete_session' },
+  ...DELETE_SESSION_ERROR_HINTS,
   ...CLEAR_SESSION_ERROR_HINTS,
   ...RENAME_SESSION_ERROR_HINTS,
   ...PIN_SESSION_ERROR_HINTS,
