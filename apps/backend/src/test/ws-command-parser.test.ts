@@ -36,6 +36,7 @@ describe('ws command parser session commands', () => {
       validate_directory: { type: 'validate_directory', path: '/tmp/project' },
       pick_directory: { type: 'pick_directory', defaultPath: '/tmp/project' },
       get_session_workers: { type: 'get_session_workers', sessionAgentId: 'session-a' },
+      rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },
     } as const
 
     for (const contract of WS_REQUEST_CONTRACTS) {
@@ -51,7 +52,7 @@ describe('ws command parser session commands', () => {
     }
   })
 
-  it('rejects invalid requestId values for get_session_workers without making requestId mandatory', () => {
+  it('rejects invalid requestId values for request contracts without making requestId mandatory', () => {
     expect(parseJsonCommand({ type: 'get_session_workers', sessionAgentId: 'session-a' })).toEqual({
       ok: true,
       command: { type: 'get_session_workers', sessionAgentId: 'session-a', requestId: undefined },
@@ -59,6 +60,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'get_session_workers', sessionAgentId: 'session-a', requestId: 123 })).toEqual({
       ok: false,
       error: 'get_session_workers.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'rename_profile', profileId: 'profile-a', displayName: 'Renamed' })).toEqual({
+      ok: true,
+      command: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Renamed', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'rename_profile', profileId: 'profile-a', displayName: 'Renamed', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'rename_profile.requestId must be a string when provided',
     })
   })
 

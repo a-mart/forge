@@ -17,8 +17,14 @@ export type WsRequestContract<
   errorCodeFragments: readonly string[]
 }
 
-type ContractCommandType = Extract<ClientCommand['type'], 'list_directories' | 'validate_directory' | 'pick_directory' | 'get_session_workers'>
-type ContractSuccessEventType = Extract<ServerEvent['type'], 'directories_listed' | 'directory_validated' | 'directory_picked' | 'session_workers_snapshot'>
+type ContractCommandType = Extract<
+  ClientCommand['type'],
+  'list_directories' | 'validate_directory' | 'pick_directory' | 'get_session_workers' | 'rename_profile'
+>
+type ContractSuccessEventType = Extract<
+  ServerEvent['type'],
+  'directories_listed' | 'directory_validated' | 'directory_picked' | 'session_workers_snapshot' | 'profile_renamed'
+>
 
 export const WS_REQUEST_CONTRACTS = [
   {
@@ -48,6 +54,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_workers_snapshot'],
     errorCodeFragments: ['get_session_workers'],
+  },
+  {
+    commandType: 'rename_profile',
+    resultFamily: 'profile_rename',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['profile_renamed'],
+    errorCodeFragments: ['rename_profile'],
   },
 ] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 

@@ -1,4 +1,4 @@
-import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
+import { getWsRequestContract, WS_REQUEST_CONTRACTS } from '@forge/protocol'
 import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
 import type { AgentActivityEntry } from '../ws-state'
 import type { WsRequestErrorHint, WsRequestType } from './types'
@@ -26,7 +26,14 @@ function uniqueErrorHints(errorHints: readonly WsRequestErrorHint[]): WsRequestE
   })
 }
 
-const CONTRACT_REQUEST_TYPES = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
+const RENAME_PROFILE_CONTRACT = getWsRequestContract('rename_profile')
+const NON_LEGACY_POSITION_CONTRACTS = WS_REQUEST_CONTRACTS.filter(
+  (contract) => contract.commandType !== RENAME_PROFILE_CONTRACT.commandType,
+)
+const RENAME_PROFILE_ERROR_HINTS = RENAME_PROFILE_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: RENAME_PROFILE_CONTRACT.commandType,
+  codeFragment,
+}))
 
 export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'create_manager',
@@ -43,7 +50,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'rename_session',
   'pin_session',
   'update_session_model',
-  'rename_profile',
+  RENAME_PROFILE_CONTRACT.commandType,
   'fork_session',
   'merge_session_memory',
   'set_session_project_agent',
@@ -53,7 +60,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'set_project_agent_reference',
   'delete_project_agent_reference',
   'request_project_agent_recommendations',
-  ...CONTRACT_REQUEST_TYPES,
+  ...NON_LEGACY_POSITION_CONTRACTS.map((contract) => contract.commandType),
 ])
 
 export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
@@ -71,7 +78,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'rename_session', codeFragment: 'rename_session' },
   { requestType: 'pin_session', codeFragment: 'pin_session' },
   { requestType: 'update_session_model', codeFragment: 'update_session_model' },
-  { requestType: 'rename_profile', codeFragment: 'rename_profile' },
+  ...RENAME_PROFILE_ERROR_HINTS,
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
   { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
@@ -81,7 +88,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'set_project_agent_reference', codeFragment: 'project_agent_reference_saved' },
   { requestType: 'delete_project_agent_reference', codeFragment: 'project_agent_reference_deleted' },
   { requestType: 'request_project_agent_recommendations', codeFragment: 'project_agent_recommendations' },
-  ...WS_REQUEST_CONTRACTS.flatMap((contract) =>
+  ...NON_LEGACY_POSITION_CONTRACTS.flatMap((contract) =>
     contract.errorCodeFragments.map((codeFragment) => ({ requestType: contract.commandType, codeFragment })),
   ),
 ])

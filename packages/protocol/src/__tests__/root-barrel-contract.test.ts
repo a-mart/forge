@@ -282,7 +282,13 @@ describe('protocol root barrel contract', () => {
   })
 
   it('exports minimal WebSocket request contracts from the root barrel', () => {
-    expect(WS_REQUEST_CONTRACT_TYPES).toEqual(['list_directories', 'validate_directory', 'pick_directory', 'get_session_workers'])
+    expect(WS_REQUEST_CONTRACT_TYPES).toEqual([
+      'list_directories',
+      'validate_directory',
+      'pick_directory',
+      'get_session_workers',
+      'rename_profile',
+    ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.wire === 'optional')).toBe(true)
@@ -297,6 +303,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_workers',
       successEvents: ['session_workers_snapshot'],
       errorCodeFragments: ['get_session_workers'],
+    })
+    expect(getWsRequestContract('rename_profile')).toMatchObject({
+      commandType: 'rename_profile',
+      resultFamily: 'profile_rename',
+      successEvents: ['profile_renamed'],
+      errorCodeFragments: ['rename_profile'],
     })
   })
 

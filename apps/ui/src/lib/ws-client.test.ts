@@ -72,7 +72,7 @@ describe('ManagerWsClient', () => {
   it('keeps promise request policy aligned with protocol contracts', () => {
     const contractTypes = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
 
-    expect(contractTypes).toEqual(['list_directories', 'validate_directory', 'pick_directory', 'get_session_workers'])
+    expect(contractTypes).toEqual(['list_directories', 'validate_directory', 'pick_directory', 'get_session_workers', 'rename_profile'])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
     expect(
@@ -1125,6 +1125,71 @@ describe('ManagerWsClient', () => {
 
     await expect(creationPromise).resolves.toMatchObject({ agentId: 'release-manager' })
     expect(client.getState().agents.some((agent) => agent.agentId === 'release-manager')).toBe(true)
+
+    client.destroy()
+  })
+
+  it('sends rename_profile commands and resolves profile_renamed events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const renamePromise = client.renameProfile(' profile-a ', ' Renamed Profile ')
+    const renamePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(renamePayload).toMatchObject({
+      type: 'rename_profile',
+      profileId: 'profile-a',
+      displayName: 'Renamed Profile',
+    })
+    expect(typeof renamePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'profile_renamed',
+      requestId: renamePayload.requestId,
+      profileId: 'profile-a',
+      displayName: 'Renamed Profile',
+    })
+
+    await expect(renamePromise).resolves.toEqual({ profileId: 'profile-a' })
+
+    client.destroy()
+  })
+
+  it('rejects rename_profile via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const renamePromise = client.renameProfile('profile-a', 'Renamed Profile')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'rename_profile_failed',
+      message: 'Rename rejected for testing.',
+    })
+
+    await expect(renamePromise).rejects.toThrow('rename_profile_failed: Rename rejected for testing.')
 
     client.destroy()
   })
