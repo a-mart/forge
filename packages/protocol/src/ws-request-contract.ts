@@ -25,6 +25,7 @@ type ContractCommandType = Extract<
   | 'get_session_workers'
   | 'rename_profile'
   | 'rename_session'
+  | 'pin_session'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
@@ -34,6 +35,7 @@ type ContractSuccessEventType = Extract<
   | 'session_workers_snapshot'
   | 'profile_renamed'
   | 'session_renamed'
+  | 'session_pinned'
 >
 
 export const WS_REQUEST_CONTRACTS = [
@@ -78,6 +80,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_renamed'],
     errorCodeFragments: ['rename_session'],
+  },
+  {
+    commandType: 'pin_session',
+    resultFamily: 'session_pin',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_pinned'],
+    errorCodeFragments: ['pin_session'],
   },
 ] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 

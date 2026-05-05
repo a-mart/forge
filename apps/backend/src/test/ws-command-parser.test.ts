@@ -38,6 +38,7 @@ describe('ws command parser session commands', () => {
       get_session_workers: { type: 'get_session_workers', sessionAgentId: 'session-a' },
       rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },
       rename_session: { type: 'rename_session', agentId: 'session-a', label: 'Session A' },
+      pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
     } as const
 
     for (const contract of WS_REQUEST_CONTRACTS) {
@@ -69,6 +70,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'rename_profile', profileId: 'profile-a', displayName: 'Renamed', requestId: 123 })).toEqual({
       ok: false,
       error: 'rename_profile.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'pin_session', agentId: 'session-a', pinned: false })).toEqual({
+      ok: true,
+      command: { type: 'pin_session', agentId: 'session-a', pinned: false, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'pin_session', agentId: 'session-a', pinned: false, requestId: 123 })).toEqual({
+      ok: false,
+      error: 'pin_session.requestId must be a string when provided',
     })
   })
 

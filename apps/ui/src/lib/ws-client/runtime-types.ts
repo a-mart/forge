@@ -28,9 +28,11 @@ function uniqueErrorHints(errorHints: readonly WsRequestErrorHint[]): WsRequestE
 
 const RENAME_PROFILE_CONTRACT = getWsRequestContract('rename_profile')
 const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
+const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
 const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_PROFILE_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
+  PIN_SESSION_CONTRACT.commandType,
 ])
 const NON_LEGACY_POSITION_CONTRACTS = WS_REQUEST_CONTRACTS.filter(
   (contract) => !LEGACY_POSITION_CONTRACT_TYPES.has(contract.commandType),
@@ -41,6 +43,10 @@ const RENAME_PROFILE_ERROR_HINTS = RENAME_PROFILE_CONTRACT.errorCodeFragments.ma
 }))
 const RENAME_SESSION_ERROR_HINTS = RENAME_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: RENAME_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const PIN_SESSION_ERROR_HINTS = PIN_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: PIN_SESSION_CONTRACT.commandType,
   codeFragment,
 }))
 
@@ -57,7 +63,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'delete_session',
   'clear_session',
   RENAME_SESSION_CONTRACT.commandType,
-  'pin_session',
+  PIN_SESSION_CONTRACT.commandType,
   'update_session_model',
   RENAME_PROFILE_CONTRACT.commandType,
   'fork_session',
@@ -85,7 +91,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'delete_session', codeFragment: 'delete_session' },
   { requestType: 'clear_session', codeFragment: 'clear_session' },
   ...RENAME_SESSION_ERROR_HINTS,
-  { requestType: 'pin_session', codeFragment: 'pin_session' },
+  ...PIN_SESSION_ERROR_HINTS,
   { requestType: 'update_session_model', codeFragment: 'update_session_model' },
   ...RENAME_PROFILE_ERROR_HINTS,
   { requestType: 'fork_session', codeFragment: 'fork_session' },

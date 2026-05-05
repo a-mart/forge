@@ -79,6 +79,7 @@ describe('ManagerWsClient', () => {
       'get_session_workers',
       'rename_profile',
       'rename_session',
+      'pin_session',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1197,6 +1198,110 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(renamePromise).rejects.toThrow('rename_session_failed: Rename rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends pin_session commands and resolves pinned session_pinned events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const pinPromise = client.pinSession(' session-a ', true)
+    const pinPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(pinPayload).toMatchObject({
+      type: 'pin_session',
+      agentId: 'session-a',
+      pinned: true,
+    })
+    expect(typeof pinPayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_pinned',
+      requestId: pinPayload.requestId,
+      agentId: 'session-a',
+      pinned: true,
+      pinnedAt: '2026-05-05T00:00:00.000Z',
+    })
+
+    await expect(pinPromise).resolves.toEqual({ pinnedAt: '2026-05-05T00:00:00.000Z' })
+
+    client.destroy()
+  })
+
+  it('sends pin_session commands and resolves unpinned session_pinned events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const pinPromise = client.pinSession('session-a', false)
+    const pinPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(pinPayload).toMatchObject({
+      type: 'pin_session',
+      agentId: 'session-a',
+      pinned: false,
+    })
+    expect(typeof pinPayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_pinned',
+      requestId: pinPayload.requestId,
+      agentId: 'session-a',
+      pinned: false,
+      pinnedAt: null,
+    })
+
+    await expect(pinPromise).resolves.toEqual({ pinnedAt: null })
+
+    client.destroy()
+  })
+
+  it('rejects pin_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const pinPromise = client.pinSession('session-a', true)
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'pin_session_failed',
+      message: 'Pin rejected for testing.',
+    })
+
+    await expect(pinPromise).rejects.toThrow('pin_session_failed: Pin rejected for testing.')
 
     client.destroy()
   })
