@@ -66,6 +66,13 @@ interface ModelCapacityBlockLike {
   blockedUntilMs: number;
 }
 
+export interface AgentLifecycleDescriptorMutations {
+  upsertDescriptor: (descriptor: AgentDescriptor) => void;
+  deleteDescriptor: (agentId: string) => void;
+  upsertProfile: (profile: ManagerProfile) => void;
+  deleteProfile: (profileId: string) => void;
+}
+
 export type AgentLifecycleStopSessionOptions = {
   saveStore: boolean;
   emitSnapshots: boolean;
@@ -91,6 +98,7 @@ export interface SwarmAgentLifecycleServiceOptions {
   pendingManagerRuntimeRecycleReasonsByAgentId: Map<string, ManagerRuntimeRecycleReason>;
   modelCapacityBlocks: Map<string, ModelCapacityBlockLike>;
   sessionProvisioner: SessionProvisioner;
+  descriptorMutations: AgentLifecycleDescriptorMutations;
   now: () => string;
   getRequiredSessionDescriptor: (agentId: string) => ProvisionedSessionDescriptor;
   assertManager: (agentId: string, action: string) => AgentDescriptor;
@@ -201,6 +209,18 @@ export interface SwarmAgentLifecycleServiceOptions {
 export class SwarmAgentLifecycleService {
   constructor(private readonly options: SwarmAgentLifecycleServiceOptions) {}
 
+  private upsertDescriptor(descriptor: AgentDescriptor): void {
+    this.options.descriptorMutations.upsertDescriptor(descriptor);
+  }
+
+  private deleteDescriptor(agentId: string): void {
+    this.options.descriptorMutations.deleteDescriptor(agentId);
+  }
+
+  private deleteProfile(profileId: string): void {
+    this.options.descriptorMutations.deleteProfile(profileId);
+  }
+
   private clearWorkerTeardownState(agentId: string): void {
     this.options.clearWatchdogState(agentId);
     this.options.deleteWorkerStallState(agentId);
@@ -264,16 +284,16 @@ export class SwarmAgentLifecycleService {
     }
 
     descriptor.updatedAt = this.options.now();
-    this.options.descriptors.set(agentId, descriptor);
+    this.upsertDescriptor(descriptor);
 
     try {
       const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
       descriptor.contextUsage = runtime.getContextUsage();
-      this.options.descriptors.set(agentId, descriptor);
+      this.upsertDescriptor(descriptor);
     } catch (error) {
       descriptor.status = previousStatus;
       descriptor.updatedAt = this.options.now();
-      this.options.descriptors.set(agentId, descriptor);
+      this.upsertDescriptor(descriptor);
       throw error;
     }
 
@@ -429,7 +449,7 @@ export class SwarmAgentLifecycleService {
       }
     }
 
-    this.options.descriptors.set(agentId, descriptor);
+    this.upsertDescriptor(descriptor);
     await this.options.ensureSessionFileParentDirectory(descriptor.sessionFile);
     await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
     await this.options.saveStore();
@@ -461,7 +481,7 @@ export class SwarmAgentLifecycleService {
         if (specialistFallbackModel && shouldRetrySpecialistSpawnWithFallback(error, descriptor.model)) {
           const previousModel = { ...descriptor.model };
           descriptor.model = { ...specialistFallbackModel };
-          this.options.descriptors.set(agentId, descriptor);
+          this.upsertDescriptor(descriptor);
           await this.options.saveStore();
 
           this.options.logDebug("agent:spawn:specialist_fallback_retry", {
@@ -484,7 +504,7 @@ export class SwarmAgentLifecycleService {
       const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? runtimeSystemPrompt;
       const contextUsage = runtime.getContextUsage();
       descriptor.contextUsage = contextUsage;
-      this.options.descriptors.set(agentId, descriptor);
+      this.upsertDescriptor(descriptor);
       await this.options.updateSessionMetaForWorkerDescriptor(descriptor, persistedSystemPrompt);
       await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
 
@@ -508,7 +528,7 @@ export class SwarmAgentLifecycleService {
       this.options.deleteWorkerActivityState(agentId);
       this.options.deleteWorkerCompletionReportState(agentId);
 
-      this.options.descriptors.delete(agentId);
+      this.deleteDescriptor(agentId);
       this.options.emitAgentsSnapshot();
       await this.options.saveStore();
 
@@ -573,7 +593,7 @@ export class SwarmAgentLifecycleService {
     descriptor.status = transitionAgentStatus(descriptor.status, "idle");
     descriptor.contextUsage = undefined;
     descriptor.updatedAt = this.options.now();
-    this.options.descriptors.set(agentId, descriptor);
+    this.upsertDescriptor(descriptor);
 
     await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
     await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
@@ -611,16 +631,16 @@ export class SwarmAgentLifecycleService {
     }
 
     descriptor.updatedAt = this.options.now();
-    this.options.descriptors.set(agentId, descriptor);
+    this.upsertDescriptor(descriptor);
 
     try {
       const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
       descriptor.contextUsage = runtime.getContextUsage();
-      this.options.descriptors.set(agentId, descriptor);
+      this.upsertDescriptor(descriptor);
     } catch (error) {
       descriptor.status = previousStatus;
       descriptor.updatedAt = this.options.now();
-      this.options.descriptors.set(agentId, descriptor);
+      this.upsertDescriptor(descriptor);
       throw error;
     }
 
@@ -678,7 +698,7 @@ export class SwarmAgentLifecycleService {
       descriptor.status = transitionAgentStatus(descriptor.status, "idle");
       descriptor.contextUsage = undefined;
       descriptor.updatedAt = this.options.now();
-      this.options.descriptors.set(descriptor.agentId, descriptor);
+      this.upsertDescriptor(descriptor);
       await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
       this.options.emitStatus(descriptor.agentId, descriptor.status, 0, descriptor.contextUsage);
 
@@ -695,7 +715,7 @@ export class SwarmAgentLifecycleService {
       target.status = transitionAgentStatus(target.status, "idle");
       target.contextUsage = undefined;
       target.updatedAt = this.options.now();
-      this.options.descriptors.set(target.agentId, target);
+      this.upsertDescriptor(target);
       this.options.emitStatus(target.agentId, target.status, 0, target.contextUsage);
       managerStopped = true;
     }
@@ -811,7 +831,7 @@ export class SwarmAgentLifecycleService {
 
     const contextUsage = runtime?.getContextUsage();
     descriptor.contextUsage = contextUsage;
-    this.options.descriptors.set(managerId, descriptor);
+    this.upsertDescriptor(descriptor);
 
     await this.options.captureSessionRuntimePromptMeta(descriptor, persistedSystemPrompt);
     await this.options.refreshSessionMetaStats(descriptor);
@@ -860,19 +880,19 @@ export class SwarmAgentLifecycleService {
       for (const workerDescriptor of this.options.getWorkersForManager(sessionDescriptor.agentId)) {
         terminatedWorkerIds.push(workerDescriptor.agentId);
         await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
-        this.options.descriptors.delete(workerDescriptor.agentId);
+        this.deleteDescriptor(workerDescriptor.agentId);
         this.options.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
       }
 
       await this.terminateDescriptor(sessionDescriptor, { abort: true, emitStatus: true });
-      this.options.descriptors.delete(sessionDescriptor.agentId);
+      this.deleteDescriptor(sessionDescriptor.agentId);
       this.options.deleteConversationHistory(sessionDescriptor.agentId, sessionDescriptor.sessionFile);
     }
 
     if (profile) {
-      this.options.profiles.delete(profile.profileId);
+      this.deleteProfile(profile.profileId);
     } else {
-      this.options.profiles.delete(targetManagerId);
+      this.deleteProfile(targetManagerId);
     }
 
     const schedulesProfileId = profile?.profileId ?? sessionDescriptors[0]?.profileId ?? targetManagerId;
@@ -1074,7 +1094,7 @@ export class SwarmAgentLifecycleService {
       terminatedWorkerIds.push(workerDescriptor.agentId);
       await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
       if (options.deleteWorkers) {
-        this.options.descriptors.delete(workerDescriptor.agentId);
+        this.deleteDescriptor(workerDescriptor.agentId);
       }
       this.options.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
     }
@@ -1090,7 +1110,7 @@ export class SwarmAgentLifecycleService {
       : transitionAgentStatus(descriptor.status, "idle");
     descriptor.contextUsage = undefined;
     descriptor.updatedAt = this.options.now();
-    this.options.descriptors.set(agentId, descriptor);
+    this.upsertDescriptor(descriptor);
 
     if (options.emitStatus ?? true) {
       this.options.emitStatus(agentId, descriptor.status, 0);
@@ -1166,7 +1186,7 @@ export class SwarmAgentLifecycleService {
     descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
     descriptor.contextUsage = undefined;
     descriptor.updatedAt = this.options.now();
-    this.options.descriptors.set(descriptor.agentId, descriptor);
+    this.upsertDescriptor(descriptor);
 
     if (descriptor.role === "worker") {
       await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
@@ -1218,7 +1238,7 @@ export class SwarmAgentLifecycleService {
       descriptor.specialistId = specialist.specialistId;
       descriptor.specialistDisplayName = specialist.displayName;
       descriptor.specialistColor = specialist.color;
-      this.options.descriptors.set(descriptor.agentId, descriptor);
+      this.upsertDescriptor(descriptor);
       changed = true;
     }
 
@@ -1270,7 +1290,7 @@ export class SwarmAgentLifecycleService {
 
     if (descriptor.contextUsage) {
       descriptor.contextUsage = undefined;
-      this.options.descriptors.set(descriptor.agentId, descriptor);
+      this.upsertDescriptor(descriptor);
     }
 
     await this.options.refreshSessionMetaStats(descriptor);
@@ -1399,7 +1419,7 @@ export class SwarmAgentLifecycleService {
 
     const contextUsage = runtime.getContextUsage();
     attachDescriptor.contextUsage = contextUsage;
-    this.options.descriptors.set(descriptor.agentId, attachDescriptor);
+    this.upsertDescriptor(attachDescriptor);
 
     if (attachDescriptor.role === "manager") {
       await this.options.captureSessionRuntimePromptMeta(attachDescriptor, persistedSystemPrompt);

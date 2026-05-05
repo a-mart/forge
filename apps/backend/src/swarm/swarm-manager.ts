@@ -81,7 +81,9 @@ import type {
   SidebarPerfSummary
 } from "../stats/sidebar-perf-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
-import { migrateDataDirectory } from "./data-migration.js";
+import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
+import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
+import { ProjectAgentMirrorReconciler } from "./agents/descriptor-store/project-agent-mirror-reconciler.js";
 import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "./shared-config-migration.js";
 import {
   formatAgentCreatorContextMessage,
@@ -92,7 +94,7 @@ import {
   type AnalyzeSessionForPromotionOptions,
   type ProjectAgentRecommendations
 } from "./project-agent-analysis.js";
-import { deleteProjectAgentRecord, reconcileProjectAgentStorage } from "./project-agent-storage.js";
+import { deleteProjectAgentRecord } from "./project-agent-storage.js";
 import {
   deliverProjectAgentMessage,
   findProjectAgentByHandle,
@@ -1012,6 +1014,36 @@ async function backupLegacyCortexWorkerPrompts(path: string, content: string): P
   }
 }
 
+interface DescriptorStoreAdapter {
+  loadStore: () => Promise<AgentsStoreFile>;
+  saveStore: () => Promise<void>;
+  transactionDescriptors: <T>(
+    callback: (store: AgentDescriptorStore) => T | Promise<T>,
+    options?: { saveMode?: "rollback" | "best-effort"; onSaveError?: (error: unknown) => void }
+  ) => Promise<T>;
+  persistBestEffort: () => Promise<void>;
+  upsertDescriptor: (descriptor: AgentDescriptor) => Promise<void>;
+  upsertDescriptorInLiveMaps: (descriptor: AgentDescriptor) => void;
+  patchDescriptor: (
+    agentId: string,
+    patch: Partial<AgentDescriptor> | ((descriptor: AgentDescriptor) => AgentDescriptor)
+  ) => Promise<AgentDescriptor>;
+  patchDescriptorInLiveMaps: (
+    agentId: string,
+    patch: Partial<AgentDescriptor> | ((descriptor: AgentDescriptor) => AgentDescriptor)
+  ) => AgentDescriptor | undefined;
+  deleteDescriptor: (agentId: string) => Promise<boolean>;
+  deleteDescriptorInLiveMaps: (agentId: string) => boolean;
+  upsertProfile: (profile: ManagerProfile) => Promise<void>;
+  upsertProfileInLiveMaps: (profile: ManagerProfile) => void;
+  patchProfile: (
+    profileId: string,
+    patch: Partial<ManagerProfile> | ((profile: ManagerProfile) => ManagerProfile)
+  ) => Promise<ManagerProfile>;
+  deleteProfile: (profileId: string) => Promise<boolean>;
+  deleteProfileInLiveMaps: (profileId: string) => boolean;
+}
+
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
@@ -1037,6 +1069,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly sidebarPerfRecorder: SidebarPerfRecorder;
   private readonly conversationProjector: ConversationProjector;
+  private readonly descriptorStore: AgentDescriptorStore;
+  private readonly descriptorStoreAdapter: DescriptorStoreAdapter;
   private readonly persistenceService: PersistenceService;
   private readonly forgeExtensionHost: ForgeExtensionHost;
   private piModelsJsonPath: string | null = null;
@@ -1131,6 +1165,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt ?? undefined),
       refreshSessionMetaStatsBySessionId: (sessionAgentId) => this.refreshSessionMetaStatsBySessionId(sessionAgentId),
       saveStore: () => this.saveStore(),
+      patchDescriptor: (agentId, patch, options) =>
+        this.descriptorStoreAdapter.transactionDescriptors((store) => store.patchDescriptor(agentId, patch), options),
+      patchDescriptorInLiveMaps: (agentId, patch) => this.descriptorStoreAdapter.patchDescriptorInLiveMaps(agentId, patch),
       emitStatus: (agentId, status, pendingCount, contextUsage) =>
         this.emitStatus(agentId, status, pendingCount, contextUsage),
       emitAgentsSnapshot: () => {
@@ -1142,6 +1179,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.runtimeController.setSpecialistFallbackManager(this.specialistFallbackManager);
+    this.descriptorStore = new AgentDescriptorStore({
+      dataDir: this.config.paths.dataDir,
+      storeFilePath: this.config.paths.agentsStoreFile,
+      configuredManagerId: this.getConfiguredManagerId(),
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
+    this.descriptorStoreAdapter = this.createDescriptorStoreAdapter();
     this.persistenceService = new PersistenceService({
       config: this.config,
       descriptors: this.descriptors,
@@ -1211,9 +1255,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.emitAgentsSnapshot();
       },
       getRequiredSessionDescriptor: (agentId) => this.getRequiredSessionDescriptor(agentId),
-      upsertDescriptor: (descriptor) => {
-        this.descriptors.set(descriptor.agentId, descriptor);
-      },
+      upsertDescriptor: (descriptor) => this.descriptorStoreAdapter.upsertDescriptor(descriptor),
       getAgentMemoryPath: (agentId) => this.getAgentMemoryPath(agentId),
       resolvePreferredManagerId: (options) => this.resolvePreferredManagerId(options),
       resolvePromptWithFallback: (category, promptId, profileId, fallback) =>
@@ -1243,8 +1285,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
     this.sessionProvisioner = new SessionProvisioner({
       dataDir: this.config.paths.dataDir,
-      descriptors: this.descriptors,
-      profiles: this.profiles,
+      descriptorMutations: {
+        upsertDescriptor: (descriptor) => {
+          this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+        },
+        deleteDescriptor: (agentId) => {
+          this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId);
+        },
+        upsertProfile: (profile) => {
+          this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
+        },
+        deleteProfile: (profileId) => {
+          this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId);
+        }
+      },
       runtimes: this.runtimes,
       pinnedMessageIdsBySessionAgentId: this.pinnedMessageIdsBySessionAgentId,
       conversationProjector: this.conversationProjector,
@@ -1277,6 +1331,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       assertCanChangeManagerCwd: (profileId, sessions) => this.assertCanChangeManagerCwd(profileId, sessions),
       applyManagerRuntimeRecyclePolicy: (agentId, reason) => this.applyManagerRuntimeRecyclePolicy(agentId, reason),
       now: this.now,
+      transactionDescriptors: (callback) => this.descriptorStoreAdapter.transactionDescriptors(callback),
       saveStore: async () => {
         await this.saveStore();
       },
@@ -1329,6 +1384,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       pendingManagerRuntimeRecycleReasonsByAgentId: this.pendingManagerRuntimeRecycleReasonsByAgentId,
       modelCapacityBlocks: this.modelCapacityBlocks,
       sessionProvisioner: this.sessionProvisioner,
+      descriptorMutations: {
+        upsertDescriptor: (descriptor) => {
+          this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+        },
+        deleteDescriptor: (agentId) => {
+          this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId);
+        },
+        upsertProfile: (profile) => {
+          this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
+        },
+        deleteProfile: (profileId) => {
+          this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId);
+        }
+      },
       now: this.now,
       getRequiredSessionDescriptor: (agentId) => this.getRequiredSessionDescriptor(agentId),
       assertManager: (agentId, action) => this.assertManager(agentId, action),
@@ -1494,6 +1563,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       buildProjectAgentInfoForSession: (descriptor, whenToUse, systemPrompt, handle, capabilities) =>
         this.buildProjectAgentInfoForSession(descriptor, whenToUse, systemPrompt, handle, capabilities),
       getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
+      upsertDescriptorInLiveMaps: (descriptor) => this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
       captureSessionRuntimePromptMeta: (descriptor, resolvedSystemPrompt) =>
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       saveStore: async () => {
@@ -1544,48 +1614,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.refreshDefaultMemoryTemplateNormalizedLines();
 
-    let loaded = await this.loadStore();
-    const migrationResult = await migrateDataDirectory(
-      {
-        dataDir: this.config.paths.dataDir,
-        agentsStoreFile: this.config.paths.agentsStoreFile
-      },
-      loaded.agents,
-      loaded.profiles ?? [],
-      {
-        debug: (message, details) => this.logDebug(message, details),
-        info: (message, details) => this.logDebug(message, details),
-        warn: (message, details) => this.logDebug(message, details)
-      }
-    );
-    loaded = {
-      ...loaded,
-      agents: migrationResult.updatedAgents
-    };
-    const cortexPruneResult = this.prunePersistedCortexStateForBoot(loaded);
-    loaded = cortexPruneResult.store;
-    const workerSidecarPruneResult = this.prunePersistedWorkerSidecarDescriptorsForBoot(loaded);
-    loaded = workerSidecarPruneResult.store;
-
-    for (const descriptor of loaded.agents) {
-      this.descriptors.set(descriptor.agentId, descriptor);
-    }
-    for (const profile of loaded.profiles ?? []) {
-      this.profiles.set(profile.profileId, profile);
-    }
-
-    await this.preloadPinnedMessageIndexes();
-
-    const normalizedSessionModelState = this.reconcileProfilesOnBoot();
-    const normalizedSystemProfileTypes = this.normalizeSystemProfileTypes();
-    if (
-      cortexPruneResult.pruned ||
-      workerSidecarPruneResult.pruned ||
-      normalizedSessionModelState ||
-      normalizedSystemProfileTypes
-    ) {
-      await this.saveStore();
-    }
+    await new BootReconciler({
+      config: this.config,
+      descriptors: this.descriptors,
+      profiles: this.profiles,
+      loadStore: () => this.loadStore(),
+      saveStore: () => this.saveStore(),
+      prunePersistedCortexStateForBoot: (store) => this.prunePersistedCortexStateForBoot(store),
+      prunePersistedWorkerSidecarDescriptorsForBoot: (store) => this.prunePersistedWorkerSidecarDescriptorsForBoot(store),
+      preloadPinnedMessageIndexes: () => this.preloadPinnedMessageIndexes(),
+      reconcileProfilesOnBoot: () => this.reconcileProfilesOnBoot(),
+      normalizeSystemProfileTypes: () => this.normalizeSystemProfileTypes(),
+      logDebug: (message, details) => this.logDebug(message, details)
+    }).loadAndReconcilePersistedStore();
     await this.ensureCortexProfile();
     await loadOnboardingState(this.config.paths.dataDir);
     await this.ensureLegacyProfileKnowledgeReferenceDocs();
@@ -1600,28 +1641,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     // Reconcile project agent storage: hydrate descriptors from on-disk config,
     // materialize missing directories from descriptor data (first-boot migration).
-    for (const profile of this.profiles.values()) {
-      const result = await reconcileProjectAgentStorage(
-        this.config.paths.dataDir,
-        profile.profileId,
-        this.descriptors
-      );
-      if (result.materialized.length > 0) {
-        console.info(
-          `[swarm][boot] Materialized ${result.materialized.length} project agent(s) for profile ${profile.profileId}: ${result.materialized.join(", ")}`
-        );
-      }
-      if (result.hydrated.length > 0) {
-        console.info(
-          `[swarm][boot] Hydrated ${result.hydrated.length} project agent descriptor(s) for profile ${profile.profileId}: ${result.hydrated.join(", ")}`
-        );
-      }
-      if (result.orphansRemoved.length > 0) {
-        console.info(
-          `[swarm][boot] Removed ${result.orphansRemoved.length} orphan project agent director(ies) for profile ${profile.profileId}: ${result.orphansRemoved.join(", ")}`
-        );
-      }
-    }
+    await new ProjectAgentMirrorReconciler({
+      dataDir: this.config.paths.dataDir,
+      descriptors: this.descriptors,
+      profiles: this.profiles
+    }).reconcileAllProfiles();
 
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
@@ -1863,8 +1887,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profile.updatedAt = now;
     }
 
-    this.profiles.set(profile.profileId, profile);
-    this.descriptors.set(descriptor.agentId, descriptor);
+    this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
 
     await this.ensureProfilePiDirectories(profile.profileId);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
@@ -2189,9 +2213,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const targetAgentId = createdSession.sessionAgent.agentId;
     createdSession.sessionAgent.creatorAgentId = creatorDescriptor.agentId;
 
-    const targetDescriptor = this.getRequiredSessionDescriptor(targetAgentId);
-    targetDescriptor.creatorAgentId = creatorDescriptor.agentId;
-    await this.saveStore();
+    const targetDescriptor = await this.descriptorStoreAdapter.patchDescriptor(targetAgentId, {
+      creatorAgentId: creatorDescriptor.agentId,
+    });
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
 
@@ -2372,20 +2396,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
-    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "pin Builder sessions");
+    this.getRequiredBuilderSessionDescriptor(agentId, "pin Builder sessions");
 
-    if (pinned) {
-      descriptor.pinnedAt = descriptor.pinnedAt ?? this.now();
-    } else {
-      delete descriptor.pinnedAt;
-    }
-
-    this.descriptors.set(agentId, descriptor);
-    await this.saveStore();
+    const updatedDescriptor = await this.descriptorStoreAdapter.patchDescriptor(agentId, (current) => {
+      if (pinned) {
+        current.pinnedAt = current.pinnedAt ?? this.now();
+      } else {
+        delete current.pinnedAt;
+      }
+      return current;
+    });
     this.emitAgentsSnapshot();
 
     return {
-      pinnedAt: descriptor.pinnedAt ?? null
+      pinnedAt: updatedDescriptor.pinnedAt ?? null
     };
   }
 
@@ -2449,10 +2473,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!normalizedName) {
       throw new Error("Profile display name must be non-empty");
     }
-    profile.displayName = normalizedName;
-    profile.updatedAt = this.now();
-    this.profiles.set(profileId, profile);
-    await this.saveStore();
+    await this.descriptorStoreAdapter.patchProfile(profileId, {
+      displayName: normalizedName,
+      updatedAt: this.now(),
+    });
     this.emitProfilesSnapshot();
     this.emitAgentsSnapshot();
   }
@@ -4398,7 +4422,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     descriptor.updatedAt = normalizedTimestamp;
-    this.descriptors.set(sessionAgentId, descriptor);
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
     this.emitAgentsSnapshot();
   }
 
@@ -4512,7 +4536,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const profile = this.profiles.get(sorted[i].profileId);
       if (profile) {
         profile.sortOrder = i;
-        this.profiles.set(profile.profileId, profile);
+        this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
       }
     }
   }
@@ -4545,7 +4569,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const profile = this.profiles.get(profileIds[i]);
       if (profile) {
         profile.sortOrder = i;
-        this.profiles.set(profile.profileId, profile);
+        this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
       }
     }
 
@@ -4678,7 +4702,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const normalizedDescriptorModel = cloneModelDescriptor(descriptor.model);
       if (!sameModelDescriptor(descriptor.model, normalizedDescriptorModel)) {
         descriptor.model = normalizedDescriptorModel;
-        this.descriptors.set(descriptor.agentId, descriptor);
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
         changed = true;
       }
 
@@ -4689,7 +4713,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const reconciledProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? descriptor.agentId;
       if (descriptor.profileId !== reconciledProfileId) {
         descriptor.profileId = reconciledProfileId;
-        this.descriptors.set(descriptor.agentId, descriptor);
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
         changed = true;
       }
 
@@ -4699,7 +4723,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         continue;
       }
 
-      this.profiles.set(reconciledProfileId, {
+      this.descriptorStoreAdapter.upsertProfileInLiveMaps({
         profileId: reconciledProfileId,
         displayName: descriptor.displayName,
         defaultSessionAgentId: reconciledProfileId,
@@ -4715,7 +4739,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (!defaultSessionDescriptor || defaultSessionDescriptor.role !== "manager") {
         const rootSessionDescriptor = managerDescriptorsById.get(profileId);
         if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
-          this.profiles.delete(profileId);
+          this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId);
           changed = true;
           continue;
         }
@@ -4729,14 +4753,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (profileSessions.length === 0) {
         const rootSessionDescriptor = managerDescriptorsById.get(profileId);
         if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
-          this.profiles.delete(profileId);
+          this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId);
           changed = true;
           continue;
         }
 
         if (rootSessionDescriptor.profileId !== profileId) {
           rootSessionDescriptor.profileId = profileId;
-          this.descriptors.set(rootSessionDescriptor.agentId, rootSessionDescriptor);
+          this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(rootSessionDescriptor);
           changed = true;
         }
       }
@@ -4761,11 +4785,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         session.modelOrigin = inferLegacySessionModelOrigin(session, profile, {
           forceDefaultSessionInherited: defaultModelWasSynthesized
         });
-        this.descriptors.set(session.agentId, session);
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(session);
         changed = true;
       }
 
-      this.profiles.set(profileId, profile);
+      this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
     }
 
     return changed;
@@ -4855,7 +4879,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     let changed = false;
     const cortexProfile = this.profiles.get(CORTEX_PROFILE_ID);
     if (cortexProfile && cortexProfile.profileType !== "system") {
-      this.profiles.set(CORTEX_PROFILE_ID, {
+      this.descriptorStoreAdapter.upsertProfileInLiveMaps({
         ...cortexProfile,
         profileType: "system",
       });
@@ -4874,7 +4898,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (this.hasCortexRootDescriptor()) {
       const existingProfile = this.profiles.get(CORTEX_PROFILE_ID);
       if (existingProfile && existingProfile.profileType !== "system") {
-        this.profiles.set(CORTEX_PROFILE_ID, {
+        this.descriptorStoreAdapter.upsertProfileInLiveMaps({
           ...existingProfile,
           profileType: "system",
         });
@@ -4931,8 +4955,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           profileType: "system"
         };
 
-    this.descriptors.set(descriptor.agentId, descriptor);
-    this.profiles.set(profile.profileId, profile);
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+    this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
 
     await this.ensureProfilePiDirectories(profile.profileId);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
@@ -5085,7 +5109,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       descriptor.status = transitionAgentStatus(descriptor.status, "idle");
       descriptor.updatedAt = this.now();
-      this.descriptors.set(descriptor.agentId, descriptor);
+      this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
       normalizedAgentIds.push(descriptor.agentId);
     }
 
@@ -5157,7 +5181,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
             sessionFile: workerFilePath
           };
 
-          this.descriptors.set(workerId, workerDescriptor);
+          this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(workerDescriptor);
           knownWorkerIds.add(workerId);
           recoveredIds.push(workerId);
         } catch {
@@ -5255,7 +5279,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         descriptor.status = transitionAgentStatus(idleStatus, "stopped");
         descriptor.contextUsage = undefined;
         descriptor.updatedAt = this.now();
-        this.descriptors.set(descriptor.agentId, descriptor);
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
         shouldPersist = true;
 
         this.emitStatus(descriptor.agentId, descriptor.status, 0);
@@ -6339,7 +6363,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async loadStore(): Promise<AgentsStoreFile> {
-    return this.persistenceService.loadStore();
+    return this.descriptorStoreAdapter.loadStore();
   }
 
   private loadConversationHistoriesFromStore(): void {
@@ -6347,8 +6371,63 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async saveStore(): Promise<void> {
-    await this.persistenceService.saveStore();
+    await this.descriptorStoreAdapter.saveStore();
   }
+
+  async patchDescriptorFromRuntimeStatus(
+    agentId: string,
+    patch: Partial<AgentDescriptor>
+  ): Promise<AgentDescriptor | undefined> {
+    return this.descriptorStoreAdapter.patchDescriptorInLiveMaps(agentId, patch);
+  }
+
+  private createDescriptorStoreAdapter(): DescriptorStoreAdapter {
+    const liveMaps = () => ({
+      descriptors: this.descriptors,
+      profiles: this.profiles
+    });
+    const transactionDescriptors: DescriptorStoreAdapter["transactionDescriptors"] = (callback, options) =>
+      this.descriptorStore.transactionWithLiveMaps(liveMaps(), callback, options);
+
+    return {
+      loadStore: () => this.descriptorStore.load(),
+      saveStore: () => this.descriptorStore.saveLiveMaps(liveMaps()),
+      transactionDescriptors,
+      persistBestEffort: () => this.descriptorStore.saveLiveMapsBestEffort(liveMaps(), (error) => {
+        this.logDebug("descriptor-store:best-effort-save-failed", { error });
+      }),
+      upsertDescriptor: async (descriptor) => {
+        await transactionDescriptors((store) => {
+          store.upsertDescriptor(descriptor);
+        });
+      },
+      upsertDescriptorInLiveMaps: (descriptor) => {
+        this.descriptors.set(descriptor.agentId, descriptor);
+      },
+      patchDescriptor: (agentId, patch) => transactionDescriptors((store) => store.patchDescriptor(agentId, patch)),
+      patchDescriptorInLiveMaps: (agentId, patch) => this.descriptorStore.patchDescriptorInLiveMaps(liveMaps(), agentId, patch),
+      deleteDescriptor: (agentId) => transactionDescriptors((store) => store.deleteDescriptor(agentId)),
+      deleteDescriptorInLiveMaps: (agentId) => this.descriptors.delete(agentId),
+      upsertProfile: async (profile) => {
+        await transactionDescriptors((store) => {
+          store.upsertProfile(profile);
+        });
+      },
+      upsertProfileInLiveMaps: (profile) => {
+        this.profiles.set(profile.profileId, cloneManagerProfileForLiveMap(profile));
+      },
+      patchProfile: (profileId, patch) => transactionDescriptors((store) => store.patchProfile(profileId, patch)),
+      deleteProfile: (profileId) => transactionDescriptors((store) => store.deleteProfile(profileId)),
+      deleteProfileInLiveMaps: (profileId) => this.profiles.delete(profileId)
+    };
+  }
+}
+
+function cloneManagerProfileForLiveMap(profile: ManagerProfile): ManagerProfile {
+  return {
+    ...profile,
+    defaultModel: { ...profile.defaultModel },
+  };
 }
 
 function isOpenAICodexDescriptor(descriptor: AgentDescriptor): boolean {

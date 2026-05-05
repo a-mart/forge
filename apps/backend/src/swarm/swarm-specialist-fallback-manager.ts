@@ -79,6 +79,15 @@ export interface SwarmSpecialistFallbackManagerOptions {
   ): Promise<void>;
   refreshSessionMetaStatsBySessionId(sessionAgentId: string): Promise<void>;
   saveStore(): Promise<void>;
+  patchDescriptor?(
+    agentId: string,
+    patch: (descriptor: AgentDescriptor) => AgentDescriptor,
+    options?: { saveMode?: "rollback" | "best-effort"; onSaveError?: (error: unknown) => void }
+  ): Promise<AgentDescriptor | undefined>;
+  patchDescriptorInLiveMaps?(
+    agentId: string,
+    patch: (descriptor: AgentDescriptor) => AgentDescriptor
+  ): AgentDescriptor | undefined;
   emitStatus(
     agentId: string,
     status: AgentStatus,
@@ -217,6 +226,7 @@ export class SwarmSpecialistFallbackManager {
     let replacementRuntime: SwarmAgentRuntime | undefined;
     let replacementRuntimeToken: number | undefined;
     let runtimeSystemPrompt = "";
+    let fallbackRerouteUpdatedAt: string | undefined;
     let recovered = false;
     let handoffStarted = false;
     let deferredSettled = false;
@@ -278,11 +288,12 @@ export class SwarmSpecialistFallbackManager {
         return false;
       }
 
+      fallbackRerouteUpdatedAt = this.options.now();
       const fallbackDescriptor: AgentDescriptor = {
         ...descriptor,
         model: { ...fallbackModel },
         status: "idle",
-        updatedAt: this.options.now(),
+        updatedAt: fallbackRerouteUpdatedAt,
         contextUsage: undefined
       };
       delete fallbackDescriptor.streamingStartedAt;
@@ -302,21 +313,26 @@ export class SwarmSpecialistFallbackManager {
         return true;
       }
 
-      descriptor.model = { ...fallbackDescriptor.model };
-      descriptor.status = fallbackDescriptor.status;
-      descriptor.updatedAt = fallbackDescriptor.updatedAt;
-      descriptor.contextUsage = undefined;
-      delete descriptor.streamingStartedAt;
-      this.options.descriptors.set(input.agentId, descriptor);
-      await this.options.saveStore();
+      const reroutedDescriptor = await this.persistSpecialistFallbackReroute(
+        input.agentId,
+        fallbackDescriptor
+      );
+      if (!reroutedDescriptor) {
+        throw new Error(`Specialist fallback descriptor disappeared for ${input.agentId}`);
+      }
 
       this.options.attachRuntime(input.agentId, replacementRuntime);
 
       const persistedSystemPrompt = replacementRuntime.getSystemPrompt?.() ?? runtimeSystemPrompt;
-      await this.options.updateSessionMetaForWorkerDescriptor(descriptor, persistedSystemPrompt);
-      await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+      await this.options.updateSessionMetaForWorkerDescriptor(reroutedDescriptor, persistedSystemPrompt);
+      await this.options.refreshSessionMetaStatsBySessionId(reroutedDescriptor.managerId);
 
-      this.options.emitStatus(input.agentId, descriptor.status, replacementRuntime.getPendingCount(), replacementRuntime.getContextUsage());
+      this.options.emitStatus(
+        input.agentId,
+        reroutedDescriptor.status,
+        replacementRuntime.getPendingCount(),
+        replacementRuntime.getContextUsage()
+      );
       this.options.emitAgentsSnapshot();
 
       if (!this.isSpecialistFallbackHandoffStillValid(input.agentId, replacementRuntime)) {
@@ -334,7 +350,7 @@ export class SwarmSpecialistFallbackManager {
         specialistId: descriptor.specialistId,
         sourcePhase: input.sourcePhase,
         previousModel,
-        fallbackModel: descriptor.model,
+        fallbackModel: reroutedDescriptor.model,
         message: input.errorMessage,
         replayPreview: previewForLog(extractRuntimeMessageText(replaySnapshot.messages[0]), 160),
         replayMessageCount: replaySnapshot.messages.length
@@ -369,7 +385,7 @@ export class SwarmSpecialistFallbackManager {
         if (failureDisposition === "restore_original_runtime") {
           await currentRuntime.restorePreparedSpecialistFallbackReplay?.();
           await this.restoreWorkerAfterFailedSpecialistFallback(
-            descriptor,
+            input.agentId,
             currentRuntime,
             suppressedRuntimeToken,
             {
@@ -378,7 +394,8 @@ export class SwarmSpecialistFallbackManager {
               previousUpdatedAt,
               previousStreamingStartedAt,
               previousContextUsage,
-              previousRuntimeSystemPrompt
+              previousRuntimeSystemPrompt,
+              fallbackRerouteUpdatedAt
             }
           );
           resolveWaiters(currentRuntime);
@@ -612,8 +629,72 @@ export class SwarmSpecialistFallbackManager {
     return "restore_original_runtime";
   }
 
+  private async persistSpecialistFallbackReroute(
+    agentId: string,
+    fallbackDescriptor: AgentDescriptor
+  ): Promise<AgentDescriptor | undefined> {
+    const patch = (current: AgentDescriptor): AgentDescriptor => {
+      const next: AgentDescriptor = {
+        ...current,
+        model: { ...fallbackDescriptor.model },
+        status: fallbackDescriptor.status,
+        updatedAt: fallbackDescriptor.updatedAt,
+        contextUsage: undefined
+      };
+      delete next.streamingStartedAt;
+      return next;
+    };
+
+    if (this.options.patchDescriptor) {
+      return this.options.patchDescriptor(agentId, patch);
+    }
+
+    const current = this.options.descriptors.get(agentId);
+    if (!current) {
+      return undefined;
+    }
+
+    const updated = patch(current);
+    this.options.descriptors.set(agentId, updated);
+    await this.options.saveStore();
+    return updated;
+  }
+
+  private patchWorkerDescriptorInLiveMaps(
+    agentId: string,
+    patch: (descriptor: AgentDescriptor) => AgentDescriptor
+  ): AgentDescriptor | undefined {
+    if (this.options.patchDescriptorInLiveMaps) {
+      return this.options.patchDescriptorInLiveMaps(agentId, patch);
+    }
+
+    const current = this.options.descriptors.get(agentId);
+    if (!current) {
+      return undefined;
+    }
+
+    const updated = patch(current);
+    this.options.descriptors.set(agentId, updated);
+    return updated;
+  }
+
+  private async saveWorkerDescriptorBestEffort(
+    agentId: string,
+    specialistId: string | undefined
+  ): Promise<void> {
+    try {
+      await this.options.saveStore();
+    } catch (saveError) {
+      this.options.logDebug("worker:specialist_fallback:rollback_save_failed", {
+        agentId,
+        specialistId,
+        message: saveError instanceof Error ? saveError.message : String(saveError)
+      });
+    }
+  }
+
   private async restoreWorkerAfterFailedSpecialistFallback(
-    descriptor: AgentDescriptor,
+    agentId: string,
     currentRuntime: SwarmAgentRuntime,
     suppressedRuntimeToken: number | undefined,
     previousState: {
@@ -623,59 +704,63 @@ export class SwarmSpecialistFallbackManager {
       previousStreamingStartedAt?: number;
       previousContextUsage?: AgentContextUsage;
       previousRuntimeSystemPrompt?: string | null;
+      fallbackRerouteUpdatedAt?: string;
     }
   ): Promise<void> {
     const handoffState =
       suppressedRuntimeToken !== undefined
-        ? this.getSuppressedSpecialistFallbackHandoff(descriptor.agentId, suppressedRuntimeToken)
+        ? this.getSuppressedSpecialistFallbackHandoff(agentId, suppressedRuntimeToken)
         : undefined;
     const reconciledStatus = handoffState?.bufferedStatus?.status ?? currentRuntime.getStatus();
     const reconciledContextUsage =
       handoffState?.bufferedStatus?.contextUsage ?? currentRuntime.getContextUsage() ?? previousState.previousContextUsage;
 
-    descriptor.model = previousState.previousModel;
-    descriptor.status = reconciledStatus;
-    descriptor.updatedAt = previousState.previousUpdatedAt;
-    descriptor.contextUsage = isNonRunningAgentStatus(reconciledStatus) ? undefined : reconciledContextUsage;
-    if (reconciledStatus === "streaming" && previousState.previousStreamingStartedAt !== undefined) {
-      descriptor.streamingStartedAt = previousState.previousStreamingStartedAt;
-    } else {
-      delete descriptor.streamingStartedAt;
+    const restoredDescriptor = this.patchWorkerDescriptorInLiveMaps(agentId, (current) => {
+      const next: AgentDescriptor = {
+        ...current,
+        model: previousState.previousModel,
+        status: reconciledStatus,
+        updatedAt: current.updatedAt === previousState.fallbackRerouteUpdatedAt
+          ? previousState.previousUpdatedAt
+          : current.updatedAt,
+        contextUsage: isNonRunningAgentStatus(reconciledStatus) ? undefined : reconciledContextUsage
+      };
+      if (reconciledStatus === "streaming" && previousState.previousStreamingStartedAt !== undefined) {
+        next.streamingStartedAt = previousState.previousStreamingStartedAt;
+      } else {
+        delete next.streamingStartedAt;
+      }
+      return next;
+    });
+    if (!restoredDescriptor) {
+      throw new Error(`Specialist fallback rollback descriptor disappeared for ${agentId}`);
     }
-    this.options.descriptors.set(descriptor.agentId, descriptor);
-    this.options.attachRuntime(descriptor.agentId, currentRuntime);
+
+    this.options.attachRuntime(agentId, currentRuntime);
     if (suppressedRuntimeToken !== undefined) {
-      this.options.runtimeTokensByAgentId.set(descriptor.agentId, suppressedRuntimeToken);
+      this.options.runtimeTokensByAgentId.set(agentId, suppressedRuntimeToken);
     }
 
     if (handoffState?.receivedAgentEnd) {
-      this.options.clearTrackedToolPaths(descriptor.agentId);
+      this.options.clearTrackedToolPaths(agentId);
     }
-    this.options.workerHealthService.reconcileRuntimeStateAfterFallbackRollback(descriptor.agentId, reconciledStatus, {
+    this.options.workerHealthService.reconcileRuntimeStateAfterFallbackRollback(agentId, reconciledStatus, {
       receivedAgentEnd: handoffState?.receivedAgentEnd === true
     });
 
-    try {
-      await this.options.saveStore();
-    } catch (saveError) {
-      this.options.logDebug("worker:specialist_fallback:rollback_save_failed", {
-        agentId: descriptor.agentId,
-        specialistId: descriptor.specialistId,
-        message: saveError instanceof Error ? saveError.message : String(saveError)
-      });
-    }
+    await this.saveWorkerDescriptorBestEffort(agentId, restoredDescriptor.specialistId);
 
     await this.options.updateSessionMetaForWorkerDescriptor(
-      descriptor,
+      restoredDescriptor,
       previousState.previousRuntimeSystemPrompt ?? undefined
     );
-    await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+    await this.options.refreshSessionMetaStatsBySessionId(restoredDescriptor.managerId);
 
     this.options.emitStatus(
-      descriptor.agentId,
-      descriptor.status,
+      agentId,
+      restoredDescriptor.status,
       handoffState?.bufferedStatus?.pendingCount ?? currentRuntime.getPendingCount(),
-      descriptor.contextUsage
+      restoredDescriptor.contextUsage
     );
     this.options.emitAgentsSnapshot();
   }

@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
+import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
@@ -203,6 +204,15 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     finalizeWorkerIdleTurn,
     isRuntimeRecoveryActive: vi.fn(() => false),
     incrementSessionCompactionCount: vi.fn(),
+    patchDescriptorFromRuntimeStatus: vi.fn(async (agentId: string, patch: Partial<AgentDescriptor>) => {
+      const descriptor = descriptors.get(agentId);
+      if (!descriptor) {
+        return undefined;
+      }
+      const updated = { ...descriptor, ...patch };
+      descriptors.set(agentId, updated);
+      return updated;
+    }),
     emitConversationMessage,
     emitStatus,
     emitAgentsSnapshot: vi.fn(),
@@ -302,6 +312,10 @@ describe("SwarmRuntimeController", () => {
       percent: 1
     });
 
+    expect(host.patchDescriptorFromRuntimeStatus).toHaveBeenCalledWith(
+      worker.agentId,
+      expect.objectContaining({ status: "streaming", contextUsage: expect.objectContaining({ tokens: 1 }) })
+    );
     const updated = descriptors.get(worker.agentId);
     expect(updated?.status).toBe("streaming");
     expect(updated?.contextUsage).toEqual({
@@ -315,6 +329,42 @@ describe("SwarmRuntimeController", () => {
       0,
       expect.objectContaining({ tokens: 1 })
     );
+    const metaOrder = vi.mocked(host.updateSessionMetaForWorkerDescriptor).mock.invocationCallOrder[0];
+    const statsOrder = vi.mocked(host.refreshSessionMetaStatsBySessionId).mock.invocationCallOrder[0];
+    const saveOrder = vi.mocked(host.saveStore).mock.invocationCallOrder[0];
+    const emitOrder = emitStatus.mock.invocationCallOrder[0];
+    expect(metaOrder).toBeLessThan(statsOrder);
+    expect(statsOrder).toBeLessThan(saveOrder);
+    expect(saveOrder).toBeLessThan(emitOrder);
+  });
+
+  it("manager runtime-status host patch delegates through the descriptor-store live-map adapter without saving", async () => {
+    const config = await makeTempConfig();
+    const manager = new TestSwarmManager(config);
+    const rootSession = await bootWithDefaultManager(manager, config);
+    const patchSpy = vi.spyOn(AgentDescriptorStore.prototype, "patchDescriptorInLiveMaps");
+    const persistedBefore = JSON.parse(await readFile(config.paths.agentsStoreFile, "utf8")) as { agents: AgentDescriptor[] };
+
+    const updated = await (manager as unknown as {
+      patchDescriptorFromRuntimeStatus: (
+        agentId: string,
+        patch: Partial<AgentDescriptor>
+      ) => Promise<AgentDescriptor | undefined>;
+    }).patchDescriptorFromRuntimeStatus(rootSession.agentId, {
+      status: "streaming",
+      contextUsage: { tokens: 3, contextWindow: 100, percent: 3 }
+    });
+
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+    expect(patchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ descriptors: expect.any(Map), profiles: expect.any(Map) }),
+      rootSession.agentId,
+      expect.objectContaining({ status: "streaming" })
+    );
+    expect(updated?.status).toBe("streaming");
+    expect(manager.getAgent(rootSession.agentId)?.status).toBe("streaming");
+    const persistedAfter = JSON.parse(await readFile(config.paths.agentsStoreFile, "utf8")) as { agents: AgentDescriptor[] };
+    expect(persistedAfter).toEqual(persistedBefore);
   });
 
   it("ignores stale runtime tokens for status, session events, runtime errors, and agent end", async () => {

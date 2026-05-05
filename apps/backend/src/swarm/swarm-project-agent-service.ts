@@ -39,6 +39,7 @@ export interface SwarmProjectAgentServiceOptions {
     capabilities?: ProjectAgentCapability[]
   ) => NonNullable<AgentDescriptor["projectAgent"]>;
   getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<{ getContextUsage(): AgentDescriptor["contextUsage"] }>;
+  upsertDescriptorInLiveMaps: (descriptor: AgentDescriptor) => void;
   captureSessionRuntimePromptMeta: (
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
@@ -161,7 +162,7 @@ export class SwarmProjectAgentService {
             createdHandle: handle,
             createdAt: new Date().toISOString()
           };
-          this.options.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
+          this.options.upsertDescriptorInLiveMaps(creatorDescriptor);
         },
         onError: async () => {
           if (previousCreatorResult) {
@@ -169,7 +170,7 @@ export class SwarmProjectAgentService {
           } else {
             delete creatorDescriptor.agentCreatorResult;
           }
-          this.options.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
+          this.options.upsertDescriptorInLiveMaps(creatorDescriptor);
           await deleteProjectAgentRecord(this.options.dataDir, profileId, handle);
         }
       });
@@ -185,7 +186,7 @@ export class SwarmProjectAgentService {
       } else {
         delete creatorDescriptor.agentCreatorResult;
       }
-      this.options.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
+      this.options.upsertDescriptorInLiveMaps(creatorDescriptor);
 
       const cleanupResults = await Promise.allSettled([
         deleteProjectAgentRecord(this.options.dataDir, profileId, handle),
@@ -200,6 +201,17 @@ export class SwarmProjectAgentService {
             message: cleanupResult.reason instanceof Error ? cleanupResult.reason.message : String(cleanupResult.reason)
           });
         }
+      }
+
+      try {
+        await this.options.saveStore();
+      } catch (rollbackSaveError) {
+        this.options.logDebug("project_agent:create:rollback_save_error", {
+          creatorAgentId,
+          agentId: sessionDescriptor.agentId,
+          handle,
+          message: rollbackSaveError instanceof Error ? rollbackSaveError.message : String(rollbackSaveError)
+        });
       }
 
       throw error;
@@ -277,7 +289,7 @@ export class SwarmProjectAgentService {
     }
 
     descriptor.projectAgent = nextProjectAgent ?? undefined;
-    this.options.descriptors.set(agentId, descriptor);
+    this.options.upsertDescriptorInLiveMaps(descriptor);
 
     try {
       await this.options.saveStore();

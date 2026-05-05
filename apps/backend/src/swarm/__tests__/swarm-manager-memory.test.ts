@@ -690,6 +690,13 @@ describe('SwarmManager', () => {
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session merge detail\n', 'utf8')
 
+    const descriptorSaveSpy = vi.spyOn((manager as any).descriptorStore, 'save')
+    const auditSpy = vi.spyOn(manager as any, 'appendSessionMemoryMergeAuditEntry')
+    const snapshotSpy = vi.spyOn(manager as any, 'emitAgentsSnapshot')
+    descriptorSaveSpy.mockClear()
+    auditSpy.mockClear()
+    snapshotSpy.mockClear()
+
     const result = await manager.mergeSessionMemory(sessionAgent.agentId)
 
     expect(result.status).toBe('applied')
@@ -703,6 +710,12 @@ describe('SwarmManager', () => {
 
     const mergedSessionDescriptor = manager.listAgents().find((agent) => agent.agentId === sessionAgent.agentId)
     expect(mergedSessionDescriptor?.mergedAt).toBeDefined()
+    expect(mergedSessionDescriptor?.mergedAt).toBe(result.mergedAt)
+
+    const lastDescriptorSaveOrder = descriptorSaveSpy.mock.invocationCallOrder.at(-1)
+    expect(lastDescriptorSaveOrder).toBeDefined()
+    expect(lastDescriptorSaveOrder!).toBeLessThan(auditSpy.mock.invocationCallOrder[0])
+    expect(auditSpy.mock.invocationCallOrder[0]).toBeLessThan(snapshotSpy.mock.invocationCallOrder[0])
 
     const sessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', sessionAgent.agentId)
     expect(sessionMeta?.memoryMergeAttemptCount).toBe(1)
@@ -1078,87 +1091,70 @@ describe('SwarmManager', () => {
     })
   })
 
-  it('mergeSessionMemory records failed attempts for non-llm save-store failures', async () => {
+  it('mergeSessionMemory rolls back live and persisted mergedAt when descriptor-store save fails', async () => {
     memoryMergeMockState.executeLLMMerge.mockReset()
-    memoryMergeMockState.executeLLMMerge.mockResolvedValue('# Swarm Memory\n\n## Decisions\n- merged before save failure\n')
+    memoryMergeMockState.executeLLMMerge.mockResolvedValue('# Swarm Memory\n\n## Decisions\n- merged before descriptor-store failure\n')
 
     const config = await makeTempConfig()
     const manager = new MergeEnabledTestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const { sessionAgent } = await manager.createSession('manager', { label: 'Save Failure Session' })
-    const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Descriptor Store Save Failure Session' })
+    const beforeDescriptor = manager.listAgents().find((agent) => agent.agentId === sessionAgent.agentId)
+    expect(beforeDescriptor?.mergedAt).toBeUndefined()
+
     await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
-      '# Swarm Memory\n\n## Decisions\n- detail before save-store failure\n',
+      '# Swarm Memory\n\n## Decisions\n- detail before descriptor-store save failure\n',
       'utf8',
     )
 
-    ;(manager as any).saveStore = async () => {
-      throw new Error('agents store write failed')
-    }
+    vi.spyOn((manager as any).descriptorStore, 'save').mockRejectedValueOnce(new Error('transactional store write failed'))
 
     await expect(manager.mergeSessionMemory(sessionAgent.agentId)).rejects.toThrow(
-      'Session memory merge failed during save_store: agents store write failed',
+      'Session memory merge failed during save_store: transactional store write failed',
     )
+
+    const liveDescriptor = manager.listAgents().find((agent) => agent.agentId === sessionAgent.agentId)
+    expect(liveDescriptor?.mergedAt).toBeUndefined()
+
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: Array<{ agentId: string; mergedAt?: string }>
+    }
+    expect(persistedStore.agents.find((agent) => agent.agentId === sessionAgent.agentId)?.mergedAt).toBeUndefined()
 
     const sessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', sessionAgent.agentId)
-    expect(sessionMeta?.memoryMergeAttemptCount).toBe(2)
     expect(sessionMeta?.lastMemoryMergeStatus).toBe('failed')
-    expect(sessionMeta?.lastMemoryMergeStrategy).toBe('llm')
     expect(sessionMeta?.lastMemoryMergeFailureStage).toBe('save_store')
-    expect(sessionMeta?.lastMemoryMergeAppliedSourceHash).toBe(sessionMeta?.lastMemoryMergeSourceHash)
-    expect(sessionMeta?.lastMemoryMergeError).toContain('agents store write failed')
-
-    const auditLines = (await readFile(auditPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
-    expect(auditLines.at(-1)).toMatchObject({
-      sessionAgentId: sessionAgent.agentId,
-      status: 'failed',
-      strategy: 'llm',
-      stage: 'save_store',
-      appliedChange: true,
-    })
   })
 
-  it('mergeSessionMemory retries after a save_store failure instead of idempotent-skipping recovery', async () => {
+  it('mergeSessionMemory does not report failure from a redundant post-transaction save after descriptor state is committed', async () => {
     memoryMergeMockState.executeLLMMerge.mockReset()
-    memoryMergeMockState.executeLLMMerge
-      .mockResolvedValueOnce('# Swarm Memory\n\n## Decisions\n- merged before save retry\n')
-      .mockResolvedValueOnce('# Swarm Memory\n\n## Decisions\n- merged before save retry\n')
+    memoryMergeMockState.executeLLMMerge.mockResolvedValue('# Swarm Memory\n\n## Decisions\n- merged despite redundant save failure\n')
 
     const config = await makeTempConfig()
     const manager = new MergeEnabledTestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const { sessionAgent } = await manager.createSession('manager', { label: 'Save Retry Session' })
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Redundant Save Failure Session' })
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
     await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
-      '# Swarm Memory\n\n## Decisions\n- detail before save retry\n',
+      '# Swarm Memory\n\n## Decisions\n- detail before redundant save failure\n',
       'utf8',
     )
 
-    const originalSaveStore = (manager as any).saveStore.bind(manager)
-    let saveStoreFailuresRemaining = 1
-    ;(manager as any).saveStore = async (...args: any[]) => {
-      if (saveStoreFailuresRemaining > 0) {
-        saveStoreFailuresRemaining -= 1
-        throw new Error('agents store write failed')
-      }
+    const redundantSave = vi
+      .spyOn(manager as unknown as { saveStore: () => Promise<void> }, 'saveStore')
+      .mockRejectedValue(new Error('redundant agents store write failed'))
 
-      return originalSaveStore(...args)
-    }
+    const result = await manager.mergeSessionMemory(sessionAgent.agentId)
 
-    await expect(manager.mergeSessionMemory(sessionAgent.agentId)).rejects.toThrow(
-      'Session memory merge failed during save_store: agents store write failed',
-    )
-
-    const retryResult = await manager.mergeSessionMemory(sessionAgent.agentId)
-    expect(retryResult.status).toBe('applied')
-    expect(retryResult.strategy).toBe('llm')
-    expect(memoryMergeMockState.executeLLMMerge).toHaveBeenCalledTimes(2)
+    expect(result.status).toBe('applied')
+    expect(result.strategy).toBe('llm')
+    expect(redundantSave).not.toHaveBeenCalled()
 
     const sessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', sessionAgent.agentId)
     expect(sessionMeta?.lastMemoryMergeStatus).toBe('applied')
@@ -1166,15 +1162,14 @@ describe('SwarmManager', () => {
     expect(sessionMeta?.lastMemoryMergeError).toBeNull()
 
     const auditLines = (await readFile(auditPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
-    expect(auditLines).toHaveLength(2)
-    expect(auditLines[0]).toMatchObject({ status: 'failed', strategy: 'llm', stage: 'save_store' })
-    expect(auditLines[1]).toMatchObject({ status: 'applied', strategy: 'llm' })
+    expect(auditLines).toHaveLength(1)
+    expect(auditLines[0]).toMatchObject({ status: 'applied', strategy: 'llm' })
 
     const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
       agents: Array<{ agentId: string; mergedAt?: string }>
     }
     expect(persistedStore.agents.find((agent) => agent.agentId === sessionAgent.agentId)?.mergedAt).toBe(
-      retryResult.mergedAt,
+      result.mergedAt,
     )
   })
 

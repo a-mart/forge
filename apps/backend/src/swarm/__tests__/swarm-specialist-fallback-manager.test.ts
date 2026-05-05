@@ -625,6 +625,15 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimeTokensByAgentId.set(descriptor.agentId, token);
       return new FakeRuntime(structuredClone(descriptor), systemPrompt);
     });
+    const patchDescriptor = vi.fn(async (agentId: string, patch: (descriptor: AgentDescriptor) => AgentDescriptor) => {
+      const currentDescriptor = descriptors.get(agentId);
+      if (!currentDescriptor) {
+        return undefined;
+      }
+      const updatedDescriptor = patch(structuredClone(currentDescriptor));
+      descriptors.set(agentId, updatedDescriptor);
+      return updatedDescriptor;
+    });
 
     const manager = new SwarmSpecialistFallbackManager({
       descriptors,
@@ -645,6 +654,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       updateSessionMetaForWorkerDescriptor: vi.fn(),
       refreshSessionMetaStatsBySessionId: vi.fn(),
       saveStore: vi.fn(),
+      patchDescriptor,
       emitStatus: vi.fn(),
       emitAgentsSnapshot: vi.fn(),
       clearTrackedToolPaths: vi.fn(),
@@ -669,6 +679,7 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(replacement.sendCalls.map((c) => c.delivery)).toEqual(["auto"]);
 
     expect(current.terminateCalls.length).toBeGreaterThan(0);
+    expect(patchDescriptor).toHaveBeenCalledTimes(1);
     expect(descriptors.get(worker.agentId)?.model.provider).toBe("openai-codex");
   });
 
@@ -744,6 +755,125 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(recovered).toBe(false);
     expect(restoreSpy).toHaveBeenCalled();
     expect(descriptors.get(worker.agentId)?.model.provider).toBe("anthropic");
+    expect(runtimes.get(worker.agentId)).toBe(current);
+  });
+
+  it("preserves unrelated descriptor updates and newer updatedAt when rollback restores original fallback state", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sessionsDir, "w-rollback-preserve.jsonl"), "", "utf8");
+
+    const descriptors = new Map<string, AgentDescriptor>();
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+    const previousUpdatedAt = "2026-01-01T00:00:00.000Z";
+    const rerouteUpdatedAt = "2026-01-01T00:00:01.000Z";
+    const unrelatedUpdatedAt = "2026-01-01T00:00:02.000Z";
+
+    const worker = buildWorkerDescriptor(config, {
+      agentId: "w-rollback-preserve",
+      displayName: "Original",
+      updatedAt: previousUpdatedAt
+    });
+    descriptors.set(worker.agentId, worker);
+
+    const current = new FakeRuntime(worker, "sys");
+    current.specialistFallbackReplayMessage = { text: "rollback-preserve" };
+    runtimes.set(worker.agentId, current);
+    runtimeTokensByAgentId.set(worker.agentId, 22);
+
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn()
+    });
+
+    const attachRuntime = vi.fn((agentId: string, runtime: SwarmAgentRuntime) => {
+      runtimes.set(agentId, runtime);
+    });
+    const replacement = new FakeRuntime(
+      {
+        ...worker,
+        model: { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "medium" }
+      },
+      "sys2"
+    );
+    replacement.sendMessageError = new Error("fallback replay boom");
+    const patchDescriptor = vi.fn(async (agentId: string, patch: (descriptor: AgentDescriptor) => AgentDescriptor) => {
+      const currentDescriptor = descriptors.get(agentId);
+      if (!currentDescriptor) {
+        return undefined;
+      }
+      const updatedDescriptor = patch(structuredClone(currentDescriptor));
+      expect(updatedDescriptor.updatedAt).toBe(rerouteUpdatedAt);
+      updatedDescriptor.displayName = "Renamed while rerouted";
+      updatedDescriptor.updatedAt = unrelatedUpdatedAt;
+      descriptors.set(agentId, updatedDescriptor);
+      return updatedDescriptor;
+    });
+    const patchDescriptorInLiveMaps = vi.fn((agentId: string, patch: (descriptor: AgentDescriptor) => AgentDescriptor) => {
+      const currentDescriptor = descriptors.get(agentId);
+      if (!currentDescriptor) {
+        return undefined;
+      }
+      const updatedDescriptor = patch(structuredClone(currentDescriptor));
+      descriptors.set(agentId, updatedDescriptor);
+      return updatedDescriptor;
+    });
+
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      workerHealthService: health,
+      now: () => rerouteUpdatedAt,
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+      ]),
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor: vi.fn(async () => replacement),
+      attachRuntime,
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      patchDescriptor,
+      patchDescriptorInLiveMaps,
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn()
+    });
+
+    const recovered = await manager.maybeRecoverWorkerWithSpecialistFallback({
+      agentId: worker.agentId,
+      errorMessage: "rate limit exceeded",
+      sourcePhase: "prompt_start",
+      runtimeToken: 22,
+      handleRuntimeStatus: vi.fn(),
+      handleRuntimeAgentEnd: vi.fn()
+    });
+
+    expect(recovered).toBe(false);
+    expect(patchDescriptor).toHaveBeenCalledTimes(1);
+    expect(patchDescriptorInLiveMaps).toHaveBeenCalledTimes(1);
+    expect(descriptors.get(worker.agentId)).toMatchObject({
+      displayName: "Renamed while rerouted",
+      status: "idle",
+      updatedAt: unrelatedUpdatedAt,
+      model: expect.objectContaining({ provider: "anthropic" })
+    });
     expect(runtimes.get(worker.agentId)).toBe(current);
   });
 

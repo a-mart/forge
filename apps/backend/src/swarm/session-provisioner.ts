@@ -33,10 +33,16 @@ export interface DisposeSessionOptions {
   removeProfileId?: string;
 }
 
+export interface SessionProvisionerDescriptorMutations {
+  upsertDescriptor(descriptor: AgentDescriptor): void;
+  deleteDescriptor(agentId: string): void;
+  upsertProfile(profile: ManagerProfile): void;
+  deleteProfile(profileId: string): void;
+}
+
 export interface SessionProvisionerOptions {
   dataDir: string;
-  descriptors: Map<string, AgentDescriptor>;
-  profiles: Map<string, ManagerProfile>;
+  descriptorMutations: SessionProvisionerDescriptorMutations;
   runtimes: Map<string, SwarmAgentRuntime>;
   pinnedMessageIdsBySessionAgentId: Map<string, Set<string>>;
   conversationProjector: SessionProvisionerConversationProjector;
@@ -71,9 +77,9 @@ export class SessionProvisioner {
       removeProfileOnRollback = Boolean(profile)
     } = options;
 
-    this.options.descriptors.set(descriptor.agentId, descriptor);
+    this.options.descriptorMutations.upsertDescriptor(descriptor);
     if (profile) {
-      this.options.profiles.set(profile.profileId, profile);
+      this.options.descriptorMutations.upsertProfile(profile);
     }
 
     try {
@@ -134,7 +140,7 @@ export class SessionProvisioner {
       managerId: descriptor.managerId
     });
 
-    this.options.descriptors.delete(descriptor.agentId);
+    this.options.descriptorMutations.deleteDescriptor(descriptor.agentId);
     this.options.pinnedMessageIdsBySessionAgentId.delete(descriptor.agentId);
     this.options.conversationProjector.deleteConversationHistory(descriptor.agentId, descriptor.sessionFile);
 
@@ -149,7 +155,7 @@ export class SessionProvisioner {
     }
 
     if (options.removeProfileId) {
-      this.options.profiles.delete(options.removeProfileId);
+      this.options.descriptorMutations.deleteProfile(options.removeProfileId);
     }
   }
 

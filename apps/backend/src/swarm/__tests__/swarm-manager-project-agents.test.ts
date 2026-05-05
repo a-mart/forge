@@ -587,6 +587,39 @@ describe('SwarmManager', () => {
     expect(retried.handle).toBe('release-notes')
   })
 
+  it('createAndPromoteProjectAgent preserves unrelated live descriptor changes when provisioning fails', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+    const unrelated = await manager.createSession('manager', { label: 'Unrelated Session' })
+    const agentIdsBefore = manager.listAgents().map((agent) => agent.agentId).sort()
+
+    vi.spyOn(manager as any, 'createRuntimeForDescriptor').mockImplementationOnce(async () => {
+      await manager.renameSession(unrelated.sessionAgent.agentId, 'Unrelated Updated')
+      throw new Error('runtime boom')
+    })
+
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: 'Release Notes',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: 'You are the release notes project agent.',
+      }),
+    ).rejects.toThrow('runtime boom')
+
+    expect(manager.listAgents().map((agent) => agent.agentId).sort()).toEqual(agentIdsBefore)
+    expect(manager.getAgent(unrelated.sessionAgent.agentId)?.sessionLabel).toBe('Unrelated Updated')
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'release-notes'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(manager.notifiedProjectAgentProfileIds).toEqual([])
+  })
+
   it('createAndPromoteProjectAgent rolls back descriptors when persistence fails after runtime creation', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
@@ -600,7 +633,7 @@ describe('SwarmManager', () => {
     const profileSessionsDir = join(config.paths.dataDir, 'profiles', 'manager', 'sessions')
     const sessionDirsBefore = (await readdir(profileSessionsDir)).sort()
 
-    vi.spyOn(manager as any, 'saveStore').mockRejectedValueOnce(new Error('save boom'))
+    vi.spyOn((manager as any).descriptorStore, 'save').mockRejectedValueOnce(new Error('save boom'))
 
     await expect(
       manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {

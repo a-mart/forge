@@ -42,6 +42,17 @@ import type {
   SwarmReasoningLevel
 } from "./types.js";
 
+interface SettingsDescriptorTransactionStore {
+  patchDescriptor: (
+    agentId: string,
+    patch: Partial<AgentDescriptor> | ((descriptor: AgentDescriptor) => AgentDescriptor)
+  ) => AgentDescriptor;
+  patchProfile: (
+    profileId: string,
+    patch: Partial<ManagerProfile> | ((profile: ManagerProfile) => ManagerProfile)
+  ) => ManagerProfile;
+}
+
 export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change" | "prompt_mode_change";
 
 type ManagerRuntimeRecycleDisposition = "recycled" | "deferred" | "none";
@@ -62,6 +73,7 @@ export interface SwarmSettingsServiceOptions {
     reason: ManagerRuntimeRecycleReason
   ) => Promise<ManagerRuntimeRecycleDisposition>;
   now?: () => string;
+  transactionDescriptors?: <T>(callback: (store: SettingsDescriptorTransactionStore) => T | Promise<T>) => Promise<T>;
   saveStore: () => Promise<void>;
   emitAgentsSnapshot: () => void;
   emitProfilesSnapshot: () => void;
@@ -192,9 +204,24 @@ export class SwarmSettingsService {
     const deferredSessions: string[] = [];
     const recycleFailures: Array<{ agentId: string; error: string }> = [];
 
-    for (const session of sessions) {
-      session.cwd = resolvedCwd;
-    }
+    await this.runDescriptorTransaction(async (store) => {
+      for (const session of sessions) {
+        store.patchDescriptor(session.agentId, { cwd: resolvedCwd });
+      }
+    }, async () => {
+      const originalCwds = sessions.map((session) => ({ session, cwd: session.cwd }));
+      try {
+        for (const session of sessions) {
+          session.cwd = resolvedCwd;
+        }
+        await this.options.saveStore();
+      } catch (error) {
+        for (const originalState of originalCwds) {
+          originalState.session.cwd = originalState.cwd;
+        }
+        throw error;
+      }
+    });
 
     for (const session of sessions) {
       try {
@@ -212,12 +239,11 @@ export class SwarmSettingsService {
       }
     }
 
-    await this.options.saveStore();
-    this.options.emitAgentsSnapshot();
-
     if (recycleFailures.length > 0) {
       console.warn(`[swarm] manager:update_cwd:recycle_failed managerId=${managerId} failures=${JSON.stringify(recycleFailures)}`);
     }
+
+    this.options.emitAgentsSnapshot();
 
     this.options.logDebug("manager:update_cwd", {
       managerId,
@@ -468,14 +494,21 @@ export class SwarmSettingsService {
     };
 
     if (mutations.length === 0) {
-      applyProfileDefaultMutation();
-      try {
-        await this.options.saveStore();
-      } catch (error) {
-        profile.defaultModel = previousDefaultModel;
-        profile.updatedAt = previousUpdatedAt;
-        throw error;
-      }
+      await this.runDescriptorTransaction(async (store) => {
+        store.patchProfile(profile.profileId, {
+          defaultModel: { ...targetModel },
+          updatedAt: stagedUpdatedAt
+        });
+      }, async () => {
+        applyProfileDefaultMutation();
+        try {
+          await this.options.saveStore();
+        } catch (error) {
+          profile.defaultModel = previousDefaultModel;
+          profile.updatedAt = previousUpdatedAt;
+          throw error;
+        }
+      });
       this.options.emitProfilesSnapshot();
       this.options.emitAgentsSnapshot();
       this.options.logDebug(details.logContext, {
@@ -493,6 +526,11 @@ export class SwarmSettingsService {
 
     const result = await this.applySessionModelMutations(mutations, {
       emitProfilesSnapshot: true,
+      profilePatch: {
+        profileId: profile.profileId,
+        defaultModel: targetModel,
+        updatedAt: stagedUpdatedAt
+      },
       beforeSave: applyProfileDefaultMutation,
       rollbackBeforeSave: () => {
         profile.defaultModel = previousDefaultModel;
@@ -653,6 +691,7 @@ export class SwarmSettingsService {
     }>,
     options: {
       emitProfilesSnapshot: boolean;
+      profilePatch?: { profileId: string; defaultModel: AgentDescriptor["model"]; updatedAt: string };
       beforeSave?: () => void;
       rollbackBeforeSave?: () => void;
     }
@@ -717,22 +756,37 @@ export class SwarmSettingsService {
     const deferredSessions: string[] = [];
     const recycleFailures: Array<{ agentId: string; error: string }> = [];
 
-    try {
+    await this.runDescriptorTransaction(async (store) => {
       for (const mutation of mutations) {
-        mutation.session.model = { ...mutation.targetModel };
-        mutation.session.modelOrigin = mutation.targetModelOrigin;
+        store.patchDescriptor(mutation.session.agentId, {
+          model: { ...mutation.targetModel },
+          modelOrigin: mutation.targetModelOrigin
+        });
       }
+      if (options.profilePatch) {
+        store.patchProfile(options.profilePatch.profileId, {
+          defaultModel: { ...options.profilePatch.defaultModel },
+          updatedAt: options.profilePatch.updatedAt
+        });
+      }
+    }, async () => {
+      try {
+        for (const mutation of mutations) {
+          mutation.session.model = { ...mutation.targetModel };
+          mutation.session.modelOrigin = mutation.targetModelOrigin;
+        }
 
-      options.beforeSave?.();
-      await this.options.saveStore();
-    } catch (error) {
-      for (const originalState of originalSessionStates) {
-        originalState.session.model = originalState.model;
-        originalState.session.modelOrigin = originalState.modelOrigin;
+        options.beforeSave?.();
+        await this.options.saveStore();
+      } catch (error) {
+        for (const originalState of originalSessionStates) {
+          originalState.session.model = originalState.model;
+          originalState.session.modelOrigin = originalState.modelOrigin;
+        }
+        options.rollbackBeforeSave?.();
+        throw error;
       }
-      options.rollbackBeforeSave?.();
-      throw error;
-    }
+    });
 
     for (const pendingWrite of continuityWrites) {
       try {
@@ -773,6 +827,17 @@ export class SwarmSettingsService {
       deferredSessions,
       recycleFailures
     };
+  }
+
+  private async runDescriptorTransaction<T>(
+    transactionCallback: (store: SettingsDescriptorTransactionStore) => T | Promise<T>,
+    fallbackCallback: () => T | Promise<T>
+  ): Promise<T> {
+    if (this.options.transactionDescriptors) {
+      return this.options.transactionDescriptors(transactionCallback);
+    }
+
+    return fallbackCallback();
   }
 
   private getCwdPolicy(): { rootDir: string; allowlistRoots: string[] } {

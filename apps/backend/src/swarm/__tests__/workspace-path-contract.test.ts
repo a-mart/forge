@@ -2,9 +2,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PINNED_MESSAGES_FILE_NAME } from "../message-pins.js";
+import { createProfileWorkspace } from "../session/profile-workspace.js";
+import { createSessionWorkspace } from "../session/session-workspace.js";
 import {
   getProfileDir,
   getProfileMemoryPath,
+  getProfilePiDir,
+  getProfilePiExtensionsDir,
+  getProfilePiPromptsDir,
+  getProfilePiSkillsDir,
+  getProfilePiThemesDir,
   getProfileReferenceDir,
   getProfileScheduleFilePath,
   getProfileSchedulesDir,
@@ -83,5 +90,53 @@ describe("workspace/data path contract", () => {
     expect(getTerminalLogPath(DATA_DIR, PROFILE_ID, PROFILE_ID, TERMINAL_ID)).toBe(
       join(rootTerminalsDir, TERMINAL_ID, "delta.ndjson")
     );
+  });
+
+  it("wraps profile-scoped paths in ProfileWorkspace without changing existing helpers", () => {
+    const workspace = createProfileWorkspace(DATA_DIR, PROFILE_ID);
+
+    expect(workspace.dataDir).toBe(DATA_DIR);
+    expect(workspace.profileId).toBe(PROFILE_ID);
+    expect(workspace.profileDir).toBe(getProfileDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.memoryPath).toBe(getProfileMemoryPath(DATA_DIR, PROFILE_ID));
+    expect(workspace.referenceDir).toBe(getProfileReferenceDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.projectAgentsDir).toBe(getProjectAgentsDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.schedulesDir).toBe(getProfileSchedulesDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.scheduleFilePath).toBe(getProfileScheduleFilePath(DATA_DIR, PROFILE_ID));
+    expect(workspace.slashCommandsPath).toBe(getProfileSlashCommandsPath(DATA_DIR, PROFILE_ID));
+    expect(workspace.pi.piDir).toBe(getProfilePiDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.pi.extensionsDir).toBe(getProfilePiExtensionsDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.pi.skillsDir).toBe(getProfilePiSkillsDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.pi.promptsDir).toBe(getProfilePiPromptsDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.pi.themesDir).toBe(getProfilePiThemesDir(DATA_DIR, PROFILE_ID));
+    expect(workspace.terminalRootDir).toBe(getSessionTerminalsDir(DATA_DIR, PROFILE_ID, PROFILE_ID));
+
+    const sessionWorkspace = workspace.session(CHAT_SESSION_ID);
+    expect(sessionWorkspace.sessionDir).toBe(createSessionWorkspace(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID).sessionDir);
+    expect(sessionWorkspace.sessionFilePath).toBe(getSessionFilePath(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID));
+  });
+
+  it("wraps ordinary session paths in SessionWorkspace and intentionally excludes terminal paths", () => {
+    const workspace = createSessionWorkspace(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID);
+
+    expect(workspace.dataDir).toBe(DATA_DIR);
+    expect(workspace.profileId).toBe(PROFILE_ID);
+    expect(workspace.sessionAgentId).toBe(CHAT_SESSION_ID);
+    expect(workspace.sessionDir).toBe(getSessionDir(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID));
+    expect(workspace.sessionFilePath).toBe(getSessionFilePath(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID));
+    expect(workspace.memoryPath).toBe(getSessionMemoryPath(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID));
+    expect(workspace.metaPath).toBe(getSessionMetaPath(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID));
+    expect(workspace.feedbackPath).toBe(getSessionFeedbackPath(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID));
+    expect(workspace.workersDir).toBe(getWorkersDir(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID));
+    expect(workspace.pinnedMessagesPath).toBe(
+      join(getSessionDir(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID), PINNED_MESSAGES_FILE_NAME)
+    );
+    expect(workspace.workerSessionFilePath(WORKER_ID)).toBe(
+      getWorkerSessionFilePath(DATA_DIR, PROFILE_ID, CHAT_SESSION_ID, WORKER_ID)
+    );
+
+    expect("terminalRootDir" in workspace).toBe(false);
+    expect("terminalsDir" in workspace).toBe(false);
+    expect(Object.keys(workspace).some((key) => key.toLowerCase().includes("terminal"))).toBe(false);
   });
 });

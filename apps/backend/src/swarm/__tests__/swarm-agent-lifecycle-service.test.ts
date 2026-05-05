@@ -64,6 +64,20 @@ function baseLifecycleOptions(
     pendingManagerRuntimeRecycleReasonsByAgentId: pendingReasons,
     modelCapacityBlocks,
     sessionProvisioner,
+    descriptorMutations: overrides.descriptorMutations ?? {
+      upsertDescriptor: (descriptor) => {
+        descriptors.set(descriptor.agentId, descriptor);
+      },
+      deleteDescriptor: (agentId) => {
+        descriptors.delete(agentId);
+      },
+      upsertProfile: (profile) => {
+        profiles.set(profile.profileId, profile);
+      },
+      deleteProfile: (profileId) => {
+        profiles.delete(profileId);
+      }
+    },
     now: overrides.now ?? (() => NOW),
     getRequiredSessionDescriptor:
       overrides.getRequiredSessionDescriptor ??
@@ -468,6 +482,43 @@ describe("SwarmAgentLifecycleService", () => {
     expect(deleteWorkerStallState).toHaveBeenCalled();
     expect(runtimes.has("w1")).toBe(false);
     expect(worker.status).toBe("idle");
+  });
+
+  it("routes lifecycle descriptor mutations through the mutation adapter", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    const descriptors = new Map([[worker.agentId, worker]]);
+    const runtimes = new Map([[worker.agentId, makeRuntimeStub({ descriptor: worker })]]);
+    const upsertDescriptor = vi.fn((descriptor: AgentDescriptor) => {
+      descriptors.set(descriptor.agentId, descriptor);
+    });
+    const deleteDescriptor = vi.fn((agentId: string) => {
+      descriptors.delete(agentId);
+    });
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        descriptorMutations: {
+          upsertDescriptor,
+          deleteDescriptor,
+          upsertProfile: vi.fn((profile: ManagerProfile) => {
+            // Not used by this path, but wired to prove the lifecycle service no longer owns map writes.
+            return profile;
+          }),
+          deleteProfile: vi.fn()
+        }
+      })
+    );
+
+    await svc.stopWorker("w1");
+
+    expect(upsertDescriptor).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: "w1",
+      status: "idle"
+    }));
+    expect(deleteDescriptor).not.toHaveBeenCalled();
+    expect(descriptors.get("w1")?.status).toBe("idle");
   });
 
   it("spawnAgent resolves specialists from the collaboration roster for collab managers", async () => {

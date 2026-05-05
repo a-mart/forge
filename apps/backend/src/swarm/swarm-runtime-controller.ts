@@ -161,6 +161,10 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     sessionId: string,
     failureLogKey: string
   ): Promise<number | undefined>;
+  patchDescriptorFromRuntimeStatus(
+    agentId: string,
+    patch: Partial<AgentDescriptor>
+  ): Promise<AgentDescriptor | undefined>;
   emitConversationMessage(event: ConversationMessageEvent): void;
   emitStatus(
     agentId: string,
@@ -430,27 +434,40 @@ export class SwarmRuntimeController {
     const normalizedContextUsage = normalizeContextUsage(contextUsage);
     const contextUsageChanged = !areContextUsagesEqual(descriptor.contextUsage, normalizedContextUsage);
     let shouldPersist = false;
+    const descriptorPatch: Partial<AgentDescriptor> = {};
 
     if (contextUsageChanged) {
-      descriptor.contextUsage = normalizedContextUsage;
+      descriptorPatch.contextUsage = normalizedContextUsage;
     }
 
     const previousStatus = descriptor.status;
     const nextStatus = transitionAgentStatus(previousStatus, status);
     const statusChanged = previousStatus !== nextStatus;
     if (statusChanged) {
-      descriptor.status = nextStatus;
-      descriptor.updatedAt = this.now();
+      descriptorPatch.status = nextStatus;
+      descriptorPatch.updatedAt = this.now();
       shouldPersist = true;
     }
 
     if (previousStatus !== "streaming" && nextStatus === "streaming") {
-      descriptor.streamingStartedAt = Date.now();
+      descriptorPatch.streamingStartedAt = Date.now();
       shouldPersist = true;
     }
 
-    if (descriptor.role === "worker") {
-      const effectiveStatus = descriptor.status;
+    const effectiveContextUsage = Object.prototype.hasOwnProperty.call(descriptorPatch, "contextUsage")
+      ? descriptorPatch.contextUsage
+      : descriptor.contextUsage;
+    if (isNonRunningAgentStatus(nextStatus) && effectiveContextUsage) {
+      descriptorPatch.contextUsage = undefined;
+      shouldPersist = true;
+    }
+
+    const updatedDescriptor = Object.keys(descriptorPatch).length > 0
+      ? await this.host.patchDescriptorFromRuntimeStatus(agentId, descriptorPatch) ?? descriptor
+      : descriptor;
+
+    if (updatedDescriptor.role === "worker") {
+      const effectiveStatus = nextStatus;
       if (effectiveStatus === "streaming" && !this.workerStallState.has(agentId)) {
         this.workerStallState.set(agentId, {
           lastProgressAt: Date.now(),
@@ -467,33 +484,26 @@ export class SwarmRuntimeController {
       }
     }
 
-    if (isNonRunningAgentStatus(nextStatus) && descriptor.contextUsage) {
-      descriptor.contextUsage = undefined;
-      shouldPersist = true;
-    }
-
-    this.descriptors.set(agentId, descriptor);
-
-    if (descriptor.role === "worker" && (statusChanged || contextUsageChanged || nextStatus === "terminated")) {
-      await this.updateSessionMetaForWorkerDescriptor(descriptor);
-      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-    } else if (descriptor.role === "manager" && statusChanged) {
-      await this.refreshSessionMetaStats(descriptor);
+    if (updatedDescriptor.role === "worker" && (statusChanged || contextUsageChanged || nextStatus === "terminated")) {
+      await this.updateSessionMetaForWorkerDescriptor(updatedDescriptor);
+      await this.refreshSessionMetaStatsBySessionId(updatedDescriptor.managerId);
+    } else if (updatedDescriptor.role === "manager" && statusChanged) {
+      await this.refreshSessionMetaStats(updatedDescriptor);
     }
 
     if (shouldPersist) {
       await this.saveStore();
     }
 
-    this.emitStatus(agentId, status, pendingCount, descriptor.contextUsage);
+    this.emitStatus(agentId, status, pendingCount, updatedDescriptor.contextUsage);
     this.logDebug("runtime:status", {
       agentId,
       status,
       pendingCount,
-      contextUsage: descriptor.contextUsage
+      contextUsage: updatedDescriptor.contextUsage
     });
 
-    if (descriptor.role === "worker") {
+    if (updatedDescriptor.role === "worker") {
       if (nextStatus === "streaming") {
         const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
         watchdogState.hadStreamingThisTurn = true;
@@ -503,16 +513,16 @@ export class SwarmRuntimeController {
         this.removeWorkerFromWatchdogBatchQueues(agentId);
       } else if (nextStatus === "idle" && pendingCount === 0) {
         const watchdogState = this.workerWatchdogState.get(agentId);
-        if (watchdogState?.hadStreamingThisTurn && !this.shouldSuppressWorkerIdleFinalization(descriptor)) {
-          await this.finalizeWorkerIdleTurn(agentId, descriptor, "status_idle");
+        if (watchdogState?.hadStreamingThisTurn && !this.shouldSuppressWorkerIdleFinalization(updatedDescriptor)) {
+          await this.finalizeWorkerIdleTurn(agentId, updatedDescriptor, "status_idle");
         }
       }
     }
 
-    if (descriptor.role === "manager") {
-      await this.host.cortexService.handleManagerStatusTransition(descriptor, nextStatus, pendingCount);
+    if (updatedDescriptor.role === "manager") {
+      await this.host.cortexService.handleManagerStatusTransition(updatedDescriptor, nextStatus, pendingCount);
       if (nextStatus === "idle" && pendingCount === 0) {
-        const recycleDisposition = await this.host.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
+        const recycleDisposition = await this.host.applyManagerRuntimeRecyclePolicy(updatedDescriptor.agentId, "idle_transition");
         if (recycleDisposition === "recycled") {
           await this.saveStore();
           this.emitAgentsSnapshot();
@@ -751,7 +761,7 @@ export class SwarmRuntimeController {
         "runtime:compact:count-increment-failed"
       );
       if (autoCount !== undefined) {
-        descriptor.compactionCount = autoCount;
+        await this.host.patchDescriptorFromRuntimeStatus(agentId, { compactionCount: autoCount });
       }
     }
 
