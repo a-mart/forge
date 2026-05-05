@@ -29,10 +29,12 @@ function uniqueErrorHints(errorHints: readonly WsRequestErrorHint[]): WsRequestE
 const RENAME_PROFILE_CONTRACT = getWsRequestContract('rename_profile')
 const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
+const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_PROFILE_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
+  UPDATE_MANAGER_CWD_CONTRACT.commandType,
 ])
 const NON_LEGACY_POSITION_CONTRACTS = WS_REQUEST_CONTRACTS.filter(
   (contract) => !LEGACY_POSITION_CONTRACT_TYPES.has(contract.commandType),
@@ -49,13 +51,17 @@ const PIN_SESSION_ERROR_HINTS = PIN_SESSION_CONTRACT.errorCodeFragments.map((cod
   requestType: PIN_SESSION_CONTRACT.commandType,
   codeFragment,
 }))
+const UPDATE_MANAGER_CWD_ERROR_HINTS = UPDATE_MANAGER_CWD_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_MANAGER_CWD_CONTRACT.commandType,
+  codeFragment,
+}))
 
 export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'create_manager',
   'delete_manager',
   'update_profile_default_model',
   'update_manager_model',
-  'update_manager_cwd',
+  UPDATE_MANAGER_CWD_CONTRACT.commandType,
   'stop_all_agents',
   'create_session',
   'stop_session',
@@ -83,7 +89,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
   { requestType: 'update_profile_default_model', codeFragment: 'update_profile_default_model' },
   { requestType: 'update_manager_model', codeFragment: 'update_manager_model' },
-  { requestType: 'update_manager_cwd', codeFragment: 'update_manager_cwd' },
+  ...UPDATE_MANAGER_CWD_ERROR_HINTS,
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
   { requestType: 'create_session', codeFragment: 'create_session' },
   { requestType: 'stop_session', codeFragment: 'stop_session' },

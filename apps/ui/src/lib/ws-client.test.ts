@@ -80,6 +80,7 @@ describe('ManagerWsClient', () => {
       'rename_profile',
       'rename_session',
       'pin_session',
+      'update_manager_cwd',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1133,6 +1134,71 @@ describe('ManagerWsClient', () => {
 
     await expect(creationPromise).resolves.toMatchObject({ agentId: 'release-manager' })
     expect(client.getState().agents.some((agent) => agent.agentId === 'release-manager')).toBe(true)
+
+    client.destroy()
+  })
+
+  it('sends update_manager_cwd commands and resolves manager_cwd_updated events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const updatePromise = client.updateManagerCwd(' manager ', ' /tmp/project ')
+    const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(updatePayload).toMatchObject({
+      type: 'update_manager_cwd',
+      managerId: 'manager',
+      cwd: '/tmp/project',
+    })
+    expect(typeof updatePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'manager_cwd_updated',
+      requestId: updatePayload.requestId,
+      managerId: 'manager',
+      cwd: '/tmp/project',
+    })
+
+    await expect(updatePromise).resolves.toEqual({ managerId: 'manager', cwd: '/tmp/project' })
+
+    client.destroy()
+  })
+
+  it('rejects update_manager_cwd via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const updatePromise = client.updateManagerCwd('manager', '/tmp/project')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'update_manager_cwd_failed',
+      message: 'Cwd update rejected for testing.',
+    })
+
+    await expect(updatePromise).rejects.toThrow('update_manager_cwd_failed: Cwd update rejected for testing.')
 
     client.destroy()
   })

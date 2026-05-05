@@ -290,6 +290,7 @@ describe('protocol root barrel contract', () => {
       'rename_profile',
       'rename_session',
       'pin_session',
+      'update_manager_cwd',
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
@@ -323,6 +324,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_pin',
       successEvents: ['session_pinned'],
       errorCodeFragments: ['pin_session'],
+    })
+    expect(getWsRequestContract('update_manager_cwd')).toMatchObject({
+      commandType: 'update_manager_cwd',
+      resultFamily: 'manager_cwd_update',
+      successEvents: ['manager_cwd_updated'],
+      errorCodeFragments: ['update_manager_cwd'],
     })
   })
 
