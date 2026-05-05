@@ -82,6 +82,7 @@ describe('ManagerWsClient', () => {
       'pin_session',
       'update_session_model',
       'fork_session',
+      'update_manager_model',
       'update_manager_cwd',
       'create_session',
       'stop_session',
@@ -1141,6 +1142,73 @@ describe('ManagerWsClient', () => {
 
     await expect(creationPromise).resolves.toMatchObject({ agentId: 'release-manager' })
     expect(client.getState().agents.some((agent) => agent.agentId === 'release-manager')).toBe(true)
+
+    client.destroy()
+  })
+
+  it('sends update_manager_model commands and resolves manager_model_updated events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const updatePromise = client.updateManagerModel(' manager ', 'pi-5.4', 'high')
+    const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(updatePayload).toMatchObject({
+      type: 'update_manager_model',
+      managerId: 'manager',
+      model: 'pi-5.4',
+      reasoningLevel: 'high',
+    })
+    expect(typeof updatePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'manager_model_updated',
+      requestId: updatePayload.requestId,
+      managerId: 'manager',
+      model: 'pi-opus',
+      reasoningLevel: 'low',
+    })
+
+    await expect(updatePromise).resolves.toEqual({ managerId: 'manager' })
+
+    client.destroy()
+  })
+
+  it('rejects update_manager_model via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const updatePromise = client.updateManagerModel('manager', 'pi-5.4')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'UPDATE_MANAGER_MODEL_FAILED',
+      message: 'Model update rejected for testing.',
+    })
+
+    await expect(updatePromise).rejects.toThrow('UPDATE_MANAGER_MODEL_FAILED: Model update rejected for testing.')
 
     client.destroy()
   })

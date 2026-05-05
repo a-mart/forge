@@ -31,6 +31,7 @@ const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
 const UPDATE_SESSION_MODEL_CONTRACT = getWsRequestContract('update_session_model')
 const FORK_SESSION_CONTRACT = getWsRequestContract('fork_session')
+const UPDATE_MANAGER_MODEL_CONTRACT = getWsRequestContract('update_manager_model')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
@@ -43,6 +44,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   PIN_SESSION_CONTRACT.commandType,
   UPDATE_SESSION_MODEL_CONTRACT.commandType,
   FORK_SESSION_CONTRACT.commandType,
+  UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   CREATE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
@@ -71,6 +73,10 @@ const UPDATE_SESSION_MODEL_ERROR_HINTS = UPDATE_SESSION_MODEL_CONTRACT.errorCode
 }))
 const FORK_SESSION_ERROR_HINTS = FORK_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: FORK_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const UPDATE_MANAGER_MODEL_ERROR_HINTS = UPDATE_MANAGER_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   codeFragment,
 }))
 const UPDATE_MANAGER_CWD_ERROR_HINTS = UPDATE_MANAGER_CWD_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -102,7 +108,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'create_manager',
   'delete_manager',
   'update_profile_default_model',
-  'update_manager_model',
+  UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   'stop_all_agents',
   CREATE_SESSION_CONTRACT.commandType,
@@ -130,7 +136,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'create_manager', codeFragment: 'create_manager' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
   { requestType: 'update_profile_default_model', codeFragment: 'update_profile_default_model' },
-  { requestType: 'update_manager_model', codeFragment: 'update_manager_model' },
+  ...UPDATE_MANAGER_MODEL_ERROR_HINTS,
   ...UPDATE_MANAGER_CWD_ERROR_HINTS,
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
   ...CREATE_SESSION_ERROR_HINTS,
