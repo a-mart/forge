@@ -37,6 +37,7 @@ describe('ws command parser session commands', () => {
       pick_directory: { type: 'pick_directory', defaultPath: '/tmp/project' },
       get_session_workers: { type: 'get_session_workers', sessionAgentId: 'session-a' },
       rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },
+      rename_session: { type: 'rename_session', agentId: 'session-a', label: 'Session A' },
     } as const
 
     for (const contract of WS_REQUEST_CONTRACTS) {

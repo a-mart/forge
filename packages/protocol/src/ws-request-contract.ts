@@ -19,11 +19,21 @@ export type WsRequestContract<
 
 type ContractCommandType = Extract<
   ClientCommand['type'],
-  'list_directories' | 'validate_directory' | 'pick_directory' | 'get_session_workers' | 'rename_profile'
+  | 'list_directories'
+  | 'validate_directory'
+  | 'pick_directory'
+  | 'get_session_workers'
+  | 'rename_profile'
+  | 'rename_session'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
-  'directories_listed' | 'directory_validated' | 'directory_picked' | 'session_workers_snapshot' | 'profile_renamed'
+  | 'directories_listed'
+  | 'directory_validated'
+  | 'directory_picked'
+  | 'session_workers_snapshot'
+  | 'profile_renamed'
+  | 'session_renamed'
 >
 
 export const WS_REQUEST_CONTRACTS = [
@@ -61,6 +71,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['profile_renamed'],
     errorCodeFragments: ['rename_profile'],
+  },
+  {
+    commandType: 'rename_session',
+    resultFamily: 'session_rename',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_renamed'],
+    errorCodeFragments: ['rename_session'],
   },
 ] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 

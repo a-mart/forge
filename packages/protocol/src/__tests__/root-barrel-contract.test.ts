@@ -288,6 +288,7 @@ describe('protocol root barrel contract', () => {
       'pick_directory',
       'get_session_workers',
       'rename_profile',
+      'rename_session',
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
@@ -309,6 +310,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'profile_rename',
       successEvents: ['profile_renamed'],
       errorCodeFragments: ['rename_profile'],
+    })
+    expect(getWsRequestContract('rename_session')).toMatchObject({
+      commandType: 'rename_session',
+      resultFamily: 'session_rename',
+      successEvents: ['session_renamed'],
+      errorCodeFragments: ['rename_session'],
     })
   })
 

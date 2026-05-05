@@ -72,7 +72,14 @@ describe('ManagerWsClient', () => {
   it('keeps promise request policy aligned with protocol contracts', () => {
     const contractTypes = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
 
-    expect(contractTypes).toEqual(['list_directories', 'validate_directory', 'pick_directory', 'get_session_workers', 'rename_profile'])
+    expect(contractTypes).toEqual([
+      'list_directories',
+      'validate_directory',
+      'pick_directory',
+      'get_session_workers',
+      'rename_profile',
+      'rename_session',
+    ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
     expect(
@@ -1125,6 +1132,71 @@ describe('ManagerWsClient', () => {
 
     await expect(creationPromise).resolves.toMatchObject({ agentId: 'release-manager' })
     expect(client.getState().agents.some((agent) => agent.agentId === 'release-manager')).toBe(true)
+
+    client.destroy()
+  })
+
+  it('sends rename_session commands and resolves session_renamed events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const renamePromise = client.renameSession(' session-a ', ' Renamed Session ')
+    const renamePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(renamePayload).toMatchObject({
+      type: 'rename_session',
+      agentId: 'session-a',
+      label: 'Renamed Session',
+    })
+    expect(typeof renamePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_renamed',
+      requestId: renamePayload.requestId,
+      agentId: 'session-a',
+      label: 'Renamed Session',
+    })
+
+    await expect(renamePromise).resolves.toEqual({ agentId: 'session-a' })
+
+    client.destroy()
+  })
+
+  it('rejects rename_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const renamePromise = client.renameSession('session-a', 'Renamed Session')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'rename_session_failed',
+      message: 'Rename rejected for testing.',
+    })
+
+    await expect(renamePromise).rejects.toThrow('rename_session_failed: Rename rejected for testing.')
 
     client.destroy()
   })
