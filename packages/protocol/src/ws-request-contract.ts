@@ -27,6 +27,7 @@ type ContractCommandType = Extract<
   | 'rename_session'
   | 'pin_session'
   | 'update_session_model'
+  | 'fork_session'
   | 'update_manager_cwd'
   | 'create_session'
   | 'stop_session'
@@ -44,6 +45,7 @@ type ContractSuccessEventType = Extract<
   | 'session_renamed'
   | 'session_pinned'
   | 'session_model_updated'
+  | 'session_forked'
   | 'manager_cwd_updated'
   | 'session_created'
   | 'session_stopped'
@@ -108,6 +110,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_model_updated'],
     errorCodeFragments: ['update_session_model'],
+  },
+  {
+    commandType: 'fork_session',
+    resultFamily: 'session_fork',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_forked'],
+    errorCodeFragments: ['fork_session'],
   },
   {
     commandType: 'update_manager_cwd',

@@ -81,6 +81,7 @@ describe('ManagerWsClient', () => {
       'rename_session',
       'pin_session',
       'update_session_model',
+      'fork_session',
       'update_manager_cwd',
       'create_session',
       'stop_session',
@@ -1843,6 +1844,95 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(updatePromise).rejects.toThrow('UPDATE_SESSION_MODEL_FAILED: Update session model rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends fork_session commands and resolves session_forked events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const forkPromise = client.forkSession(' source ', ' Forked ', ' message-1 ')
+    const forkPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(forkPayload).toMatchObject({
+      type: 'fork_session',
+      sourceAgentId: 'source',
+      label: 'Forked',
+      fromMessageId: 'message-1',
+    })
+    expect(typeof forkPayload.requestId).toBe('string')
+
+    const newSessionAgent = {
+      agentId: 'forked-session',
+      managerId: 'forked-session',
+      displayName: 'Forked',
+      role: 'manager',
+      status: 'idle',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      cwd: '/tmp/project',
+      model: { provider: 'openai-codex', modelId: 'gpt-5.4' },
+      sessionFile: '/tmp/project/session.jsonl',
+      profileId: 'profile-a',
+    }
+
+    emitServerEvent(socket, {
+      type: 'session_forked',
+      requestId: forkPayload.requestId,
+      sourceAgentId: 'source',
+      newSessionAgent,
+      profile: {
+        profileId: 'profile-a',
+        displayName: 'Profile A',
+        defaultSessionAgentId: 'source',
+        defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.4' },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      fromMessageId: 'message-1',
+    })
+
+    await expect(forkPromise).resolves.toEqual({ sourceAgentId: 'source', newSessionAgent })
+
+    client.destroy()
+  })
+
+  it('rejects fork_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const forkPromise = client.forkSession('source')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'FORK_SESSION_FAILED',
+      message: 'Fork session rejected for testing.',
+    })
+
+    await expect(forkPromise).rejects.toThrow('FORK_SESSION_FAILED: Fork session rejected for testing.')
 
     client.destroy()
   })

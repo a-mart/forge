@@ -30,6 +30,7 @@ const RENAME_PROFILE_CONTRACT = getWsRequestContract('rename_profile')
 const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
 const UPDATE_SESSION_MODEL_CONTRACT = getWsRequestContract('update_session_model')
+const FORK_SESSION_CONTRACT = getWsRequestContract('fork_session')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
@@ -41,6 +42,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
   UPDATE_SESSION_MODEL_CONTRACT.commandType,
+  FORK_SESSION_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   CREATE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
@@ -65,6 +67,10 @@ const PIN_SESSION_ERROR_HINTS = PIN_SESSION_CONTRACT.errorCodeFragments.map((cod
 }))
 const UPDATE_SESSION_MODEL_ERROR_HINTS = UPDATE_SESSION_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: UPDATE_SESSION_MODEL_CONTRACT.commandType,
+  codeFragment,
+}))
+const FORK_SESSION_ERROR_HINTS = FORK_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: FORK_SESSION_CONTRACT.commandType,
   codeFragment,
 }))
 const UPDATE_MANAGER_CWD_ERROR_HINTS = UPDATE_MANAGER_CWD_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -108,7 +114,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   PIN_SESSION_CONTRACT.commandType,
   UPDATE_SESSION_MODEL_CONTRACT.commandType,
   RENAME_PROFILE_CONTRACT.commandType,
-  'fork_session',
+  FORK_SESSION_CONTRACT.commandType,
   'merge_session_memory',
   'set_session_project_agent',
   'get_project_agent_config',
@@ -136,7 +142,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   ...PIN_SESSION_ERROR_HINTS,
   ...UPDATE_SESSION_MODEL_ERROR_HINTS,
   ...RENAME_PROFILE_ERROR_HINTS,
-  { requestType: 'fork_session', codeFragment: 'fork_session' },
+  ...FORK_SESSION_ERROR_HINTS,
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
   { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
   { requestType: 'get_project_agent_config', codeFragment: 'project_agent_config' },

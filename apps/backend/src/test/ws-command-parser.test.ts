@@ -40,6 +40,7 @@ describe('ws command parser session commands', () => {
       rename_session: { type: 'rename_session', agentId: 'session-a', label: 'Session A' },
       pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
       update_session_model: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' },
+      fork_session: { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', fromMessageId: 'message-1' },
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
       create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
       stop_session: { type: 'stop_session', agentId: 'session-a' },
@@ -93,6 +94,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit', requestId: 123 })).toEqual({
       ok: false,
       error: 'update_session_model.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'fork_session', sourceAgentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'fork_session', sourceAgentId: 'session-a', label: undefined, fromMessageId: undefined, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'fork_session', sourceAgentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'fork_session.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' })).toEqual({
       ok: true,
