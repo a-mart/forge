@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ManagerWsClient } from './ws-client'
+import { REQUEST_TIMEOUT_MS } from './ws-client/runtime-types'
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
 
@@ -2319,6 +2320,901 @@ describe('ManagerWsClient', () => {
       expect(client.getState().messages).toHaveLength(1)
 
       unsub()
+      client.destroy()
+    })
+
+    it('does not flush when only ready event has been received', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+
+      // No flush — ready alone is insufficient
+      expect(notificationCount).toBe(0)
+      // State should not yet reflect session-b subscription
+      expect(client.getState().subscribedAgentId).not.toBe('session-b')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('does not flush when only conversation_history has been received', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'test', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+
+      // No flush — conversation_history alone is insufficient
+      expect(notificationCount).toBe(0)
+
+      unsub()
+      client.destroy()
+    })
+
+    it('does not flush when only pending_choices_snapshot has been received', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: ['c-1'] })
+
+      // No flush — pending_choices_snapshot alone is insufficient (need terminal signal)
+      expect(notificationCount).toBe(0)
+
+      unsub()
+      client.destroy()
+    })
+
+    it('flushes when unread_counts_snapshot arrives as terminal signal even without other bootstrap events', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // unread_counts_snapshot is the terminal signal — should always flush
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: { 'session-c': 1 } })
+
+      // Flush occurs because unread_counts_snapshot is the terminal signal
+      expect(notificationCount).toBe(1)
+      expect(client.getState().unreadCounts).toEqual({ 'session-c': 1 })
+
+      unsub()
+      client.destroy()
+    })
+
+    it('force-flushes on agent_status targeting the bootstrap agent itself (not just workers)', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // Partial bootstrap — only ready so far
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      expect(notificationCount).toBe(0)
+
+      // agent_status targeting the bootstrap agent itself (agentId === target)
+      emitServerEvent(socket, {
+        type: 'agent_status',
+        agentId: 'session-b',
+        status: 'streaming',
+        pendingCount: 1,
+      })
+
+      // Force-flush produced a notification, and the agent_status was processed
+      expect(notificationCount).toBeGreaterThanOrEqual(1)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+      expect(client.getState().statuses['session-b']?.status).toBe('streaming')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('does not force-flush on agent_status for an unrelated agent during bootstrap', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // Partial bootstrap — only ready so far
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      expect(notificationCount).toBe(0)
+
+      // agent_status for a completely unrelated agent — should NOT force-flush
+      emitServerEvent(socket, {
+        type: 'agent_status',
+        agentId: 'unrelated-worker',
+        managerId: 'other-manager',
+        status: 'streaming',
+        pendingCount: 1,
+      })
+
+      // Bootstrap buffer should still be pending — the status update applies but no flush
+      // The status may or may not be applied immediately (depends on non-coalescible pass-through)
+      // but the key assertion is that bootstrap did not flush
+      expect(client.getState().subscribedAgentId).not.toBe('session-b')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('ignores wrong-target conversation_history during bootstrap', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // Send bootstrap events where conversation_history targets wrong agent
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'wrong-session',
+        messages: [
+          { type: 'conversation_message', agentId: 'wrong-session', role: 'user', text: 'wrong target', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      // Correct history arrives
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'correct', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      expect(notificationCount).toBe(1)
+      expect(client.getState().messages).toHaveLength(1)
+      const msg = client.getState().messages[0]
+      expect(msg.type === 'conversation_message' ? msg.text : undefined).toBe('correct')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('ignores wrong-target pending_choices_snapshot during bootstrap', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-b', messages: [] })
+      // Wrong target for pending_choices_snapshot
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'wrong-session', choiceIds: ['stale-choice'] })
+      // Correct target
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: ['good-choice'] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      expect(notificationCount).toBe(1)
+      expect(client.getState().pendingChoiceIds.has('good-choice')).toBe(true)
+      expect(client.getState().pendingChoiceIds.has('stale-choice')).toBe(false)
+
+      unsub()
+      client.destroy()
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Async request behavior
+  // -------------------------------------------------------------------------
+
+  describe('async request behavior', () => {
+    function setupReadyClient(agentId = 'manager') {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', agentId)
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.emit('open')
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: agentId })
+      return { client, socket }
+    }
+
+    it('generates request IDs with prefix-timestamp-counter format', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const promise = client.stopAllAgents('manager')
+      const payload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+      // Request ID format: {requestType}-{timestamp}-{counter}
+      expect(payload.requestId).toMatch(/^stop_all_agents-\d+-\d+$/)
+
+      // Resolve to avoid dangling promise
+      emitServerEvent(socket, {
+        type: 'stop_all_agents_result',
+        requestId: payload.requestId,
+        managerId: 'manager',
+        stoppedWorkerIds: [],
+        managerStopped: false,
+      })
+      await promise
+
+      client.destroy()
+    })
+
+    it('increments request counter across multiple requests', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const promise1 = client.listDirectories('/tmp')
+      const payload1 = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+      const promise2 = client.listDirectories('/home')
+      const payload2 = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+      // Both should be list_directories prefix
+      expect(payload1.requestId).toMatch(/^list_directories-/)
+      expect(payload2.requestId).toMatch(/^list_directories-/)
+
+      // They must be distinct
+      expect(payload1.requestId).not.toBe(payload2.requestId)
+
+      // Counter part (last segment) should increment
+      const counter1 = parseInt(payload1.requestId.split('-').at(-1), 10)
+      const counter2 = parseInt(payload2.requestId.split('-').at(-1), 10)
+      expect(counter2).toBe(counter1 + 1)
+
+      // Resolve to clean up
+      emitServerEvent(socket, {
+        type: 'directories_listed',
+        requestId: payload1.requestId,
+        path: '/tmp',
+        directories: [],
+      })
+      emitServerEvent(socket, {
+        type: 'directories_listed',
+        requestId: payload2.requestId,
+        path: '/home',
+        directories: [],
+      })
+      await Promise.all([promise1, promise2])
+
+      client.destroy()
+    })
+
+    it('rejects pending request after REQUEST_TIMEOUT_MS with fake timers', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const deletePromise = client.deleteManager('some-manager')
+      const deletePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      expect(deletePayload.requestId).toBeDefined()
+
+      // Advance time past the timeout
+      vi.advanceTimersByTime(REQUEST_TIMEOUT_MS + 100)
+
+      await expect(deletePromise).rejects.toThrow('Request timed out waiting for backend response.')
+
+      client.destroy()
+    })
+
+    it('rejects pending request when error event has matching requestId', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const createPromise = client.createManager({
+        name: 'fail-manager',
+        cwd: '/tmp',
+        modelSelection: { provider: 'openai-codex', modelId: 'gpt-5.3-codex' },
+      })
+      const createPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+      emitServerEvent(socket, {
+        type: 'error',
+        code: 'CREATE_MANAGER_FAILED',
+        message: 'Something went wrong',
+        requestId: createPayload.requestId,
+      })
+
+      await expect(createPromise).rejects.toThrow('CREATE_MANAGER_FAILED: Something went wrong')
+      expect(client.getState().lastError).toBe('Something went wrong')
+
+      client.destroy()
+    })
+
+    it('rejects pending request via fallback hint matching when error has no requestId', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const deletePromise = client.deleteManager('some-manager')
+
+      // Error without requestId, but code contains 'delete_manager' fragment
+      emitServerEvent(socket, {
+        type: 'error',
+        code: 'delete_manager_error',
+        message: 'Manager not found',
+      })
+
+      await expect(deletePromise).rejects.toThrow('delete_manager_error: Manager not found')
+
+      client.destroy()
+    })
+
+    it('rejects the only pending request when error has no requestId and no hint match', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const validatePromise = client.validateDirectory('/invalid')
+
+      // Error with no requestId and code that doesn't match any hint
+      emitServerEvent(socket, {
+        type: 'error',
+        code: 'UNKNOWN_ERROR',
+        message: 'Something completely unexpected',
+      })
+
+      await expect(validatePromise).rejects.toThrow('UNKNOWN_ERROR: Something completely unexpected')
+
+      client.destroy()
+    })
+
+    it('does not reject unrelated requests when error hint matches a specific type', async () => {
+      const { client, socket } = setupReadyClient()
+
+      // Start two different requests
+      const listPromise = client.listDirectories('/tmp')
+      const deletePromise = client.deleteManager('some-manager')
+
+      // Error code matches delete_manager hint specifically
+      emitServerEvent(socket, {
+        type: 'error',
+        code: 'delete_manager_failed',
+        message: 'Cannot delete',
+      })
+
+      // delete_manager should be rejected
+      await expect(deletePromise).rejects.toThrow('delete_manager_failed: Cannot delete')
+
+      // list_directories should still be pending — resolve it
+      const listPayload = JSON.parse(socket.sentPayloads.find((p) => JSON.parse(p).type === 'list_directories') ?? '{}')
+      emitServerEvent(socket, {
+        type: 'directories_listed',
+        requestId: listPayload.requestId,
+        path: '/tmp',
+        directories: ['/tmp/a'],
+      })
+
+      await expect(listPromise).resolves.toEqual({ path: '/tmp', directories: ['/tmp/a'] })
+
+      client.destroy()
+    })
+
+    it('rejects all pending requests on destroy', async () => {
+      const { client } = setupReadyClient()
+
+      const promise1 = client.deleteManager('mgr-1')
+      const promise2 = client.listDirectories('/tmp')
+
+      client.destroy()
+
+      await expect(promise1).rejects.toThrow('Client destroyed before request completed.')
+      await expect(promise2).rejects.toThrow('Client destroyed before request completed.')
+    })
+
+    it('rejects all pending requests on disconnect', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const promise = client.deleteManager('mgr-1')
+
+      socket.close()
+
+      await expect(promise).rejects.toThrow('WebSocket disconnected before request completed.')
+
+      client.destroy()
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Session worker cache
+  // -------------------------------------------------------------------------
+
+  describe('session worker cache', () => {
+    function setupReadyClient(agentId = 'manager') {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', agentId)
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.emit('open')
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: agentId })
+      return { client, socket }
+    }
+
+    it('returns cached workers without sending a new request when session is loaded', async () => {
+      const { client, socket } = setupReadyClient()
+
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          {
+            agentId: 'manager',
+            managerId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            workerCount: 1,
+            activeWorkerCount: 0,
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/manager.jsonl',
+          },
+        ],
+      })
+
+      // First fetch — sends request
+      const fetchPromise = client.getSessionWorkers('manager')
+      const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      expect(fetchPayload.type).toBe('get_session_workers')
+
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: fetchPayload.requestId,
+        workers: [
+          {
+            agentId: 'worker-1',
+            managerId: 'manager',
+            displayName: 'Worker 1',
+            role: 'worker',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-1.jsonl',
+          },
+        ],
+      })
+
+      await fetchPromise
+      expect(client.getState().loadedSessionIds.has('manager')).toBe(true)
+
+      const sentCountBefore = socket.sentPayloads.length
+
+      // Second fetch — should return cached result without new WS request
+      const cachedResult = await client.getSessionWorkers('manager')
+      expect(socket.sentPayloads.length).toBe(sentCountBefore)
+      expect(cachedResult.sessionAgentId).toBe('manager')
+      expect(cachedResult.workers).toHaveLength(1)
+      expect(cachedResult.workers[0].agentId).toBe('worker-1')
+
+      client.destroy()
+    })
+
+    it('invalidates cache and sends new request when workerCount mismatches cached workers', async () => {
+      const { client, socket } = setupReadyClient()
+
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          {
+            agentId: 'manager',
+            managerId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            workerCount: 1,
+            activeWorkerCount: 0,
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/manager.jsonl',
+          },
+        ],
+      })
+
+      // Load initial workers
+      const fetchPromise = client.getSessionWorkers('manager')
+      const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: fetchPayload.requestId,
+        workers: [
+          {
+            agentId: 'worker-1',
+            managerId: 'manager',
+            displayName: 'Worker 1',
+            role: 'worker',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-1.jsonl',
+          },
+        ],
+      })
+
+      await fetchPromise
+      expect(client.getState().loadedSessionIds.has('manager')).toBe(true)
+
+      // Update manager's workerCount to 2 (mismatch with cached 1 worker)
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          {
+            agentId: 'manager',
+            managerId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            workerCount: 2,
+            activeWorkerCount: 1,
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/manager.jsonl',
+          },
+        ],
+      })
+
+      // Next fetch should detect the mismatch and send a new request
+      const refetchPromise = client.getSessionWorkers('manager')
+      const refetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      expect(refetchPayload.type).toBe('get_session_workers')
+
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: refetchPayload.requestId,
+        workers: [
+          {
+            agentId: 'worker-1',
+            managerId: 'manager',
+            displayName: 'Worker 1',
+            role: 'worker',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-1.jsonl',
+          },
+          {
+            agentId: 'worker-2',
+            managerId: 'manager',
+            displayName: 'Worker 2',
+            role: 'worker',
+            status: 'streaming',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-2.jsonl',
+          },
+        ],
+      })
+
+      const result = await refetchPromise
+      expect(result.workers).toHaveLength(2)
+      expect(client.getState().loadedSessionIds.has('manager')).toBe(true)
+
+      client.destroy()
+    })
+
+    it('de-duplicates concurrent getSessionWorkers calls for the same session', async () => {
+      const { client, socket } = setupReadyClient()
+
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          {
+            agentId: 'manager',
+            managerId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            workerCount: 1,
+            activeWorkerCount: 0,
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/manager.jsonl',
+          },
+        ],
+      })
+
+      const sentCountBefore = socket.sentPayloads.length
+
+      // Launch two concurrent requests for the same session
+      const promise1 = client.getSessionWorkers('manager')
+      const promise2 = client.getSessionWorkers('manager')
+
+      // Only one WS request should have been sent (de-duplication)
+      expect(socket.sentPayloads.length).toBe(sentCountBefore + 1)
+
+      const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: fetchPayload.requestId,
+        workers: [
+          {
+            agentId: 'worker-1',
+            managerId: 'manager',
+            displayName: 'Worker 1',
+            role: 'worker',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-1.jsonl',
+          },
+        ],
+      })
+
+      // Both promises should resolve with the same data
+      const result1 = await promise1
+      const result2 = await promise2
+
+      expect(result1.sessionAgentId).toBe('manager')
+      expect(result2.sessionAgentId).toBe('manager')
+      expect(result1.workers).toHaveLength(1)
+      expect(result2.workers).toHaveLength(1)
+
+      client.destroy()
+    })
+
+    it('queues debounced refetch when unknown worker status arrives for a loaded session', async () => {
+      const { client, socket } = setupReadyClient()
+
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          {
+            agentId: 'manager',
+            managerId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            workerCount: 1,
+            activeWorkerCount: 0,
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/manager.jsonl',
+          },
+        ],
+      })
+
+      // Load workers initially
+      const fetchPromise = client.getSessionWorkers('manager')
+      const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: fetchPayload.requestId,
+        workers: [
+          {
+            agentId: 'worker-1',
+            managerId: 'manager',
+            displayName: 'Worker 1',
+            role: 'worker',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-1.jsonl',
+          },
+        ],
+      })
+      await fetchPromise
+      expect(client.getState().loadedSessionIds.has('manager')).toBe(true)
+
+      const sentCountAfterLoad = socket.sentPayloads.length
+
+      // Unknown worker status arrives — invalidates loadedSessionIds
+      emitServerEvent(socket, {
+        type: 'agent_status',
+        agentId: 'unknown-worker',
+        managerId: 'manager',
+        status: 'streaming',
+        pendingCount: 1,
+      })
+
+      expect(client.getState().loadedSessionIds.has('manager')).toBe(false)
+
+      // No refetch yet — debounce timer hasn't fired
+      expect(socket.sentPayloads.length).toBe(sentCountAfterLoad)
+
+      // Advance past the debounce period (250ms)
+      vi.advanceTimersByTime(300)
+
+      // Now the debounced refetch should have fired
+      const refetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      expect(refetchPayload.type).toBe('get_session_workers')
+
+      // Resolve to clean up
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: refetchPayload.requestId,
+        workers: [],
+      })
+
+      client.destroy()
+    })
+
+    it('clears queued refetch timers on destroy', async () => {
+      const { client, socket } = setupReadyClient()
+
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          {
+            agentId: 'manager',
+            managerId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            workerCount: 1,
+            activeWorkerCount: 0,
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/manager.jsonl',
+          },
+        ],
+      })
+
+      // Load workers
+      const fetchPromise = client.getSessionWorkers('manager')
+      const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: fetchPayload.requestId,
+        workers: [
+          {
+            agentId: 'worker-1',
+            managerId: 'manager',
+            displayName: 'Worker 1',
+            role: 'worker',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-1.jsonl',
+          },
+        ],
+      })
+      await fetchPromise
+
+      // Trigger an unknown worker status to queue a debounced refetch
+      emitServerEvent(socket, {
+        type: 'agent_status',
+        agentId: 'unknown-worker',
+        managerId: 'manager',
+        status: 'streaming',
+        pendingCount: 1,
+      })
+
+      const sentCountBeforeDestroy = socket.sentPayloads.length
+
+      // Destroy the client before the debounce fires
+      client.destroy()
+
+      // Advance time past the debounce period
+      vi.advanceTimersByTime(500)
+
+      // No refetch should have been sent after destroy
+      expect(socket.sentPayloads.length).toBe(sentCountBeforeDestroy)
+    })
+
+    it('clears queued refetch timers on disconnect', async () => {
+      const { client, socket } = setupReadyClient()
+
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [
+          {
+            agentId: 'manager',
+            managerId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            workerCount: 1,
+            activeWorkerCount: 0,
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/manager.jsonl',
+          },
+        ],
+      })
+
+      // Load workers
+      const fetchPromise = client.getSessionWorkers('manager')
+      const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: fetchPayload.requestId,
+        workers: [
+          {
+            agentId: 'worker-1',
+            managerId: 'manager',
+            displayName: 'Worker 1',
+            role: 'worker',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-1.jsonl',
+          },
+        ],
+      })
+      await fetchPromise
+
+      // Trigger unknown worker to queue debounced refetch
+      emitServerEvent(socket, {
+        type: 'agent_status',
+        agentId: 'unknown-worker',
+        managerId: 'manager',
+        status: 'streaming',
+        pendingCount: 1,
+      })
+
+      const sentCountBeforeClose = socket.sentPayloads.length
+
+      // Simulate disconnect
+      socket.close()
+
+      // Advance time past debounce period
+      vi.advanceTimersByTime(500)
+
+      // The reconnect timer fires but the refetch timer should have been cleared
+      // Check that no get_session_workers was sent after the close
+      const payloadsAfterClose = socket.sentPayloads.slice(sentCountBeforeClose)
+      const refetchAttempts = payloadsAfterClose.filter((p) => {
+        try { return JSON.parse(p).type === 'get_session_workers' } catch { return false }
+      })
+      expect(refetchAttempts).toHaveLength(0)
+
       client.destroy()
     })
   })

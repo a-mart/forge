@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { collectFeatureAdoption } from '../feature-counters.js'
+import { getSessionTerminalsDir } from '../../swarm/data-paths.js'
 import type { SwarmConfig } from '../../swarm/types.js'
 
 async function writeSkill(baseDir: string, skillName: string) {
@@ -52,37 +53,71 @@ function createConfig(rootDir: string): SwarmConfig {
 }
 
 describe('feature counters', () => {
-  it('counts persisted project agents from the agents registry and exposes the clearer alias', async () => {
+  it('counts persisted project agents from raw agents registry shapes and exposes the clearer alias', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'feature-counters-project-agents-root-'))
-    const dataDir = await mkdtemp(join(tmpdir(), 'feature-counters-project-agents-data-'))
-    await mkdir(join(dataDir, 'swarm'), { recursive: true })
-    await writeFile(
-      join(dataDir, 'swarm', 'agents.json'),
-      JSON.stringify({
-        agents: [
-          {
-            agentId: 'manager-1',
-            role: 'manager',
-            projectAgent: { handle: 'alpha', whenToUse: 'Use alpha' },
-          },
-          {
-            agentId: 'manager-2',
-            role: 'manager',
-          },
-          {
-            agentId: 'worker-1',
-            role: 'worker',
-            projectAgent: { handle: 'worker-alpha', whenToUse: 'Should not count' },
-          },
-        ],
-      }),
-      'utf8',
-    )
 
-    const features = await collectFeatureAdoption(dataDir, [], createConfig(rootDir))
+    async function collectForAgents(agents: unknown[]) {
+      const dataDir = await mkdtemp(join(tmpdir(), 'feature-counters-project-agents-data-'))
+      await mkdir(join(dataDir, 'swarm'), { recursive: true })
+      await writeFile(
+        join(dataDir, 'swarm', 'agents.json'),
+        JSON.stringify({ agents }),
+        'utf8',
+      )
 
-    expect(features.projectAgentsCount).toBe(1)
-    expect(features.projectAgentsPersistedCount).toBe(1)
+      return collectFeatureAdoption(dataDir, [], createConfig(rootDir))
+    }
+
+    const rawAgents = [
+      {
+        agentId: 'manager-1',
+        role: 'manager',
+        projectAgent: {
+          handle: 'alpha',
+          whenToUse: 'Use alpha',
+          systemPrompt: 'Project-agent prompt is irrelevant to the counter.',
+          capabilities: ['create_session'],
+        },
+      },
+      {
+        agentId: 'manager-2',
+        role: 'manager',
+      },
+      {
+        agentId: 'worker-1',
+        role: 'worker',
+        projectAgent: { handle: 'worker-alpha', whenToUse: 'Should not count' },
+      },
+      {
+        agentId: 'manager-null-project-agent',
+        role: 'manager',
+        projectAgent: null,
+      },
+      'malformed-agent-record',
+    ]
+    const normalizedAgents = rawAgents.filter((agent) => typeof agent === 'object' && agent !== null)
+
+    const rawFeatures = await collectForAgents(rawAgents)
+    const normalizedFeatures = await collectForAgents(normalizedAgents)
+
+    expect(rawFeatures.projectAgentsCount).toBe(1)
+    expect(rawFeatures.projectAgentsPersistedCount).toBe(1)
+    expect(rawFeatures.projectAgentsCount).toBe(normalizedFeatures.projectAgentsCount)
+    expect(rawFeatures.projectAgentsPersistedCount).toBe(normalizedFeatures.projectAgentsPersistedCount)
+  })
+
+  it('counts terminals only under the profile root session terminal directory', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'feature-counters-terminals-root-'))
+    const dataDir = await mkdtemp(join(tmpdir(), 'feature-counters-terminals-data-'))
+    const profileId = 'profile-1'
+
+    await mkdir(join(getSessionTerminalsDir(dataDir, profileId, profileId), 'terminal-a'), { recursive: true })
+    await mkdir(join(getSessionTerminalsDir(dataDir, profileId, profileId), 'terminal-b'), { recursive: true })
+    await mkdir(join(getSessionTerminalsDir(dataDir, profileId, `${profileId}--s2`), 'terminal-child'), { recursive: true })
+
+    const features = await collectFeatureAdoption(dataDir, [profileId], createConfig(rootDir))
+
+    expect(features.terminalsActive).toBe(2)
   })
 
   it('adds specialist persisted/custom/enabled split without changing the legacy count', async () => {

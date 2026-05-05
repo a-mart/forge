@@ -131,6 +131,16 @@ describe("specialist routes", () => {
     });
   });
 
+  it("rejects invalid targetSpace query values before resolving rosters", async () => {
+    const server = await createSpecialistRouteTestServer();
+    const response = await fetch(`${server.baseUrl}/api/settings/specialists?targetSpace=invalid`);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "targetSpace query must be builder or collaboration" });
+    expect(specialistRegistryState.resolveSharedRoster).not.toHaveBeenCalled();
+    expect(specialistRegistryState.resolveRoster).not.toHaveBeenCalled();
+  });
+
   it("returns 404 for unknown profile-scoped specialist requests", async () => {
     const server = await createSpecialistRouteTestServer({
       profiles: [{ profileId: "alpha", displayName: "Alpha" }],
@@ -236,6 +246,19 @@ describe("specialist routes", () => {
     await expect(promptResponse.json()).resolves.toEqual({ markdown: "## Specialists\n- collab\n" });
   });
 
+  it("rejects invalid targetSpace entries in save payloads", async () => {
+    const server = await createSpecialistRouteTestServer();
+    const response = await fetch(`${server.baseUrl}/api/settings/specialists/releases`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...validSpecialistPayload(), targetSpace: ["builder", "invalid"] }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "targetSpace entries must be builder or collaboration" });
+    expect(specialistRegistryState.saveSharedSpecialist).not.toHaveBeenCalled();
+  });
+
   it("saves global specialists with targetSpace from explicit query when body omits it", async () => {
     const server = await createSpecialistRouteTestServer({
       profiles: [{ profileId: "alpha", displayName: "Alpha" }],
@@ -292,6 +315,7 @@ describe("specialist routes", () => {
         type: "specialist_roster_changed",
         profileId: "alpha",
         specialistIds: ["alpha-one"],
+        updatedAt: expect.any(String),
       }),
     );
   });

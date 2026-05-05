@@ -177,6 +177,67 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(resolved?.modelId).toBe("gpt-5.3-codex-spark");
   });
 
+  it("currently infers fallback provider from fallbackModelId even when roster carries fallbackProvider", async () => {
+    const config = await makeTempConfig();
+    const worker = buildWorkerDescriptor(config);
+    const descriptors = new Map<string, AgentDescriptor>([[worker.agentId, worker]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn()
+    });
+
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        {
+          specialistId: "backend",
+          fallbackModelId: "gpt-5.4",
+          fallbackProvider: "anthropic",
+          fallbackReasoningLevel: "high"
+        }
+      ]),
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor: vi.fn(),
+      attachRuntime: vi.fn(),
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn()
+    });
+
+    const resolved = await manager.resolveSpecialistFallbackModelForDescriptor(worker);
+
+    expect(resolved).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "high",
+    });
+  });
+
   it("resolves worker fallback from the parent collab manager's collaboration roster", async () => {
     const config = await makeTempConfig();
     const collabManager = buildWorkerDescriptor(config, {
@@ -359,6 +420,80 @@ describe("SwarmSpecialistFallbackManager", () => {
     });
 
     expect(recovered).toBe(false);
+  });
+
+  it("does not recover when the resolved fallback exactly matches the current worker model", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sessionsDir, "w-same-model.jsonl"), "", "utf8");
+
+    const worker = buildWorkerDescriptor(config, {
+      agentId: "w-same-model",
+      model: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "high" },
+    });
+    const descriptors = new Map<string, AgentDescriptor>([[worker.agentId, worker]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+    const current = new FakeRuntime(worker, "sys");
+    runtimes.set(worker.agentId, current);
+    runtimeTokensByAgentId.set(worker.agentId, 7);
+
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn()
+    });
+
+    const createRuntimeForDescriptor = vi.fn();
+    const handleRuntimeStatus = vi.fn();
+    const handleRuntimeAgentEnd = vi.fn();
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        { specialistId: "backend", fallbackModelId: "gpt-5.4", fallbackReasoningLevel: "high" }
+      ]),
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor,
+      attachRuntime: vi.fn(),
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn()
+    });
+
+    const recovered = await manager.maybeRecoverWorkerWithSpecialistFallback({
+      agentId: worker.agentId,
+      errorMessage: "rate limit exceeded",
+      sourcePhase: "prompt_start",
+      runtimeToken: 7,
+      handleRuntimeStatus,
+      handleRuntimeAgentEnd,
+    });
+
+    expect(recovered).toBe(false);
+    expect(createRuntimeForDescriptor).not.toHaveBeenCalled();
+    expect(runtimeCreationPromisesByAgentId.has(worker.agentId)).toBe(false);
+    expect(runtimes.get(worker.agentId)).toBe(current);
+    expect(descriptors.get(worker.agentId)?.model).toEqual(worker.model);
   });
 
   it("buffers status during an active handoff and reapplies it on abort reconciliation", async () => {

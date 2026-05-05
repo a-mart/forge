@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -180,6 +180,14 @@ describe('SwarmManager', () => {
       handle: 'releases',
       whenToUse: 'Owns release notes and changelog QA.',
     })
+
+    await expect(
+      manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+        handle: 'ship-notes',
+        whenToUse: 'Try to rename the handle.',
+      }),
+    ).rejects.toThrow('Cannot change project agent handle after promotion. Demote and re-promote to change the handle.')
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent?.handle).toBe('releases')
   })
 
   it('promotes, demotes, and re-promotes the same handle with on-disk directory cleanup', async () => {
@@ -295,6 +303,38 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toBeUndefined()
   })
 
+  it('preserves project-agent capabilities across later edits', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'QA' })
+
+    const promoted = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Reproduce issues.',
+      capabilities: ['create_session'],
+    })
+    expect(promoted.projectAgent).toEqual({
+      handle: 'qa',
+      whenToUse: 'Reproduce issues.',
+      capabilities: ['create_session'],
+    })
+
+    const updated = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Reproduce issues and create follow-up sessions.',
+    })
+    expect(updated.projectAgent).toEqual({
+      handle: 'qa',
+      whenToUse: 'Reproduce issues and create follow-up sessions.',
+      capabilities: ['create_session'],
+    })
+    expect(JSON.parse(await readFile(getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'qa'), 'utf8'))).toMatchObject({
+      agentId: created.sessionAgent.agentId,
+      handle: 'qa',
+      capabilities: ['create_session'],
+    })
+  })
+
   it('persists project-agent system prompts through store reload', async () => {
     const config = await makeTempConfig()
     const firstBoot = new ProjectAgentAwareSwarmManager(config)
@@ -340,6 +380,54 @@ describe('SwarmManager', () => {
   })
 
 
+
+  it('getProjectAgentConfig falls back to the in-memory descriptor when the mirror record is missing', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'QA' })
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Reproduce issues.',
+      systemPrompt: 'You are QA.',
+      capabilities: ['create_session'],
+    })
+    await rm(getProjectAgentDir(config.paths.dataDir, 'manager', 'qa'), { recursive: true, force: true })
+
+    const result = await manager.getProjectAgentConfig(created.sessionAgent.agentId)
+
+    expect(result).toEqual({
+      config: {
+        version: 1,
+        agentId: created.sessionAgent.agentId,
+        handle: 'qa',
+        whenToUse: 'Reproduce issues.',
+        capabilities: ['create_session'],
+        promotedAt: created.sessionAgent.createdAt,
+        updatedAt: expect.any(String),
+      },
+      systemPrompt: 'You are QA.',
+      references: [],
+    })
+  })
+
+  it('rejects project-agent reference path traversal through the manager facade', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Docs' })
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Maintain docs.',
+    })
+
+    await expect(
+      manager.setProjectAgentReference(created.sessionAgent.agentId, '../escape.md', 'escaped'),
+    ).rejects.toThrow('Invalid path segment')
+    await expect(manager.getProjectAgentReference(created.sessionAgent.agentId, '../escape.md')).rejects.toThrow(
+      'Invalid path segment',
+    )
+  })
 
   it('rejects project-agent promotion collisions and cortex-only sessions', async () => {
     const config = await makeTempConfig()
@@ -767,5 +855,40 @@ describe('SwarmManager', () => {
       )
 
     expect(deliveredMessages).toHaveLength(6)
+  })
+
+  it('allows a different sender session after another sender exhausts its project-agent rate limit', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const senderTwo = await manager.createSession('manager', { label: 'Coordinator Two' })
+    const { sessionAgent: target } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(target.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    for (let index = 0; index < 6; index += 1) {
+      await manager.sendMessage('manager', target.agentId, `sender-one-${index + 1}`, 'auto')
+    }
+    await expect(manager.sendMessage('manager', target.agentId, 'sender-one-7', 'auto')).rejects.toThrow(
+      'Project-agent messaging rate limit exceeded for this session. Batch your message or involve the user before continuing.',
+    )
+
+    const receipt = await manager.sendMessage(senderTwo.sessionAgent.agentId, target.agentId, 'sender-two-1', 'auto')
+
+    expect(receipt.targetAgentId).toBe(target.agentId)
+    const deliveredMessages = manager
+      .getConversationHistory(target.agentId)
+      .filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'project_agent_input' &&
+          entry.role === 'user',
+      )
+    expect(deliveredMessages.map((entry) => (entry.type === 'conversation_message' ? entry.text : ''))).toContain(
+      'sender-two-1',
+    )
+    expect(deliveredMessages).toHaveLength(7)
   })
 })

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   findMissingCollaborationSkillHandles,
+  normalizeCollaborationOptionalSkillHandles,
   parseCollaborationSkillHandlesJson,
   resolveCollaborationSkillSelectionMode,
   serializeCollaborationSkillHandles,
+  serializeCollaborationSkillSelectionInput,
 } from "../collaboration/skill-selection.js";
 import { resolveCollaborationSkillRoster } from "../swarm/skills/collaboration-skill-resolver.js";
 import type { SkillMetadata } from "../swarm/skills/skill-metadata-service.js";
@@ -28,8 +30,22 @@ describe("collaboration skill selection helpers", () => {
   });
 
   it("strips always-on core handles from optional persisted selections", () => {
+    expect(normalizeCollaborationOptionalSkillHandles(["memory", "Search", "memory"])).toEqual(["search"]);
     expect(serializeCollaborationSkillHandles(["memory", "Search", "memory"])).toBe(JSON.stringify(["search"]));
     expect(findMissingCollaborationSkillHandles(["memory", "missing"], [])).toEqual(["missing"]);
+  });
+
+  it("serializes selection input with null all-mode and custom empty semantics", () => {
+    expect(serializeCollaborationSkillSelectionInput(undefined)).toBeUndefined();
+    expect(serializeCollaborationSkillSelectionInput({ mode: "all" })).toBeNull();
+    expect(serializeCollaborationSkillSelectionInput({
+      mode: "custom",
+      savedSelectedSkillHandles: ["memory", "Search", "search"],
+    })).toBe(JSON.stringify(["search"]));
+    expect(serializeCollaborationSkillSelectionInput({
+      mode: "custom",
+      savedSelectedSkillHandles: ["memory"],
+    })).toBe(JSON.stringify([]));
   });
 
   it("rejects malformed custom selection JSON", () => {
@@ -50,6 +66,7 @@ describe("collaboration skill roster resolver", () => {
     expect(roster.alwaysOnHandles).toEqual(["memory"]);
     expect(roster.savedSelectedOptionalHandles).toEqual([]);
     expect(roster.resolvedOptionalHandles).toEqual(["search", "browser"]);
+    expect(roster.missingHandles).toBeUndefined();
     expect(roster.skills.map((skill) => skill.directoryName)).toEqual(["memory", "search", "browser"]);
   });
 
@@ -73,7 +90,9 @@ describe("collaboration skill roster resolver", () => {
     });
 
     expect(roster.mode).toBe("custom");
+    expect(roster.savedSelectedOptionalHandles).toEqual([]);
     expect(roster.resolvedOptionalHandles).toEqual([]);
+    expect(roster.missingHandles).toBeUndefined();
     expect(roster.skills.map((skill) => skill.directoryName)).toEqual(["memory"]);
   });
 });

@@ -317,6 +317,152 @@ describe("SwarmRuntimeController", () => {
     );
   });
 
+  it("ignores stale runtime tokens for status, session events, runtime errors, and agent end", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      emitStatus,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      finalizeWorkerIdleTurn,
+      maybeRecoverWorkerWithSpecialistFallback
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const worker = baseDescriptor({
+      agentId: "w-stale-callbacks",
+      role: "worker",
+      managerId: "m1",
+      status: "idle",
+      profileId: "p1"
+    });
+    descriptors.set(worker.agentId, { ...worker });
+
+    const staleToken = controller.allocateRuntimeToken(worker.agentId);
+    const currentToken = controller.allocateRuntimeToken(worker.agentId);
+    expect(currentToken).not.toBe(staleToken);
+
+    const sessionEvent: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "stale" }],
+        stopReason: "stop"
+      }
+    };
+
+    await controller.handleRuntimeStatus(staleToken, worker.agentId, "streaming" as AgentStatus, 0, {
+      tokens: 10,
+      contextWindow: 100,
+      percent: 10
+    });
+    await controller.handleRuntimeSessionEvent(staleToken, worker.agentId, sessionEvent);
+    await controller.handleRuntimeError(staleToken, worker.agentId, {
+      phase: "prompt_start",
+      message: "stale failure"
+    });
+    await controller.handleRuntimeAgentEnd(staleToken, worker.agentId);
+
+    expect(descriptors.get(worker.agentId)).toEqual(expect.objectContaining({ status: "idle" }));
+    expect(descriptors.get(worker.agentId)?.contextUsage).toBeUndefined();
+    expect(emitStatus).not.toHaveBeenCalled();
+    expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+    expect(finalizeWorkerIdleTurn).not.toHaveBeenCalled();
+    expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+    expect(host.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
+    expect(host.getOrCreateWorkerWatchdogState).not.toHaveBeenCalled();
+    expect(host.workerWatchdogState.has(worker.agentId)).toBe(false);
+    expect(host.workerStallState.has(worker.agentId)).toBe(false);
+    expect(host.workerActivityState.has(worker.agentId)).toBe(false);
+  });
+
+  it("applies only current runtime token callbacks once after stale callbacks are ignored", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      emitStatus,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      finalizeWorkerIdleTurn
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const worker = baseDescriptor({
+      agentId: "w-current-once",
+      role: "worker",
+      managerId: "m1",
+      status: "idle",
+      profileId: "p1"
+    });
+    const endingWorker = baseDescriptor({
+      agentId: "w-current-agent-end-once",
+      role: "worker",
+      managerId: "m1",
+      status: "streaming",
+      profileId: "p1"
+    });
+    descriptors.set(worker.agentId, { ...worker });
+    descriptors.set(endingWorker.agentId, { ...endingWorker });
+
+    const staleToken = controller.allocateRuntimeToken(worker.agentId);
+    const currentToken = controller.allocateRuntimeToken(worker.agentId);
+    const staleEndToken = controller.allocateRuntimeToken(endingWorker.agentId);
+    const currentEndToken = controller.allocateRuntimeToken(endingWorker.agentId);
+    const sessionEvent: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        stopReason: "stop"
+      }
+    };
+
+    await controller.handleRuntimeSessionEvent(staleToken, worker.agentId, sessionEvent);
+    await controller.handleRuntimeSessionEvent(currentToken, worker.agentId, sessionEvent);
+    await controller.handleRuntimeError(staleToken, worker.agentId, {
+      phase: "prompt_dispatch",
+      message: "stale failure"
+    });
+    await controller.handleRuntimeError(currentToken, worker.agentId, {
+      phase: "extension",
+      message: "current failure"
+    });
+    await controller.handleRuntimeStatus(staleToken, worker.agentId, "streaming" as AgentStatus, 0);
+    await controller.handleRuntimeStatus(currentToken, worker.agentId, "streaming" as AgentStatus, 0);
+    await controller.handleRuntimeAgentEnd(staleEndToken, endingWorker.agentId);
+    await controller.handleRuntimeAgentEnd(currentEndToken, endingWorker.agentId);
+
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, sessionEvent);
+    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: worker.agentId,
+        role: "system",
+        text: "⚠️ Extension error: current failure"
+      })
+    );
+    expect(emitStatus).toHaveBeenCalledTimes(1);
+    expect(emitStatus).toHaveBeenCalledWith(worker.agentId, "streaming", 0, undefined);
+    expect(finalizeWorkerIdleTurn).toHaveBeenCalledTimes(1);
+    expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(
+      endingWorker.agentId,
+      expect.objectContaining({ agentId: endingWorker.agentId }),
+      "agent_end"
+    );
+    expect(host.maybeRecordModelCapacityBlock).toHaveBeenCalledTimes(1);
+    expect(host.maybeRecordModelCapacityBlock).toHaveBeenCalledWith(
+      worker.agentId,
+      expect.objectContaining({ agentId: worker.agentId }),
+      expect.objectContaining({ message: "current failure" })
+    );
+  });
+
   it("surfaces manual manager stop as a neutral system notice and strips abort-shaped assistant errors", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
@@ -612,25 +758,63 @@ describe("SwarmRuntimeController", () => {
   it("suppresses runtime callbacks while intentional stop tokens are registered", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
-    const { host, descriptors, emitStatus } = createRuntimeControllerHarness(config);
+    const {
+      host,
+      descriptors,
+      emitStatus,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      finalizeWorkerIdleTurn,
+      maybeRecoverWorkerWithSpecialistFallback
+    } = createRuntimeControllerHarness(config);
     const controller = new SwarmRuntimeController(host);
 
     const worker = baseDescriptor({
       agentId: "w-sup",
       role: "worker",
-      managerId: "m1"
+      managerId: "m1",
+      status: "streaming"
     });
     descriptors.set(worker.agentId, worker);
+    host.workerWatchdogState.set(worker.agentId, {
+      turnSeq: 0,
+      reportedThisTurn: false,
+      pendingReportTurnSeq: null,
+      deferredFinalizeTurnSeq: null,
+      hadStreamingThisTurn: true,
+      lastFinalizedTurnSeq: null
+    });
 
     const token = controller.allocateRuntimeToken(worker.agentId);
     controller.suppressIntentionalStopRuntimeCallbacks(worker.agentId, token);
 
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "suppressed" }],
+        stopReason: "stop"
+      }
+    };
+
     await controller.handleRuntimeStatus(token, worker.agentId, "idle" as AgentStatus, 0);
+    await controller.handleRuntimeSessionEvent(token, worker.agentId, event);
+    await controller.handleRuntimeError(token, worker.agentId, {
+      phase: "prompt_start",
+      message: "suppressed failure"
+    });
+    await controller.handleRuntimeAgentEnd(token, worker.agentId);
+
     expect(emitStatus).not.toHaveBeenCalled();
+    expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+    expect(finalizeWorkerIdleTurn).not.toHaveBeenCalled();
+    expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+    expect(host.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
 
     controller.clearIntentionalStopRuntimeCallbackSuppression(worker.agentId, token);
     await controller.handleRuntimeStatus(token, worker.agentId, "idle" as AgentStatus, 0);
-    expect(emitStatus).toHaveBeenCalled();
+    expect(emitStatus).toHaveBeenCalledTimes(1);
   });
 
   it("wires listRuntimeExtensionSnapshots through a booted TestSwarmManager", async () => {

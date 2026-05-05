@@ -1,12 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { getCatalogModelKey } from "@forge/protocol";
 import { modelCatalogService } from "../swarm/model-catalog-service.js";
 import { readModelOverrides } from "../swarm/model-overrides.js";
 import { createModelConfigRoutes } from "../ws/http/routes/model-config-routes.js";
+import { createTempConfig } from "../test-support/index.js";
 
 interface TestServer {
   readonly baseUrl: string;
@@ -108,15 +107,30 @@ describe("model config routes", () => {
       expect.objectContaining({ type: "model_config_changed" }),
     );
   });
+
+  it("reports claude-sdk as provider-available without Anthropic credentials", async () => {
+    const harness = await createModelConfigRouteHarness();
+
+    const response = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      providerAvailability: {
+        anthropic: false,
+        "claude-sdk": true,
+      },
+    });
+  });
 });
 
 async function createModelConfigRouteHarness(): Promise<ModelConfigRouteHarness> {
-  const dataDir = await mkdtemp(join(tmpdir(), "forge-model-config-routes-"));
-  tempRoots.push(dataDir);
+  const tempConfig = await createTempConfig({ prefix: "forge-model-config-routes-" });
+  const dataDir = tempConfig.config.paths.dataDir;
+  tempRoots.push(tempConfig.tempRootDir);
   await modelCatalogService.loadOverrides(dataDir);
 
   const swarmManager = {
-    getConfig: () => ({ paths: { dataDir } }),
+    getConfig: () => tempConfig.config,
     reloadModelCatalogOverridesAndProjection: vi.fn(async () => {
       await modelCatalogService.loadOverrides(dataDir);
     }),

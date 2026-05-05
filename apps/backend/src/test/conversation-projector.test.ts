@@ -524,6 +524,73 @@ describe('ConversationProjector session tree continuity', () => {
     }
   })
 
+  it('keeps id-less persisted messages when no wrapper id exists, but rejects malformed blank ids', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-id-fallbacks-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    await writeFile(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: 'session',
+          version: 3,
+          id: 'session-header',
+          timestamp: FIXED_NOW,
+          cwd: root,
+        }),
+        JSON.stringify({
+          type: 'custom',
+          customType: 'swarm_conversation_entry',
+          parentId: 'session-header',
+          timestamp: FIXED_NOW,
+          data: {
+            type: 'conversation_message',
+            agentId: descriptor.agentId,
+            role: 'assistant',
+            text: 'legacy message with no wrapper id',
+            timestamp: '2025-12-31T23:58:00.000Z',
+            source: 'system',
+          },
+        }),
+        JSON.stringify({
+          type: 'custom',
+          customType: 'swarm_conversation_entry',
+          id: 'blank-id-wrapper',
+          parentId: 'session-header',
+          timestamp: FIXED_NOW,
+          data: {
+            type: 'conversation_message',
+            agentId: descriptor.agentId,
+            id: '   ',
+            role: 'assistant',
+            text: 'message with malformed blank id',
+            timestamp: '2025-12-31T23:59:00.000Z',
+            source: 'system',
+          },
+        }),
+      ].join('\n') + '\n',
+      'utf8',
+    )
+
+    const projector = makeProjector({ descriptor })
+    const history = projector.getConversationHistory(descriptor.agentId)
+
+    const noWrapperIdEntry = history.find(
+      (entry) => entry.type === 'conversation_message' && entry.text === 'legacy message with no wrapper id',
+    )
+    const malformedIdEntry = history.find(
+      (entry) => entry.type === 'conversation_message' && entry.text === 'message with malformed blank id',
+    )
+
+    expect(noWrapperIdEntry).toBeDefined()
+    expect(noWrapperIdEntry?.type).toBe('conversation_message')
+    if (noWrapperIdEntry?.type === 'conversation_message') {
+      expect(noWrapperIdEntry.id).toBeUndefined()
+    }
+    expect(malformedIdEntry).toBeUndefined()
+  })
+
   it('rejects and rewrites a tail-only cache snapshot even when the cached tail matches canonical history', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-tail-cache-'))
     const sessionFile = join(root, 'manager.jsonl')
@@ -974,6 +1041,151 @@ describe('ConversationProjector session tree continuity', () => {
     })
   })
 
+  it('rejects cache headers with invalid metadata version or shape before rebuilding from JSONL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-invalid-cache-metadata-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history survives invalid cache metadata',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeCacheLines(cacheFile, [
+      {
+        type: 'swarm_conversation_cache_meta',
+        version: 999,
+        persistedEntryCount: 1,
+        cachedPersistedEntryCount: 1,
+        firstPersistedEntryKey: null,
+        lastPersistedEntryKey: null,
+        canonicalStat: await readCanonicalStat(sessionFile),
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'stale cache payload with invalid version',
+        timestamp: FIXED_NOW,
+        source: 'system',
+      },
+    ])
+
+    const invalidVersionProjector = makeProjector({ descriptor })
+    const invalidVersionResult = invalidVersionProjector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(
+      invalidVersionResult.history.some(
+        (entry) =>
+          entry.type === 'conversation_message' && entry.text === 'persisted history survives invalid cache metadata',
+      ),
+    ).toBe(true)
+    expect(invalidVersionResult.diagnostics).toMatchObject({
+      cacheState: 'legacy_rebuild',
+      historySource: 'cache_rebuild',
+      detail: 'missing_cache_metadata',
+    })
+
+    const shapeRoot = await mkdtemp(join(tmpdir(), 'conversation-projector-invalid-cache-shape-'))
+    const shapeSessionFile = join(shapeRoot, 'manager.jsonl')
+    const shapeDescriptor = makeDescriptor(shapeSessionFile, shapeRoot)
+    const shapeSeededSession = SessionManager.open(shapeSessionFile)
+    shapeSeededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    shapeSeededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: shapeDescriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history survives invalid cache shape',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const shapeCacheFile = getConversationHistoryCacheFilePath(shapeSessionFile)
+    await writeCacheLines(shapeCacheFile, [
+      {
+        type: 'swarm_conversation_cache_meta',
+        version: 2,
+        persistedEntryCount: '1',
+        cachedPersistedEntryCount: 1,
+        firstPersistedEntryKey: null,
+        lastPersistedEntryKey: null,
+        canonicalStat: await readCanonicalStat(shapeSessionFile),
+      },
+    ])
+
+    const invalidShapeProjector = makeProjector({ descriptor: shapeDescriptor })
+    const invalidShapeResult = invalidShapeProjector.getConversationHistoryWithDiagnostics(shapeDescriptor.agentId)
+
+    expect(
+      invalidShapeResult.history.some(
+        (entry) =>
+          entry.type === 'conversation_message' && entry.text === 'persisted history survives invalid cache shape',
+      ),
+    ).toBe(true)
+    expect(invalidShapeResult.diagnostics).toMatchObject({
+      cacheState: 'legacy_rebuild',
+      historySource: 'cache_rebuild',
+      detail: 'missing_cache_metadata',
+    })
+  })
+
+  it('rejects truncated cache payloads even when the metadata header is otherwise valid', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-truncated-cache-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    const entryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history survives truncated cache payload',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    const metadata = await buildCacheMetadata(sessionFile, {
+      persistedEntryCount: 1,
+      cachedPersistedEntryCount: 1,
+      firstPersistedEntryKey: `conversation_message:${entryId}`,
+      lastPersistedEntryKey: `conversation_message:${entryId}`,
+    })
+    await writeFile(cacheFile, `${JSON.stringify(metadata)}\n{"type":"conversation_message","agentId"`, 'utf8')
+
+    const projector = makeProjector({ descriptor })
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(
+      result.history.some(
+        (entry) =>
+          entry.type === 'conversation_message' && entry.text === 'persisted history survives truncated cache payload',
+      ),
+    ).toBe(true)
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'metadata_entries_mismatch',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
+  })
+
   it('rejects caches whose metadata does not match the cached entries', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-metadata-mismatch-'))
     const sessionFile = join(root, 'manager.jsonl')
@@ -1374,6 +1586,88 @@ describe('ConversationProjector session tree continuity', () => {
     expect(pinnedEntry).toMatchObject({ type: 'conversation_message', id: 'pinned-msg', pinned: true })
     expect(regularEntry).toMatchObject({ type: 'conversation_message', id: 'regular-msg' })
     expect(regularEntry && 'pinned' in regularEntry ? regularEntry.pinned : undefined).toBeUndefined()
+  })
+
+  it('treats pinned-message sidecar state as authoritative over cached pinned flags', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-cache-pins-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      id: 'stale-cache-pinned',
+      role: 'assistant',
+      text: 'Cache says pinned, sidecar does not',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      id: 'sidecar-pinned',
+      role: 'assistant',
+      text: 'Sidecar says pinned, cache does not',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeCacheLines(cacheFile, [
+      await buildCacheMetadata(sessionFile, {
+        persistedEntryCount: 2,
+        cachedPersistedEntryCount: 2,
+        firstPersistedEntryKey: 'conversation_message:stale-cache-pinned',
+        lastPersistedEntryKey: 'conversation_message:sidecar-pinned',
+      }),
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        id: 'stale-cache-pinned',
+        role: 'assistant',
+        text: 'Cache says pinned, sidecar does not',
+        timestamp: '2025-12-31T23:58:00.000Z',
+        source: 'system',
+        pinned: true,
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        id: 'sidecar-pinned',
+        role: 'assistant',
+        text: 'Sidecar says pinned, cache does not',
+        timestamp: FIXED_NOW,
+        source: 'system',
+        pinned: false,
+      },
+    ])
+
+    const projector = makeProjector({
+      descriptor,
+      getPinnedMessageIds: () => new Set(['sidecar-pinned']),
+    })
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    const stalePinnedEntry = result.history.find(
+      (entry) => entry.type === 'conversation_message' && entry.id === 'stale-cache-pinned',
+    )
+    const authoritativePinnedEntry = result.history.find(
+      (entry) => entry.type === 'conversation_message' && entry.id === 'sidecar-pinned',
+    )
+
+    expect(result.diagnostics).toMatchObject({ cacheState: 'hit', historySource: 'cache_hit' })
+    expect(stalePinnedEntry).toMatchObject({ type: 'conversation_message', id: 'stale-cache-pinned' })
+    expect(stalePinnedEntry && 'pinned' in stalePinnedEntry ? stalePinnedEntry.pinned : undefined).toBeUndefined()
+    expect(authoritativePinnedEntry).toMatchObject({
+      type: 'conversation_message',
+      id: 'sidecar-pinned',
+      pinned: true,
+    })
   })
 
   it('loads persisted project-agent transcript entries during JSONL replay', async () => {

@@ -61,6 +61,34 @@ describe("manager model selection", () => {
     });
   });
 
+  it("allows Claude SDK exact selection when Anthropic credentials are unavailable", async () => {
+    const dataDir = await makeTempDataDir();
+    await modelCatalogService.loadOverrides(dataDir);
+
+    expect(
+      resolveExactManagerModelSelection(
+        { provider: "claude-sdk", modelId: "claude-opus-4-7" },
+        { surface: "change", providerAvailability: new Map([["anthropic", false]]) },
+      )
+    ).toEqual({
+      provider: "claude-sdk",
+      modelId: "claude-opus-4-7",
+      thinkingLevel: "high",
+    });
+  });
+
+  it("rejects exact manager selection when provider availability is explicitly false", async () => {
+    const dataDir = await makeTempDataDir();
+    await modelCatalogService.loadOverrides(dataDir);
+
+    expect(() =>
+      resolveExactManagerModelSelection(
+        { provider: "anthropic", modelId: "claude-opus-4-7" },
+        { surface: "change", providerAvailability: new Map([["anthropic", false]]) },
+      )
+    ).toThrow("Provider anthropic is not configured for manager model selection");
+  });
+
   it("rejects exact manager selection when managerEnabled is false", async () => {
     const dataDir = await makeTempDataDir();
     await writeModelOverrides(dataDir, {

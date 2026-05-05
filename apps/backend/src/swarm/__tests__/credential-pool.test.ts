@@ -250,6 +250,53 @@ describe("CredentialPoolService — selection", () => {
     expect(result).not.toBeNull();
     expect(result!.credentialId).toBe(credId);
   });
+
+  it("selects API-key credentials that were explicitly added to an OpenAI Codex pool", async () => {
+    await writeAuthFile({});
+
+    const service = new CredentialPoolService(deps);
+    const added = await service.addCredential("openai-codex", makeApiKeyCredential("sk-pooled-openai"), {
+      label: "Pooled API Key",
+    });
+
+    const pool = await service.listPool("openai-codex");
+    expect(pool.credentials).toEqual([
+      expect.objectContaining({
+        id: added.id,
+        label: "Pooled API Key",
+        isPrimary: true,
+        health: "healthy",
+      }),
+    ]);
+
+    const result = await service.select("openai-codex");
+    expect(result).toEqual({
+      credentialId: added.id,
+      authStorageKey: "openai-codex",
+    });
+  });
+
+  it("buildRuntimeAuthData maps explicitly pooled API-key credentials to the bare provider key", async () => {
+    await writeAuthFile({
+      anthropic: makeOAuthCredential("anthropic_oauth"),
+      xai: makeApiKeyCredential("xai_api_key"),
+    });
+
+    const service = new CredentialPoolService(deps);
+    const added = await service.addCredential("openai-codex", makeApiKeyCredential("sk-pooled-openai"), {
+      label: "Pooled API Key",
+    });
+
+    const authData = await service.buildRuntimeAuthData("openai-codex", added.id);
+
+    expect(authData["openai-codex"]).toMatchObject({
+      type: "api_key",
+      key: "sk-pooled-openai",
+    });
+    expect(Object.keys(authData).filter((key) => key.startsWith("openai-codex:"))).toHaveLength(0);
+    expect((authData["anthropic"] as any).access).toBe("anthropic_oauth");
+    expect((authData["xai"] as any).key).toBe("xai_api_key");
+  });
 });
 
 // ── Mutations ──
@@ -543,6 +590,31 @@ describe("CredentialPoolService — health", () => {
     // auth_error credentials should be skipped during selection
     const result = await service.select("openai-codex");
     expect(result).toBeNull();
+  });
+
+  it("reports healthy pooled metadata as auth_error when the auth payload is missing", async () => {
+    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
+
+    const service = new CredentialPoolService(deps);
+    const pool = await service.listPool("openai-codex");
+    const credId = pool.credentials[0].id;
+
+    await writeAuthFile({});
+
+    const listed = await service.listPool("openai-codex");
+    expect(listed.credentials[0]).toMatchObject({
+      id: credId,
+      health: "auth_error",
+    });
+
+    const result = await service.select("openai-codex");
+    expect(result).toBeNull();
+
+    const persisted = await service.listPool("openai-codex");
+    expect(persisted.credentials[0]).toMatchObject({
+      id: credId,
+      health: "auth_error",
+    });
   });
 });
 

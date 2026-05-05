@@ -502,6 +502,62 @@ describe("ProviderUsageService", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not fall back to single-account auth when configured pooled credentials are unusable", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    const pool = {
+      listPool: vi.fn(async (provider: string) => {
+        if (provider === "openai-codex") {
+          return {
+            strategy: "fill_first",
+            credentials: [
+              { id: "cred_openai", label: "OpenAI Broken", isPrimary: true, health: "auth_error", requestCount: 0, createdAt: "2026-04-01T00:00:00.000Z" }
+            ]
+          };
+        }
+
+        if (provider === "anthropic") {
+          return {
+            strategy: "fill_first",
+            credentials: [
+              { id: "cred_anthropic", label: "Anthropic Broken", isPrimary: true, health: "auth_error", requestCount: 0, createdAt: "2026-04-01T00:00:00.000Z" }
+            ]
+          };
+        }
+
+        return { strategy: "fill_first", credentials: [] };
+      }),
+      buildRuntimeAuthData: vi.fn(async () => ({})),
+      markAuthError: vi.fn(async () => undefined)
+    };
+
+    service.setCredentialPoolGetter(() => pool as any);
+    const readOpenAIAuthSpy = vi.spyOn(service, "readOpenAIAuth").mockResolvedValue({
+      tokens: { access_token: "single-openai-token" }
+    });
+    const readAnthropicAuthSpy = vi.spyOn(service, "readAnthropicAuth").mockResolvedValue({
+      type: "oauth",
+      access: "single-anthropic-token",
+      expires: Date.now() + 60_000
+    });
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.openai).toEqual([{ provider: "openai", available: false }]);
+    expect(snapshot.anthropic).toEqual([{ provider: "anthropic", available: false }]);
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("openai-codex", "cred_openai");
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_anthropic");
+    expect(readOpenAIAuthSpy).not.toHaveBeenCalled();
+    expect(readAnthropicAuthSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("uses the pooled auth path even when only one pooled Anthropic credential exists", async () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("VITEST", "");

@@ -138,6 +138,62 @@ describe("appendImmediateCustomEntry", () => {
     expect(readFileSync(sessionFile, "utf8")).toBe(original);
   });
 
+  it("appends after an existing header-only session file with a null parent", async () => {
+    const root = await createTempDir("immediate-entry-writer-");
+    const sessionFile = join(root, "manager.jsonl");
+    writeFileSync(sessionFile, `${buildSessionHeader(root)}\n`, "utf8");
+
+    const result = await appendImmediateCustomEntry({
+      sessionFile,
+      cwd: root,
+      customType: "swarm_model_change_continuity_request",
+      data: { requestId: "req-header-only" },
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    expect(result.headerCreated).toBe(false);
+    expect(result.parentId).toBeNull();
+
+    const lines = readFileSync(sessionFile, "utf8").trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    const appended = JSON.parse(lines[1] ?? "{}");
+    expect(appended.parentId).toBeNull();
+    expect(appended.customType).toBe("swarm_model_change_continuity_request");
+  });
+
+  it("preserves CRLF session headers and inserts a leading newline when appending after a non-newline tail", async () => {
+    const root = await createTempDir("immediate-entry-writer-");
+    const sessionFile = join(root, "manager.jsonl");
+    const original = `${buildSessionHeader(root)}\r\n${JSON.stringify({
+      type: "custom",
+      customType: "swarm_conversation_entry",
+      id: "entry-1",
+      parentId: null,
+      timestamp: "2026-01-01T00:00:01.000Z",
+      data: { text: "existing" }
+    })}`;
+    writeFileSync(sessionFile, original, "utf8");
+
+    const result = await appendImmediateCustomEntry({
+      sessionFile,
+      cwd: root,
+      customType: "swarm_model_change_continuity_applied",
+      data: { ok: true },
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    expect(result.headerCreated).toBe(false);
+    expect(result.parentId).toBe("entry-1");
+
+    const text = readFileSync(sessionFile, "utf8");
+    expect(text.startsWith(`${buildSessionHeader(root)}\r\n`)).toBe(true);
+    expect(text.startsWith(`${original}\n`)).toBe(true);
+    const lines = text.trimEnd().split(/\r?\n/u);
+    expect(lines).toHaveLength(3);
+    const appended = JSON.parse(lines[2] ?? "{}");
+    expect(appended.parentId).toBe("entry-1");
+  });
+
   it("uses append-only single-line writes when multiple entries are written concurrently", async () => {
     const root = await createTempDir("immediate-entry-writer-");
     const sessionFile = join(root, "manager.jsonl");
