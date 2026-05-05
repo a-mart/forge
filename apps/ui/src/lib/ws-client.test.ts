@@ -69,11 +69,12 @@ describe('ManagerWsClient', () => {
     ;(globalThis as any).document = originalDocument
   })
 
-  it('keeps directory promise request policy aligned with protocol contracts', () => {
+  it('keeps promise request policy aligned with protocol contracts', () => {
     const contractTypes = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
 
-    expect(contractTypes).toEqual(['list_directories', 'validate_directory', 'pick_directory'])
+    expect(contractTypes).toEqual(['list_directories', 'validate_directory', 'pick_directory', 'get_session_workers'])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
+    expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
     expect(
       WS_REQUEST_CONTRACTS.every((contract) =>
         contract.errorCodeFragments.every((codeFragment) =>
@@ -81,6 +82,9 @@ describe('ManagerWsClient', () => {
         ),
       ),
     ).toBe(true)
+    expect(new Set(WS_REQUEST_ERROR_HINTS.map((hint) => `${hint.requestType}:${hint.codeFragment}`)).size).toBe(
+      WS_REQUEST_ERROR_HINTS.length,
+    )
   })
 
   it('subscribes on connect and sends user_message commands to the active agent', () => {
@@ -3004,6 +3008,38 @@ describe('ManagerWsClient', () => {
       expect(result2.sessionAgentId).toBe('manager')
       expect(result1.workers).toHaveLength(1)
       expect(result2.workers).toHaveLength(1)
+
+      client.destroy()
+    })
+
+    it('rejects getSessionWorkers from fallback error hints when requestId is absent', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const fetchPromise = client.getSessionWorkers('manager')
+      const fetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      expect(fetchPayload.type).toBe('get_session_workers')
+
+      emitServerEvent(socket, {
+        type: 'error',
+        code: 'get_session_workers_failed',
+        message: 'boom',
+      })
+
+      await expect(fetchPromise).rejects.toThrow('get_session_workers_failed: boom')
+
+      const refetchPromise = client.getSessionWorkers('manager')
+      const refetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+      expect(refetchPayload.type).toBe('get_session_workers')
+      expect(refetchPayload.requestId).not.toBe(fetchPayload.requestId)
+
+      emitServerEvent(socket, {
+        type: 'session_workers_snapshot',
+        sessionAgentId: 'manager',
+        requestId: refetchPayload.requestId,
+        workers: [],
+      })
+
+      await expect(refetchPromise).resolves.toEqual({ sessionAgentId: 'manager', workers: [] })
 
       client.destroy()
     })

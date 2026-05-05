@@ -30,11 +30,12 @@ describe('ws command parser session commands', () => {
     })
   })
 
-  it('parses directory request contracts while preserving optional wire requestId', () => {
+  it('parses request contracts while preserving optional wire requestId', () => {
     const payloadByType = {
       list_directories: { type: 'list_directories', path: '/tmp/project' },
       validate_directory: { type: 'validate_directory', path: '/tmp/project' },
       pick_directory: { type: 'pick_directory', defaultPath: '/tmp/project' },
+      get_session_workers: { type: 'get_session_workers', sessionAgentId: 'session-a' },
     } as const
 
     for (const contract of WS_REQUEST_CONTRACTS) {
@@ -48,6 +49,17 @@ describe('ws command parser session commands', () => {
         command: { ...basePayload, requestId: undefined },
       })
     }
+  })
+
+  it('rejects invalid requestId values for get_session_workers without making requestId mandatory', () => {
+    expect(parseJsonCommand({ type: 'get_session_workers', sessionAgentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'get_session_workers', sessionAgentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'get_session_workers', sessionAgentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'get_session_workers.requestId must be a string when provided',
+    })
   })
 
   it('parses subscribe messageCount', () => {

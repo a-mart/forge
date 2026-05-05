@@ -17,8 +17,8 @@ export type WsRequestContract<
   errorCodeFragments: readonly string[]
 }
 
-type DirectoryCommandType = Extract<ClientCommand['type'], 'list_directories' | 'validate_directory' | 'pick_directory'>
-type DirectorySuccessEventType = Extract<ServerEvent['type'], 'directories_listed' | 'directory_validated' | 'directory_picked'>
+type ContractCommandType = Extract<ClientCommand['type'], 'list_directories' | 'validate_directory' | 'pick_directory' | 'get_session_workers'>
+type ContractSuccessEventType = Extract<ServerEvent['type'], 'directories_listed' | 'directory_validated' | 'directory_picked' | 'session_workers_snapshot'>
 
 export const WS_REQUEST_CONTRACTS = [
   {
@@ -42,7 +42,14 @@ export const WS_REQUEST_CONTRACTS = [
     successEvents: ['directory_picked'],
     errorCodeFragments: ['pick_directory'],
   },
-] as const satisfies readonly WsRequestContract<DirectoryCommandType, DirectorySuccessEventType>[]
+  {
+    commandType: 'get_session_workers',
+    resultFamily: 'session_workers',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_workers_snapshot'],
+    errorCodeFragments: ['get_session_workers'],
+  },
+] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 
 export type WsRequestContractType = (typeof WS_REQUEST_CONTRACTS)[number]['commandType']
 

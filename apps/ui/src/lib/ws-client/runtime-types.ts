@@ -10,7 +10,25 @@ export const SESSION_WORKERS_REFETCH_DEBOUNCE_MS = 250
 // Keep client-side activity retention aligned with backend history retention.
 export const MAX_CLIENT_CONVERSATION_HISTORY = 2000
 
-export const WS_REQUEST_TYPES: WsRequestType[] = [
+function uniqueRequestTypes(requestTypes: readonly WsRequestType[]): WsRequestType[] {
+  return [...new Set(requestTypes)]
+}
+
+function uniqueErrorHints(errorHints: readonly WsRequestErrorHint[]): WsRequestErrorHint[] {
+  const seen = new Set<string>()
+  return errorHints.filter((hint) => {
+    const key = `${hint.requestType}:${hint.codeFragment}`
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+const CONTRACT_REQUEST_TYPES = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
+
+export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'create_manager',
   'delete_manager',
   'update_profile_default_model',
@@ -35,11 +53,10 @@ export const WS_REQUEST_TYPES: WsRequestType[] = [
   'set_project_agent_reference',
   'delete_project_agent_reference',
   'request_project_agent_recommendations',
-  'get_session_workers',
-  ...WS_REQUEST_CONTRACTS.map((contract) => contract.commandType),
-]
+  ...CONTRACT_REQUEST_TYPES,
+])
 
-export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = [
+export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'create_manager', codeFragment: 'create_manager' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
   { requestType: 'update_profile_default_model', codeFragment: 'update_profile_default_model' },
@@ -64,11 +81,10 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = [
   { requestType: 'set_project_agent_reference', codeFragment: 'project_agent_reference_saved' },
   { requestType: 'delete_project_agent_reference', codeFragment: 'project_agent_reference_deleted' },
   { requestType: 'request_project_agent_recommendations', codeFragment: 'project_agent_recommendations' },
-  { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
   ...WS_REQUEST_CONTRACTS.flatMap((contract) =>
     contract.errorCodeFragments.map((codeFragment) => ({ requestType: contract.commandType, codeFragment })),
   ),
-]
+])
 
 export function isManagerAgent(agent: AgentDescriptor): boolean {
   return agent.role === 'manager'

@@ -205,7 +205,8 @@ const serverEventsByLeafModule = [
   { type: 'manager_created', manager: agent, requestId: 'request-1' },
   { type: 'session_created', profile, sessionAgent: agent, requestId: 'request-2' },
   { type: 'session_project_agent_updated', agentId: agent.agentId, profileId: profile.profileId, projectAgent: null },
-  { type: 'directories_listed', path: '/tmp', directories: [], requestId: 'request-3' },
+  { type: 'session_workers_snapshot', sessionAgentId: agent.agentId, workers: [], requestId: 'request-3' },
+  { type: 'directories_listed', path: '/tmp', directories: [], requestId: 'request-4' },
   { type: 'telegram_status', state: 'disabled', enabled: false, updatedAt: now },
   {
     type: 'playwright_discovery_settings_updated',
@@ -280,8 +281,8 @@ describe('protocol root barrel contract', () => {
     expect(isCatalogModelId('gpt-5.4')).toBe(true)
   })
 
-  it('exports minimal directory WebSocket request contracts from the root barrel', () => {
-    expect(WS_REQUEST_CONTRACT_TYPES).toEqual(['list_directories', 'validate_directory', 'pick_directory'])
+  it('exports minimal WebSocket request contracts from the root barrel', () => {
+    expect(WS_REQUEST_CONTRACT_TYPES).toEqual(['list_directories', 'validate_directory', 'pick_directory', 'get_session_workers'])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.wire === 'optional')).toBe(true)
@@ -290,6 +291,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'directory_listing',
       successEvents: ['directories_listed'],
       errorCodeFragments: ['list_directories'],
+    })
+    expect(getWsRequestContract('get_session_workers')).toMatchObject({
+      commandType: 'get_session_workers',
+      resultFamily: 'session_workers',
+      successEvents: ['session_workers_snapshot'],
+      errorCodeFragments: ['get_session_workers'],
     })
   })
 
@@ -358,6 +365,7 @@ describe('protocol root barrel contract', () => {
       'manager_created',
       'session_created',
       'session_project_agent_updated',
+      'session_workers_snapshot',
       'directories_listed',
       'telegram_status',
       'playwright_discovery_settings_updated',
