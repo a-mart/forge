@@ -40,6 +40,7 @@ describe('ws command parser session commands', () => {
       rename_session: { type: 'rename_session', agentId: 'session-a', label: 'Session A' },
       pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
+      clear_session: { type: 'clear_session', agentId: 'session-a' },
     } as const
 
     for (const contract of WS_REQUEST_CONTRACTS) {
@@ -87,6 +88,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project', requestId: 123 })).toEqual({
       ok: false,
       error: 'update_manager_cwd.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'clear_session', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'clear_session', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'clear_session', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'clear_session.requestId must be a string when provided',
     })
   })
 
@@ -146,6 +155,7 @@ describe('ws command parser session commands', () => {
       { type: 'stop_session', agentId: 'session-a', requestId: 'req-stop' },
       { type: 'resume_session', agentId: 'session-a', requestId: 'req-resume' },
       { type: 'delete_session', agentId: 'session-a', requestId: 'req-delete' },
+      { type: 'clear_session', agentId: 'session-a', requestId: 'req-clear' },
       { type: 'rename_session', agentId: 'session-a', label: 'Renamed', requestId: 'req-rename' },
       { type: 'pin_session', agentId: 'session-a', pinned: true, requestId: 'req-pin' },
       {
@@ -776,6 +786,7 @@ describe('ws command parser session commands', () => {
       { type: 'stop_session', agentId: 'manager--s2', requestId: 'req-stop' },
       { type: 'resume_session', agentId: 'manager--s2', requestId: 'req-resume' },
       { type: 'delete_session', agentId: 'manager--s2', requestId: 'req-delete' },
+      { type: 'clear_session', agentId: 'manager--s2', requestId: 'req-clear' },
       { type: 'rename_session', agentId: 'manager--s2', label: 'Renamed', requestId: 'req-rename' },
       { type: 'pin_session', agentId: 'manager--s2', pinned: true, requestId: 'req-pin' },
       {

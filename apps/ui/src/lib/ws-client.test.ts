@@ -81,6 +81,7 @@ describe('ManagerWsClient', () => {
       'rename_session',
       'pin_session',
       'update_manager_cwd',
+      'clear_session',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1199,6 +1200,122 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(updatePromise).rejects.toThrow('update_manager_cwd_failed: Cwd update rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends clear_session commands and resolves session_cleared events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const clearPromise = client.clearSession(' session-a ')
+    const clearPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(clearPayload).toMatchObject({
+      type: 'clear_session',
+      agentId: 'session-a',
+    })
+    expect(typeof clearPayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_cleared',
+      requestId: clearPayload.requestId,
+      agentId: 'session-a',
+    })
+
+    await expect(clearPromise).resolves.toEqual({ agentId: 'session-a' })
+
+    client.destroy()
+  })
+
+  it('rejects clear_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const clearPromise = client.clearSession('session-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'clear_session_failed',
+      message: 'Clear rejected for testing.',
+    })
+
+    await expect(clearPromise).rejects.toThrow('clear_session_failed: Clear rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('clears visible state on conversation_reset but resolves clear_session only after session_cleared', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'session-a',
+    })
+    emitServerEvent(socket, {
+      type: 'conversation_message',
+      agentId: 'session-a',
+      role: 'assistant',
+      text: 'visible before reset',
+      timestamp: new Date().toISOString(),
+      source: 'speak_to_user',
+    })
+
+    const clearPromise = client.clearSession(' session-a ')
+    const clearPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    let resolved = false
+    void clearPromise.then(() => {
+      resolved = true
+    })
+
+    emitServerEvent(socket, {
+      type: 'conversation_reset',
+      agentId: 'session-a',
+      timestamp: new Date().toISOString(),
+      reason: 'user_new_command',
+    })
+    await Promise.resolve()
+
+    expect(client.getState().messages).toHaveLength(0)
+    expect(resolved).toBe(false)
+
+    emitServerEvent(socket, {
+      type: 'session_cleared',
+      requestId: clearPayload.requestId,
+      agentId: 'session-a',
+    })
+
+    await expect(clearPromise).resolves.toEqual({ agentId: 'session-a' })
+    expect(resolved).toBe(true)
 
     client.destroy()
   })
