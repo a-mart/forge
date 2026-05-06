@@ -5,11 +5,6 @@ import {
   extractSessionEntryId
 } from "./conversation-timeline.js";
 import type { ServerEvent } from "@forge/protocol";
-import {
-  SIDEBAR_HISTORY_CACHE_STATE_METRIC,
-  type HistoryCacheState,
-  type HistorySource
-} from "../../stats/sidebar-perf-metrics.js";
 import type { SidebarConversationHistoryDiagnostics, SidebarPerfRecorder } from "../../stats/sidebar-perf-types.js";
 import {
   HistoryCacheStore,
@@ -22,6 +17,12 @@ import {
 import { applyPinOverlay, setPinnedFlagInMemory } from "./pin-overlay.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
+import {
+  createConversationHistoryDiagnostics,
+  mergeDiagnosticDetails,
+  recordConversationHistoryDiagnostics,
+  sumOptionalNumbers
+} from "./conversation-diagnostics.js";
 import { RuntimeConversationEventMapper, safeJson } from "./runtime-conversation-event-mapper.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type {
@@ -455,27 +456,7 @@ export class ConversationProjector {
   }
 
   private recordHistoryDiagnostics(agentId: string, diagnostics: SidebarConversationHistoryDiagnostics): void {
-    this.deps.perf?.increment(SIDEBAR_HISTORY_CACHE_STATE_METRIC, {
-      labels: {
-        cacheState: diagnostics.cacheState,
-        historySource: diagnostics.historySource
-      },
-      fields: {
-        agentId,
-        coldLoad: diagnostics.coldLoad,
-        fsReadOps: diagnostics.fsReadOps,
-        fsReadBytes: diagnostics.fsReadBytes,
-        sessionFileBytes: diagnostics.sessionFileBytes,
-        cacheFileBytes: diagnostics.cacheFileBytes,
-        persistedEntryCount: diagnostics.persistedEntryCount,
-        cachedEntryCount: diagnostics.cachedEntryCount,
-        sessionSummaryBytesScanned: diagnostics.sessionSummaryBytesScanned,
-        cacheReadMs: diagnostics.cacheReadMs,
-        sessionSummaryReadMs: diagnostics.sessionSummaryReadMs,
-        detail: diagnostics.detail ?? undefined,
-        fastPathUsed: diagnostics.fastPathUsed ?? undefined
-      }
-    });
+    recordConversationHistoryDiagnostics(this.deps.perf, agentId, diagnostics);
   }
 
   private applyPinnedState(agentId: string, entries: ConversationEntryEvent[]): void {
@@ -597,60 +578,6 @@ export class ConversationProjector {
       id: wrapperEntryId
     };
   }
-}
-
-function createConversationHistoryDiagnostics(
-  options: Partial<SidebarConversationHistoryDiagnostics> & {
-    cacheState: HistoryCacheState;
-    historySource: HistorySource;
-    coldLoad: boolean;
-  }
-): SidebarConversationHistoryDiagnostics {
-  return {
-    cacheState: options.cacheState,
-    historySource: options.historySource,
-    coldLoad: options.coldLoad,
-    fsReadOps: options.fsReadOps ?? 0,
-    fsReadBytes: options.fsReadBytes ?? 0,
-    sessionFileBytes: options.sessionFileBytes,
-    cacheFileBytes: options.cacheFileBytes,
-    persistedEntryCount: options.persistedEntryCount,
-    cachedEntryCount: options.cachedEntryCount,
-    sessionSummaryBytesScanned: options.sessionSummaryBytesScanned,
-    cacheReadMs: options.cacheReadMs,
-    sessionSummaryReadMs: options.sessionSummaryReadMs,
-    fastPathUsed: options.fastPathUsed ?? false,
-    detail: options.detail ?? null
-  };
-}
-
-function mergeDiagnosticDetails(...details: Array<string | null | undefined>): string | null {
-  const normalized = details
-    .flatMap((detail) => (typeof detail === "string" ? detail.split("; ") : []))
-    .map((detail) => detail.trim())
-    .filter((detail) => detail.length > 0);
-
-  if (normalized.length === 0) {
-    return null;
-  }
-
-  return Array.from(new Set(normalized)).join("; ");
-}
-
-function sumOptionalNumbers(...values: Array<number | undefined>): number | undefined {
-  let total = 0;
-  let foundValue = false;
-
-  for (const value of values) {
-    if (typeof value !== "number") {
-      continue;
-    }
-
-    total += value;
-    foundValue = true;
-  }
-
-  return foundValue ? total : undefined;
 }
 
 function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {

@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import { dirname } from "node:path";
 import type { HistoryCacheState } from "../../stats/sidebar-perf-metrics.js";
 import type { ConversationEntryEvent } from "../types.js";
+import { mergeDiagnosticDetails } from "./conversation-diagnostics.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { CONVERSATION_ENTRY_TYPE, extractSessionEntryId, hasValidSessionHeader } from "./conversation-timeline.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
@@ -784,19 +785,6 @@ export class HistoryCacheStore {
       await writeFile(cacheFile, serializedHistory, "utf8");
     }
   }
-}
-
-function mergeDiagnosticDetails(...details: Array<string | null | undefined>): string | null {
-  const normalized = details
-    .flatMap((detail) => (typeof detail === "string" ? detail.split("; ") : []))
-    .map((detail) => detail.trim())
-    .filter((detail) => detail.length > 0);
-
-  if (normalized.length === 0) {
-    return null;
-  }
-
-  return Array.from(new Set(normalized)).join("; ");
 }
 
 function safeJson(value: unknown): string {
