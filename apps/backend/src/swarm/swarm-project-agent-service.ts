@@ -1,15 +1,15 @@
 import type { PersistedProjectAgentConfig, ProjectAgentCapability } from "@forge/protocol";
 import {
   deleteProjectAgentRecord,
-  readProjectAgentRecord,
   writeProjectAgentRecord
 } from "./project-agent-storage.js";
 import {
-  findProjectAgentByHandle,
   getProjectAgentHandleCollisionError,
   normalizeProjectAgentHandle,
   normalizeProjectAgentInlineText
-} from "./project-agents.js";
+} from "./agents/project-agents.js";
+import { ProjectAgentRegistry } from "./agents/project-agent-registry.js";
+import { ProjectAgentSettingsSnapshotReader } from "./agents/project-agent-settings-snapshot.js";
 import {
   deleteProjectAgentReferenceDoc,
   listProjectAgentReferenceDocs,
@@ -64,7 +64,20 @@ export interface SwarmProjectAgentServiceOptions {
 }
 
 export class SwarmProjectAgentService {
-  constructor(private readonly options: SwarmProjectAgentServiceOptions) {}
+  private readonly registry: ProjectAgentRegistry;
+  private readonly settingsSnapshotReader: ProjectAgentSettingsSnapshotReader;
+
+  constructor(private readonly options: SwarmProjectAgentServiceOptions) {
+    this.registry = new ProjectAgentRegistry({
+      dataDir: options.dataDir,
+      descriptors: options.descriptors
+    });
+    this.settingsSnapshotReader = new ProjectAgentSettingsSnapshotReader({
+      dataDir: options.dataDir,
+      registry: this.registry,
+      now: options.now
+    });
+  }
 
   async createAndPromoteProjectAgent(
     creatorAgentId: string,
@@ -105,13 +118,12 @@ export class SwarmProjectAgentService {
       throw new Error("Project agent handle must contain at least one letter, number, or dash");
     }
 
-    const collision = findProjectAgentByHandle(this.options.descriptors.values(), profileId, handle);
+    const collision = this.registry.findByHandle(profileId, handle);
     if (collision) {
       throw new Error(getProjectAgentHandleCollisionError(handle));
     }
 
-    const onDiskCollision = await readProjectAgentRecord(this.options.dataDir, profileId, handle);
-    if (onDiskCollision) {
+    if (await this.registry.hasOnDiskCollision(profileId, handle)) {
       throw new Error(getProjectAgentHandleCollisionError(handle));
     }
 
@@ -261,8 +273,7 @@ export class SwarmProjectAgentService {
       : null;
 
     if (nextProjectAgent) {
-      const onDiskCollision = await readProjectAgentRecord(this.options.dataDir, profileId, nextProjectAgent.handle);
-      if (onDiskCollision && onDiskCollision.config.agentId !== descriptor.agentId) {
+      if (await this.registry.hasOnDiskCollision(profileId, nextProjectAgent.handle, descriptor.agentId)) {
         throw new Error(getProjectAgentHandleCollisionError(nextProjectAgent.handle));
       }
 
@@ -315,40 +326,16 @@ export class SwarmProjectAgentService {
     systemPrompt: string | null;
     references: string[];
   }> {
-    const { descriptor, profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
-    const references = await listProjectAgentReferenceDocs(this.options.dataDir, profileId, handle);
-    const record = await readProjectAgentRecord(this.options.dataDir, profileId, handle);
-    if (record) {
-      return { config: record.config, systemPrompt: record.systemPrompt, references };
-    }
-
-    return {
-      config: {
-        version: 1,
-        agentId,
-        handle,
-        whenToUse: descriptor.projectAgent.whenToUse,
-        ...(descriptor.projectAgent.creatorSessionId !== undefined
-          ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
-          : {}),
-        ...(descriptor.projectAgent.capabilities !== undefined
-          ? { capabilities: descriptor.projectAgent.capabilities }
-          : {}),
-        promotedAt: descriptor.createdAt ?? new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      },
-      systemPrompt: descriptor.projectAgent.systemPrompt ?? null,
-      references
-    };
+    return this.settingsSnapshotReader.read(agentId);
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {
-    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const { profileId, handle } = this.registry.assertReferenceScope(agentId);
     return listProjectAgentReferenceDocs(this.options.dataDir, profileId, handle);
   }
 
   async getProjectAgentReference(agentId: string, fileName: string): Promise<string> {
-    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const { profileId, handle } = this.registry.assertReferenceScope(agentId);
     const content = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
     if (content === null) {
       throw new Error(`Reference document ${fileName} does not exist`);
@@ -357,30 +344,12 @@ export class SwarmProjectAgentService {
   }
 
   async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<void> {
-    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const { profileId, handle } = this.registry.assertReferenceScope(agentId);
     await writeProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName, content);
   }
 
   async deleteProjectAgentReference(agentId: string, fileName: string): Promise<void> {
-    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const { profileId, handle } = this.registry.assertReferenceScope(agentId);
     await deleteProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
-  }
-
-  private assertProjectAgentReferenceScope(agentId: string): {
-    descriptor: AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> };
-    profileId: string;
-    handle: string;
-  } {
-    const descriptor = this.options.descriptors.get(agentId);
-    const handle = descriptor?.projectAgent?.handle?.trim();
-    if (!descriptor?.projectAgent || !handle) {
-      throw new Error(`Agent ${agentId} is not a project agent`);
-    }
-
-    return {
-      descriptor: descriptor as AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> },
-      profileId: descriptor.profileId ?? descriptor.agentId,
-      handle
-    };
   }
 }

@@ -1,4 +1,4 @@
-import { reconcileProjectAgentStorage } from "../../storage/project-agent-storage.js";
+import { ProjectAgentRegistry } from "../project-agent-registry.js";
 import type { AgentDescriptor, ManagerProfile } from "../../types.js";
 
 export interface ProjectAgentMirrorReconcilerOptions {
@@ -25,11 +25,11 @@ export class ProjectAgentMirrorReconciler {
     };
 
     for (const profile of this.options.profiles.values()) {
-      const result = await reconcileProjectAgentStorage(
-        this.options.dataDir,
-        profile.profileId,
-        this.options.descriptors
-      );
+      const registry = new ProjectAgentRegistry({
+        dataDir: this.options.dataDir,
+        descriptors: this.options.descriptors
+      });
+      const result = await registry.reconcileProfile(profile.profileId);
 
       combined.hydrated.push(...result.hydrated);
       combined.materialized.push(...result.materialized);
@@ -55,7 +55,7 @@ export class ProjectAgentMirrorReconciler {
     }
     if (result.orphansRemoved.length > 0) {
       info(
-        `[swarm][boot] Removed ${result.orphansRemoved.length} orphan project agent director(ies) for profile ${profileId}: ${result.orphansRemoved.join(", ")}`
+        `[swarm][boot] Removed ${result.orphansRemoved.length} orphan project agent directories for profile ${profileId}: ${result.orphansRemoved.join(", ")}`
       );
     }
   }
