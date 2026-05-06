@@ -1,7 +1,6 @@
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
-  getCatalogProvider,
   type AgentRuntimeExtensionSnapshot,
   type RuntimeExtensionMetadata,
   type RuntimeExtensionSource
@@ -10,7 +9,6 @@ import type { Model, Transport } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   DefaultResourceLoader,
-  compact as runPiCompaction,
   createAgentSession,
   ModelRegistry,
   SettingsManager,
@@ -21,8 +19,6 @@ import {
   type Skill
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "../agent-runtime.js";
-import { buildCreateProjectAgentTool } from "../agent-creator-tool.js";
-import { buildCreateSessionTool } from "../agents/create-session-tool.js";
 import { ensureCanonicalAuthFilePath } from "../auth-storage-paths.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import { openSessionManagerWithSizeGuard } from "../session-file-guard.js";
@@ -31,8 +27,6 @@ import { ClaudeAgentRuntime } from "../claude-agent-runtime.js";
 import { ClaudeAuthResolver } from "../claude-auth-resolver.js";
 import { createClaudeMcpToolBridge } from "../claude-mcp-tool-bridge.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
-import { wrapForgeToolsWithExtensionHooks } from "../forge-instrumented-tools.js";
-import { buildForgePiToolBridgeExtensionFactory } from "../forge-pi-tool-bridge.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import { createAcpMcpToolBridge } from "./acp/acp-mcp-tool-bridge.js";
 import { installOpenAICodexWebSocketDiagnostics } from "../runtime-utils.js";
@@ -44,10 +38,6 @@ import type {
   RuntimeStartupRecoveryContext
 } from "../runtime-contracts.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
-import { buildSwarmTools } from "../swarm-tools.js";
-import { normalizeArchetypeId } from "../prompt-registry.js";
-import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
-import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
 import { modelCatalogService } from "../model-catalog-service.js";
 import { isCollabSession, resolveExactModel } from "../swarm-manager-utils.js";
 import {
@@ -55,8 +45,8 @@ import {
   getProfilePiPromptsDir,
   getProfilePiSkillsDir,
   getProfilePiThemesDir,
-  getSessionDir,
 } from "../data-paths.js";
+import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "./runtime-tool-plan.js";
 import { createPiModelRegistry } from "../pi-model-registry.js";
 import type {
   AgentContextUsage,
@@ -172,14 +162,7 @@ export class RuntimeFactory {
       runtimeType: "pi",
       runtimeToken
     });
-    const baseSwarmTools = this.buildRuntimeTools(descriptor);
-    const swarmTools = preparedForgeBindings
-      ? wrapForgeToolsWithExtensionHooks({
-          tools: baseSwarmTools,
-          forgeExtensionHost: this.deps.forgeExtensionHost,
-          bindingToken: preparedForgeBindings.bindingToken
-        })
-      : baseSwarmTools;
+    const { baseSwarmTools, swarmTools } = this.buildRuntimeToolPlan(descriptor, preparedForgeBindings);
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
     const runtimeAgentDir =
       descriptor.role === "manager" ? this.deps.config.paths.managerAgentDir : this.deps.config.paths.agentDir;
@@ -236,13 +219,11 @@ export class RuntimeFactory {
     });
 
     const extensionFactories = this.buildExtensionFactories(descriptor, {
-      forgePiToolBridgeFactory: preparedForgeBindings
-        ? buildForgePiToolBridgeExtensionFactory({
-            forgeExtensionHost: this.deps.forgeExtensionHost,
-            bindingToken: preparedForgeBindings.bindingToken,
-            skippedToolNames: baseSwarmTools.map((tool) => tool.name)
-          })
-        : undefined
+      forgePiToolBridgeFactory: planForgePiToolBridgeFactory({
+        forgeExtensionHost: this.deps.forgeExtensionHost,
+        preparedForgeBindings,
+        baseSwarmTools
+      })
     });
     const isCollaborationRuntime = this.isCollaborationRuntimeDescriptor(descriptor);
     const additionalSkillPaths = [
@@ -471,14 +452,7 @@ export class RuntimeFactory {
       runtimeType: "claude",
       runtimeToken
     });
-    const baseSwarmTools = this.buildRuntimeTools(descriptor);
-    const swarmTools = preparedForgeBindings
-      ? wrapForgeToolsWithExtensionHooks({
-          tools: baseSwarmTools,
-          forgeExtensionHost: this.deps.forgeExtensionHost,
-          bindingToken: preparedForgeBindings.bindingToken
-        })
-      : baseSwarmTools;
+    const { swarmTools } = this.buildRuntimeToolPlan(descriptor, preparedForgeBindings);
     const profileId = descriptor.profileId ?? descriptor.agentId;
     const sessionId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
     const workerId = descriptor.role === "worker" ? descriptor.agentId : undefined;
@@ -574,14 +548,7 @@ export class RuntimeFactory {
       runtimeType: "acp",
       runtimeToken
     });
-    const baseSwarmTools = this.buildRuntimeTools(descriptor);
-    const swarmTools = preparedForgeBindings
-      ? wrapForgeToolsWithExtensionHooks({
-          tools: baseSwarmTools,
-          forgeExtensionHost: this.deps.forgeExtensionHost,
-          bindingToken: preparedForgeBindings.bindingToken
-        })
-      : baseSwarmTools;
+    const { swarmTools } = this.buildRuntimeToolPlan(descriptor, preparedForgeBindings);
     const [acpSystemPrompt, memoryResources] = await Promise.all([
       this.deps.buildAcpRuntimeSystemPrompt(descriptor, systemPrompt),
       this.deps.getMemoryRuntimeResources(descriptor)
@@ -653,27 +620,18 @@ export class RuntimeFactory {
     return runtime;
   }
 
-  private buildRuntimeTools(descriptor: AgentDescriptor) {
-    const swarmTools = buildSwarmTools(this.deps.host, descriptor);
-
-    if (descriptor.role !== "manager") {
-      return swarmTools;
-    }
-
-    if (descriptor.projectAgent?.capabilities?.includes("create_session")) {
-      swarmTools.push(buildCreateSessionTool(this.deps.host, descriptor));
-    }
-
-    if (descriptor.sessionPurpose === "agent_creator") {
-      swarmTools.push(buildCreateProjectAgentTool(this.deps.host, descriptor));
-    }
-
-    if (normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID) {
-      return swarmTools;
-    }
-
-    return swarmTools.filter((tool) => !CORTEX_DISABLED_TOOL_NAMES.has(tool.name));
+  private buildRuntimeToolPlan(
+    descriptor: AgentDescriptor,
+    preparedForgeBindings?: Parameters<typeof planRuntimeTools>[0]["preparedForgeBindings"]
+  ) {
+    return planRuntimeTools({
+      host: this.deps.host,
+      descriptor,
+      forgeExtensionHost: this.deps.forgeExtensionHost,
+      preparedForgeBindings
+    });
   }
+
 
   private buildExtensionFactories(
     descriptor: AgentDescriptor,
@@ -681,94 +639,12 @@ export class RuntimeFactory {
       forgePiToolBridgeFactory?: ExtensionFactory;
     }
   ): ExtensionFactory[] {
-    const factories: ExtensionFactory[] = [];
-
-    if (descriptor.role === "manager" && descriptor.profileId) {
-      factories.push((pi) => {
-        pi.on("session_before_compact", async (event, ctx) => {
-          const sessionDir = getSessionDir(
-            this.deps.config.paths.dataDir,
-            descriptor.profileId ?? descriptor.agentId,
-            descriptor.agentId
-          );
-          const registry = await loadPins(sessionDir);
-          const existingInstructions = event.customInstructions?.trim() || undefined;
-          const combinedInstructions = combineCompactionCustomInstructions(existingInstructions, registry);
-
-          if (!combinedInstructions || combinedInstructions === existingInstructions) {
-            return undefined;
-          }
-
-          if (!ctx.model) {
-            return undefined;
-          }
-
-          const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model as Model<any>);
-          if (!auth.ok) {
-            const message =
-              `Pinned-message preservation during auto-compaction is unavailable for ${descriptor.agentId}: ${auth.error}`;
-            console.warn(`[swarm] ${message}`);
-            ctx.ui.notify(message, "warning");
-            return undefined;
-          }
-
-          // Pi's compaction helper currently requires a raw API key plus optional headers.
-          // If a provider can only authenticate via headers, fall back to Pi's default compaction.
-          if (!auth.apiKey) {
-            const message =
-              `Pinned-message preservation during auto-compaction is unavailable for ${descriptor.agentId}: this auth mode does not expose a raw API key to the compaction helper.`;
-            console.warn(`[swarm] ${message}`);
-            ctx.ui.notify(message, "warning");
-            return undefined;
-          }
-
-          const compaction = await runPiCompaction(
-            event.preparation,
-            ctx.model as Model<any>,
-            auth.apiKey,
-            auth.headers,
-            combinedInstructions,
-            event.signal
-          );
-
-          return {
-            compaction
-          };
-        });
-      });
-    }
-
-    if (process.env.FORGE_DEBUG === "true") {
-      factories.push((pi) => {
-        pi.on("tool_call", (event) => {
-          try {
-            this.deps.logDebug("extension:tool_call", {
-              agentId: descriptor.agentId,
-              toolName: event.toolName,
-              inputPreview: previewJsonForLog(event.input, 200)
-            });
-          } catch {
-            // Extension handler errors must not propagate into tool execution
-          }
-        });
-      });
-    }
-
-    if (options?.forgePiToolBridgeFactory) {
-      // Ordering relative to user Pi extensions is intentionally unspecified in v1.
-      factories.push(options.forgePiToolBridgeFactory);
-    }
-
-    const provider = getCatalogProvider(descriptor.model.provider);
-    if (provider?.requestBehaviorId) {
-      factories.push(
-        createCatalogRequestBehaviorExtensionFactory({
-          webSearchEnabled: descriptor.webSearch === true
-        })
-      );
-    }
-
-    return factories;
+    return planPiExtensionFactories({
+      descriptor,
+      config: this.deps.config,
+      logDebug: this.deps.logDebug,
+      forgePiToolBridgeFactory: options?.forgePiToolBridgeFactory
+    });
   }
 
 
@@ -1029,8 +905,6 @@ function appendStartupRecoveryContext(
   return [systemPrompt, startupRecoveryContext.blockText].filter(Boolean).join("\n\n");
 }
 
-const CORTEX_ARCHETYPE_ID = "cortex";
-const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent"]);
 const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 
 function isClaudeSdkModelDescriptor(
@@ -1160,16 +1034,4 @@ function bindRuntimeCleanup(runtime: SwarmAgentRuntime, cleanup: () => Promise<v
   wrap("terminate");
   wrap("shutdownForReplacement");
   wrap("recycle");
-}
-
-function previewJsonForLog(value: unknown, maxLength = 160): string {
-  try {
-    const serialized = JSON.stringify(value);
-    if (!serialized) {
-      return "<unserializable>";
-    }
-    return previewForLog(serialized, maxLength);
-  } catch {
-    return "<unserializable>";
-  }
 }

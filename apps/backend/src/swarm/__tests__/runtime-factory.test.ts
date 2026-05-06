@@ -404,6 +404,48 @@ function fakePiSkill(name: string, filePath: string, baseDir: string) {
   };
 }
 
+const providerRuntimeCases = [
+  {
+    runtimeName: "Claude SDK",
+    model: {
+      provider: "claude-sdk",
+      modelId: "claude-opus-4-6",
+      thinkingLevel: "high",
+    },
+    setupRuntimeMock: () => undefined,
+    getBridgeToolNames: () => {
+      const tools = claudeRuntimeMockState.createMcpBridge.mock.calls.at(-1)?.[0] as Array<{ name: string }> | undefined;
+      return (tools ?? []).map((tool) => tool.name);
+    },
+  },
+  {
+    runtimeName: "ACP",
+    model: {
+      provider: "cursor-acp",
+      modelId: "default",
+      thinkingLevel: "high",
+    },
+    setupRuntimeMock: () => {
+      acpRuntimeMockState.create.mockImplementation(async (options: { descriptor: AgentDescriptor; systemPrompt: string }) =>
+        createMockRuntime({
+          descriptor: options.descriptor,
+          runtimeType: "acp",
+          systemPrompt: options.systemPrompt,
+        })
+      );
+    },
+    getBridgeToolNames: () => {
+      const tools = acpRuntimeMockState.createMcpBridge.mock.calls.at(-1)?.[0] as Array<{ name: string }> | undefined;
+      return (tools ?? []).map((tool) => tool.name);
+    },
+  },
+] satisfies Array<{
+  runtimeName: string;
+  model: AgentDescriptor["model"];
+  setupRuntimeMock: () => void;
+  getBridgeToolNames: () => string[];
+}>;
+
 describe("RuntimeFactory", () => {
   beforeEach(() => {
     resetClaudeSdkLoaderForTests();
@@ -612,6 +654,49 @@ describe("RuntimeFactory", () => {
     expect(toolNames).toContain("create_session");
     expect(toolNames).not.toContain("create_project_agent");
   });
+
+  it.each(providerRuntimeCases)(
+    "passes Agent Creator tools through the $runtimeName MCP bridge provider path",
+    async ({ model, setupRuntimeMock, getBridgeToolNames }) => {
+      const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+      await mkdir(rootDir, { recursive: true });
+      setupRuntimeMock();
+
+      const descriptor = createManagerDescriptor(rootDir, {
+        model,
+        sessionPurpose: "agent_creator",
+      });
+      const factory = createFactory(rootDir);
+
+      await factory.createRuntimeForDescriptor(descriptor, "Base system prompt", 1);
+
+      const toolNames = getBridgeToolNames();
+      expect(toolNames).toContain("create_project_agent");
+      expect(toolNames).toContain("speak_to_user");
+    }
+  );
+
+  it.each(providerRuntimeCases)(
+    "passes Cortex-filtered tools through the $runtimeName MCP bridge provider path",
+    async ({ model, setupRuntimeMock, getBridgeToolNames }) => {
+      const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+      await mkdir(rootDir, { recursive: true });
+      setupRuntimeMock();
+
+      const descriptor = createManagerDescriptor(rootDir, {
+        model,
+        archetypeId: "cortex",
+      });
+      const factory = createFactory(rootDir);
+
+      await factory.createRuntimeForDescriptor(descriptor, "Base system prompt", 1);
+
+      const toolNames = getBridgeToolNames();
+      expect(toolNames).toContain("spawn_agent");
+      expect(toolNames).not.toContain("list_agents");
+      expect(toolNames).not.toContain("kill_agent");
+    }
+  );
 
   it("throws when the requested Pi model is unavailable instead of falling back", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
