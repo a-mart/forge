@@ -877,6 +877,222 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(runtimes.get(worker.agentId)).toBe(current);
   });
 
+  it("replays buffered old-runtime status then agent_end when fallback aborts", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sessionsDir, "w-replay-abort.jsonl"), "", "utf8");
+
+    const descriptors = new Map<string, AgentDescriptor>();
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+
+    const worker = buildWorkerDescriptor(config, { agentId: "w-replay-abort" });
+    descriptors.set(worker.agentId, worker);
+
+    const current = new FakeRuntime(worker, "sys");
+    current.specialistFallbackReplayMessage = { text: "retry-me" };
+    runtimes.set(worker.agentId, current);
+    runtimeTokensByAgentId.set(worker.agentId, 41);
+
+    let continueRoster: (entries: Array<{ specialistId: string; fallbackModelId?: string }>) => void = () => {};
+    const rosterGate = new Promise<Array<{ specialistId: string; fallbackModelId?: string }>>((resolve) => {
+      continueRoster = resolve;
+    });
+
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn()
+    });
+
+    const replayOrder: string[] = [];
+    const managerRef: { current?: SwarmSpecialistFallbackManager } = {};
+    const handleRuntimeStatus = vi.fn(async () => {
+      expect(managerRef.current?.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
+      replayOrder.push("status");
+    });
+    const handleRuntimeAgentEnd = vi.fn(async () => {
+      expect(managerRef.current?.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
+      replayOrder.push("agent_end");
+    });
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: () => rosterGate,
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor: vi.fn(),
+      attachRuntime: vi.fn(),
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn()
+    });
+    managerRef.current = manager;
+
+    const recovery = manager.maybeRecoverWorkerWithSpecialistFallback({
+      agentId: worker.agentId,
+      errorMessage: "rate limit exceeded",
+      sourcePhase: "prompt_start",
+      runtimeToken: 41,
+      handleRuntimeStatus,
+      handleRuntimeAgentEnd
+    });
+
+    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(true);
+    expect(manager.bufferStatusDuringHandoff(worker.agentId, 41, "streaming", 2, {
+      tokens: 5,
+      contextWindow: 50,
+      percent: 10
+    })).toBe(true);
+    expect(manager.bufferAgentEndDuringHandoff(worker.agentId, 41)).toBe(true);
+
+    continueRoster([]);
+
+    await expect(recovery).resolves.toBe(false);
+
+    expect(replayOrder).toEqual(["status", "agent_end"]);
+    expect(handleRuntimeStatus).toHaveBeenCalledWith(
+      41,
+      worker.agentId,
+      "streaming",
+      2,
+      expect.objectContaining({ tokens: 5 })
+    );
+    expect(handleRuntimeAgentEnd).toHaveBeenCalledWith(41, worker.agentId);
+    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
+  });
+
+  it("ends successful fallback handoff without replaying buffered old-runtime callbacks", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sessionsDir, "w-success-no-replay.jsonl"), "", "utf8");
+
+    const descriptors = new Map<string, AgentDescriptor>();
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+
+    const worker = buildWorkerDescriptor(config, { agentId: "w-success-no-replay" });
+    descriptors.set(worker.agentId, worker);
+
+    const current = new FakeRuntime(worker, "sys");
+    current.specialistFallbackReplayMessage = { text: "retry-me" };
+    runtimes.set(worker.agentId, current);
+    runtimeTokensByAgentId.set(worker.agentId, 42);
+
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn()
+    });
+
+    let signalCreateStarted: () => void = () => {};
+    const createStarted = new Promise<void>((resolve) => {
+      signalCreateStarted = resolve;
+    });
+    let releaseReplacement: (runtime: SwarmAgentRuntime) => void = () => {};
+    const replacementGate = new Promise<SwarmAgentRuntime>((resolve) => {
+      releaseReplacement = resolve;
+    });
+    const replacementRuntimeToken = 43;
+    const attachRuntime = vi.fn((agentId: string, runtime: SwarmAgentRuntime) => {
+      runtimes.set(agentId, runtime);
+    });
+    const createRuntimeForDescriptor = vi.fn(() => {
+      runtimeTokensByAgentId.set(worker.agentId, replacementRuntimeToken);
+      signalCreateStarted();
+      return replacementGate;
+    });
+
+    const handleRuntimeStatus = vi.fn();
+    const handleRuntimeAgentEnd = vi.fn();
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+      ]),
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor,
+      attachRuntime,
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn()
+    });
+
+    const recovery = manager.maybeRecoverWorkerWithSpecialistFallback({
+      agentId: worker.agentId,
+      errorMessage: "rate limit exceeded",
+      sourcePhase: "prompt_start",
+      runtimeToken: 42,
+      handleRuntimeStatus,
+      handleRuntimeAgentEnd
+    });
+
+    await createStarted;
+    expect(runtimeTokensByAgentId.get(worker.agentId)).toBe(replacementRuntimeToken);
+    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 42)).toBe(true);
+    expect(manager.isSuppressedRuntimeCallback(worker.agentId, replacementRuntimeToken)).toBe(false);
+    expect(manager.bufferStatusDuringHandoff(worker.agentId, 42, "idle", 0)).toBe(true);
+    expect(manager.bufferStatusDuringHandoff(worker.agentId, replacementRuntimeToken, "streaming", 1)).toBe(false);
+    expect(manager.bufferAgentEndDuringHandoff(worker.agentId, 42)).toBe(true);
+    expect(manager.bufferAgentEndDuringHandoff(worker.agentId, replacementRuntimeToken)).toBe(false);
+
+    const replacement = new FakeRuntime(
+      {
+        ...worker,
+        model: { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "medium" }
+      },
+      "sys2"
+    );
+    releaseReplacement(replacement);
+
+    await expect(recovery).resolves.toBe(true);
+
+    expect(handleRuntimeStatus).not.toHaveBeenCalled();
+    expect(handleRuntimeAgentEnd).not.toHaveBeenCalled();
+    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 42)).toBe(false);
+    expect(manager.isSuppressedRuntimeCallback(worker.agentId, replacementRuntimeToken)).toBe(false);
+    expect(runtimeTokensByAgentId.get(worker.agentId)).toBe(replacementRuntimeToken);
+    expect(attachRuntime).toHaveBeenCalledWith(worker.agentId, replacement);
+  });
+
   it("exposes suppression for callbacks tied to the active handoff token", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sessionsDir, "w-sup.jsonl"), "", "utf8");

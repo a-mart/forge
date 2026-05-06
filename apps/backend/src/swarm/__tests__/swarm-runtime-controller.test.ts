@@ -879,6 +879,200 @@ describe("SwarmRuntimeController", () => {
     expect(controller.listRuntimeExtensionSnapshots()[0].extensions[0].events).toEqual(["e1"]);
   });
 
+  it("buffers status during specialist fallback handoff before normal status processing", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, emitStatus, finalizeWorkerIdleTurn } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const worker = baseDescriptor({
+      agentId: "w-fallback-status",
+      role: "worker",
+      managerId: "m1",
+      status: "idle",
+      profileId: "p1"
+    });
+    descriptors.set(worker.agentId, worker);
+
+    const oldToken = controller.allocateRuntimeToken(worker.agentId);
+    const replacementToken = controller.allocateRuntimeToken(worker.agentId);
+    const fallbackManager = {
+      bufferStatusDuringHandoff: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken),
+      bufferAgentEndDuringHandoff: vi.fn(() => false),
+      isSuppressedRuntimeCallback: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken)
+    } as unknown as Parameters<SwarmRuntimeController["setSpecialistFallbackManager"]>[0];
+    controller.setSpecialistFallbackManager(fallbackManager);
+
+    await controller.handleRuntimeStatus(oldToken, worker.agentId, "streaming" as AgentStatus, 3, {
+      tokens: 10,
+      contextWindow: 100,
+      percent: 10
+    });
+
+    expect(fallbackManager.bufferStatusDuringHandoff).toHaveBeenCalledWith(
+      worker.agentId,
+      oldToken,
+      "streaming",
+      3,
+      expect.objectContaining({ tokens: 10 })
+    );
+    expect(fallbackManager.isSuppressedRuntimeCallback).not.toHaveBeenCalled();
+    expect(host.patchDescriptorFromRuntimeStatus).not.toHaveBeenCalled();
+    expect(host.updateSessionMetaForWorkerDescriptor).not.toHaveBeenCalled();
+    expect(host.refreshSessionMetaStatsBySessionId).not.toHaveBeenCalled();
+    expect(host.saveStore).not.toHaveBeenCalled();
+    expect(emitStatus).not.toHaveBeenCalled();
+    expect(finalizeWorkerIdleTurn).not.toHaveBeenCalled();
+    expect(host.workerStallState.has(worker.agentId)).toBe(false);
+    expect(host.workerActivityState.has(worker.agentId)).toBe(false);
+    expect(host.workerWatchdogState.has(worker.agentId)).toBe(false);
+    expect(host.watchdogTimerTokens.has(worker.agentId)).toBe(false);
+    expect(host.clearWatchdogTimer).not.toHaveBeenCalled();
+    expect(host.removeWorkerFromWatchdogBatchQueues).not.toHaveBeenCalled();
+
+    vi.mocked(fallbackManager.bufferStatusDuringHandoff).mockClear();
+    await controller.handleRuntimeStatus(replacementToken, worker.agentId, "streaming" as AgentStatus, 0);
+
+    expect(fallbackManager.bufferStatusDuringHandoff).toHaveBeenCalledWith(
+      worker.agentId,
+      replacementToken,
+      "streaming",
+      0,
+      undefined
+    );
+    expect(fallbackManager.isSuppressedRuntimeCallback).toHaveBeenCalledWith(worker.agentId, replacementToken);
+    expect(host.patchDescriptorFromRuntimeStatus).toHaveBeenCalled();
+    expect(emitStatus).toHaveBeenCalledWith(worker.agentId, "streaming", 0, undefined);
+  });
+
+  it("buffers agent_end during specialist fallback handoff before worker finalization", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      emitStatus,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      finalizeWorkerIdleTurn,
+      maybeRecoverWorkerWithSpecialistFallback
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const worker = baseDescriptor({
+      agentId: "w-fallback-end",
+      role: "worker",
+      managerId: "m1",
+      status: "streaming",
+      profileId: "p1"
+    });
+    descriptors.set(worker.agentId, worker);
+
+    const oldToken = controller.allocateRuntimeToken(worker.agentId);
+    const replacementToken = controller.allocateRuntimeToken(worker.agentId);
+    const fallbackManager = {
+      bufferStatusDuringHandoff: vi.fn(() => false),
+      bufferAgentEndDuringHandoff: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken),
+      isSuppressedRuntimeCallback: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken)
+    } as unknown as Parameters<SwarmRuntimeController["setSpecialistFallbackManager"]>[0];
+    controller.setSpecialistFallbackManager(fallbackManager);
+
+    await controller.handleRuntimeAgentEnd(oldToken, worker.agentId);
+
+    expect(fallbackManager.bufferAgentEndDuringHandoff).toHaveBeenCalledWith(worker.agentId, oldToken);
+    expect(fallbackManager.isSuppressedRuntimeCallback).not.toHaveBeenCalled();
+    expect(finalizeWorkerIdleTurn).not.toHaveBeenCalled();
+    expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+    expect(emitStatus).not.toHaveBeenCalled();
+    expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+
+    vi.mocked(fallbackManager.bufferAgentEndDuringHandoff).mockClear();
+    await controller.handleRuntimeAgentEnd(replacementToken, worker.agentId);
+
+    expect(fallbackManager.bufferAgentEndDuringHandoff).toHaveBeenCalledWith(worker.agentId, replacementToken);
+    expect(fallbackManager.isSuppressedRuntimeCallback).toHaveBeenCalledWith(worker.agentId, replacementToken);
+    expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(worker.agentId, worker, "agent_end");
+  });
+
+  it("suppresses old-runtime session events, errors, and extension snapshots while fallback owns the token", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      maybeRecoverWorkerWithSpecialistFallback
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const worker = baseDescriptor({
+      agentId: "w-fallback-suppressed",
+      role: "worker",
+      managerId: "m1",
+      status: "streaming",
+      profileId: "p1"
+    });
+    descriptors.set(worker.agentId, worker);
+
+    const oldToken = controller.allocateRuntimeToken(worker.agentId);
+    const replacementToken = controller.allocateRuntimeToken(worker.agentId);
+    const fallbackManager = {
+      bufferStatusDuringHandoff: vi.fn(() => false),
+      bufferAgentEndDuringHandoff: vi.fn(() => false),
+      isSuppressedRuntimeCallback: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken)
+    } as unknown as Parameters<SwarmRuntimeController["setSpecialistFallbackManager"]>[0];
+    controller.setSpecialistFallbackManager(fallbackManager);
+    const dispatchRuntimeError = vi.spyOn(host.forgeExtensionHost, "dispatchRuntimeError");
+
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "old runtime failure" }],
+        stopReason: "error"
+      }
+    };
+    const oldSnapshot: AgentRuntimeExtensionSnapshot = {
+      agentId: worker.agentId,
+      role: "worker",
+      managerId: worker.managerId,
+      profileId: worker.profileId,
+      loadedAt: "suppressed",
+      extensions: [],
+      loadErrors: []
+    };
+    const freshSnapshot: AgentRuntimeExtensionSnapshot = {
+      ...oldSnapshot,
+      loadedAt: "fresh"
+    };
+    const snapshotHandler = controller as unknown as {
+      handleRuntimeExtensionSnapshot(t: number, id: string, snap: AgentRuntimeExtensionSnapshot): void;
+    };
+
+    await controller.handleRuntimeSessionEvent(oldToken, worker.agentId, event);
+    await controller.handleRuntimeError(oldToken, worker.agentId, {
+      phase: "prompt_start",
+      message: "rate limit exceeded"
+    });
+    snapshotHandler.handleRuntimeExtensionSnapshot(oldToken, worker.agentId, oldSnapshot);
+
+    expect(fallbackManager.isSuppressedRuntimeCallback).toHaveBeenCalledWith(worker.agentId, oldToken);
+    expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(host.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
+    expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+    expect(dispatchRuntimeError).not.toHaveBeenCalled();
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+    expect(controller.listRuntimeExtensionSnapshots()).toEqual([]);
+
+    vi.mocked(fallbackManager.isSuppressedRuntimeCallback).mockClear();
+    snapshotHandler.handleRuntimeExtensionSnapshot(replacementToken, worker.agentId, freshSnapshot);
+
+    expect(fallbackManager.isSuppressedRuntimeCallback).toHaveBeenCalledWith(worker.agentId, replacementToken);
+    expect(controller.listRuntimeExtensionSnapshots()).toEqual([freshSnapshot]);
+  });
+
   it("suppresses runtime callbacks while intentional stop tokens are registered", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
