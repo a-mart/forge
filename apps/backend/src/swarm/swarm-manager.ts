@@ -107,12 +107,7 @@ import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js
 import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
-import {
-  appendModelChangeContinuityApplied,
-  createModelChangeContinuityApplied,
-  type ModelChangeContinuityRequest
-} from "./runtime/model-change-continuity.js";
-import { resolvePendingModelChangeRuntimeStartup } from "./runtime/model-change-runtime-startup.js";
+import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
 import {
   isRuntimeRecoveryActiveForRuntime,
   RuntimeRecoveryState
@@ -1073,6 +1068,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   readonly runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
   readonly runtimeTokensByAgentId: Map<string, number>;
   private readonly runtimeRecoveryState = new RuntimeRecoveryState();
+  private readonly modelChangeStartupRecoveryCoordinator: ModelChangeStartupRecoveryCoordinator;
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
@@ -1136,6 +1132,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       manifest: backendSidebarPerfMetricManifest
     });
     this.runtimeController = new SwarmRuntimeController(this as unknown as SwarmRuntimeControllerHost);
+    this.modelChangeStartupRecoveryCoordinator = new ModelChangeStartupRecoveryCoordinator({
+      now: this.now,
+      logDebug: (message, details) => this.logDebug(message, details),
+      getEffectiveContextWindow: (modelId, provider) =>
+        modelCatalogService.getEffectiveContextWindow(modelId, provider),
+      hasPinnedContent: (agentId) => this.pinnedMessageIdsBySessionAgentId.has(agentId)
+    });
     this.runtimes = this.runtimeController.runtimes;
     this.runtimeCreationPromisesByAgentId = this.runtimeController.runtimeCreationPromisesByAgentId;
     this.runtimeTokensByAgentId = this.runtimeController.runtimeTokensByAgentId;
@@ -1462,9 +1465,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       captureSessionRuntimePromptMeta: (descriptor, resolvedSystemPrompt) =>
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       prepareManagerRuntimeCreation: (descriptor, systemPrompt) =>
-        this.prepareManagerRuntimeCreation(descriptor, systemPrompt),
+        this.modelChangeStartupRecoveryCoordinator.prepareManagerRuntimeCreation(descriptor, systemPrompt),
       appendAppliedModelChangeContinuity: (descriptor, request, runtime) =>
-        this.appendAppliedModelChangeContinuity(descriptor, request, runtime),
+        this.modelChangeStartupRecoveryCoordinator.appendAppliedModelChangeContinuity(descriptor, request, runtime),
       attachRuntime: (agentId, runtime) => {
         this.runtimeController.attachRuntime(agentId, runtime);
       },
@@ -5635,72 +5638,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     return this.runtimeController.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
-  }
-
-  private async prepareManagerRuntimeCreation(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    systemPrompt: string
-  ): Promise<{
-    continuityRequest?: ModelChangeContinuityRequest;
-    runtimeCreationOptions?: RuntimeCreationOptions;
-  }> {
-    const recovery = await resolvePendingModelChangeRuntimeStartup({
-      descriptor,
-      targetModel: descriptor.model,
-      existingPrompt: systemPrompt,
-      modelContextWindow: modelCatalogService.getEffectiveContextWindow(
-        descriptor.model.modelId,
-        descriptor.model.provider
-      ),
-      hasPinnedContent: this.pinnedMessageIdsBySessionAgentId.has(descriptor.agentId)
-    });
-
-    if (!recovery.request) {
-      return {};
-    }
-
-    this.logDebug("manager:model_change_continuity:prepare", {
-      agentId: descriptor.agentId,
-      requestId: recovery.request.requestId,
-      sourceModel: recovery.request.sourceModel,
-      targetModel: recovery.request.targetModel,
-      policy: recovery.policy,
-      eligibleEntryCount: recovery.recoveryContext?.eligibleEntryCount,
-      includedEntryCount: recovery.recoveryContext?.includedEntryCount,
-      omittedEntryCount: recovery.recoveryContext?.omittedEntryCount,
-      truncated: recovery.recoveryContext?.truncated,
-      approxTokenCount: recovery.recoveryContext?.approxTokenCount
-    });
-
-    return {
-      continuityRequest: recovery.request,
-      runtimeCreationOptions: recovery.policy === "skip_pi_to_pi"
-        ? undefined
-        : {
-            startupRecoveryContext: {
-              reason: "model_change",
-              blockText: recovery.recoveryContext?.blockText ?? ""
-            }
-          }
-    };
-  }
-
-  private async appendAppliedModelChangeContinuity(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    request: ModelChangeContinuityRequest,
-    runtime: SwarmAgentRuntime
-  ): Promise<void> {
-    await appendModelChangeContinuityApplied({
-      sessionFile: descriptor.sessionFile,
-      cwd: descriptor.cwd,
-      applied: createModelChangeContinuityApplied({
-        requestId: request.requestId,
-        appliedAt: this.now(),
-        sessionAgentId: descriptor.agentId,
-        attachedRuntime: runtime.descriptor.model
-      }),
-      now: this.now
-    });
   }
 
   private allocateRuntimeToken(agentId: string): number {
