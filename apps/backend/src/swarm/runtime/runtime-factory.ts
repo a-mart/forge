@@ -1,4 +1,3 @@
-import { readdirSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   type AgentRuntimeExtensionSnapshot,
@@ -14,9 +13,7 @@ import {
   SettingsManager,
   type AgentSession,
   type ExtensionFactory,
-  type LoadExtensionsResult,
-  type ResourceDiagnostic,
-  type Skill
+  type LoadExtensionsResult
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "../agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "../auth-storage-paths.js";
@@ -39,14 +36,9 @@ import type {
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import { modelCatalogService } from "../model-catalog-service.js";
 import { isCollabSession, resolveExactModel } from "../swarm-manager-utils.js";
-import {
-  getProfilePiExtensionsDir,
-  getProfilePiPromptsDir,
-  getProfilePiSkillsDir,
-  getProfilePiThemesDir,
-} from "../data-paths.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "./runtime-tool-plan.js";
 import { planClaudeRuntimePrompt, planPiRuntimePrompt } from "./runtime-prompt-plan.js";
+import { planPiResourceLoaderOptions, planRuntimeEnv, planRuntimeResourcePaths } from "./runtime-resource-plan.js";
 import { createPiModelRegistry } from "../pi-model-registry.js";
 import type {
   AgentContextUsage,
@@ -164,14 +156,9 @@ export class RuntimeFactory {
     });
     const { baseSwarmTools, swarmTools } = this.buildRuntimeToolPlan(descriptor, preparedForgeBindings);
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
-    const runtimeAgentDir =
-      descriptor.role === "manager" ? this.deps.config.paths.managerAgentDir : this.deps.config.paths.agentDir;
+    const pathsPlan = planRuntimeResourcePaths({ config: this.deps.config, descriptor });
+    const runtimeAgentDir = pathsPlan.runtimeAgentDir;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-    const profilePiExtensionsDir = getProfilePiExtensionsDir(this.deps.config.paths.dataDir, profileId);
-    const profilePiSkillsDir = getProfilePiSkillsDir(this.deps.config.paths.dataDir, profileId);
-    const profilePiPromptsDir = getProfilePiPromptsDir(this.deps.config.paths.dataDir, profileId);
-    const profilePiThemesDir = getProfilePiThemesDir(this.deps.config.paths.dataDir, profileId);
     const promptPlan = planPiRuntimePrompt({
       descriptor,
       systemPrompt,
@@ -191,11 +178,11 @@ export class RuntimeFactory {
       agentDir: runtimeAgentDir,
       piModelsJsonPath: this.deps.getPiModelsJsonPath(),
       memoryFile: memoryResources.memoryContextFile.path,
-      profileId,
-      profilePiExtensionsDir,
-      profilePiSkillsDir,
-      profilePiPromptsDir,
-      profilePiThemesDir,
+      profileId: pathsPlan.profileId,
+      profilePiExtensionsDir: pathsPlan.profilePiExtensionsDir,
+      profilePiSkillsDir: pathsPlan.profilePiSkillsDir,
+      profilePiPromptsDir: pathsPlan.profilePiPromptsDir,
+      profilePiThemesDir: pathsPlan.profilePiThemesDir,
       managerSystemPromptSource:
         descriptor.role === "manager" ? "archetype:manager" : undefined
     });
@@ -208,16 +195,6 @@ export class RuntimeFactory {
     const piModelsJsonPath = this.deps.getPiModelsJsonPath();
     const modelRegistry = createPiModelRegistry(authStorage, piModelsJsonPath);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
-    const applyRuntimeContext = (base: { agentsFiles: Array<{ path: string; content: string }> }) => ({
-      agentsFiles: [
-        ...this.deps.mergeRuntimeContextFiles(base.agentsFiles, {
-          memoryContextFile: memoryResources.memoryContextFile,
-          swarmContextFiles
-        }),
-        ...(promptPlan.startupRecoveryContextFile ? [promptPlan.startupRecoveryContextFile] : [])
-      ]
-    });
-
     const extensionFactories = this.buildExtensionFactories(descriptor, {
       forgePiToolBridgeFactory: planForgePiToolBridgeFactory({
         forgeExtensionHost: this.deps.forgeExtensionHost,
@@ -225,45 +202,22 @@ export class RuntimeFactory {
         baseSwarmTools
       })
     });
-    const isCollaborationRuntime = this.isCollaborationRuntimeDescriptor(descriptor);
-    const additionalSkillPaths = [
-      ...memoryResources.additionalSkillPaths,
-      ...(!isCollaborationRuntime && dirHasFiles(profilePiSkillsDir) ? [profilePiSkillsDir] : [])
-    ];
-    const skillsOverride = isCollaborationRuntime
-      ? buildCollaborationSkillsOverride(memoryResources.skillMetadata)
-      : undefined;
-    const additionalExtensionPaths = dirHasFiles(profilePiExtensionsDir) ? [profilePiExtensionsDir] : [];
-    const additionalPromptTemplatePaths = dirHasFiles(profilePiPromptsDir) ? [profilePiPromptsDir] : [];
-    const additionalThemePaths = dirHasFiles(profilePiThemesDir) ? [profilePiThemesDir] : [];
+    const resourcePlan = planPiResourceLoaderOptions({
+      descriptor,
+      pathsPlan,
+      memoryResources,
+      promptPlan,
+      swarmContextFiles,
+      extensionFactories,
+      isCollaborationRuntime: this.isCollaborationRuntimeDescriptor(descriptor),
+      mergeRuntimeContextFiles: this.deps.mergeRuntimeContextFiles
+    });
     const resourceLoader =
       descriptor.role === "manager"
         ? new DefaultResourceLoader({
-            cwd: descriptor.cwd,
-            agentDir: runtimeAgentDir,
-            additionalExtensionPaths,
-            additionalSkillPaths,
-            additionalPromptTemplatePaths,
-            additionalThemePaths,
-            agentsFilesOverride: applyRuntimeContext,
-            extensionFactories,
-            ...(skillsOverride ? { skillsOverride } : {}),
-            // Manager prompt comes from the archetype prompt registry.
-            ...(promptPlan.systemPrompt !== undefined ? { systemPrompt: promptPlan.systemPrompt } : {}),
-            appendSystemPromptOverride: promptPlan.appendSystemPromptOverride
+            ...resourcePlan
           })
-        : new DefaultResourceLoader({
-            cwd: descriptor.cwd,
-            agentDir: runtimeAgentDir,
-            additionalExtensionPaths,
-            additionalSkillPaths,
-            additionalPromptTemplatePaths,
-            additionalThemePaths,
-            agentsFilesOverride: applyRuntimeContext,
-            extensionFactories,
-            ...(skillsOverride ? { skillsOverride } : {}),
-            appendSystemPromptOverride: promptPlan.appendSystemPromptOverride
-          });
+        : new DefaultResourceLoader(omitSystemPrompt(resourcePlan));
 
     try {
       await resourceLoader.reload();
@@ -507,10 +461,10 @@ export class RuntimeFactory {
         [mcpBridge.serverName]: mcpBridge.server
       },
       allowedTools: mcpBridge.allowedTools,
-      runtimeEnv: {
-        SWARM_DATA_DIR: this.deps.config.paths.dataDir,
-        SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path
-      },
+      runtimeEnv: planRuntimeEnv({
+        dataDir: this.deps.config.paths.dataDir,
+        memoryContextFile: memoryResources.memoryContextFile
+      }),
       modelContextWindow: modelCatalogService.getEffectiveContextWindow(
         descriptor.model.modelId,
         descriptor.model.provider
@@ -589,10 +543,10 @@ export class RuntimeFactory {
         now: this.deps.now,
         systemPrompt: acpSystemPrompt,
         mcpServers: [mcpBridge.mcpDescriptor],
-        runtimeEnv: {
-          SWARM_DATA_DIR: this.deps.config.paths.dataDir,
-          SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path
-        },
+        runtimeEnv: planRuntimeEnv({
+          dataDir: this.deps.config.paths.dataDir,
+          memoryContextFile: memoryResources.memoryContextFile
+        }),
         onSessionFileRotated: async (sessionFile) => {
           await this.deps.onSessionFileRotated?.(descriptor, sessionFile);
         },
@@ -911,63 +865,6 @@ function normalizeThinkingLevel(level: string): string {
   return level === "x-high" ? "xhigh" : level;
 }
 
-function dirHasFiles(dirPath: string): boolean {
-  try {
-    return readdirSync(dirPath).length > 0;
-  } catch {
-    return false;
-  }
-}
-
-function buildCollaborationSkillsOverride(skillMetadata: SkillMetadata[]) {
-  const allowedByHandle = new Map<string, SkillMetadata[]>();
-  for (const skill of skillMetadata) {
-    const handle = normalizeSkillHandle(skill.directoryName);
-    allowedByHandle.set(handle, [...(allowedByHandle.get(handle) ?? []), skill]);
-  }
-
-  return (current: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => ({
-    skills: current.skills.filter((skill) => {
-      const skillHandle = getPiSkillDirectoryHandle(skill);
-      if (!skillHandle) {
-        return false;
-      }
-
-      const allowedSkills = allowedByHandle.get(skillHandle) ?? [];
-      return allowedSkills.some(
-        (allowedSkill) =>
-          skillPathMatches(skill.filePath, allowedSkill.path) || skillPathMatches(skill.baseDir, allowedSkill.rootPath)
-      );
-    }),
-    diagnostics: current.diagnostics,
-  });
-}
-
-function getPiSkillDirectoryHandle(skill: Skill): string | undefined {
-  const candidates = [skill.baseDir, skill.filePath ? dirname(skill.filePath) : undefined];
-
-  for (const candidate of candidates) {
-    const handle = normalizeSkillHandle(basename(candidate ?? ""));
-    if (handle.length > 0) {
-      return handle;
-    }
-  }
-
-  return undefined;
-}
-
-function normalizeSkillHandle(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function skillPathMatches(actual: string | undefined, expected: string): boolean {
-  if (!actual) {
-    return false;
-  }
-
-  return resolve(actual) === resolve(expected);
-}
-
 function previewForLog(text: string, maxLength = 160): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
@@ -1002,6 +899,11 @@ export function resolveOpenAICodexTransport(model: Pick<Model<any>, "provider" |
 
 function cloneRuntimeDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return structuredClone(descriptor);
+}
+
+function omitSystemPrompt<T extends { systemPrompt?: string }>(plan: T): Omit<T, "systemPrompt"> {
+  const { systemPrompt: _systemPrompt, ...rest } = plan;
+  return rest;
 }
 
 function bindRuntimeCleanup(runtime: SwarmAgentRuntime, cleanup: () => Promise<void>): void {
