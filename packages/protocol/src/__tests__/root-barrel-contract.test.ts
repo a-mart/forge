@@ -300,6 +300,7 @@ describe('protocol root barrel contract', () => {
       'resume_session',
       'delete_session',
       'clear_session',
+      'set_session_project_agent',
       'get_project_agent_config',
       'list_project_agent_references',
       'get_project_agent_reference',
@@ -398,6 +399,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_delete',
       successEvents: ['session_deleted'],
       errorCodeFragments: ['delete_session'],
+    })
+    expect(getWsRequestContract('set_session_project_agent')).toMatchObject({
+      commandType: 'set_session_project_agent',
+      resultFamily: 'session_project_agent_update',
+      successEvents: ['session_project_agent_updated'],
+      errorCodeFragments: ['set_session_project_agent'],
     })
     expect(getWsRequestContract('get_project_agent_config')).toMatchObject({
       commandType: 'get_project_agent_config',

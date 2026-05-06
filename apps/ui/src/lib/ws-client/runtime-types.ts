@@ -36,6 +36,7 @@ const UPDATE_MANAGER_MODEL_CONTRACT = getWsRequestContract('update_manager_model
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
+const SET_SESSION_PROJECT_AGENT_CONTRACT = getWsRequestContract('set_session_project_agent')
 const GET_PROJECT_AGENT_CONFIG_CONTRACT = getWsRequestContract('get_project_agent_config')
 const LIST_PROJECT_AGENT_REFERENCES_CONTRACT = getWsRequestContract('list_project_agent_references')
 const GET_PROJECT_AGENT_REFERENCE_CONTRACT = getWsRequestContract('get_project_agent_reference')
@@ -55,6 +56,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   CREATE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
+  SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
   GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
   LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
   GET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
@@ -105,6 +107,10 @@ const CREATE_SESSION_ERROR_HINTS = CREATE_SESSION_CONTRACT.errorCodeFragments.ma
 }))
 const CLEAR_SESSION_ERROR_HINTS = CLEAR_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: CLEAR_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const SET_SESSION_PROJECT_AGENT_ERROR_HINTS = SET_SESSION_PROJECT_AGENT_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
   codeFragment,
 }))
 const GET_PROJECT_AGENT_CONFIG_ERROR_HINTS = GET_PROJECT_AGENT_CONFIG_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -158,7 +164,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   RENAME_PROFILE_CONTRACT.commandType,
   FORK_SESSION_CONTRACT.commandType,
   'merge_session_memory',
-  'set_session_project_agent',
+  SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
   GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
   LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
   GET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
@@ -186,7 +192,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   ...RENAME_PROFILE_ERROR_HINTS,
   ...FORK_SESSION_ERROR_HINTS,
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
-  { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
+  ...SET_SESSION_PROJECT_AGENT_ERROR_HINTS,
   ...GET_PROJECT_AGENT_CONFIG_ERROR_HINTS,
   ...LIST_PROJECT_AGENT_REFERENCES_ERROR_HINTS,
   ...SET_PROJECT_AGENT_REFERENCE_ERROR_HINTS,

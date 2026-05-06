@@ -49,6 +49,7 @@ describe('ws command parser session commands', () => {
       resume_session: { type: 'resume_session', agentId: 'session-a' },
       delete_session: { type: 'delete_session', agentId: 'session-a' },
       clear_session: { type: 'clear_session', agentId: 'session-a' },
+      set_session_project_agent: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: null },
       get_project_agent_config: { type: 'get_project_agent_config', agentId: 'session-a' },
       list_project_agent_references: { type: 'list_project_agent_references', agentId: 'session-a' },
       get_project_agent_reference: { type: 'get_project_agent_reference', agentId: 'session-a', fileName: 'README.md' },

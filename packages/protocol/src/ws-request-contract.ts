@@ -36,6 +36,7 @@ type ContractCommandType = Extract<
   | 'resume_session'
   | 'delete_session'
   | 'clear_session'
+  | 'set_session_project_agent'
   | 'get_project_agent_config'
   | 'list_project_agent_references'
   | 'get_project_agent_reference'
@@ -61,6 +62,7 @@ type ContractSuccessEventType = Extract<
   | 'session_resumed'
   | 'session_deleted'
   | 'session_cleared'
+  | 'session_project_agent_updated'
   | 'project_agent_config'
   | 'project_agent_references'
   | 'project_agent_reference'
@@ -187,6 +189,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_cleared'],
     errorCodeFragments: ['clear_session'],
+  },
+  {
+    commandType: 'set_session_project_agent',
+    resultFamily: 'session_project_agent_update',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_project_agent_updated'],
+    errorCodeFragments: ['set_session_project_agent'],
   },
   {
     commandType: 'get_project_agent_config',

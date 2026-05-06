@@ -90,6 +90,7 @@ describe('ManagerWsClient', () => {
       'resume_session',
       'delete_session',
       'clear_session',
+      'set_session_project_agent',
       'get_project_agent_config',
       'list_project_agent_references',
       'get_project_agent_reference',
@@ -1698,6 +1699,117 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(clearPromise).rejects.toThrow('clear_session_failed: Clear rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends set_session_project_agent commands and resolves session_project_agent_updated events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const projectAgent = {
+      whenToUse: 'Coordinate release notes.',
+      systemPrompt: 'You are the release notes project agent.',
+      handle: 'release-notes',
+      capabilities: ['create_session' as const],
+    }
+    const setPromise = client.setSessionProjectAgent(' agent-a ', projectAgent)
+    const setPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(setPayload).toMatchObject({
+      type: 'set_session_project_agent',
+      agentId: 'agent-a',
+      projectAgent,
+    })
+    expect(setPayload.requestId).toMatch(/^set_session_project_agent-/)
+
+    const result = {
+      agentId: 'agent-a',
+      profileId: 'profile-a',
+      projectAgent: {
+        handle: 'release-notes',
+        whenToUse: 'Coordinate release notes.',
+        capabilities: ['create_session' as const],
+      },
+    }
+
+    emitServerEvent(socket, {
+      type: 'session_project_agent_updated',
+      requestId: setPayload.requestId,
+      ...result,
+    })
+
+    await expect(setPromise).resolves.toEqual(result)
+
+    client.destroy()
+  })
+
+  it('rejects only set_session_project_agent via fallback error hints with concurrent project-agent requests', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const setPromise = client.setSessionProjectAgent('agent-a', null)
+    const setPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    const configPromise = client.getProjectAgentConfig('agent-a')
+    const configPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'SET_SESSION_PROJECT_AGENT_FAILED',
+      message: 'Project agent update rejected for testing.',
+    })
+
+    await expect(setPromise).rejects.toThrow(
+      'SET_SESSION_PROJECT_AGENT_FAILED: Project agent update rejected for testing.',
+    )
+
+    const configResult = {
+      agentId: 'agent-a',
+      config: {
+        version: 1,
+        agentId: 'agent-a',
+        handle: 'release-notes',
+        whenToUse: 'Coordinate release notes.',
+        creatorSessionId: undefined,
+        capabilities: [],
+        promotedAt: '2026-05-05T00:00:00.000Z',
+        updatedAt: '2026-05-05T00:00:00.000Z',
+      },
+      systemPrompt: null,
+      references: [],
+    }
+
+    emitServerEvent(socket, {
+      type: 'project_agent_config',
+      requestId: configPayload.requestId,
+      ...configResult,
+    })
+
+    await expect(configPromise).resolves.toEqual(configResult)
+    expect(setPayload.requestId).toMatch(/^set_session_project_agent-/)
+    expect(configPayload.requestId).toMatch(/^get_project_agent_config-/)
 
     client.destroy()
   })
