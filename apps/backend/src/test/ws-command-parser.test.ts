@@ -46,6 +46,7 @@ describe('ws command parser session commands', () => {
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
       stop_all_agents: { type: 'stop_all_agents', managerId: 'manager-a' },
       create_manager: { type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.4' },
+      delete_manager: { type: 'delete_manager', managerId: 'manager-a' },
       create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
       stop_session: { type: 'stop_session', agentId: 'session-a' },
       resume_session: { type: 'resume_session', agentId: 'session-a' },
@@ -153,6 +154,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.4', requestId: 123 })).toEqual({
       ok: false,
       error: 'create_manager.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'delete_manager', managerId: 'manager-a' })).toEqual({
+      ok: true,
+      command: { type: 'delete_manager', managerId: 'manager-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'delete_manager', managerId: 'manager-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'delete_manager.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'create_session', profileId: 'manager-a' })).toEqual({
       ok: true,
@@ -911,6 +920,8 @@ describe('ws command parser session commands', () => {
   it('extracts request ids for new session commands', () => {
     const commands = [
       { type: 'api_proxy', requestId: 'req-proxy', method: 'GET', path: '/api/slash-commands' },
+      { type: 'create_manager', name: 'Manager', cwd: '/tmp/project', requestId: 'req-create-manager' },
+      { type: 'delete_manager', managerId: 'manager', requestId: 'req-delete-manager' },
       { type: 'create_session', profileId: 'manager', requestId: 'req-create' },
       { type: 'stop_session', agentId: 'manager--s2', requestId: 'req-stop' },
       { type: 'resume_session', agentId: 'manager--s2', requestId: 'req-resume' },

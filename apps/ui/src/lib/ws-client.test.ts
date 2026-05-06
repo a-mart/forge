@@ -87,6 +87,7 @@ describe('ManagerWsClient', () => {
       'update_manager_cwd',
       'stop_all_agents',
       'create_manager',
+      'delete_manager',
       'create_session',
       'stop_session',
       'resume_session',
@@ -103,6 +104,7 @@ describe('ManagerWsClient', () => {
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
     expect(WS_REQUEST_TYPES.filter((type) => type === 'create_manager')).toHaveLength(1)
+    expect(WS_REQUEST_TYPES.filter((type) => type === 'delete_manager')).toHaveLength(1)
     expect(
       WS_REQUEST_CONTRACTS.every((contract) =>
         contract.errorCodeFragments.every((codeFragment) =>
@@ -1181,6 +1183,40 @@ describe('ManagerWsClient', () => {
 
     await expect(creationPromise).resolves.toMatchObject({ agentId: 'release-manager' })
     expect(client.getState().agents.some((agent) => agent.agentId === 'release-manager')).toBe(true)
+
+    client.destroy()
+  })
+
+  it('sends delete_manager and resolves with manager_deleted event', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const deletePromise = client.deleteManager('manager-2')
+    const sentDeletePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(sentDeletePayload.type).toBe('delete_manager')
+    expect(sentDeletePayload.managerId).toBe('manager-2')
+    expect(typeof sentDeletePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'manager_deleted',
+      requestId: sentDeletePayload.requestId,
+      managerId: 'manager-2',
+      terminatedWorkerIds: ['worker-1'],
+    })
+
+    await expect(deletePromise).resolves.toEqual({ managerId: 'manager-2' })
 
     client.destroy()
   })
@@ -4372,11 +4408,11 @@ describe('ManagerWsClient', () => {
       // Error without requestId, but code contains 'delete_manager' fragment
       emitServerEvent(socket, {
         type: 'error',
-        code: 'delete_manager_error',
+        code: 'DELETE_MANAGER_FAILED',
         message: 'Manager not found',
       })
 
-      await expect(deletePromise).rejects.toThrow('delete_manager_error: Manager not found')
+      await expect(deletePromise).rejects.toThrow('DELETE_MANAGER_FAILED: Manager not found')
 
       client.destroy()
     })

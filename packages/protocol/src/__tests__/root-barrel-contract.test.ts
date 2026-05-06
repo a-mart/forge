@@ -203,6 +203,7 @@ const serverEventsByLeafModule = [
   { type: 'profiles_snapshot', profiles: [profile] },
   { type: 'unread_notification', agentId: agent.agentId, reason: 'message', sessionAgentId: agent.agentId },
   { type: 'manager_created', manager: agent, requestId: 'request-1' },
+  { type: 'manager_deleted', managerId: agent.agentId, terminatedWorkerIds: [], requestId: 'request-2' },
   { type: 'session_created', profile, sessionAgent: agent, requestId: 'request-2' },
   { type: 'session_project_agent_updated', agentId: agent.agentId, profileId: profile.profileId, projectAgent: null },
   { type: 'session_workers_snapshot', sessionAgentId: agent.agentId, workers: [], requestId: 'request-3' },
@@ -297,6 +298,7 @@ describe('protocol root barrel contract', () => {
       'update_manager_cwd',
       'stop_all_agents',
       'create_manager',
+      'delete_manager',
       'create_session',
       'stop_session',
       'resume_session',
@@ -384,6 +386,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'manager_create',
       successEvents: ['manager_created'],
       errorCodeFragments: ['create_manager'],
+    })
+    expect(getWsRequestContract('delete_manager')).toMatchObject({
+      commandType: 'delete_manager',
+      resultFamily: 'manager_delete',
+      successEvents: ['manager_deleted'],
+      errorCodeFragments: ['delete_manager'],
     })
     expect(getWsRequestContract('create_session')).toMatchObject({
       commandType: 'create_session',
@@ -522,6 +530,7 @@ describe('protocol root barrel contract', () => {
       'profiles_snapshot',
       'unread_notification',
       'manager_created',
+      'manager_deleted',
       'session_created',
       'session_project_agent_updated',
       'session_workers_snapshot',

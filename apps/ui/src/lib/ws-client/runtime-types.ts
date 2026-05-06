@@ -36,6 +36,7 @@ const UPDATE_MANAGER_MODEL_CONTRACT = getWsRequestContract('update_manager_model
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const STOP_ALL_AGENTS_CONTRACT = getWsRequestContract('stop_all_agents')
 const CREATE_MANAGER_CONTRACT = getWsRequestContract('create_manager')
+const DELETE_MANAGER_CONTRACT = getWsRequestContract('delete_manager')
 const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
 const SET_SESSION_PROJECT_AGENT_CONTRACT = getWsRequestContract('set_session_project_agent')
@@ -59,6 +60,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   STOP_ALL_AGENTS_CONTRACT.commandType,
   CREATE_MANAGER_CONTRACT.commandType,
+  DELETE_MANAGER_CONTRACT.commandType,
   CREATE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
   SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
@@ -115,6 +117,10 @@ const CREATE_MANAGER_ERROR_HINTS = CREATE_MANAGER_CONTRACT.errorCodeFragments.ma
   requestType: CREATE_MANAGER_CONTRACT.commandType,
   codeFragment,
 }))
+const DELETE_MANAGER_ERROR_HINTS = DELETE_MANAGER_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: DELETE_MANAGER_CONTRACT.commandType,
+  codeFragment,
+}))
 const CREATE_SESSION_ERROR_HINTS = CREATE_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: CREATE_SESSION_CONTRACT.commandType,
   codeFragment,
@@ -166,7 +172,7 @@ const DELETE_SESSION_ERROR_HINTS = DELETE_SESSION_CONTRACT.errorCodeFragments.ma
 
 export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   CREATE_MANAGER_CONTRACT.commandType,
-  'delete_manager',
+  DELETE_MANAGER_CONTRACT.commandType,
   UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
@@ -193,7 +199,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
 ])
 
 export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
-  { requestType: 'delete_manager', codeFragment: 'delete_manager' },
+  ...DELETE_MANAGER_ERROR_HINTS,
   ...UPDATE_PROFILE_DEFAULT_MODEL_ERROR_HINTS,
   ...UPDATE_MANAGER_MODEL_ERROR_HINTS,
   ...UPDATE_MANAGER_CWD_ERROR_HINTS,

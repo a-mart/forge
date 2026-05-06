@@ -33,6 +33,7 @@ type ContractCommandType = Extract<
   | 'update_manager_cwd'
   | 'stop_all_agents'
   | 'create_manager'
+  | 'delete_manager'
   | 'create_session'
   | 'stop_session'
   | 'resume_session'
@@ -62,6 +63,7 @@ type ContractSuccessEventType = Extract<
   | 'manager_cwd_updated'
   | 'stop_all_agents_result'
   | 'manager_created'
+  | 'manager_deleted'
   | 'session_created'
   | 'session_stopped'
   | 'session_resumed'
@@ -174,6 +176,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['manager_created'],
     errorCodeFragments: ['create_manager'],
+  },
+  {
+    commandType: 'delete_manager',
+    resultFamily: 'manager_delete',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['manager_deleted'],
+    errorCodeFragments: ['delete_manager'],
   },
   {
     commandType: 'create_session',
