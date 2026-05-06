@@ -17,6 +17,7 @@ import {
   type RuntimeCallbackFallbackHandoffReplayHandlers,
   type RuntimeCallbackFallbackHandoffSnapshot
 } from "./runtime/runtime-callback-gate.js";
+import { RuntimeBinding } from "./runtime/runtime-binding.js";
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type {
@@ -30,7 +31,6 @@ import type {
 } from "./types.js";
 import {
   areContextUsagesEqual,
-  compareRuntimeExtensionSnapshots,
   extractVersionedToolPath,
   formatToolExecutionPayload,
   isVersionedWriteToolName,
@@ -188,21 +188,31 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
 }
 
 export class SwarmRuntimeController {
-  readonly runtimes = new Map<string, SwarmAgentRuntime>();
-  readonly runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
-  readonly runtimeTokensByAgentId = new Map<string, number>();
-  readonly runtimeExtensionSnapshotsByAgentId = new Map<string, AgentRuntimeExtensionSnapshot>();
+  readonly runtimes: Map<string, SwarmAgentRuntime>;
+  readonly runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
+  readonly runtimeTokensByAgentId: Map<string, number>;
+  readonly runtimeExtensionSnapshotsByAgentId: Map<string, AgentRuntimeExtensionSnapshot>;
 
   private specialistFallbackManager: SwarmSpecialistFallbackManager | null = null;
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
   private readonly recoveryAbortedWorkerTurnAgentIds = new Set<string>();
-  private nextRuntimeToken = 1;
+  private readonly runtimeBinding: RuntimeBinding;
   private readonly runtimeCallbackGate: RuntimeCallbackGate;
   private readonly runtimeFactory: RuntimeFactory;
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
+    this.runtimeBinding = new RuntimeBinding({
+      deactivateRuntimeBindings: (bindingToken) => this.host.forgeExtensionHost.deactivateRuntimeBindings(bindingToken),
+      clearIntentionalStopRuntimeCallbackSuppression: (agentId, runtimeToken) =>
+        this.clearIntentionalStopRuntimeCallbackSuppression(agentId, runtimeToken)
+    });
+    this.runtimes = this.runtimeBinding.runtimes;
+    this.runtimeCreationPromisesByAgentId = this.runtimeBinding.runtimeCreationPromisesByAgentId;
+    this.runtimeTokensByAgentId = this.runtimeBinding.runtimeTokensByAgentId;
+    this.runtimeExtensionSnapshotsByAgentId = this.runtimeBinding.runtimeExtensionSnapshotsByAgentId;
+
     this.runtimeCallbackGate = new RuntimeCallbackGate({
-      getCurrentRuntimeToken: (agentId) => this.runtimeTokensByAgentId.get(agentId),
+      getCurrentRuntimeToken: (agentId) => this.runtimeBinding.getRuntimeToken(agentId),
       now: () => this.now()
     });
     this.runtimeFactory = new RuntimeFactory({
@@ -265,21 +275,11 @@ export class SwarmRuntimeController {
   }
 
   listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
-    return Array.from(this.runtimeExtensionSnapshotsByAgentId.values())
-      .map((snapshot) => ({
-        ...snapshot,
-        extensions: snapshot.extensions.map((extension) => ({
-          ...extension,
-          events: [...extension.events],
-          tools: [...extension.tools]
-        })),
-        loadErrors: snapshot.loadErrors.map((error) => ({ ...error }))
-      }))
-      .sort(compareRuntimeExtensionSnapshots);
+    return this.runtimeBinding.listRuntimeExtensionSnapshots();
   }
 
   attachRuntime(agentId: string, runtime: SwarmAgentRuntime): void {
-    this.runtimes.set(agentId, runtime);
+    this.runtimeBinding.attachRuntime(agentId, runtime);
   }
 
   clearTrackedToolPaths(agentId: string): void {
@@ -332,41 +332,19 @@ export class SwarmRuntimeController {
   }
 
   allocateRuntimeToken(agentId: string): number {
-    const token = this.nextRuntimeToken;
-    this.nextRuntimeToken += 1;
-    this.runtimeTokensByAgentId.set(agentId, token);
-    return token;
+    return this.runtimeBinding.allocateRuntimeToken(agentId);
   }
 
   getRuntimeToken(agentId: string): number | undefined {
-    return this.runtimeTokensByAgentId.get(agentId);
+    return this.runtimeBinding.getRuntimeToken(agentId);
   }
 
   clearRuntimeToken(agentId: string, runtimeToken?: number): void {
-    const isCurrentRuntime = runtimeToken === undefined || this.isCurrentRuntimeToken(agentId, runtimeToken);
-
-    if (runtimeToken !== undefined) {
-      this.host.forgeExtensionHost.deactivateRuntimeBindings(createForgeBindingToken(runtimeToken));
-    }
-    this.clearIntentionalStopRuntimeCallbackSuppression(agentId, runtimeToken);
-
-    if (!isCurrentRuntime) {
-      return;
-    }
-
-    this.runtimeTokensByAgentId.delete(agentId);
-    this.runtimeExtensionSnapshotsByAgentId.delete(agentId);
+    this.runtimeBinding.clearRuntimeToken(agentId, runtimeToken);
   }
 
   detachRuntime(agentId: string, runtimeToken?: number): boolean {
-    if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
-      this.clearRuntimeToken(agentId, runtimeToken);
-      return false;
-    }
-
-    this.runtimes.delete(agentId);
-    this.clearRuntimeToken(agentId, runtimeToken);
-    return true;
+    return this.runtimeBinding.detachRuntime(agentId, runtimeToken);
   }
 
   async runRuntimeShutdown(
@@ -956,10 +934,6 @@ export class SwarmRuntimeController {
     return [...withoutSwarmAndMemory, ...options.swarmContextFiles, options.memoryContextFile];
   }
 
-  private isCurrentRuntimeToken(agentId: string, runtimeToken: number): boolean {
-    return this.runtimeTokensByAgentId.get(agentId) === runtimeToken;
-  }
-
   private shouldIgnoreRuntimeCallback(agentId: string, runtimeToken?: number): boolean {
     return this.runtimeCallbackGate.shouldIgnoreRuntimeCallback(agentId, runtimeToken);
   }
@@ -973,15 +947,7 @@ export class SwarmRuntimeController {
       return;
     }
 
-    this.runtimeExtensionSnapshotsByAgentId.set(agentId, {
-      ...snapshot,
-      extensions: snapshot.extensions.map((extension) => ({
-        ...extension,
-        events: [...extension.events],
-        tools: [...extension.tools]
-      })),
-      loadErrors: snapshot.loadErrors.map((error) => ({ ...error }))
-    });
+    this.runtimeBinding.recordRuntimeExtensionSnapshot(agentId, snapshot);
   }
 
   private trackWorkerStallProgressEvent(agentId: string, event: RuntimeSessionEvent): void {
