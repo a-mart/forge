@@ -22,16 +22,7 @@ import {
 import { applyPinOverlay, setPinnedFlagInMemory } from "./pin-overlay.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
-import {
-  extractMessageErrorMessage,
-  extractMessageImageAttachments,
-  extractMessageStopReason,
-  extractMessageText,
-  extractRole,
-  hasMessageErrorMessageField,
-  isStrictContextOverflowMessage,
-  normalizeProviderErrorMessage
-} from "./message-utils.js";
+import { RuntimeConversationEventMapper, safeJson } from "./runtime-conversation-event-mapper.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type {
   AgentDescriptor,
@@ -42,13 +33,6 @@ import type {
   ConversationLogEvent,
   ConversationMessageEvent
 } from "../types.js";
-
-const MAX_SAFE_JSON_BYTES = 32 * 1024;
-const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
-const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
-const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provider auth and rate limits.";
-const WORKER_ERROR_CONTEXT_HINT = "The manager may need to compact the task context before retrying.";
-const WORKER_ERROR_GENERIC_HINT = "The manager may need to retry after checking provider auth, quotas, or rate limits.";
 
 type ConversationEventName =
   | "conversation_message"
@@ -77,6 +61,7 @@ interface ConversationProjectorDependencies {
 export class ConversationProjector {
   private readonly timeline: ConversationTimeline;
   private readonly historyCacheStore: HistoryCacheStore;
+  private readonly runtimeConversationEventMapper = new RuntimeConversationEventMapper();
   private readonly loadedFromDisk = new Set<string>();
 
   constructor(private readonly deps: ConversationProjectorDependencies) {
@@ -218,144 +203,25 @@ export class ConversationProjector {
   }
 
   captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void {
-    const descriptor = this.deps.descriptors.get(agentId);
-    const timestamp = this.deps.now();
-    if (descriptor) {
-      const managerContextId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
-      this.captureToolCallActivityFromRuntime(managerContextId, agentId, event, timestamp);
-    }
+    const projections = this.runtimeConversationEventMapper.mapRuntimeEvent({
+      agentId,
+      event,
+      timestamp: this.deps.now(),
+      descriptor: this.deps.descriptors.get(agentId)
+    });
 
-    if (descriptor?.role === "manager") {
-      this.captureManagerRuntimeErrorConversationEvent(agentId, event);
-      return;
-    }
-
-    switch (event.type) {
-      case "message_start": {
-        const role = extractRole(event.message);
-        if (role !== "user" && role !== "assistant" && role !== "system") {
-          return;
-        }
-
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "message_start",
-          role,
-          text: extractMessageText(event.message) ?? "(non-text message)"
-        });
-        return;
+    for (const projection of projections) {
+      switch (projection.type) {
+        case "conversation_message":
+          this.emitConversationMessage(projection);
+          break;
+        case "conversation_log":
+          this.emitConversationLog(projection);
+          break;
+        case "agent_tool_call":
+          this.emitAgentToolCall(projection);
+          break;
       }
-
-      case "message_end": {
-        const role = extractRole(event.message);
-        if (role !== "user" && role !== "assistant" && role !== "system") {
-          return;
-        }
-
-        const extractedText = extractMessageText(event.message);
-        const text = extractedText ?? "(non-text message)";
-        const attachments = extractMessageImageAttachments(event.message);
-
-        if ((role === "assistant" || role === "system") && (extractedText || attachments.length > 0)) {
-          this.emitConversationMessage({
-            type: "conversation_message",
-            agentId,
-            role,
-            text: extractedText ?? "",
-            attachments: attachments.length > 0 ? attachments : undefined,
-            timestamp,
-            source: "system"
-          });
-        }
-
-        if (role === "assistant") {
-          const stopReason = extractMessageStopReason(event.message);
-          const hasStructuredErrorMessage = hasMessageErrorMessageField(event.message);
-          if (stopReason === "error" || hasStructuredErrorMessage) {
-            const normalizedErrorMessage = normalizeProviderErrorMessage(
-              extractMessageErrorMessage(event.message) ?? extractedText
-            );
-            const isContextOverflow = isStrictContextOverflowMessage(normalizedErrorMessage);
-
-            this.emitConversationMessage({
-              type: "conversation_message",
-              agentId,
-              role: "system",
-              text: buildWorkerErrorConversationText({
-                errorMessage: normalizedErrorMessage,
-                isContextOverflow
-              }),
-              timestamp,
-              source: "system"
-            });
-          }
-        }
-
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "message_end",
-          role,
-          text
-        });
-        return;
-      }
-
-      case "tool_execution_start":
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "tool_execution_start",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.args)
-        });
-        return;
-
-      case "tool_execution_update":
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "tool_execution_update",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.partialResult)
-        });
-        return;
-
-      case "tool_execution_end":
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "tool_execution_end",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.result),
-          isError: event.isError
-        });
-        break;
-
-      case "agent_start":
-      case "agent_end":
-      case "turn_start":
-      case "turn_end":
-      case "message_update":
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        break;
     }
   }
 
@@ -731,101 +597,6 @@ export class ConversationProjector {
       id: wrapperEntryId
     };
   }
-
-  private captureManagerRuntimeErrorConversationEvent(agentId: string, event: RuntimeSessionEvent): void {
-    if (event.type !== "message_end") {
-      return;
-    }
-
-    const role = extractRole(event.message);
-    if (role !== "assistant") {
-      return;
-    }
-
-    const stopReason = extractMessageStopReason(event.message);
-    const hasStructuredErrorMessage = hasMessageErrorMessageField(event.message);
-    if (stopReason !== "error" && !hasStructuredErrorMessage) {
-      return;
-    }
-
-    const messageText = extractMessageText(event.message);
-    const normalizedErrorMessage = normalizeProviderErrorMessage(extractMessageErrorMessage(event.message) ?? messageText);
-    const isContextOverflow = isStrictContextOverflowMessage(normalizedErrorMessage);
-
-    this.emitConversationMessage({
-      type: "conversation_message",
-      agentId,
-      role: "system",
-      text: buildManagerErrorConversationText({
-        errorMessage: normalizedErrorMessage,
-        isContextOverflow
-      }),
-      timestamp: this.deps.now(),
-      source: "system"
-    });
-  }
-
-  private captureToolCallActivityFromRuntime(
-    managerContextId: string,
-    actorAgentId: string,
-    event: RuntimeSessionEvent,
-    timestamp: string
-  ): void {
-    switch (event.type) {
-      case "tool_execution_start":
-        this.emitAgentToolCall({
-          type: "agent_tool_call",
-          agentId: managerContextId,
-          actorAgentId,
-          timestamp,
-          kind: "tool_execution_start",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.args)
-        });
-        return;
-
-      case "tool_execution_update":
-        this.emitAgentToolCall({
-          type: "agent_tool_call",
-          agentId: managerContextId,
-          actorAgentId,
-          timestamp,
-          kind: "tool_execution_update",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.partialResult)
-        });
-        return;
-
-      case "tool_execution_end":
-        this.emitAgentToolCall({
-          type: "agent_tool_call",
-          agentId: managerContextId,
-          actorAgentId,
-          timestamp,
-          kind: "tool_execution_end",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.result),
-          isError: event.isError
-        });
-        break;
-
-      case "agent_start":
-      case "agent_end":
-      case "turn_start":
-      case "turn_end":
-      case "message_start":
-      case "message_update":
-      case "message_end":
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        break;
-    }
-  }
 }
 
 function createConversationHistoryDiagnostics(
@@ -882,29 +653,6 @@ function sumOptionalNumbers(...values: Array<number | undefined>): number | unde
   return foundValue ? total : undefined;
 }
 
-function safeJson(value: unknown): string {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value);
-  } catch {
-    serialized = String(value);
-  }
-
-  const serializedBytes = Buffer.byteLength(serialized, "utf8");
-  if (serializedBytes <= MAX_SAFE_JSON_BYTES) {
-    return serialized;
-  }
-
-  const suffixBytes = Buffer.byteLength(SAFE_JSON_TRUNCATED_SUFFIX, "utf8");
-  if (MAX_SAFE_JSON_BYTES <= suffixBytes) {
-    return SAFE_JSON_TRUNCATED_SUFFIX;
-  }
-
-  const previewByteCount = MAX_SAFE_JSON_BYTES - suffixBytes;
-  const preview = Buffer.from(serialized, "utf8").subarray(0, previewByteCount).toString("utf8");
-  return `${preview}${SAFE_JSON_TRUNCATED_SUFFIX}`;
-}
-
 function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {
   if (entry.type !== "conversation_message") {
     return undefined;
@@ -930,51 +678,4 @@ function decrementCounter(counter: Map<string, number>, key: string): boolean {
   }
 
   return true;
-}
-
-function buildManagerErrorConversationText(options: {
-  errorMessage?: string;
-  isContextOverflow: boolean;
-}): string {
-  if (options.isContextOverflow) {
-    if (options.errorMessage) {
-      return `⚠️ Manager reply failed because the prompt exceeded the model context window (${options.errorMessage}). ${MANAGER_ERROR_CONTEXT_HINT}`;
-    }
-
-    return `⚠️ Manager reply failed because the prompt exceeded the model context window. ${MANAGER_ERROR_CONTEXT_HINT}`;
-  }
-
-  if (options.errorMessage) {
-    return `⚠️ Manager reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${MANAGER_ERROR_GENERIC_HINT}`;
-  }
-
-  return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
-}
-
-function buildWorkerErrorConversationText(options: {
-  errorMessage?: string;
-  isContextOverflow: boolean;
-}): string {
-  if (options.isContextOverflow) {
-    if (options.errorMessage) {
-      return `⚠️ Worker reply failed because the prompt exceeded the model context window (${options.errorMessage}). ${WORKER_ERROR_CONTEXT_HINT}`;
-    }
-
-    return `⚠️ Worker reply failed because the prompt exceeded the model context window. ${WORKER_ERROR_CONTEXT_HINT}`;
-  }
-
-  if (options.errorMessage) {
-    return `⚠️ Worker reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${WORKER_ERROR_GENERIC_HINT}`;
-  }
-
-  return `⚠️ Worker reply failed. ${WORKER_ERROR_GENERIC_HINT}`;
-}
-
-function formatManagerErrorMessage(errorMessage: string): string {
-  const trimmed = errorMessage.trim();
-  if (trimmed.length === 0) {
-    return "Unknown error.";
-  }
-
-  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }

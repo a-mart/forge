@@ -1811,3 +1811,74 @@ describe('ConversationProjector session tree continuity', () => {
     ).toBe(false)
   })
 })
+
+describe('ConversationProjector runtime event mapper facade', () => {
+  it('emits worker tool activity before the worker-local runtime log and stores matching history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-runtime-mapper-'))
+    const managerSessionFile = join(root, 'manager.jsonl')
+    const workerSessionFile = join(root, 'worker.jsonl')
+    const managerDescriptor = makeDescriptor(managerSessionFile, root)
+    const workerDescriptor: AgentDescriptor = {
+      ...makeDescriptor(workerSessionFile, root),
+      agentId: 'worker',
+      displayName: 'Worker',
+      role: 'worker',
+      managerId: managerDescriptor.agentId,
+      sessionFile: workerSessionFile,
+    }
+    const emitted: Array<{ eventName: string; payload: ConversationEntryEvent }> = []
+    const conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>()
+
+    const projector = new ConversationProjector({
+      descriptors: new Map([
+        [managerDescriptor.agentId, managerDescriptor],
+        [workerDescriptor.agentId, workerDescriptor],
+      ]),
+      runtimes: new Map(),
+      conversationEntriesByAgentId,
+      now: () => FIXED_NOW,
+      emitServerEvent: (eventName, payload) => {
+        emitted.push({ eventName, payload: payload as ConversationEntryEvent })
+      },
+      logDebug: () => {},
+    })
+
+    projector.captureConversationEventFromRuntime(workerDescriptor.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'read',
+      toolCallId: 'tool-1',
+      args: { path: 'README.md' },
+    })
+
+    expect(emitted).toEqual([
+      {
+        eventName: 'agent_tool_call',
+        payload: {
+          type: 'agent_tool_call',
+          agentId: managerDescriptor.agentId,
+          actorAgentId: workerDescriptor.agentId,
+          timestamp: FIXED_NOW,
+          kind: 'tool_execution_start',
+          toolName: 'read',
+          toolCallId: 'tool-1',
+          text: '{"path":"README.md"}',
+        },
+      },
+      {
+        eventName: 'conversation_log',
+        payload: {
+          type: 'conversation_log',
+          agentId: workerDescriptor.agentId,
+          timestamp: FIXED_NOW,
+          source: 'runtime_log',
+          kind: 'tool_execution_start',
+          toolName: 'read',
+          toolCallId: 'tool-1',
+          text: '{"path":"README.md"}',
+        },
+      },
+    ])
+    expect(projector.getConversationHistory(managerDescriptor.agentId)).toEqual([emitted[0]?.payload])
+    expect(projector.getConversationHistory(workerDescriptor.agentId)).toEqual([emitted[1]?.payload])
+  })
+})
