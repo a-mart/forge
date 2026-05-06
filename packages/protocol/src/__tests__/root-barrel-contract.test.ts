@@ -302,6 +302,7 @@ describe('protocol root barrel contract', () => {
       'clear_session',
       'get_project_agent_config',
       'list_project_agent_references',
+      'get_project_agent_reference',
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
@@ -407,6 +408,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'project_agent_references',
       successEvents: ['project_agent_references'],
       errorCodeFragments: ['project_agent_references'],
+    })
+    expect(getWsRequestContract('get_project_agent_reference')).toMatchObject({
+      commandType: 'get_project_agent_reference',
+      resultFamily: 'project_agent_reference',
+      successEvents: ['project_agent_reference'],
+      errorCodeFragments: ['project_agent_reference'],
     })
   })
 

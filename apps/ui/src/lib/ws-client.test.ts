@@ -92,6 +92,7 @@ describe('ManagerWsClient', () => {
       'clear_session',
       'get_project_agent_config',
       'list_project_agent_references',
+      'get_project_agent_reference',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1843,6 +1844,78 @@ describe('ManagerWsClient', () => {
 
     await expect(referencesPromise).rejects.toThrow(
       'PROJECT_AGENT_REFERENCES_FAILED: Project agent references rejected for testing.',
+    )
+
+    client.destroy()
+  })
+
+  it('sends get_project_agent_reference commands and resolves project_agent_reference events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const referencePromise = client.getProjectAgentReference(' agent-a ', ' README.md ')
+    const referencePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(referencePayload).toMatchObject({
+      type: 'get_project_agent_reference',
+      agentId: 'agent-a',
+      fileName: 'README.md',
+    })
+    expect(referencePayload.requestId).toMatch(/^get_project_agent_reference-/)
+
+    const result = {
+      agentId: 'agent-a',
+      fileName: 'README.md',
+      content: '# Reference',
+    }
+
+    emitServerEvent(socket, {
+      type: 'project_agent_reference',
+      requestId: referencePayload.requestId,
+      ...result,
+    })
+
+    await expect(referencePromise).resolves.toEqual(result)
+
+    client.destroy()
+  })
+
+  it('rejects get_project_agent_reference via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const referencePromise = client.getProjectAgentReference('agent-a', 'README.md')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'GET_PROJECT_AGENT_REFERENCE_FAILED',
+      message: 'Project agent reference rejected for testing.',
+    })
+
+    await expect(referencePromise).rejects.toThrow(
+      'GET_PROJECT_AGENT_REFERENCE_FAILED: Project agent reference rejected for testing.',
     )
 
     client.destroy()
