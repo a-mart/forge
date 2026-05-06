@@ -156,6 +156,7 @@ vi.mock("../onboarding-state.js", () => ({
 }));
 
 import { ClaudeSdkUnavailableError, resetClaudeSdkLoaderForTests, setClaudeSdkImporterForTests } from "../claude-sdk-loader.js";
+import { modelCatalogService } from "../model-catalog-service.js";
 import { savePins } from "../message-pins.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { RuntimeFactory } from "../runtime-factory.js";
@@ -1425,6 +1426,197 @@ describe("RuntimeFactory", () => {
     expect(claudeOptions.systemPrompt).toBe("Base Claude prompt");
     expect(claudeOptions.startupSystemPromptOverride).toContain("# Recovered Forge Conversation Context");
     expect(claudeOptions.skipInitialSessionResume).toBe(true);
+  });
+
+  it("prepares and activates Claude Forge extension bindings with runtimeType claude and runtime token", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
+
+    const forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const prepareSpy = vi.spyOn(forgeExtensionHost, "prepareRuntimeBindings");
+    const activateSpy = vi.spyOn(forgeExtensionHost, "activateRuntimeBindings");
+
+    const factory = createFactory(rootDir, { forgeExtensionHost });
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "claude-sdk",
+          modelId: "claude-opus-4-6",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      17
+    );
+
+    expect(prepareSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeType: "claude",
+        runtimeToken: 17,
+      })
+    );
+    expect(activateSpy).toHaveBeenCalled();
+    expect(activateSpy.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        runtimeType: "claude",
+        bindingToken: "forge-runtime-17",
+      })
+    );
+  });
+
+  it("orders Claude Forge binding preparation, bridge creation, runtime construction, and activation", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
+
+    const sequence: string[] = [];
+    claudeRuntimeMockState.createMcpBridge.mockImplementation(async () => {
+      sequence.push("bridge");
+      return {
+        serverName: "forge-test",
+        server: {},
+        allowedTools: [],
+      };
+    });
+    claudeRuntimeMockState.constructImpl = () => {
+      sequence.push("construct");
+      return undefined;
+    };
+
+    const forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const originalPrepare = forgeExtensionHost.prepareRuntimeBindings.bind(forgeExtensionHost);
+    vi.spyOn(forgeExtensionHost, "prepareRuntimeBindings").mockImplementation(async (...args) => {
+      sequence.push("prepare");
+      return originalPrepare(...args);
+    });
+    const originalActivate = forgeExtensionHost.activateRuntimeBindings.bind(forgeExtensionHost);
+    vi.spyOn(forgeExtensionHost, "activateRuntimeBindings").mockImplementation((...args) => {
+      sequence.push("activate");
+      return originalActivate(...args);
+    });
+
+    const factory = createFactory(rootDir, { forgeExtensionHost });
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "claude-sdk",
+          modelId: "claude-opus-4-6",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      18
+    );
+
+    expect(sequence).toEqual(["prepare", "bridge", "construct", "activate"]);
+  });
+
+  it("does not activate Claude Forge extension bindings when runtime construction throws", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
+
+    const constructionError = new Error("claude runtime failed");
+    claudeRuntimeMockState.constructImpl = () => {
+      throw constructionError;
+    };
+
+    const forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const activateSpy = vi.spyOn(forgeExtensionHost, "activateRuntimeBindings");
+    const factory = createFactory(rootDir, { forgeExtensionHost });
+
+    await expect(
+      factory.createRuntimeForDescriptor(
+        createDescriptor(rootDir, {
+          model: {
+            provider: "claude-sdk",
+            modelId: "claude-opus-4-6",
+            thinkingLevel: "high",
+          },
+        }),
+        "system prompt",
+        19
+      )
+    ).rejects.toBe(constructionError);
+
+    expect(claudeRuntimeMockState.createMcpBridge).toHaveBeenCalledTimes(1);
+    expect(claudeRuntimeMockState.constructorArgs).toHaveLength(1);
+    expect(activateSpy).not.toHaveBeenCalled();
+  });
+
+  it("passes Claude worker identity and runtime options unchanged into runtime construction", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const mcpServer = { name: "server" };
+    const allowedTools = ["send_message_to_agent", "speak_to_user"];
+    claudeRuntimeMockState.createMcpBridge.mockResolvedValue({
+      serverName: "forge-worker-test",
+      server: mcpServer,
+      allowedTools,
+    });
+    const getContextWindowSpy = vi
+      .spyOn(modelCatalogService, "getEffectiveContextWindow")
+      .mockReturnValueOnce(123456);
+    const memoryContextFile = {
+      path: join(rootDir, "worker-memory.md"),
+      content: "worker memory",
+    };
+    const factory = createFactory(rootDir, {
+      getMemoryRuntimeResources: async () => ({
+        memoryContextFile,
+        additionalSkillPaths: [],
+        skillMetadata: [],
+      }),
+    });
+    const descriptor = createDescriptor(rootDir, {
+      agentId: "worker-claude-1",
+      managerId: "manager-claude-1",
+      profileId: "profile-claude-1",
+      model: {
+        provider: "claude-sdk",
+        modelId: "claude-opus-4-6",
+        thinkingLevel: "high",
+      },
+    });
+
+    await factory.createRuntimeForDescriptor(descriptor, "system prompt", 20);
+
+    const claudeOptions = claudeRuntimeMockState.constructorArgs.at(-1) as {
+      profileId: string;
+      sessionId: string;
+      workerId?: string;
+      dataDir: string;
+      mcpServers: Record<string, unknown>;
+      allowedTools: string[];
+      runtimeEnv: Record<string, string>;
+      modelContextWindow?: number;
+    };
+    expect(claudeOptions.profileId).toBe("profile-claude-1");
+    expect(claudeOptions.sessionId).toBe("manager-claude-1");
+    expect(claudeOptions.workerId).toBe("worker-claude-1");
+    expect(claudeOptions.dataDir).toBe(join(rootDir, "data"));
+    expect(claudeOptions.mcpServers).toEqual({ "forge-worker-test": mcpServer });
+    expect(claudeOptions.allowedTools).toBe(allowedTools);
+    expect(claudeOptions.runtimeEnv).toEqual({
+      SWARM_DATA_DIR: join(rootDir, "data"),
+      SWARM_MEMORY_FILE: memoryContextFile.path,
+    });
+    expect(claudeOptions.modelContextWindow).toBe(123456);
+    expect(getContextWindowSpy).toHaveBeenCalledWith("claude-opus-4-6", "claude-sdk");
   });
 
   it("selects the ACP runtime and invokes the ACP prompt builder for cursor-acp providers", async () => {
