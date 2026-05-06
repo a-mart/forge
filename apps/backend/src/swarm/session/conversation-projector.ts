@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { dirname } from "node:path";
+import {
+  CONVERSATION_ENTRY_TYPE,
+  ConversationTimeline,
+  extractSessionEntryId,
+  hasValidSessionHeader
+} from "./conversation-timeline.js";
 import type { ServerEvent } from "@forge/protocol";
 import {
   SIDEBAR_HISTORY_CACHE_STATE_METRIC,
@@ -37,10 +43,8 @@ import type {
 const MAX_CONVERSATION_HISTORY = 2000;
 const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
-const CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
 const CONVERSATION_CACHE_META_TYPE = "swarm_conversation_cache_meta";
 const CONVERSATION_CACHE_VERSION = 2;
-const SESSION_HEADER_VERSION = 3;
 const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
 const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provider auth and rate limits.";
 const WORKER_ERROR_CONTEXT_HINT = "The manager may need to compact the task context before retrying.";
@@ -157,13 +161,17 @@ interface ConversationProjectorDependencies {
 }
 
 export class ConversationProjector {
-  private readonly lastSessionEntryIdBySessionFile = new Map<string, string>();
-  private readonly persistedEntryCountBySessionFile = new Map<string, number>();
+  private readonly timeline: ConversationTimeline;
   private readonly loadedFromDisk = new Set<string>();
   private readonly pendingCacheWrites = new Map<string, Promise<void>>();
   private readonly queuedCacheSnapshots = new Map<string, QueuedConversationHistoryCacheSnapshot>();
 
-  constructor(private readonly deps: ConversationProjectorDependencies) {}
+  constructor(private readonly deps: ConversationProjectorDependencies) {
+    this.timeline = new ConversationTimeline({
+      now: deps.now,
+      logDebug: deps.logDebug
+    });
+  }
 
   getConversationHistory(agentId: string): ConversationEntryEvent[] {
     return this.getConversationHistoryWithDiagnostics(agentId).history;
@@ -227,8 +235,7 @@ export class ConversationProjector {
       return;
     }
 
-    this.lastSessionEntryIdBySessionFile.delete(resolvedSessionFile);
-    this.persistedEntryCountBySessionFile.delete(resolvedSessionFile);
+    this.timeline.resetSession(resolvedSessionFile);
     this.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
@@ -241,8 +248,7 @@ export class ConversationProjector {
       return;
     }
 
-    this.lastSessionEntryIdBySessionFile.delete(resolvedSessionFile);
-    this.persistedEntryCountBySessionFile.delete(resolvedSessionFile);
+    this.timeline.resetSession(resolvedSessionFile);
     this.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
@@ -286,8 +292,7 @@ export class ConversationProjector {
   loadConversationHistoriesFromStore(): void {
     // Histories are lazy-loaded on first access per agent.
     this.deps.conversationEntriesByAgentId.clear();
-    this.lastSessionEntryIdBySessionFile.clear();
-    this.persistedEntryCountBySessionFile.clear();
+    this.timeline.clear();
     this.loadedFromDisk.clear();
 
     // Seed leaf ids so fallback appends preserve parentId chains even before
@@ -297,7 +302,7 @@ export class ConversationProjector {
         continue;
       }
 
-      this.hydrateLeafEntryId(descriptor);
+      this.timeline.hydrateLeafEntryId(descriptor);
     }
   }
 
@@ -471,8 +476,8 @@ export class ConversationProjector {
         const entryId = runtime.appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
         this.assignConversationMessageIdIfMissing(event, entryId);
         if (descriptor) {
-          this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
-          this.incrementPersistedEntryCount(descriptor.sessionFile);
+          this.timeline.trackLastSessionEntryId(descriptor.sessionFile, entryId);
+          this.timeline.incrementPersistedEntryCount(descriptor.sessionFile);
         }
         this.queueConversationHistoryCacheWrite(event.agentId, history);
         return;
@@ -484,9 +489,9 @@ export class ConversationProjector {
         return;
       }
 
-      const entryId = this.appendConversationEntryToSessionFile(descriptor, event);
+      const { entryId } = this.timeline.appendConversationEntry(descriptor, event);
       this.assignConversationMessageIdIfMissing(event, entryId);
-      this.incrementPersistedEntryCount(descriptor.sessionFile);
+      this.timeline.incrementPersistedEntryCount(descriptor.sessionFile);
       this.queueConversationHistoryCacheWrite(event.agentId, history);
     } catch (error) {
       this.deps.logDebug("history:save:error", {
@@ -494,122 +499,6 @@ export class ConversationProjector {
       });
       this.assignConversationMessageIdIfMissing(event);
       this.queueConversationHistoryCacheWrite(event.agentId, history);
-    }
-  }
-
-  private appendConversationEntryToSessionFile(
-    descriptor: AgentDescriptor,
-    event: ConversationEntryEvent
-  ): string {
-    // Avoid SessionManager.open() here: opening re-reads the whole JSONL file,
-    // which is unsafe for very large transcripts. Appending a well-formed JSONL
-    // entry keeps this path O(1) with no full-file reads.
-    this.ensureSessionFileHeader(descriptor);
-
-    const parentId = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile) ?? null;
-    const entryId = randomUUID().slice(0, 8);
-
-    this.assignConversationMessageIdIfMissing(event, entryId);
-
-    appendFileSync(
-      descriptor.sessionFile,
-      `${JSON.stringify({
-        type: "custom",
-        customType: CONVERSATION_ENTRY_TYPE,
-        data: event,
-        id: entryId,
-        parentId,
-        timestamp: this.deps.now()
-      })}\n`,
-      "utf8"
-    );
-
-    this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
-    return entryId;
-  }
-
-  private ensureSessionFileHeader(descriptor: AgentDescriptor): void {
-    if (hasValidSessionHeader(descriptor.sessionFile)) {
-      return;
-    }
-
-    const headerLine = `${JSON.stringify({
-      type: "session",
-      version: SESSION_HEADER_VERSION,
-      id: randomUUID(),
-      timestamp: this.deps.now(),
-      cwd: descriptor.cwd
-    })}\n`;
-
-    if (isMissingOrEmptySessionFile(descriptor.sessionFile)) {
-      appendFileSync(descriptor.sessionFile, headerLine, "utf8");
-      this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
-      return;
-    }
-
-    // Existing files with invalid headers cannot be reopened by SessionManager.
-    // Replace with a fresh header so subsequent appends stay recoverable.
-    writeFileSync(descriptor.sessionFile, headerLine, "utf8");
-    this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
-  }
-
-  private hydrateLeafEntryId(descriptor: AgentDescriptor): void {
-    const sessionFile = descriptor.sessionFile;
-    let fileDescriptor: number | undefined;
-
-    try {
-      const fileSize = statSync(sessionFile).size;
-      if (fileSize <= 0) {
-        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-        return;
-      }
-
-      const tailBytes = 8192;
-      const readLength = Math.min(fileSize, tailBytes);
-      const readOffset = Math.max(0, fileSize - readLength);
-
-      fileDescriptor = openSync(sessionFile, "r");
-      const buffer = Buffer.alloc(readLength);
-      const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, readOffset);
-      if (bytesRead <= 0) {
-        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-        return;
-      }
-
-      const tail = buffer.toString("utf8", 0, bytesRead);
-      const lines = tail.split("\n");
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const line = lines[index]?.trim();
-        if (!line) {
-          continue;
-        }
-
-        try {
-          const entryId = extractSessionEntryId(JSON.parse(line));
-          if (entryId) {
-            this.trackLastSessionEntryId(sessionFile, entryId);
-            return;
-          }
-        } catch {
-          // read window may start/end mid-line; skip parse failures
-        }
-      }
-
-      this.trackLastSessionEntryId(sessionFile, undefined);
-    } catch (error) {
-      if (isEnoentError(error)) {
-        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-        return;
-      }
-
-      this.deps.logDebug("history:hydrate_leaf:error", {
-        agentId: descriptor.agentId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    } finally {
-      if (fileDescriptor !== undefined) {
-        closeSync(fileDescriptor);
-      }
     }
   }
 
@@ -632,7 +521,7 @@ export class ConversationProjector {
         trimConversationHistory(validatedCachedEntries);
         const mergedEntries = this.mergeDiskAndInMemoryEntries(validatedCachedEntries, existingInMemoryEntries);
         this.applyPinnedState(descriptor.agentId, mergedEntries);
-        this.trackPersistedEntryCount(descriptor.sessionFile, validation.persistedEntryCount);
+        this.timeline.trackPersistedEntryCount(descriptor.sessionFile, validation.persistedEntryCount);
         this.loadedFromDisk.add(descriptor.agentId);
         this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
         if (validation.rewriteCache) {
@@ -715,7 +604,7 @@ export class ConversationProjector {
   ): ConversationHistoryWithDiagnostics {
     const entriesForAgent: ConversationEntryEvent[] = [];
     let persistedEntryCount = 0;
-    let lastSessionEntryId: string | undefined = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile);
+    let lastSessionEntryId: string | undefined = this.timeline.getLastSessionEntryId(descriptor.sessionFile);
     const diagnostics = createConversationHistoryDiagnostics({
       ...diagnosticsSeed,
       coldLoad: true
@@ -779,8 +668,8 @@ export class ConversationProjector {
 
     const mergedEntries = this.mergeDiskAndInMemoryEntries(entriesForAgent, existingInMemoryEntries);
     this.applyPinnedState(descriptor.agentId, mergedEntries);
-    this.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
-    this.trackPersistedEntryCount(descriptor.sessionFile, persistedEntryCount);
+    this.timeline.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
+    this.timeline.trackPersistedEntryCount(descriptor.sessionFile, persistedEntryCount);
     this.loadedFromDisk.add(descriptor.agentId);
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
     this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
@@ -1414,7 +1303,7 @@ export class ConversationProjector {
 
     const persistedEntryCount =
       validatedCanonicalProof?.persistedEntryCount ??
-      this.persistedEntryCountBySessionFile.get(descriptor.sessionFile) ??
+      this.timeline.getPersistedEntryCount(descriptor.sessionFile) ??
       0;
     const metadata = buildConversationHistoryCacheMetadata(
       history,
@@ -1568,23 +1457,6 @@ export class ConversationProjector {
       ...entry,
       id: wrapperEntryId
     };
-  }
-
-  private trackLastSessionEntryId(sessionFile: string, entryId: string | undefined): void {
-    if (typeof entryId !== "string" || entryId.trim().length === 0) {
-      this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-      return;
-    }
-
-    this.lastSessionEntryIdBySessionFile.set(sessionFile, entryId);
-  }
-
-  private trackPersistedEntryCount(sessionFile: string, count: number): void {
-    this.persistedEntryCountBySessionFile.set(sessionFile, Math.max(0, Math.trunc(count)));
-  }
-
-  private incrementPersistedEntryCount(sessionFile: string): void {
-    this.trackPersistedEntryCount(sessionFile, (this.persistedEntryCountBySessionFile.get(sessionFile) ?? 0) + 1);
   }
 
   private captureManagerRuntimeErrorConversationEvent(agentId: string, event: RuntimeSessionEvent): void {
@@ -1758,19 +1630,6 @@ function safeJson(value: unknown): string {
   const previewByteCount = MAX_SAFE_JSON_BYTES - suffixBytes;
   const preview = Buffer.from(serialized, "utf8").subarray(0, previewByteCount).toString("utf8");
   return `${preview}${SAFE_JSON_TRUNCATED_SUFFIX}`;
-}
-
-function extractSessionEntryId(entry: unknown): string | undefined {
-  if (typeof entry !== "object" || entry === null || !("id" in entry)) {
-    return undefined;
-  }
-
-  const entryId = (entry as { id?: unknown }).id;
-  if (typeof entryId !== "string" || entryId.trim().length === 0) {
-    return undefined;
-  }
-
-  return entryId;
 }
 
 type PersistedConversationEntryIdentity = {
@@ -2066,49 +1925,6 @@ function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean 
   }
 
   return true;
-}
-
-function hasValidSessionHeader(sessionFile: string): boolean {
-  if (!existsSync(sessionFile)) {
-    return false;
-  }
-
-  let fileDescriptor: number | undefined;
-
-  try {
-    fileDescriptor = openSync(sessionFile, "r");
-    const buffer = Buffer.alloc(512);
-    const bytesRead = readSync(fileDescriptor, buffer, 0, buffer.length, 0);
-    if (bytesRead <= 0) {
-      return false;
-    }
-
-    const firstLine = buffer.toString("utf8", 0, bytesRead).split("\n")[0]?.trim();
-    if (!firstLine) {
-      return false;
-    }
-
-    const header = JSON.parse(firstLine) as { type?: string; id?: unknown };
-    return header.type === "session" && typeof header.id === "string" && header.id.trim().length > 0;
-  } catch {
-    return false;
-  } finally {
-    if (fileDescriptor !== undefined) {
-      closeSync(fileDescriptor);
-    }
-  }
-}
-
-function isMissingOrEmptySessionFile(sessionFile: string): boolean {
-  try {
-    return statSync(sessionFile).size === 0;
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return true;
-    }
-
-    throw error;
-  }
 }
 
 function isEnoentError(error: unknown): boolean {
