@@ -94,6 +94,7 @@ describe('ManagerWsClient', () => {
       'list_project_agent_references',
       'get_project_agent_reference',
       'set_project_agent_reference',
+      'delete_project_agent_reference',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1960,6 +1961,43 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('sends delete_project_agent_reference commands and resolves project_agent_reference_deleted events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const referencePromise = client.deleteProjectAgentReference(' agent-a ', ' README.md ')
+    const referencePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(referencePayload).toMatchObject({
+      type: 'delete_project_agent_reference',
+      agentId: 'agent-a',
+      fileName: 'README.md',
+    })
+    expect(referencePayload.requestId).toMatch(/^delete_project_agent_reference-/)
+
+    emitServerEvent(socket, {
+      type: 'project_agent_reference_deleted',
+      requestId: referencePayload.requestId,
+      agentId: 'agent-a',
+      fileName: 'README.md',
+    })
+
+    await expect(referencePromise).resolves.toEqual({ agentId: 'agent-a', fileName: 'README.md' })
+
+    client.destroy()
+  })
+
   it('rejects set_project_agent_reference via fallback error hints without broad get-reference interception', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
@@ -1991,6 +2029,57 @@ describe('ManagerWsClient', () => {
 
     await expect(setReferencePromise).rejects.toThrow(
       'SET_PROJECT_AGENT_REFERENCE_FAILED: Set project agent reference rejected for testing.',
+    )
+    expect(getSettled).toBe(false)
+
+    emitServerEvent(socket, {
+      type: 'project_agent_reference',
+      requestId: JSON.parse(socket.sentPayloads.at(-2) ?? '{}').requestId,
+      agentId: 'agent-a',
+      fileName: 'README.md',
+      content: '# Reference',
+    })
+
+    await expect(getReferencePromise).resolves.toEqual({
+      agentId: 'agent-a',
+      fileName: 'README.md',
+      content: '# Reference',
+    })
+
+    client.destroy()
+  })
+
+  it('rejects delete_project_agent_reference via fallback error hints without broad get-reference interception', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const getReferencePromise = client.getProjectAgentReference('agent-a', 'README.md')
+    const deleteReferencePromise = client.deleteProjectAgentReference('agent-a', 'README.md')
+    let getSettled = false
+    void getReferencePromise.finally(() => {
+      getSettled = true
+    })
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'DELETE_PROJECT_AGENT_REFERENCE_FAILED',
+      message: 'Delete project agent reference rejected for testing.',
+    })
+    await Promise.resolve()
+
+    await expect(deleteReferencePromise).rejects.toThrow(
+      'DELETE_PROJECT_AGENT_REFERENCE_FAILED: Delete project agent reference rejected for testing.',
     )
     expect(getSettled).toBe(false)
 

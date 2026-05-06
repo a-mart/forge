@@ -304,6 +304,7 @@ describe('protocol root barrel contract', () => {
       'list_project_agent_references',
       'get_project_agent_reference',
       'set_project_agent_reference',
+      'delete_project_agent_reference',
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
@@ -421,6 +422,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'project_agent_reference_save',
       successEvents: ['project_agent_reference_saved'],
       errorCodeFragments: ['set_project_agent_reference'],
+    })
+    expect(getWsRequestContract('delete_project_agent_reference')).toMatchObject({
+      commandType: 'delete_project_agent_reference',
+      resultFamily: 'project_agent_reference_delete',
+      successEvents: ['project_agent_reference_deleted'],
+      errorCodeFragments: ['delete_project_agent_reference'],
     })
   })
 
