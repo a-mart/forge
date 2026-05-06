@@ -645,6 +645,141 @@ describe("SwarmRuntimeController", () => {
     );
   });
 
+  it("admits one invalidated manager token message_end so manual stop notice survives slow worker teardown", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      consumePendingManualManagerStopNoticeIfApplicable,
+      stripManagerAbortErrorFromEvent
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-stop-invalidated-token",
+      role: "manager",
+      managerId: "mgr-stop-invalidated-token",
+      status: "streaming"
+    });
+    descriptors.set(manager.agentId, { ...manager });
+
+    consumePendingManualManagerStopNoticeIfApplicable.mockReturnValue(true);
+    stripManagerAbortErrorFromEvent.mockImplementation((event: RuntimeSessionEvent) => ({
+      ...event,
+      message: {
+        ...(event as { message: Record<string, unknown> }).message,
+        stopReason: "stop"
+      }
+    }));
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    controller.allowInvalidatedManualStopMessageEnd(manager.agentId, token);
+    controller.clearRuntimeToken(manager.agentId);
+
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "partial" }],
+        stopReason: "error",
+        errorMessage: "Request was aborted"
+      }
+    };
+
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, event);
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, event);
+
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
+    expect(stripManagerAbortErrorFromEvent).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "conversation_message",
+        role: "system",
+        text: "Session stopped.",
+        agentId: manager.agentId
+      })
+    );
+  });
+
+  it("admits invalidated manager token message_end after shutdown timeout cleanup", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      consumePendingManualManagerStopNoticeIfApplicable,
+      stripManagerAbortErrorFromEvent
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-stop-timeout-late-end",
+      role: "manager",
+      managerId: "mgr-stop-timeout-late-end",
+      status: "streaming"
+    });
+    descriptors.set(manager.agentId, { ...manager });
+
+    consumePendingManualManagerStopNoticeIfApplicable.mockReturnValue(true);
+    stripManagerAbortErrorFromEvent.mockImplementation((event: RuntimeSessionEvent) => ({
+      ...event,
+      message: {
+        ...(event as { message: Record<string, unknown> }).message,
+        stopReason: "stop"
+      }
+    }));
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    let resolveShutdown: (() => void) | undefined;
+    const neverSettlingShutdown = new Promise<void>((resolve) => {
+      resolveShutdown = resolve;
+    });
+    expect(resolveShutdown).toBeTypeOf("function");
+    controller.attachRuntime(manager.agentId, {
+      getStatus: vi.fn(() => "streaming"),
+      stopInFlight: vi.fn(() => neverSettlingShutdown)
+    } as unknown as SwarmAgentRuntime);
+    controller.allowInvalidatedManualStopMessageEnd(manager.agentId, token);
+
+    await expect(
+      controller.runRuntimeShutdown(manager, "stopInFlight", {
+        abort: true,
+        shutdownTimeoutMs: 1,
+        drainTimeoutMs: 1
+      })
+    ).resolves.toEqual({ timedOut: true, runtimeToken: token });
+    expect(controller.runtimes.has(manager.agentId)).toBe(false);
+
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "partial" }],
+        stopReason: "error",
+        errorMessage: "Request was aborted"
+      }
+    };
+
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, event);
+
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
+    expect(stripManagerAbortErrorFromEvent).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "conversation_message",
+        role: "system",
+        text: "Session stopped.",
+        agentId: manager.agentId
+      })
+    );
+  });
+
   it("suppresses abort errors during context recovery without emitting a system notice", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

@@ -104,9 +104,15 @@ export class RuntimeBinding {
       return true;
     }
 
-    if (!this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+    const currentRuntimeToken = this.getRuntimeToken(agentId);
+    if (currentRuntimeToken !== runtimeToken) {
       this.clearRuntimeToken(agentId, runtimeToken);
-      return false;
+      if (currentRuntimeToken !== undefined) {
+        return false;
+      }
+
+      this.runtimes.delete(agentId);
+      return true;
     }
 
     this.runtimes.delete(agentId);

@@ -184,6 +184,7 @@ export interface SwarmAgentLifecycleServiceOptions {
   clearTrackedToolPaths: (agentId: string) => void;
   suppressIntentionalStopRuntimeCallbacks: (agentId: string, runtimeToken?: number) => void;
   clearIntentionalStopRuntimeCallbackSuppression: (agentId: string, runtimeToken?: number) => void;
+  allowInvalidatedManualStopMessageEnd: (agentId: string, runtimeToken?: number) => void;
   markPendingManualManagerStopNotice: (agentId: string) => void;
   cancelAllPendingChoicesForAgent: (agentId: string) => void;
   runRuntimeShutdown: (
@@ -192,6 +193,11 @@ export interface SwarmAgentLifecycleServiceOptions {
     options?: RuntimeShutdownOptions
   ) => Promise<{ timedOut: boolean; runtimeToken?: number }>;
   detachRuntime: (agentId: string, runtimeToken?: number) => boolean;
+  detachRuntimeIfMatches: (
+    agentId: string,
+    expectedRuntime: SwarmAgentRuntime,
+    runtimeToken?: number
+  ) => boolean;
   syncPinnedContentForManagerRuntime: (
     descriptor: ProvisionedSessionDescriptor,
     options?: {
@@ -253,6 +259,45 @@ export class SwarmAgentLifecycleService {
     this.options.deleteWorkerCompletionReportState(agentId);
     this.options.clearTrackedToolPaths(agentId);
     this.options.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId);
+  }
+
+  private invalidateManagerRuntimeBeforeWorkerTeardown(
+    agentId: string,
+    options?: { allowManualStopMessageEnd?: boolean }
+  ): {
+    runtime?: SwarmAgentRuntime;
+    runtimeToken?: number;
+  } {
+    const runtime = this.options.runtimes.get(agentId);
+    const runtimeToken = this.options.getRuntimeToken(agentId);
+    if (options?.allowManualStopMessageEnd) {
+      this.options.allowInvalidatedManualStopMessageEnd(agentId, runtimeToken);
+    }
+    this.options.clearRuntimeToken(agentId);
+    return { runtime, runtimeToken };
+  }
+
+  private async shutdownLatestManagerRuntime(
+    descriptor: AgentDescriptor,
+    action: "terminate" | "stopInFlight",
+    invalidatedRuntime: { runtime?: SwarmAgentRuntime; runtimeToken?: number }
+  ): Promise<void> {
+    const latestRuntime = this.options.runtimes.get(descriptor.agentId);
+    if (!latestRuntime) {
+      this.options.clearRuntimeToken(descriptor.agentId);
+      return;
+    }
+
+    const shutdown = await this.options.runRuntimeShutdown(descriptor, action, { abort: true });
+    const runtimeToken = shutdown.runtimeToken ??
+      (latestRuntime === invalidatedRuntime.runtime ? invalidatedRuntime.runtimeToken : undefined);
+
+    if (latestRuntime === invalidatedRuntime.runtime && shutdown.runtimeToken === undefined) {
+      this.options.detachRuntimeIfMatches(descriptor.agentId, latestRuntime, runtimeToken);
+      return;
+    }
+
+    this.options.detachRuntime(descriptor.agentId, runtimeToken);
   }
 
   private async shutdownWorkerRuntimeWithSuppressedCallbacks(
@@ -697,11 +742,16 @@ export class SwarmAgentLifecycleService {
 
     const stoppedWorkerIds: string[] = [];
     const managerRuntime = this.options.runtimes.get(target.agentId);
-    if (managerRuntime && (target.status === "streaming" || managerRuntime.getStatus() === "streaming")) {
+    const shouldAllowManualStopMessageEnd =
+      managerRuntime !== undefined && (target.status === "streaming" || managerRuntime.getStatus() === "streaming");
+    if (shouldAllowManualStopMessageEnd) {
       this.options.markPendingManualManagerStopNotice(target.agentId);
     }
 
     this.options.cancelAllPendingChoicesForAgent(targetManagerId);
+    const invalidatedManagerRuntime = this.invalidateManagerRuntimeBeforeWorkerTeardown(target.agentId, {
+      allowManualStopMessageEnd: shouldAllowManualStopMessageEnd
+    });
 
     for (const descriptor of Array.from(this.options.descriptors.values())) {
       if (descriptor.role !== "worker") {
@@ -733,10 +783,11 @@ export class SwarmAgentLifecycleService {
 
     let managerStopped = false;
     if (!isNonRunningAgentStatus(target.status)) {
-      if (managerRuntime) {
-        const shutdown = await this.options.runRuntimeShutdown(target, "stopInFlight", { abort: true });
-        this.options.detachRuntime(target.agentId, shutdown.runtimeToken);
+      if (shouldAllowManualStopMessageEnd) {
+        this.options.markPendingManualManagerStopNotice(target.agentId);
+        this.options.allowInvalidatedManualStopMessageEnd(target.agentId, invalidatedManagerRuntime.runtimeToken);
       }
+      await this.shutdownLatestManagerRuntime(target, "stopInFlight", invalidatedManagerRuntime);
 
       target.status = transitionAgentStatus(target.status, "idle");
       target.contextUsage = undefined;
@@ -1106,13 +1157,17 @@ export class SwarmAgentLifecycleService {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
     const terminatedWorkerIds: string[] = [];
     const runtime = this.options.runtimes.get(agentId);
-    if (
-      runtime &&
+    const shouldAllowManualStopMessageEnd =
+      runtime !== undefined &&
       !options.deleteWorkers &&
-      (descriptor.status === "streaming" || runtime.getStatus() === "streaming")
-    ) {
+      (descriptor.status === "streaming" || runtime.getStatus() === "streaming");
+    if (shouldAllowManualStopMessageEnd) {
       this.options.markPendingManualManagerStopNotice(agentId);
     }
+
+    const invalidatedManagerRuntime = this.invalidateManagerRuntimeBeforeWorkerTeardown(agentId, {
+      allowManualStopMessageEnd: shouldAllowManualStopMessageEnd
+    });
 
     for (const workerDescriptor of this.options.getWorkersForManager(agentId)) {
       terminatedWorkerIds.push(workerDescriptor.agentId);
@@ -1123,10 +1178,11 @@ export class SwarmAgentLifecycleService {
       this.options.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
     }
 
-    if (runtime) {
-      const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: true });
-      this.options.detachRuntime(agentId, shutdown.runtimeToken);
+    if (shouldAllowManualStopMessageEnd) {
+      this.options.markPendingManualManagerStopNotice(agentId);
+      this.options.allowInvalidatedManualStopMessageEnd(agentId, invalidatedManagerRuntime.runtimeToken);
     }
+    await this.shutdownLatestManagerRuntime(descriptor, "terminate", invalidatedManagerRuntime);
     this.clearPendingManagerRuntimeRecycle(agentId);
 
     descriptor.status = descriptor.status === "error"
@@ -1388,30 +1444,7 @@ export class SwarmAgentLifecycleService {
       return concurrentRuntime;
     }
 
-    if (latestDescriptor.role === "manager" && managerRuntimeCreation?.continuityRequest) {
-      try {
-        await this.options.appendAppliedModelChangeContinuity?.(
-          latestDescriptor as ProvisionedSessionDescriptor,
-          managerRuntimeCreation.continuityRequest,
-          runtime
-        );
-      } catch (error) {
-        this.options.logDebug("manager:model_change_continuity:applied_write_error", {
-          agentId: latestDescriptor.agentId,
-          requestId: managerRuntimeCreation.continuityRequest.requestId,
-          message: error instanceof Error ? error.message : String(error)
-        });
-        await runtime.terminate({
-          abort: true,
-          shutdownTimeoutMs: 1_500,
-          drainTimeoutMs: 500,
-        });
-        this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
-        throw error;
-      }
-    }
-
-    const attachDescriptor = this.options.descriptors.get(descriptor.agentId);
+    let attachDescriptor = this.options.descriptors.get(descriptor.agentId);
     if (!attachDescriptor || isNonRunningAgentStatus(attachDescriptor.status)) {
       await runtime.terminate({
         abort: true,
@@ -1433,6 +1466,88 @@ export class SwarmAgentLifecycleService {
       return attachConcurrentRuntime;
     }
 
+    if (this.options.getRuntimeToken(descriptor.agentId) !== runtimeToken) {
+      this.options.logDebug("manager:model_change_continuity:pre_write_attach_rejected", {
+        agentId: descriptor.agentId,
+        reason: "stale_runtime_token"
+      });
+      await runtime.terminate({
+        abort: true,
+        shutdownTimeoutMs: 1_500,
+        drainTimeoutMs: 500,
+      });
+      this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+      throw new Error(`Runtime token is stale for agent: ${descriptor.agentId}`);
+    }
+
+    if (attachDescriptor.role === "manager" && managerRuntimeCreation?.continuityRequest) {
+      try {
+        await this.options.appendAppliedModelChangeContinuity?.(
+          attachDescriptor as ProvisionedSessionDescriptor,
+          managerRuntimeCreation.continuityRequest,
+          runtime
+        );
+      } catch (error) {
+        this.options.logDebug("manager:model_change_continuity:applied_write_error", {
+          agentId: attachDescriptor.agentId,
+          requestId: managerRuntimeCreation.continuityRequest.requestId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        await runtime.terminate({
+          abort: true,
+          shutdownTimeoutMs: 1_500,
+          drainTimeoutMs: 500,
+        });
+        this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+        throw error;
+      }
+    }
+
+    const postWriteDescriptor = this.options.descriptors.get(descriptor.agentId);
+    if (!postWriteDescriptor || isNonRunningAgentStatus(postWriteDescriptor.status)) {
+      this.options.logDebug("manager:model_change_continuity:post_write_attach_rejected", {
+        agentId: descriptor.agentId,
+        reason: postWriteDescriptor ? "not_running" : "missing_descriptor"
+      });
+      await runtime.terminate({
+        abort: true,
+        shutdownTimeoutMs: 1_500,
+        drainTimeoutMs: 500,
+      });
+      this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+      throw new Error(`Target agent is not running: ${descriptor.agentId}`);
+    }
+
+    const postWriteConcurrentRuntime = this.options.runtimes.get(descriptor.agentId);
+    if (postWriteConcurrentRuntime) {
+      this.options.logDebug("manager:model_change_continuity:post_write_attach_rejected", {
+        agentId: descriptor.agentId,
+        reason: "concurrent_runtime"
+      });
+      await runtime.terminate({
+        abort: true,
+        shutdownTimeoutMs: 1_500,
+        drainTimeoutMs: 500,
+      });
+      this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+      return postWriteConcurrentRuntime;
+    }
+
+    if (this.options.getRuntimeToken(descriptor.agentId) !== runtimeToken) {
+      this.options.logDebug("manager:model_change_continuity:post_write_attach_rejected", {
+        agentId: descriptor.agentId,
+        reason: "stale_runtime_token"
+      });
+      await runtime.terminate({
+        abort: true,
+        shutdownTimeoutMs: 1_500,
+        drainTimeoutMs: 500,
+      });
+      this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+      throw new Error(`Runtime token is stale for agent: ${descriptor.agentId}`);
+    }
+
+    attachDescriptor = postWriteDescriptor;
     this.options.attachRuntime(descriptor.agentId, runtime);
 
     if (attachDescriptor.role === "worker") {

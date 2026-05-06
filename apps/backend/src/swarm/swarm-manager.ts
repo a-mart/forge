@@ -1505,12 +1505,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       clearIntentionalStopRuntimeCallbackSuppression: (agentId, runtimeToken) => {
         this.runtimeController.clearIntentionalStopRuntimeCallbackSuppression(agentId, runtimeToken);
       },
+      allowInvalidatedManualStopMessageEnd: (agentId, runtimeToken) => {
+        this.runtimeController.allowInvalidatedManualStopMessageEnd(agentId, runtimeToken);
+      },
       markPendingManualManagerStopNotice: (agentId) => this.markPendingManualManagerStopNotice(agentId),
       cancelAllPendingChoicesForAgent: (agentId) => {
         this.cancelAllPendingChoicesForAgent(agentId);
       },
       runRuntimeShutdown: (descriptor, action, options) => this.runRuntimeShutdown(descriptor, action, options),
       detachRuntime: (agentId, runtimeToken) => this.detachRuntime(agentId, runtimeToken),
+      detachRuntimeIfMatches: (agentId, runtime, runtimeToken) =>
+        this.runtimeController.detachRuntimeIfMatches(agentId, runtime, runtimeToken),
       syncPinnedContentForManagerRuntime: async (descriptor, options) => {
         await this.syncPinnedContentForManagerRuntime(descriptor, options);
       },
@@ -5858,10 +5863,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private markPendingManualManagerStopNotice(agentId: string): void {
-    this.clearPendingManualManagerStopNotice(agentId);
+    this.clearPendingManualManagerStopNoticeTimer(agentId);
 
     const timer = setTimeout(() => {
       this.pendingManualManagerStopNoticeTimersByAgentId.delete(agentId);
+      this.runtimeController.clearInvalidatedManualStopMessageEndAllowance(agentId);
     }, PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS);
     timer.unref?.();
 
@@ -5869,6 +5875,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private clearPendingManualManagerStopNotice(agentId: string): void {
+    this.clearPendingManualManagerStopNoticeTimer(agentId);
+  }
+
+  private clearPendingManualManagerStopNoticeTimer(agentId: string): void {
     const timer = this.pendingManualManagerStopNoticeTimersByAgentId.get(agentId);
     if (!timer) {
       return;

@@ -273,6 +273,14 @@ export class SwarmRuntimeController {
     this.runtimeCallbackGate.clearIntentionalStopRuntimeCallbackSuppression(agentId, runtimeToken);
   }
 
+  allowInvalidatedManualStopMessageEnd(agentId: string, runtimeToken?: number): void {
+    this.runtimeCallbackGate.allowInvalidatedManualStopMessageEnd(agentId, runtimeToken);
+  }
+
+  clearInvalidatedManualStopMessageEndAllowance(agentId: string, runtimeToken?: number): void {
+    this.runtimeCallbackGate.clearInvalidatedManualStopMessageEndAllowance(agentId, runtimeToken);
+  }
+
   beginFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void {
     this.runtimeCallbackGate.beginFallbackHandoff(agentId, suppressedRuntimeToken);
   }
@@ -524,7 +532,7 @@ export class SwarmRuntimeController {
       return;
     }
 
-    if (this.shouldIgnoreRuntimeCallback(agentId, runtimeToken)) {
+    if (this.runtimeCallbackGate.shouldIgnoreRuntimeSessionEvent(agentId, runtimeToken, event.type)) {
       return;
     }
 

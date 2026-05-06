@@ -145,6 +145,7 @@ function baseLifecycleOptions(
     clearTrackedToolPaths: overrides.clearTrackedToolPaths ?? vi.fn(),
     suppressIntentionalStopRuntimeCallbacks: overrides.suppressIntentionalStopRuntimeCallbacks ?? vi.fn(),
     clearIntentionalStopRuntimeCallbackSuppression: overrides.clearIntentionalStopRuntimeCallbackSuppression ?? vi.fn(),
+    allowInvalidatedManualStopMessageEnd: overrides.allowInvalidatedManualStopMessageEnd ?? vi.fn(),
     markPendingManualManagerStopNotice: overrides.markPendingManualManagerStopNotice ?? vi.fn(),
     cancelAllPendingChoicesForAgent: overrides.cancelAllPendingChoicesForAgent ?? vi.fn(),
     runRuntimeShutdown:
@@ -153,6 +154,15 @@ function baseLifecycleOptions(
     detachRuntime:
       overrides.detachRuntime ??
       vi.fn((agentId: string) => {
+        runtimes.delete(agentId);
+        return true;
+      }),
+    detachRuntimeIfMatches:
+      overrides.detachRuntimeIfMatches ??
+      vi.fn((agentId: string, expectedRuntime: SwarmAgentRuntime) => {
+        if (runtimes.get(agentId) !== expectedRuntime) {
+          return false;
+        }
         runtimes.delete(agentId);
         return true;
       }),
@@ -270,6 +280,7 @@ describe("SwarmAgentLifecycleService", () => {
           order.push("allocate");
           return 42;
         }),
+        getRuntimeToken: vi.fn(() => 42),
         createRuntimeForDescriptor: vi.fn(async (_descriptor, _prompt, token, options) => {
           order.push(`create:${token}:${options === runtimeOptions}`);
           return runtime;
@@ -321,6 +332,321 @@ describe("SwarmAgentLifecycleService", () => {
     expect(position("attach")).toBeLessThan(position("stats"));
   });
 
+  it("does not mark model-change continuity applied when the real stop-session path runs before attach", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-before-attach",
+      role: "manager",
+      managerId: "m-stop-before-attach",
+      profileId: "m-stop-before-attach",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtime = makeRuntimeStub({ descriptor: manager });
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-stop-before-attach",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+    };
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {});
+    const attachRuntime = vi.fn();
+    let runtimeToken: number | undefined;
+    const allocateRuntimeToken = vi.fn(() => {
+      runtimeToken = 91;
+      return runtimeToken;
+    });
+    const getRuntimeToken = vi.fn(() => runtimeToken);
+    const clearRuntimeToken = vi.fn((_agentId: string, expectedToken?: number) => {
+      if (expectedToken === undefined || expectedToken === runtimeToken) {
+        runtimeToken = undefined;
+      }
+    });
+    const serviceRef: { current?: SwarmAgentLifecycleService } = {};
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({ continuityRequest })),
+        createRuntimeForDescriptor: vi.fn(async () => runtime),
+        syncPinnedContentForManagerRuntime: vi.fn(async () => {
+          await serviceRef.current!.stopSession(manager.agentId);
+        }),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        clearRuntimeToken,
+        allocateRuntimeToken,
+        getRuntimeToken
+      })
+    );
+    serviceRef.current = svc;
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).rejects.toThrow(/Runtime token is stale/);
+
+    expect(manager.status).toBe("idle");
+    expect(appendAppliedModelChangeContinuity).not.toHaveBeenCalled();
+    expect(attachRuntime).not.toHaveBeenCalled();
+    expect(runtime.terminate).toHaveBeenCalledWith({ abort: true, shutdownTimeoutMs: 1_500, drainTimeoutMs: 500 });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId);
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId, 91);
+  });
+
+  it("does not mark model-change continuity applied when a concurrent runtime wins before attach", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-concurrent-before-attach",
+      role: "manager",
+      managerId: "m-concurrent-before-attach",
+      profileId: "m-concurrent-before-attach",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const replacementRuntime = makeRuntimeStub({ descriptor: manager });
+    const winningRuntime = makeRuntimeStub({ descriptor: manager });
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-concurrent-before-attach",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+    };
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {});
+    const attachRuntime = vi.fn();
+    const clearRuntimeToken = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({ continuityRequest })),
+        createRuntimeForDescriptor: vi.fn(async () => replacementRuntime),
+        syncPinnedContentForManagerRuntime: vi.fn(async () => {
+          runtimes.set(manager.agentId, winningRuntime);
+        }),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        clearRuntimeToken,
+        allocateRuntimeToken: vi.fn(() => 92)
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).resolves.toBe(winningRuntime);
+
+    expect(appendAppliedModelChangeContinuity).not.toHaveBeenCalled();
+    expect(attachRuntime).not.toHaveBeenCalled();
+    expect(replacementRuntime.terminate).toHaveBeenCalledWith({ abort: true, shutdownTimeoutMs: 1_500, drainTimeoutMs: 500 });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId, 92);
+    expect(runtimes.get(manager.agentId)).toBe(winningRuntime);
+  });
+
+  it("terminates replacement runtime when the real stop-session path runs while continuity is being marked applied", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-after-applied",
+      role: "manager",
+      managerId: "m-stop-after-applied",
+      profileId: "m-stop-after-applied",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtime = makeRuntimeStub({ descriptor: manager });
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-stop-after-applied",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+    };
+    const attachRuntime = vi.fn();
+    let runtimeToken: number | undefined;
+    const allocateRuntimeToken = vi.fn(() => {
+      runtimeToken = 93;
+      return runtimeToken;
+    });
+    const getRuntimeToken = vi.fn(() => runtimeToken);
+    const clearRuntimeToken = vi.fn((_agentId: string, expectedToken?: number) => {
+      if (expectedToken === undefined || expectedToken === runtimeToken) {
+        runtimeToken = undefined;
+      }
+    });
+    const serviceRef: { current?: SwarmAgentLifecycleService } = {};
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {
+      await serviceRef.current!.stopSession(manager.agentId);
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({ continuityRequest })),
+        createRuntimeForDescriptor: vi.fn(async () => runtime),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        clearRuntimeToken,
+        allocateRuntimeToken,
+        getRuntimeToken
+      })
+    );
+    serviceRef.current = svc;
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).rejects.toThrow(/Runtime token is stale/);
+
+    expect(manager.status).toBe("idle");
+    expect(appendAppliedModelChangeContinuity).toHaveBeenCalledWith(manager, continuityRequest, runtime);
+    expect(attachRuntime).not.toHaveBeenCalled();
+    expect(runtime.terminate).toHaveBeenCalledWith({ abort: true, shutdownTimeoutMs: 1_500, drainTimeoutMs: 500 });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId);
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId, 93);
+  });
+
+  it("terminates replacement runtime when the real stop-all path runs while continuity is being marked applied", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-all-after-applied",
+      role: "manager",
+      managerId: "m-stop-all-after-applied",
+      profileId: "m-stop-all-after-applied",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtime = makeRuntimeStub({ descriptor: manager });
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-stop-all-after-applied",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+    };
+    const attachRuntime = vi.fn();
+    let runtimeToken: number | undefined;
+    const allocateRuntimeToken = vi.fn(() => {
+      runtimeToken = 96;
+      return runtimeToken;
+    });
+    const getRuntimeToken = vi.fn(() => runtimeToken);
+    const clearRuntimeToken = vi.fn((_agentId: string, expectedToken?: number) => {
+      if (expectedToken === undefined || expectedToken === runtimeToken) {
+        runtimeToken = undefined;
+      }
+    });
+    const serviceRef: { current?: SwarmAgentLifecycleService } = {};
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {
+      await serviceRef.current!.stopAllAgents(manager.agentId, manager.agentId);
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({ continuityRequest })),
+        createRuntimeForDescriptor: vi.fn(async () => runtime),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        clearRuntimeToken,
+        allocateRuntimeToken,
+        getRuntimeToken
+      })
+    );
+    serviceRef.current = svc;
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).rejects.toThrow(/Runtime token is stale/);
+
+    expect(manager.status).toBe("idle");
+    expect(appendAppliedModelChangeContinuity).toHaveBeenCalledWith(manager, continuityRequest, runtime);
+    expect(attachRuntime).not.toHaveBeenCalled();
+    expect(runtime.terminate).toHaveBeenCalledWith({ abort: true, shutdownTimeoutMs: 1_500, drainTimeoutMs: 500 });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId);
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId, 96);
+  });
+
+  it("terminates replacement runtime when the manager is deleted after continuity is marked applied", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-delete-after-applied",
+      role: "manager",
+      managerId: "m-delete-after-applied",
+      profileId: "m-delete-after-applied",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtime = makeRuntimeStub({ descriptor: manager });
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-delete-after-applied",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+    };
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {
+      descriptors.delete(manager.agentId);
+    });
+    const attachRuntime = vi.fn();
+    const clearRuntimeToken = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({ continuityRequest })),
+        createRuntimeForDescriptor: vi.fn(async () => runtime),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        clearRuntimeToken,
+        allocateRuntimeToken: vi.fn(() => 94),
+        getRuntimeToken: vi.fn(() => 94)
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).rejects.toThrow(/Target agent is not running/);
+
+    expect(appendAppliedModelChangeContinuity).toHaveBeenCalledWith(manager, continuityRequest, runtime);
+    expect(attachRuntime).not.toHaveBeenCalled();
+    expect(runtime.terminate).toHaveBeenCalledWith({ abort: true, shutdownTimeoutMs: 1_500, drainTimeoutMs: 500 });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId, 94);
+  });
+
+  it("returns the winning runtime when a concurrent runtime appears after continuity is marked applied", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-concurrent-after-applied",
+      role: "manager",
+      managerId: "m-concurrent-after-applied",
+      profileId: "m-concurrent-after-applied",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const replacementRuntime = makeRuntimeStub({ descriptor: manager });
+    const winningRuntime = makeRuntimeStub({ descriptor: manager });
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-concurrent-after-applied",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+    };
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {
+      runtimes.set(manager.agentId, winningRuntime);
+    });
+    const attachRuntime = vi.fn();
+    const clearRuntimeToken = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({ continuityRequest })),
+        createRuntimeForDescriptor: vi.fn(async () => replacementRuntime),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        clearRuntimeToken,
+        allocateRuntimeToken: vi.fn(() => 95),
+        getRuntimeToken: vi.fn(() => 95)
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).resolves.toBe(winningRuntime);
+
+    expect(appendAppliedModelChangeContinuity).toHaveBeenCalledWith(manager, continuityRequest, replacementRuntime);
+    expect(attachRuntime).not.toHaveBeenCalled();
+    expect(replacementRuntime.terminate).toHaveBeenCalledWith({ abort: true, shutdownTimeoutMs: 1_500, drainTimeoutMs: 500 });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId, 95);
+    expect(runtimes.get(manager.agentId)).toBe(winningRuntime);
+  });
+
   it("getOrCreateRuntimeForDescriptor dedupes in-flight creation and preserves newer creation promise on cleanup", async () => {
     const worker = createWorkerDescriptor("/p", "m1", { agentId: "w-dedupe", status: "idle" });
     const descriptors = new Map([[worker.agentId, worker]]);
@@ -341,6 +667,7 @@ describe("SwarmAgentLifecycleService", () => {
         runtimes,
         runtimeCreationPromisesByAgentId,
         allocateRuntimeToken: vi.fn(() => 11),
+        getRuntimeToken: vi.fn(() => 11),
         createRuntimeForDescriptor,
         attachRuntime: (agentId, runtimeToAttach) => {
           runtimes.set(agentId, runtimeToAttach);
@@ -502,6 +829,298 @@ describe("SwarmAgentLifecycleService", () => {
     expect(runRuntimeShutdown).toHaveBeenCalled();
     expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(false);
     expect(runtimes.has("m1")).toBe(false);
+    expect(manager.status).toBe("idle");
+  });
+
+  it("stopSession deactivates an invalidated attached manager binding after slow worker teardown", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-attached-slow-worker",
+      role: "manager",
+      managerId: "m-stop-attached-slow-worker",
+      profileId: "m-stop-attached-slow-worker",
+      status: "streaming"
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-stop-attached-slow",
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const managerRuntime = makeRuntimeStub({ descriptor: manager, getStatus: () => "streaming" });
+    const workerRuntime = makeRuntimeStub({ descriptor: worker, getStatus: () => "streaming" });
+    const runtimes = new Map<string, SwarmAgentRuntime>([
+      [manager.agentId, managerRuntime],
+      [worker.agentId, workerRuntime]
+    ]);
+    let runtimeToken: number | undefined = 401;
+    const clearRuntimeToken = vi.fn((_agentId: string, expectedToken?: number) => {
+      if (expectedToken === undefined || expectedToken === runtimeToken) {
+        runtimeToken = undefined;
+      }
+    });
+    const allowInvalidatedManualStopMessageEnd = vi.fn();
+    const markPendingManualManagerStopNotice = vi.fn();
+    const runRuntimeShutdown = vi.fn(async (descriptor: AgentDescriptor) => {
+      if (descriptor.agentId === worker.agentId) {
+        await Promise.resolve();
+        return { timedOut: false, runtimeToken: 1 };
+      }
+      await managerRuntime.terminate({ abort: true });
+      return { timedOut: false, runtimeToken: undefined };
+    });
+    const detachRuntimeIfMatches = vi.fn((agentId: string, expectedRuntime: SwarmAgentRuntime, expectedToken?: number) => {
+      if (runtimes.get(agentId) !== expectedRuntime) {
+        return false;
+      }
+      runtimes.delete(agentId);
+      clearRuntimeToken(agentId, expectedToken);
+      return true;
+    });
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        getWorkersForManager: vi.fn(() => [worker]),
+        getRuntimeToken: vi.fn(() => runtimeToken),
+        clearRuntimeToken,
+        allowInvalidatedManualStopMessageEnd,
+        markPendingManualManagerStopNotice,
+        runRuntimeShutdown,
+        detachRuntimeIfMatches
+      })
+    );
+
+    await expect(svc.stopSession(manager.agentId)).resolves.toEqual({ terminatedWorkerIds: [worker.agentId] });
+
+    expect(allowInvalidatedManualStopMessageEnd).toHaveBeenCalledWith(manager.agentId, 401);
+    expect(markPendingManualManagerStopNotice).toHaveBeenCalledTimes(2);
+    expect(runRuntimeShutdown).toHaveBeenCalledWith(manager, "terminate", { abort: true });
+    expect(detachRuntimeIfMatches).toHaveBeenCalledWith(manager.agentId, managerRuntime, 401);
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId);
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId, 401);
+    expect(clearRuntimeToken.mock.calls.filter(([agentId, token]) => agentId === manager.agentId && token === 401)).toHaveLength(1);
+    expect(runtimes.has(manager.agentId)).toBe(false);
+    expect(manager.status).toBe("idle");
+  });
+
+  it("stopAllAgents deactivates an invalidated attached manager binding after slow worker teardown", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-all-attached-slow-worker",
+      role: "manager",
+      managerId: "m-stop-all-attached-slow-worker",
+      profileId: "m-stop-all-attached-slow-worker",
+      status: "streaming"
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-stop-all-attached-slow",
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const managerRuntime = makeRuntimeStub({ descriptor: manager, getStatus: () => "streaming" });
+    const workerRuntime = makeRuntimeStub({ descriptor: worker, getStatus: () => "streaming" });
+    const runtimes = new Map<string, SwarmAgentRuntime>([
+      [manager.agentId, managerRuntime],
+      [worker.agentId, workerRuntime]
+    ]);
+    let runtimeToken: number | undefined = 402;
+    const clearRuntimeToken = vi.fn((_agentId: string, expectedToken?: number) => {
+      if (expectedToken === undefined || expectedToken === runtimeToken) {
+        runtimeToken = undefined;
+      }
+    });
+    const allowInvalidatedManualStopMessageEnd = vi.fn();
+    const markPendingManualManagerStopNotice = vi.fn();
+    const runRuntimeShutdown = vi.fn(async (descriptor: AgentDescriptor) => {
+      if (descriptor.agentId === worker.agentId) {
+        await Promise.resolve();
+        return { timedOut: false, runtimeToken: 1 };
+      }
+      await managerRuntime.stopInFlight({ abort: true });
+      return { timedOut: false, runtimeToken: undefined };
+    });
+    const detachRuntimeIfMatches = vi.fn((agentId: string, expectedRuntime: SwarmAgentRuntime, expectedToken?: number) => {
+      if (runtimes.get(agentId) !== expectedRuntime) {
+        return false;
+      }
+      runtimes.delete(agentId);
+      clearRuntimeToken(agentId, expectedToken);
+      return true;
+    });
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        getRuntimeToken: vi.fn(() => runtimeToken),
+        clearRuntimeToken,
+        allowInvalidatedManualStopMessageEnd,
+        markPendingManualManagerStopNotice,
+        runRuntimeShutdown,
+        detachRuntimeIfMatches
+      })
+    );
+
+    await expect(svc.stopAllAgents(manager.agentId, manager.agentId)).resolves.toMatchObject({
+      managerId: manager.agentId,
+      stoppedWorkerIds: [worker.agentId],
+      managerStopped: true
+    });
+
+    expect(allowInvalidatedManualStopMessageEnd).toHaveBeenCalledWith(manager.agentId, 402);
+    expect(markPendingManualManagerStopNotice).toHaveBeenCalledTimes(2);
+    expect(runRuntimeShutdown).toHaveBeenCalledWith(manager, "stopInFlight", { abort: true });
+    expect(detachRuntimeIfMatches).toHaveBeenCalledWith(manager.agentId, managerRuntime, 402);
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId);
+    expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId, 402);
+    expect(clearRuntimeToken.mock.calls.filter(([agentId, token]) => agentId === manager.agentId && token === 402)).toHaveLength(1);
+    expect(runtimes.has(manager.agentId)).toBe(false);
+    expect(manager.status).toBe("idle");
+  });
+
+  it("stopSession shuts down a replacement manager runtime that attaches while worker teardown is slow", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-slow-worker",
+      role: "manager",
+      managerId: "m-stop-slow-worker",
+      profileId: "m-stop-slow-worker",
+      status: "streaming"
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-stop-slow",
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const workerRuntime = makeRuntimeStub({ descriptor: worker, getStatus: () => "streaming" });
+    const replacementRuntime = makeRuntimeStub({ descriptor: manager, getStatus: () => "idle" });
+    const runtimes = new Map<string, SwarmAgentRuntime>([[worker.agentId, workerRuntime]]);
+    let runtimeToken: number | undefined;
+    const serviceRef: { current?: SwarmAgentLifecycleService } = {};
+    const attachRuntime = vi.fn((agentId: string, runtimeToAttach: SwarmAgentRuntime) => {
+      runtimes.set(agentId, runtimeToAttach);
+    });
+    const runRuntimeShutdown = vi.fn(async (descriptor: AgentDescriptor, action: "terminate" | "stopInFlight") => {
+      if (descriptor.agentId === worker.agentId) {
+        await serviceRef.current!.getOrCreateRuntimeForDescriptor(manager);
+        return { timedOut: false, runtimeToken: 1 };
+      }
+      if (action === "terminate") {
+        await replacementRuntime.terminate({ abort: true });
+      } else {
+        await replacementRuntime.stopInFlight({ abort: true });
+      }
+      return { timedOut: false, runtimeToken };
+    });
+    const clearRuntimeToken = vi.fn((_agentId: string, expectedToken?: number) => {
+      if (expectedToken === undefined || expectedToken === runtimeToken) {
+        runtimeToken = undefined;
+      }
+    });
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        getWorkersForManager: vi.fn(() => [worker]),
+        createRuntimeForDescriptor: vi.fn(async () => replacementRuntime),
+        attachRuntime,
+        runRuntimeShutdown,
+        allocateRuntimeToken: vi.fn(() => {
+          runtimeToken = 201;
+          return runtimeToken;
+        }),
+        getRuntimeToken: vi.fn(() => runtimeToken),
+        clearRuntimeToken
+      })
+    );
+    serviceRef.current = svc;
+
+    await expect(svc.stopSession(manager.agentId)).resolves.toEqual({ terminatedWorkerIds: [worker.agentId] });
+
+    expect(attachRuntime).toHaveBeenCalledWith(manager.agentId, replacementRuntime);
+    expect(replacementRuntime.terminate).toHaveBeenCalledWith({ abort: true });
+    expect(runRuntimeShutdown).toHaveBeenCalledWith(manager, "terminate", { abort: true });
+    expect(runtimes.has(manager.agentId)).toBe(false);
+    expect(manager.status).toBe("idle");
+  });
+
+  it("stopAllAgents shuts down a replacement manager runtime that attaches while worker teardown is slow", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-stop-all-slow-worker",
+      role: "manager",
+      managerId: "m-stop-all-slow-worker",
+      profileId: "m-stop-all-slow-worker",
+      status: "streaming"
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-stop-all-slow",
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const workerRuntime = makeRuntimeStub({ descriptor: worker, getStatus: () => "streaming" });
+    const replacementRuntime = makeRuntimeStub({ descriptor: manager, getStatus: () => "idle" });
+    const runtimes = new Map<string, SwarmAgentRuntime>([[worker.agentId, workerRuntime]]);
+    let runtimeToken: number | undefined;
+    const serviceRef: { current?: SwarmAgentLifecycleService } = {};
+    const attachRuntime = vi.fn((agentId: string, runtimeToAttach: SwarmAgentRuntime) => {
+      runtimes.set(agentId, runtimeToAttach);
+    });
+    const runRuntimeShutdown = vi.fn(async (descriptor: AgentDescriptor, action: "terminate" | "stopInFlight") => {
+      if (descriptor.agentId === worker.agentId) {
+        await serviceRef.current!.getOrCreateRuntimeForDescriptor(manager);
+        return { timedOut: false, runtimeToken: 1 };
+      }
+      if (action === "terminate") {
+        await replacementRuntime.terminate({ abort: true });
+      } else {
+        await replacementRuntime.stopInFlight({ abort: true });
+      }
+      return { timedOut: false, runtimeToken };
+    });
+    const clearRuntimeToken = vi.fn((_agentId: string, expectedToken?: number) => {
+      if (expectedToken === undefined || expectedToken === runtimeToken) {
+        runtimeToken = undefined;
+      }
+    });
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        createRuntimeForDescriptor: vi.fn(async () => replacementRuntime),
+        attachRuntime,
+        runRuntimeShutdown,
+        allocateRuntimeToken: vi.fn(() => {
+          runtimeToken = 301;
+          return runtimeToken;
+        }),
+        getRuntimeToken: vi.fn(() => runtimeToken),
+        clearRuntimeToken
+      })
+    );
+    serviceRef.current = svc;
+
+    await expect(svc.stopAllAgents(manager.agentId, manager.agentId)).resolves.toMatchObject({
+      managerId: manager.agentId,
+      stoppedWorkerIds: [worker.agentId],
+      managerStopped: true
+    });
+
+    expect(attachRuntime).toHaveBeenCalledWith(manager.agentId, replacementRuntime);
+    expect(replacementRuntime.stopInFlight).toHaveBeenCalledWith({ abort: true });
+    expect(runRuntimeShutdown).toHaveBeenCalledWith(manager, "stopInFlight", { abort: true });
+    expect(runtimes.has(manager.agentId)).toBe(false);
     expect(manager.status).toBe("idle");
   });
 

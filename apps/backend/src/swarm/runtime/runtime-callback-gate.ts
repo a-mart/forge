@@ -40,6 +40,7 @@ export interface RuntimeCallbackGateOptions {
 export class RuntimeCallbackGate {
   private readonly intentionallyStoppedRuntimeTokensByAgentId = new Map<string, Set<number>>();
   private readonly fallbackHandoffsByAgentId = new Map<string, RuntimeCallbackFallbackHandoffSnapshot>();
+  private readonly invalidatedManualStopMessageEndTokensByAgentId = new Map<string, Set<number>>();
 
   constructor(private readonly options: RuntimeCallbackGateOptions) {}
 
@@ -64,14 +65,26 @@ export class RuntimeCallbackGate {
     }
 
     const suppressedTokens = this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId);
-    if (!suppressedTokens) {
+    if (suppressedTokens) {
+      suppressedTokens.delete(runtimeToken);
+      if (suppressedTokens.size === 0) {
+        this.intentionallyStoppedRuntimeTokensByAgentId.delete(agentId);
+      }
+    }
+  }
+
+  allowInvalidatedManualStopMessageEnd(agentId: string, runtimeToken?: number): void {
+    if (runtimeToken === undefined) {
       return;
     }
 
-    suppressedTokens.delete(runtimeToken);
-    if (suppressedTokens.size === 0) {
-      this.intentionallyStoppedRuntimeTokensByAgentId.delete(agentId);
+    let allowedTokens = this.invalidatedManualStopMessageEndTokensByAgentId.get(agentId);
+    if (!allowedTokens) {
+      allowedTokens = new Set<number>();
+      this.invalidatedManualStopMessageEndTokensByAgentId.set(agentId, allowedTokens);
     }
+
+    allowedTokens.add(runtimeToken);
   }
 
   beginFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void {
@@ -218,8 +231,59 @@ export class RuntimeCallbackGate {
     return this.options.getCurrentRuntimeToken(agentId) !== runtimeToken;
   }
 
+  shouldIgnoreRuntimeSessionEvent(
+    agentId: string,
+    runtimeToken: number | undefined,
+    eventType: string
+  ): boolean {
+    if (runtimeToken === undefined) {
+      return false;
+    }
+
+    if (this.isSuppressedRuntimeCallback(agentId, runtimeToken)) {
+      return true;
+    }
+
+    if (this.options.getCurrentRuntimeToken(agentId) === runtimeToken) {
+      return false;
+    }
+
+    if (eventType === "message_end" && this.consumeInvalidatedManualStopMessageEndAllowance(agentId, runtimeToken)) {
+      return false;
+    }
+
+    return true;
+  }
+
   private isIntentionalStopRuntimeCallbackSuppressed(agentId: string, runtimeToken: number): boolean {
     return this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId)?.has(runtimeToken) === true;
+  }
+
+  private consumeInvalidatedManualStopMessageEndAllowance(agentId: string, runtimeToken: number): boolean {
+    const allowedTokens = this.invalidatedManualStopMessageEndTokensByAgentId.get(agentId);
+    if (!allowedTokens?.has(runtimeToken)) {
+      return false;
+    }
+
+    this.clearInvalidatedManualStopMessageEndAllowance(agentId, runtimeToken);
+    return true;
+  }
+
+  clearInvalidatedManualStopMessageEndAllowance(agentId: string, runtimeToken?: number): void {
+    if (runtimeToken === undefined) {
+      this.invalidatedManualStopMessageEndTokensByAgentId.delete(agentId);
+      return;
+    }
+
+    const allowedTokens = this.invalidatedManualStopMessageEndTokensByAgentId.get(agentId);
+    if (!allowedTokens) {
+      return;
+    }
+
+    allowedTokens.delete(runtimeToken);
+    if (allowedTokens.size === 0) {
+      this.invalidatedManualStopMessageEndTokensByAgentId.delete(agentId);
+    }
   }
 
   private getSuppressedFallbackHandoff(

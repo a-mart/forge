@@ -129,6 +129,37 @@ describe("RuntimeCallbackGate", () => {
     expect(handleRuntimeAgentEnd).not.toHaveBeenCalled();
   });
 
+  it("admits exactly one invalidated manual-stop message_end callback", () => {
+    const gate = new RuntimeCallbackGate({ getCurrentRuntimeToken: () => undefined });
+
+    gate.allowInvalidatedManualStopMessageEnd("agent-1", 10);
+
+    expect(gate.shouldIgnoreRuntimeSessionEvent("agent-1", 10, "message_end")).toBe(false);
+    expect(gate.shouldIgnoreRuntimeSessionEvent("agent-1", 10, "message_end")).toBe(true);
+  });
+
+  it("rejects non-message_end callbacks for invalidated manual-stop allowances", () => {
+    const gate = new RuntimeCallbackGate({ getCurrentRuntimeToken: () => undefined });
+
+    gate.allowInvalidatedManualStopMessageEnd("agent-1", 10);
+
+    expect(gate.shouldIgnoreRuntimeSessionEvent("agent-1", 10, "message_delta")).toBe(true);
+    expect(gate.shouldIgnoreRuntimeSessionEvent("agent-1", 10, "message_end")).toBe(false);
+  });
+
+  it("keeps invalidated manual-stop allowance through intentional-stop cleanup until explicit expiry cleanup", () => {
+    const gate = new RuntimeCallbackGate({ getCurrentRuntimeToken: () => undefined });
+
+    gate.allowInvalidatedManualStopMessageEnd("agent-1", 10);
+    gate.allowInvalidatedManualStopMessageEnd("agent-1", 11);
+    gate.clearIntentionalStopRuntimeCallbackSuppression("agent-1", 10);
+
+    expect(gate.shouldIgnoreRuntimeSessionEvent("agent-1", 10, "message_end")).toBe(false);
+
+    gate.clearInvalidatedManualStopMessageEndAllowance("agent-1", 11);
+    expect(gate.shouldIgnoreRuntimeSessionEvent("agent-1", 11, "message_end")).toBe(true);
+  });
+
   it("works without a fallback handoff", () => {
     const gate = new RuntimeCallbackGate({ getCurrentRuntimeToken: () => 1 });
 
