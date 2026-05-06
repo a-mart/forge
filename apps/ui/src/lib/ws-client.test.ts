@@ -90,6 +90,7 @@ describe('ManagerWsClient', () => {
       'resume_session',
       'delete_session',
       'clear_session',
+      'get_project_agent_config',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1693,6 +1694,85 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(clearPromise).rejects.toThrow('clear_session_failed: Clear rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends get_project_agent_config commands and resolves project_agent_config events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const configPromise = client.getProjectAgentConfig(' agent-a ')
+    const configPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(configPayload).toMatchObject({
+      type: 'get_project_agent_config',
+      agentId: 'agent-a',
+    })
+    expect(configPayload.requestId).toMatch(/^get_project_agent_config-/)
+
+    const result = {
+      agentId: 'agent-a',
+      config: {
+        version: 1,
+        agentId: 'agent-a',
+        handle: 'release-notes',
+        whenToUse: 'Coordinate release notes.',
+        creatorSessionId: 'creator-a',
+        capabilities: ['create_session'],
+        promotedAt: '2026-05-05T00:00:00.000Z',
+        updatedAt: '2026-05-05T00:00:00.000Z',
+      },
+      systemPrompt: 'You are the release notes project agent.',
+      references: ['README.md'],
+    }
+
+    emitServerEvent(socket, {
+      type: 'project_agent_config',
+      requestId: configPayload.requestId,
+      ...result,
+    })
+
+    await expect(configPromise).resolves.toEqual(result)
+
+    client.destroy()
+  })
+
+  it('rejects get_project_agent_config via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const configPromise = client.getProjectAgentConfig('agent-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'PROJECT_AGENT_CONFIG_FAILED',
+      message: 'Project agent config rejected for testing.',
+    })
+
+    await expect(configPromise).rejects.toThrow('PROJECT_AGENT_CONFIG_FAILED: Project agent config rejected for testing.')
 
     client.destroy()
   })

@@ -300,6 +300,7 @@ describe('protocol root barrel contract', () => {
       'resume_session',
       'delete_session',
       'clear_session',
+      'get_project_agent_config',
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
@@ -393,6 +394,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_delete',
       successEvents: ['session_deleted'],
       errorCodeFragments: ['delete_session'],
+    })
+    expect(getWsRequestContract('get_project_agent_config')).toMatchObject({
+      commandType: 'get_project_agent_config',
+      resultFamily: 'project_agent_config',
+      successEvents: ['project_agent_config'],
+      errorCodeFragments: ['project_agent_config'],
     })
   })
 

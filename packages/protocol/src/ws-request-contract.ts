@@ -36,6 +36,7 @@ type ContractCommandType = Extract<
   | 'resume_session'
   | 'delete_session'
   | 'clear_session'
+  | 'get_project_agent_config'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
@@ -56,6 +57,7 @@ type ContractSuccessEventType = Extract<
   | 'session_resumed'
   | 'session_deleted'
   | 'session_cleared'
+  | 'project_agent_config'
 >
 
 export const WS_REQUEST_CONTRACTS = [
@@ -177,6 +179,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_cleared'],
     errorCodeFragments: ['clear_session'],
+  },
+  {
+    commandType: 'get_project_agent_config',
+    resultFamily: 'project_agent_config',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['project_agent_config'],
+    errorCodeFragments: ['project_agent_config'],
   },
 ] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 
