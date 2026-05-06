@@ -1066,8 +1066,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly profiles = new Map<string, ManagerProfile>();
   private readonly runtimeController: SwarmRuntimeController;
   private readonly runtimes: Map<string, SwarmAgentRuntime>;
-  private readonly runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
-  private readonly runtimeTokensByAgentId: Map<string, number>;
+  readonly runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
+  readonly runtimeTokensByAgentId: Map<string, number>;
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
   private readonly pendingManagerRuntimeRecycleReasonsByAgentId = new Map<string, ManagerRuntimeRecycleReason>();
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
@@ -1158,8 +1158,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.specialistFallbackManager = new SwarmSpecialistFallbackManager({
       descriptors: this.descriptors,
       runtimes: this.runtimes,
-      runtimeCreationPromisesByAgentId: this.runtimeCreationPromisesByAgentId,
-      runtimeTokensByAgentId: this.runtimeTokensByAgentId,
+      getRuntime: (agentId) => this.runtimeController.getRuntime(agentId),
+      isRuntime: (agentId, runtime) => this.runtimeController.isRuntime(agentId, runtime),
+      getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
+      clearRuntimeToken: (agentId, runtimeToken) => this.runtimeController.clearRuntimeToken(agentId, runtimeToken),
+      restoreRuntimeTokenForFallbackRollback: (agentId, runtimeToken) =>
+        this.runtimeController.restoreRuntimeTokenForFallbackRollback(agentId, runtimeToken),
+      getRuntimeCreationPromise: (agentId) => this.runtimeController.getRuntimeCreationPromise(agentId),
+      setRuntimeCreationPromise: (agentId, promise) =>
+        this.runtimeController.setRuntimeCreationPromise(agentId, promise),
+      clearRuntimeCreationPromiseIfCurrent: (agentId, promise) =>
+        this.runtimeController.clearRuntimeCreationPromiseIfCurrent(agentId, promise),
       workerHealthService: this.workerHealthService,
       now: this.now,
       resolveSpecialistRosterForProfile: (profileId, targetSpace) => this.resolveSpecialistRosterForProfile(profileId, targetSpace),
@@ -1174,6 +1183,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.runtimeController.attachRuntime(agentId, runtime);
       },
       detachRuntime: (agentId, runtimeToken) => this.runtimeController.detachRuntime(agentId, runtimeToken),
+      detachRuntimeIfMatches: (agentId, runtime, runtimeToken) =>
+        this.runtimeController.detachRuntimeIfMatches(agentId, runtime, runtimeToken),
       updateSessionMetaForWorkerDescriptor: (descriptor, resolvedSystemPrompt) =>
         this.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt ?? undefined),
       refreshSessionMetaStatsBySessionId: (sessionAgentId) => this.refreshSessionMetaStatsBySessionId(sessionAgentId),
@@ -1392,7 +1403,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       descriptors: this.descriptors,
       profiles: this.profiles,
       runtimes: this.runtimes,
-      runtimeCreationPromisesByAgentId: this.runtimeCreationPromisesByAgentId,
+      getRuntime: (agentId) => this.runtimeController.getRuntime(agentId),
+      getRuntimeCreationPromise: (agentId) => this.runtimeController.getRuntimeCreationPromise(agentId),
+      setRuntimeCreationPromise: (agentId, promise) =>
+        this.runtimeController.setRuntimeCreationPromise(agentId, promise),
+      clearRuntimeCreationPromiseIfCurrent: (agentId, promise) =>
+        this.runtimeController.clearRuntimeCreationPromiseIfCurrent(agentId, promise),
       pendingManagerRuntimeRecycleAgentIds: this.pendingManagerRuntimeRecycleAgentIds,
       pendingManagerRuntimeRecycleReasonsByAgentId: this.pendingManagerRuntimeRecycleReasonsByAgentId,
       modelCapacityBlocks: this.modelCapacityBlocks,
@@ -1435,7 +1451,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options),
       allocateRuntimeToken: (agentId) => this.allocateRuntimeToken(agentId),
       clearRuntimeToken: (agentId, runtimeToken) => this.clearRuntimeToken(agentId, runtimeToken),
-      getRuntimeToken: (agentId) => this.runtimeTokensByAgentId.get(agentId),
+      getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
       ensureSessionFileParentDirectory: (sessionFile) => this.ensureSessionFileParentDirectory(sessionFile),
       updateSessionMetaForWorkerDescriptor: (descriptor, resolvedSystemPrompt) =>
         this.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt),

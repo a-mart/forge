@@ -69,8 +69,16 @@ export interface SpecialistFallbackHandoffController {
 export interface SwarmSpecialistFallbackManagerOptions {
   descriptors: Map<string, AgentDescriptor>;
   runtimes: Map<string, SwarmAgentRuntime>;
-  runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
-  runtimeTokensByAgentId: Map<string, number>;
+  runtimeCreationPromisesByAgentId?: Map<string, Promise<SwarmAgentRuntime>>;
+  runtimeTokensByAgentId?: Map<string, number>;
+  getRuntime(agentId: string): SwarmAgentRuntime | undefined;
+  isRuntime(agentId: string, runtime: SwarmAgentRuntime): boolean;
+  getRuntimeToken(agentId: string): number | undefined;
+  clearRuntimeToken(agentId: string, runtimeToken?: number): void;
+  restoreRuntimeTokenForFallbackRollback(agentId: string, runtimeToken: number): void;
+  getRuntimeCreationPromise(agentId: string): Promise<SwarmAgentRuntime> | undefined;
+  setRuntimeCreationPromise(agentId: string, promise: Promise<SwarmAgentRuntime>): void;
+  clearRuntimeCreationPromiseIfCurrent(agentId: string, promise: Promise<SwarmAgentRuntime>): boolean;
   workerHealthService: SwarmWorkerHealthService;
   now: () => string;
   resolveSpecialistRosterForProfile(
@@ -92,6 +100,7 @@ export interface SwarmSpecialistFallbackManagerOptions {
   ): Promise<SwarmAgentRuntime>;
   attachRuntime(agentId: string, runtime: SwarmAgentRuntime): void;
   detachRuntime(agentId: string, runtimeToken?: number): boolean;
+  detachRuntimeIfMatches(agentId: string, expectedRuntime: SwarmAgentRuntime, runtimeToken?: number): boolean;
   updateSessionMetaForWorkerDescriptor(
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
@@ -156,8 +165,8 @@ export class SwarmSpecialistFallbackManager {
       return false;
     }
 
-    const currentRuntime = this.options.runtimes.get(input.agentId);
-    const suppressedRuntimeToken = input.runtimeToken ?? this.options.runtimeTokensByAgentId.get(input.agentId);
+    const currentRuntime = this.getRuntime(input.agentId);
+    const suppressedRuntimeToken = input.runtimeToken ?? this.getRuntimeToken(input.agentId);
     if (!currentRuntime) {
       return false;
     }
@@ -195,7 +204,7 @@ export class SwarmSpecialistFallbackManager {
       fallbackRuntimeDeferred.reject(reason);
     };
 
-    this.options.runtimeCreationPromisesByAgentId.set(input.agentId, fallbackRuntimeDeferred.promise);
+    this.setRuntimeCreationPromise(input.agentId, fallbackRuntimeDeferred.promise);
 
     if (suppressedRuntimeToken !== undefined) {
       this.beginSpecialistFallbackHandoff(input.agentId, suppressedRuntimeToken);
@@ -249,7 +258,7 @@ export class SwarmSpecialistFallbackManager {
       const baseSystemPrompt = await this.options.resolveSystemPromptForDescriptor(fallbackDescriptor);
       runtimeSystemPrompt = this.options.injectWorkerIdentityContext(fallbackDescriptor, baseSystemPrompt);
       replacementRuntime = await this.options.createRuntimeForDescriptor(fallbackDescriptor, runtimeSystemPrompt);
-      replacementRuntimeToken = this.options.runtimeTokensByAgentId.get(input.agentId);
+      replacementRuntimeToken = this.getRuntimeToken(input.agentId);
 
       if (!this.isSpecialistFallbackHandoffStillValid(input.agentId, currentRuntime)) {
         await this.discardSpecialistFallbackReplacementRuntime(input.agentId, replacementRuntime, replacementRuntimeToken);
@@ -391,10 +400,44 @@ export class SwarmSpecialistFallbackManager {
         rejectWaiters(new Error(`Specialist fallback handoff did not settle for ${input.agentId}`));
       }
 
-      if (this.options.runtimeCreationPromisesByAgentId.get(input.agentId) === fallbackRuntimeDeferred.promise) {
-        this.options.runtimeCreationPromisesByAgentId.delete(input.agentId);
-      }
+      this.clearRuntimeCreationPromiseIfCurrent(input.agentId, fallbackRuntimeDeferred.promise);
     }
+  }
+
+  private getRuntime(agentId: string): SwarmAgentRuntime | undefined {
+    return this.options.getRuntime(agentId);
+  }
+
+  private isRuntime(agentId: string, runtime: SwarmAgentRuntime): boolean {
+    return this.options.isRuntime(agentId, runtime);
+  }
+
+  private getRuntimeToken(agentId: string): number | undefined {
+    return this.options.getRuntimeToken(agentId);
+  }
+
+  private clearRuntimeToken(agentId: string, runtimeToken?: number): void {
+    this.options.clearRuntimeToken(agentId, runtimeToken);
+  }
+
+  private restoreRuntimeTokenForFallbackRollback(agentId: string, runtimeToken: number): void {
+    this.options.restoreRuntimeTokenForFallbackRollback(agentId, runtimeToken);
+  }
+
+  private setRuntimeCreationPromise(agentId: string, promise: Promise<SwarmAgentRuntime>): void {
+    this.options.setRuntimeCreationPromise(agentId, promise);
+  }
+
+  private clearRuntimeCreationPromiseIfCurrent(agentId: string, promise: Promise<SwarmAgentRuntime>): boolean {
+    return this.options.clearRuntimeCreationPromiseIfCurrent(agentId, promise);
+  }
+
+  private detachRuntimeIfMatches(
+    agentId: string,
+    expectedRuntime: SwarmAgentRuntime,
+    runtimeToken?: number
+  ): boolean {
+    return this.options.detachRuntimeIfMatches(agentId, expectedRuntime, runtimeToken);
   }
 
   private async doResolveSpecialistFallbackModelForDescriptor(
@@ -489,7 +532,7 @@ export class SwarmSpecialistFallbackManager {
       return false;
     }
 
-    return this.options.runtimes.get(agentId) === expectedRuntime;
+    return this.isRuntime(agentId, expectedRuntime);
   }
 
   private async discardSpecialistFallbackReplacementRuntime(
@@ -512,10 +555,11 @@ export class SwarmSpecialistFallbackManager {
       }
     }
 
-    if (replacementRuntimeToken !== undefined) {
-      this.options.detachRuntime(agentId, replacementRuntimeToken);
-    } else if (replacementRuntime && this.options.runtimes.get(agentId) === replacementRuntime) {
-      this.options.runtimes.delete(agentId);
+    if (replacementRuntime) {
+      const detached = this.detachRuntimeIfMatches(agentId, replacementRuntime, replacementRuntimeToken);
+      if (!detached && replacementRuntimeToken !== undefined && this.getRuntimeToken(agentId) === replacementRuntimeToken) {
+        this.clearRuntimeToken(agentId, replacementRuntimeToken);
+      }
     }
   }
 
@@ -552,7 +596,7 @@ export class SwarmSpecialistFallbackManager {
       return "interrupted";
     }
 
-    if (replacementRuntime && this.options.runtimes.get(agentId) !== replacementRuntime) {
+    if (replacementRuntime && !this.isRuntime(agentId, replacementRuntime) && !this.isRuntime(agentId, currentRuntime)) {
       return "interrupted";
     }
 
@@ -671,7 +715,7 @@ export class SwarmSpecialistFallbackManager {
 
     this.options.attachRuntime(agentId, currentRuntime);
     if (suppressedRuntimeToken !== undefined) {
-      this.options.runtimeTokensByAgentId.set(agentId, suppressedRuntimeToken);
+      this.restoreRuntimeTokenForFallbackRollback(agentId, suppressedRuntimeToken);
     }
 
     if (handoffState?.receivedAgentEnd) {

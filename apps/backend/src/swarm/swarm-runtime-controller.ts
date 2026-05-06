@@ -278,6 +278,18 @@ export class SwarmRuntimeController {
     return this.runtimeBinding.listRuntimeExtensionSnapshots();
   }
 
+  getRuntime(agentId: string): SwarmAgentRuntime | undefined {
+    return this.runtimeBinding.getRuntime(agentId);
+  }
+
+  hasRuntime(agentId: string): boolean {
+    return this.runtimeBinding.hasRuntime(agentId);
+  }
+
+  isRuntime(agentId: string, runtime: SwarmAgentRuntime): boolean {
+    return this.runtimeBinding.isRuntime(agentId, runtime);
+  }
+
   attachRuntime(agentId: string, runtime: SwarmAgentRuntime): void {
     this.runtimeBinding.attachRuntime(agentId, runtime);
   }
@@ -343,8 +355,32 @@ export class SwarmRuntimeController {
     this.runtimeBinding.clearRuntimeToken(agentId, runtimeToken);
   }
 
+  restoreRuntimeTokenForFallbackRollback(agentId: string, runtimeToken: number): void {
+    this.runtimeBinding.restoreRuntimeTokenForFallbackRollback(agentId, runtimeToken);
+  }
+
   detachRuntime(agentId: string, runtimeToken?: number): boolean {
     return this.runtimeBinding.detachRuntime(agentId, runtimeToken);
+  }
+
+  detachRuntimeIfMatches(
+    agentId: string,
+    expectedRuntime: SwarmAgentRuntime,
+    runtimeToken?: number
+  ): boolean {
+    return this.runtimeBinding.detachRuntimeIfMatches(agentId, expectedRuntime, runtimeToken);
+  }
+
+  getRuntimeCreationPromise(agentId: string): Promise<SwarmAgentRuntime> | undefined {
+    return this.runtimeBinding.getRuntimeCreationPromise(agentId);
+  }
+
+  setRuntimeCreationPromise(agentId: string, promise: Promise<SwarmAgentRuntime>): void {
+    this.runtimeBinding.setRuntimeCreationPromise(agentId, promise);
+  }
+
+  clearRuntimeCreationPromiseIfCurrent(agentId: string, promise: Promise<SwarmAgentRuntime>): boolean {
+    return this.runtimeBinding.clearRuntimeCreationPromiseIfCurrent(agentId, promise);
   }
 
   async runRuntimeShutdown(

@@ -93,7 +93,11 @@ export interface SwarmAgentLifecycleServiceOptions {
   descriptors: Map<string, AgentDescriptor>;
   profiles: Map<string, ManagerProfile>;
   runtimes: Map<string, SwarmAgentRuntime>;
-  runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
+  runtimeCreationPromisesByAgentId?: Map<string, Promise<SwarmAgentRuntime>>;
+  getRuntime: (agentId: string) => SwarmAgentRuntime | undefined;
+  getRuntimeCreationPromise: (agentId: string) => Promise<SwarmAgentRuntime> | undefined;
+  setRuntimeCreationPromise: (agentId: string, promise: Promise<SwarmAgentRuntime>) => void;
+  clearRuntimeCreationPromiseIfCurrent: (agentId: string, promise: Promise<SwarmAgentRuntime>) => boolean;
   pendingManagerRuntimeRecycleAgentIds: Set<string>;
   pendingManagerRuntimeRecycleReasonsByAgentId: Map<string, ManagerRuntimeRecycleReason>;
   modelCapacityBlocks: Map<string, ModelCapacityBlockLike>;
@@ -219,6 +223,22 @@ export class SwarmAgentLifecycleService {
 
   private deleteProfile(profileId: string): void {
     this.options.descriptorMutations.deleteProfile(profileId);
+  }
+
+  private getRuntime(agentId: string): SwarmAgentRuntime | undefined {
+    return this.options.getRuntime(agentId);
+  }
+
+  private getRuntimeCreationPromise(agentId: string): Promise<SwarmAgentRuntime> | undefined {
+    return this.options.getRuntimeCreationPromise(agentId);
+  }
+
+  private setRuntimeCreationPromise(agentId: string, promise: Promise<SwarmAgentRuntime>): void {
+    this.options.setRuntimeCreationPromise(agentId, promise);
+  }
+
+  private clearRuntimeCreationPromiseIfCurrent(agentId: string, promise: Promise<SwarmAgentRuntime>): boolean {
+    return this.options.clearRuntimeCreationPromiseIfCurrent(agentId, promise);
   }
 
   private clearWorkerTeardownState(agentId: string): void {
@@ -973,25 +993,23 @@ export class SwarmAgentLifecycleService {
   }
 
   async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
-    const inFlightCreation = this.options.runtimeCreationPromisesByAgentId.get(descriptor.agentId);
+    const inFlightCreation = this.getRuntimeCreationPromise(descriptor.agentId);
     if (inFlightCreation) {
       return inFlightCreation;
     }
 
-    const existingRuntime = this.options.runtimes.get(descriptor.agentId);
+    const existingRuntime = this.getRuntime(descriptor.agentId);
     if (existingRuntime) {
       return existingRuntime;
     }
 
     const creationPromise = this.createAndAttachRuntimeForDescriptor(descriptor);
-    this.options.runtimeCreationPromisesByAgentId.set(descriptor.agentId, creationPromise);
+    this.setRuntimeCreationPromise(descriptor.agentId, creationPromise);
 
     try {
       return await creationPromise;
     } finally {
-      if (this.options.runtimeCreationPromisesByAgentId.get(descriptor.agentId) === creationPromise) {
-        this.options.runtimeCreationPromisesByAgentId.delete(descriptor.agentId);
-      }
+      this.clearRuntimeCreationPromiseIfCurrent(descriptor.agentId, creationPromise);
     }
   }
 

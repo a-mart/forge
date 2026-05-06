@@ -106,6 +106,88 @@ describe("RuntimeBinding", () => {
     expect(options.deactivateRuntimeBindings).toHaveBeenCalledWith(`forge-runtime-${currentToken}`);
   });
 
+  it("tracks creation promise lifecycle without clearing newer promise", () => {
+    const options = createBinding();
+    const binding = new RuntimeBinding(options);
+    const first = Promise.resolve(runtime("first"));
+    const second = Promise.resolve(runtime("second"));
+
+    binding.setRuntimeCreationPromise("agent-1", first);
+    expect(binding.getRuntimeCreationPromise("agent-1")).toBe(first);
+
+    binding.setRuntimeCreationPromise("agent-1", second);
+    expect(binding.clearRuntimeCreationPromiseIfCurrent("agent-1", first)).toBe(false);
+    expect(binding.getRuntimeCreationPromise("agent-1")).toBe(second);
+
+    expect(binding.clearRuntimeCreationPromiseIfCurrent("agent-1", second)).toBe(true);
+    expect(binding.getRuntimeCreationPromise("agent-1")).toBeUndefined();
+  });
+
+  it("restores runtime token for fallback rollback", () => {
+    const options = createBinding();
+    const binding = new RuntimeBinding(options);
+
+    binding.allocateRuntimeToken("agent-1");
+    binding.restoreRuntimeTokenForFallbackRollback("agent-1", 42);
+
+    expect(binding.getRuntimeToken("agent-1")).toBe(42);
+  });
+
+  it("detachRuntimeIfMatches preserves concurrent runtime and supports tokenless detach", () => {
+    const options = createBinding();
+    const binding = new RuntimeBinding(options);
+    const original = runtime("original");
+    const concurrent = runtime("concurrent");
+
+    binding.attachRuntime("agent-1", original);
+    const originalToken = binding.allocateRuntimeToken("agent-1");
+    binding.attachRuntime("agent-1", concurrent);
+    const concurrentToken = binding.allocateRuntimeToken("agent-1");
+
+    expect(binding.detachRuntimeIfMatches("agent-1", original, originalToken)).toBe(false);
+    expect(options.deactivateRuntimeBindings).toHaveBeenCalledWith(`forge-runtime-${originalToken}`);
+    expect(options.clearIntentionalStopRuntimeCallbackSuppression).toHaveBeenCalledWith("agent-1", originalToken);
+    expect(binding.runtimes.get("agent-1")).toBe(concurrent);
+    expect(binding.getRuntimeToken("agent-1")).toBe(concurrentToken);
+
+    expect(binding.detachRuntimeIfMatches("agent-1", concurrent)).toBe(true);
+    expect(binding.runtimes.has("agent-1")).toBe(false);
+    expect(binding.getRuntimeToken("agent-1")).toBe(concurrentToken);
+  });
+
+  it("detachRuntimeIfMatches preserves a mismatched current runtime/token instead of clearing it", () => {
+    const options = createBinding();
+    const binding = new RuntimeBinding(options);
+    const original = runtime("original");
+    const concurrent = runtime("concurrent");
+
+    binding.attachRuntime("agent-1", original);
+    binding.attachRuntime("agent-1", concurrent);
+    const concurrentToken = binding.allocateRuntimeToken("agent-1");
+    binding.recordRuntimeExtensionSnapshot("agent-1", snapshot({ agentId: "agent-1" }));
+
+    expect(binding.detachRuntimeIfMatches("agent-1", original, concurrentToken)).toBe(false);
+
+    expect(options.deactivateRuntimeBindings).not.toHaveBeenCalled();
+    expect(binding.runtimes.get("agent-1")).toBe(concurrent);
+    expect(binding.getRuntimeToken("agent-1")).toBe(concurrentToken);
+    expect(binding.runtimeExtensionSnapshotsByAgentId.has("agent-1")).toBe(true);
+  });
+
+  it("detachRuntimeIfMatches token-specific path clears only matching current runtime", () => {
+    const options = createBinding();
+    const binding = new RuntimeBinding(options);
+    const current = runtime("current");
+    binding.attachRuntime("agent-1", current);
+    const token = binding.allocateRuntimeToken("agent-1");
+
+    expect(binding.detachRuntimeIfMatches("agent-1", current, token)).toBe(true);
+
+    expect(binding.runtimes.has("agent-1")).toBe(false);
+    expect(binding.getRuntimeToken("agent-1")).toBeUndefined();
+    expect(options.deactivateRuntimeBindings).toHaveBeenCalledWith(`forge-runtime-${token}`);
+  });
+
   it("extension snapshots are defensively cloned and sorted like controller behavior", () => {
     const options = createBinding();
     const binding = new RuntimeBinding(options);

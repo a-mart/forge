@@ -36,6 +36,10 @@ export class RuntimeBinding {
     return this.runtimeTokensByAgentId.get(agentId);
   }
 
+  restoreRuntimeTokenForFallbackRollback(agentId: string, runtimeToken: number): void {
+    this.runtimeTokensByAgentId.set(agentId, runtimeToken);
+  }
+
   isCurrentRuntimeToken(agentId: string, runtimeToken: number): boolean {
     return this.runtimeTokensByAgentId.get(agentId) === runtimeToken;
   }
@@ -56,6 +60,18 @@ export class RuntimeBinding {
     this.runtimeExtensionSnapshotsByAgentId.delete(agentId);
   }
 
+  getRuntime(agentId: string): SwarmAgentRuntime | undefined {
+    return this.runtimes.get(agentId);
+  }
+
+  hasRuntime(agentId: string): boolean {
+    return this.runtimes.has(agentId);
+  }
+
+  isRuntime(agentId: string, runtime: SwarmAgentRuntime): boolean {
+    return this.runtimes.get(agentId) === runtime;
+  }
+
   attachRuntime(agentId: string, runtime: SwarmAgentRuntime): void {
     this.runtimes.set(agentId, runtime);
   }
@@ -68,6 +84,50 @@ export class RuntimeBinding {
 
     this.runtimes.delete(agentId);
     this.clearRuntimeToken(agentId, runtimeToken);
+    return true;
+  }
+
+  detachRuntimeIfMatches(
+    agentId: string,
+    expectedRuntime: SwarmAgentRuntime,
+    runtimeToken?: number
+  ): boolean {
+    if (!this.isRuntime(agentId, expectedRuntime)) {
+      if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+        this.clearRuntimeToken(agentId, runtimeToken);
+      }
+      return false;
+    }
+
+    if (runtimeToken === undefined) {
+      this.runtimes.delete(agentId);
+      return true;
+    }
+
+    if (!this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      this.clearRuntimeToken(agentId, runtimeToken);
+      return false;
+    }
+
+    this.runtimes.delete(agentId);
+    this.clearRuntimeToken(agentId, runtimeToken);
+    return true;
+  }
+
+  getRuntimeCreationPromise(agentId: string): Promise<SwarmAgentRuntime> | undefined {
+    return this.runtimeCreationPromisesByAgentId.get(agentId);
+  }
+
+  setRuntimeCreationPromise(agentId: string, promise: Promise<SwarmAgentRuntime>): void {
+    this.runtimeCreationPromisesByAgentId.set(agentId, promise);
+  }
+
+  clearRuntimeCreationPromiseIfCurrent(agentId: string, promise: Promise<SwarmAgentRuntime>): boolean {
+    if (this.runtimeCreationPromisesByAgentId.get(agentId) !== promise) {
+      return false;
+    }
+
+    this.runtimeCreationPromisesByAgentId.delete(agentId);
     return true;
   }
 

@@ -119,6 +119,51 @@ function buildWorkerDescriptor(config: SwarmConfig, overrides: Partial<AgentDesc
   };
 }
 
+function runtimeBindingOptionHelpers(
+  runtimes: Map<string, SwarmAgentRuntime>,
+  runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>,
+  runtimeTokensByAgentId: Map<string, number>
+) {
+  return {
+    getRuntime: (agentId: string) => runtimes.get(agentId),
+    isRuntime: (agentId: string, runtime: SwarmAgentRuntime) => runtimes.get(agentId) === runtime,
+    getRuntimeToken: (agentId: string) => runtimeTokensByAgentId.get(agentId),
+    clearRuntimeToken: (agentId: string, runtimeToken?: number) => {
+      if (runtimeToken !== undefined && runtimeTokensByAgentId.get(agentId) !== runtimeToken) {
+        return;
+      }
+      runtimeTokensByAgentId.delete(agentId);
+    },
+    restoreRuntimeTokenForFallbackRollback: (agentId: string, runtimeToken: number) => {
+      runtimeTokensByAgentId.set(agentId, runtimeToken);
+    },
+    getRuntimeCreationPromise: (agentId: string) => runtimeCreationPromisesByAgentId.get(agentId),
+    setRuntimeCreationPromise: (agentId: string, promise: Promise<SwarmAgentRuntime>) => {
+      runtimeCreationPromisesByAgentId.set(agentId, promise);
+    },
+    clearRuntimeCreationPromiseIfCurrent: (agentId: string, promise: Promise<SwarmAgentRuntime>) => {
+      if (runtimeCreationPromisesByAgentId.get(agentId) !== promise) {
+        return false;
+      }
+      runtimeCreationPromisesByAgentId.delete(agentId);
+      return true;
+    },
+    detachRuntimeIfMatches: (agentId: string, expectedRuntime: SwarmAgentRuntime, runtimeToken?: number) => {
+      if (runtimes.get(agentId) !== expectedRuntime) {
+        return false;
+      }
+      if (runtimeToken !== undefined && runtimeTokensByAgentId.get(agentId) !== runtimeToken) {
+        return false;
+      }
+      runtimes.delete(agentId);
+      if (runtimeToken !== undefined) {
+        runtimeTokensByAgentId.delete(agentId);
+      }
+      return true;
+    }
+  };
+}
+
 function attachRealFallbackHandoff(
   manager: SwarmSpecialistFallbackManager,
   runtimeTokensByAgentId: Map<string, number>
@@ -173,6 +218,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
@@ -225,6 +271,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
@@ -302,6 +349,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile,
@@ -355,6 +403,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [{ specialistId: "backend" }]),
@@ -411,6 +460,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
@@ -481,6 +531,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
@@ -558,6 +609,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: () => rosterGate,
@@ -662,6 +714,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
@@ -743,6 +796,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
@@ -778,6 +832,121 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(restoreSpy).toHaveBeenCalled();
     expect(descriptors.get(worker.agentId)?.model.provider).toBe("anthropic");
     expect(runtimes.get(worker.agentId)).toBe(current);
+  });
+
+  it("rolls back and clears the discarded replacement token when reroute persistence fails before attach", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sessionsDir, "w-pre-attach-reroute-fails.jsonl"), "", "utf8");
+
+    const descriptors = new Map<string, AgentDescriptor>();
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+
+    const worker = buildWorkerDescriptor(config, { agentId: "w-pre-attach-reroute-fails" });
+    descriptors.set(worker.agentId, worker);
+
+    const originalRuntimeToken = 23;
+    const replacementRuntimeToken = 24;
+    const current = new FakeRuntime(worker, "sys");
+    current.specialistFallbackReplayMessage = { text: "retry after persist failure" };
+    runtimes.set(worker.agentId, current);
+    runtimeTokensByAgentId.set(worker.agentId, originalRuntimeToken);
+
+    const restoreSpy = vi.spyOn(current, "restorePreparedSpecialistFallbackReplay");
+    const clearedTokens: Array<number | undefined> = [];
+    const restoredTokens: number[] = [];
+
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn()
+    });
+
+    const replacement = new FakeRuntime(
+      {
+        ...worker,
+        model: { provider: "openai-codex", modelId: "gpt-5.3-codex-spark", thinkingLevel: "medium" }
+      },
+      "sys2"
+    );
+    const attachRuntime = vi.fn((agentId: string, runtime: SwarmAgentRuntime) => {
+      runtimes.set(agentId, runtime);
+    });
+    const bindingHelpers = runtimeBindingOptionHelpers(
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId
+    );
+
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      ...bindingHelpers,
+      clearRuntimeToken: (agentId, runtimeToken) => {
+        clearedTokens.push(runtimeToken);
+        bindingHelpers.clearRuntimeToken(agentId, runtimeToken);
+      },
+      restoreRuntimeTokenForFallbackRollback: (agentId, runtimeToken) => {
+        restoredTokens.push(runtimeToken);
+        bindingHelpers.restoreRuntimeTokenForFallbackRollback(agentId, runtimeToken);
+      },
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        { specialistId: "backend", fallbackModelId: "gpt-5.3-codex-spark" }
+      ]),
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor: vi.fn(async (descriptor: AgentDescriptor) => {
+        runtimeTokensByAgentId.set(descriptor.agentId, replacementRuntimeToken);
+        return replacement;
+      }),
+      attachRuntime,
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      patchDescriptor: vi.fn(async () => {
+        throw new Error("persist reroute failed");
+      }),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn()
+    });
+
+    const recovered = await manager.maybeRecoverWorkerWithSpecialistFallback({
+      agentId: worker.agentId,
+      errorMessage: "rate limit exceeded",
+      sourcePhase: "prompt_start",
+      runtimeToken: originalRuntimeToken,
+      handleRuntimeStatus: vi.fn(),
+      handleRuntimeAgentEnd: vi.fn()
+    });
+
+    expect(recovered).toBe(false);
+    expect(restoreSpy).toHaveBeenCalled();
+    expect(current.terminateCalls).toHaveLength(0);
+    expect(replacement.terminateCalls).toHaveLength(1);
+    expect(attachRuntime).toHaveBeenCalledWith(worker.agentId, current);
+    expect(runtimes.get(worker.agentId)).toBe(current);
+    expect(clearedTokens).toContain(replacementRuntimeToken);
+    expect(restoredTokens).toContain(originalRuntimeToken);
+    expect(runtimeTokensByAgentId.get(worker.agentId)).toBe(originalRuntimeToken);
+    expect(runtimeCreationPromisesByAgentId.has(worker.agentId)).toBe(false);
+    expect(descriptors.get(worker.agentId)?.model).toEqual(worker.model);
   });
 
   it("preserves unrelated descriptor updates and newer updatedAt when rollback restores original fallback state", async () => {
@@ -856,6 +1025,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => rerouteUpdatedAt,
       resolveSpecialistRosterForProfile: vi.fn(async () => [
@@ -950,6 +1120,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: () => rosterGate,
@@ -1059,6 +1230,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [
@@ -1158,6 +1330,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       runtimes,
       runtimeCreationPromisesByAgentId,
       runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
       workerHealthService: health,
       now: () => new Date().toISOString(),
       resolveSpecialistRosterForProfile: vi.fn(async () => [

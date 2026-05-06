@@ -40,6 +40,7 @@ function baseLifecycleOptions(
   const descriptors = overrides.descriptors ?? new Map<string, AgentDescriptor>();
   const profiles = overrides.profiles ?? new Map<string, ManagerProfile>();
   const runtimes = overrides.runtimes ?? new Map<string, SwarmAgentRuntime>();
+  const runtimeCreationPromisesByAgentId = overrides.runtimeCreationPromisesByAgentId ?? new Map<string, Promise<SwarmAgentRuntime>>();
   const modelCapacityBlocks =
     overrides.modelCapacityBlocks ?? new Map<string, { provider: string; modelId: string; blockedUntilMs: number }>();
   const pendingRecycle = overrides.pendingManagerRuntimeRecycleAgentIds ?? new Set<string>();
@@ -59,7 +60,20 @@ function baseLifecycleOptions(
     descriptors,
     profiles,
     runtimes,
-    runtimeCreationPromisesByAgentId: overrides.runtimeCreationPromisesByAgentId ?? new Map(),
+    runtimeCreationPromisesByAgentId,
+    getRuntime: overrides.getRuntime ?? ((agentId) => runtimes.get(agentId)),
+    getRuntimeCreationPromise:
+      overrides.getRuntimeCreationPromise ?? ((agentId) => runtimeCreationPromisesByAgentId.get(agentId)),
+    setRuntimeCreationPromise:
+      overrides.setRuntimeCreationPromise ?? ((agentId, promise) => runtimeCreationPromisesByAgentId.set(agentId, promise)),
+    clearRuntimeCreationPromiseIfCurrent:
+      overrides.clearRuntimeCreationPromiseIfCurrent ?? ((agentId, promise) => {
+        if (runtimeCreationPromisesByAgentId.get(agentId) !== promise) {
+          return false;
+        }
+        runtimeCreationPromisesByAgentId.delete(agentId);
+        return true;
+      }),
     pendingManagerRuntimeRecycleAgentIds: pendingRecycle,
     pendingManagerRuntimeRecycleReasonsByAgentId: pendingReasons,
     modelCapacityBlocks,
@@ -309,6 +323,47 @@ describe("SwarmAgentLifecycleService", () => {
     expect(position("attach")).toBeLessThan(position("status"));
     expect(position("attach")).toBeLessThan(position("prompt-meta"));
     expect(position("attach")).toBeLessThan(position("stats"));
+  });
+
+  it("getOrCreateRuntimeForDescriptor dedupes in-flight creation and preserves newer creation promise on cleanup", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w-dedupe", status: "idle" });
+    const descriptors = new Map([[worker.agentId, worker]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtime = makeRuntimeStub({ descriptor: worker });
+    let releaseCreation!: () => void;
+    const creationGate = new Promise<void>((resolve) => {
+      releaseCreation = resolve;
+    });
+    const createRuntimeForDescriptor = vi.fn(async () => {
+      await creationGate;
+      return runtime;
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        runtimeCreationPromisesByAgentId,
+        allocateRuntimeToken: vi.fn(() => 11),
+        createRuntimeForDescriptor,
+        attachRuntime: (agentId, runtimeToAttach) => {
+          runtimes.set(agentId, runtimeToAttach);
+        }
+      })
+    );
+
+    const firstCreation = svc.getOrCreateRuntimeForDescriptor(worker);
+    const secondCreation = svc.getOrCreateRuntimeForDescriptor(worker);
+    expect(runtimeCreationPromisesByAgentId.get(worker.agentId)).toBeDefined();
+
+    const newerCreation = Promise.resolve(makeRuntimeStub({ descriptor: worker }));
+    runtimeCreationPromisesByAgentId.set(worker.agentId, newerCreation);
+    releaseCreation();
+
+    await expect(firstCreation).resolves.toBe(runtime);
+    await expect(secondCreation).resolves.toBe(runtime);
+    expect(createRuntimeForDescriptor).toHaveBeenCalledTimes(1);
+    expect(runtimeCreationPromisesByAgentId.get(worker.agentId)).toBe(newerCreation);
   });
 
   it("terminates and clears a replacement runtime when the descriptor disappears before attach", async () => {
