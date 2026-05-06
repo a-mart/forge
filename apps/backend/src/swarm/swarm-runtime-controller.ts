@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import { createForgeBindingToken } from "./forge-extension-types.js";
@@ -19,6 +18,7 @@ import {
 import { RuntimeBinding } from "./runtime/runtime-binding.js";
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
+import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type {
   AgentContextUsage,
@@ -34,8 +34,6 @@ import {
   formatToolExecutionPayload,
   isVersionedWriteToolName,
   previewForLog,
-  readPositiveIntegerDetail,
-  readStringDetail,
   safeJson,
   trimToMaxChars,
   trimToMaxCharsFromEnd,
@@ -198,6 +196,7 @@ export class SwarmRuntimeController {
   private readonly runtimeCallbackGate: RuntimeCallbackGate;
   private readonly runtimeFactory: RuntimeFactory;
   private runtimeStatusProjector: RuntimeStatusProjector | null = null;
+  private runtimeErrorProjector: RuntimeErrorProjector | null = null;
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
     this.runtimeBinding = new RuntimeBinding({
@@ -472,6 +471,30 @@ export class SwarmRuntimeController {
     return this.runtimeStatusProjector;
   }
 
+  private getRuntimeErrorProjector(): RuntimeErrorProjector {
+    if (!this.runtimeErrorProjector) {
+      this.runtimeErrorProjector = new RuntimeErrorProjector({
+        descriptors: this.host.descriptors,
+        getRuntimeToken: (agentId) => this.runtimeBinding.getRuntimeToken(agentId),
+        now: () => this.now(),
+        maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
+          this.host.maybeRecordModelCapacityBlock(agentId, descriptor, error),
+        dispatchRuntimeError: (runtimeToken, error) =>
+          this.host.forgeExtensionHost.dispatchRuntimeError(createForgeBindingToken(runtimeToken), error),
+        maybeRecoverWorkerWithSpecialistFallback: (agentId, errorMessage, sourcePhase, runtimeToken) =>
+          this.maybeRecoverWorkerWithSpecialistFallback(agentId, errorMessage, sourcePhase, runtimeToken),
+        incrementSessionCompactionCount: (profileId, sessionId, failureLogKey) =>
+          this.host.incrementSessionCompactionCount(profileId, sessionId, failureLogKey),
+        patchDescriptorFromRuntimeStatus: (agentId, patch) =>
+          this.host.patchDescriptorFromRuntimeStatus(agentId, patch),
+        emitConversationMessage: (event) => this.host.emitConversationMessage(event),
+        logDebug: (message, details) => this.logDebug(message, details)
+      });
+    }
+
+    return this.runtimeErrorProjector;
+  }
+
   async handleRuntimeStatus(
     runtimeToken: number,
     agentId: string,
@@ -655,107 +678,8 @@ export class SwarmRuntimeController {
     if (this.shouldIgnoreRuntimeCallback(agentId, runtimeToken)) {
       return;
     }
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor) {
-      return;
-    }
 
-    const message = error.message.trim().length > 0 ? error.message.trim() : "Unknown runtime error";
-    this.host.maybeRecordModelCapacityBlock(agentId, descriptor, {
-      ...error,
-      message
-    });
-
-    const forgeBindingRuntimeToken = runtimeToken ?? this.runtimeTokensByAgentId.get(agentId);
-    if (forgeBindingRuntimeToken !== undefined) {
-      await this.host.forgeExtensionHost.dispatchRuntimeError(createForgeBindingToken(forgeBindingRuntimeToken), {
-        ...error,
-        message
-      });
-    }
-
-    if (error.phase === "prompt_dispatch" || error.phase === "prompt_start") {
-      const recoveredWithFallback = await this.maybeRecoverWorkerWithSpecialistFallback(
-        agentId,
-        message,
-        error.phase,
-        runtimeToken
-      );
-      if (recoveredWithFallback) {
-        return;
-      }
-    }
-
-    const attempt = readPositiveIntegerDetail(error.details, "attempt");
-    const maxAttempts = readPositiveIntegerDetail(error.details, "maxAttempts");
-    const droppedPendingCount = readPositiveIntegerDetail(error.details, "droppedPendingCount");
-    const recoveryStage = readStringDetail(error.details, "recoveryStage");
-
-    this.logDebug("runtime:error", {
-      agentId,
-      runtime:
-        descriptor.model.provider.includes("cursor-acp")
-          ? "cursor-acp"
-          : descriptor.model.provider.includes("claude-sdk")
-            ? "claude-sdk"
-            : "pi",
-      phase: error.phase,
-      message,
-      stack: error.stack,
-      details: error.details
-    });
-
-    const retryLabel =
-      attempt && maxAttempts && maxAttempts > 1 ? ` (attempt ${attempt}/${maxAttempts})` : "";
-
-    const extensionPath = readStringDetail(error.details, "extensionPath");
-    const extensionEvent = readStringDetail(error.details, "event");
-    const extensionBaseName = extensionPath ? basename(extensionPath) : undefined;
-    const userFacingMessage = readStringDetail(error.details, "userFacingMessage");
-
-    if (error.phase === "compaction" && recoveryStage === "auto_compaction_succeeded" && descriptor.profileId) {
-      const autoCount = await this.host.incrementSessionCompactionCount(
-        descriptor.profileId,
-        agentId,
-        "runtime:compact:count-increment-failed"
-      );
-      if (autoCount !== undefined) {
-        await this.host.patchDescriptorFromRuntimeStatus(agentId, { compactionCount: autoCount });
-      }
-    }
-
-    const text =
-      userFacingMessage
-      ?? (
-        error.phase === "compaction"
-          ? recoveryStage === "auto_compaction_succeeded"
-            ? `📋 ${message}.`
-            : recoveryStage === "recovery_failed"
-              ? `🚨 Context recovery failed: ${message}. Start a new session or manually trim history/compact before continuing.`
-              : `⚠️ Compaction error${retryLabel}: ${message}. Attempting fallback recovery.`
-          : error.phase === "context_guard"
-            ? recoveryStage === "guard_started"
-              ? `📋 ${message}.`
-              : `⚠️ Context guard error${retryLabel}: ${message}.`
-            : error.phase === "extension"
-              ? extensionBaseName && extensionEvent
-                ? `⚠️ Extension error (${extensionBaseName} · ${extensionEvent}): ${message}`
-                : extensionBaseName
-                  ? `⚠️ Extension error (${extensionBaseName}): ${message}`
-                  : `⚠️ Extension error: ${message}`
-              : droppedPendingCount && droppedPendingCount > 0
-                ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
-                : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`
-      );
-
-    this.host.emitConversationMessage({
-      type: "conversation_message",
-      agentId,
-      role: "system",
-      text,
-      timestamp: this.now(),
-      source: "system"
-    });
+    await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
   }
 
   async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
