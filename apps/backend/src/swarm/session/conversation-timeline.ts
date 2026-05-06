@@ -50,18 +50,15 @@ export interface CopySessionHistoryForForkOptions {
 
 export class ConversationTimeline {
   private readonly lastSessionEntryIdBySessionFile = new Map<string, string>();
-  private readonly persistedEntryCountBySessionFile = new Map<string, number>();
 
   constructor(private readonly options: ConversationTimelineOptions) {}
 
   clear(): void {
     this.lastSessionEntryIdBySessionFile.clear();
-    this.persistedEntryCountBySessionFile.clear();
   }
 
   resetSession(sessionFile: string): void {
     this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-    this.persistedEntryCountBySessionFile.delete(sessionFile);
   }
 
   appendConversationEntry(
@@ -185,17 +182,6 @@ export class ConversationTimeline {
     this.lastSessionEntryIdBySessionFile.set(sessionFile, entryId);
   }
 
-  getPersistedEntryCount(sessionFile: string): number | undefined {
-    return this.persistedEntryCountBySessionFile.get(sessionFile);
-  }
-
-  trackPersistedEntryCount(sessionFile: string, count: number): void {
-    this.persistedEntryCountBySessionFile.set(sessionFile, Math.max(0, Math.trunc(count)));
-  }
-
-  incrementPersistedEntryCount(sessionFile: string): void {
-    this.trackPersistedEntryCount(sessionFile, (this.persistedEntryCountBySessionFile.get(sessionFile) ?? 0) + 1);
-  }
 }
 
 export async function copySessionHistoryForFork(options: CopySessionHistoryForForkOptions): Promise<void> {

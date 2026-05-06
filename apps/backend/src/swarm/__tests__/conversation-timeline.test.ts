@@ -157,23 +157,6 @@ describe("ConversationTimeline", () => {
     expect(JSON.parse(lines[1] ?? "{}")).toMatchObject({ parentId: null, id: result.entryId });
   });
 
-  it("tracks persisted entry counts independently from leaf ids", async () => {
-    const root = await createTempDir("conversation-timeline-");
-    const sessionFile = join(root, "manager.jsonl");
-    const timeline = makeTimeline();
-
-    timeline.trackPersistedEntryCount(sessionFile, 1.9);
-    timeline.incrementPersistedEntryCount(sessionFile);
-    timeline.trackLastSessionEntryId(sessionFile, "leaf-1");
-
-    expect(timeline.getPersistedEntryCount(sessionFile)).toBe(2);
-    expect(timeline.getLastSessionEntryId(sessionFile)).toBe("leaf-1");
-
-    timeline.resetSession(sessionFile);
-    expect(timeline.getPersistedEntryCount(sessionFile)).toBeUndefined();
-    expect(timeline.getLastSessionEntryId(sessionFile)).toBeUndefined();
-  });
-
   it("uses the same append inspection path for immediate custom entries", async () => {
     const root = await createTempDir("conversation-timeline-");
     const sessionFile = join(root, "manager.jsonl");
