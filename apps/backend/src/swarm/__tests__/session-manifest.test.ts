@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SessionMeta } from "@forge/protocol";
+import type { AgentDescriptor } from "../types.js";
 import {
   getRootSessionMemoryPath,
   getSessionFilePath,
@@ -304,6 +305,183 @@ describe("session-manifest", () => {
     expect(childMeta?.stats.memoryFileSize).toBe(String("child-memory".length));
     expect(childMeta?.cortexReviewedMemoryBytes).toBe("child-memory".length);
     expect(childMeta?.cortexReviewedMemoryAt).toBeNull();
+  });
+
+  it("rebuilds equivalent meta from raw agents.json records and normalized descriptors", async () => {
+    const createdAt = "2026-03-01T00:00:00.000Z";
+    const updatedAt = "2026-03-01T00:00:01.000Z";
+    const profileId = "profile-parity";
+    const sessionId = "profile-parity--agent";
+    const workerId = "worker-parity";
+
+    async function rebuildFromFixture(mode: "raw" | "normalized"): Promise<SessionMeta | undefined> {
+      const root = await mkdtemp(join(tmpdir(), `session-manifest-${mode}-`));
+      const dataDir = join(root, "data");
+      const agentsStoreFile = join(dataDir, "swarm", "agents.json");
+      const sessionFile = getSessionFilePath(dataDir, profileId, sessionId);
+      const memoryFile = getSessionMemoryPath(dataDir, profileId, sessionId);
+      const workerFile = join(dataDir, "profiles", profileId, "sessions", sessionId, "workers", `${workerId}.jsonl`);
+
+      await mkdir(join(dataDir, "swarm"), { recursive: true });
+      await mkdir(join(dataDir, "profiles", profileId, "sessions", sessionId, "workers"), { recursive: true });
+      await writeFile(sessionFile, "session-body", "utf8");
+      await writeFile(memoryFile, "memory-body", "utf8");
+
+      const managerRecord = {
+        agentId: sessionId,
+        displayName: "Renamed Project Agent",
+        role: "manager",
+        managerId: sessionId,
+        creatorAgentId: "creator-agent",
+        profileId,
+        status: "idle",
+        createdAt,
+        updatedAt,
+        cwd: "/tmp/parity-project",
+        model: DEFAULT_MODEL,
+        sessionFile,
+        sessionLabel: "Parity Session",
+        sessionSystemPrompt: "Session-specific prompt ignored by manifest rebuild.",
+        pinnedAt: "2026-03-01T00:00:02.000Z",
+        contextUsage: {
+          tokens: 1234,
+          contextWindow: 200000,
+          percent: 0.617
+        },
+        projectAgent: {
+          handle: "parity-agent",
+          whenToUse: "Use for parity checks.",
+          systemPrompt: "Project agent prompt ignored by manifest rebuild.",
+          capabilities: ["create_session"]
+        }
+      };
+      const workerRecord = {
+        agentId: workerId,
+        displayName: "Worker Parity",
+        role: "worker",
+        managerId: sessionId,
+        profileId,
+        status: "streaming",
+        createdAt,
+        updatedAt,
+        cwd: "/tmp/parity-project",
+        model: DEFAULT_MODEL,
+        specialistId: "backend",
+        sessionFile: workerFile
+      };
+      const malformedRecord = {
+        agentId: "malformed-manager",
+        role: "manager",
+        managerId: "malformed-manager",
+        status: "idle",
+        createdAt,
+        updatedAt,
+        model: DEFAULT_MODEL,
+        sessionFile
+      };
+      const rawAgents = [managerRecord, workerRecord, malformedRecord];
+
+      await writeFile(agentsStoreFile, `${JSON.stringify({ agents: rawAgents }, null, 2)}\n`, "utf8");
+      await writeSessionMeta(dataDir, {
+        sessionId,
+        profileId,
+        label: "Old label overwritten from descriptor",
+        model: {
+          provider: "openai-codex",
+          modelId: "old-model"
+        },
+        createdAt,
+        updatedAt,
+        cwd: "/tmp/old",
+        promptFingerprint: null,
+        promptComponents: null,
+        workers: [
+          {
+            id: workerId,
+            model: "openai-codex/gpt-5.3-codex",
+            specialistId: null,
+            specialistAttributionKnown: false,
+            status: "idle",
+            createdAt,
+            terminatedAt: null,
+            tokens: {
+              input: 7,
+              output: 2
+            },
+            systemPrompt: "Persisted worker prompt survives rebuild."
+          }
+        ],
+        stats: {
+          totalWorkers: 1,
+          activeWorkers: 0,
+          totalTokens: {
+            input: 7,
+            output: 2
+          },
+          sessionFileSize: null,
+          memoryFileSize: null
+        }
+      });
+
+      const descriptors = rawAgents
+        .filter((record) => record.agentId !== "malformed-manager")
+        .map((record) => ({ ...record })) as AgentDescriptor[];
+
+      const metas = await rebuildSessionMeta({
+        dataDir,
+        agentsStoreFile,
+        ...(mode === "normalized" ? { descriptors } : {})
+      });
+
+      expect(metas).toHaveLength(1);
+      return readSessionMeta(dataDir, profileId, sessionId);
+    }
+
+    const rawMeta = await rebuildFromFixture("raw");
+    const normalizedMeta = await rebuildFromFixture("normalized");
+
+    expect(rawMeta).toEqual(normalizedMeta);
+    expect(rawMeta).toMatchObject({
+      sessionId,
+      profileId,
+      label: "Parity Session",
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.3-codex"
+      },
+      cwd: "/tmp/parity-project",
+      workers: [
+        {
+          id: workerId,
+          model: "openai-codex/gpt-5.3-codex",
+          specialistId: "backend",
+          specialistAttributionKnown: false,
+          status: "streaming",
+          createdAt,
+          terminatedAt: null,
+          tokens: {
+            input: null,
+            output: null
+          },
+          systemPrompt: "Persisted worker prompt survives rebuild."
+        }
+      ],
+      stats: {
+        totalWorkers: 1,
+        activeWorkers: 1,
+        totalTokens: {
+          input: null,
+          output: null
+        },
+        sessionFileSize: String("session-body".length),
+        memoryFileSize: String("memory-body".length)
+      }
+    });
+
+    expect(rawMeta).not.toHaveProperty("pinnedAt");
+    expect(rawMeta).not.toHaveProperty("creatorAgentId");
+    expect(rawMeta).not.toHaveProperty("sessionSystemPrompt");
+    expect(rawMeta).not.toHaveProperty("projectAgent");
   });
 
   it("updates worker metadata incrementally", async () => {

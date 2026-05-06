@@ -306,7 +306,7 @@ export function buildCreateSessionCommand(
     type: 'create_session',
     profileId: requireTrimmedValue(profileId, 'Profile id is required.'),
     name: name?.trim() || undefined,
-    label: opts?.label,
+    label: opts?.label?.trim() || undefined,
     sessionPurpose: opts?.sessionPurpose,
     requestId,
   }

@@ -172,10 +172,9 @@ describe('project-agents helpers', () => {
       creatorAgentId: 'creator-manager',
     })
 
-    const emittedEvents: unknown[] = []
     const runtimeCalls: string[] = []
 
-    const receipt = await deliverProjectAgentMessage(
+    const result = await deliverProjectAgentMessage(
       {
         now: () => '2026-01-02T03:04:05.000Z',
         getOrCreateRuntimeForDescriptor: async (descriptor) => {
@@ -188,10 +187,6 @@ describe('project-agents helpers', () => {
             }),
           } as unknown as Awaited<ReturnType<NonNullable<Parameters<typeof deliverProjectAgentMessage>[0]['getOrCreateRuntimeForDescriptor']>>>
         },
-        emitConversationMessage: (event) => {
-          emittedEvents.push(event)
-        },
-        markSessionActivity: () => {},
         rateLimitBuckets: new Map(),
       },
       {
@@ -202,9 +197,13 @@ describe('project-agents helpers', () => {
       },
     )
 
-    expect(receipt.targetAgentId).toBe('child-session')
+    expect(result.receipt.targetAgentId).toBe('child-session')
     expect(runtimeCalls).toEqual(['child-session'])
-    expect(emittedEvents.length).toBeGreaterThan(0)
+    expect(result.inboundPayload.text).toBe('Start working on the task.')
+    expect(result.inboundPayload.projectAgentContext).toEqual({
+      fromAgentId: 'creator-manager',
+      fromDisplayName: 'creator',
+    })
   })
 
   it('rejects manager-to-manager delivery when target has neither projectAgent nor matching creatorAgentId', async () => {
@@ -225,8 +224,6 @@ describe('project-agents helpers', () => {
           getOrCreateRuntimeForDescriptor: async () => {
             throw new Error('should not be called')
           },
-          emitConversationMessage: () => {},
-          markSessionActivity: () => {},
           rateLimitBuckets: new Map(),
         },
         {
@@ -255,8 +252,6 @@ describe('project-agents helpers', () => {
           getOrCreateRuntimeForDescriptor: async () => {
             throw new Error('should not be called')
           },
-          emitConversationMessage: () => {},
-          markSessionActivity: () => {},
           rateLimitBuckets: new Map(),
         },
         {
@@ -280,21 +275,12 @@ describe('project-agents helpers', () => {
       projectAgent: { handle: 'release-notes', whenToUse: 'Draft release notes' },
     })
 
-    const emittedEvents: unknown[] = []
-    const markedActivity: Array<{ agentId: string; timestamp?: string }> = []
-
     await expect(
       deliverProjectAgentMessage(
         {
           now: () => '2026-01-02T03:04:05.000Z',
           getOrCreateRuntimeForDescriptor: async () => {
             throw new Error('runtime creation failed')
-          },
-          emitConversationMessage: (event) => {
-            emittedEvents.push(event)
-          },
-          markSessionActivity: (agentId, timestamp) => {
-            markedActivity.push({ agentId, timestamp })
           },
           rateLimitBuckets: new Map(),
         },
@@ -306,8 +292,5 @@ describe('project-agents helpers', () => {
         },
       ),
     ).rejects.toThrow('runtime creation failed')
-
-    expect(emittedEvents).toEqual([])
-    expect(markedActivity).toEqual([])
   })
 })

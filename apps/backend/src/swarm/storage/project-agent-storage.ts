@@ -1,6 +1,6 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { readPromptFile, writePromptFile } from "./asset-root-storage.js";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   PROJECT_AGENT_CAPABILITIES,
   type PersistedProjectAgentConfig,
@@ -77,6 +77,45 @@ export async function renameProjectAgentRecord(
 export async function deleteProjectAgentRecord(dataDir: string, profileId: string, handle: string): Promise<void> {
   const dirPath = getProjectAgentDir(dataDir, profileId, handle);
   await rm(dirPath, { recursive: true, force: true });
+}
+
+export async function deleteProjectAgentRecordByDirPath(
+  dataDir: string,
+  profileId: string,
+  dirPath: string
+): Promise<void> {
+  const targetDir = assertProjectAgentDirPathInProfile(dataDir, profileId, dirPath, "delete");
+  await rm(targetDir, { recursive: true, force: true });
+}
+
+export async function normalizeProjectAgentRecordDirectory(
+  dataDir: string,
+  profileId: string,
+  record: ProjectAgentOnDiskRecord
+): Promise<ProjectAgentOnDiskRecord> {
+  const sourceDir = assertProjectAgentDirPathInProfile(dataDir, profileId, record.dirPath, "move");
+  const canonicalDir = resolve(getProjectAgentDir(dataDir, profileId, record.config.handle));
+
+  if (sourceDir === canonicalDir) {
+    return record;
+  }
+
+  try {
+    await access(canonicalDir);
+    throw new Error(`Refusing to move project-agent directory onto existing canonical directory: ${canonicalDir}`);
+  } catch (error) {
+    if (!isEnoentError(error)) {
+      throw error;
+    }
+  }
+
+  await mkdir(dirname(canonicalDir), { recursive: true });
+  await rename(sourceDir, canonicalDir);
+
+  return {
+    ...record,
+    dirPath: canonicalDir
+  };
 }
 
 export async function readProjectAgentRecord(
@@ -165,93 +204,8 @@ export async function reconcileProjectAgentStorage(
   profileId: string,
   descriptors: Map<string, AgentDescriptor>
 ): Promise<ReconcileProjectAgentStorageResult> {
-  const result: ReconcileProjectAgentStorageResult = {
-    hydrated: [],
-    materialized: [],
-    orphansRemoved: []
-  };
-
-  const profileDescriptors = Array.from(descriptors.values()).filter(
-    (descriptor): descriptor is AgentDescriptor & { role: "manager" } =>
-      descriptor.role === "manager" && descriptor.profileId === profileId
-  );
-  const descriptorsByAgentId = new Map(profileDescriptors.map((descriptor) => [descriptor.agentId, descriptor]));
-
-  const scannedRecords = await scanProjectAgentRecords(dataDir, profileId);
-  const dedupedRecords = await resolveDuplicateRecords(profileId, scannedRecords);
-  const survivingRecords: ProjectAgentOnDiskRecord[] = [];
-
-  for (const record of dedupedRecords) {
-    const descriptor = descriptorsByAgentId.get(record.config.agentId);
-    if (!descriptor) {
-      console.info(
-        `[swarm] project-agent-storage:remove_orphan profile=${profileId} agentId=${record.config.agentId} handle=${record.config.handle}`
-      );
-      await rm(record.dirPath, { recursive: true, force: true });
-      result.orphansRemoved.push(record.config.handle);
-      continue;
-    }
-
-    survivingRecords.push(record);
-
-    if (hydrateDescriptorFromRecord(descriptor, record)) {
-      result.hydrated.push(descriptor.agentId);
-    }
-  }
-
-  const recordsByAgentId = new Map(survivingRecords.map((record) => [record.config.agentId, record]));
-  const recordsByHandle = new Map(survivingRecords.map((record) => [record.config.handle, record]));
-
-  for (const descriptor of profileDescriptors) {
-    if (!descriptor.projectAgent) {
-      continue;
-    }
-
-    if (!isNonEmptyString(descriptor.projectAgent.handle) || !isNonEmptyString(descriptor.projectAgent.whenToUse)) {
-      console.warn(
-        `[swarm] project-agent-storage:skip_materialize_invalid_descriptor profile=${profileId} agentId=${descriptor.agentId}`
-      );
-      continue;
-    }
-
-    if (recordsByAgentId.has(descriptor.agentId)) {
-      continue;
-    }
-
-    const handleCollision = recordsByHandle.get(descriptor.projectAgent.handle);
-    if (handleCollision && handleCollision.config.agentId !== descriptor.agentId) {
-      console.warn(
-        `[swarm] project-agent-storage:skip_materialize_handle_collision profile=${profileId} agentId=${descriptor.agentId} handle=${descriptor.projectAgent.handle} existingAgentId=${handleCollision.config.agentId}`
-      );
-      continue;
-    }
-
-    const config: PersistedProjectAgentConfig = {
-      version: 1,
-      agentId: descriptor.agentId,
-      handle: descriptor.projectAgent.handle,
-      whenToUse: descriptor.projectAgent.whenToUse,
-      ...(descriptor.projectAgent.creatorSessionId ? { creatorSessionId: descriptor.projectAgent.creatorSessionId } : {}),
-      ...(normalizeProjectAgentCapabilities(descriptor.projectAgent.capabilities).length > 0
-        ? { capabilities: normalizeProjectAgentCapabilities(descriptor.projectAgent.capabilities) }
-        : {}),
-      promotedAt: descriptor.createdAt,
-      updatedAt: new Date().toISOString()
-    };
-
-    await writeProjectAgentRecord(
-      dataDir,
-      profileId,
-      config,
-      descriptor.projectAgent.systemPrompt === undefined ? null : descriptor.projectAgent.systemPrompt
-    );
-    console.info(
-      `[swarm] project-agent-storage:materialized profile=${profileId} agentId=${descriptor.agentId} handle=${config.handle}`
-    );
-    result.materialized.push(descriptor.agentId);
-  }
-
-  return result;
+  const { ProjectAgentRegistry } = await import("../agents/project-agent-registry.js");
+  return new ProjectAgentRegistry({ dataDir, descriptors }).reconcileProfile(profileId);
 }
 
 function coercePersistedProjectAgentConfig(value: unknown): PersistedProjectAgentConfig | null {
@@ -300,74 +254,7 @@ function coercePersistedProjectAgentConfig(value: unknown): PersistedProjectAgen
   };
 }
 
-async function resolveDuplicateRecords(
-  profileId: string,
-  records: ProjectAgentOnDiskRecord[]
-): Promise<ProjectAgentOnDiskRecord[]> {
-  const grouped = new Map<string, ProjectAgentOnDiskRecord[]>();
-  for (const record of records) {
-    const existing = grouped.get(record.config.agentId);
-    if (existing) {
-      existing.push(record);
-    } else {
-      grouped.set(record.config.agentId, [record]);
-    }
-  }
-
-  const deduped: ProjectAgentOnDiskRecord[] = [];
-  for (const group of grouped.values()) {
-    if (group.length === 1) {
-      deduped.push(group[0]!);
-      continue;
-    }
-
-    const sorted = [...group].sort(compareRecordsByUpdatedAtDesc);
-    const winner = sorted[0]!;
-    deduped.push(winner);
-
-    for (const duplicate of sorted.slice(1)) {
-      console.info(
-        `[swarm] project-agent-storage:remove_duplicate profile=${profileId} agentId=${duplicate.config.agentId} handle=${duplicate.config.handle} keptHandle=${winner.config.handle}`
-      );
-      await rm(duplicate.dirPath, { recursive: true, force: true });
-    }
-  }
-
-  return deduped;
-}
-
-function compareRecordsByUpdatedAtDesc(left: ProjectAgentOnDiskRecord, right: ProjectAgentOnDiskRecord): number {
-  const updatedAtDiff = parseTimestamp(right.config.updatedAt) - parseTimestamp(left.config.updatedAt);
-  if (updatedAtDiff !== 0) {
-    return updatedAtDiff;
-  }
-
-  return left.config.handle.localeCompare(right.config.handle);
-}
-
-function hydrateDescriptorFromRecord(descriptor: AgentDescriptor, record: ProjectAgentOnDiskRecord): boolean {
-  const previous = descriptor.projectAgent;
-  const nextHandle = previous?.handle === record.config.handle ? previous.handle : record.config.handle;
-  const nextProjectAgent: NonNullable<AgentDescriptor["projectAgent"]> = {
-    handle: nextHandle,
-    whenToUse: record.config.whenToUse,
-    ...(record.systemPrompt !== null ? { systemPrompt: record.systemPrompt } : {}),
-    ...(record.config.creatorSessionId !== undefined ? { creatorSessionId: record.config.creatorSessionId } : {}),
-    ...(record.config.capabilities !== undefined ? { capabilities: record.config.capabilities } : {})
-  };
-
-  const changed =
-    previous?.handle !== nextProjectAgent.handle ||
-    previous?.whenToUse !== nextProjectAgent.whenToUse ||
-    previous?.systemPrompt !== nextProjectAgent.systemPrompt ||
-    previous?.creatorSessionId !== nextProjectAgent.creatorSessionId ||
-    !areCapabilitiesEqual(previous?.capabilities, nextProjectAgent.capabilities);
-
-  descriptor.projectAgent = nextProjectAgent;
-  return changed;
-}
-
-function normalizeProjectAgentCapabilities(value: unknown): ProjectAgentCapability[] {
+export function normalizeProjectAgentCapabilities(value: unknown): ProjectAgentCapability[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -383,29 +270,26 @@ function normalizeProjectAgentCapabilities(value: unknown): ProjectAgentCapabili
   ).sort((left, right) => PROJECT_AGENT_CAPABILITIES.indexOf(left) - PROJECT_AGENT_CAPABILITIES.indexOf(right));
 }
 
-function areCapabilitiesEqual(
-  left: ProjectAgentCapability[] | undefined,
-  right: ProjectAgentCapability[] | undefined
-): boolean {
-  if (!left && !right) {
-    return true;
+function assertProjectAgentDirPathInProfile(
+  dataDir: string,
+  profileId: string,
+  dirPath: string,
+  operation: string
+): string {
+  const projectAgentsDir = resolve(getProjectAgentsDir(dataDir, profileId));
+  const targetDir = resolve(dirPath);
+  const relativeTarget = relative(projectAgentsDir, targetDir);
+
+  if (!relativeTarget || relativeTarget.startsWith("..") || isAbsolute(relativeTarget)) {
+    throw new Error(`Refusing to ${operation} project-agent directory outside profile scope: ${dirPath}`);
   }
 
-  if (!left || !right || left.length !== right.length) {
-    return false;
-  }
-
-  return left.every((capability, index) => capability === right[index]);
+  return targetDir;
 }
 
 function buildTempSiblingPath(targetPath: string): string {
   const suffix = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2, 10)}.tmp`;
   return join(dirname(targetPath), `${basename(targetPath)}.${suffix}`);
-}
-
-function parseTimestamp(value: string): number {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

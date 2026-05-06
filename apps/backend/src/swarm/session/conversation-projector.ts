@@ -1,28 +1,29 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { performance } from "node:perf_hooks";
-import { dirname } from "node:path";
-import type { ServerEvent } from "@forge/protocol";
 import {
-  SIDEBAR_HISTORY_CACHE_STATE_METRIC,
-  type HistoryCacheState,
-  type HistorySource
-} from "../../stats/sidebar-perf-metrics.js";
+  CONVERSATION_ENTRY_TYPE,
+  ConversationTimeline,
+  extractSessionEntryId
+} from "./conversation-timeline.js";
+import type { ServerEvent } from "@forge/protocol";
 import type { SidebarConversationHistoryDiagnostics, SidebarPerfRecorder } from "../../stats/sidebar-perf-types.js";
-import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
+import {
+  HistoryCacheStore,
+  type ValidatedConversationHistoryCanonicalProof
+} from "./history-cache-store.js";
+import {
+  shouldPersistConversationEntry,
+  trimConversationHistory
+} from "./history-policy.js";
+import { applyPinOverlay, setPinnedFlagInMemory } from "./pin-overlay.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import {
-  extractMessageErrorMessage,
-  extractMessageImageAttachments,
-  extractMessageStopReason,
-  extractMessageText,
-  extractRole,
-  hasMessageErrorMessageField,
-  isStrictContextOverflowMessage,
-  normalizeProviderErrorMessage
-} from "./message-utils.js";
+  createConversationHistoryDiagnostics,
+  mergeDiagnosticDetails,
+  recordConversationHistoryDiagnostics,
+  sumOptionalNumbers
+} from "./conversation-diagnostics.js";
+import { RuntimeConversationEventMapper, safeJson } from "./runtime-conversation-event-mapper.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type {
   AgentDescriptor,
@@ -34,18 +35,6 @@ import type {
   ConversationMessageEvent
 } from "../types.js";
 
-const MAX_CONVERSATION_HISTORY = 2000;
-const MAX_SAFE_JSON_BYTES = 32 * 1024;
-const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
-const CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
-const CONVERSATION_CACHE_META_TYPE = "swarm_conversation_cache_meta";
-const CONVERSATION_CACHE_VERSION = 2;
-const SESSION_HEADER_VERSION = 3;
-const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
-const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provider auth and rate limits.";
-const WORKER_ERROR_CONTEXT_HINT = "The manager may need to compact the task context before retrying.";
-const WORKER_ERROR_GENERIC_HINT = "The manager may need to retry after checking provider auth, quotas, or rate limits.";
-
 type ConversationEventName =
   | "conversation_message"
   | "conversation_log"
@@ -53,92 +42,6 @@ type ConversationEventName =
   | "agent_tool_call"
   | "conversation_reset"
   | "choice_request";
-
-interface ConversationHistoryCacheCanonicalStat {
-  size: number;
-  mtimeMs: number;
-}
-
-interface ConversationHistoryCacheMetadata {
-  type: typeof CONVERSATION_CACHE_META_TYPE;
-  version: typeof CONVERSATION_CACHE_VERSION;
-  persistedEntryCount: number;
-  cachedPersistedEntryCount: number;
-  firstPersistedEntryKey: string | null;
-  lastPersistedEntryKey: string | null;
-  canonicalStat: ConversationHistoryCacheCanonicalStat;
-}
-
-interface LoadedConversationHistoryCache {
-  entries: ConversationEntryEvent[];
-  metadata: ConversationHistoryCacheMetadata | null;
-}
-
-interface LoadedConversationHistoryCacheResult {
-  cacheState: "loaded" | "absent" | "cache_read_error";
-  cachedHistory: LoadedConversationHistoryCache | null;
-  cacheFileBytes?: number;
-  cacheReadMs?: number;
-  fsReadOps: number;
-  fsReadBytes: number;
-  detail?: string | null;
-}
-
-interface LoadedConversationHistoryCacheHeaderResult {
-  cacheState: "loaded" | "absent" | "cache_read_error" | "legacy_rebuild";
-  metadata: ConversationHistoryCacheMetadata | null;
-  cacheFileBytes?: number;
-  cacheReadMs?: number;
-  fsReadOps: number;
-  fsReadBytes: number;
-  detail?: string | null;
-}
-
-interface ValidatedConversationHistoryCanonicalProof {
-  persistedEntryCount: number;
-  lastPersistedEntryKey: string | null;
-  canonicalStat: ConversationHistoryCacheCanonicalStat | null;
-}
-
-interface ValidatedConversationHistoryCacheResult {
-  ok: boolean;
-  entries?: ConversationEntryEvent[];
-  cacheState?: Exclude<HistoryCacheState, "memory" | "hit" | "absent" | "size_guard_skip">;
-  persistedEntryCount: number;
-  cachedEntryCount: number;
-  sessionFileBytes?: number;
-  sessionSummaryBytesScanned?: number;
-  sessionSummaryReadMs?: number;
-  cacheReadMs?: number;
-  fsReadOps: number;
-  fsReadBytes: number;
-  detail?: string | null;
-  fastPathUsed: boolean;
-  rewriteCache: boolean;
-  validatedCanonicalProof?: ValidatedConversationHistoryCanonicalProof;
-}
-
-interface QueuedConversationHistoryCacheSnapshot {
-  sessionFile: string;
-  history: ConversationEntryEvent[] | null;
-  metadata: ConversationHistoryCacheMetadata | null;
-}
-
-interface PersistedConversationEntrySummary {
-  count: number;
-  first: PersistedConversationEntryIdentity | null;
-  last: PersistedConversationEntryIdentity | null;
-}
-
-interface PersistedConversationEntrySummaryResult {
-  summary: PersistedConversationEntrySummary;
-  sessionFileBytes?: number;
-  sessionSummaryBytesScanned?: number;
-  sessionSummaryReadMs?: number;
-  fsReadOps: number;
-  fsReadBytes: number;
-  detail?: string | null;
-}
 
 interface ConversationHistoryWithDiagnostics {
   history: ConversationEntryEvent[];
@@ -157,13 +60,22 @@ interface ConversationProjectorDependencies {
 }
 
 export class ConversationProjector {
-  private readonly lastSessionEntryIdBySessionFile = new Map<string, string>();
-  private readonly persistedEntryCountBySessionFile = new Map<string, number>();
+  private readonly timeline: ConversationTimeline;
+  private readonly historyCacheStore: HistoryCacheStore;
+  private readonly runtimeConversationEventMapper = new RuntimeConversationEventMapper();
   private readonly loadedFromDisk = new Set<string>();
-  private readonly pendingCacheWrites = new Map<string, Promise<void>>();
-  private readonly queuedCacheSnapshots = new Map<string, QueuedConversationHistoryCacheSnapshot>();
 
-  constructor(private readonly deps: ConversationProjectorDependencies) {}
+  constructor(private readonly deps: ConversationProjectorDependencies) {
+    this.timeline = new ConversationTimeline({
+      now: deps.now,
+      logDebug: deps.logDebug
+    });
+    this.historyCacheStore = new HistoryCacheStore({
+      logDebug: deps.logDebug,
+      readSessionFileCanonicalStat: (sessionFile) => this.readSessionFileCanonicalStat(sessionFile),
+      readPersistedConversationEntrySummary: (sessionFile) => this.readPersistedConversationEntrySummary(sessionFile)
+    });
+  }
 
   getConversationHistory(agentId: string): ConversationEntryEvent[] {
     return this.getConversationHistoryWithDiagnostics(agentId).history;
@@ -205,17 +117,7 @@ export class ConversationProjector {
       return;
     }
 
-    for (const entry of history) {
-      if (entry.type !== "conversation_message" || entry.id !== messageId) {
-        continue;
-      }
-
-      if (pinned) {
-        entry.pinned = true;
-      } else {
-        delete entry.pinned;
-      }
-    }
+    setPinnedFlagInMemory(history, messageId, pinned);
   }
 
   resetConversationHistory(agentId: string, sessionFile?: string): void {
@@ -227,9 +129,9 @@ export class ConversationProjector {
       return;
     }
 
-    this.lastSessionEntryIdBySessionFile.delete(resolvedSessionFile);
-    this.persistedEntryCountBySessionFile.delete(resolvedSessionFile);
-    this.queueCacheSnapshotWrite(resolvedSessionFile, null);
+    this.timeline.resetSession(resolvedSessionFile);
+    this.historyCacheStore.resetSession(resolvedSessionFile);
+    this.historyCacheStore.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
   deleteConversationHistory(agentId: string, sessionFile?: string): void {
@@ -241,9 +143,9 @@ export class ConversationProjector {
       return;
     }
 
-    this.lastSessionEntryIdBySessionFile.delete(resolvedSessionFile);
-    this.persistedEntryCountBySessionFile.delete(resolvedSessionFile);
-    this.queueCacheSnapshotWrite(resolvedSessionFile, null);
+    this.timeline.resetSession(resolvedSessionFile);
+    this.historyCacheStore.resetSession(resolvedSessionFile);
+    this.historyCacheStore.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
   emitConversationMessage(event: ConversationMessageEvent): void {
@@ -286,8 +188,8 @@ export class ConversationProjector {
   loadConversationHistoriesFromStore(): void {
     // Histories are lazy-loaded on first access per agent.
     this.deps.conversationEntriesByAgentId.clear();
-    this.lastSessionEntryIdBySessionFile.clear();
-    this.persistedEntryCountBySessionFile.clear();
+    this.timeline.clear();
+    this.historyCacheStore.clear();
     this.loadedFromDisk.clear();
 
     // Seed leaf ids so fallback appends preserve parentId chains even before
@@ -297,149 +199,30 @@ export class ConversationProjector {
         continue;
       }
 
-      this.hydrateLeafEntryId(descriptor);
+      this.timeline.hydrateLeafEntryId(descriptor);
     }
   }
 
   captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void {
-    const descriptor = this.deps.descriptors.get(agentId);
-    const timestamp = this.deps.now();
-    if (descriptor) {
-      const managerContextId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
-      this.captureToolCallActivityFromRuntime(managerContextId, agentId, event, timestamp);
-    }
+    const projections = this.runtimeConversationEventMapper.mapRuntimeEvent({
+      agentId,
+      event,
+      timestamp: this.deps.now(),
+      descriptor: this.deps.descriptors.get(agentId)
+    });
 
-    if (descriptor?.role === "manager") {
-      this.captureManagerRuntimeErrorConversationEvent(agentId, event);
-      return;
-    }
-
-    switch (event.type) {
-      case "message_start": {
-        const role = extractRole(event.message);
-        if (role !== "user" && role !== "assistant" && role !== "system") {
-          return;
-        }
-
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "message_start",
-          role,
-          text: extractMessageText(event.message) ?? "(non-text message)"
-        });
-        return;
+    for (const projection of projections) {
+      switch (projection.type) {
+        case "conversation_message":
+          this.emitConversationMessage(projection);
+          break;
+        case "conversation_log":
+          this.emitConversationLog(projection);
+          break;
+        case "agent_tool_call":
+          this.emitAgentToolCall(projection);
+          break;
       }
-
-      case "message_end": {
-        const role = extractRole(event.message);
-        if (role !== "user" && role !== "assistant" && role !== "system") {
-          return;
-        }
-
-        const extractedText = extractMessageText(event.message);
-        const text = extractedText ?? "(non-text message)";
-        const attachments = extractMessageImageAttachments(event.message);
-
-        if ((role === "assistant" || role === "system") && (extractedText || attachments.length > 0)) {
-          this.emitConversationMessage({
-            type: "conversation_message",
-            agentId,
-            role,
-            text: extractedText ?? "",
-            attachments: attachments.length > 0 ? attachments : undefined,
-            timestamp,
-            source: "system"
-          });
-        }
-
-        if (role === "assistant") {
-          const stopReason = extractMessageStopReason(event.message);
-          const hasStructuredErrorMessage = hasMessageErrorMessageField(event.message);
-          if (stopReason === "error" || hasStructuredErrorMessage) {
-            const normalizedErrorMessage = normalizeProviderErrorMessage(
-              extractMessageErrorMessage(event.message) ?? extractedText
-            );
-            const isContextOverflow = isStrictContextOverflowMessage(normalizedErrorMessage);
-
-            this.emitConversationMessage({
-              type: "conversation_message",
-              agentId,
-              role: "system",
-              text: buildWorkerErrorConversationText({
-                errorMessage: normalizedErrorMessage,
-                isContextOverflow
-              }),
-              timestamp,
-              source: "system"
-            });
-          }
-        }
-
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "message_end",
-          role,
-          text
-        });
-        return;
-      }
-
-      case "tool_execution_start":
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "tool_execution_start",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.args)
-        });
-        return;
-
-      case "tool_execution_update":
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "tool_execution_update",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.partialResult)
-        });
-        return;
-
-      case "tool_execution_end":
-        this.emitConversationLog({
-          type: "conversation_log",
-          agentId,
-          timestamp,
-          source: "runtime_log",
-          kind: "tool_execution_end",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.result),
-          isError: event.isError
-        });
-        break;
-
-      case "agent_start":
-      case "agent_end":
-      case "turn_start":
-      case "turn_end":
-      case "message_update":
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        break;
     }
   }
 
@@ -471,8 +254,8 @@ export class ConversationProjector {
         const entryId = runtime.appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
         this.assignConversationMessageIdIfMissing(event, entryId);
         if (descriptor) {
-          this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
-          this.incrementPersistedEntryCount(descriptor.sessionFile);
+          this.timeline.trackLastSessionEntryId(descriptor.sessionFile, entryId);
+          this.historyCacheStore.incrementPersistedEntryCount(descriptor.sessionFile);
         }
         this.queueConversationHistoryCacheWrite(event.agentId, history);
         return;
@@ -484,9 +267,9 @@ export class ConversationProjector {
         return;
       }
 
-      const entryId = this.appendConversationEntryToSessionFile(descriptor, event);
+      const { entryId } = this.timeline.appendConversationEntry(descriptor, event);
       this.assignConversationMessageIdIfMissing(event, entryId);
-      this.incrementPersistedEntryCount(descriptor.sessionFile);
+      this.historyCacheStore.incrementPersistedEntryCount(descriptor.sessionFile);
       this.queueConversationHistoryCacheWrite(event.agentId, history);
     } catch (error) {
       this.deps.logDebug("history:save:error", {
@@ -494,122 +277,6 @@ export class ConversationProjector {
       });
       this.assignConversationMessageIdIfMissing(event);
       this.queueConversationHistoryCacheWrite(event.agentId, history);
-    }
-  }
-
-  private appendConversationEntryToSessionFile(
-    descriptor: AgentDescriptor,
-    event: ConversationEntryEvent
-  ): string {
-    // Avoid SessionManager.open() here: opening re-reads the whole JSONL file,
-    // which is unsafe for very large transcripts. Appending a well-formed JSONL
-    // entry keeps this path O(1) with no full-file reads.
-    this.ensureSessionFileHeader(descriptor);
-
-    const parentId = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile) ?? null;
-    const entryId = randomUUID().slice(0, 8);
-
-    this.assignConversationMessageIdIfMissing(event, entryId);
-
-    appendFileSync(
-      descriptor.sessionFile,
-      `${JSON.stringify({
-        type: "custom",
-        customType: CONVERSATION_ENTRY_TYPE,
-        data: event,
-        id: entryId,
-        parentId,
-        timestamp: this.deps.now()
-      })}\n`,
-      "utf8"
-    );
-
-    this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
-    return entryId;
-  }
-
-  private ensureSessionFileHeader(descriptor: AgentDescriptor): void {
-    if (hasValidSessionHeader(descriptor.sessionFile)) {
-      return;
-    }
-
-    const headerLine = `${JSON.stringify({
-      type: "session",
-      version: SESSION_HEADER_VERSION,
-      id: randomUUID(),
-      timestamp: this.deps.now(),
-      cwd: descriptor.cwd
-    })}\n`;
-
-    if (isMissingOrEmptySessionFile(descriptor.sessionFile)) {
-      appendFileSync(descriptor.sessionFile, headerLine, "utf8");
-      this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
-      return;
-    }
-
-    // Existing files with invalid headers cannot be reopened by SessionManager.
-    // Replace with a fresh header so subsequent appends stay recoverable.
-    writeFileSync(descriptor.sessionFile, headerLine, "utf8");
-    this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
-  }
-
-  private hydrateLeafEntryId(descriptor: AgentDescriptor): void {
-    const sessionFile = descriptor.sessionFile;
-    let fileDescriptor: number | undefined;
-
-    try {
-      const fileSize = statSync(sessionFile).size;
-      if (fileSize <= 0) {
-        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-        return;
-      }
-
-      const tailBytes = 8192;
-      const readLength = Math.min(fileSize, tailBytes);
-      const readOffset = Math.max(0, fileSize - readLength);
-
-      fileDescriptor = openSync(sessionFile, "r");
-      const buffer = Buffer.alloc(readLength);
-      const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, readOffset);
-      if (bytesRead <= 0) {
-        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-        return;
-      }
-
-      const tail = buffer.toString("utf8", 0, bytesRead);
-      const lines = tail.split("\n");
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const line = lines[index]?.trim();
-        if (!line) {
-          continue;
-        }
-
-        try {
-          const entryId = extractSessionEntryId(JSON.parse(line));
-          if (entryId) {
-            this.trackLastSessionEntryId(sessionFile, entryId);
-            return;
-          }
-        } catch {
-          // read window may start/end mid-line; skip parse failures
-        }
-      }
-
-      this.trackLastSessionEntryId(sessionFile, undefined);
-    } catch (error) {
-      if (isEnoentError(error)) {
-        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-        return;
-      }
-
-      this.deps.logDebug("history:hydrate_leaf:error", {
-        agentId: descriptor.agentId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    } finally {
-      if (fileDescriptor !== undefined) {
-        closeSync(fileDescriptor);
-      }
     }
   }
 
@@ -621,10 +288,10 @@ export class ConversationProjector {
     descriptor: AgentDescriptor
   ): ConversationHistoryWithDiagnostics {
     const existingInMemoryEntries = this.deps.conversationEntriesByAgentId.get(descriptor.agentId) ?? [];
-    const cacheHeaderLoad = this.loadConversationHistoryCacheHeader(descriptor.sessionFile);
+    const cacheHeaderLoad = this.historyCacheStore.loadConversationHistoryCacheHeader(descriptor.sessionFile);
 
     if (cacheHeaderLoad.metadata) {
-      const validation = this.validateCachedConversationHistory(descriptor.sessionFile, cacheHeaderLoad.metadata);
+      const validation = this.historyCacheStore.validateCachedConversationHistory(descriptor.sessionFile, cacheHeaderLoad.metadata);
       const totalCacheReadMs = sumOptionalNumbers(cacheHeaderLoad.cacheReadMs, validation.cacheReadMs);
 
       if (validation.ok) {
@@ -632,7 +299,7 @@ export class ConversationProjector {
         trimConversationHistory(validatedCachedEntries);
         const mergedEntries = this.mergeDiskAndInMemoryEntries(validatedCachedEntries, existingInMemoryEntries);
         this.applyPinnedState(descriptor.agentId, mergedEntries);
-        this.trackPersistedEntryCount(descriptor.sessionFile, validation.persistedEntryCount);
+        this.historyCacheStore.trackPersistedEntryCount(descriptor.sessionFile, validation.persistedEntryCount);
         this.loadedFromDisk.add(descriptor.agentId);
         this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
         if (validation.rewriteCache) {
@@ -715,7 +382,7 @@ export class ConversationProjector {
   ): ConversationHistoryWithDiagnostics {
     const entriesForAgent: ConversationEntryEvent[] = [];
     let persistedEntryCount = 0;
-    let lastSessionEntryId: string | undefined = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile);
+    let lastSessionEntryId: string | undefined = this.timeline.getLastSessionEntryId(descriptor.sessionFile);
     const diagnostics = createConversationHistoryDiagnostics({
       ...diagnosticsSeed,
       coldLoad: true
@@ -779,8 +446,8 @@ export class ConversationProjector {
 
     const mergedEntries = this.mergeDiskAndInMemoryEntries(entriesForAgent, existingInMemoryEntries);
     this.applyPinnedState(descriptor.agentId, mergedEntries);
-    this.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
-    this.trackPersistedEntryCount(descriptor.sessionFile, persistedEntryCount);
+    this.timeline.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
+    this.historyCacheStore.trackPersistedEntryCount(descriptor.sessionFile, persistedEntryCount);
     this.loadedFromDisk.add(descriptor.agentId);
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
     this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
@@ -789,617 +456,19 @@ export class ConversationProjector {
   }
 
   private recordHistoryDiagnostics(agentId: string, diagnostics: SidebarConversationHistoryDiagnostics): void {
-    this.deps.perf?.increment(SIDEBAR_HISTORY_CACHE_STATE_METRIC, {
-      labels: {
-        cacheState: diagnostics.cacheState,
-        historySource: diagnostics.historySource
-      },
-      fields: {
-        agentId,
-        coldLoad: diagnostics.coldLoad,
-        fsReadOps: diagnostics.fsReadOps,
-        fsReadBytes: diagnostics.fsReadBytes,
-        sessionFileBytes: diagnostics.sessionFileBytes,
-        cacheFileBytes: diagnostics.cacheFileBytes,
-        persistedEntryCount: diagnostics.persistedEntryCount,
-        cachedEntryCount: diagnostics.cachedEntryCount,
-        sessionSummaryBytesScanned: diagnostics.sessionSummaryBytesScanned,
-        cacheReadMs: diagnostics.cacheReadMs,
-        sessionSummaryReadMs: diagnostics.sessionSummaryReadMs,
-        detail: diagnostics.detail ?? undefined,
-        fastPathUsed: diagnostics.fastPathUsed ?? undefined
-      }
-    });
+    recordConversationHistoryDiagnostics(this.deps.perf, agentId, diagnostics);
   }
 
   private applyPinnedState(agentId: string, entries: ConversationEntryEvent[]): void {
-    const pinnedMessageIds = this.deps.getPinnedMessageIds?.(agentId);
-    if (!pinnedMessageIds || pinnedMessageIds.size === 0) {
-      for (const entry of entries) {
-        if (entry.type === "conversation_message") {
-          delete entry.pinned;
-        }
-      }
-      return;
-    }
-
-    for (const entry of entries) {
-      if (entry.type !== "conversation_message") {
-        continue;
-      }
-
-      if (entry.id && pinnedMessageIds.has(entry.id)) {
-        entry.pinned = true;
-      } else {
-        delete entry.pinned;
-      }
-    }
+    applyPinOverlay(entries, this.deps.getPinnedMessageIds?.(agentId));
   }
 
-  private loadConversationHistoryCacheHeader(sessionFile: string): LoadedConversationHistoryCacheHeaderResult {
-    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
-    if (!existsSync(cacheFile)) {
-      return {
-        cacheState: "absent",
-        metadata: null,
-        fsReadOps: 0,
-        fsReadBytes: 0
-      };
-    }
-
-    const startedAtMs = performance.now();
-    let fileDescriptor: number | undefined;
-
-    try {
-      const cacheFileBytes = statSync(cacheFile).size;
-      if (cacheFileBytes <= 0) {
-        return {
-          cacheState: "legacy_rebuild",
-          metadata: null,
-          cacheFileBytes,
-          cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps: 0,
-          fsReadBytes: 0,
-          detail: "missing_cache_metadata"
-        };
-      }
-
-      fileDescriptor = openSync(cacheFile, "r");
-      const chunkSize = 4096;
-      let headerLine = "";
-      let position = 0;
-      let fsReadOps = 0;
-      let fsReadBytes = 0;
-
-      while (position < cacheFileBytes) {
-        const readLength = Math.min(chunkSize, cacheFileBytes - position);
-        const buffer = Buffer.alloc(readLength);
-        const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, position);
-        if (bytesRead <= 0) {
-          break;
-        }
-
-        fsReadOps += 1;
-        fsReadBytes += bytesRead;
-        position += bytesRead;
-        headerLine += buffer.toString("utf8", 0, bytesRead);
-
-        const newlineIndex = headerLine.indexOf("\n");
-        if (newlineIndex >= 0) {
-          headerLine = headerLine.slice(0, newlineIndex);
-          break;
-        }
-      }
-
-      const trimmedHeaderLine = headerLine.trim();
-      if (trimmedHeaderLine.length === 0) {
-        return {
-          cacheState: "legacy_rebuild",
-          metadata: null,
-          cacheFileBytes,
-          cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps,
-          fsReadBytes,
-          detail: "missing_cache_metadata"
-        };
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmedHeaderLine);
-      } catch {
-        return {
-          cacheState: "cache_read_error",
-          metadata: null,
-          cacheFileBytes,
-          cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps,
-          fsReadBytes,
-          detail: "invalid_cache_payload"
-        };
-      }
-
-      const metadata = parseConversationHistoryCacheMetadata(parsed);
-      if (metadata) {
-        return {
-          cacheState: "loaded",
-          metadata,
-          cacheFileBytes,
-          cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps,
-          fsReadBytes
-        };
-      }
-
-      if (isConversationHistoryCacheMetadataRecord(parsed) || isConversationEntryEvent(parsed)) {
-        return {
-          cacheState: "legacy_rebuild",
-          metadata: null,
-          cacheFileBytes,
-          cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps,
-          fsReadBytes,
-          detail: "missing_cache_metadata"
-        };
-      }
-
-      return {
-        cacheState: "cache_read_error",
-        metadata: null,
-        cacheFileBytes,
-        cacheReadMs: performance.now() - startedAtMs,
-        fsReadOps,
-        fsReadBytes,
-        detail: "invalid_cache_payload"
-      };
-    } catch (error) {
-      this.deps.logDebug("history:load:cache:error", {
-        cacheFile,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return {
-        cacheState: "cache_read_error",
-        metadata: null,
-        cacheReadMs: performance.now() - startedAtMs,
-        fsReadOps: 0,
-        fsReadBytes: 0,
-        detail: error instanceof Error ? error.message : String(error)
-      };
-    } finally {
-      if (fileDescriptor !== undefined) {
-        closeSync(fileDescriptor);
-      }
-    }
+  private readSessionFileCanonicalStat(sessionFile: string) {
+    return this.historyCacheStore.readSessionFileCanonicalStat(sessionFile);
   }
 
-  private loadConversationHistoryFromCache(sessionFile: string): LoadedConversationHistoryCacheResult {
-    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
-    if (!existsSync(cacheFile)) {
-      return {
-        cacheState: "absent",
-        cachedHistory: null,
-        fsReadOps: 0,
-        fsReadBytes: 0
-      };
-    }
-
-    const startedAtMs = performance.now();
-
-    try {
-      const raw = readFileSync(cacheFile, "utf8");
-      const cacheFileBytes = Buffer.byteLength(raw, "utf8");
-      if (raw.trim().length === 0) {
-        return {
-          cacheState: "loaded",
-          cachedHistory: {
-            entries: [],
-            metadata: null
-          },
-          cacheFileBytes,
-          cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps: 1,
-          fsReadBytes: cacheFileBytes
-        };
-      }
-
-      const entries: ConversationEntryEvent[] = [];
-      let metadata: ConversationHistoryCacheMetadata | null = null;
-      for (const line of raw.split("\n")) {
-        if (!line.trim()) {
-          continue;
-        }
-
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          continue;
-        }
-
-        const parsedMetadata = parseConversationHistoryCacheMetadata(parsed);
-        if (parsedMetadata) {
-          metadata = parsedMetadata;
-          continue;
-        }
-
-        if (isConversationEntryEvent(parsed)) {
-          entries.push(parsed);
-        }
-      }
-
-      if (!metadata && entries.length === 0 && raw.trim().length > 0) {
-        return {
-          cacheState: "cache_read_error",
-          cachedHistory: null,
-          cacheFileBytes,
-          cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps: 1,
-          fsReadBytes: cacheFileBytes,
-          detail: "invalid_cache_payload"
-        };
-      }
-
-      return {
-        cacheState: "loaded",
-        cachedHistory: {
-          entries,
-          metadata
-        },
-        cacheFileBytes,
-        cacheReadMs: performance.now() - startedAtMs,
-        fsReadOps: 1,
-        fsReadBytes: cacheFileBytes
-      };
-    } catch (error) {
-      this.deps.logDebug("history:load:cache:error", {
-        cacheFile,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return {
-        cacheState: "cache_read_error",
-        cachedHistory: null,
-        cacheReadMs: performance.now() - startedAtMs,
-        fsReadOps: 0,
-        fsReadBytes: 0,
-        detail: error instanceof Error ? error.message : String(error)
-      };
-    }
-  }
-
-  private validateCachedConversationHistory(
-    sessionFile: string,
-    metadata: ConversationHistoryCacheMetadata
-  ): ValidatedConversationHistoryCacheResult {
-    let canonicalStat = this.readSessionFileCanonicalStat(sessionFile);
-    let persistedEntryCount = metadata.persistedEntryCount;
-    let lastPersistedEntryKey = metadata.lastPersistedEntryKey;
-    let sessionFileBytes = canonicalStat?.size;
-    let sessionSummaryBytesScanned: number | undefined;
-    let sessionSummaryReadMs: number | undefined;
-    let summaryFsReadOps = 0;
-    let summaryFsReadBytes = 0;
-    let detail: string | null = null;
-    let fastPathUsed = false;
-    let rewriteCache = false;
-    let canonicalProofStable = true;
-
-    const refreshCanonicalProofFromSummary = (): void => {
-      rewriteCache = true;
-      fastPathUsed = false;
-      canonicalProofStable = false;
-
-      const maxSummaryProofAttempts = 2;
-      for (let attempt = 0; attempt < maxSummaryProofAttempts; attempt += 1) {
-        const preSummaryStat = this.readSessionFileCanonicalStat(sessionFile);
-        const sessionSummaryResult = this.readPersistedConversationEntrySummary(sessionFile);
-        persistedEntryCount = sessionSummaryResult.summary.count;
-        lastPersistedEntryKey = sessionSummaryResult.summary.last?.key ?? null;
-        sessionFileBytes = sessionSummaryResult.sessionFileBytes;
-        sessionSummaryBytesScanned = sessionSummaryResult.sessionSummaryBytesScanned;
-        sessionSummaryReadMs = sessionSummaryResult.sessionSummaryReadMs;
-        summaryFsReadOps += sessionSummaryResult.fsReadOps;
-        summaryFsReadBytes += sessionSummaryResult.fsReadBytes;
-        detail = mergeDiagnosticDetails(detail, sessionSummaryResult.detail);
-        const postSummaryStat = this.readSessionFileCanonicalStat(sessionFile);
-        canonicalStat = postSummaryStat;
-
-        if (
-          (preSummaryStat &&
-            postSummaryStat &&
-            doesConversationHistoryCacheCanonicalStatMatch(preSummaryStat, postSummaryStat)) ||
-          (!preSummaryStat && !postSummaryStat)
-        ) {
-          canonicalProofStable = true;
-          return;
-        }
-
-        detail = mergeDiagnosticDetails(detail, "canonical_changed_during_summary_scan");
-      }
-    };
-
-    if (!canonicalStat || !doesConversationHistoryCacheCanonicalStatMatch(metadata.canonicalStat, canonicalStat)) {
-      refreshCanonicalProofFromSummary();
-    } else {
-      fastPathUsed = true;
-    }
-
-    const cacheLoad = this.loadConversationHistoryFromCache(sessionFile);
-    const cacheReadMs = cacheLoad.cacheReadMs;
-    const getTotalFsReadOps = (): number => summaryFsReadOps + cacheLoad.fsReadOps;
-    const getTotalFsReadBytes = (): number => summaryFsReadBytes + cacheLoad.fsReadBytes;
-    const buildFailure = (
-      cacheState: Exclude<HistoryCacheState, "memory" | "hit" | "absent" | "size_guard_skip">,
-      failureDetail?: string | null
-    ): ValidatedConversationHistoryCacheResult => ({
-      ok: false,
-      cacheState,
-      persistedEntryCount,
-      cachedEntryCount: 0,
-      sessionFileBytes,
-      sessionSummaryBytesScanned,
-      sessionSummaryReadMs,
-      cacheReadMs,
-      fsReadOps: getTotalFsReadOps(),
-      fsReadBytes: getTotalFsReadBytes(),
-      detail: mergeDiagnosticDetails(detail, cacheLoad.detail, failureDetail),
-      fastPathUsed: false,
-      rewriteCache: false
-    });
-
-    if (!cacheLoad.cachedHistory) {
-      return buildFailure("cache_read_error");
-    }
-
-    if (!canonicalProofStable) {
-      return buildFailure("cache_read_error");
-    }
-
-    const cachedHistory = cacheLoad.cachedHistory;
-    const cacheSummary = summarizePersistedConversationEntries(cachedHistory.entries);
-    const buildMismatchResult = (
-      cacheState: Exclude<HistoryCacheState, "memory" | "hit" | "absent" | "size_guard_skip">,
-      mismatchDetail?: string | null
-    ): ValidatedConversationHistoryCacheResult => ({
-      ok: false,
-      cacheState,
-      persistedEntryCount,
-      cachedEntryCount: cacheSummary.count,
-      sessionFileBytes,
-      sessionSummaryBytesScanned,
-      sessionSummaryReadMs,
-      cacheReadMs,
-      fsReadOps: getTotalFsReadOps(),
-      fsReadBytes: getTotalFsReadBytes(),
-      detail: mergeDiagnosticDetails(detail, cacheLoad.detail, mismatchDetail),
-      fastPathUsed,
-      rewriteCache: false
-    });
-    const buildSuccess = (
-      validatedCanonicalStat: ConversationHistoryCacheCanonicalStat
-    ): ValidatedConversationHistoryCacheResult => ({
-      ok: true,
-      entries: cachedHistory.entries,
-      persistedEntryCount,
-      cachedEntryCount: cacheSummary.count,
-      sessionFileBytes,
-      sessionSummaryBytesScanned,
-      sessionSummaryReadMs,
-      cacheReadMs,
-      fsReadOps: getTotalFsReadOps(),
-      fsReadBytes: getTotalFsReadBytes(),
-      detail: mergeDiagnosticDetails(detail, cacheLoad.detail),
-      fastPathUsed,
-      rewriteCache,
-      validatedCanonicalProof: {
-        persistedEntryCount,
-        lastPersistedEntryKey,
-        canonicalStat: validatedCanonicalStat
-      }
-    });
-
-    if (
-      !cachedHistory.metadata ||
-      !doesConversationHistoryCacheMetadataMatchEntries(cachedHistory.metadata, cacheSummary) ||
-      !doesConversationHistoryCacheMetadataMatchFingerprint(cachedHistory.metadata, metadata)
-    ) {
-      this.deps.logDebug("history:load:cache:validate:reject", {
-        sessionFile,
-        reason: "metadata_entries_mismatch"
-      });
-      return {
-        ...buildMismatchResult("metadata_entries_mismatch"),
-        fastPathUsed: false
-      };
-    }
-
-    const maxCanonicalValidationAttempts = 2;
-    for (let attempt = 0; attempt < maxCanonicalValidationAttempts; attempt += 1) {
-      if (!(cacheSummary.count === 0 && persistedEntryCount === 0 && hasValidSessionHeader(sessionFile))) {
-        if (
-          cachedHistory.entries.length < MAX_CONVERSATION_HISTORY &&
-          cachedHistory.metadata.cachedPersistedEntryCount < persistedEntryCount
-        ) {
-          this.deps.logDebug("history:load:cache:validate:reject", {
-            sessionFile,
-            reason: "cache_missing_persisted_prefix"
-          });
-          return buildMismatchResult("cache_missing_persisted_prefix");
-        }
-
-        if (cachedHistory.metadata.persistedEntryCount !== persistedEntryCount) {
-          this.deps.logDebug("history:load:cache:validate:reject", {
-            sessionFile,
-            reason: "persisted_entry_count_mismatch",
-            expected: cachedHistory.metadata.persistedEntryCount,
-            actual: persistedEntryCount
-          });
-          return buildMismatchResult(
-            "persisted_entry_count_mismatch",
-            `expected=${cachedHistory.metadata.persistedEntryCount},actual=${persistedEntryCount}`
-          );
-        }
-
-        if (cachedHistory.metadata.lastPersistedEntryKey !== lastPersistedEntryKey) {
-          this.deps.logDebug("history:load:cache:validate:reject", {
-            sessionFile,
-            reason: "last_persisted_entry_mismatch"
-          });
-          return buildMismatchResult("last_persisted_entry_mismatch");
-        }
-      }
-
-      const postValidationStat = this.readSessionFileCanonicalStat(sessionFile);
-      if (
-        canonicalStat &&
-        postValidationStat &&
-        doesConversationHistoryCacheCanonicalStatMatch(canonicalStat, postValidationStat)
-      ) {
-        return buildSuccess(postValidationStat);
-      }
-
-      detail = mergeDiagnosticDetails(detail, "canonical_changed_during_validation");
-      if (attempt === maxCanonicalValidationAttempts - 1) {
-        this.deps.logDebug("history:load:cache:validate:reject", {
-          sessionFile,
-          reason: "canonical_changed_during_validation"
-        });
-        return buildMismatchResult("cache_read_error");
-      }
-
-      refreshCanonicalProofFromSummary();
-      if (!canonicalProofStable) {
-        this.deps.logDebug("history:load:cache:validate:reject", {
-          sessionFile,
-          reason: "canonical_changed_during_summary_scan"
-        });
-        return buildMismatchResult("cache_read_error");
-      }
-    }
-
-    return buildMismatchResult("cache_read_error");
-  }
-
-  private readSessionFileCanonicalStat(sessionFile: string): ConversationHistoryCacheCanonicalStat | null {
-    try {
-      const fileStat = statSync(sessionFile);
-      return {
-        size: fileStat.size,
-        mtimeMs: fileStat.mtimeMs
-      };
-    } catch (error) {
-      if (isEnoentError(error)) {
-        return null;
-      }
-
-      throw error;
-    }
-  }
-
-  private readPersistedConversationEntrySummary(sessionFile: string): PersistedConversationEntrySummaryResult {
-    let fileDescriptor: number | undefined;
-    const startedAtMs = performance.now();
-
-    try {
-      const fileSize = statSync(sessionFile).size;
-      if (fileSize <= 0) {
-        return {
-          summary: { count: 0, first: null, last: null },
-          sessionFileBytes: fileSize,
-          sessionSummaryBytesScanned: 0,
-          sessionSummaryReadMs: performance.now() - startedAtMs,
-          fsReadOps: 0,
-          fsReadBytes: 0
-        };
-      }
-
-      const chunkSize = 8192;
-      let position = 0;
-      let remainder = "";
-      let count = 0;
-      let first: PersistedConversationEntryIdentity | null = null;
-      let last: PersistedConversationEntryIdentity | null = null;
-      let fsReadOps = 0;
-      let fsReadBytes = 0;
-
-      fileDescriptor = openSync(sessionFile, "r");
-
-      while (position < fileSize) {
-        const readLength = Math.min(chunkSize, fileSize - position);
-        const buffer = Buffer.alloc(readLength);
-        const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, position);
-        if (bytesRead <= 0) {
-          break;
-        }
-
-        fsReadOps += 1;
-        fsReadBytes += bytesRead;
-        const chunk = buffer.toString("utf8", 0, bytesRead);
-        const combined = `${remainder}${chunk}`;
-        const lines = combined.split("\n");
-        remainder = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const identity = parsePersistedConversationEntryIdentity(line);
-          if (!identity) {
-            continue;
-          }
-
-          if (!first) {
-            first = identity;
-          }
-          last = identity;
-          count += 1;
-        }
-
-        position += bytesRead;
-      }
-
-      const finalIdentity = parsePersistedConversationEntryIdentity(remainder);
-      if (finalIdentity) {
-        if (!first) {
-          first = finalIdentity;
-        }
-        last = finalIdentity;
-        count += 1;
-      }
-
-      return {
-        summary: { count, first, last },
-        sessionFileBytes: fileSize,
-        sessionSummaryBytesScanned: fsReadBytes,
-        sessionSummaryReadMs: performance.now() - startedAtMs,
-        fsReadOps,
-        fsReadBytes
-      };
-    } catch (error) {
-      if (isEnoentError(error)) {
-        return {
-          summary: { count: 0, first: null, last: null },
-          sessionSummaryBytesScanned: 0,
-          sessionSummaryReadMs: performance.now() - startedAtMs,
-          fsReadOps: 0,
-          fsReadBytes: 0,
-          detail: "session_file_missing"
-        };
-      }
-
-      this.deps.logDebug("history:load:cache:validate:error", {
-        sessionFile,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return {
-        summary: { count: 0, first: null, last: null },
-        sessionSummaryBytesScanned: 0,
-        sessionSummaryReadMs: performance.now() - startedAtMs,
-        fsReadOps: 0,
-        fsReadBytes: 0,
-        detail: error instanceof Error ? error.message : String(error)
-      };
-    } finally {
-      if (fileDescriptor !== undefined) {
-        closeSync(fileDescriptor);
-      }
-    }
+  private readPersistedConversationEntrySummary(sessionFile: string) {
+    return this.historyCacheStore.readPersistedConversationEntrySummary(sessionFile);
   }
 
   private queueConversationHistoryCacheWrite(
@@ -1414,77 +483,17 @@ export class ConversationProjector {
 
     const persistedEntryCount =
       validatedCanonicalProof?.persistedEntryCount ??
-      this.persistedEntryCountBySessionFile.get(descriptor.sessionFile) ??
+      this.historyCacheStore.getPersistedEntryCount(descriptor.sessionFile) ??
       0;
-    const metadata = buildConversationHistoryCacheMetadata(
+    const metadata = this.historyCacheStore.buildMetadata(
       history,
       persistedEntryCount,
-      validatedCanonicalProof?.canonicalStat ?? this.readSessionFileCanonicalStat(descriptor.sessionFile)
+      validatedCanonicalProof?.canonicalStat ?? this.historyCacheStore.readSessionFileCanonicalStat(descriptor.sessionFile)
     );
     if (validatedCanonicalProof) {
       metadata.lastPersistedEntryKey = validatedCanonicalProof.lastPersistedEntryKey;
     }
-    this.queueCacheSnapshotWrite(descriptor.sessionFile, history.slice(), metadata);
-  }
-
-  private queueCacheSnapshotWrite(
-    sessionFile: string,
-    history: ConversationEntryEvent[] | null,
-    metadata: ConversationHistoryCacheMetadata | null = null
-  ): void {
-    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
-    this.queuedCacheSnapshots.set(cacheFile, {
-      sessionFile,
-      history,
-      metadata
-    });
-
-    if (this.pendingCacheWrites.has(cacheFile)) {
-      return;
-    }
-
-    const writePromise = this.flushQueuedCacheSnapshot(cacheFile)
-      .catch((error) => {
-        this.deps.logDebug("history:cache:write:error", {
-          cacheFile,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      })
-      .finally(() => {
-        this.pendingCacheWrites.delete(cacheFile);
-        const queuedSnapshot = this.queuedCacheSnapshots.get(cacheFile);
-        if (queuedSnapshot) {
-          this.queueCacheSnapshotWrite(queuedSnapshot.sessionFile, queuedSnapshot.history, queuedSnapshot.metadata);
-        }
-      });
-
-    this.pendingCacheWrites.set(cacheFile, writePromise);
-  }
-
-  private async flushQueuedCacheSnapshot(cacheFile: string): Promise<void> {
-    while (this.queuedCacheSnapshots.has(cacheFile)) {
-      const queuedSnapshot = this.queuedCacheSnapshots.get(cacheFile);
-      this.queuedCacheSnapshots.delete(cacheFile);
-
-      if (!queuedSnapshot) {
-        continue;
-      }
-
-      const { history, metadata } = queuedSnapshot;
-      if (history === null) {
-        await rm(cacheFile, { force: true });
-        continue;
-      }
-
-      await mkdir(dirname(cacheFile), { recursive: true });
-      const resolvedMetadata =
-        metadata ?? buildConversationHistoryCacheMetadata(history, 0, this.readSessionFileCanonicalStat(queuedSnapshot.sessionFile));
-      const serializedHistory = `${[
-        JSON.stringify(resolvedMetadata),
-        ...history.map((entry) => JSON.stringify(entry))
-      ].join("\n")}\n`;
-      await writeFile(cacheFile, serializedHistory, "utf8");
-    }
+    this.historyCacheStore.queueCacheSnapshotWrite(descriptor.sessionFile, history.slice(), metadata);
   }
 
   private mergeDiskAndInMemoryEntries(
@@ -1569,213 +578,7 @@ export class ConversationProjector {
       id: wrapperEntryId
     };
   }
-
-  private trackLastSessionEntryId(sessionFile: string, entryId: string | undefined): void {
-    if (typeof entryId !== "string" || entryId.trim().length === 0) {
-      this.lastSessionEntryIdBySessionFile.delete(sessionFile);
-      return;
-    }
-
-    this.lastSessionEntryIdBySessionFile.set(sessionFile, entryId);
-  }
-
-  private trackPersistedEntryCount(sessionFile: string, count: number): void {
-    this.persistedEntryCountBySessionFile.set(sessionFile, Math.max(0, Math.trunc(count)));
-  }
-
-  private incrementPersistedEntryCount(sessionFile: string): void {
-    this.trackPersistedEntryCount(sessionFile, (this.persistedEntryCountBySessionFile.get(sessionFile) ?? 0) + 1);
-  }
-
-  private captureManagerRuntimeErrorConversationEvent(agentId: string, event: RuntimeSessionEvent): void {
-    if (event.type !== "message_end") {
-      return;
-    }
-
-    const role = extractRole(event.message);
-    if (role !== "assistant") {
-      return;
-    }
-
-    const stopReason = extractMessageStopReason(event.message);
-    const hasStructuredErrorMessage = hasMessageErrorMessageField(event.message);
-    if (stopReason !== "error" && !hasStructuredErrorMessage) {
-      return;
-    }
-
-    const messageText = extractMessageText(event.message);
-    const normalizedErrorMessage = normalizeProviderErrorMessage(extractMessageErrorMessage(event.message) ?? messageText);
-    const isContextOverflow = isStrictContextOverflowMessage(normalizedErrorMessage);
-
-    this.emitConversationMessage({
-      type: "conversation_message",
-      agentId,
-      role: "system",
-      text: buildManagerErrorConversationText({
-        errorMessage: normalizedErrorMessage,
-        isContextOverflow
-      }),
-      timestamp: this.deps.now(),
-      source: "system"
-    });
-  }
-
-  private captureToolCallActivityFromRuntime(
-    managerContextId: string,
-    actorAgentId: string,
-    event: RuntimeSessionEvent,
-    timestamp: string
-  ): void {
-    switch (event.type) {
-      case "tool_execution_start":
-        this.emitAgentToolCall({
-          type: "agent_tool_call",
-          agentId: managerContextId,
-          actorAgentId,
-          timestamp,
-          kind: "tool_execution_start",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.args)
-        });
-        return;
-
-      case "tool_execution_update":
-        this.emitAgentToolCall({
-          type: "agent_tool_call",
-          agentId: managerContextId,
-          actorAgentId,
-          timestamp,
-          kind: "tool_execution_update",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.partialResult)
-        });
-        return;
-
-      case "tool_execution_end":
-        this.emitAgentToolCall({
-          type: "agent_tool_call",
-          agentId: managerContextId,
-          actorAgentId,
-          timestamp,
-          kind: "tool_execution_end",
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          text: safeJson(event.result),
-          isError: event.isError
-        });
-        break;
-
-      case "agent_start":
-      case "agent_end":
-      case "turn_start":
-      case "turn_end":
-      case "message_start":
-      case "message_update":
-      case "message_end":
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        break;
-    }
-  }
 }
-
-function createConversationHistoryDiagnostics(
-  options: Partial<SidebarConversationHistoryDiagnostics> & {
-    cacheState: HistoryCacheState;
-    historySource: HistorySource;
-    coldLoad: boolean;
-  }
-): SidebarConversationHistoryDiagnostics {
-  return {
-    cacheState: options.cacheState,
-    historySource: options.historySource,
-    coldLoad: options.coldLoad,
-    fsReadOps: options.fsReadOps ?? 0,
-    fsReadBytes: options.fsReadBytes ?? 0,
-    sessionFileBytes: options.sessionFileBytes,
-    cacheFileBytes: options.cacheFileBytes,
-    persistedEntryCount: options.persistedEntryCount,
-    cachedEntryCount: options.cachedEntryCount,
-    sessionSummaryBytesScanned: options.sessionSummaryBytesScanned,
-    cacheReadMs: options.cacheReadMs,
-    sessionSummaryReadMs: options.sessionSummaryReadMs,
-    fastPathUsed: options.fastPathUsed ?? false,
-    detail: options.detail ?? null
-  };
-}
-
-function mergeDiagnosticDetails(...details: Array<string | null | undefined>): string | null {
-  const normalized = details
-    .flatMap((detail) => (typeof detail === "string" ? detail.split("; ") : []))
-    .map((detail) => detail.trim())
-    .filter((detail) => detail.length > 0);
-
-  if (normalized.length === 0) {
-    return null;
-  }
-
-  return Array.from(new Set(normalized)).join("; ");
-}
-
-function sumOptionalNumbers(...values: Array<number | undefined>): number | undefined {
-  let total = 0;
-  let foundValue = false;
-
-  for (const value of values) {
-    if (typeof value !== "number") {
-      continue;
-    }
-
-    total += value;
-    foundValue = true;
-  }
-
-  return foundValue ? total : undefined;
-}
-
-function safeJson(value: unknown): string {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value);
-  } catch {
-    serialized = String(value);
-  }
-
-  const serializedBytes = Buffer.byteLength(serialized, "utf8");
-  if (serializedBytes <= MAX_SAFE_JSON_BYTES) {
-    return serialized;
-  }
-
-  const suffixBytes = Buffer.byteLength(SAFE_JSON_TRUNCATED_SUFFIX, "utf8");
-  if (MAX_SAFE_JSON_BYTES <= suffixBytes) {
-    return SAFE_JSON_TRUNCATED_SUFFIX;
-  }
-
-  const previewByteCount = MAX_SAFE_JSON_BYTES - suffixBytes;
-  const preview = Buffer.from(serialized, "utf8").subarray(0, previewByteCount).toString("utf8");
-  return `${preview}${SAFE_JSON_TRUNCATED_SUFFIX}`;
-}
-
-function extractSessionEntryId(entry: unknown): string | undefined {
-  if (typeof entry !== "object" || entry === null || !("id" in entry)) {
-    return undefined;
-  }
-
-  const entryId = (entry as { id?: unknown }).id;
-  if (typeof entryId !== "string" || entryId.trim().length === 0) {
-    return undefined;
-  }
-
-  return entryId;
-}
-
-type PersistedConversationEntryIdentity = {
-  key: string;
-};
 
 function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {
   if (entry.type !== "conversation_message") {
@@ -1787,211 +590,6 @@ function extractConversationEntryEventId(entry: ConversationEntryEvent): string 
   }
 
   return entry.id;
-}
-
-function extractPersistedConversationEntryIdentity(
-  entry: ConversationEntryEvent | undefined
-): PersistedConversationEntryIdentity | null {
-  if (!entry || !shouldPersistConversationEntry(entry)) {
-    return null;
-  }
-
-  const entryId = extractConversationEntryEventId(entry);
-  if (entryId) {
-    return { key: `conversation_message:${entryId}` };
-  }
-
-  return { key: `entry:${safeJson(entry)}` };
-}
-
-function summarizePersistedConversationEntries(
-  history: ConversationEntryEvent[]
-): PersistedConversationEntrySummary {
-  let count = 0;
-  let first: PersistedConversationEntryIdentity | null = null;
-  let last: PersistedConversationEntryIdentity | null = null;
-
-  for (const entry of history) {
-    const identity = extractPersistedConversationEntryIdentity(entry);
-    if (!identity) {
-      continue;
-    }
-
-    if (!first) {
-      first = identity;
-    }
-
-    last = identity;
-    count += 1;
-  }
-
-  return { count, first, last };
-}
-
-function buildConversationHistoryCacheMetadata(
-  history: ConversationEntryEvent[],
-  persistedEntryCount: number,
-  canonicalStat: ConversationHistoryCacheCanonicalStat | null
-): ConversationHistoryCacheMetadata {
-  const summary = summarizePersistedConversationEntries(history);
-
-  return {
-    type: CONVERSATION_CACHE_META_TYPE,
-    version: CONVERSATION_CACHE_VERSION,
-    persistedEntryCount: Math.max(0, Math.trunc(persistedEntryCount)),
-    cachedPersistedEntryCount: summary.count,
-    firstPersistedEntryKey: summary.first?.key ?? null,
-    lastPersistedEntryKey: summary.last?.key ?? null,
-    canonicalStat: normalizeConversationHistoryCacheCanonicalStat(canonicalStat)
-  };
-}
-
-function doesConversationHistoryCacheMetadataMatchEntries(
-  metadata: ConversationHistoryCacheMetadata,
-  summary: PersistedConversationEntrySummary
-): boolean {
-  return (
-    metadata.cachedPersistedEntryCount === summary.count &&
-    metadata.firstPersistedEntryKey === (summary.first?.key ?? null) &&
-    metadata.lastPersistedEntryKey === (summary.last?.key ?? null)
-  );
-}
-
-function doesConversationHistoryCacheMetadataMatchFingerprint(
-  metadata: ConversationHistoryCacheMetadata,
-  expected: ConversationHistoryCacheMetadata
-): boolean {
-  return doesConversationHistoryCacheCanonicalStatMatch(metadata.canonicalStat, expected.canonicalStat);
-}
-
-function doesConversationHistoryCacheCanonicalStatMatch(
-  left: ConversationHistoryCacheCanonicalStat,
-  right: ConversationHistoryCacheCanonicalStat
-): boolean {
-  return left.size === right.size && left.mtimeMs === right.mtimeMs;
-}
-
-function normalizeConversationHistoryCacheCanonicalStat(
-  value: ConversationHistoryCacheCanonicalStat | null | undefined
-): ConversationHistoryCacheCanonicalStat {
-  return {
-    size: Math.max(0, Math.trunc(value?.size ?? 0)),
-    mtimeMs: typeof value?.mtimeMs === "number" && Number.isFinite(value.mtimeMs) ? value.mtimeMs : 0
-  };
-}
-
-function isConversationHistoryCacheMetadataRecord(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { type?: unknown }).type === CONVERSATION_CACHE_META_TYPE
-  );
-}
-
-function parseConversationHistoryCacheMetadata(value: unknown): ConversationHistoryCacheMetadata | null {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    (value as { type?: unknown }).type !== CONVERSATION_CACHE_META_TYPE ||
-    (value as { version?: unknown }).version !== CONVERSATION_CACHE_VERSION
-  ) {
-    return null;
-  }
-
-  const persistedEntryCount = (value as { persistedEntryCount?: unknown }).persistedEntryCount;
-  const cachedPersistedEntryCount = (value as { cachedPersistedEntryCount?: unknown }).cachedPersistedEntryCount;
-  const firstPersistedEntryKey = (value as { firstPersistedEntryKey?: unknown }).firstPersistedEntryKey;
-  const lastPersistedEntryKey = (value as { lastPersistedEntryKey?: unknown }).lastPersistedEntryKey;
-  const canonicalStat = (value as { canonicalStat?: unknown }).canonicalStat;
-
-  if (typeof persistedEntryCount !== "number" || !Number.isFinite(persistedEntryCount) || persistedEntryCount < 0) {
-    return null;
-  }
-
-  if (
-    typeof cachedPersistedEntryCount !== "number" ||
-    !Number.isFinite(cachedPersistedEntryCount) ||
-    cachedPersistedEntryCount < 0
-  ) {
-    return null;
-  }
-
-  if (firstPersistedEntryKey !== null && typeof firstPersistedEntryKey !== "string") {
-    return null;
-  }
-
-  if (lastPersistedEntryKey !== null && typeof lastPersistedEntryKey !== "string") {
-    return null;
-  }
-
-  if (typeof canonicalStat !== "object" || canonicalStat === null) {
-    return null;
-  }
-
-  const canonicalSize = (canonicalStat as { size?: unknown }).size;
-  const canonicalMtimeMs = (canonicalStat as { mtimeMs?: unknown }).mtimeMs;
-  if (typeof canonicalSize !== "number" || !Number.isFinite(canonicalSize) || canonicalSize < 0) {
-    return null;
-  }
-
-  if (typeof canonicalMtimeMs !== "number" || !Number.isFinite(canonicalMtimeMs) || canonicalMtimeMs < 0) {
-    return null;
-  }
-
-  return {
-    type: CONVERSATION_CACHE_META_TYPE,
-    version: CONVERSATION_CACHE_VERSION,
-    persistedEntryCount: Math.max(0, Math.trunc(persistedEntryCount)),
-    cachedPersistedEntryCount: Math.max(0, Math.trunc(cachedPersistedEntryCount)),
-    firstPersistedEntryKey,
-    lastPersistedEntryKey,
-    canonicalStat: normalizeConversationHistoryCacheCanonicalStat({
-      size: canonicalSize,
-      mtimeMs: canonicalMtimeMs
-    })
-  };
-}
-
-function parsePersistedConversationEntryIdentity(line: string | undefined): PersistedConversationEntryIdentity | null {
-  const trimmedLine = line?.trim();
-  if (!trimmedLine) {
-    return null;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmedLine);
-  } catch {
-    return null;
-  }
-
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    (parsed as { type?: unknown }).type !== "custom" ||
-    (parsed as { customType?: unknown }).customType !== CONVERSATION_ENTRY_TYPE
-  ) {
-    return null;
-  }
-
-  const data = (parsed as { data?: unknown }).data;
-  if (!isConversationEntryEvent(data) || !shouldPersistConversationEntry(data)) {
-    return null;
-  }
-
-  const wrapperEntryId = extractSessionEntryId(parsed);
-  const hydratedEntry =
-    data.type === "conversation_message" && wrapperEntryId
-      ? {
-          ...data,
-          id:
-            typeof data.id === "string" && data.id.trim().length > 0
-              ? data.id
-              : wrapperEntryId
-        }
-      : data;
-
-  return extractPersistedConversationEntryIdentity(hydratedEntry);
 }
 
 function decrementCounter(counter: Map<string, number>, key: string): boolean {
@@ -2007,157 +605,4 @@ function decrementCounter(counter: Map<string, number>, key: string): boolean {
   }
 
   return true;
-}
-
-function buildManagerErrorConversationText(options: {
-  errorMessage?: string;
-  isContextOverflow: boolean;
-}): string {
-  if (options.isContextOverflow) {
-    if (options.errorMessage) {
-      return `⚠️ Manager reply failed because the prompt exceeded the model context window (${options.errorMessage}). ${MANAGER_ERROR_CONTEXT_HINT}`;
-    }
-
-    return `⚠️ Manager reply failed because the prompt exceeded the model context window. ${MANAGER_ERROR_CONTEXT_HINT}`;
-  }
-
-  if (options.errorMessage) {
-    return `⚠️ Manager reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${MANAGER_ERROR_GENERIC_HINT}`;
-  }
-
-  return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
-}
-
-function buildWorkerErrorConversationText(options: {
-  errorMessage?: string;
-  isContextOverflow: boolean;
-}): string {
-  if (options.isContextOverflow) {
-    if (options.errorMessage) {
-      return `⚠️ Worker reply failed because the prompt exceeded the model context window (${options.errorMessage}). ${WORKER_ERROR_CONTEXT_HINT}`;
-    }
-
-    return `⚠️ Worker reply failed because the prompt exceeded the model context window. ${WORKER_ERROR_CONTEXT_HINT}`;
-  }
-
-  if (options.errorMessage) {
-    return `⚠️ Worker reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${WORKER_ERROR_GENERIC_HINT}`;
-  }
-
-  return `⚠️ Worker reply failed. ${WORKER_ERROR_GENERIC_HINT}`;
-}
-
-function formatManagerErrorMessage(errorMessage: string): string {
-  const trimmed = errorMessage.trim();
-  if (trimmed.length === 0) {
-    return "Unknown error.";
-  }
-
-  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
-}
-
-function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean {
-  if (entry.type === "conversation_log") {
-    return false;
-  }
-
-  if (entry.type === "agent_tool_call") {
-    return entry.kind !== "tool_execution_update";
-  }
-
-  return true;
-}
-
-function hasValidSessionHeader(sessionFile: string): boolean {
-  if (!existsSync(sessionFile)) {
-    return false;
-  }
-
-  let fileDescriptor: number | undefined;
-
-  try {
-    fileDescriptor = openSync(sessionFile, "r");
-    const buffer = Buffer.alloc(512);
-    const bytesRead = readSync(fileDescriptor, buffer, 0, buffer.length, 0);
-    if (bytesRead <= 0) {
-      return false;
-    }
-
-    const firstLine = buffer.toString("utf8", 0, bytesRead).split("\n")[0]?.trim();
-    if (!firstLine) {
-      return false;
-    }
-
-    const header = JSON.parse(firstLine) as { type?: string; id?: unknown };
-    return header.type === "session" && typeof header.id === "string" && header.id.trim().length > 0;
-  } catch {
-    return false;
-  } finally {
-    if (fileDescriptor !== undefined) {
-      closeSync(fileDescriptor);
-    }
-  }
-}
-
-function isMissingOrEmptySessionFile(sessionFile: string): boolean {
-  try {
-    return statSync(sessionFile).size === 0;
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return true;
-    }
-
-    throw error;
-  }
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}
-
-function isPreservedWebTranscriptEntry(entry: ConversationEntryEvent): boolean {
-  if (entry.type !== "conversation_message") {
-    return false;
-  }
-
-  if (entry.source === "project_agent_input") {
-    return true;
-  }
-
-  if (entry.source !== "user_input" && entry.source !== "speak_to_user") {
-    return false;
-  }
-
-  return (entry.sourceContext?.channel ?? "web") === "web";
-}
-
-function trimConversationHistory(entries: ConversationEntryEvent[]): void {
-  const overflow = entries.length - MAX_CONVERSATION_HISTORY;
-  if (overflow <= 0) {
-    return;
-  }
-
-  const removableIndexes: number[] = [];
-  for (let index = 0; index < entries.length; index += 1) {
-    if (removableIndexes.length >= overflow) {
-      break;
-    }
-
-    if (!isPreservedWebTranscriptEntry(entries[index])) {
-      removableIndexes.push(index);
-    }
-  }
-
-  if (removableIndexes.length === 0) {
-    return;
-  }
-
-  for (let index = removableIndexes.length - 1; index >= 0; index -= 1) {
-    entries.splice(removableIndexes[index], 1);
-  }
 }

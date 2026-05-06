@@ -116,6 +116,7 @@ function createService(options: {
   profiles?: Map<string, ManagerProfile>;
   applyManagerRuntimeRecyclePolicy?: ReturnType<typeof vi.fn>;
   saveStore?: ReturnType<typeof vi.fn>;
+  transactionDescriptors?: (callback: any) => Promise<any>;
   emitAgentsSnapshot?: ReturnType<typeof vi.fn>;
   emitProfilesSnapshot?: ReturnType<typeof vi.fn>;
   logDebug?: ReturnType<typeof vi.fn>;
@@ -135,6 +136,7 @@ function createService(options: {
     assertCanChangeManagerCwd: () => {},
     applyManagerRuntimeRecyclePolicy: options.applyManagerRuntimeRecyclePolicy ?? vi.fn(async () => "none"),
     now: options.now,
+    transactionDescriptors: options.transactionDescriptors,
     saveStore: options.saveStore ?? vi.fn(async () => {}),
     emitAgentsSnapshot: options.emitAgentsSnapshot ?? vi.fn(),
     emitProfilesSnapshot: options.emitProfilesSnapshot ?? vi.fn(),
@@ -493,6 +495,58 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     expect(emitProfilesSnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it("applies profile default session descriptor patches in one transaction before recycling", async () => {
+    const root = await createTempRoot();
+    const profiles = new Map<string, ManagerProfile>([["manager", createProfile()]]);
+    const firstSession = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const secondSession = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const transactionCalls: string[][] = [];
+    let saved = false;
+    const transactionDescriptors = vi.fn(async (callback: any) => {
+      const patchedDescriptors: string[] = [];
+      const result = await callback({
+        patchDescriptor: (agentId: string, patch: Partial<AgentDescriptor>) => {
+          patchedDescriptors.push(agentId);
+          const session = [firstSession, secondSession].find((candidate) => candidate.agentId === agentId);
+          if (!session) throw new Error(`unknown descriptor ${agentId}`);
+          Object.assign(session, patch);
+          return session;
+        },
+        patchProfile: (profileId: string, patch: Partial<ManagerProfile>) => {
+          const profile = profiles.get(profileId);
+          if (!profile) throw new Error(`unknown profile ${profileId}`);
+          Object.assign(profile, patch);
+          return profile;
+        }
+      });
+      transactionCalls.push(patchedDescriptors);
+      saved = true;
+      return result;
+    });
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => {
+      expect(saved).toBe(true);
+      return "recycled";
+    });
+    const service = createService({
+      rootDir: root,
+      sessions: [firstSession, secondSession],
+      profiles,
+      transactionDescriptors,
+      applyManagerRuntimeRecyclePolicy,
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    await service.updateProfileDefaultModel("manager", "pi-5.4");
+
+    expect(transactionDescriptors).toHaveBeenCalledTimes(1);
+    expect(transactionCalls).toEqual([["manager", "manager--s2"]]);
+    expect(profiles.get("manager")).toMatchObject({
+      defaultModel: resolveModelDescriptorFromPreset("pi-5.4"),
+      updatedAt: "2026-01-02T00:00:00.000Z"
+    });
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(2);
+  });
+
   it("persists metadata-only session override transitions without recycling when the effective model stays the same", async () => {
     const root = await createTempRoot();
     const session = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
@@ -515,5 +569,124 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     expect(saveStore).toHaveBeenCalledTimes(1);
     expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
     await expect(readFile(session.sessionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("SwarmSettingsService.updateManagerCwd", () => {
+  it("patches all profile sessions in one transaction and recycles only after save", async () => {
+    const root = await createTempRoot();
+    const nextCwd = join(root, "workspace");
+    const firstSession = createSession(root, "manager");
+    const secondSession = createSession(root, "manager--s2");
+    const patchedDescriptors: string[] = [];
+    let saved = false;
+    const transactionDescriptors = vi.fn(async (callback: any) => {
+      const result = await callback({
+        patchDescriptor: (agentId: string, patch: Partial<AgentDescriptor>) => {
+          patchedDescriptors.push(agentId);
+          const session = [firstSession, secondSession].find((candidate) => candidate.agentId === agentId);
+          if (!session) throw new Error(`unknown descriptor ${agentId}`);
+          Object.assign(session, patch);
+          return session;
+        },
+        patchProfile: () => {
+          throw new Error("unexpected profile patch");
+        }
+      });
+      saved = true;
+      return result;
+    });
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => {
+      expect(saved).toBe(true);
+      return "recycled";
+    });
+    const emitAgentsSnapshot = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [firstSession, secondSession],
+      transactionDescriptors,
+      applyManagerRuntimeRecyclePolicy,
+      emitAgentsSnapshot
+    });
+
+    await expect(service.updateManagerCwd("manager", nextCwd)).resolves.toBe(nextCwd);
+
+    expect(transactionDescriptors).toHaveBeenCalledTimes(1);
+    expect(patchedDescriptors).toEqual(["manager", "manager--s2"]);
+    expect(firstSession.cwd).toBe(nextCwd);
+    expect(secondSession.cwd).toBe(nextCwd);
+    expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
+      ["manager", "cwd_change"],
+      ["manager--s2", "cwd_change"]
+    ]);
+    expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits the agents snapshot only after cwd recycle attempts finish", async () => {
+    const root = await createTempRoot();
+    const nextCwd = join(root, "workspace");
+    const firstSession = createSession(root, "manager");
+    const secondSession = createSession(root, "manager--s2");
+    const events: string[] = [];
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async (agentId: string) => {
+      events.push(`recycle-start:${agentId}`);
+      await Promise.resolve();
+      events.push(`recycle-finish:${agentId}`);
+      return agentId === firstSession.agentId ? "recycled" : "deferred";
+    });
+    const emitAgentsSnapshot = vi.fn(() => {
+      events.push("snapshot");
+    });
+    const service = createService({
+      rootDir: root,
+      sessions: [firstSession, secondSession],
+      applyManagerRuntimeRecyclePolicy,
+      emitAgentsSnapshot
+    });
+
+    await expect(service.updateManagerCwd("manager", nextCwd)).resolves.toBe(nextCwd);
+
+    expect(events).toEqual([
+      "recycle-start:manager",
+      "recycle-finish:manager",
+      "recycle-start:manager--s2",
+      "recycle-finish:manager--s2",
+      "snapshot"
+    ]);
+  });
+
+  it("does not recycle or emit when cwd transaction save fails", async () => {
+    const root = await createTempRoot();
+    const nextCwd = join(root, "workspace");
+    const session = createSession(root, "manager");
+    const transactionDescriptors = vi.fn(async (callback: any) => {
+      await callback({
+        patchDescriptor: (agentId: string, patch: Partial<AgentDescriptor>) => {
+          expect(agentId).toBe(session.agentId);
+          Object.assign(session, patch);
+          return session;
+        },
+        patchProfile: () => {
+          throw new Error("unexpected profile patch");
+        }
+      });
+      session.cwd = root;
+      throw new Error("save failed");
+    });
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const emitAgentsSnapshot = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      transactionDescriptors,
+      applyManagerRuntimeRecyclePolicy,
+      emitAgentsSnapshot
+    });
+
+    await expect(service.updateManagerCwd("manager", nextCwd)).rejects.toThrow("save failed");
+
+    expect(session.cwd).toBe(root);
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+    expect(emitAgentsSnapshot).not.toHaveBeenCalled();
   });
 });

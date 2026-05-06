@@ -341,6 +341,80 @@ describe('settings routes', () => {
     })
     expect(swarmManager.setCredentialPoolStrategy).not.toHaveBeenCalled()
   })
+
+  it('invalidates usage cache for Anthropic pool primary, cooldown, remove, and strategy mutations', async () => {
+    const pool = createPoolState([
+      makeCredential({ id: 'acct-ant-1', label: 'Anthropic Primary', isPrimary: true }),
+      makeCredential({ id: 'acct-ant-2', label: 'Anthropic Backup', isPrimary: false }),
+    ])
+    const swarmManager = {
+      setPrimaryPooledCredential: vi.fn(async () => undefined),
+      resetPooledCredentialCooldown: vi.fn(async () => undefined),
+      removePooledCredential: vi.fn(async () => undefined),
+      setCredentialPoolStrategy: vi.fn(async () => undefined),
+      listCredentialPool: vi.fn(async () => pool),
+    }
+    const statsService = {
+      invalidateProviderUsage: vi.fn(async () => undefined),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager, statsService)
+
+    const primaryResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2/primary`, {
+      method: 'POST',
+    })
+    expect(primaryResponse.status).toBe(200)
+
+    const cooldownResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2/cooldown`, {
+      method: 'DELETE',
+    })
+    expect(cooldownResponse.status).toBe(200)
+
+    const removeResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2`, {
+      method: 'DELETE',
+    })
+    expect(removeResponse.status).toBe(200)
+
+    const strategyResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/strategy`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ strategy: 'least_used' }),
+    })
+    expect(strategyResponse.status).toBe(200)
+
+    expect(statsService.invalidateProviderUsage).toHaveBeenCalledTimes(4)
+    expect(statsService.invalidateProviderUsage).toHaveBeenNthCalledWith(1, 'anthropic')
+    expect(statsService.invalidateProviderUsage).toHaveBeenNthCalledWith(2, 'anthropic')
+    expect(statsService.invalidateProviderUsage).toHaveBeenNthCalledWith(3, 'anthropic')
+    expect(statsService.invalidateProviderUsage).toHaveBeenNthCalledWith(4, 'anthropic')
+  })
+
+  it('rejects unsupported pooled-auth providers before invoking pool mutations', async () => {
+    const swarmManager = {
+      listCredentialPool: vi.fn(async (provider: string) => {
+        throw new Error(`Credential pooling is only supported for 'openai-codex', 'anthropic', got '${provider}'`)
+      }),
+      setCredentialPoolStrategy: vi.fn(async () => undefined),
+      renamePooledCredential: vi.fn(async () => undefined),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager)
+
+    const accountsResponse = await fetch(`${server.baseUrl}/api/settings/auth/xai/accounts`)
+    expect(accountsResponse.status).toBe(400)
+    await expect(accountsResponse.json()).resolves.toEqual({ error: 'Invalid pooled auth provider' })
+
+    const strategyResponse = await fetch(`${server.baseUrl}/api/settings/auth/xai/strategy`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ strategy: 'fill_first' }),
+    })
+    expect(strategyResponse.status).toBe(400)
+    await expect(strategyResponse.json()).resolves.toEqual({ error: 'Invalid pooled auth provider' })
+
+    expect(swarmManager.setCredentialPoolStrategy).not.toHaveBeenCalled()
+    expect(swarmManager.renamePooledCredential).not.toHaveBeenCalled()
+  })
 })
 
 describe('SwarmWebSocketServer P0 endpoints', () => {

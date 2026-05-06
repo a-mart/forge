@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
 import { getSessionDir } from '../data-paths.js'
+import { loadPins, savePins } from '../message-pins.js'
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import { readSessionMeta } from '../session-manifest.js'
 import { modelCatalogService } from '../model-catalog-service.js'
@@ -468,6 +469,110 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('filters copied pinned messages to the partial forked session history', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Pinned Source Session' })
+    await writeFile(
+      sessionAgent.sessionFile,
+      [
+        JSON.stringify({
+          type: 'session',
+          version: 3,
+          id: 'hdr',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+        }),
+        JSON.stringify({
+          type: 'custom',
+          customType: 'swarm_conversation_entry',
+          id: 'entry-1',
+          parentId: null,
+          timestamp: '2026-01-01T00:00:01.000Z',
+          data: {
+            type: 'conversation_message',
+            id: 'm1',
+            agentId: sessionAgent.agentId,
+            role: 'assistant',
+            text: 'Pinned before fork target',
+            timestamp: '2026-01-01T00:00:01.000Z',
+            source: 'system',
+          },
+        }),
+        JSON.stringify({
+          type: 'custom',
+          customType: 'swarm_conversation_entry',
+          id: 'entry-2',
+          parentId: 'entry-1',
+          timestamp: '2026-01-01T00:00:02.000Z',
+          data: {
+            type: 'conversation_message',
+            id: 'm2',
+            agentId: sessionAgent.agentId,
+            role: 'assistant',
+            text: 'Pinned fork target',
+            timestamp: '2026-01-01T00:00:02.000Z',
+            source: 'system',
+          },
+        }),
+        JSON.stringify({
+          type: 'custom',
+          customType: 'swarm_conversation_entry',
+          id: 'entry-3',
+          parentId: 'entry-2',
+          timestamp: '2026-01-01T00:00:03.000Z',
+          data: {
+            type: 'conversation_message',
+            id: 'm3',
+            agentId: sessionAgent.agentId,
+            role: 'assistant',
+            text: 'Pinned after fork target',
+            timestamp: '2026-01-01T00:00:03.000Z',
+            source: 'system',
+          },
+        }),
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await savePins(getSessionDir(config.paths.dataDir, 'manager', sessionAgent.agentId), {
+      version: 1,
+      pins: {
+        m1: {
+          pinnedAt: '2026-01-01T00:00:01.000Z',
+          role: 'assistant',
+          text: 'Pinned before fork target',
+          timestamp: '2026-01-01T00:00:01.000Z',
+        },
+        m2: {
+          pinnedAt: '2026-01-01T00:00:02.000Z',
+          role: 'assistant',
+          text: 'Pinned fork target',
+          timestamp: '2026-01-01T00:00:02.000Z',
+        },
+        m3: {
+          pinnedAt: '2026-01-01T00:00:03.000Z',
+          role: 'assistant',
+          text: 'Pinned after fork target',
+          timestamp: '2026-01-01T00:00:03.000Z',
+        },
+      },
+    })
+
+    const forked = await manager.forkSession(sessionAgent.agentId, {
+      label: 'Pinned Partial Fork',
+      fromMessageId: 'm2',
+    })
+
+    const forkedPins = await loadPins(getSessionDir(config.paths.dataDir, 'manager', forked.sessionAgent.agentId))
+    expect(Object.keys(forkedPins.pins).sort()).toEqual(['m1', 'm2'])
+    expect(forkedPins.pins.m1?.text).toBe('Pinned before fork target')
+    expect(forkedPins.pins.m2?.text).toBe('Pinned fork target')
+    expect(forkedPins.pins.m3).toBeUndefined()
+  })
+
   it('createSessionFromAgent inherits the profile default when model and reasoning are omitted', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -714,7 +819,7 @@ describe('SwarmManager', () => {
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
       runtimeTokensByAgentId: Map<string, number>
-      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
       handleRuntimeStatus: (
         runtimeToken: number,
         agentId: string,
@@ -741,7 +846,7 @@ describe('SwarmManager', () => {
     expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(0)
     expect(sessionRuntime.recycleCalls).toBe(0)
     expect(sessionRuntime.terminateCalls).toHaveLength(0)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
 
     const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
@@ -753,7 +858,7 @@ describe('SwarmManager', () => {
     expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(1)
     expect(sessionRuntime.recycleCalls).toBe(0)
     expect(sessionRuntime.terminateCalls).toHaveLength(0)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
     expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
@@ -1007,7 +1112,7 @@ describe('SwarmManager', () => {
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
       runtimeTokensByAgentId: Map<string, number>
-      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
       handleRuntimeStatus: (
         runtimeToken: number,
         agentId: string,
@@ -1046,8 +1151,8 @@ describe('SwarmManager', () => {
     expect(state.runtimes.has(rootSession.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
     expect(state.runtimes.has(otherManager.agentId)).toBe(true)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(otherManager.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(otherManager.agentId)).toBe(false)
 
     const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
     expect(runtimeToken).toBeTypeOf('number')
@@ -1056,7 +1161,7 @@ describe('SwarmManager', () => {
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
     expect(sessionRuntime.recycleCalls).toBe(1)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
     expect(manager.runtimeByAgentId.get(otherManager.agentId)).toBe(otherRuntime)
 
@@ -1156,7 +1261,7 @@ describe('SwarmManager', () => {
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
       runtimeTokensByAgentId: Map<string, number>
-      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
       handleRuntimeStatus: (
         runtimeToken: number,
         agentId: string,
@@ -1184,7 +1289,7 @@ describe('SwarmManager', () => {
     expect(sessionRuntime.recycleCalls).toBe(0)
     expect(state.runtimes.has(rootSession.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
 
     const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
     expect(runtimeToken).toBeTypeOf('number')
@@ -1193,8 +1298,153 @@ describe('SwarmManager', () => {
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
     expect(sessionRuntime.recycleCalls).toBe(1)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+  })
+
+  it('recycles only the target project agent when its system prompt changes without directory changes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Prompt Agent' })
+
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      handle: 'prompt-agent',
+      whenToUse: 'Use for prompt-backed work',
+      systemPrompt: 'Initial prompt',
+    })
+    await manager.handleUserMessage('Attach after promotion', { targetAgentId: sessionAgent.agentId })
+
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+
+    const rootCallsAfterAttach = rootRuntime?.recycleCalls ?? 0
+    const sessionCallsAfterAttach = sessionRuntime?.recycleCalls ?? 0
+
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      handle: 'prompt-agent',
+      whenToUse: 'Use for prompt-backed work',
+      systemPrompt: 'Updated prompt',
+    })
+
+    expect(rootRuntime?.recycleCalls).toBe(rootCallsAfterAttach)
+    expect(sessionRuntime?.recycleCalls).toBe(sessionCallsAfterAttach + 1)
+  })
+
+  it('recycles only the target project agent when its reference docs change', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Docs Agent' })
+
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Use for docs updates',
+      systemPrompt: 'Maintain docs',
+    })
+    await manager.handleUserMessage('Attach after promotion', { targetAgentId: sessionAgent.agentId })
+
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+
+    const rootCallsAfterAttach = rootRuntime?.recycleCalls ?? 0
+    const sessionCallsAfterAttach = sessionRuntime?.recycleCalls ?? 0
+
+    await manager.setProjectAgentReference(sessionAgent.agentId, 'notes.md', 'reference content')
+
+    expect(rootRuntime?.recycleCalls).toBe(rootCallsAfterAttach)
+    expect(sessionRuntime?.recycleCalls).toBe(sessionCallsAfterAttach + 1)
+  })
+
+  it('does not recycle the target project agent for normalized no-op reference writes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Docs Agent' })
+
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Use for docs updates',
+      systemPrompt: 'Maintain docs',
+    })
+    await manager.handleUserMessage('Attach after promotion', { targetAgentId: sessionAgent.agentId })
+
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+
+    await manager.setProjectAgentReference(sessionAgent.agentId, 'notes.md', 'reference content')
+
+    const rootCallsAfterWrite = rootRuntime?.recycleCalls ?? 0
+    const sessionCallsAfterWrite = sessionRuntime?.recycleCalls ?? 0
+
+    await manager.setProjectAgentReference(sessionAgent.agentId, 'notes.md', 'reference content   \n\n')
+
+    expect(rootRuntime?.recycleCalls).toBe(rootCallsAfterWrite)
+    expect(sessionRuntime?.recycleCalls).toBe(sessionCallsAfterWrite)
+  })
+
+  it('defers target-only project-agent reference recycle while the target runtime is busy', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Busy Docs Agent' })
+
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      handle: 'busy-docs',
+      whenToUse: 'Use for busy docs updates',
+      systemPrompt: 'Maintain busy docs',
+    })
+    await manager.handleUserMessage('Attach after promotion', { targetAgentId: sessionAgent.agentId })
+
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    const descriptor = manager.getAgent(sessionAgent.agentId)
+    const state = manager as unknown as {
+      runtimeTokensByAgentId: Map<string, number>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
+      handleRuntimeStatus: (
+        runtimeToken: number,
+        agentId: string,
+        status: AgentDescriptor['status'],
+        pendingCount: number,
+        contextUsage?: AgentContextUsage,
+      ) => Promise<void>
+    }
+
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+    expect(descriptor?.role).toBe('manager')
+
+    if (!rootRuntime || !sessionRuntime || !descriptor || descriptor.role !== 'manager') {
+      throw new Error('Expected project-agent runtime to exist')
+    }
+
+    const rootCallsAfterAttach = rootRuntime.recycleCalls
+    const sessionCallsAfterAttach = sessionRuntime.recycleCalls
+    descriptor.status = 'streaming'
+    descriptor.updatedAt = new Date().toISOString()
+    sessionRuntime.busy = true
+
+    await manager.setProjectAgentReference(sessionAgent.agentId, 'notes.md', 'reference content')
+
+    expect(rootRuntime.recycleCalls).toBe(rootCallsAfterAttach)
+    expect(sessionRuntime.recycleCalls).toBe(sessionCallsAfterAttach)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
+
+    const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
+    expect(runtimeToken).toBeTypeOf('number')
+
+    sessionRuntime.busy = false
+    await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
+
+    expect(sessionRuntime.recycleCalls).toBe(sessionCallsAfterAttach + 1)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
   })
 
   it.each([

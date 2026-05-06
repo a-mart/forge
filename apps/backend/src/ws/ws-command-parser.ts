@@ -50,6 +50,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "api_proxy":
     case "create_manager":
     case "delete_manager":
+    case "update_profile_default_model":
     case "update_manager_model":
     case "update_manager_cwd":
     case "create_session":
@@ -59,6 +60,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "clear_session":
     case "rename_session":
     case "pin_session":
+    case "update_session_model":
     case "set_session_project_agent":
     case "get_project_agent_config":
     case "list_project_agent_references":

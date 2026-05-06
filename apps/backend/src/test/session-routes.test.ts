@@ -188,6 +188,43 @@ describe("session routes", () => {
     );
   });
 
+  it("stops manager sessions and removes subscriptions for terminated workers", async () => {
+    const send = vi.fn();
+    const handleDeletedAgentSubscriptions = vi.fn();
+    const swarmManager = {
+      getAgent: vi.fn((agentId: string) => {
+        if (agentId === "session-1") {
+          return { agentId: "session-1", role: "manager", profileId: "profile-a" };
+        }
+        return undefined;
+      }),
+      stopSession: vi.fn(async () => ({ terminatedWorkerIds: ["worker-1", "worker-2"] })),
+    };
+
+    await handleSessionCommand({
+      command: { type: "stop_session", agentId: "session-1", requestId: "req-stop" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions,
+    });
+
+    expect(swarmManager.stopSession).toHaveBeenCalledWith("session-1");
+    expect(handleDeletedAgentSubscriptions).toHaveBeenCalledWith(new Set(["worker-1", "worker-2"]));
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_stopped",
+        agentId: "session-1",
+        profileId: "profile-a",
+        terminatedWorkerIds: ["worker-1", "worker-2"],
+        requestId: "req-stop",
+      }),
+    );
+  });
+
   it("deletes sessions, clears unread state, and removes subscriptions for the session and workers", async () => {
     const send = vi.fn();
     const clearSession = vi.fn();

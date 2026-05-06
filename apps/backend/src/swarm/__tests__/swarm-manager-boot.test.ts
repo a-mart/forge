@@ -1474,6 +1474,113 @@ describe('SwarmManager', () => {
     expect(manager.runtimeByAgentId.get('worker-a')).toBeUndefined()
   })
 
+  it('preserves critical persisted descriptor fields across boot save normalization', async () => {
+    const config = await makeTempConfig()
+    const projectSessionFile = join(config.paths.sessionsDir, 'release-notes.jsonl')
+    const normalizedProjectSessionFile = join(getSessionDir(config.paths.dataDir, 'manager', 'release-notes'), 'session.jsonl')
+
+    const seedAgents = {
+      agents: [
+        {
+          agentId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          managerId: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          profileId: 'manager',
+        },
+        {
+          agentId: 'release-notes',
+          displayName: 'Release Notes',
+          role: 'manager',
+          managerId: 'release-notes',
+          creatorAgentId: 'agent-creator',
+          status: 'stopped_on_restart',
+          createdAt: '2026-01-02T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.5',
+            thinkingLevel: 'xhigh',
+            serviceTier: 'priority',
+          },
+          modelOrigin: 'session_override',
+          sessionFile: projectSessionFile,
+          profileId: 'manager',
+          sessionLabel: 'Release Notes',
+          sessionPurpose: 'agent_creator',
+          sessionSurface: 'builder',
+          sessionSystemPrompt: 'Session prompt survives boot.',
+          pinnedAt: '2026-01-03T00:00:00.000Z',
+          contextUsage: { tokens: 123, contextWindow: 456, percent: 27 },
+          projectAgent: {
+            handle: 'release-notes',
+            whenToUse: 'Draft release notes.',
+            systemPrompt: 'You are the release notes project agent.',
+            creatorSessionId: 'agent-creator',
+            capabilities: ['create_session'],
+          },
+          agentCreatorResult: {
+            createdAgentId: 'release-notes',
+            createdHandle: 'release-notes',
+            createdAt: '2026-01-04T00:00:00.000Z',
+          },
+        },
+      ],
+    }
+
+    await writeFile(config.paths.agentsStoreFile, JSON.stringify(seedAgents, null, 2), 'utf8')
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const publicDescriptor = manager.getAgent('release-notes')
+    const listedDescriptor = manager.listAgents().find((agent) => agent.agentId === 'release-notes')
+    expect(publicDescriptor?.status).toBe('stopped')
+    expect(publicDescriptor?.projectAgent?.systemPrompt).toBeUndefined()
+    expect(listedDescriptor?.projectAgent?.systemPrompt).toBeUndefined()
+
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    const persisted = persistedStore.agents.find((agent) => agent.agentId === 'release-notes')
+    expect(persisted).toMatchObject({
+      creatorAgentId: 'agent-creator',
+      status: 'stopped',
+      model: {
+        provider: 'openai-codex',
+        modelId: 'gpt-5.5',
+        thinkingLevel: 'xhigh',
+        serviceTier: 'priority',
+      },
+      modelOrigin: 'session_override',
+      sessionFile: normalizedProjectSessionFile,
+      profileId: 'manager',
+      sessionLabel: 'Release Notes',
+      sessionPurpose: 'agent_creator',
+      sessionSurface: 'builder',
+      sessionSystemPrompt: 'Session prompt survives boot.',
+      pinnedAt: '2026-01-03T00:00:00.000Z',
+      contextUsage: { tokens: 123, contextWindow: 456, percent: 27 },
+      projectAgent: {
+        handle: 'release-notes',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: 'You are the release notes project agent.',
+        creatorSessionId: 'agent-creator',
+        capabilities: ['create_session'],
+      },
+      agentCreatorResult: {
+        createdAgentId: 'release-notes',
+        createdHandle: 'release-notes',
+        createdAt: '2026-01-04T00:00:00.000Z',
+      },
+    })
+  })
+
   it('migrates persisted stopped_on_restart statuses to stopped at boot', async () => {
     const config = await makeTempConfig()
 

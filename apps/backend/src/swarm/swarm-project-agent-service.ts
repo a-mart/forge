@@ -1,15 +1,21 @@
 import type { PersistedProjectAgentConfig, ProjectAgentCapability } from "@forge/protocol";
 import {
   deleteProjectAgentRecord,
-  readProjectAgentRecord,
   writeProjectAgentRecord
 } from "./project-agent-storage.js";
 import {
-  findProjectAgentByHandle,
+  planProjectAgentReferenceDeleteMutation,
+  planProjectAgentReferenceWriteMutation,
+  planSetSessionProjectAgentMutation,
+  type ProjectAgentMutationFlags
+} from "./agents/project-agent-mutations.js";
+import {
   getProjectAgentHandleCollisionError,
   normalizeProjectAgentHandle,
   normalizeProjectAgentInlineText
-} from "./project-agents.js";
+} from "./agents/project-agents.js";
+import { ProjectAgentRegistry } from "./agents/project-agent-registry.js";
+import { ProjectAgentSettingsSnapshotReader } from "./agents/project-agent-settings-snapshot.js";
 import {
   deleteProjectAgentReferenceDoc,
   listProjectAgentReferenceDocs,
@@ -31,14 +37,8 @@ export interface SwarmProjectAgentServiceOptions {
   ) => { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number };
   getRequiredSessionDescriptor: (agentId: string) => ProvisionedSessionDescriptor;
   assertSessionSupportsProjectAgent: (descriptor: ProvisionedSessionDescriptor) => void;
-  buildProjectAgentInfoForSession: (
-    descriptor: ProvisionedSessionDescriptor,
-    whenToUse: string,
-    systemPrompt?: string,
-    handle?: string,
-    capabilities?: ProjectAgentCapability[]
-  ) => NonNullable<AgentDescriptor["projectAgent"]>;
   getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<{ getContextUsage(): AgentDescriptor["contextUsage"] }>;
+  upsertDescriptorInLiveMaps: (descriptor: AgentDescriptor) => void;
   captureSessionRuntimePromptMeta: (
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
@@ -63,7 +63,20 @@ export interface SwarmProjectAgentServiceOptions {
 }
 
 export class SwarmProjectAgentService {
-  constructor(private readonly options: SwarmProjectAgentServiceOptions) {}
+  private readonly registry: ProjectAgentRegistry;
+  private readonly settingsSnapshotReader: ProjectAgentSettingsSnapshotReader;
+
+  constructor(private readonly options: SwarmProjectAgentServiceOptions) {
+    this.registry = new ProjectAgentRegistry({
+      dataDir: options.dataDir,
+      descriptors: options.descriptors
+    });
+    this.settingsSnapshotReader = new ProjectAgentSettingsSnapshotReader({
+      dataDir: options.dataDir,
+      registry: this.registry,
+      now: options.now
+    });
+  }
 
   async createAndPromoteProjectAgent(
     creatorAgentId: string,
@@ -104,15 +117,7 @@ export class SwarmProjectAgentService {
       throw new Error("Project agent handle must contain at least one letter, number, or dash");
     }
 
-    const collision = findProjectAgentByHandle(this.options.descriptors.values(), profileId, handle);
-    if (collision) {
-      throw new Error(getProjectAgentHandleCollisionError(handle));
-    }
-
-    const onDiskCollision = await readProjectAgentRecord(this.options.dataDir, profileId, handle);
-    if (onDiskCollision) {
-      throw new Error(getProjectAgentHandleCollisionError(handle));
-    }
+    await this.assertProjectAgentHandleAvailable(profileId, handle);
 
     const prepared = this.options.prepareSessionCreation(profileId, {
       name: trimmedName,
@@ -161,7 +166,7 @@ export class SwarmProjectAgentService {
             createdHandle: handle,
             createdAt: new Date().toISOString()
           };
-          this.options.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
+          this.options.upsertDescriptorInLiveMaps(creatorDescriptor);
         },
         onError: async () => {
           if (previousCreatorResult) {
@@ -169,7 +174,7 @@ export class SwarmProjectAgentService {
           } else {
             delete creatorDescriptor.agentCreatorResult;
           }
-          this.options.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
+          this.options.upsertDescriptorInLiveMaps(creatorDescriptor);
           await deleteProjectAgentRecord(this.options.dataDir, profileId, handle);
         }
       });
@@ -185,7 +190,7 @@ export class SwarmProjectAgentService {
       } else {
         delete creatorDescriptor.agentCreatorResult;
       }
-      this.options.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
+      this.options.upsertDescriptorInLiveMaps(creatorDescriptor);
 
       const cleanupResults = await Promise.allSettled([
         deleteProjectAgentRecord(this.options.dataDir, profileId, handle),
@@ -200,6 +205,17 @@ export class SwarmProjectAgentService {
             message: cleanupResult.reason instanceof Error ? cleanupResult.reason.message : String(cleanupResult.reason)
           });
         }
+      }
+
+      try {
+        await this.options.saveStore();
+      } catch (rollbackSaveError) {
+        this.options.logDebug("project_agent:create:rollback_save_error", {
+          creatorAgentId,
+          agentId: sessionDescriptor.agentId,
+          handle,
+          message: rollbackSaveError instanceof Error ? rollbackSaveError.message : String(rollbackSaveError)
+        });
       }
 
       throw error;
@@ -232,52 +248,28 @@ export class SwarmProjectAgentService {
     this.options.assertSessionSupportsProjectAgent(descriptor);
 
     const profileId = descriptor.profileId;
-    const previousProjectAgent = descriptor.projectAgent;
-    const nextHandle = projectAgent?.handle !== undefined ? normalizeProjectAgentHandle(projectAgent.handle) : undefined;
-    if (previousProjectAgent && nextHandle && nextHandle !== previousProjectAgent.handle) {
-      throw new Error("Cannot change project agent handle after promotion. Demote and re-promote to change the handle.");
-    }
+    const mutation = planSetSessionProjectAgentMutation({
+      descriptor,
+      projectAgent,
+      updatedAt: this.options.now()
+    });
+    const nextProjectAgent = mutation.nextProjectAgent;
 
-    const nextProjectAgent = projectAgent
-      ? this.options.buildProjectAgentInfoForSession(
-          descriptor,
-          projectAgent.whenToUse,
-          projectAgent.systemPrompt,
-          projectAgent.handle ?? descriptor.projectAgent?.handle,
-          projectAgent.capabilities ?? descriptor.projectAgent?.capabilities
-        )
-      : null;
+    if (mutation.configPlan.kind === "write") {
+      await this.assertProjectAgentHandleAvailable(profileId, mutation.configPlan.handle, descriptor.agentId);
 
-    if (nextProjectAgent) {
-      const onDiskCollision = await readProjectAgentRecord(this.options.dataDir, profileId, nextProjectAgent.handle);
-      if (onDiskCollision && onDiskCollision.config.agentId !== descriptor.agentId) {
-        throw new Error(getProjectAgentHandleCollisionError(nextProjectAgent.handle));
-      }
-
-      const persistedProjectAgentConfig: PersistedProjectAgentConfig = {
-        version: 1,
-        agentId: descriptor.agentId,
-        handle: nextProjectAgent.handle,
-        whenToUse: nextProjectAgent.whenToUse,
-        ...(nextProjectAgent.creatorSessionId !== undefined
-          ? { creatorSessionId: nextProjectAgent.creatorSessionId }
-          : {}),
-        ...(nextProjectAgent.capabilities !== undefined ? { capabilities: nextProjectAgent.capabilities } : {}),
-        promotedAt: descriptor.createdAt,
-        updatedAt: this.options.now()
-      };
       await writeProjectAgentRecord(
         this.options.dataDir,
         profileId,
-        persistedProjectAgentConfig,
-        nextProjectAgent.systemPrompt ?? null
+        mutation.configPlan.config,
+        mutation.configPlan.systemPrompt
       );
-    } else if (previousProjectAgent?.handle) {
-      await deleteProjectAgentRecord(this.options.dataDir, profileId, previousProjectAgent.handle);
+    } else if (mutation.configPlan.kind === "delete") {
+      await deleteProjectAgentRecord(this.options.dataDir, profileId, mutation.configPlan.handle);
     }
 
     descriptor.projectAgent = nextProjectAgent ?? undefined;
-    this.options.descriptors.set(agentId, descriptor);
+    this.options.upsertDescriptorInLiveMaps(descriptor);
 
     try {
       await this.options.saveStore();
@@ -290,7 +282,9 @@ export class SwarmProjectAgentService {
 
     this.options.emitAgentsSnapshot();
     this.options.emitSessionProjectAgentUpdated(descriptor.agentId, profileId, nextProjectAgent);
-    await this.options.notifyProjectAgentsChanged(profileId);
+    if (mutation.flags.directoryChanged) {
+      await this.options.notifyProjectAgentsChanged(profileId);
+    }
 
     return {
       profileId,
@@ -303,40 +297,16 @@ export class SwarmProjectAgentService {
     systemPrompt: string | null;
     references: string[];
   }> {
-    const { descriptor, profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
-    const references = await listProjectAgentReferenceDocs(this.options.dataDir, profileId, handle);
-    const record = await readProjectAgentRecord(this.options.dataDir, profileId, handle);
-    if (record) {
-      return { config: record.config, systemPrompt: record.systemPrompt, references };
-    }
-
-    return {
-      config: {
-        version: 1,
-        agentId,
-        handle,
-        whenToUse: descriptor.projectAgent.whenToUse,
-        ...(descriptor.projectAgent.creatorSessionId !== undefined
-          ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
-          : {}),
-        ...(descriptor.projectAgent.capabilities !== undefined
-          ? { capabilities: descriptor.projectAgent.capabilities }
-          : {}),
-        promotedAt: descriptor.createdAt ?? new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      },
-      systemPrompt: descriptor.projectAgent.systemPrompt ?? null,
-      references
-    };
+    return this.settingsSnapshotReader.read(agentId);
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {
-    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
     return listProjectAgentReferenceDocs(this.options.dataDir, profileId, handle);
   }
 
   async getProjectAgentReference(agentId: string, fileName: string): Promise<string> {
-    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
     const content = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
     if (content === null) {
       throw new Error(`Reference document ${fileName} does not exist`);
@@ -344,31 +314,34 @@ export class SwarmProjectAgentService {
     return content;
   }
 
-  async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<void> {
-    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
-    await writeProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName, content);
+  async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<ProjectAgentMutationFlags> {
+    const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
+    const existingContent = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
+    const mutation = planProjectAgentReferenceWriteMutation({ fileName, content, existingContent });
+    if (mutation.changed) {
+      await writeProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, mutation.fileName, mutation.content);
+    }
+    return mutation.flags;
   }
 
-  async deleteProjectAgentReference(agentId: string, fileName: string): Promise<void> {
-    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
-    await deleteProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
+  async deleteProjectAgentReference(agentId: string, fileName: string): Promise<ProjectAgentMutationFlags> {
+    const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
+    const existingContent = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
+    const mutation = planProjectAgentReferenceDeleteMutation({ fileName, existingContent });
+    if (mutation.changed) {
+      await deleteProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, mutation.fileName);
+    }
+    return mutation.flags;
   }
 
-  private assertProjectAgentReferenceScope(agentId: string): {
-    descriptor: AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> };
-    profileId: string;
-    handle: string;
-  } {
-    const descriptor = this.options.descriptors.get(agentId);
-    const handle = descriptor?.projectAgent?.handle?.trim();
-    if (!descriptor?.projectAgent || !handle) {
-      throw new Error(`Agent ${agentId} is not a project agent`);
+  private async assertProjectAgentHandleAvailable(profileId: string, handle: string, ownerAgentId?: string): Promise<void> {
+    const descriptorCollision = this.registry.findByHandle(profileId, handle);
+    if (descriptorCollision && descriptorCollision.agentId !== ownerAgentId) {
+      throw new Error(getProjectAgentHandleCollisionError(handle));
     }
 
-    return {
-      descriptor: descriptor as AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> },
-      profileId: descriptor.profileId ?? descriptor.agentId,
-      handle
-    };
+    if (await this.registry.hasOnDiskCollision(profileId, handle, ownerAgentId)) {
+      throw new Error(getProjectAgentHandleCollisionError(handle));
+    }
   }
 }

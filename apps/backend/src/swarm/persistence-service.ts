@@ -1,6 +1,5 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import {
@@ -16,7 +15,7 @@ import {
   getSharedKnowledgeDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
-import { renameWithRetry } from "./retry-rename.js";
+import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
 
 export const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
@@ -169,61 +168,28 @@ export class PersistenceService {
   }
 
   async loadStore(): Promise<AgentsStoreFile> {
-    try {
-      const raw = await readFile(this.deps.config.paths.agentsStoreFile, "utf8");
-      const parsed = JSON.parse(raw) as AgentsStoreFile;
-      if (!Array.isArray(parsed.agents)) {
-        return { agents: [], profiles: [] };
-      }
+    const store = new AgentDescriptorStore({
+      dataDir: this.deps.config.paths.dataDir,
+      storeFilePath: this.deps.config.paths.agentsStoreFile,
+      configuredManagerId: this.deps.getConfiguredManagerId(),
+      logDebug: this.deps.logDebug
+    });
 
-      const validAgents: AgentDescriptor[] = [];
-      let normalizedPathCount = 0;
-      for (const [index, candidate] of parsed.agents.entries()) {
-        const validated = this.deps.validateAgentDescriptor(candidate);
-        if (typeof validated === "string") {
-          const maybeAgentId = this.deps.extractDescriptorAgentId(candidate);
-          const descriptorHint = maybeAgentId ? `agentId=${maybeAgentId}` : `index=${index}`;
-          console.warn(
-            `[swarm] Skipping invalid descriptor (${descriptorHint}) in ${this.deps.config.paths.agentsStoreFile}: ${validated}`
-          );
-          continue;
-        }
-
-        const normalizedDescriptor = normalizeDescriptorPaths(validated, this.deps.config.paths.dataDir);
-        if (normalizedDescriptor !== validated) {
-          normalizedPathCount += 1;
-        }
-
-        validAgents.push(normalizedDescriptor);
-      }
-
-      if (normalizedPathCount > 0) {
-        this.deps.logDebug("Normalized legacy descriptor sessionFile paths during store load", {
-          normalizedPathCount,
-          dataDir: this.deps.config.paths.dataDir
-        });
-      }
-
-      return {
-        agents: validAgents,
-        profiles: Array.isArray(parsed.profiles) ? parsed.profiles : []
-      };
-    } catch {
-      return { agents: [], profiles: [] };
-    }
+    return store.load();
   }
 
   async saveStore(): Promise<void> {
-    const payload: AgentsStoreFile = {
+    const store = new AgentDescriptorStore({
+      dataDir: this.deps.config.paths.dataDir,
+      storeFilePath: this.deps.config.paths.agentsStoreFile,
+      configuredManagerId: this.deps.getConfiguredManagerId(),
+      logDebug: this.deps.logDebug
+    });
+    store.replace({
       agents: this.deps.sortedDescriptors(),
       profiles: this.deps.sortedProfiles()
-    };
-
-    const target = this.deps.config.paths.agentsStoreFile;
-    const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2, 10)}.tmp`;
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
+    });
+    await store.save();
   }
 
   async ensureProfileDirectories(profileId: string): Promise<void> {
@@ -255,66 +221,6 @@ export class PersistenceService {
       managerId: descriptor.managerId
     });
   }
-}
-
-function normalizeDescriptorPaths(descriptor: AgentDescriptor, dataDir: string): AgentDescriptor {
-  const normalizedDataDir = resolve(dataDir);
-  const legacyDataDirCandidates = resolveLegacyDataDirCandidatesForCurrentDataDir(normalizedDataDir);
-  if (legacyDataDirCandidates.length === 0) {
-    return descriptor;
-  }
-
-  const normalizedSessionFile = resolve(descriptor.sessionFile);
-
-  for (const legacyDataDir of legacyDataDirCandidates) {
-    if (!isPathWithinDirectory(normalizedSessionFile, legacyDataDir)) {
-      continue;
-    }
-
-    const relativeSessionPath = normalizedSessionFile.slice(legacyDataDir.length).replace(/^[/\\]+/, "");
-    if (!relativeSessionPath) {
-      continue;
-    }
-
-    if (relativeSessionPath === ".." || relativeSessionPath.startsWith(`..${sep}`)) {
-      continue;
-    }
-
-    const rewrittenSessionFile = resolve(normalizedDataDir, relativeSessionPath);
-    if (rewrittenSessionFile === descriptor.sessionFile) {
-      return descriptor;
-    }
-
-    return {
-      ...descriptor,
-      sessionFile: rewrittenSessionFile
-    };
-  }
-
-  return descriptor;
-}
-
-function resolveLegacyDataDirCandidatesForCurrentDataDir(dataDir: string): string[] {
-  const normalized = dataDir.toLowerCase();
-  const candidates: string[] = [];
-
-  if (normalized.endsWith(`${sep}.forge`)) {
-    candidates.push(`${dataDir.slice(0, -(".forge".length))}.middleman`);
-  }
-
-  if (normalized.endsWith(`${sep}forge`)) {
-    candidates.push(`${dataDir.slice(0, -("forge".length))}middleman`);
-
-    if (process.platform === "win32") {
-      candidates.push(resolve(homedir(), ".middleman"));
-    }
-  }
-
-  return [...new Set(candidates.map((candidate) => resolve(candidate)))];
-}
-
-function isPathWithinDirectory(pathValue: string, directoryPath: string): boolean {
-  return pathValue === directoryPath || pathValue.startsWith(`${directoryPath}${sep}`);
 }
 
 function isEnoentError(error: unknown): boolean {

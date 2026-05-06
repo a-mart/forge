@@ -1,3 +1,5 @@
+import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
+import type { WsRequestContractType } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import { extractRequestId, parseClientCommand } from '../ws/ws-command-parser.js'
 
@@ -26,6 +28,222 @@ describe('ws command parser session commands', () => {
         sessionPurpose: 'agent_creator',
         requestId: 'req-1',
       },
+    })
+  })
+
+  it('parses request contracts while preserving optional wire requestId', () => {
+    const payloadByType = {
+      list_directories: { type: 'list_directories', path: '/tmp/project' },
+      validate_directory: { type: 'validate_directory', path: '/tmp/project' },
+      pick_directory: { type: 'pick_directory', defaultPath: '/tmp/project' },
+      get_session_workers: { type: 'get_session_workers', sessionAgentId: 'session-a' },
+      rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },
+      rename_session: { type: 'rename_session', agentId: 'session-a', label: 'Session A' },
+      pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
+      update_session_model: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' },
+      fork_session: { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', fromMessageId: 'message-1' },
+      merge_session_memory: { type: 'merge_session_memory', agentId: 'session-a' },
+      update_profile_default_model: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4', reasoningLevel: undefined },
+      update_manager_model: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', reasoningLevel: undefined },
+      update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
+      stop_all_agents: { type: 'stop_all_agents', managerId: 'manager-a' },
+      create_manager: { type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.4' },
+      delete_manager: { type: 'delete_manager', managerId: 'manager-a' },
+      create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
+      stop_session: { type: 'stop_session', agentId: 'session-a' },
+      resume_session: { type: 'resume_session', agentId: 'session-a' },
+      delete_session: { type: 'delete_session', agentId: 'session-a' },
+      clear_session: { type: 'clear_session', agentId: 'session-a' },
+      set_session_project_agent: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: null },
+      get_project_agent_config: { type: 'get_project_agent_config', agentId: 'session-a' },
+      list_project_agent_references: { type: 'list_project_agent_references', agentId: 'session-a' },
+      get_project_agent_reference: { type: 'get_project_agent_reference', agentId: 'session-a', fileName: 'README.md' },
+      set_project_agent_reference: { type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs' },
+      delete_project_agent_reference: { type: 'delete_project_agent_reference', agentId: 'session-a', fileName: 'README.md' },
+      request_project_agent_recommendations: { type: 'request_project_agent_recommendations', agentId: 'session-a' },
+    } as const satisfies { [Type in WsRequestContractType]: { type: Type } & Record<string, unknown> }
+
+    for (const contract of WS_REQUEST_CONTRACTS) {
+      const basePayload = payloadByType[contract.commandType]
+      expect(parseJsonCommand({ ...basePayload, requestId: 'request-1' })).toEqual({
+        ok: true,
+        command: { ...basePayload, requestId: 'request-1' },
+      })
+      expect(parseJsonCommand(basePayload)).toEqual({
+        ok: true,
+        command: { ...basePayload, requestId: undefined },
+      })
+    }
+  })
+
+  it('rejects invalid requestId values for request contracts without making requestId mandatory', () => {
+    expect(parseJsonCommand({ type: 'get_session_workers', sessionAgentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'get_session_workers', sessionAgentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'get_session_workers', sessionAgentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'get_session_workers.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'rename_profile', profileId: 'profile-a', displayName: 'Renamed' })).toEqual({
+      ok: true,
+      command: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Renamed', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'rename_profile', profileId: 'profile-a', displayName: 'Renamed', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'rename_profile.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'pin_session', agentId: 'session-a', pinned: false })).toEqual({
+      ok: true,
+      command: { type: 'pin_session', agentId: 'session-a', pinned: false, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'pin_session', agentId: 'session-a', pinned: false, requestId: 123 })).toEqual({
+      ok: false,
+      error: 'pin_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' })).toEqual({
+      ok: true,
+      command: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit', model: undefined, reasoningLevel: undefined, modelSelection: undefined, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'update_session_model.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'fork_session', sourceAgentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'fork_session', sourceAgentId: 'session-a', label: undefined, fromMessageId: undefined, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'fork_session', sourceAgentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'fork_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'merge_session_memory', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'merge_session_memory', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'merge_session_memory', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'merge_session_memory.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4' })).toEqual({
+      ok: true,
+      command: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4', reasoningLevel: undefined, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'update_profile_default_model.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4' })).toEqual({
+      ok: true,
+      command: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', reasoningLevel: undefined, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'update_manager_model.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' })).toEqual({
+      ok: true,
+      command: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'update_manager_cwd.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'stop_all_agents', managerId: 'manager-a' })).toEqual({
+      ok: true,
+      command: { type: 'stop_all_agents', managerId: 'manager-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'stop_all_agents', managerId: 'manager-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'stop_all_agents.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.4' })).toEqual({
+      ok: true,
+      command: { type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.4', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'create_manager', name: 'Manager A', cwd: '/tmp/project', model: 'pi-5.4', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'create_manager.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'delete_manager', managerId: 'manager-a' })).toEqual({
+      ok: true,
+      command: { type: 'delete_manager', managerId: 'manager-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'delete_manager', managerId: 'manager-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'delete_manager.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'create_session', profileId: 'manager-a' })).toEqual({
+      ok: true,
+      command: { type: 'create_session', profileId: 'manager-a', label: undefined, name: undefined, sessionPurpose: undefined, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'create_session', profileId: 'manager-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'create_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'clear_session', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'clear_session', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'clear_session', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'clear_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'get_project_agent_config', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'get_project_agent_config', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'get_project_agent_config', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'get_project_agent_config.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'list_project_agent_references', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'list_project_agent_references', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'list_project_agent_references', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'list_project_agent_references.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'get_project_agent_reference', agentId: 'session-a', fileName: 'README.md' })).toEqual({
+      ok: true,
+      command: { type: 'get_project_agent_reference', agentId: 'session-a', fileName: 'README.md', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'get_project_agent_reference', agentId: 'session-a', fileName: 'README.md', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'get_project_agent_reference.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs' })).toEqual({
+      ok: true,
+      command: { type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'set_project_agent_reference.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'stop_session', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'stop_session', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'stop_session', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'stop_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'resume_session', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'resume_session', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'resume_session', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'resume_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'delete_session', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'delete_session', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'delete_session', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'delete_session.requestId must be a string when provided',
     })
   })
 
@@ -85,6 +303,7 @@ describe('ws command parser session commands', () => {
       { type: 'stop_session', agentId: 'session-a', requestId: 'req-stop' },
       { type: 'resume_session', agentId: 'session-a', requestId: 'req-resume' },
       { type: 'delete_session', agentId: 'session-a', requestId: 'req-delete' },
+      { type: 'clear_session', agentId: 'session-a', requestId: 'req-clear' },
       { type: 'rename_session', agentId: 'session-a', label: 'Renamed', requestId: 'req-rename' },
       { type: 'pin_session', agentId: 'session-a', pinned: true, requestId: 'req-pin' },
       {
@@ -711,17 +930,50 @@ describe('ws command parser session commands', () => {
   it('extracts request ids for new session commands', () => {
     const commands = [
       { type: 'api_proxy', requestId: 'req-proxy', method: 'GET', path: '/api/slash-commands' },
+      { type: 'create_manager', name: 'Manager', cwd: '/tmp/project', requestId: 'req-create-manager' },
+      { type: 'delete_manager', managerId: 'manager', requestId: 'req-delete-manager' },
       { type: 'create_session', profileId: 'manager', requestId: 'req-create' },
       { type: 'stop_session', agentId: 'manager--s2', requestId: 'req-stop' },
       { type: 'resume_session', agentId: 'manager--s2', requestId: 'req-resume' },
       { type: 'delete_session', agentId: 'manager--s2', requestId: 'req-delete' },
+      { type: 'clear_session', agentId: 'manager--s2', requestId: 'req-clear' },
       { type: 'rename_session', agentId: 'manager--s2', label: 'Renamed', requestId: 'req-rename' },
       { type: 'pin_session', agentId: 'manager--s2', pinned: true, requestId: 'req-pin' },
+      { type: 'update_session_model', sessionAgentId: 'manager--s2', mode: 'inherit', requestId: 'req-session-model' },
       {
         type: 'set_session_project_agent',
         agentId: 'manager--s2',
         projectAgent: { whenToUse: 'Coordinate release work' },
         requestId: 'req-project-agent',
+      },
+      {
+        type: 'get_project_agent_config',
+        agentId: 'manager--s2',
+        requestId: 'req-project-agent-config',
+      },
+      {
+        type: 'list_project_agent_references',
+        agentId: 'manager--s2',
+        requestId: 'req-project-agent-references',
+      },
+      {
+        type: 'get_project_agent_reference',
+        agentId: 'manager--s2',
+        fileName: 'README.md',
+        requestId: 'req-project-agent-reference',
+      },
+      {
+        type: 'set_project_agent_reference',
+        agentId: 'manager--s2',
+        fileName: 'README.md',
+        content: 'docs',
+        requestId: 'req-set-project-agent-reference',
+      },
+      {
+        type: 'delete_project_agent_reference',
+        agentId: 'manager--s2',
+        fileName: 'README.md',
+        requestId: 'req-delete-project-agent-reference',
       },
       {
         type: 'request_project_agent_recommendations',
@@ -732,6 +984,8 @@ describe('ws command parser session commands', () => {
       { type: 'merge_session_memory', agentId: 'manager--s2', requestId: 'req-merge' },
       { type: 'get_session_workers', sessionAgentId: 'manager--s2', requestId: 'req-workers' },
       { type: 'mark_unread', agentId: 'manager--s2', requestId: 'req-mark-unread' },
+      { type: 'update_profile_default_model', profileId: 'manager', model: 'pi-5.4', requestId: 'req-update-profile-model' },
+      { type: 'update_manager_model', managerId: 'manager', model: 'pi-5.4', requestId: 'req-update-model' },
       { type: 'update_manager_cwd', managerId: 'manager', cwd: '/tmp/project', requestId: 'req-update-cwd' },
     ] as const
 

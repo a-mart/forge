@@ -258,7 +258,24 @@ describe("collaboration HTTP routes", () => {
       mode: "custom",
       savedSelectedSkillHandles: ["brave-search", "missing-skill"],
       resolvedSkillHandles: ["brave-search"],
+      alwaysOnSkillHandles: ["memory"],
       missingSkillHandles: ["missing-skill"],
+    });
+
+    const invalidCreateCategorySkillSelectionResponse = await fetch(`${baseUrl}/api/collaboration/categories`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify({
+        name: "Invalid skill selection",
+        defaultSkillSelection: { mode: "custom" },
+      }),
+    });
+    expect(invalidCreateCategorySkillSelectionResponse.status).toBe(500);
+    await expect(invalidCreateCategorySkillSelectionResponse.json()).resolves.toEqual({
+      error: "defaultSkillSelection.savedSelectedSkillHandles must be an array when provided",
     });
 
     const missingDefaultsCategoryResponse = await fetch(`${baseUrl}/api/collaboration/categories`, {
@@ -314,6 +331,22 @@ describe("collaboration HTTP routes", () => {
           missingDefaultSpecialistHandles: ["missing-default-specialist"],
         }),
       ],
+    });
+
+    const invalidUpdateCategorySkillSelectionResponse = await fetch(
+      `${baseUrl}/api/collaboration/categories/${encodeURIComponent(createCategoryBody.category.categoryId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({ defaultSkillSelection: { mode: "selected", savedSelectedSkillHandles: [] } }),
+      },
+    );
+    expect(invalidUpdateCategorySkillSelectionResponse.status).toBe(500);
+    await expect(invalidUpdateCategorySkillSelectionResponse.json()).resolves.toEqual({
+      error: "defaultSkillSelection.mode must be 'all' or 'custom'",
     });
 
     const resetCategorySkillDefaultsResponse = await fetch(
@@ -430,6 +463,7 @@ describe("collaboration HTTP routes", () => {
       mode: "custom",
       savedSelectedSkillHandles: ["brave-search", "missing-skill"],
       resolvedSkillHandles: ["brave-search"],
+      alwaysOnSkillHandles: ["memory"],
       missingSkillHandles: ["missing-skill"],
     });
     expect(createChannelBody.channel.modelId).toBe("pi-opus");
@@ -497,6 +531,22 @@ describe("collaboration HTTP routes", () => {
     expect(memberSkillSelectionResponse.status).toBe(403);
     await expect(memberSkillSelectionResponse.json()).resolves.toEqual({ error: "Admin access required" });
 
+    const invalidSkillSelectionResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/skills/selection`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({ activeSkillSelection: { mode: "custom", savedSelectedSkillHandles: ["agent-browser", ""] } }),
+      },
+    );
+    expect(invalidSkillSelectionResponse.status).toBe(500);
+    await expect(invalidSkillSelectionResponse.json()).resolves.toEqual({
+      error: "activeSkillSelection.savedSelectedSkillHandles must contain only non-empty strings",
+    });
+
     const updateSkillSelectionResponse = await fetch(
       `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}/skills/selection`,
       {
@@ -521,6 +571,7 @@ describe("collaboration HTTP routes", () => {
           mode: "custom",
           savedSelectedSkillHandles: ["agent-browser", "missing-skill-2"],
           resolvedSkillHandles: ["agent-browser"],
+          alwaysOnSkillHandles: ["memory"],
           missingSkillHandles: ["missing-skill-2"],
         }),
       }),
@@ -544,6 +595,7 @@ describe("collaboration HTTP routes", () => {
         activeSkillSelection: expect.objectContaining({
           mode: "all",
           savedSelectedSkillHandles: [],
+          alwaysOnSkillHandles: ["memory"],
         }),
       }),
     });

@@ -42,20 +42,17 @@ import {
   RECONNECTING_SOCKET_ERROR,
 } from './ws-client/request-definitions'
 import { WebSocketTransport } from './ws-client/websocket-transport'
+import { BootstrapBuffer } from './ws-client/bootstrap-buffer'
+import { SessionWorkerCache } from './ws-client/session-worker-cache'
 import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
-  REQUEST_TIMEOUT_MS,
-  SESSION_WORKERS_REFETCH_DEBOUNCE_MS,
-  WS_REQUEST_ERROR_HINTS,
-  WS_REQUEST_TYPES,
 } from './ws-client/runtime-types'
 import {
   reduceAgentStatus,
   reduceAgentsSnapshot,
   reduceManagerDeleted,
   reduceSessionDeleted,
-  reduceSessionWorkersSnapshot,
 } from './ws-client/snapshot-reducers'
 import type {
   DirectoriesListedResult,
@@ -71,20 +68,14 @@ import type {
   SessionForkedResult,
   SessionProjectAgentResult,
   SessionWorkersResult,
-  WsRequestResultMap,
-  WsRequestType,
 } from './ws-client/types'
 import { createSystemConversationMessage, normalizeAgentId, normalizeConversationAttachments, resolveTerminalScopeAgentId } from './ws-client/utils'
-import { WsRequestTracker } from './ws-request-tracker'
+import { RequestDispatcher } from './ws-client/request-dispatcher'
 import {
   createInitialManagerWsState,
   type ManagerWsState,
 } from './ws-state'
-import {
-  BOOTSTRAP_COALESCIBLE_EVENT_TYPES,
-  BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES,
-  handleConversationEvent,
-} from './ws-client/event-handlers/conversation-event-handlers'
+import { handleConversationEvent } from './ws-client/event-handlers/conversation-event-handlers'
 import { handleTerminalEvent } from './ws-client/event-handlers/terminal-event-handlers'
 import { handleAgentEvent } from './ws-client/event-handlers/agent-event-handlers'
 import { handleSessionEvent } from './ws-client/event-handlers/session-event-handlers'
@@ -117,14 +108,6 @@ export type {
   ProjectAgentReferenceSavedResult,
 } from './ws-client/types'
 
-const BOOTSTRAP_FLUSH_TIMEOUT_MS = 100
-
-interface BootstrapBuffer {
-  targetAgentId: string
-  pendingPatch: Partial<ManagerWsState>
-  timeoutId: ReturnType<typeof setTimeout> | undefined
-}
-
 export class ManagerWsClient {
   private readonly transport: WebSocketTransport
   private desiredAgentId: string | null
@@ -142,19 +125,35 @@ export class ManagerWsClient {
   private state: ManagerWsState
   private readonly listeners = new Set<Listener>()
 
-  private requestCounter = 0
-  private readonly requestTracker = new WsRequestTracker<WsRequestResultMap>(
-    WS_REQUEST_TYPES,
-    REQUEST_TIMEOUT_MS,
-  )
-  private readonly pendingWorkerFetches = new Map<string, Promise<SessionWorkersResult>>()
-  private readonly pendingSessionWorkerRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private bootstrapBuffer: BootstrapBuffer | null = null
+  private readonly requestDispatcher: RequestDispatcher
+  private readonly bootstrapBuffer: BootstrapBuffer
+  private readonly sessionWorkerCache: SessionWorkerCache
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
     this.desiredAgentId = normalizedInitialAgentId
     this.state = createInitialManagerWsState(normalizedInitialAgentId)
+
+    this.requestDispatcher = new RequestDispatcher({
+      send: (command) => this.send(command),
+    })
+
+    this.bootstrapBuffer = new BootstrapBuffer({
+      getState: () => this.state,
+      updateState: (patch) => this.updateState(patch),
+      applyConversationEvent: handleConversationEvent,
+    })
+
+    this.sessionWorkerCache = new SessionWorkerCache({
+      getState: () => this.state,
+      updateState: (patch) => this.updateState(patch),
+      requestSessionWorkers: (sessionAgentId) => {
+        assertConnectedSocket(this.socket)
+        return this.requestDispatcher.enqueueRequest('get_session_workers', (requestId) =>
+          buildGetSessionWorkersCommand(sessionAgentId, requestId),
+        )
+      },
+    })
 
     this.transport = new WebSocketTransport({
       url,
@@ -226,9 +225,9 @@ export class ManagerWsClient {
   }
 
   destroy(): void {
-    this.rejectAllPendingRequests('Client destroyed before request completed.')
-    this.pendingWorkerFetches.clear()
-    this.clearQueuedSessionWorkerRefetches()
+    this.requestDispatcher.rejectAllPendingRequests('Client destroyed before request completed.')
+    this.sessionWorkerCache.destroy()
+    this.bootstrapBuffer.clear()
 
     this.transport.disconnect()
   }
@@ -262,7 +261,7 @@ export class ManagerWsClient {
       return
     }
 
-    this.startBootstrapBuffer(trimmed)
+    this.bootstrapBuffer.begin(trimmed)
     this.send(buildSubscribeCommand(trimmed))
   }
 
@@ -364,7 +363,7 @@ export class ManagerWsClient {
 
     assertReconnectableSocket(this.socket)
 
-    return this.enqueueRequest('stop_all_agents', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('stop_all_agents', (requestId) =>
       buildStopAllAgentsCommand(trimmed, requestId),
     )
   }
@@ -376,14 +375,14 @@ export class ManagerWsClient {
     modelSelection?: ManagerExactModelSelection
   }): Promise<AgentDescriptor> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('create_manager', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('create_manager', (requestId) =>
       buildCreateManagerCommand(input, requestId),
     )
   }
 
   async deleteManager(managerId: string): Promise<{ managerId: string }> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('delete_manager', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('delete_manager', (requestId) =>
       buildDeleteManagerCommand(managerId, requestId),
     )
   }
@@ -395,7 +394,7 @@ export class ManagerWsClient {
     modelSelection?: ManagerExactModelSelection,
   ): Promise<{ profileId: string }> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('update_profile_default_model', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('update_profile_default_model', (requestId) =>
       buildUpdateProfileDefaultModelCommand(profileId, model, reasoningLevel, requestId, modelSelection),
     )
   }
@@ -407,14 +406,14 @@ export class ManagerWsClient {
     modelSelection?: ManagerExactModelSelection,
   ): Promise<{ managerId: string }> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('update_manager_model', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('update_manager_model', (requestId) =>
       buildUpdateManagerModelCommand(managerId, model, reasoningLevel, requestId, modelSelection),
     )
   }
 
   async updateManagerCwd(managerId: string, cwd: string): Promise<{ managerId: string; cwd: string }> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('update_manager_cwd', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('update_manager_cwd', (requestId) =>
       buildUpdateManagerCwdCommand(managerId, cwd, requestId),
     )
   }
@@ -426,14 +425,14 @@ export class ManagerWsClient {
 
   async listDirectories(path?: string): Promise<DirectoriesListedResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('list_directories', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('list_directories', (requestId) =>
       buildListDirectoriesCommand(path, requestId),
     )
   }
 
   async validateDirectory(path: string): Promise<DirectoryValidationResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('validate_directory', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('validate_directory', (requestId) =>
       buildValidateDirectoryCommand(path, requestId),
     )
   }
@@ -450,7 +449,7 @@ export class ManagerWsClient {
     }
 
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('pick_directory', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('pick_directory', (requestId) =>
       buildPickDirectoryCommand(defaultPath, requestId),
     )
   }
@@ -461,7 +460,7 @@ export class ManagerWsClient {
     opts?: { sessionPurpose?: AgentSessionPurpose; label?: string },
   ): Promise<SessionCreatedResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('create_session', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('create_session', (requestId) =>
       buildCreateSessionCommand(profileId, name, opts, requestId),
     )
   }
@@ -474,56 +473,56 @@ export class ManagerWsClient {
     modelSelection?: ManagerExactModelSelection,
   ): Promise<{ sessionAgentId: string; mode: 'inherit' | 'override' }> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('update_session_model', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('update_session_model', (requestId) =>
       buildUpdateSessionModelCommand(sessionAgentId, mode, model, reasoningLevel, requestId, modelSelection),
     )
   }
 
   async stopSession(agentId: string): Promise<SessionActionResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('stop_session', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('stop_session', (requestId) =>
       buildSessionActionCommand('stop_session', agentId, requestId),
     )
   }
 
   async resumeSession(agentId: string): Promise<SessionActionResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('resume_session', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('resume_session', (requestId) =>
       buildSessionActionCommand('resume_session', agentId, requestId),
     )
   }
 
   async deleteSession(agentId: string): Promise<SessionActionResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('delete_session', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('delete_session', (requestId) =>
       buildSessionActionCommand('delete_session', agentId, requestId),
     )
   }
 
   async clearSession(agentId: string): Promise<SessionActionResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('clear_session', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('clear_session', (requestId) =>
       buildSessionActionCommand('clear_session', agentId, requestId),
     )
   }
 
   async renameSession(agentId: string, label: string): Promise<SessionActionResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('rename_session', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('rename_session', (requestId) =>
       buildRenameSessionCommand(agentId, label, requestId),
     )
   }
 
   async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('pin_session', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('pin_session', (requestId) =>
       buildPinSessionCommand(agentId, pinned, requestId),
     )
   }
 
   async renameProfile(profileId: string, displayName: string): Promise<{ profileId: string }> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('rename_profile', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('rename_profile', (requestId) =>
       buildRenameProfileCommand(profileId, displayName, requestId),
     )
   }
@@ -534,7 +533,7 @@ export class ManagerWsClient {
     fromMessageId?: string,
   ): Promise<SessionForkedResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('fork_session', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('fork_session', (requestId) =>
       buildForkSessionCommand(sourceAgentId, label, fromMessageId, requestId),
     )
   }
@@ -544,21 +543,21 @@ export class ManagerWsClient {
     projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null,
   ): Promise<SessionProjectAgentResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('set_session_project_agent', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('set_session_project_agent', (requestId) =>
       buildSetSessionProjectAgentCommand(agentId, projectAgent, requestId),
     )
   }
 
   async getProjectAgentConfig(agentId: string): Promise<ProjectAgentConfigResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('get_project_agent_config', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('get_project_agent_config', (requestId) =>
       buildGetProjectAgentConfigCommand(agentId, requestId),
     )
   }
 
   async listProjectAgentReferences(agentId: string): Promise<ProjectAgentReferencesResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('list_project_agent_references', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('list_project_agent_references', (requestId) =>
       buildListProjectAgentReferencesCommand(agentId, requestId),
     )
   }
@@ -568,7 +567,7 @@ export class ManagerWsClient {
     fileName: string,
   ): Promise<ProjectAgentReferenceResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('get_project_agent_reference', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('get_project_agent_reference', (requestId) =>
       buildGetProjectAgentReferenceCommand(agentId, fileName, requestId),
     )
   }
@@ -579,7 +578,7 @@ export class ManagerWsClient {
     content: string,
   ): Promise<ProjectAgentReferenceSavedResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('set_project_agent_reference', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('set_project_agent_reference', (requestId) =>
       buildSetProjectAgentReferenceCommand(agentId, fileName, content, requestId),
     )
   }
@@ -589,68 +588,27 @@ export class ManagerWsClient {
     fileName: string,
   ): Promise<ProjectAgentReferenceDeletedResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('delete_project_agent_reference', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('delete_project_agent_reference', (requestId) =>
       buildDeleteProjectAgentReferenceCommand(agentId, fileName, requestId),
     )
   }
 
   async requestProjectAgentRecommendations(agentId: string): Promise<{ agentId: string; whenToUse: string; systemPrompt: string }> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('request_project_agent_recommendations', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('request_project_agent_recommendations', (requestId) =>
       buildRequestProjectAgentRecommendationsCommand(agentId, requestId),
     )
   }
 
   async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
     assertReconnectableSocket(this.socket)
-    return this.enqueueRequest('merge_session_memory', (requestId) =>
+    return this.requestDispatcher.enqueueRequest('merge_session_memory', (requestId) =>
       buildMergeSessionMemoryCommand(agentId, requestId),
     )
   }
 
-  async getSessionWorkers(sessionAgentId: string): Promise<SessionWorkersResult> {
-    const trimmed = sessionAgentId.trim()
-    if (!trimmed) {
-      throw new Error('Session agent id is required.')
-    }
-
-    if (this.state.loadedSessionIds.has(trimmed)) {
-      const cachedWorkers = this.state.agents.filter(
-        (agent) => agent.role === 'worker' && agent.managerId === trimmed,
-      )
-      const manager = this.state.agents.find(
-        (agent) => agent.role === 'manager' && agent.agentId === trimmed,
-      )
-      if (manager?.workerCount !== undefined && cachedWorkers.length !== manager.workerCount) {
-        const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
-        nextLoadedSessionIds.delete(trimmed)
-        this.updateState({ loadedSessionIds: nextLoadedSessionIds })
-      } else {
-        return {
-          sessionAgentId: trimmed,
-          workers: cachedWorkers,
-        }
-      }
-    }
-
-    const existingRequest = this.pendingWorkerFetches.get(trimmed)
-    if (existingRequest) {
-      return existingRequest
-    }
-
-    assertConnectedSocket(this.socket)
-
-    const request = this.enqueueRequest('get_session_workers', (requestId) =>
-      buildGetSessionWorkersCommand(trimmed, requestId),
-    )
-
-    this.pendingWorkerFetches.set(trimmed, request)
-
-    try {
-      return await request
-    } finally {
-      this.pendingWorkerFetches.delete(trimmed)
-    }
+  getSessionWorkers(sessionAgentId: string): Promise<SessionWorkersResult> {
+    return this.sessionWorkerCache.getSessionWorkers(sessionAgentId)
   }
 
   // -----------------------------------------------------------------------
@@ -685,7 +643,7 @@ export class ManagerWsClient {
 
     this.hasExplicitAgentSelection = false
     this.explicitAgentSelectionAgentId = null
-    this.clearBootstrapBuffer()
+    this.bootstrapBuffer.clear()
 
     this.updateState({
       connected: false,
@@ -694,8 +652,8 @@ export class ManagerWsClient {
       subscribedAgentId: null,
     })
 
-    this.clearQueuedSessionWorkerRefetches()
-    this.rejectAllPendingRequests('WebSocket disconnected before request completed.')
+    this.sessionWorkerCache.clearQueuedRefetches()
+    this.requestDispatcher.rejectAllPendingRequests('WebSocket disconnected before request completed.')
   }
 
   private handleTransportError(): void {
@@ -708,14 +666,9 @@ export class ManagerWsClient {
   private handleServerEvent(parsed: unknown): void {
     const event = parsed as ServerEvent
 
-    if (this.bootstrapBuffer) {
-      if (BOOTSTRAP_COALESCIBLE_EVENT_TYPES.has(event.type)) {
-        this.handleBootstrapCoalescibleEvent(event)
-        return
-      }
-      if (this.shouldForceFlushBootstrap(event)) {
-        this.flushBootstrapBuffer()
-      }
+    if (this.bootstrapBuffer.active) {
+      const consumed = this.bootstrapBuffer.handleEvent(event)
+      if (consumed) return
     }
 
     if (
@@ -744,7 +697,7 @@ export class ManagerWsClient {
           this.applySessionWorkersSnapshot(sessionAgentId, workers, requestId),
         applyManagerCreated: (manager) => this.applyManagerCreated(manager),
         applyManagerDeleted: (managerId) => this.applyManagerDeleted(managerId),
-        requestTracker: this.requestTracker,
+        requestTracker: this.requestDispatcher.tracker,
       })
     ) {
       return
@@ -753,13 +706,13 @@ export class ManagerWsClient {
     if (
       handleSessionEvent(event, {
         applySessionDeleted: (agentId, profileId) => this.applySessionDeleted(agentId, profileId),
-        requestTracker: this.requestTracker,
+        requestTracker: this.requestDispatcher.tracker,
       })
     ) {
       return
     }
 
-    if (handleProjectAgentEvent(event, { requestTracker: this.requestTracker })) {
+    if (handleProjectAgentEvent(event, { requestTracker: this.requestDispatcher.tracker })) {
       return
     }
 
@@ -767,13 +720,13 @@ export class ManagerWsClient {
       handleConfigEvent(event, {
         state: this.state,
         updateState: (patch) => this.updateState(patch),
-        requestTracker: this.requestTracker,
+        requestTracker: this.requestDispatcher.tracker,
       })
     ) {
       return
     }
 
-    if (handleDirectoryEvent(event, { requestTracker: this.requestTracker })) {
+    if (handleDirectoryEvent(event, { requestTracker: this.requestDispatcher.tracker })) {
       return
     }
 
@@ -781,7 +734,7 @@ export class ManagerWsClient {
       updateState: (patch) => this.updateState(patch),
       pushSystemMessage: (text) => this.pushSystemMessage(text),
       rejectPendingFromError: (code, message, requestId) =>
-        this.rejectPendingFromError(code, message, requestId),
+        this.requestDispatcher.rejectPendingFromError(code, message, requestId),
     })
   }
 
@@ -792,7 +745,7 @@ export class ManagerWsClient {
     this.updateState(result.patch)
 
     if (result.queueSessionWorkersRefetchId) {
-      this.queueSessionWorkersRefetch(result.queueSessionWorkersRefetchId)
+      this.sessionWorkerCache.queueRefetch(result.queueSessionWorkersRefetchId)
     }
 
     if (result.managerIdleTransitionAgentId) {
@@ -809,7 +762,7 @@ export class ManagerWsClient {
     })
 
     for (const sessionAgentId of result.queueSessionWorkersRefetchIds) {
-      this.queueSessionWorkersRefetch(sessionAgentId)
+      this.sessionWorkerCache.queueRefetch(sessionAgentId)
     }
 
     if (result.shouldClearExplicitSelection) {
@@ -830,16 +783,10 @@ export class ManagerWsClient {
     workers: AgentDescriptor[],
     requestId?: string,
   ): void {
-    const result = reduceSessionWorkersSnapshot({
-      state: this.state,
-      sessionAgentId,
-      workers,
-    })
-
-    this.updateState(result.patch)
+    this.sessionWorkerCache.applySessionWorkersSnapshot(sessionAgentId, workers)
 
     if (requestId) {
-      this.requestTracker.resolve('get_session_workers', requestId, {
+      this.requestDispatcher.tracker.resolve('get_session_workers', requestId, {
         sessionAgentId,
         workers,
       })
@@ -861,7 +808,7 @@ export class ManagerWsClient {
       socketOpen: isSocketOpen(this.socket),
     })
 
-    this.clearQueuedSessionWorkerRefetch(managerId)
+    this.sessionWorkerCache.clearQueuedRefetch(managerId)
     removeMutedAgents(result.deletedAgentIds)
 
     if (result.nextDesiredAgentId !== undefined) {
@@ -885,7 +832,7 @@ export class ManagerWsClient {
       socketOpen: isSocketOpen(this.socket),
     })
 
-    this.clearQueuedSessionWorkerRefetch(agentId)
+    this.sessionWorkerCache.clearQueuedRefetch(agentId)
     removeMutedAgent(result.mutedAgentIdToRemove)
 
     if (result.nextDesiredAgentId !== undefined) {
@@ -899,141 +846,6 @@ export class ManagerWsClient {
     }
 
     this.updateState(result.patch)
-  }
-
-  private queueSessionWorkersRefetch(sessionAgentId: string): void {
-    const normalizedSessionAgentId = sessionAgentId.trim()
-    if (!normalizedSessionAgentId) {
-      return
-    }
-
-    this.clearQueuedSessionWorkerRefetch(normalizedSessionAgentId)
-
-    const timer = setTimeout(() => {
-      this.pendingSessionWorkerRefetchTimers.delete(normalizedSessionAgentId)
-      void this.getSessionWorkers(normalizedSessionAgentId).catch(() => {
-        // Best-effort refresh to keep worker cache in sync after session invalidation.
-      })
-    }, SESSION_WORKERS_REFETCH_DEBOUNCE_MS)
-
-    this.pendingSessionWorkerRefetchTimers.set(normalizedSessionAgentId, timer)
-  }
-
-  private clearQueuedSessionWorkerRefetch(sessionAgentId: string): void {
-    const normalizedSessionAgentId = sessionAgentId.trim()
-    if (!normalizedSessionAgentId) {
-      return
-    }
-
-    const timer = this.pendingSessionWorkerRefetchTimers.get(normalizedSessionAgentId)
-    if (!timer) {
-      return
-    }
-
-    clearTimeout(timer)
-    this.pendingSessionWorkerRefetchTimers.delete(normalizedSessionAgentId)
-  }
-
-  private clearQueuedSessionWorkerRefetches(): void {
-    for (const timer of this.pendingSessionWorkerRefetchTimers.values()) {
-      clearTimeout(timer)
-    }
-
-    this.pendingSessionWorkerRefetchTimers.clear()
-  }
-
-  private startBootstrapBuffer(targetAgentId: string): void {
-    this.clearBootstrapBuffer()
-
-    this.bootstrapBuffer = {
-      targetAgentId,
-      pendingPatch: {},
-      timeoutId: undefined,
-    }
-  }
-
-  private flushBootstrapBuffer(): void {
-    const buffer = this.bootstrapBuffer
-    if (!buffer) return
-
-    if (buffer.timeoutId !== undefined) {
-      clearTimeout(buffer.timeoutId)
-    }
-
-    this.bootstrapBuffer = null
-
-    if (Object.keys(buffer.pendingPatch).length > 0) {
-      this.updateState(buffer.pendingPatch)
-    }
-  }
-
-  private clearBootstrapBuffer(): void {
-    if (this.bootstrapBuffer?.timeoutId !== undefined) {
-      clearTimeout(this.bootstrapBuffer.timeoutId)
-    }
-    this.bootstrapBuffer = null
-  }
-
-  private resetBootstrapTimeout(buffer: BootstrapBuffer): void {
-    if (buffer.timeoutId !== undefined) {
-      clearTimeout(buffer.timeoutId)
-    }
-    const targetAgentId = buffer.targetAgentId
-    buffer.timeoutId = setTimeout(() => {
-      if (this.bootstrapBuffer?.targetAgentId === targetAgentId) {
-        this.flushBootstrapBuffer()
-      }
-    }, BOOTSTRAP_FLUSH_TIMEOUT_MS)
-  }
-
-  private handleBootstrapCoalescibleEvent(event: ServerEvent): void {
-    const buffer = this.bootstrapBuffer
-    if (!buffer) return
-
-    if (!this.isBootstrapEventForTarget(event, buffer.targetAgentId)) {
-      return
-    }
-
-    this.resetBootstrapTimeout(buffer)
-
-    const effectiveState: ManagerWsState = { ...this.state, ...buffer.pendingPatch }
-
-    handleConversationEvent(event, {
-      state: effectiveState,
-      updateState: (patch) => {
-        buffer.pendingPatch = { ...buffer.pendingPatch, ...patch }
-      },
-    })
-
-    if (event.type === 'unread_counts_snapshot') {
-      this.flushBootstrapBuffer()
-    }
-  }
-
-  private isBootstrapEventForTarget(event: ServerEvent, targetAgentId: string): boolean {
-    if (event.type === 'ready') {
-      return event.subscribedAgentId === targetAgentId
-    }
-    if (event.type === 'conversation_history' || event.type === 'pending_choices_snapshot') {
-      return event.agentId === targetAgentId
-    }
-    return true
-  }
-
-  private shouldForceFlushBootstrap(event: ServerEvent): boolean {
-    const targetAgentId = this.bootstrapBuffer?.targetAgentId
-    if (!targetAgentId) return false
-
-    if (BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES.has(event.type)) {
-      return 'agentId' in event && (event as { agentId: string }).agentId === targetAgentId
-    }
-
-    if (event.type === 'agent_status') {
-      return event.agentId === targetAgentId ||
-        (event.managerId !== undefined && event.managerId === targetAgentId)
-    }
-
-    return false
   }
 
   private pushSystemMessage(text: string): void {
@@ -1057,54 +869,4 @@ export class ManagerWsClient {
     }
   }
 
-  private nextRequestId(prefix: string): string {
-    this.requestCounter += 1
-    return `${prefix}-${Date.now()}-${this.requestCounter}`
-  }
-
-  private enqueueRequest<RequestType extends WsRequestType>(
-    requestType: RequestType,
-    buildCommand: (requestId: string) => ClientCommand,
-  ): Promise<WsRequestResultMap[RequestType]> {
-    const requestId = this.nextRequestId(requestType)
-
-    return new Promise<WsRequestResultMap[RequestType]>((resolve, reject) => {
-      this.requestTracker.track(requestType, requestId, resolve, reject)
-
-      const sent = this.send(buildCommand(requestId))
-      if (!sent) {
-        this.requestTracker.reject(
-          requestType,
-          requestId,
-          new Error(RECONNECTING_SOCKET_ERROR),
-        )
-      }
-    })
-  }
-
-  private rejectPendingFromError(code: string, message: string, requestId?: string): void {
-    const fullError = new Error(`${code}: ${message}`)
-
-    if (requestId && this.requestTracker.rejectByRequestId(requestId, fullError)) {
-      return
-    }
-
-    const loweredCode = code.toLowerCase()
-
-    for (const hint of WS_REQUEST_ERROR_HINTS) {
-      if (!loweredCode.includes(hint.codeFragment)) {
-        continue
-      }
-
-      if (this.requestTracker.rejectOldest(hint.requestType, fullError)) {
-        return
-      }
-    }
-
-    this.requestTracker.rejectOnlyPending(fullError)
-  }
-
-  private rejectAllPendingRequests(reason: string): void {
-    this.requestTracker.rejectAll(new Error(reason))
-  }
 }

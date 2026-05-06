@@ -1,106 +1,29 @@
-import type { ProjectAgentCapability } from "@forge/protocol";
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
 import type {
   AgentDescriptor,
-  ConversationMessageEvent,
+  ProjectAgentMessageContext,
   RequestedDeliveryMode,
   SendMessageReceipt
 } from "../types.js";
-
-export interface ProjectAgentDirectoryEntry {
-  agentId: string;
-  displayName: string;
-  handle: string;
-  whenToUse: string;
-  capabilities?: ProjectAgentCapability[];
-}
-
-export interface ListProjectAgentsOptions {
-  excludeAgentId?: string;
-}
+import {
+  getProjectAgentPublicName,
+  type ProjectAgentDirectoryEntry
+} from "./project-agent-registry.js";
+export {
+  findProjectAgentByHandle,
+  getProjectAgentHandleCollisionError,
+  getProjectAgentPublicName,
+  listProjectAgents,
+  normalizeProjectAgentHandle,
+  type ListProjectAgentsOptions,
+  type ProjectAgentDescriptor,
+  type ProjectAgentDirectoryEntry
+} from "./project-agent-registry.js";
 
 export const PROJECT_AGENT_DIRECTORY_MAX_ENTRIES = 12;
 
 export function normalizeProjectAgentInlineText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
-}
-
-export type ProjectAgentDescriptor = AgentDescriptor & {
-  role: "manager";
-  profileId: string;
-  projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
-};
-
-function hasProjectAgent(
-  descriptor: AgentDescriptor,
-  profileId: string,
-  options?: ListProjectAgentsOptions
-): descriptor is ProjectAgentDescriptor {
-  return (
-    descriptor.role === "manager" &&
-    descriptor.profileId === profileId &&
-    descriptor.agentId !== options?.excludeAgentId &&
-    typeof descriptor.projectAgent?.handle === "string" &&
-    descriptor.projectAgent.handle.trim().length > 0 &&
-    typeof descriptor.projectAgent?.whenToUse === "string" &&
-    descriptor.projectAgent.whenToUse.trim().length > 0
-  );
-}
-
-export function getProjectAgentPublicName(descriptor: AgentDescriptor): string {
-  const sessionLabel = descriptor.sessionLabel?.trim();
-  if (sessionLabel) {
-    return sessionLabel;
-  }
-
-  const displayName = descriptor.displayName?.trim();
-  if (displayName) {
-    return displayName;
-  }
-
-  return descriptor.agentId;
-}
-
-export function normalizeProjectAgentHandle(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-export function listProjectAgents(
-  descriptors: Iterable<AgentDescriptor>,
-  profileId: string,
-  options?: ListProjectAgentsOptions
-): ProjectAgentDescriptor[] {
-  return Array.from(descriptors)
-    .filter((descriptor): descriptor is ProjectAgentDescriptor => hasProjectAgent(descriptor, profileId, options))
-    .sort((left, right) => {
-      const nameCompare = getProjectAgentPublicName(left).localeCompare(getProjectAgentPublicName(right));
-      if (nameCompare !== 0) {
-        return nameCompare;
-      }
-
-      return left.agentId.localeCompare(right.agentId);
-    });
-}
-
-export function findProjectAgentByHandle(
-  descriptors: Iterable<AgentDescriptor>,
-  profileId: string,
-  handle: string
-): ProjectAgentDescriptor | undefined {
-  const normalizedHandle = normalizeProjectAgentHandle(handle);
-  if (!normalizedHandle) {
-    return undefined;
-  }
-
-  return listProjectAgents(descriptors, profileId).find(
-    (descriptor) => normalizeProjectAgentHandle(descriptor.projectAgent.handle) === normalizedHandle
-  );
 }
 
 export function generateProjectAgentDirectoryBlock(entries: ProjectAgentDirectoryEntry[]): string {
@@ -127,10 +50,6 @@ export function generateProjectAgentDirectoryBlock(entries: ProjectAgentDirector
   return lines.join("\n");
 }
 
-export function getProjectAgentHandleCollisionError(handle: string): string {
-  return `Project agent handle "${handle}" is already in use in this profile. Choose a different handle and try again.`;
-}
-
 export const PROJECT_AGENT_MESSAGES_PER_MINUTE = 6;
 const PROJECT_AGENT_RATE_LIMIT_WINDOW_MS = 60_000;
 const PROJECT_AGENT_RATE_LIMIT_ERROR =
@@ -139,8 +58,6 @@ const PROJECT_AGENT_RATE_LIMIT_ERROR =
 interface DeliverProjectAgentMessageDependencies {
   now: () => string;
   getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<SwarmAgentRuntime>;
-  emitConversationMessage: (event: ConversationMessageEvent) => void;
-  markSessionActivity?: (agentId: string, timestamp?: string) => void;
   rateLimitBuckets: Map<string, number[]>;
 }
 
@@ -149,6 +66,16 @@ interface DeliverProjectAgentMessageOptions {
   target: AgentDescriptor;
   message: string;
   delivery: RequestedDeliveryMode;
+}
+
+export interface ProjectAgentDeliveryResult {
+  receipt: SendMessageReceipt;
+  inboundPayload: {
+    text: string;
+    runtimeText: string;
+    timestamp: string;
+    projectAgentContext: ProjectAgentMessageContext;
+  };
 }
 
 export function formatProjectAgentRuntimeMessage(context: {
@@ -161,7 +88,7 @@ export function formatProjectAgentRuntimeMessage(context: {
 export async function deliverProjectAgentMessage(
   deps: DeliverProjectAgentMessageDependencies,
   options: DeliverProjectAgentMessageOptions
-): Promise<SendMessageReceipt> {
+): Promise<ProjectAgentDeliveryResult> {
   const sender = assertManagerSession(options.sender, "sender");
   const target = assertManagerSession(options.target, "target");
 
@@ -183,24 +110,19 @@ export async function deliverProjectAgentMessage(
     fromDisplayName: getProjectAgentPublicName(sender)
   };
 
+  const runtimeText = formatProjectAgentRuntimeMessage(projectAgentContext, options.message);
   const runtime = await deps.getOrCreateRuntimeForDescriptor(target);
-  const receipt = await runtime.sendMessage(
-    formatProjectAgentRuntimeMessage(projectAgentContext, options.message),
-    options.delivery
-  );
+  const receipt = await runtime.sendMessage(runtimeText, options.delivery);
 
-  deps.emitConversationMessage({
-    type: "conversation_message",
-    agentId: target.agentId,
-    role: "user",
-    text: options.message,
-    timestamp,
-    source: "project_agent_input",
-    projectAgentContext
-  });
-  deps.markSessionActivity?.(target.agentId, timestamp);
-
-  return receipt;
+  return {
+    receipt,
+    inboundPayload: {
+      text: options.message,
+      runtimeText,
+      timestamp,
+      projectAgentContext
+    }
+  };
 }
 
 function assertManagerSession(

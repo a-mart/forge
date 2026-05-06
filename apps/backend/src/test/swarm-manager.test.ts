@@ -514,6 +514,102 @@ describe('SwarmManager', () => {
     ).toBe(false)
   })
 
+  it('refreshes manual stop notice and allowance for delayed invalidated-token abort callbacks', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    seedManagerDescriptorForRuntimeEventTests(manager, config)
+    const controller = (manager as any).runtimeController
+
+    vi.useFakeTimers()
+    try {
+      const token = controller.allocateRuntimeToken('manager')
+      ;(manager as any).markPendingManualManagerStopNotice('manager')
+      controller.allowInvalidatedManualStopMessageEnd('manager', token)
+      controller.clearRuntimeToken('manager')
+
+      vi.advanceTimersByTime(16_000)
+      ;(manager as any).markPendingManualManagerStopNotice('manager')
+      controller.allowInvalidatedManualStopMessageEnd('manager', token)
+
+      await controller.handleRuntimeSessionEvent(token, 'manager', {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [],
+          stopReason: 'error',
+          errorMessage: 'Request was aborted.',
+        },
+      })
+
+      const history = manager.getConversationHistory('manager')
+      expect(
+        history.some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text === 'Session stopped.',
+        ),
+      ).toBe(true)
+      expect(
+        history.some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('Manager reply failed'),
+        ),
+      ).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('expires delayed invalidated-token allowance with the pending manual stop notice', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    seedManagerDescriptorForRuntimeEventTests(manager, config)
+    const controller = (manager as any).runtimeController
+
+    vi.useFakeTimers()
+    try {
+      const token = controller.allocateRuntimeToken('manager')
+      ;(manager as any).markPendingManualManagerStopNotice('manager')
+      controller.allowInvalidatedManualStopMessageEnd('manager', token)
+      controller.clearRuntimeToken('manager')
+
+      vi.advanceTimersByTime(16_000)
+
+      await controller.handleRuntimeSessionEvent(token, 'manager', {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [],
+          stopReason: 'error',
+          errorMessage: 'Request was aborted.',
+        },
+      })
+
+      const history = manager.getConversationHistory('manager')
+      expect(
+        history.some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text === 'Session stopped.',
+        ),
+      ).toBe(false)
+      expect(
+        history.some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('Manager reply failed'),
+        ),
+      ).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('handles undefined/null/empty/malformed errorMessage payloads without crashing', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

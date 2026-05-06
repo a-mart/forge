@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -36,7 +36,7 @@ vi.mock('../project-agent-analysis.js', async () => {
   }
 })
 
-import type { AgentDescriptor, SwarmConfig } from '../types.js'
+import type { AgentDescriptor, ConversationAttachment, SwarmConfig } from '../types.js'
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from '../runtime-contracts.js'
 import { FakeRuntime, TestSwarmManager as TestSwarmManagerBase, bootWithDefaultManager } from '../../test-support/index.js'
 
@@ -180,6 +180,14 @@ describe('SwarmManager', () => {
       handle: 'releases',
       whenToUse: 'Owns release notes and changelog QA.',
     })
+
+    await expect(
+      manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+        handle: 'ship-notes',
+        whenToUse: 'Try to rename the handle.',
+      }),
+    ).rejects.toThrow('Cannot change project agent handle after promotion. Demote and re-promote to change the handle.')
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent?.handle).toBe('releases')
   })
 
   it('promotes, demotes, and re-promotes the same handle with on-disk directory cleanup', async () => {
@@ -295,6 +303,38 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toBeUndefined()
   })
 
+  it('preserves project-agent capabilities across later edits', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'QA' })
+
+    const promoted = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Reproduce issues.',
+      capabilities: ['create_session'],
+    })
+    expect(promoted.projectAgent).toEqual({
+      handle: 'qa',
+      whenToUse: 'Reproduce issues.',
+      capabilities: ['create_session'],
+    })
+
+    const updated = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Reproduce issues and create follow-up sessions.',
+    })
+    expect(updated.projectAgent).toEqual({
+      handle: 'qa',
+      whenToUse: 'Reproduce issues and create follow-up sessions.',
+      capabilities: ['create_session'],
+    })
+    expect(JSON.parse(await readFile(getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'qa'), 'utf8'))).toMatchObject({
+      agentId: created.sessionAgent.agentId,
+      handle: 'qa',
+      capabilities: ['create_session'],
+    })
+  })
+
   it('persists project-agent system prompts through store reload', async () => {
     const config = await makeTempConfig()
     const firstBoot = new ProjectAgentAwareSwarmManager(config)
@@ -341,6 +381,54 @@ describe('SwarmManager', () => {
 
 
 
+  it('getProjectAgentConfig falls back to the in-memory descriptor when the mirror record is missing', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'QA' })
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Reproduce issues.',
+      systemPrompt: 'You are QA.',
+      capabilities: ['create_session'],
+    })
+    await rm(getProjectAgentDir(config.paths.dataDir, 'manager', 'qa'), { recursive: true, force: true })
+
+    const result = await manager.getProjectAgentConfig(created.sessionAgent.agentId)
+
+    expect(result).toEqual({
+      config: {
+        version: 1,
+        agentId: created.sessionAgent.agentId,
+        handle: 'qa',
+        whenToUse: 'Reproduce issues.',
+        capabilities: ['create_session'],
+        promotedAt: created.sessionAgent.createdAt,
+        updatedAt: expect.any(String),
+      },
+      systemPrompt: 'You are QA.',
+      references: [],
+    })
+  })
+
+  it('rejects project-agent reference path traversal through the manager facade', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Docs' })
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Maintain docs.',
+    })
+
+    await expect(
+      manager.setProjectAgentReference(created.sessionAgent.agentId, '../escape.md', 'escaped'),
+    ).rejects.toThrow('Invalid path segment')
+    await expect(manager.getProjectAgentReference(created.sessionAgent.agentId, '../escape.md')).rejects.toThrow(
+      'Invalid path segment',
+    )
+  })
+
   it('rejects project-agent promotion collisions and cortex-only sessions', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
@@ -352,6 +440,7 @@ describe('SwarmManager', () => {
     await manager.setSessionProjectAgent(first.sessionAgent.agentId, {
       whenToUse: 'Draft release notes.',
     })
+    await rm(getProjectAgentDir(config.paths.dataDir, 'manager', 'release-notes'), { recursive: true, force: true })
 
     await expect(
       manager.setSessionProjectAgent(second.sessionAgent.agentId, {
@@ -499,6 +588,39 @@ describe('SwarmManager', () => {
     expect(retried.handle).toBe('release-notes')
   })
 
+  it('createAndPromoteProjectAgent preserves unrelated live descriptor changes when provisioning fails', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+    const unrelated = await manager.createSession('manager', { label: 'Unrelated Session' })
+    const agentIdsBefore = manager.listAgents().map((agent) => agent.agentId).sort()
+
+    vi.spyOn(manager as any, 'createRuntimeForDescriptor').mockImplementationOnce(async () => {
+      await manager.renameSession(unrelated.sessionAgent.agentId, 'Unrelated Updated')
+      throw new Error('runtime boom')
+    })
+
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: 'Release Notes',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: 'You are the release notes project agent.',
+      }),
+    ).rejects.toThrow('runtime boom')
+
+    expect(manager.listAgents().map((agent) => agent.agentId).sort()).toEqual(agentIdsBefore)
+    expect(manager.getAgent(unrelated.sessionAgent.agentId)?.sessionLabel).toBe('Unrelated Updated')
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'release-notes'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(manager.notifiedProjectAgentProfileIds).toEqual([])
+  })
+
   it('createAndPromoteProjectAgent rolls back descriptors when persistence fails after runtime creation', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
@@ -512,7 +634,7 @@ describe('SwarmManager', () => {
     const profileSessionsDir = join(config.paths.dataDir, 'profiles', 'manager', 'sessions')
     const sessionDirsBefore = (await readdir(profileSessionsDir)).sort()
 
-    vi.spyOn(manager as any, 'saveStore').mockRejectedValueOnce(new Error('save boom'))
+    vi.spyOn((manager as any).descriptorStore, 'save').mockRejectedValueOnce(new Error('save boom'))
 
     await expect(
       manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
@@ -661,8 +783,18 @@ describe('SwarmManager', () => {
     state.runtimes.delete(sessionAgent.agentId)
     manager.runtimeByAgentId.delete(sessionAgent.agentId)
 
+    const attachments: ConversationAttachment[] = [
+      {
+        type: 'text',
+        mimeType: 'text/plain',
+        text: 'attachment content that must not be expanded for project-agent delivery',
+        fileName: 'notes.txt',
+      },
+    ]
     const createdRuntimeCountBeforeSend = manager.createdRuntimeIds.length
-    const receipt = await manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto')
+    const receipt = await manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto', {
+      attachments,
+    })
 
     expect(receipt.targetAgentId).toBe(sessionAgent.agentId)
     expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforeSend + 1)
@@ -688,6 +820,7 @@ describe('SwarmManager', () => {
     expect(projectAgentMessage?.type).toBe('conversation_message')
     if (projectAgentMessage?.type === 'conversation_message') {
       expect(projectAgentMessage.sourceContext).toBeUndefined()
+      expect(projectAgentMessage.attachments).toBeUndefined()
       expect(projectAgentMessage.projectAgentContext).toEqual({
         fromAgentId: 'manager',
         fromDisplayName: 'manager',
@@ -707,6 +840,43 @@ describe('SwarmManager', () => {
           entry.text === 'Please draft release notes.',
       ),
     ).toBe(true)
+  })
+
+  it('does not append target transcript or mark activity when project-agent runtime send fails', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    state.runtimes.delete(sessionAgent.agentId)
+    manager.runtimeByAgentId.delete(sessionAgent.agentId)
+    manager.onCreateRuntime = ({ runtime }) => {
+      runtime.sendMessageError = new Error('runtime send failed')
+    }
+    const updatedAtBeforeSend = manager.getAgent(sessionAgent.agentId)?.updatedAt
+
+    await expect(
+      manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto'),
+    ).rejects.toThrow('runtime send failed')
+
+    expect(manager.getAgent(sessionAgent.agentId)?.updatedAt).toBe(updatedAtBeforeSend)
+    expect(
+      manager
+        .getConversationHistory(sessionAgent.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.source === 'project_agent_input' &&
+            entry.text === 'Please draft release notes.',
+        ),
+    ).toBe(false)
   })
 
   it('keeps promoted-session self-sends on the generic manager path', async () => {
@@ -767,5 +937,40 @@ describe('SwarmManager', () => {
       )
 
     expect(deliveredMessages).toHaveLength(6)
+  })
+
+  it('allows a different sender session after another sender exhausts its project-agent rate limit', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const senderTwo = await manager.createSession('manager', { label: 'Coordinator Two' })
+    const { sessionAgent: target } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(target.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    for (let index = 0; index < 6; index += 1) {
+      await manager.sendMessage('manager', target.agentId, `sender-one-${index + 1}`, 'auto')
+    }
+    await expect(manager.sendMessage('manager', target.agentId, 'sender-one-7', 'auto')).rejects.toThrow(
+      'Project-agent messaging rate limit exceeded for this session. Batch your message or involve the user before continuing.',
+    )
+
+    const receipt = await manager.sendMessage(senderTwo.sessionAgent.agentId, target.agentId, 'sender-two-1', 'auto')
+
+    expect(receipt.targetAgentId).toBe(target.agentId)
+    const deliveredMessages = manager
+      .getConversationHistory(target.agentId)
+      .filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'project_agent_input' &&
+          entry.role === 'user',
+      )
+    expect(deliveredMessages.map((entry) => (entry.type === 'conversation_message' ? entry.text : ''))).toContain(
+      'sender-two-1',
+    )
+    expect(deliveredMessages).toHaveLength(7)
   })
 })

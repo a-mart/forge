@@ -257,6 +257,25 @@ describe("project-agent-storage", () => {
     expect(record?.systemPrompt).toBe("Stored in descriptor");
   });
 
+  it("materializes descriptor capabilities when creating a missing record", async () => {
+    const dataDir = await createTempDataDir();
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      projectAgent: {
+        handle: "qa",
+        whenToUse: "Reproduce issues",
+        capabilities: ["create_session"]
+      }
+    });
+
+    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+
+    expect(result.materialized).toEqual(["agent-1"]);
+    const record = await readProjectAgentRecord(dataDir, "profile-a", "qa");
+    expect(record?.config.capabilities).toEqual(["create_session"]);
+    expect(record?.systemPrompt).toBeNull();
+  });
+
   it("reconciles rule 2 by hydrating a matching descriptor from disk", async () => {
     const dataDir = await createTempDataDir();
     await writeProjectAgentRecord(
@@ -407,6 +426,47 @@ describe("project-agent-storage", () => {
       handle: "current-handle",
       whenToUse: "Current data",
       systemPrompt: "Current prompt"
+    });
+  });
+
+  it("skips materializing a descriptor when a surviving record already owns its handle", async () => {
+    const dataDir = await createTempDataDir();
+    await writeProjectAgentRecord(
+      dataDir,
+      "profile-a",
+      makeConfig({ agentId: "agent-1", handle: "docs", whenToUse: "Existing docs agent" }),
+      "Existing prompt"
+    );
+
+    const existingDescriptor = makeDescriptor({ agentId: "agent-1" });
+    const collidingDescriptor = makeDescriptor({
+      agentId: "agent-2",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "New docs agent",
+        systemPrompt: "New prompt"
+      }
+    });
+
+    const result = await reconcileProjectAgentStorage(
+      dataDir,
+      "profile-a",
+      new Map([
+        [existingDescriptor.agentId, existingDescriptor],
+        [collidingDescriptor.agentId, collidingDescriptor]
+      ])
+    );
+
+    expect(result.hydrated).toEqual(["agent-1"]);
+    expect(result.materialized).toEqual([]);
+    const record = await readProjectAgentRecord(dataDir, "profile-a", "docs");
+    expect(record?.config.agentId).toBe("agent-1");
+    expect(record?.config.whenToUse).toBe("Existing docs agent");
+    expect(record?.systemPrompt).toBe("Existing prompt");
+    expect(collidingDescriptor.projectAgent).toEqual({
+      handle: "docs",
+      whenToUse: "New docs agent",
+      systemPrompt: "New prompt"
     });
   });
 

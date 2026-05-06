@@ -374,6 +374,50 @@ describe("validateAgentDescriptor", () => {
       expect(result.projectAgent?.handle).toBe("MyHandle");
     }
   });
+
+  it("normalizes stopped_on_restart to stopped at validation time", () => {
+    const result = validateAgentDescriptor(baseDescriptor({ status: "stopped_on_restart" }));
+
+    expect(typeof result).not.toBe("string");
+    if (typeof result !== "string") {
+      expect(result.status).toBe("stopped");
+    }
+  });
+
+  it("preserves critical persisted descriptor fields while validating", () => {
+    const descriptor = baseDescriptor({
+      creatorAgentId: "creator-session",
+      sessionPurpose: "agent_creator",
+      sessionSurface: "collab",
+      collab: { workspaceId: "workspace", channelId: "channel" },
+      sessionSystemPrompt: "Session prompt",
+      pinnedAt: "2026-01-01T00:00:00.000Z",
+      modelOrigin: "session_override",
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.5",
+        thinkingLevel: "xhigh",
+        serviceTier: "priority"
+      } as AgentDescriptor["model"],
+      contextUsage: { tokens: 10, contextWindow: 100, percent: 10 },
+      projectAgent: {
+        handle: "release-notes",
+        whenToUse: "Draft release notes.",
+        systemPrompt: "You are the release notes project agent.",
+        creatorSessionId: "creator-session",
+        capabilities: ["create_session"]
+      },
+      agentCreatorResult: {
+        createdAgentId: "release-notes",
+        createdHandle: "release-notes",
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }
+    });
+
+    const result = validateAgentDescriptor(descriptor);
+
+    expect(result).toEqual(descriptor);
+  });
 });
 
 describe("resolveModel", () => {

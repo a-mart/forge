@@ -23,7 +23,7 @@ import {
   getProjectAgentPublicName,
   listProjectAgents,
 } from "./project-agents.js";
-import { readProjectAgentRecord } from "./project-agent-storage.js";
+import { readProjectAgentRecord, type ProjectAgentOnDiskRecord } from "./project-agent-storage.js";
 import {
   listProjectAgentReferenceDocs,
   readProjectAgentReferenceDoc,
@@ -166,10 +166,14 @@ export class SwarmPromptService {
     ]);
     const systemPrompt = await this.appendAvailableSkillsBlock(resolvedSystemPrompt, descriptor);
 
+    const systemPromptSource = projectAgentPrompt
+      ? projectAgentPromptSourcePath ?? this.getProjectAgentDescriptorPromptSource(descriptor)
+      : archetypeEntry!.sourcePath;
+
     const sections: PromptPreviewSection[] = [
       {
         label: "System Prompt",
-        source: projectAgentPrompt ? projectAgentPromptSourcePath! : archetypeEntry!.sourcePath,
+        source: systemPromptSource,
         content: systemPrompt,
       },
       {
@@ -253,11 +257,12 @@ export class SwarmPromptService {
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
 
-    if (descriptor.projectAgent?.handle) {
+    const projectAgentRecord = await this.readOwnedProjectAgentRecord(descriptor, profileId);
+    if (projectAgentRecord) {
       const refDocFiles = await listProjectAgentReferenceDocs(
         this.options.config.paths.dataDir,
         profileId,
-        descriptor.projectAgent.handle,
+        projectAgentRecord.config.handle,
       );
       if (refDocFiles.length > 0) {
         const refContents: string[] = [];
@@ -265,7 +270,7 @@ export class SwarmPromptService {
           const content = await readProjectAgentReferenceDoc(
             this.options.config.paths.dataDir,
             profileId,
-            descriptor.projectAgent.handle,
+            projectAgentRecord.config.handle,
             fileName,
           );
           if (content) {
@@ -642,27 +647,53 @@ export class SwarmPromptService {
     }
 
     const profileId = descriptor.profileId ?? descriptor.agentId;
-    const sourcePath = getProjectAgentPromptPath(
-      this.options.config.paths.dataDir,
-      profileId,
-      descriptor.projectAgent.handle,
-    );
+    const onDiskRecord = await this.readOwnedProjectAgentRecord(descriptor, profileId);
+    if (onDiskRecord?.systemPrompt !== null && onDiskRecord?.systemPrompt !== undefined) {
+      const prompt = onDiskRecord.systemPrompt.trim() || undefined;
+      return {
+        prompt,
+        sourcePath: prompt
+          ? getProjectAgentPromptPath(this.options.config.paths.dataDir, profileId, onDiskRecord.config.handle)
+          : undefined,
+      };
+    }
+
+    const prompt = descriptor.projectAgent.systemPrompt?.trim() || undefined;
+    return {
+      prompt,
+      sourcePath: undefined,
+    };
+  }
+
+  private getProjectAgentDescriptorPromptSource(descriptor: AgentDescriptor): string {
+    return `project-agent-descriptor:${descriptor.projectAgent?.handle ?? descriptor.agentId}`;
+  }
+
+  private async readOwnedProjectAgentRecord(
+    descriptor: AgentDescriptor,
+    profileId: string,
+  ): Promise<ProjectAgentOnDiskRecord | null> {
+    if (!descriptor.projectAgent?.handle) {
+      return null;
+    }
+
     const onDiskRecord = await readProjectAgentRecord(
       this.options.config.paths.dataDir,
       profileId,
       descriptor.projectAgent.handle,
     );
-    let prompt: string | undefined;
-    if (onDiskRecord?.systemPrompt !== null && onDiskRecord?.systemPrompt !== undefined) {
-      prompt = onDiskRecord.systemPrompt.trim() || undefined;
-    } else {
-      prompt = descriptor.projectAgent.systemPrompt?.trim() || undefined;
+    if (!onDiskRecord) {
+      return null;
     }
 
-    return {
-      prompt,
-      sourcePath: prompt ? sourcePath : undefined,
-    };
+    if (onDiskRecord.config.agentId !== descriptor.agentId) {
+      console.warn(
+        `[swarm] prompt-service:skip_foreign_project_agent_record profile=${profileId} agentId=${descriptor.agentId} handle=${descriptor.projectAgent.handle} ownerAgentId=${onDiskRecord.config.agentId}`,
+      );
+      return null;
+    }
+
+    return onDiskRecord;
   }
 
   private async appendCollabContextOverlays(descriptor: AgentDescriptor, basePrompt: string): Promise<string> {

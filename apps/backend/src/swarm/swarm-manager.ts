@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { appendFile, copyFile, mkdir, open, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
@@ -44,6 +44,10 @@ import {
 } from "./prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
 import {
+  collectConversationMessageIdsFromSessionFile,
+  copySessionHistoryForFork
+} from "./session/conversation-timeline.js";
+import {
   getWorkerIdFromCanonicalTranscriptFileName,
   isWorkerTranscriptSidecarAgentId,
   isWorkerTranscriptSidecarSessionFile
@@ -81,7 +85,9 @@ import type {
   SidebarPerfSummary
 } from "../stats/sidebar-perf-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
-import { migrateDataDirectory } from "./data-migration.js";
+import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
+import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
+import { ProjectAgentMirrorReconciler } from "./agents/descriptor-store/project-agent-mirror-reconciler.js";
 import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "./shared-config-migration.js";
 import {
   formatAgentCreatorContextMessage,
@@ -92,16 +98,8 @@ import {
   type AnalyzeSessionForPromotionOptions,
   type ProjectAgentRecommendations
 } from "./project-agent-analysis.js";
-import { deleteProjectAgentRecord, reconcileProjectAgentStorage } from "./project-agent-storage.js";
-import {
-  deliverProjectAgentMessage,
-  findProjectAgentByHandle,
-  formatProjectAgentRuntimeMessage,
-  getProjectAgentHandleCollisionError,
-  getProjectAgentPublicName,
-  normalizeProjectAgentHandle,
-  normalizeProjectAgentInlineText
-} from "./project-agents.js";
+import { deleteProjectAgentRecord } from "./project-agent-storage.js";
+import { deliverProjectAgentMessage } from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
 import { ForgeExtensionHost } from "./forge-extension-host.js";
 import type { VersioningCommitEvent as ForgeVersioningCommitEvent } from "./forge-extension-types.js";
@@ -109,12 +107,11 @@ import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js
 import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
+import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
 import {
-  appendModelChangeContinuityApplied,
-  createModelChangeContinuityApplied,
-  type ModelChangeContinuityRequest
-} from "./runtime/model-change-continuity.js";
-import { resolvePendingModelChangeRuntimeStartup } from "./runtime/model-change-runtime-startup.js";
+  isRuntimeRecoveryActiveForRuntime,
+  RuntimeRecoveryState
+} from "./runtime/runtime-recovery-state.js";
 import {
   SwarmRuntimeController,
   type SwarmRuntimeControllerHost
@@ -303,6 +300,23 @@ export interface DispatchRuntimeUserMessageOptions {
   runtimeAttachments?: ConversationAttachment[];
   persistedAttachmentCount?: number;
   delivery?: RequestedDeliveryMode;
+}
+
+interface PreparedInboundConversationPayload {
+  text: string;
+  runtimeText?: string;
+  timestamp?: string;
+  source: "user_input" | "project_agent_input";
+  sourceContext?: MessageSourceContext;
+  collaborationAuthor?: CollaborationAuthor;
+  projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
+  attachments?: ConversationAttachment[];
+}
+
+interface AppendPreparedInboundConversationPayloadResult {
+  event: ConversationMessageEvent;
+  persistedAttachments: ConversationAttachment[];
+  runtimeAttachments: ConversationAttachment[];
 }
 
 export interface CodexTransportDebugAgentDiagnostics {
@@ -1012,6 +1026,36 @@ async function backupLegacyCortexWorkerPrompts(path: string, content: string): P
   }
 }
 
+interface DescriptorStoreAdapter {
+  loadStore: () => Promise<AgentsStoreFile>;
+  saveStore: () => Promise<void>;
+  transactionDescriptors: <T>(
+    callback: (store: AgentDescriptorStore) => T | Promise<T>,
+    options?: { saveMode?: "rollback" | "best-effort"; onSaveError?: (error: unknown) => void }
+  ) => Promise<T>;
+  persistBestEffort: () => Promise<void>;
+  upsertDescriptor: (descriptor: AgentDescriptor) => Promise<void>;
+  upsertDescriptorInLiveMaps: (descriptor: AgentDescriptor) => void;
+  patchDescriptor: (
+    agentId: string,
+    patch: Partial<AgentDescriptor> | ((descriptor: AgentDescriptor) => AgentDescriptor)
+  ) => Promise<AgentDescriptor>;
+  patchDescriptorInLiveMaps: (
+    agentId: string,
+    patch: Partial<AgentDescriptor> | ((descriptor: AgentDescriptor) => AgentDescriptor)
+  ) => AgentDescriptor | undefined;
+  deleteDescriptor: (agentId: string) => Promise<boolean>;
+  deleteDescriptorInLiveMaps: (agentId: string) => boolean;
+  upsertProfile: (profile: ManagerProfile) => Promise<void>;
+  upsertProfileInLiveMaps: (profile: ManagerProfile) => void;
+  patchProfile: (
+    profileId: string,
+    patch: Partial<ManagerProfile> | ((profile: ManagerProfile) => ManagerProfile)
+  ) => Promise<ManagerProfile>;
+  deleteProfile: (profileId: string) => Promise<boolean>;
+  deleteProfileInLiveMaps: (profileId: string) => boolean;
+}
+
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
@@ -1021,10 +1065,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly profiles = new Map<string, ManagerProfile>();
   private readonly runtimeController: SwarmRuntimeController;
   private readonly runtimes: Map<string, SwarmAgentRuntime>;
-  private readonly runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
-  private readonly runtimeTokensByAgentId: Map<string, number>;
-  private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
-  private readonly pendingManagerRuntimeRecycleReasonsByAgentId = new Map<string, ManagerRuntimeRecycleReason>();
+  readonly runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
+  readonly runtimeTokensByAgentId: Map<string, number>;
+  private readonly runtimeRecoveryState = new RuntimeRecoveryState();
+  private readonly modelChangeStartupRecoveryCoordinator: ModelChangeStartupRecoveryCoordinator;
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
@@ -1037,6 +1081,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly sidebarPerfRecorder: SidebarPerfRecorder;
   private readonly conversationProjector: ConversationProjector;
+  private readonly descriptorStore: AgentDescriptorStore;
+  private readonly descriptorStoreAdapter: DescriptorStoreAdapter;
   private readonly persistenceService: PersistenceService;
   private readonly forgeExtensionHost: ForgeExtensionHost;
   private piModelsJsonPath: string | null = null;
@@ -1086,6 +1132,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       manifest: backendSidebarPerfMetricManifest
     });
     this.runtimeController = new SwarmRuntimeController(this as unknown as SwarmRuntimeControllerHost);
+    this.modelChangeStartupRecoveryCoordinator = new ModelChangeStartupRecoveryCoordinator({
+      now: this.now,
+      logDebug: (message, details) => this.logDebug(message, details),
+      getEffectiveContextWindow: (modelId, provider) =>
+        modelCatalogService.getEffectiveContextWindow(modelId, provider),
+      hasPinnedContent: (agentId) => this.pinnedMessageIdsBySessionAgentId.has(agentId)
+    });
     this.runtimes = this.runtimeController.runtimes;
     this.runtimeCreationPromisesByAgentId = this.runtimeController.runtimeCreationPromisesByAgentId;
     this.runtimeTokensByAgentId = this.runtimeController.runtimeTokensByAgentId;
@@ -1111,8 +1164,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.specialistFallbackManager = new SwarmSpecialistFallbackManager({
       descriptors: this.descriptors,
       runtimes: this.runtimes,
-      runtimeCreationPromisesByAgentId: this.runtimeCreationPromisesByAgentId,
-      runtimeTokensByAgentId: this.runtimeTokensByAgentId,
+      getRuntime: (agentId) => this.runtimeController.getRuntime(agentId),
+      isRuntime: (agentId, runtime) => this.runtimeController.isRuntime(agentId, runtime),
+      getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
+      clearRuntimeToken: (agentId, runtimeToken) => this.runtimeController.clearRuntimeToken(agentId, runtimeToken),
+      restoreRuntimeTokenForFallbackRollback: (agentId, runtimeToken) =>
+        this.runtimeController.restoreRuntimeTokenForFallbackRollback(agentId, runtimeToken),
+      getRuntimeCreationPromise: (agentId) => this.runtimeController.getRuntimeCreationPromise(agentId),
+      setRuntimeCreationPromise: (agentId, promise) =>
+        this.runtimeController.setRuntimeCreationPromise(agentId, promise),
+      clearRuntimeCreationPromiseIfCurrent: (agentId, promise) =>
+        this.runtimeController.clearRuntimeCreationPromiseIfCurrent(agentId, promise),
       workerHealthService: this.workerHealthService,
       now: this.now,
       resolveSpecialistRosterForProfile: (profileId, targetSpace) => this.resolveSpecialistRosterForProfile(profileId, targetSpace),
@@ -1127,10 +1189,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.runtimeController.attachRuntime(agentId, runtime);
       },
       detachRuntime: (agentId, runtimeToken) => this.runtimeController.detachRuntime(agentId, runtimeToken),
+      detachRuntimeIfMatches: (agentId, runtime, runtimeToken) =>
+        this.runtimeController.detachRuntimeIfMatches(agentId, runtime, runtimeToken),
       updateSessionMetaForWorkerDescriptor: (descriptor, resolvedSystemPrompt) =>
         this.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt ?? undefined),
       refreshSessionMetaStatsBySessionId: (sessionAgentId) => this.refreshSessionMetaStatsBySessionId(sessionAgentId),
       saveStore: () => this.saveStore(),
+      patchDescriptor: (agentId, patch, options) =>
+        this.descriptorStoreAdapter.transactionDescriptors((store) => store.patchDescriptor(agentId, patch), options),
+      patchDescriptorInLiveMaps: (agentId, patch) => this.descriptorStoreAdapter.patchDescriptorInLiveMaps(agentId, patch),
       emitStatus: (agentId, status, pendingCount, contextUsage) =>
         this.emitStatus(agentId, status, pendingCount, contextUsage),
       emitAgentsSnapshot: () => {
@@ -1142,6 +1209,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.runtimeController.setSpecialistFallbackManager(this.specialistFallbackManager);
+    this.descriptorStore = new AgentDescriptorStore({
+      dataDir: this.config.paths.dataDir,
+      storeFilePath: this.config.paths.agentsStoreFile,
+      configuredManagerId: this.getConfiguredManagerId(),
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
+    this.descriptorStoreAdapter = this.createDescriptorStoreAdapter();
     this.persistenceService = new PersistenceService({
       config: this.config,
       descriptors: this.descriptors,
@@ -1211,9 +1285,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.emitAgentsSnapshot();
       },
       getRequiredSessionDescriptor: (agentId) => this.getRequiredSessionDescriptor(agentId),
-      upsertDescriptor: (descriptor) => {
-        this.descriptors.set(descriptor.agentId, descriptor);
-      },
+      upsertDescriptor: (descriptor) => this.descriptorStoreAdapter.upsertDescriptor(descriptor),
       getAgentMemoryPath: (agentId) => this.getAgentMemoryPath(agentId),
       resolvePreferredManagerId: (options) => this.resolvePreferredManagerId(options),
       resolvePromptWithFallback: (category, promptId, profileId, fallback) =>
@@ -1243,8 +1315,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
     this.sessionProvisioner = new SessionProvisioner({
       dataDir: this.config.paths.dataDir,
-      descriptors: this.descriptors,
-      profiles: this.profiles,
+      descriptorMutations: {
+        upsertDescriptor: (descriptor) => {
+          this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+        },
+        deleteDescriptor: (agentId) => {
+          this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId);
+        },
+        upsertProfile: (profile) => {
+          this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
+        },
+        deleteProfile: (profileId) => {
+          this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId);
+        }
+      },
       runtimes: this.runtimes,
       pinnedMessageIdsBySessionAgentId: this.pinnedMessageIdsBySessionAgentId,
       conversationProjector: this.conversationProjector,
@@ -1277,6 +1361,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       assertCanChangeManagerCwd: (profileId, sessions) => this.assertCanChangeManagerCwd(profileId, sessions),
       applyManagerRuntimeRecyclePolicy: (agentId, reason) => this.applyManagerRuntimeRecyclePolicy(agentId, reason),
       now: this.now,
+      transactionDescriptors: (callback) => this.descriptorStoreAdapter.transactionDescriptors(callback),
       saveStore: async () => {
         await this.saveStore();
       },
@@ -1324,11 +1409,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       descriptors: this.descriptors,
       profiles: this.profiles,
       runtimes: this.runtimes,
-      runtimeCreationPromisesByAgentId: this.runtimeCreationPromisesByAgentId,
-      pendingManagerRuntimeRecycleAgentIds: this.pendingManagerRuntimeRecycleAgentIds,
-      pendingManagerRuntimeRecycleReasonsByAgentId: this.pendingManagerRuntimeRecycleReasonsByAgentId,
+      getRuntime: (agentId) => this.runtimeController.getRuntime(agentId),
+      getRuntimeCreationPromise: (agentId) => this.runtimeController.getRuntimeCreationPromise(agentId),
+      setRuntimeCreationPromise: (agentId, promise) =>
+        this.runtimeController.setRuntimeCreationPromise(agentId, promise),
+      clearRuntimeCreationPromiseIfCurrent: (agentId, promise) =>
+        this.runtimeController.clearRuntimeCreationPromiseIfCurrent(agentId, promise),
+      runtimeRecoveryState: this.runtimeRecoveryState,
       modelCapacityBlocks: this.modelCapacityBlocks,
       sessionProvisioner: this.sessionProvisioner,
+      descriptorMutations: {
+        upsertDescriptor: (descriptor) => {
+          this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+        },
+        deleteDescriptor: (agentId) => {
+          this.descriptorStoreAdapter.deleteDescriptorInLiveMaps(agentId);
+        },
+        upsertProfile: (profile) => {
+          this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
+        },
+        deleteProfile: (profileId) => {
+          this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId);
+        }
+      },
       now: this.now,
       getRequiredSessionDescriptor: (agentId) => this.getRequiredSessionDescriptor(agentId),
       assertManager: (agentId, action) => this.assertManager(agentId, action),
@@ -1353,7 +1456,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options),
       allocateRuntimeToken: (agentId) => this.allocateRuntimeToken(agentId),
       clearRuntimeToken: (agentId, runtimeToken) => this.clearRuntimeToken(agentId, runtimeToken),
-      getRuntimeToken: (agentId) => this.runtimeTokensByAgentId.get(agentId),
+      getRuntimeToken: (agentId) => this.runtimeController.getRuntimeToken(agentId),
       ensureSessionFileParentDirectory: (sessionFile) => this.ensureSessionFileParentDirectory(sessionFile),
       updateSessionMetaForWorkerDescriptor: (descriptor, resolvedSystemPrompt) =>
         this.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt),
@@ -1362,9 +1465,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       captureSessionRuntimePromptMeta: (descriptor, resolvedSystemPrompt) =>
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       prepareManagerRuntimeCreation: (descriptor, systemPrompt) =>
-        this.prepareManagerRuntimeCreation(descriptor, systemPrompt),
+        this.modelChangeStartupRecoveryCoordinator.prepareManagerRuntimeCreation(descriptor, systemPrompt),
       appendAppliedModelChangeContinuity: (descriptor, request, runtime) =>
-        this.appendAppliedModelChangeContinuity(descriptor, request, runtime),
+        this.modelChangeStartupRecoveryCoordinator.appendAppliedModelChangeContinuity(descriptor, request, runtime),
       attachRuntime: (agentId, runtime) => {
         this.runtimeController.attachRuntime(agentId, runtime);
       },
@@ -1402,12 +1505,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       clearIntentionalStopRuntimeCallbackSuppression: (agentId, runtimeToken) => {
         this.runtimeController.clearIntentionalStopRuntimeCallbackSuppression(agentId, runtimeToken);
       },
+      allowInvalidatedManualStopMessageEnd: (agentId, runtimeToken) => {
+        this.runtimeController.allowInvalidatedManualStopMessageEnd(agentId, runtimeToken);
+      },
       markPendingManualManagerStopNotice: (agentId) => this.markPendingManualManagerStopNotice(agentId),
       cancelAllPendingChoicesForAgent: (agentId) => {
         this.cancelAllPendingChoicesForAgent(agentId);
       },
       runRuntimeShutdown: (descriptor, action, options) => this.runRuntimeShutdown(descriptor, action, options),
       detachRuntime: (agentId, runtimeToken) => this.detachRuntime(agentId, runtimeToken),
+      detachRuntimeIfMatches: (agentId, runtime, runtimeToken) =>
+        this.runtimeController.detachRuntimeIfMatches(agentId, runtime, runtimeToken),
       syncPinnedContentForManagerRuntime: async (descriptor, options) => {
         await this.syncPinnedContentForManagerRuntime(descriptor, options);
       },
@@ -1475,7 +1583,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       appendSessionRenameHistoryEntry: (descriptor, entry) => this.appendSessionRenameHistoryEntry(descriptor, entry),
       copySessionHistoryForFork: (sourceSessionFile, targetSessionFile, fromMessageId) =>
-        this.copySessionHistoryForFork(sourceSessionFile, targetSessionFile, fromMessageId),
+        copySessionHistoryForFork({
+          sourceSessionFile,
+          targetSessionFile,
+          fromMessageId,
+          omittedCustomTypes: [CLAUDE_RUNTIME_STATE_ENTRY_TYPE]
+        }),
       copyPinnedMessagesForFork: (sourceDescriptor, forkedDescriptor) =>
         this.copyPinnedMessagesForFork(sourceDescriptor, forkedDescriptor),
       writeForkedSessionMemoryHeader: (sourceDescriptor, forkedSessionAgentId, fromMessageId) =>
@@ -1491,9 +1604,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       prepareSessionCreation: (profileId, options) => this.prepareSessionCreation(profileId, options),
       getRequiredSessionDescriptor: (agentId) => this.getRequiredSessionDescriptor(agentId),
       assertSessionSupportsProjectAgent: (descriptor) => this.assertSessionSupportsProjectAgent(descriptor),
-      buildProjectAgentInfoForSession: (descriptor, whenToUse, systemPrompt, handle, capabilities) =>
-        this.buildProjectAgentInfoForSession(descriptor, whenToUse, systemPrompt, handle, capabilities),
       getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
+      upsertDescriptorInLiveMaps: (descriptor) => this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor),
       captureSessionRuntimePromptMeta: (descriptor, resolvedSystemPrompt) =>
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       saveStore: async () => {
@@ -1544,48 +1656,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.refreshDefaultMemoryTemplateNormalizedLines();
 
-    let loaded = await this.loadStore();
-    const migrationResult = await migrateDataDirectory(
-      {
-        dataDir: this.config.paths.dataDir,
-        agentsStoreFile: this.config.paths.agentsStoreFile
-      },
-      loaded.agents,
-      loaded.profiles ?? [],
-      {
-        debug: (message, details) => this.logDebug(message, details),
-        info: (message, details) => this.logDebug(message, details),
-        warn: (message, details) => this.logDebug(message, details)
-      }
-    );
-    loaded = {
-      ...loaded,
-      agents: migrationResult.updatedAgents
-    };
-    const cortexPruneResult = this.prunePersistedCortexStateForBoot(loaded);
-    loaded = cortexPruneResult.store;
-    const workerSidecarPruneResult = this.prunePersistedWorkerSidecarDescriptorsForBoot(loaded);
-    loaded = workerSidecarPruneResult.store;
-
-    for (const descriptor of loaded.agents) {
-      this.descriptors.set(descriptor.agentId, descriptor);
-    }
-    for (const profile of loaded.profiles ?? []) {
-      this.profiles.set(profile.profileId, profile);
-    }
-
-    await this.preloadPinnedMessageIndexes();
-
-    const normalizedSessionModelState = this.reconcileProfilesOnBoot();
-    const normalizedSystemProfileTypes = this.normalizeSystemProfileTypes();
-    if (
-      cortexPruneResult.pruned ||
-      workerSidecarPruneResult.pruned ||
-      normalizedSessionModelState ||
-      normalizedSystemProfileTypes
-    ) {
-      await this.saveStore();
-    }
+    await new BootReconciler({
+      config: this.config,
+      descriptors: this.descriptors,
+      profiles: this.profiles,
+      loadStore: () => this.loadStore(),
+      saveStore: () => this.saveStore(),
+      prunePersistedCortexStateForBoot: (store) => this.prunePersistedCortexStateForBoot(store),
+      prunePersistedWorkerSidecarDescriptorsForBoot: (store) => this.prunePersistedWorkerSidecarDescriptorsForBoot(store),
+      preloadPinnedMessageIndexes: () => this.preloadPinnedMessageIndexes(),
+      reconcileProfilesOnBoot: () => this.reconcileProfilesOnBoot(),
+      normalizeSystemProfileTypes: () => this.normalizeSystemProfileTypes(),
+      logDebug: (message, details) => this.logDebug(message, details)
+    }).loadAndReconcilePersistedStore();
     await this.ensureCortexProfile();
     await loadOnboardingState(this.config.paths.dataDir);
     await this.ensureLegacyProfileKnowledgeReferenceDocs();
@@ -1600,28 +1683,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     // Reconcile project agent storage: hydrate descriptors from on-disk config,
     // materialize missing directories from descriptor data (first-boot migration).
-    for (const profile of this.profiles.values()) {
-      const result = await reconcileProjectAgentStorage(
-        this.config.paths.dataDir,
-        profile.profileId,
-        this.descriptors
-      );
-      if (result.materialized.length > 0) {
-        console.info(
-          `[swarm][boot] Materialized ${result.materialized.length} project agent(s) for profile ${profile.profileId}: ${result.materialized.join(", ")}`
-        );
-      }
-      if (result.hydrated.length > 0) {
-        console.info(
-          `[swarm][boot] Hydrated ${result.hydrated.length} project agent descriptor(s) for profile ${profile.profileId}: ${result.hydrated.join(", ")}`
-        );
-      }
-      if (result.orphansRemoved.length > 0) {
-        console.info(
-          `[swarm][boot] Removed ${result.orphansRemoved.length} orphan project agent director(ies) for profile ${profile.profileId}: ${result.orphansRemoved.join(", ")}`
-        );
-      }
-    }
+    await new ProjectAgentMirrorReconciler({
+      dataDir: this.config.paths.dataDir,
+      descriptors: this.descriptors,
+      profiles: this.profiles
+    }).reconcileAllProfiles();
 
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
@@ -1863,8 +1929,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profile.updatedAt = now;
     }
 
-    this.profiles.set(profile.profileId, profile);
-    this.descriptors.set(descriptor.agentId, descriptor);
+    this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
 
     await this.ensureProfilePiDirectories(profile.profileId);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
@@ -2189,9 +2255,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const targetAgentId = createdSession.sessionAgent.agentId;
     createdSession.sessionAgent.creatorAgentId = creatorDescriptor.agentId;
 
-    const targetDescriptor = this.getRequiredSessionDescriptor(targetAgentId);
-    targetDescriptor.creatorAgentId = creatorDescriptor.agentId;
-    await this.saveStore();
+    const targetDescriptor = await this.descriptorStoreAdapter.patchDescriptor(targetAgentId, {
+      creatorAgentId: creatorDescriptor.agentId,
+    });
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
 
@@ -2372,20 +2438,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
-    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "pin Builder sessions");
+    this.getRequiredBuilderSessionDescriptor(agentId, "pin Builder sessions");
 
-    if (pinned) {
-      descriptor.pinnedAt = descriptor.pinnedAt ?? this.now();
-    } else {
-      delete descriptor.pinnedAt;
-    }
-
-    this.descriptors.set(agentId, descriptor);
-    await this.saveStore();
+    const updatedDescriptor = await this.descriptorStoreAdapter.patchDescriptor(agentId, (current) => {
+      if (pinned) {
+        current.pinnedAt = current.pinnedAt ?? this.now();
+      } else {
+        delete current.pinnedAt;
+      }
+      return current;
+    });
     this.emitAgentsSnapshot();
 
     return {
-      pinnedAt: descriptor.pinnedAt ?? null
+      pinnedAt: updatedDescriptor.pinnedAt ?? null
     };
   }
 
@@ -2402,7 +2468,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
     const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "promote Builder sessions to project agents");
     this.assertSessionSupportsProjectAgent(descriptor);
-    return this.projectAgentService.setSessionProjectAgent(agentId, projectAgent);
+    const previousProjectAgent = descriptor.projectAgent;
+    const result = await this.projectAgentService.setSessionProjectAgent(agentId, projectAgent);
+    const nextProjectAgent = this.descriptors.get(agentId)?.projectAgent;
+    const promptChanged = previousProjectAgent?.systemPrompt !== nextProjectAgent?.systemPrompt;
+    const directoryChanged =
+      previousProjectAgent?.handle !== nextProjectAgent?.handle ||
+      previousProjectAgent?.whenToUse !== nextProjectAgent?.whenToUse ||
+      JSON.stringify(previousProjectAgent?.capabilities ?? []) !== JSON.stringify(nextProjectAgent?.capabilities ?? []);
+    if (promptChanged && !directoryChanged) {
+      await this.notifyProjectAgentPromptSourceChanged(agentId);
+    }
+    return result;
   }
 
   async requestProjectAgentRecommendations(agentId: string): Promise<ProjectAgentRecommendations> {
@@ -2449,10 +2526,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!normalizedName) {
       throw new Error("Profile display name must be non-empty");
     }
-    profile.displayName = normalizedName;
-    profile.updatedAt = this.now();
-    this.profiles.set(profileId, profile);
-    await this.saveStore();
+    await this.descriptorStoreAdapter.patchProfile(profileId, {
+      displayName: normalizedName,
+      updatedAt: this.now(),
+    });
     this.emitProfilesSnapshot();
     this.emitAgentsSnapshot();
   }
@@ -2636,6 +2713,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  private async notifyProjectAgentPromptSourceChanged(agentId: string): Promise<void> {
+    try {
+      await this.applyManagerRuntimeRecyclePolicy(agentId, "prompt_mode_change");
+    } catch (error) {
+      this.logDebug("project_agent:prompt_source_change:recycle:error", {
+        agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
   private async applyManagerRuntimeRecyclePolicy(
     agentId: string,
     reason: ManagerRuntimeRecycleReason
@@ -2681,12 +2769,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<void> {
     this.getRequiredBuilderSessionDescriptor(agentId, "edit Builder project-agent references");
-    await this.projectAgentService.setProjectAgentReference(agentId, fileName, content);
+    const flags = await this.projectAgentService.setProjectAgentReference(agentId, fileName, content);
+    if (flags.referenceChanged) {
+      await this.notifyProjectAgentPromptSourceChanged(agentId);
+    }
   }
 
   async deleteProjectAgentReference(agentId: string, fileName: string): Promise<void> {
     this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder project-agent references");
-    await this.projectAgentService.deleteProjectAgentReference(agentId, fileName);
+    const flags = await this.projectAgentService.deleteProjectAgentReference(agentId, fileName);
+    if (flags.referenceChanged) {
+      await this.notifyProjectAgentPromptSourceChanged(agentId);
+    }
   }
 
   async listDirectories(path?: string): Promise<DirectoryListingResult> {
@@ -2759,47 +2853,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  private buildProjectAgentInfoForSession(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    whenToUse: string,
-    systemPrompt?: string,
-    handle?: string,
-    capabilities?: NonNullable<AgentDescriptor["projectAgent"]>["capabilities"]
-  ): NonNullable<AgentDescriptor["projectAgent"]> {
-    const normalizedWhenToUse = normalizeProjectAgentInlineText(whenToUse);
-    if (!normalizedWhenToUse) {
-      throw new Error("Project agent \"When to use\" must be non-empty");
-    }
-
-    if (normalizedWhenToUse.length > 280) {
-      throw new Error("Project agent \"When to use\" must be 280 characters or fewer");
-    }
-
-    const normalizedHandle = normalizeProjectAgentHandle(handle ?? getProjectAgentPublicName(descriptor));
-    if (!normalizedHandle) {
-      throw new Error(
-        "Project agent handle must contain at least one letter, number, or dash. Provide an explicit handle or use a session name with at least one letter, number, or dash."
-      );
-    }
-
-    const existingProjectAgent = findProjectAgentByHandle(this.descriptors.values(), descriptor.profileId, normalizedHandle);
-    if (existingProjectAgent && existingProjectAgent.agentId !== descriptor.agentId) {
-      throw new Error(getProjectAgentHandleCollisionError(normalizedHandle));
-    }
-
-    const normalizedSystemPrompt = systemPrompt?.trim();
-
-    return {
-      handle: normalizedHandle,
-      whenToUse: normalizedWhenToUse,
-      // DUAL-WRITE: systemPrompt kept in agents.json mirror for Electron rollback safety
-      ...(normalizedSystemPrompt ? { systemPrompt: normalizedSystemPrompt } : {}),
-      ...(descriptor.projectAgent?.creatorSessionId !== undefined
-        ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
-        : {}),
-      ...(capabilities !== undefined ? { capabilities: [...capabilities] } : {})
-    };
-  }
 
   private getSessionsForProfile(profileId: string): Array<AgentDescriptor & { role: "manager"; profileId: string }> {
     return Array.from(this.descriptors.values()).filter(
@@ -3115,123 +3168,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.lifecycleService.stopSessionInternal(agentId, options);
   }
 
-  private async copySessionHistoryForFork(
-    sourceSessionFile: string,
-    targetSessionFile: string,
-    fromMessageId?: string
-  ): Promise<void> {
-    await mkdir(dirname(targetSessionFile), { recursive: true });
-
-    const sourceHandle = await open(sourceSessionFile, "r").catch((error: unknown) => {
-      if (isEnoentError(error)) {
-        return undefined;
-      }
-      throw error;
-    });
-
-    if (!sourceHandle) {
-      if (fromMessageId) {
-        throw new Error("Message not found in session history");
-      }
-
-      await writeFile(targetSessionFile, "", "utf8");
-      return;
-    }
-
-    const targetHandle = await open(targetSessionFile, "w");
-    let foundForkPoint = !fromMessageId;
-
-    try {
-      for await (const line of sourceHandle.readLines()) {
-        if (!this.shouldCopySessionHistoryLineForFork(line)) {
-          continue;
-        }
-
-        await targetHandle.write(`${line}\n`);
-
-        if (fromMessageId && this.isForkTargetConversationEntryLine(line, fromMessageId)) {
-          foundForkPoint = true;
-          break;
-        }
-      }
-    } finally {
-      await Promise.allSettled([sourceHandle.close(), targetHandle.close()]);
-    }
-
-    if (!foundForkPoint) {
-      throw new Error("Message not found in session history");
-    }
-  }
-
-  private shouldCopySessionHistoryLineForFork(line: string): boolean {
-    const trimmedLine = line.trim();
-    if (trimmedLine.length === 0) {
-      return true;
-    }
-
-    let parsedEntry: unknown;
-    try {
-      parsedEntry = JSON.parse(trimmedLine);
-    } catch {
-      return true;
-    }
-
-    return !(
-      isRecord(parsedEntry) &&
-      parsedEntry.type === "custom" &&
-      parsedEntry.customType === CLAUDE_RUNTIME_STATE_ENTRY_TYPE
-    );
-  }
-
-  private isForkTargetConversationEntryLine(line: string, fromMessageId: string): boolean {
-    const conversationEntry = this.parseConversationMessageEntryLine(line);
-    if (!conversationEntry) {
-      return false;
-    }
-
-    return conversationEntry.id === fromMessageId;
-  }
-
-  private parseConversationMessageEntryLine(line: string): { id?: string } | undefined {
-    const trimmedLine = line.trim();
-    if (trimmedLine.length === 0) {
-      return undefined;
-    }
-
-    let parsedEntry: unknown;
-    try {
-      parsedEntry = JSON.parse(trimmedLine);
-    } catch {
-      return undefined;
-    }
-
-    if (!isRecord(parsedEntry)) {
-      return undefined;
-    }
-
-    if (
-      parsedEntry.type !== "custom" ||
-      parsedEntry.customType !== "swarm_conversation_entry"
-    ) {
-      return undefined;
-    }
-
-    if (typeof parsedEntry.id === "string" && parsedEntry.id.trim().length > 0) {
-      return { id: parsedEntry.id };
-    }
-
-    if (!isRecord(parsedEntry.data)) {
-      return undefined;
-    }
-
-    const dataId = parsedEntry.data.id;
-    if (typeof dataId === "string" && dataId.trim().length > 0) {
-      return { id: dataId };
-    }
-
-    return undefined;
-  }
-
   private async copyPinnedMessagesForFork(
     sourceDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
     forkedDescriptor: AgentDescriptor & { role: "manager"; profileId: string }
@@ -3242,7 +3178,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    const forkedMessageIds = await this.collectConversationMessageIdsFromSessionFile(forkedDescriptor.sessionFile);
+    const forkedMessageIds = await collectConversationMessageIdsFromSessionFile(forkedDescriptor.sessionFile);
     const filteredRegistry: PinRegistry = {
       version: 1,
       pins: Object.fromEntries(
@@ -3257,36 +3193,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await savePins(this.getSessionDirForDescriptor(forkedDescriptor), filteredRegistry);
     this.setPinnedRegistryForAgent(forkedDescriptor.agentId, filteredRegistry);
-  }
-
-  private async collectConversationMessageIdsFromSessionFile(sessionFile: string): Promise<Set<string>> {
-    const messageIds = new Set<string>();
-
-    const handle = await open(sessionFile, "r").catch((error: unknown) => {
-      if (isEnoentError(error)) {
-        return undefined;
-      }
-      throw error;
-    });
-
-    if (!handle) {
-      return messageIds;
-    }
-
-    try {
-      for await (const line of handle.readLines()) {
-        const conversationEntry = this.parseConversationMessageEntryLine(line);
-        if (!conversationEntry?.id) {
-          continue;
-        }
-
-        messageIds.add(conversationEntry.id);
-      }
-    } finally {
-      await handle.close();
-    }
-
-    return messageIds;
   }
 
   private async writeForkedSessionMemoryHeader(
@@ -3381,12 +3287,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       (target.projectAgent !== undefined || target.creatorAgentId === fromAgentId);
 
     if (isProjectAgentDelivery) {
-      const receipt = await deliverProjectAgentMessage(
+      const deliveryResult = await deliverProjectAgentMessage(
         {
           now: this.now,
           getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
-          emitConversationMessage: (event) => this.emitConversationMessage(event),
-          markSessionActivity: (agentId, timestamp) => this.markSessionActivity(agentId, timestamp),
           rateLimitBuckets: this.projectAgentMessageTimestampsBySender
         },
         {
@@ -3396,6 +3300,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           delivery
         }
       );
+      const { receipt, inboundPayload } = deliveryResult;
+      await this.appendPreparedInboundConversationPayload(target, {
+        text: inboundPayload.text,
+        runtimeText: inboundPayload.runtimeText,
+        timestamp: inboundPayload.timestamp,
+        source: "project_agent_input",
+        projectAgentContext: inboundPayload.projectAgentContext
+      });
 
       this.logDebug("agent:send_message", {
         fromAgentId,
@@ -3406,13 +3318,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         textPreview: previewForLog(message),
         attachmentCount: attachments.length,
         modelTextPreview: previewForLog(
-          formatProjectAgentRuntimeMessage(
-            {
-              fromAgentId,
-              fromDisplayName: getProjectAgentPublicName(sender)
-            },
-            message
-          )
+          inboundPayload.runtimeText
         )
       });
 
@@ -4017,12 +3923,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceContext: MessageSourceContext,
     collaborationAuthor?: CollaborationAuthor,
   ): Promise<AppendConversationUserMessageResult> {
-    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
-    const attachmentMetadata = toConversationAttachmentMetadata(
-      persistedAttachments,
-      this.config.paths.uploadsDir
-    );
-    const runtimeAttachments = toRuntimeDispatchAttachments(attachments, persistedAttachments);
     const receivedAt = this.now();
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
 
@@ -4031,7 +3931,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerContextId,
       sourceContext,
       textPreview: previewForLog(text),
-      attachmentCount: persistedAttachments.length,
+      attachmentCount: attachments.length,
       collaborationAuthor: collaborationAuthor
         ? {
             userId: collaborationAuthor.userId,
@@ -4042,26 +3942,57 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         : undefined,
     });
 
-    const userEvent: ConversationMessageEvent = {
-      type: "conversation_message",
-      agentId: target.agentId,
-      role: "user",
+    const appended = await this.appendPreparedInboundConversationPayload(target, {
       text,
-      attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
       timestamp: receivedAt,
       source: "user_input",
       sourceContext,
       collaborationAuthor,
-    };
-    this.emitConversationMessage(userEvent);
-    this.markSessionActivity(target.agentId, receivedAt);
+      attachments,
+    });
 
     return {
       target,
       text,
       sourceContext,
       receivedAt,
-      event: userEvent,
+      event: appended.event,
+      persistedAttachments: appended.persistedAttachments,
+      runtimeAttachments: appended.runtimeAttachments
+    };
+  }
+
+  private async appendPreparedInboundConversationPayload(
+    target: AgentDescriptor,
+    payload: PreparedInboundConversationPayload
+  ): Promise<AppendPreparedInboundConversationPayloadResult> {
+    const attachments = payload.source === "user_input"
+      ? normalizeConversationAttachments(payload.attachments)
+      : [];
+    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
+    const attachmentMetadata = toConversationAttachmentMetadata(
+      persistedAttachments,
+      this.config.paths.uploadsDir
+    );
+    const runtimeAttachments = toRuntimeDispatchAttachments(attachments, persistedAttachments);
+    const timestamp = payload.timestamp ?? this.now();
+    const event: ConversationMessageEvent = {
+      type: "conversation_message",
+      agentId: target.agentId,
+      role: "user",
+      text: payload.text,
+      attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
+      timestamp,
+      source: payload.source,
+      sourceContext: payload.source === "user_input" ? payload.sourceContext : undefined,
+      collaborationAuthor: payload.source === "user_input" ? payload.collaborationAuthor : undefined,
+      projectAgentContext: payload.source === "project_agent_input" ? payload.projectAgentContext : undefined,
+    };
+    this.emitConversationMessage(event);
+    this.markSessionActivity(target.agentId, timestamp);
+
+    return {
+      event,
       persistedAttachments,
       runtimeAttachments
     };
@@ -4126,7 +4057,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    if (this.pendingManagerRuntimeRecycleAgentIds.has(target.agentId)) {
+    if (this.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(target.agentId)) {
       const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(target.agentId, "idle_transition");
       if (recycleDisposition === "recycled") {
         await this.saveStore();
@@ -4398,7 +4329,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     descriptor.updatedAt = normalizedTimestamp;
-    this.descriptors.set(sessionAgentId, descriptor);
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
     this.emitAgentsSnapshot();
   }
 
@@ -4512,7 +4443,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const profile = this.profiles.get(sorted[i].profileId);
       if (profile) {
         profile.sortOrder = i;
-        this.profiles.set(profile.profileId, profile);
+        this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
       }
     }
   }
@@ -4545,7 +4476,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const profile = this.profiles.get(profileIds[i]);
       if (profile) {
         profile.sortOrder = i;
-        this.profiles.set(profile.profileId, profile);
+        this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
       }
     }
 
@@ -4678,7 +4609,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const normalizedDescriptorModel = cloneModelDescriptor(descriptor.model);
       if (!sameModelDescriptor(descriptor.model, normalizedDescriptorModel)) {
         descriptor.model = normalizedDescriptorModel;
-        this.descriptors.set(descriptor.agentId, descriptor);
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
         changed = true;
       }
 
@@ -4689,7 +4620,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const reconciledProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? descriptor.agentId;
       if (descriptor.profileId !== reconciledProfileId) {
         descriptor.profileId = reconciledProfileId;
-        this.descriptors.set(descriptor.agentId, descriptor);
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
         changed = true;
       }
 
@@ -4699,7 +4630,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         continue;
       }
 
-      this.profiles.set(reconciledProfileId, {
+      this.descriptorStoreAdapter.upsertProfileInLiveMaps({
         profileId: reconciledProfileId,
         displayName: descriptor.displayName,
         defaultSessionAgentId: reconciledProfileId,
@@ -4715,7 +4646,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (!defaultSessionDescriptor || defaultSessionDescriptor.role !== "manager") {
         const rootSessionDescriptor = managerDescriptorsById.get(profileId);
         if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
-          this.profiles.delete(profileId);
+          this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId);
           changed = true;
           continue;
         }
@@ -4729,14 +4660,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (profileSessions.length === 0) {
         const rootSessionDescriptor = managerDescriptorsById.get(profileId);
         if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
-          this.profiles.delete(profileId);
+          this.descriptorStoreAdapter.deleteProfileInLiveMaps(profileId);
           changed = true;
           continue;
         }
 
         if (rootSessionDescriptor.profileId !== profileId) {
           rootSessionDescriptor.profileId = profileId;
-          this.descriptors.set(rootSessionDescriptor.agentId, rootSessionDescriptor);
+          this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(rootSessionDescriptor);
           changed = true;
         }
       }
@@ -4761,11 +4692,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         session.modelOrigin = inferLegacySessionModelOrigin(session, profile, {
           forceDefaultSessionInherited: defaultModelWasSynthesized
         });
-        this.descriptors.set(session.agentId, session);
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(session);
         changed = true;
       }
 
-      this.profiles.set(profileId, profile);
+      this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
     }
 
     return changed;
@@ -4855,7 +4786,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     let changed = false;
     const cortexProfile = this.profiles.get(CORTEX_PROFILE_ID);
     if (cortexProfile && cortexProfile.profileType !== "system") {
-      this.profiles.set(CORTEX_PROFILE_ID, {
+      this.descriptorStoreAdapter.upsertProfileInLiveMaps({
         ...cortexProfile,
         profileType: "system",
       });
@@ -4874,7 +4805,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (this.hasCortexRootDescriptor()) {
       const existingProfile = this.profiles.get(CORTEX_PROFILE_ID);
       if (existingProfile && existingProfile.profileType !== "system") {
-        this.profiles.set(CORTEX_PROFILE_ID, {
+        this.descriptorStoreAdapter.upsertProfileInLiveMaps({
           ...existingProfile,
           profileType: "system",
         });
@@ -4931,8 +4862,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           profileType: "system"
         };
 
-    this.descriptors.set(descriptor.agentId, descriptor);
-    this.profiles.set(profile.profileId, profile);
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+    this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
 
     await this.ensureProfilePiDirectories(profile.profileId);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
@@ -5085,7 +5016,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       descriptor.status = transitionAgentStatus(descriptor.status, "idle");
       descriptor.updatedAt = this.now();
-      this.descriptors.set(descriptor.agentId, descriptor);
+      this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
       normalizedAgentIds.push(descriptor.agentId);
     }
 
@@ -5157,7 +5088,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
             sessionFile: workerFilePath
           };
 
-          this.descriptors.set(workerId, workerDescriptor);
+          this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(workerDescriptor);
           knownWorkerIds.add(workerId);
           recoveredIds.push(workerId);
         } catch {
@@ -5255,7 +5186,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         descriptor.status = transitionAgentStatus(idleStatus, "stopped");
         descriptor.contextUsage = undefined;
         descriptor.updatedAt = this.now();
-        this.descriptors.set(descriptor.agentId, descriptor);
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
         shouldPersist = true;
 
         this.emitStatus(descriptor.agentId, descriptor.status, 0);
@@ -5714,72 +5645,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.runtimeController.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
   }
 
-  private async prepareManagerRuntimeCreation(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    systemPrompt: string
-  ): Promise<{
-    continuityRequest?: ModelChangeContinuityRequest;
-    runtimeCreationOptions?: RuntimeCreationOptions;
-  }> {
-    const recovery = await resolvePendingModelChangeRuntimeStartup({
-      descriptor,
-      targetModel: descriptor.model,
-      existingPrompt: systemPrompt,
-      modelContextWindow: modelCatalogService.getEffectiveContextWindow(
-        descriptor.model.modelId,
-        descriptor.model.provider
-      ),
-      hasPinnedContent: this.pinnedMessageIdsBySessionAgentId.has(descriptor.agentId)
-    });
-
-    if (!recovery.request) {
-      return {};
-    }
-
-    this.logDebug("manager:model_change_continuity:prepare", {
-      agentId: descriptor.agentId,
-      requestId: recovery.request.requestId,
-      sourceModel: recovery.request.sourceModel,
-      targetModel: recovery.request.targetModel,
-      policy: recovery.policy,
-      eligibleEntryCount: recovery.recoveryContext?.eligibleEntryCount,
-      includedEntryCount: recovery.recoveryContext?.includedEntryCount,
-      omittedEntryCount: recovery.recoveryContext?.omittedEntryCount,
-      truncated: recovery.recoveryContext?.truncated,
-      approxTokenCount: recovery.recoveryContext?.approxTokenCount
-    });
-
-    return {
-      continuityRequest: recovery.request,
-      runtimeCreationOptions: recovery.policy === "skip_pi_to_pi"
-        ? undefined
-        : {
-            startupRecoveryContext: {
-              reason: "model_change",
-              blockText: recovery.recoveryContext?.blockText ?? ""
-            }
-          }
-    };
-  }
-
-  private async appendAppliedModelChangeContinuity(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    request: ModelChangeContinuityRequest,
-    runtime: SwarmAgentRuntime
-  ): Promise<void> {
-    await appendModelChangeContinuityApplied({
-      sessionFile: descriptor.sessionFile,
-      cwd: descriptor.cwd,
-      applied: createModelChangeContinuityApplied({
-        requestId: request.requestId,
-        appliedAt: this.now(),
-        sessionAgentId: descriptor.agentId,
-        attachedRuntime: runtime.descriptor.model
-      }),
-      now: this.now
-    });
-  }
-
   private allocateRuntimeToken(agentId: string): number {
     return this.runtimeController.allocateRuntimeToken(agentId);
   }
@@ -5994,15 +5859,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private isRuntimeRecoveryActive(agentId: string): boolean {
-    const runtime = this.runtimes.get(agentId);
-    return Boolean(runtime?.isContextRecoveryActive?.() ?? runtime?.isContextRecoveryInProgress?.());
+    return isRuntimeRecoveryActiveForRuntime(this.runtimes.get(agentId));
   }
 
   private markPendingManualManagerStopNotice(agentId: string): void {
-    this.clearPendingManualManagerStopNotice(agentId);
+    this.clearPendingManualManagerStopNoticeTimer(agentId);
 
     const timer = setTimeout(() => {
       this.pendingManualManagerStopNoticeTimersByAgentId.delete(agentId);
+      this.runtimeController.clearInvalidatedManualStopMessageEndAllowance(agentId);
     }, PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS);
     timer.unref?.();
 
@@ -6010,6 +5875,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private clearPendingManualManagerStopNotice(agentId: string): void {
+    this.clearPendingManualManagerStopNoticeTimer(agentId);
+  }
+
+  private clearPendingManualManagerStopNoticeTimer(agentId: string): void {
     const timer = this.pendingManualManagerStopNoticeTimersByAgentId.get(agentId);
     if (!timer) {
       return;
@@ -6339,7 +6208,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async loadStore(): Promise<AgentsStoreFile> {
-    return this.persistenceService.loadStore();
+    return this.descriptorStoreAdapter.loadStore();
   }
 
   private loadConversationHistoriesFromStore(): void {
@@ -6347,8 +6216,63 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async saveStore(): Promise<void> {
-    await this.persistenceService.saveStore();
+    await this.descriptorStoreAdapter.saveStore();
   }
+
+  async patchDescriptorFromRuntimeStatus(
+    agentId: string,
+    patch: Partial<AgentDescriptor>
+  ): Promise<AgentDescriptor | undefined> {
+    return this.descriptorStoreAdapter.patchDescriptorInLiveMaps(agentId, patch);
+  }
+
+  private createDescriptorStoreAdapter(): DescriptorStoreAdapter {
+    const liveMaps = () => ({
+      descriptors: this.descriptors,
+      profiles: this.profiles
+    });
+    const transactionDescriptors: DescriptorStoreAdapter["transactionDescriptors"] = (callback, options) =>
+      this.descriptorStore.transactionWithLiveMaps(liveMaps(), callback, options);
+
+    return {
+      loadStore: () => this.descriptorStore.load(),
+      saveStore: () => this.descriptorStore.saveLiveMaps(liveMaps()),
+      transactionDescriptors,
+      persistBestEffort: () => this.descriptorStore.saveLiveMapsBestEffort(liveMaps(), (error) => {
+        this.logDebug("descriptor-store:best-effort-save-failed", { error });
+      }),
+      upsertDescriptor: async (descriptor) => {
+        await transactionDescriptors((store) => {
+          store.upsertDescriptor(descriptor);
+        });
+      },
+      upsertDescriptorInLiveMaps: (descriptor) => {
+        this.descriptors.set(descriptor.agentId, descriptor);
+      },
+      patchDescriptor: (agentId, patch) => transactionDescriptors((store) => store.patchDescriptor(agentId, patch)),
+      patchDescriptorInLiveMaps: (agentId, patch) => this.descriptorStore.patchDescriptorInLiveMaps(liveMaps(), agentId, patch),
+      deleteDescriptor: (agentId) => transactionDescriptors((store) => store.deleteDescriptor(agentId)),
+      deleteDescriptorInLiveMaps: (agentId) => this.descriptors.delete(agentId),
+      upsertProfile: async (profile) => {
+        await transactionDescriptors((store) => {
+          store.upsertProfile(profile);
+        });
+      },
+      upsertProfileInLiveMaps: (profile) => {
+        this.profiles.set(profile.profileId, cloneManagerProfileForLiveMap(profile));
+      },
+      patchProfile: (profileId, patch) => transactionDescriptors((store) => store.patchProfile(profileId, patch)),
+      deleteProfile: (profileId) => transactionDescriptors((store) => store.deleteProfile(profileId)),
+      deleteProfileInLiveMaps: (profileId) => this.profiles.delete(profileId)
+    };
+  }
+}
+
+function cloneManagerProfileForLiveMap(profile: ManagerProfile): ManagerProfile {
+  return {
+    ...profile,
+    defaultModel: { ...profile.defaultModel },
+  };
 }
 
 function isOpenAICodexDescriptor(descriptor: AgentDescriptor): boolean {

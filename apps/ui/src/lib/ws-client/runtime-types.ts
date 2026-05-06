@@ -1,3 +1,4 @@
+import { getWsRequestContract, WS_REQUEST_CONTRACTS } from '@forge/protocol'
 import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
 import type { AgentActivityEntry } from '../ws-state'
 import type { WsRequestErrorHint, WsRequestType } from './types'
@@ -9,67 +10,229 @@ export const SESSION_WORKERS_REFETCH_DEBOUNCE_MS = 250
 // Keep client-side activity retention aligned with backend history retention.
 export const MAX_CLIENT_CONVERSATION_HISTORY = 2000
 
-export const WS_REQUEST_TYPES: WsRequestType[] = [
-  'create_manager',
-  'delete_manager',
-  'update_profile_default_model',
-  'update_manager_model',
-  'update_manager_cwd',
-  'stop_all_agents',
-  'create_session',
-  'stop_session',
-  'resume_session',
-  'delete_session',
-  'clear_session',
-  'rename_session',
-  'pin_session',
-  'update_session_model',
-  'rename_profile',
-  'fork_session',
-  'merge_session_memory',
-  'set_session_project_agent',
-  'get_project_agent_config',
-  'list_project_agent_references',
-  'get_project_agent_reference',
-  'set_project_agent_reference',
-  'delete_project_agent_reference',
-  'request_project_agent_recommendations',
-  'get_session_workers',
-  'list_directories',
-  'validate_directory',
-  'pick_directory',
-]
+function uniqueRequestTypes(requestTypes: readonly WsRequestType[]): WsRequestType[] {
+  return [...new Set(requestTypes)]
+}
 
-export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = [
-  { requestType: 'create_manager', codeFragment: 'create_manager' },
-  { requestType: 'delete_manager', codeFragment: 'delete_manager' },
-  { requestType: 'update_profile_default_model', codeFragment: 'update_profile_default_model' },
-  { requestType: 'update_manager_model', codeFragment: 'update_manager_model' },
-  { requestType: 'update_manager_cwd', codeFragment: 'update_manager_cwd' },
-  { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
-  { requestType: 'create_session', codeFragment: 'create_session' },
-  { requestType: 'stop_session', codeFragment: 'stop_session' },
-  { requestType: 'resume_session', codeFragment: 'resume_session' },
-  { requestType: 'delete_session', codeFragment: 'delete_session' },
-  { requestType: 'clear_session', codeFragment: 'clear_session' },
-  { requestType: 'rename_session', codeFragment: 'rename_session' },
-  { requestType: 'pin_session', codeFragment: 'pin_session' },
-  { requestType: 'update_session_model', codeFragment: 'update_session_model' },
-  { requestType: 'rename_profile', codeFragment: 'rename_profile' },
-  { requestType: 'fork_session', codeFragment: 'fork_session' },
-  { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
-  { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
-  { requestType: 'get_project_agent_config', codeFragment: 'project_agent_config' },
-  { requestType: 'list_project_agent_references', codeFragment: 'project_agent_references' },
-  { requestType: 'get_project_agent_reference', codeFragment: 'project_agent_reference' },
-  { requestType: 'set_project_agent_reference', codeFragment: 'project_agent_reference_saved' },
-  { requestType: 'delete_project_agent_reference', codeFragment: 'project_agent_reference_deleted' },
-  { requestType: 'request_project_agent_recommendations', codeFragment: 'project_agent_recommendations' },
-  { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
-  { requestType: 'list_directories', codeFragment: 'list_directories' },
-  { requestType: 'validate_directory', codeFragment: 'validate_directory' },
-  { requestType: 'pick_directory', codeFragment: 'pick_directory' },
-]
+function uniqueErrorHints(errorHints: readonly WsRequestErrorHint[]): WsRequestErrorHint[] {
+  const seen = new Set<string>()
+  return errorHints.filter((hint) => {
+    const key = `${hint.requestType}:${hint.codeFragment}`
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+const RENAME_PROFILE_CONTRACT = getWsRequestContract('rename_profile')
+const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
+const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
+const UPDATE_SESSION_MODEL_CONTRACT = getWsRequestContract('update_session_model')
+const FORK_SESSION_CONTRACT = getWsRequestContract('fork_session')
+const MERGE_SESSION_MEMORY_CONTRACT = getWsRequestContract('merge_session_memory')
+const UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT = getWsRequestContract('update_profile_default_model')
+const UPDATE_MANAGER_MODEL_CONTRACT = getWsRequestContract('update_manager_model')
+const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
+const STOP_ALL_AGENTS_CONTRACT = getWsRequestContract('stop_all_agents')
+const CREATE_MANAGER_CONTRACT = getWsRequestContract('create_manager')
+const DELETE_MANAGER_CONTRACT = getWsRequestContract('delete_manager')
+const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
+const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
+const SET_SESSION_PROJECT_AGENT_CONTRACT = getWsRequestContract('set_session_project_agent')
+const GET_PROJECT_AGENT_CONFIG_CONTRACT = getWsRequestContract('get_project_agent_config')
+const LIST_PROJECT_AGENT_REFERENCES_CONTRACT = getWsRequestContract('list_project_agent_references')
+const GET_PROJECT_AGENT_REFERENCE_CONTRACT = getWsRequestContract('get_project_agent_reference')
+const SET_PROJECT_AGENT_REFERENCE_CONTRACT = getWsRequestContract('set_project_agent_reference')
+const DELETE_PROJECT_AGENT_REFERENCE_CONTRACT = getWsRequestContract('delete_project_agent_reference')
+const REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT = getWsRequestContract('request_project_agent_recommendations')
+const STOP_SESSION_CONTRACT = getWsRequestContract('stop_session')
+const RESUME_SESSION_CONTRACT = getWsRequestContract('resume_session')
+const DELETE_SESSION_CONTRACT = getWsRequestContract('delete_session')
+const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
+  RENAME_PROFILE_CONTRACT.commandType,
+  RENAME_SESSION_CONTRACT.commandType,
+  PIN_SESSION_CONTRACT.commandType,
+  UPDATE_SESSION_MODEL_CONTRACT.commandType,
+  FORK_SESSION_CONTRACT.commandType,
+  MERGE_SESSION_MEMORY_CONTRACT.commandType,
+  UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
+  UPDATE_MANAGER_MODEL_CONTRACT.commandType,
+  UPDATE_MANAGER_CWD_CONTRACT.commandType,
+  STOP_ALL_AGENTS_CONTRACT.commandType,
+  CREATE_MANAGER_CONTRACT.commandType,
+  DELETE_MANAGER_CONTRACT.commandType,
+  CREATE_SESSION_CONTRACT.commandType,
+  CLEAR_SESSION_CONTRACT.commandType,
+  SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
+  GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
+  LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
+  GET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  SET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  DELETE_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT.commandType,
+  STOP_SESSION_CONTRACT.commandType,
+  RESUME_SESSION_CONTRACT.commandType,
+  DELETE_SESSION_CONTRACT.commandType,
+])
+const NON_LEGACY_POSITION_CONTRACTS = WS_REQUEST_CONTRACTS.filter(
+  (contract) => !LEGACY_POSITION_CONTRACT_TYPES.has(contract.commandType),
+)
+const RENAME_PROFILE_ERROR_HINTS = RENAME_PROFILE_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: RENAME_PROFILE_CONTRACT.commandType,
+  codeFragment,
+}))
+const RENAME_SESSION_ERROR_HINTS = RENAME_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: RENAME_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const PIN_SESSION_ERROR_HINTS = PIN_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: PIN_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const UPDATE_SESSION_MODEL_ERROR_HINTS = UPDATE_SESSION_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_SESSION_MODEL_CONTRACT.commandType,
+  codeFragment,
+}))
+const FORK_SESSION_ERROR_HINTS = FORK_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: FORK_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const MERGE_SESSION_MEMORY_ERROR_HINTS = MERGE_SESSION_MEMORY_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: MERGE_SESSION_MEMORY_CONTRACT.commandType,
+  codeFragment,
+}))
+const UPDATE_PROFILE_DEFAULT_MODEL_ERROR_HINTS = UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
+  codeFragment,
+}))
+const UPDATE_MANAGER_MODEL_ERROR_HINTS = UPDATE_MANAGER_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_MANAGER_MODEL_CONTRACT.commandType,
+  codeFragment,
+}))
+const UPDATE_MANAGER_CWD_ERROR_HINTS = UPDATE_MANAGER_CWD_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_MANAGER_CWD_CONTRACT.commandType,
+  codeFragment,
+}))
+const STOP_ALL_AGENTS_ERROR_HINTS = STOP_ALL_AGENTS_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: STOP_ALL_AGENTS_CONTRACT.commandType,
+  codeFragment,
+}))
+const CREATE_MANAGER_ERROR_HINTS = CREATE_MANAGER_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: CREATE_MANAGER_CONTRACT.commandType,
+  codeFragment,
+}))
+const DELETE_MANAGER_ERROR_HINTS = DELETE_MANAGER_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: DELETE_MANAGER_CONTRACT.commandType,
+  codeFragment,
+}))
+const CREATE_SESSION_ERROR_HINTS = CREATE_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: CREATE_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const CLEAR_SESSION_ERROR_HINTS = CLEAR_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: CLEAR_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const SET_SESSION_PROJECT_AGENT_ERROR_HINTS = SET_SESSION_PROJECT_AGENT_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
+  codeFragment,
+}))
+const GET_PROJECT_AGENT_CONFIG_ERROR_HINTS = GET_PROJECT_AGENT_CONFIG_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
+  codeFragment,
+}))
+const LIST_PROJECT_AGENT_REFERENCES_ERROR_HINTS = LIST_PROJECT_AGENT_REFERENCES_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
+  codeFragment,
+}))
+const GET_PROJECT_AGENT_REFERENCE_ERROR_HINTS = GET_PROJECT_AGENT_REFERENCE_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: GET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  codeFragment,
+}))
+const SET_PROJECT_AGENT_REFERENCE_ERROR_HINTS = SET_PROJECT_AGENT_REFERENCE_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: SET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  codeFragment,
+}))
+const DELETE_PROJECT_AGENT_REFERENCE_ERROR_HINTS = DELETE_PROJECT_AGENT_REFERENCE_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: DELETE_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  codeFragment,
+}))
+const REQUEST_PROJECT_AGENT_RECOMMENDATIONS_ERROR_HINTS = REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT.commandType,
+  codeFragment,
+}))
+const STOP_SESSION_ERROR_HINTS = STOP_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: STOP_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const RESUME_SESSION_ERROR_HINTS = RESUME_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: RESUME_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const DELETE_SESSION_ERROR_HINTS = DELETE_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: DELETE_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+
+export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
+  CREATE_MANAGER_CONTRACT.commandType,
+  DELETE_MANAGER_CONTRACT.commandType,
+  UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
+  UPDATE_MANAGER_MODEL_CONTRACT.commandType,
+  UPDATE_MANAGER_CWD_CONTRACT.commandType,
+  STOP_ALL_AGENTS_CONTRACT.commandType,
+  CREATE_SESSION_CONTRACT.commandType,
+  STOP_SESSION_CONTRACT.commandType,
+  RESUME_SESSION_CONTRACT.commandType,
+  DELETE_SESSION_CONTRACT.commandType,
+  CLEAR_SESSION_CONTRACT.commandType,
+  RENAME_SESSION_CONTRACT.commandType,
+  PIN_SESSION_CONTRACT.commandType,
+  UPDATE_SESSION_MODEL_CONTRACT.commandType,
+  RENAME_PROFILE_CONTRACT.commandType,
+  FORK_SESSION_CONTRACT.commandType,
+  MERGE_SESSION_MEMORY_CONTRACT.commandType,
+  SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
+  GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
+  LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
+  GET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  SET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  DELETE_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
+  REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT.commandType,
+  ...NON_LEGACY_POSITION_CONTRACTS.map((contract) => contract.commandType),
+])
+
+export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
+  ...DELETE_MANAGER_ERROR_HINTS,
+  ...UPDATE_PROFILE_DEFAULT_MODEL_ERROR_HINTS,
+  ...UPDATE_MANAGER_MODEL_ERROR_HINTS,
+  ...UPDATE_MANAGER_CWD_ERROR_HINTS,
+  ...STOP_ALL_AGENTS_ERROR_HINTS,
+  ...CREATE_MANAGER_ERROR_HINTS,
+  ...CREATE_SESSION_ERROR_HINTS,
+  ...STOP_SESSION_ERROR_HINTS,
+  ...RESUME_SESSION_ERROR_HINTS,
+  ...DELETE_SESSION_ERROR_HINTS,
+  ...CLEAR_SESSION_ERROR_HINTS,
+  ...RENAME_SESSION_ERROR_HINTS,
+  ...PIN_SESSION_ERROR_HINTS,
+  ...UPDATE_SESSION_MODEL_ERROR_HINTS,
+  ...RENAME_PROFILE_ERROR_HINTS,
+  ...FORK_SESSION_ERROR_HINTS,
+  ...MERGE_SESSION_MEMORY_ERROR_HINTS,
+  ...SET_SESSION_PROJECT_AGENT_ERROR_HINTS,
+  ...GET_PROJECT_AGENT_CONFIG_ERROR_HINTS,
+  ...LIST_PROJECT_AGENT_REFERENCES_ERROR_HINTS,
+  ...SET_PROJECT_AGENT_REFERENCE_ERROR_HINTS,
+  ...DELETE_PROJECT_AGENT_REFERENCE_ERROR_HINTS,
+  ...GET_PROJECT_AGENT_REFERENCE_ERROR_HINTS,
+  ...REQUEST_PROJECT_AGENT_RECOMMENDATIONS_ERROR_HINTS,
+  ...NON_LEGACY_POSITION_CONTRACTS.flatMap((contract) =>
+    contract.errorCodeFragments.map((codeFragment) => ({ requestType: contract.commandType, codeFragment })),
+  ),
+])
 
 export function isManagerAgent(agent: AgentDescriptor): boolean {
   return agent.role === 'manager'

@@ -465,6 +465,30 @@ describe('SwarmManager', () => {
     expect(manager.systemPromptByAgentId.get(sessionAgent.agentId)).toContain('Project agents in this profile')
   })
 
+  it('picks up changed project-agent reference docs after target runtime recycle', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Reference Agent' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      handle: 'reference-agent',
+      whenToUse: 'Use for reference-backed work.',
+      systemPrompt: 'Use the reference docs precisely.',
+    })
+
+    await manager.setProjectAgentReference(sessionAgent.agentId, 'guide.md', 'old reference guidance')
+    await manager.handleUserMessage('Use first reference', { targetAgentId: sessionAgent.agentId })
+    expect(manager.systemPromptByAgentId.get(sessionAgent.agentId)).toContain('old reference guidance')
+
+    await manager.setProjectAgentReference(sessionAgent.agentId, 'guide.md', 'new reference guidance')
+    await manager.handleUserMessage('Use updated reference', { targetAgentId: sessionAgent.agentId })
+
+    const prompt = manager.systemPromptByAgentId.get(sessionAgent.agentId)
+    expect(prompt).toContain('new reference guidance')
+    expect(prompt).not.toContain('old reference guidance')
+  })
+
   it('includes promoted peer sessions in manager prompt preview and excludes the current session from its own directory', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

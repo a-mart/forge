@@ -16,6 +16,7 @@ import type { PromptCategory } from "./prompt-registry.js";
 import type { SessionMemoryMergeAttemptMetaUpdate } from "./swarm-session-meta-service.js";
 import type { AgentDescriptor, SwarmConfig } from "./types.js";
 import {
+  cloneDescriptor,
   errorToMessage,
   finalizeMergedMemoryContent,
   hashMemoryMergeContent,
@@ -109,7 +110,7 @@ export interface SwarmMemoryMergeServiceOptions {
   getRequiredSessionDescriptor: (
     agentId: string
   ) => AgentDescriptor & { role: "manager"; profileId: string };
-  upsertDescriptor: (descriptor: AgentDescriptor) => void;
+  upsertDescriptor: (descriptor: AgentDescriptor) => Promise<void>;
   getAgentMemoryPath: (agentId: string) => string;
   resolvePreferredManagerId: (options?: { includeStoppedOnRestart?: boolean }) => string | undefined;
   resolvePromptWithFallback: (
@@ -441,12 +442,12 @@ export class SwarmMemoryMergeService {
         appliedSourceHash: sessionContentHash
       });
 
-      descriptor.mergedAt = mergedAt;
-      descriptor.updatedAt = mergedAt;
-      this.options.upsertDescriptor(descriptor);
+      const mergedDescriptor = cloneDescriptor(descriptor);
+      mergedDescriptor.mergedAt = mergedAt;
+      mergedDescriptor.updatedAt = mergedAt;
 
       failureContext.stage = "save_store";
-      await this.options.saveStore();
+      await this.options.upsertDescriptor(mergedDescriptor);
       failureContext.stage = "write_audit";
       await this.options.appendSessionMemoryMergeAuditEntry({
         attemptId,
