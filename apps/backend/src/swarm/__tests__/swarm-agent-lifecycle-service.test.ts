@@ -484,11 +484,14 @@ describe("SwarmAgentLifecycleService", () => {
 
     const runRuntimeShutdown = vi.fn(async () => ({ timedOut: false, runtimeToken: 1 }));
     const getWorkersForManager = vi.fn(() => [worker]);
+    const runtimeRecoveryState = new RuntimeRecoveryState();
+    runtimeRecoveryState.markRecoveryAbortedWorkerTurn(worker.agentId);
 
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
         descriptors,
         runtimes,
+        runtimeRecoveryState,
         runRuntimeShutdown,
         getWorkersForManager
       })
@@ -497,6 +500,7 @@ describe("SwarmAgentLifecycleService", () => {
     const { terminatedWorkerIds } = await svc.stopSession("m1");
     expect(terminatedWorkerIds).toEqual(["w1"]);
     expect(runRuntimeShutdown).toHaveBeenCalled();
+    expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(false);
     expect(runtimes.has("m1")).toBe(false);
     expect(manager.status).toBe("idle");
   });

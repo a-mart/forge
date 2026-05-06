@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
+import {
+  isRuntimeRecoveryActiveForRuntime,
+  RuntimeRecoveryState
+} from "../runtime/runtime-recovery-state.js";
 
 describe("RuntimeRecoveryState", () => {
   it("tracks pending manager runtime recycle reasons", () => {
@@ -19,6 +22,37 @@ describe("RuntimeRecoveryState", () => {
     state.clearPendingManagerRuntimeRecycle("m1");
     expect(state.hasPendingManagerRuntimeRecycle("m1")).toBe(false);
     expect(state.getPendingManagerRuntimeRecycleReason("m1")).toBeUndefined();
+  });
+
+  it("tracks recovery-aborted worker turns independently from pending recycle state", () => {
+    const state = new RuntimeRecoveryState();
+
+    expect(state.hasRecoveryAbortedWorkerTurn("w1")).toBe(false);
+    state.markRecoveryAbortedWorkerTurn("w1");
+
+    expect(state.hasRecoveryAbortedWorkerTurn("w1")).toBe(true);
+    expect(state.hasPendingManagerRuntimeRecycle("w1")).toBe(false);
+
+    state.setPendingManagerRuntimeRecycle("m1", "model_change");
+    state.clearRecoveryAbortedWorkerTurn("w1");
+
+    expect(state.hasRecoveryAbortedWorkerTurn("w1")).toBe(false);
+    expect(state.hasPendingManagerRuntimeRecycle("m1")).toBe(true);
+  });
+
+  it("detects active recovery with active helper before in-progress fallback", () => {
+    expect(isRuntimeRecoveryActiveForRuntime()).toBe(false);
+    expect(isRuntimeRecoveryActiveForRuntime({
+      isContextRecoveryInProgress: () => true
+    })).toBe(true);
+    expect(isRuntimeRecoveryActiveForRuntime({
+      isContextRecoveryActive: () => false,
+      isContextRecoveryInProgress: () => true
+    })).toBe(false);
+    expect(isRuntimeRecoveryActiveForRuntime({
+      isContextRecoveryActive: () => true,
+      isContextRecoveryInProgress: () => false
+    })).toBe(true);
   });
 
   it("lists cloned pending recycle entries sorted by agent id", () => {

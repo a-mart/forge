@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RuntimeEventProjector, type RuntimeEventProjectorDeps } from "../runtime/runtime-event-projector.js";
 import type { RuntimeSessionEvent } from "../runtime-contracts.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "../runtime/worker-health-types.js";
+import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { AgentDescriptor } from "../types.js";
 
 function baseDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescriptor, "agentId" | "role" | "managerId">): AgentDescriptor {
@@ -35,15 +36,18 @@ function createHarness(debug = false): {
   descriptors: Map<string, AgentDescriptor>;
   workerStallState: Map<string, WorkerStallStateLike>;
   workerActivityState: Map<string, WorkerActivityStateLike>;
+  runtimeRecoveryState: RuntimeRecoveryState;
 } {
   const descriptors = new Map<string, AgentDescriptor>();
   const workerStallState = new Map<string, WorkerStallStateLike>();
   const workerActivityState = new Map<string, WorkerActivityStateLike>();
+  const runtimeRecoveryState = new RuntimeRecoveryState();
   const deps: RuntimeEventProjectorDeps = {
     config: { debug },
     descriptors,
     workerStallState,
     workerActivityState,
+    runtimeRecoveryState,
     now: vi.fn(() => "2026-05-06T00:00:01.000Z"),
     conversationProjector: {
       captureConversationEventFromRuntime: vi.fn(),
@@ -58,7 +62,7 @@ function createHarness(debug = false): {
     logDebug: vi.fn()
   };
 
-  return { projector: new RuntimeEventProjector(deps), deps, descriptors, workerStallState, workerActivityState };
+  return { projector: new RuntimeEventProjector(deps), deps, descriptors, workerStallState, workerActivityState, runtimeRecoveryState };
 }
 
 function stallState(overrides: Partial<WorkerStallStateLike> = {}): WorkerStallStateLike {
@@ -108,7 +112,7 @@ describe("RuntimeEventProjector", () => {
   });
 
   it("drops abort-like worker message_end during own or parent recovery and suppresses idle finalization until agent_end cleanup", async () => {
-    const { projector, deps, descriptors } = createHarness();
+    const { projector, deps, descriptors, runtimeRecoveryState } = createHarness();
     const worker = baseDescriptor({ agentId: "worker-abort", role: "worker", managerId: "manager-1" });
     descriptors.set(worker.agentId, worker);
     vi.mocked(deps.isRuntimeRecoveryActive).mockImplementation((agentId) => agentId === "manager-1");
@@ -118,9 +122,11 @@ describe("RuntimeEventProjector", () => {
     expect(deps.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
     expect(deps.maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
     expect(deps.conversationProjector.captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(true);
     expect(projector.shouldSuppressWorkerIdleFinalization(worker)).toBe(true);
 
     projector.clearRecoveryAbortedWorkerTurn(worker.agentId);
+    expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(false);
     vi.mocked(deps.isRuntimeRecoveryActive).mockReturnValue(false);
     expect(projector.shouldSuppressWorkerIdleFinalization(worker)).toBe(false);
   });

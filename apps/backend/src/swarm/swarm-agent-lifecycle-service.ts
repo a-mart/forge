@@ -9,9 +9,10 @@ import type {
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
 import type { ModelChangeContinuityRequest } from "./runtime/model-change-continuity.js";
-import type {
-  ManagerRuntimeRecycleReason as RuntimeManagerRuntimeRecycleReason,
-  RuntimeRecoveryState
+import {
+  isRuntimeRecoveryActiveForRuntime,
+  type ManagerRuntimeRecycleReason as RuntimeManagerRuntimeRecycleReason,
+  type RuntimeRecoveryState
 } from "./runtime/runtime-recovery-state.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import { isNonRunningAgentStatus, transitionAgentStatus } from "./agent-state-machine.js";
@@ -102,6 +103,7 @@ export interface SwarmAgentLifecycleServiceOptions {
     | "getPendingManagerRuntimeRecycleReason"
     | "setPendingManagerRuntimeRecycle"
     | "clearPendingManagerRuntimeRecycle"
+    | "clearRecoveryAbortedWorkerTurn"
   >;
   modelCapacityBlocks: Map<string, ModelCapacityBlockLike>;
   sessionProvisioner: SessionProvisioner;
@@ -250,6 +252,7 @@ export class SwarmAgentLifecycleService {
     this.options.deleteWorkerActivityState(agentId);
     this.options.deleteWorkerCompletionReportState(agentId);
     this.options.clearTrackedToolPaths(agentId);
+    this.options.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId);
   }
 
   private async shutdownWorkerRuntimeWithSuppressedCallbacks(
@@ -1280,7 +1283,7 @@ export class SwarmAgentLifecycleService {
       descriptor.status === "idle" &&
       runtime.getStatus() === "idle" &&
       runtime.getPendingCount() === 0 &&
-      !(runtime.isContextRecoveryActive?.() ?? runtime.isContextRecoveryInProgress?.())
+      !isRuntimeRecoveryActiveForRuntime(runtime)
     );
   }
 

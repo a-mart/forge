@@ -9,6 +9,7 @@ import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import { SwarmRuntimeController, type SwarmRuntimeControllerHost } from "../swarm-runtime-controller.js";
+import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { AgentDescriptor, AgentStatus, SwarmConfig } from "../types.js";
 import { TestSwarmManager, bootWithDefaultManager } from "../../test-support/index.js";
 
@@ -140,6 +141,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
   const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "none" as const);
   const maybeRecoverWorkerWithSpecialistFallback = vi.fn(async () => false);
   const forgeExtensionHost = new ForgeExtensionHost({ dataDir: config.paths.dataDir });
+  const runtimeRecoveryState = new RuntimeRecoveryState();
 
   const host: SwarmRuntimeControllerHost = {
     listAgents: () => Array.from(descriptors.values()),
@@ -158,6 +160,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     workerStallState: new Map(),
     workerActivityState: new Map(),
     watchdogTimerTokens: new Map(),
+    runtimeRecoveryState,
     conversationProjector: {
       captureConversationEventFromRuntime,
       emitConversationMessage
@@ -831,6 +834,7 @@ describe("SwarmRuntimeController", () => {
         lastFinalizedTurnSeq: 1
       })
     );
+    expect(host.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(false);
   });
 
   it("stores extension snapshots for the current runtime token and lists defensive copies sorted", async () => {

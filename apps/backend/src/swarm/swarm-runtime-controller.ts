@@ -20,6 +20,7 @@ import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
 import { RuntimeEventProjector } from "./runtime/runtime-event-projector.js";
+import type { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import type {
   WorkerActivityStateLike,
   WorkerStallStateLike,
@@ -57,6 +58,10 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   workerStallState: Map<string, WorkerStallStateLike>;
   workerActivityState: Map<string, WorkerActivityStateLike>;
   watchdogTimerTokens: Map<string, number>;
+  runtimeRecoveryState: Pick<
+    RuntimeRecoveryState,
+    "markRecoveryAbortedWorkerTurn" | "hasRecoveryAbortedWorkerTurn" | "clearRecoveryAbortedWorkerTurn"
+  >;
   conversationProjector: {
     captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void;
     emitConversationMessage(event: ConversationMessageEvent): void;
@@ -466,6 +471,7 @@ export class SwarmRuntimeController {
         descriptors: this.host.descriptors,
         workerStallState: this.host.workerStallState,
         workerActivityState: this.host.workerActivityState,
+        runtimeRecoveryState: this.host.runtimeRecoveryState,
         now: () => this.now(),
         conversationProjector: this.host.conversationProjector,
         maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>

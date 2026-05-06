@@ -18,14 +18,21 @@ import {
 } from "../message-utils.js";
 import type { VersioningMutation } from "../../versioning/versioning-types.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "./worker-health-types.js";
+import type { RuntimeRecoveryState } from "./runtime-recovery-state.js";
 
 const MANUAL_MANAGER_STOP_NOTICE = "Session stopped.";
+
+export type RuntimeEventProjectorRecoveryState = Pick<
+  RuntimeRecoveryState,
+  "markRecoveryAbortedWorkerTurn" | "hasRecoveryAbortedWorkerTurn" | "clearRecoveryAbortedWorkerTurn"
+>;
 
 export interface RuntimeEventProjectorDeps {
   config: Pick<SwarmConfig, "debug">;
   descriptors: Map<string, AgentDescriptor>;
   workerStallState: Map<string, WorkerStallStateLike>;
   workerActivityState: Map<string, WorkerActivityStateLike>;
+  runtimeRecoveryState: RuntimeEventProjectorRecoveryState;
   now: () => string;
   conversationProjector: {
     captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void;
@@ -57,7 +64,6 @@ export interface RuntimeEventProjectionInput {
 
 export class RuntimeEventProjector {
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
-  private readonly recoveryAbortedWorkerTurnAgentIds = new Set<string>();
 
   constructor(private readonly deps: RuntimeEventProjectorDeps) {}
 
@@ -125,11 +131,11 @@ export class RuntimeEventProjector {
   }
 
   shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {
-    return this.recoveryAbortedWorkerTurnAgentIds.has(descriptor.agentId) || this.deps.isRuntimeRecoveryActive(descriptor.agentId);
+    return this.deps.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(descriptor.agentId) || this.deps.isRuntimeRecoveryActive(descriptor.agentId);
   }
 
   clearRecoveryAbortedWorkerTurn(agentId: string): void {
-    this.recoveryAbortedWorkerTurnAgentIds.delete(agentId);
+    this.deps.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId);
   }
 
   async projectEvent({ agentId, runtimeToken, event }: RuntimeEventProjectionInput): Promise<void> {
@@ -151,7 +157,7 @@ export class RuntimeEventProjector {
         isAbortLikeErrorMessage(errorText) &&
         (this.deps.isRuntimeRecoveryActive(agentId) || parentRecoveryActive)
       ) {
-        this.recoveryAbortedWorkerTurnAgentIds.add(agentId);
+        this.deps.runtimeRecoveryState.markRecoveryAbortedWorkerTurn(agentId);
         return;
       }
 

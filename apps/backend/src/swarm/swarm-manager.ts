@@ -113,7 +113,10 @@ import {
   type ModelChangeContinuityRequest
 } from "./runtime/model-change-continuity.js";
 import { resolvePendingModelChangeRuntimeStartup } from "./runtime/model-change-runtime-startup.js";
-import { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
+import {
+  isRuntimeRecoveryActiveForRuntime,
+  RuntimeRecoveryState
+} from "./runtime/runtime-recovery-state.js";
 import {
   SwarmRuntimeController,
   type SwarmRuntimeControllerHost
@@ -5914,8 +5917,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private isRuntimeRecoveryActive(agentId: string): boolean {
-    const runtime = this.runtimes.get(agentId);
-    return Boolean(runtime?.isContextRecoveryActive?.() ?? runtime?.isContextRecoveryInProgress?.());
+    return isRuntimeRecoveryActiveForRuntime(this.runtimes.get(agentId));
   }
 
   private markPendingManualManagerStopNotice(agentId: string): void {
