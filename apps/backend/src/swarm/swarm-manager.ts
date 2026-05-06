@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { appendFile, copyFile, mkdir, open, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
@@ -43,6 +43,10 @@ import {
   type PromptRegistry
 } from "./prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
+import {
+  collectConversationMessageIdsFromSessionFile,
+  copySessionHistoryForFork
+} from "./session/conversation-timeline.js";
 import {
   getWorkerIdFromCanonicalTranscriptFileName,
   isWorkerTranscriptSidecarAgentId,
@@ -1544,7 +1548,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
       appendSessionRenameHistoryEntry: (descriptor, entry) => this.appendSessionRenameHistoryEntry(descriptor, entry),
       copySessionHistoryForFork: (sourceSessionFile, targetSessionFile, fromMessageId) =>
-        this.copySessionHistoryForFork(sourceSessionFile, targetSessionFile, fromMessageId),
+        copySessionHistoryForFork({
+          sourceSessionFile,
+          targetSessionFile,
+          fromMessageId,
+          omittedCustomTypes: [CLAUDE_RUNTIME_STATE_ENTRY_TYPE]
+        }),
       copyPinnedMessagesForFork: (sourceDescriptor, forkedDescriptor) =>
         this.copyPinnedMessagesForFork(sourceDescriptor, forkedDescriptor),
       writeForkedSessionMemoryHeader: (sourceDescriptor, forkedSessionAgentId, fromMessageId) =>
@@ -3139,123 +3148,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.lifecycleService.stopSessionInternal(agentId, options);
   }
 
-  private async copySessionHistoryForFork(
-    sourceSessionFile: string,
-    targetSessionFile: string,
-    fromMessageId?: string
-  ): Promise<void> {
-    await mkdir(dirname(targetSessionFile), { recursive: true });
-
-    const sourceHandle = await open(sourceSessionFile, "r").catch((error: unknown) => {
-      if (isEnoentError(error)) {
-        return undefined;
-      }
-      throw error;
-    });
-
-    if (!sourceHandle) {
-      if (fromMessageId) {
-        throw new Error("Message not found in session history");
-      }
-
-      await writeFile(targetSessionFile, "", "utf8");
-      return;
-    }
-
-    const targetHandle = await open(targetSessionFile, "w");
-    let foundForkPoint = !fromMessageId;
-
-    try {
-      for await (const line of sourceHandle.readLines()) {
-        if (!this.shouldCopySessionHistoryLineForFork(line)) {
-          continue;
-        }
-
-        await targetHandle.write(`${line}\n`);
-
-        if (fromMessageId && this.isForkTargetConversationEntryLine(line, fromMessageId)) {
-          foundForkPoint = true;
-          break;
-        }
-      }
-    } finally {
-      await Promise.allSettled([sourceHandle.close(), targetHandle.close()]);
-    }
-
-    if (!foundForkPoint) {
-      throw new Error("Message not found in session history");
-    }
-  }
-
-  private shouldCopySessionHistoryLineForFork(line: string): boolean {
-    const trimmedLine = line.trim();
-    if (trimmedLine.length === 0) {
-      return true;
-    }
-
-    let parsedEntry: unknown;
-    try {
-      parsedEntry = JSON.parse(trimmedLine);
-    } catch {
-      return true;
-    }
-
-    return !(
-      isRecord(parsedEntry) &&
-      parsedEntry.type === "custom" &&
-      parsedEntry.customType === CLAUDE_RUNTIME_STATE_ENTRY_TYPE
-    );
-  }
-
-  private isForkTargetConversationEntryLine(line: string, fromMessageId: string): boolean {
-    const conversationEntry = this.parseConversationMessageEntryLine(line);
-    if (!conversationEntry) {
-      return false;
-    }
-
-    return conversationEntry.id === fromMessageId;
-  }
-
-  private parseConversationMessageEntryLine(line: string): { id?: string } | undefined {
-    const trimmedLine = line.trim();
-    if (trimmedLine.length === 0) {
-      return undefined;
-    }
-
-    let parsedEntry: unknown;
-    try {
-      parsedEntry = JSON.parse(trimmedLine);
-    } catch {
-      return undefined;
-    }
-
-    if (!isRecord(parsedEntry)) {
-      return undefined;
-    }
-
-    if (
-      parsedEntry.type !== "custom" ||
-      parsedEntry.customType !== "swarm_conversation_entry"
-    ) {
-      return undefined;
-    }
-
-    if (typeof parsedEntry.id === "string" && parsedEntry.id.trim().length > 0) {
-      return { id: parsedEntry.id };
-    }
-
-    if (!isRecord(parsedEntry.data)) {
-      return undefined;
-    }
-
-    const dataId = parsedEntry.data.id;
-    if (typeof dataId === "string" && dataId.trim().length > 0) {
-      return { id: dataId };
-    }
-
-    return undefined;
-  }
-
   private async copyPinnedMessagesForFork(
     sourceDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
     forkedDescriptor: AgentDescriptor & { role: "manager"; profileId: string }
@@ -3266,7 +3158,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    const forkedMessageIds = await this.collectConversationMessageIdsFromSessionFile(forkedDescriptor.sessionFile);
+    const forkedMessageIds = await collectConversationMessageIdsFromSessionFile(forkedDescriptor.sessionFile);
     const filteredRegistry: PinRegistry = {
       version: 1,
       pins: Object.fromEntries(
@@ -3281,36 +3173,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await savePins(this.getSessionDirForDescriptor(forkedDescriptor), filteredRegistry);
     this.setPinnedRegistryForAgent(forkedDescriptor.agentId, filteredRegistry);
-  }
-
-  private async collectConversationMessageIdsFromSessionFile(sessionFile: string): Promise<Set<string>> {
-    const messageIds = new Set<string>();
-
-    const handle = await open(sessionFile, "r").catch((error: unknown) => {
-      if (isEnoentError(error)) {
-        return undefined;
-      }
-      throw error;
-    });
-
-    if (!handle) {
-      return messageIds;
-    }
-
-    try {
-      for await (const line of handle.readLines()) {
-        const conversationEntry = this.parseConversationMessageEntryLine(line);
-        if (!conversationEntry?.id) {
-          continue;
-        }
-
-        messageIds.add(conversationEntry.id);
-      }
-    } finally {
-      await handle.close();
-    }
-
-    return messageIds;
   }
 
   private async writeForkedSessionMemoryHeader(

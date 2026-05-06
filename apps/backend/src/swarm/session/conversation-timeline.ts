@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, open as openFile } from "node:fs/promises";
+import { mkdir, open as openFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { ConversationEntryEvent } from "../types.js";
 
@@ -39,6 +39,13 @@ export interface ImmediateCustomEntryTimelineResult {
   entryId: string;
   parentId: string | null;
   headerCreated: boolean;
+}
+
+export interface CopySessionHistoryForForkOptions {
+  sourceSessionFile: string;
+  targetSessionFile: string;
+  fromMessageId?: string;
+  omittedCustomTypes?: readonly string[];
 }
 
 export class ConversationTimeline {
@@ -189,6 +196,146 @@ export class ConversationTimeline {
   incrementPersistedEntryCount(sessionFile: string): void {
     this.trackPersistedEntryCount(sessionFile, (this.persistedEntryCountBySessionFile.get(sessionFile) ?? 0) + 1);
   }
+}
+
+export async function copySessionHistoryForFork(options: CopySessionHistoryForForkOptions): Promise<void> {
+  await mkdir(dirname(options.targetSessionFile), { recursive: true });
+
+  const sourceHandle = await openFile(options.sourceSessionFile, "r").catch((error: unknown) => {
+    if (isEnoentError(error)) {
+      return undefined;
+    }
+    throw error;
+  });
+
+  if (!sourceHandle) {
+    if (options.fromMessageId) {
+      throw new Error("Message not found in session history");
+    }
+
+    await writeFile(options.targetSessionFile, "", "utf8");
+    return;
+  }
+
+  const omittedCustomTypes = new Set(options.omittedCustomTypes ?? []);
+  const targetHandle = await openFile(options.targetSessionFile, "w");
+  let foundForkPoint = !options.fromMessageId;
+
+  try {
+    for await (const line of sourceHandle.readLines()) {
+      if (!shouldCopySessionHistoryLineForFork(line, omittedCustomTypes)) {
+        continue;
+      }
+
+      await targetHandle.write(`${line}\n`);
+
+      if (options.fromMessageId && isForkTargetConversationEntryLine(line, options.fromMessageId)) {
+        foundForkPoint = true;
+        break;
+      }
+    }
+  } finally {
+    await Promise.allSettled([sourceHandle.close(), targetHandle.close()]);
+  }
+
+  if (!foundForkPoint) {
+    throw new Error("Message not found in session history");
+  }
+}
+
+export async function collectConversationMessageIdsFromSessionFile(sessionFile: string): Promise<Set<string>> {
+  const messageIds = new Set<string>();
+
+  const handle = await openFile(sessionFile, "r").catch((error: unknown) => {
+    if (isEnoentError(error)) {
+      return undefined;
+    }
+    throw error;
+  });
+
+  if (!handle) {
+    return messageIds;
+  }
+
+  try {
+    for await (const line of handle.readLines()) {
+      const conversationEntry = parseConversationMessageEntryLine(line);
+      if (!conversationEntry?.id) {
+        continue;
+      }
+
+      messageIds.add(conversationEntry.id);
+    }
+  } finally {
+    await handle.close();
+  }
+
+  return messageIds;
+}
+
+export function parseConversationMessageEntryLine(line: string): { id?: string } | undefined {
+  const trimmedLine = line.trim();
+  if (trimmedLine.length === 0) {
+    return undefined;
+  }
+
+  let parsedEntry: unknown;
+  try {
+    parsedEntry = JSON.parse(trimmedLine);
+  } catch {
+    return undefined;
+  }
+
+  if (!isRecordLike(parsedEntry)) {
+    return undefined;
+  }
+
+  if (parsedEntry.type !== "custom" || parsedEntry.customType !== CONVERSATION_ENTRY_TYPE) {
+    return undefined;
+  }
+
+  if (isRecordLike(parsedEntry.data)) {
+    const dataId = parsedEntry.data.id;
+    if (typeof dataId === "string" && dataId.trim().length > 0) {
+      return { id: dataId };
+    }
+  }
+
+  if (typeof parsedEntry.id === "string" && parsedEntry.id.trim().length > 0) {
+    return { id: parsedEntry.id };
+  }
+
+  return undefined;
+}
+
+function shouldCopySessionHistoryLineForFork(line: string, omittedCustomTypes: ReadonlySet<string>): boolean {
+  const trimmedLine = line.trim();
+  if (trimmedLine.length === 0) {
+    return true;
+  }
+
+  let parsedEntry: unknown;
+  try {
+    parsedEntry = JSON.parse(trimmedLine);
+  } catch {
+    return true;
+  }
+
+  return !(
+    isRecordLike(parsedEntry) &&
+    parsedEntry.type === "custom" &&
+    typeof parsedEntry.customType === "string" &&
+    omittedCustomTypes.has(parsedEntry.customType)
+  );
+}
+
+function isForkTargetConversationEntryLine(line: string, fromMessageId: string): boolean {
+  const conversationEntry = parseConversationMessageEntryLine(line);
+  if (!conversationEntry) {
+    return false;
+  }
+
+  return conversationEntry.id === fromMessageId;
 }
 
 export async function appendImmediateCustomEntryViaTimeline(
@@ -486,6 +633,10 @@ function extractParentId(parsedLastLine: Record<string, unknown> | undefined): s
 
   const entryId = parsedLastLine.id;
   return typeof entryId === "string" && entryId.trim().length > 0 ? entryId : null;
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isEnoentError(error: unknown): boolean {

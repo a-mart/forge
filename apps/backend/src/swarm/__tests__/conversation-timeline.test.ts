@@ -7,6 +7,8 @@ import {
   CONVERSATION_ENTRY_TYPE,
   ConversationTimeline,
   appendImmediateCustomEntryViaTimeline,
+  collectConversationMessageIdsFromSessionFile,
+  copySessionHistoryForFork,
   hasValidSessionHeader
 } from "../session/conversation-timeline.js";
 import type { ConversationMessageEvent } from "../types.js";
@@ -53,6 +55,34 @@ function buildSessionHeader(cwd: string, id = "session-header"): string {
     id,
     timestamp: FIXED_NOW,
     cwd
+  });
+}
+
+function buildConversationEntry(id: string, text = id): string {
+  return buildConversationMessageEntry({ wrapperId: id, dataId: id, text });
+}
+
+function buildConversationMessageEntry(options: { wrapperId?: string; dataId?: string; text?: string }): string {
+  const data: Record<string, unknown> = {
+    type: "conversation_message",
+    agentId: "manager",
+    role: "assistant",
+    text: options.text ?? options.dataId ?? options.wrapperId,
+    timestamp: FIXED_NOW,
+    source: "system"
+  };
+
+  if (options.dataId !== undefined) {
+    data.id = options.dataId;
+  }
+
+  return JSON.stringify({
+    type: "custom",
+    customType: CONVERSATION_ENTRY_TYPE,
+    ...(options.wrapperId !== undefined ? { id: options.wrapperId } : {}),
+    parentId: null,
+    timestamp: FIXED_NOW,
+    data
   });
 }
 
@@ -187,5 +217,149 @@ describe("ConversationTimeline", () => {
     const directoryPath = join(root, "not-a-file.jsonl");
     mkdirSync(directoryPath, { recursive: true });
     expect(() => makeTimeline().appendConversationEntry({ sessionFile: directoryPath, cwd: root }, makeMessage("manager", "nope"))).toThrow();
+  });
+
+  it("copies full session history for forks while preserving malformed, blank, and non-JSON lines", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "nested", "target.jsonl");
+    const lines = [
+      buildSessionHeader(root),
+      buildConversationEntry("message-1"),
+      "not-json",
+      "",
+      JSON.stringify({ type: "message", id: "runtime-entry" }),
+      buildConversationEntry("message-2")
+    ];
+    writeFileSync(sourceSessionFile, `${lines.join("\n")}\n`, "utf8");
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile });
+
+    expect(readFileSync(targetSessionFile, "utf8")).toBe(readFileSync(sourceSessionFile, "utf8"));
+  });
+
+  it("omits only configured custom entry types when copying fork history", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    writeFileSync(
+      sourceSessionFile,
+      [
+        buildSessionHeader(root),
+        JSON.stringify({ type: "custom", customType: "omit_me", id: "runtime-state" }),
+        JSON.stringify({ type: "custom", customType: "keep_me", id: "other-custom" }),
+        buildConversationEntry("message-1")
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({
+      sourceSessionFile,
+      targetSessionFile,
+      omittedCustomTypes: ["omit_me"]
+    });
+
+    const copied = readFileSync(targetSessionFile, "utf8");
+    expect(copied).not.toContain("omit_me");
+    expect(copied).toContain("keep_me");
+    expect(copied).toContain("message-1");
+  });
+
+  it("copies partial fork history through the matching top-level conversation entry id when data.id is absent", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    writeFileSync(
+      sourceSessionFile,
+      [
+        buildSessionHeader(root),
+        buildConversationMessageEntry({ wrapperId: "wrapper-1", text: "message-1" }),
+        buildConversationMessageEntry({ wrapperId: "wrapper-2", text: "message-2" }),
+        buildConversationMessageEntry({ wrapperId: "wrapper-3", text: "message-3" })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile, fromMessageId: "wrapper-2" });
+
+    const copied = readFileSync(targetSessionFile, "utf8").trimEnd().split("\n");
+    expect(copied).toHaveLength(3);
+    expect(copied.join("\n")).toContain("wrapper-1");
+    expect(copied.join("\n")).toContain("wrapper-2");
+    expect(copied.join("\n")).not.toContain("wrapper-3");
+  });
+
+  it("copies partial fork history through conversation data.id when wrapper id differs", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    writeFileSync(
+      sourceSessionFile,
+      [
+        buildSessionHeader(root),
+        buildConversationMessageEntry({ wrapperId: "entry-1", dataId: "message-1" }),
+        buildConversationMessageEntry({ wrapperId: "entry-2", dataId: "message-2" }),
+        buildConversationMessageEntry({ wrapperId: "entry-3", dataId: "message-3" })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile, fromMessageId: "message-2" });
+
+    const copied = readFileSync(targetSessionFile, "utf8");
+    expect(copied).toContain("message-1");
+    expect(copied).toContain("message-2");
+    expect(copied).not.toContain("message-3");
+    expect(copied).toContain("entry-2");
+    expect(copied).not.toContain("entry-3");
+  });
+
+  it("throws the existing fork error when the requested fork target is absent", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    writeFileSync(sourceSessionFile, `${buildSessionHeader(root)}\n${buildConversationEntry("message-1")}\n`, "utf8");
+
+    await expect(
+      copySessionHistoryForFork({ sourceSessionFile, targetSessionFile, fromMessageId: "missing-message" })
+    ).rejects.toThrow("Message not found in session history");
+  });
+
+  it("writes an empty target for missing source full forks and preserves the missing-target error for partial forks", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const missingSourceSessionFile = join(root, "missing-source.jsonl");
+    const emptyTargetSessionFile = join(root, "nested", "empty-target.jsonl");
+
+    await copySessionHistoryForFork({ sourceSessionFile: missingSourceSessionFile, targetSessionFile: emptyTargetSessionFile });
+
+    expect(readFileSync(emptyTargetSessionFile, "utf8")).toBe("");
+
+    await expect(
+      copySessionHistoryForFork({
+        sourceSessionFile: missingSourceSessionFile,
+        targetSessionFile: join(root, "partial-target.jsonl"),
+        fromMessageId: "missing-message"
+      })
+    ).rejects.toThrow("Message not found in session history");
+  });
+
+  it("collects conversation message ids preferring data.id over distinct wrapper ids", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sessionFile = join(root, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        buildSessionHeader(root),
+        buildConversationMessageEntry({ wrapperId: "entry-1", dataId: "message-1" }),
+        buildConversationMessageEntry({ wrapperId: "entry-2", dataId: "message-2" }),
+        buildConversationMessageEntry({ wrapperId: "wrapper-only", text: "fallback" }),
+        JSON.stringify({ type: "custom", customType: "other", id: "not-a-conversation-message" }),
+        "not-json"
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await expect(collectConversationMessageIdsFromSessionFile(join(root, "missing.jsonl"))).resolves.toEqual(new Set());
+    await expect(collectConversationMessageIdsFromSessionFile(sessionFile)).resolves.toEqual(new Set(["message-1", "message-2", "wrapper-only"]));
   });
 });

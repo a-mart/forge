@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
 import { getSessionDir } from '../data-paths.js'
+import { loadPins, savePins } from '../message-pins.js'
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import { readSessionMeta } from '../session-manifest.js'
 import { modelCatalogService } from '../model-catalog-service.js'
@@ -466,6 +467,110 @@ describe('SwarmManager', () => {
       model: resolveModelDescriptorFromPreset('pi-opus'),
       modelOrigin: 'session_override',
     })
+  })
+
+  it('filters copied pinned messages to the partial forked session history', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Pinned Source Session' })
+    await writeFile(
+      sessionAgent.sessionFile,
+      [
+        JSON.stringify({
+          type: 'session',
+          version: 3,
+          id: 'hdr',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+        }),
+        JSON.stringify({
+          type: 'custom',
+          customType: 'swarm_conversation_entry',
+          id: 'entry-1',
+          parentId: null,
+          timestamp: '2026-01-01T00:00:01.000Z',
+          data: {
+            type: 'conversation_message',
+            id: 'm1',
+            agentId: sessionAgent.agentId,
+            role: 'assistant',
+            text: 'Pinned before fork target',
+            timestamp: '2026-01-01T00:00:01.000Z',
+            source: 'system',
+          },
+        }),
+        JSON.stringify({
+          type: 'custom',
+          customType: 'swarm_conversation_entry',
+          id: 'entry-2',
+          parentId: 'entry-1',
+          timestamp: '2026-01-01T00:00:02.000Z',
+          data: {
+            type: 'conversation_message',
+            id: 'm2',
+            agentId: sessionAgent.agentId,
+            role: 'assistant',
+            text: 'Pinned fork target',
+            timestamp: '2026-01-01T00:00:02.000Z',
+            source: 'system',
+          },
+        }),
+        JSON.stringify({
+          type: 'custom',
+          customType: 'swarm_conversation_entry',
+          id: 'entry-3',
+          parentId: 'entry-2',
+          timestamp: '2026-01-01T00:00:03.000Z',
+          data: {
+            type: 'conversation_message',
+            id: 'm3',
+            agentId: sessionAgent.agentId,
+            role: 'assistant',
+            text: 'Pinned after fork target',
+            timestamp: '2026-01-01T00:00:03.000Z',
+            source: 'system',
+          },
+        }),
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await savePins(getSessionDir(config.paths.dataDir, 'manager', sessionAgent.agentId), {
+      version: 1,
+      pins: {
+        m1: {
+          pinnedAt: '2026-01-01T00:00:01.000Z',
+          role: 'assistant',
+          text: 'Pinned before fork target',
+          timestamp: '2026-01-01T00:00:01.000Z',
+        },
+        m2: {
+          pinnedAt: '2026-01-01T00:00:02.000Z',
+          role: 'assistant',
+          text: 'Pinned fork target',
+          timestamp: '2026-01-01T00:00:02.000Z',
+        },
+        m3: {
+          pinnedAt: '2026-01-01T00:00:03.000Z',
+          role: 'assistant',
+          text: 'Pinned after fork target',
+          timestamp: '2026-01-01T00:00:03.000Z',
+        },
+      },
+    })
+
+    const forked = await manager.forkSession(sessionAgent.agentId, {
+      label: 'Pinned Partial Fork',
+      fromMessageId: 'm2',
+    })
+
+    const forkedPins = await loadPins(getSessionDir(config.paths.dataDir, 'manager', forked.sessionAgent.agentId))
+    expect(Object.keys(forkedPins.pins).sort()).toEqual(['m1', 'm2'])
+    expect(forkedPins.pins.m1?.text).toBe('Pinned before fork target')
+    expect(forkedPins.pins.m2?.text).toBe('Pinned fork target')
+    expect(forkedPins.pins.m3).toBeUndefined()
   })
 
   it('createSessionFromAgent inherits the profile default when model and reasoning are omitted', async () => {
