@@ -295,6 +295,7 @@ describe('protocol root barrel contract', () => {
       'update_profile_default_model',
       'update_manager_model',
       'update_manager_cwd',
+      'stop_all_agents',
       'create_session',
       'stop_session',
       'resume_session',
@@ -370,6 +371,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'manager_cwd_update',
       successEvents: ['manager_cwd_updated'],
       errorCodeFragments: ['update_manager_cwd'],
+    })
+    expect(getWsRequestContract('stop_all_agents')).toMatchObject({
+      commandType: 'stop_all_agents',
+      resultFamily: 'stop_all_agents',
+      successEvents: ['stop_all_agents_result'],
+      errorCodeFragments: ['stop_all_agents'],
     })
     expect(getWsRequestContract('create_session')).toMatchObject({
       commandType: 'create_session',

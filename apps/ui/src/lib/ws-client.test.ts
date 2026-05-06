@@ -85,6 +85,7 @@ describe('ManagerWsClient', () => {
       'update_profile_default_model',
       'update_manager_model',
       'update_manager_cwd',
+      'stop_all_agents',
       'create_session',
       'stop_session',
       'resume_session',
@@ -953,6 +954,34 @@ describe('ManagerWsClient', () => {
       type: 'kill_agent',
       agentId: 'worker-2',
     })
+
+    client.destroy()
+  })
+
+  it('rejects stop_all_agents via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const stopPromise = client.stopAllAgents('manager')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'STOP_ALL_AGENTS_FAILED',
+      message: 'Stop rejected for testing.',
+    })
+
+    await expect(stopPromise).rejects.toThrow('STOP_ALL_AGENTS_FAILED: Stop rejected for testing.')
 
     client.destroy()
   })

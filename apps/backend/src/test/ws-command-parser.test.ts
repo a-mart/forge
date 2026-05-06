@@ -44,6 +44,7 @@ describe('ws command parser session commands', () => {
       update_profile_default_model: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4', reasoningLevel: undefined },
       update_manager_model: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', reasoningLevel: undefined },
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
+      stop_all_agents: { type: 'stop_all_agents', managerId: 'manager-a' },
       create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
       stop_session: { type: 'stop_session', agentId: 'session-a' },
       resume_session: { type: 'resume_session', agentId: 'session-a' },
@@ -135,6 +136,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project', requestId: 123 })).toEqual({
       ok: false,
       error: 'update_manager_cwd.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'stop_all_agents', managerId: 'manager-a' })).toEqual({
+      ok: true,
+      command: { type: 'stop_all_agents', managerId: 'manager-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'stop_all_agents', managerId: 'manager-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'stop_all_agents.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'create_session', profileId: 'manager-a' })).toEqual({
       ok: true,

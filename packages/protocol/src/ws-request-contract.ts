@@ -31,6 +31,7 @@ type ContractCommandType = Extract<
   | 'update_profile_default_model'
   | 'update_manager_model'
   | 'update_manager_cwd'
+  | 'stop_all_agents'
   | 'create_session'
   | 'stop_session'
   | 'resume_session'
@@ -58,6 +59,7 @@ type ContractSuccessEventType = Extract<
   | 'profile_default_model_updated'
   | 'manager_model_updated'
   | 'manager_cwd_updated'
+  | 'stop_all_agents_result'
   | 'session_created'
   | 'session_stopped'
   | 'session_resumed'
@@ -156,6 +158,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['manager_cwd_updated'],
     errorCodeFragments: ['update_manager_cwd'],
+  },
+  {
+    commandType: 'stop_all_agents',
+    resultFamily: 'stop_all_agents',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['stop_all_agents_result'],
+    errorCodeFragments: ['stop_all_agents'],
   },
   {
     commandType: 'create_session',

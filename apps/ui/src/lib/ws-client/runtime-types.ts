@@ -34,6 +34,7 @@ const FORK_SESSION_CONTRACT = getWsRequestContract('fork_session')
 const UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT = getWsRequestContract('update_profile_default_model')
 const UPDATE_MANAGER_MODEL_CONTRACT = getWsRequestContract('update_manager_model')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
+const STOP_ALL_AGENTS_CONTRACT = getWsRequestContract('stop_all_agents')
 const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
 const SET_SESSION_PROJECT_AGENT_CONTRACT = getWsRequestContract('set_session_project_agent')
@@ -55,6 +56,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
+  STOP_ALL_AGENTS_CONTRACT.commandType,
   CREATE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
   SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
@@ -101,6 +103,10 @@ const UPDATE_MANAGER_MODEL_ERROR_HINTS = UPDATE_MANAGER_MODEL_CONTRACT.errorCode
 }))
 const UPDATE_MANAGER_CWD_ERROR_HINTS = UPDATE_MANAGER_CWD_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: UPDATE_MANAGER_CWD_CONTRACT.commandType,
+  codeFragment,
+}))
+const STOP_ALL_AGENTS_ERROR_HINTS = STOP_ALL_AGENTS_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: STOP_ALL_AGENTS_CONTRACT.commandType,
   codeFragment,
 }))
 const CREATE_SESSION_ERROR_HINTS = CREATE_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -158,7 +164,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
-  'stop_all_agents',
+  STOP_ALL_AGENTS_CONTRACT.commandType,
   CREATE_SESSION_CONTRACT.commandType,
   STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
@@ -186,7 +192,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   ...UPDATE_PROFILE_DEFAULT_MODEL_ERROR_HINTS,
   ...UPDATE_MANAGER_MODEL_ERROR_HINTS,
   ...UPDATE_MANAGER_CWD_ERROR_HINTS,
-  { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
+  ...STOP_ALL_AGENTS_ERROR_HINTS,
   ...CREATE_SESSION_ERROR_HINTS,
   ...STOP_SESSION_ERROR_HINTS,
   ...RESUME_SESSION_ERROR_HINTS,
