@@ -12,7 +12,11 @@ import type {
   RuntimeShutdownOptions,
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
-import { RuntimeCallbackGate } from "./runtime/runtime-callback-gate.js";
+import {
+  RuntimeCallbackGate,
+  type RuntimeCallbackFallbackHandoffReplayHandlers,
+  type RuntimeCallbackFallbackHandoffSnapshot
+} from "./runtime/runtime-callback-gate.js";
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type {
@@ -198,7 +202,8 @@ export class SwarmRuntimeController {
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
     this.runtimeCallbackGate = new RuntimeCallbackGate({
-      getCurrentRuntimeToken: (agentId) => this.runtimeTokensByAgentId.get(agentId)
+      getCurrentRuntimeToken: (agentId) => this.runtimeTokensByAgentId.get(agentId),
+      now: () => this.now()
     });
     this.runtimeFactory = new RuntimeFactory({
       host,
@@ -247,7 +252,16 @@ export class SwarmRuntimeController {
 
   setSpecialistFallbackManager(manager: SwarmSpecialistFallbackManager): void {
     this.specialistFallbackManager = manager;
-    this.runtimeCallbackGate.setFallbackHandoffAdapter(manager);
+    manager.setFallbackHandoffController({
+      beginFallbackHandoff: (agentId, suppressedRuntimeToken) =>
+        this.beginFallbackHandoff(agentId, suppressedRuntimeToken),
+      endFallbackHandoff: (agentId, suppressedRuntimeToken) =>
+        this.endFallbackHandoff(agentId, suppressedRuntimeToken),
+      getFallbackHandoffSnapshot: (agentId, suppressedRuntimeToken) =>
+        this.getFallbackHandoffSnapshot(agentId, suppressedRuntimeToken),
+      reconcileBufferedCallbacksOnAbort: (agentId, suppressedRuntimeToken, handlers) =>
+        this.reconcileBufferedCallbacksOnAbort(agentId, suppressedRuntimeToken, handlers)
+    });
   }
 
   listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
@@ -278,6 +292,29 @@ export class SwarmRuntimeController {
 
   clearIntentionalStopRuntimeCallbackSuppression(agentId: string, runtimeToken?: number): void {
     this.runtimeCallbackGate.clearIntentionalStopRuntimeCallbackSuppression(agentId, runtimeToken);
+  }
+
+  beginFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void {
+    this.runtimeCallbackGate.beginFallbackHandoff(agentId, suppressedRuntimeToken);
+  }
+
+  endFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void {
+    this.runtimeCallbackGate.endFallbackHandoff(agentId, suppressedRuntimeToken);
+  }
+
+  getFallbackHandoffSnapshot(
+    agentId: string,
+    suppressedRuntimeToken?: number
+  ): RuntimeCallbackFallbackHandoffSnapshot | undefined {
+    return this.runtimeCallbackGate.getFallbackHandoffSnapshot(agentId, suppressedRuntimeToken);
+  }
+
+  async reconcileBufferedCallbacksOnAbort(
+    agentId: string,
+    suppressedRuntimeToken: number | undefined,
+    handlers: RuntimeCallbackFallbackHandoffReplayHandlers
+  ): Promise<void> {
+    await this.runtimeCallbackGate.reconcileBufferedCallbacksOnAbort(agentId, suppressedRuntimeToken, handlers);
   }
 
   async createRuntimeForDescriptor(

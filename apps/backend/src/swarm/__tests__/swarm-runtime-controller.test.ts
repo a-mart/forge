@@ -896,12 +896,7 @@ describe("SwarmRuntimeController", () => {
 
     const oldToken = controller.allocateRuntimeToken(worker.agentId);
     const replacementToken = controller.allocateRuntimeToken(worker.agentId);
-    const fallbackManager = {
-      bufferStatusDuringHandoff: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken),
-      bufferAgentEndDuringHandoff: vi.fn(() => false),
-      isSuppressedRuntimeCallback: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken)
-    } as unknown as Parameters<SwarmRuntimeController["setSpecialistFallbackManager"]>[0];
-    controller.setSpecialistFallbackManager(fallbackManager);
+    controller.beginFallbackHandoff(worker.agentId, oldToken);
 
     await controller.handleRuntimeStatus(oldToken, worker.agentId, "streaming" as AgentStatus, 3, {
       tokens: 10,
@@ -909,14 +904,11 @@ describe("SwarmRuntimeController", () => {
       percent: 10
     });
 
-    expect(fallbackManager.bufferStatusDuringHandoff).toHaveBeenCalledWith(
-      worker.agentId,
-      oldToken,
-      "streaming",
-      3,
-      expect.objectContaining({ tokens: 10 })
-    );
-    expect(fallbackManager.isSuppressedRuntimeCallback).not.toHaveBeenCalled();
+    expect(controller.getFallbackHandoffSnapshot(worker.agentId, oldToken)?.bufferedStatus).toMatchObject({
+      status: "streaming",
+      pendingCount: 3,
+      contextUsage: { tokens: 10, contextWindow: 100, percent: 10 }
+    });
     expect(host.patchDescriptorFromRuntimeStatus).not.toHaveBeenCalled();
     expect(host.updateSessionMetaForWorkerDescriptor).not.toHaveBeenCalled();
     expect(host.refreshSessionMetaStatsBySessionId).not.toHaveBeenCalled();
@@ -930,17 +922,9 @@ describe("SwarmRuntimeController", () => {
     expect(host.clearWatchdogTimer).not.toHaveBeenCalled();
     expect(host.removeWorkerFromWatchdogBatchQueues).not.toHaveBeenCalled();
 
-    vi.mocked(fallbackManager.bufferStatusDuringHandoff).mockClear();
     await controller.handleRuntimeStatus(replacementToken, worker.agentId, "streaming" as AgentStatus, 0);
 
-    expect(fallbackManager.bufferStatusDuringHandoff).toHaveBeenCalledWith(
-      worker.agentId,
-      replacementToken,
-      "streaming",
-      0,
-      undefined
-    );
-    expect(fallbackManager.isSuppressedRuntimeCallback).toHaveBeenCalledWith(worker.agentId, replacementToken);
+    expect(controller.getFallbackHandoffSnapshot(worker.agentId, oldToken)?.bufferedStatus?.pendingCount).toBe(3);
     expect(host.patchDescriptorFromRuntimeStatus).toHaveBeenCalled();
     expect(emitStatus).toHaveBeenCalledWith(worker.agentId, "streaming", 0, undefined);
   });
@@ -970,28 +954,20 @@ describe("SwarmRuntimeController", () => {
 
     const oldToken = controller.allocateRuntimeToken(worker.agentId);
     const replacementToken = controller.allocateRuntimeToken(worker.agentId);
-    const fallbackManager = {
-      bufferStatusDuringHandoff: vi.fn(() => false),
-      bufferAgentEndDuringHandoff: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken),
-      isSuppressedRuntimeCallback: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken)
-    } as unknown as Parameters<SwarmRuntimeController["setSpecialistFallbackManager"]>[0];
-    controller.setSpecialistFallbackManager(fallbackManager);
+    controller.beginFallbackHandoff(worker.agentId, oldToken);
 
     await controller.handleRuntimeAgentEnd(oldToken, worker.agentId);
 
-    expect(fallbackManager.bufferAgentEndDuringHandoff).toHaveBeenCalledWith(worker.agentId, oldToken);
-    expect(fallbackManager.isSuppressedRuntimeCallback).not.toHaveBeenCalled();
+    expect(controller.getFallbackHandoffSnapshot(worker.agentId, oldToken)?.receivedAgentEnd).toBe(true);
     expect(finalizeWorkerIdleTurn).not.toHaveBeenCalled();
     expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
     expect(emitStatus).not.toHaveBeenCalled();
     expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
     expect(emitConversationMessage).not.toHaveBeenCalled();
 
-    vi.mocked(fallbackManager.bufferAgentEndDuringHandoff).mockClear();
     await controller.handleRuntimeAgentEnd(replacementToken, worker.agentId);
 
-    expect(fallbackManager.bufferAgentEndDuringHandoff).toHaveBeenCalledWith(worker.agentId, replacementToken);
-    expect(fallbackManager.isSuppressedRuntimeCallback).toHaveBeenCalledWith(worker.agentId, replacementToken);
+    expect(controller.getFallbackHandoffSnapshot(worker.agentId, oldToken)?.receivedAgentEnd).toBe(true);
     expect(finalizeWorkerIdleTurn).toHaveBeenCalledWith(worker.agentId, worker, "agent_end");
   });
 
@@ -1018,12 +994,7 @@ describe("SwarmRuntimeController", () => {
 
     const oldToken = controller.allocateRuntimeToken(worker.agentId);
     const replacementToken = controller.allocateRuntimeToken(worker.agentId);
-    const fallbackManager = {
-      bufferStatusDuringHandoff: vi.fn(() => false),
-      bufferAgentEndDuringHandoff: vi.fn(() => false),
-      isSuppressedRuntimeCallback: vi.fn((agentId, runtimeToken) => agentId === worker.agentId && runtimeToken === oldToken)
-    } as unknown as Parameters<SwarmRuntimeController["setSpecialistFallbackManager"]>[0];
-    controller.setSpecialistFallbackManager(fallbackManager);
+    controller.beginFallbackHandoff(worker.agentId, oldToken);
     const dispatchRuntimeError = vi.spyOn(host.forgeExtensionHost, "dispatchRuntimeError");
 
     const event: RuntimeSessionEvent = {
@@ -1058,7 +1029,7 @@ describe("SwarmRuntimeController", () => {
     });
     snapshotHandler.handleRuntimeExtensionSnapshot(oldToken, worker.agentId, oldSnapshot);
 
-    expect(fallbackManager.isSuppressedRuntimeCallback).toHaveBeenCalledWith(worker.agentId, oldToken);
+    expect(controller.getFallbackHandoffSnapshot(worker.agentId, oldToken)).toBeDefined();
     expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
     expect(host.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
     expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
@@ -1066,10 +1037,8 @@ describe("SwarmRuntimeController", () => {
     expect(emitConversationMessage).not.toHaveBeenCalled();
     expect(controller.listRuntimeExtensionSnapshots()).toEqual([]);
 
-    vi.mocked(fallbackManager.isSuppressedRuntimeCallback).mockClear();
     snapshotHandler.handleRuntimeExtensionSnapshot(replacementToken, worker.agentId, freshSnapshot);
 
-    expect(fallbackManager.isSuppressedRuntimeCallback).toHaveBeenCalledWith(worker.agentId, replacementToken);
     expect(controller.listRuntimeExtensionSnapshots()).toEqual([freshSnapshot]);
   });
 

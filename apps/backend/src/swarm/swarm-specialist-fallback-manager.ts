@@ -16,7 +16,6 @@ import type {
 import {
   createDeferred,
   extractRuntimeMessageText,
-  normalizeContextUsage,
   normalizeOptionalAgentId,
   normalizeThinkingLevelForProvider,
   previewForLog,
@@ -34,17 +33,37 @@ interface ResolvedSpecialistDefinitionLike {
   fallbackReasoningLevel?: SwarmReasoningLevel;
 }
 
-interface BufferedSpecialistFallbackStatus {
-  status: AgentStatus;
-  pendingCount: number;
-  contextUsage?: AgentContextUsage;
+interface SpecialistFallbackHandoffSnapshot {
+  suppressedRuntimeToken: number;
+  bufferedStatus?: {
+    status: AgentStatus;
+    pendingCount: number;
+    contextUsage?: AgentContextUsage;
+  };
+  receivedAgentEnd?: boolean;
 }
 
-interface SpecialistFallbackHandoffState {
-  suppressedRuntimeToken: number;
-  startedAt: string;
-  bufferedStatus?: BufferedSpecialistFallbackStatus;
-  receivedAgentEnd?: boolean;
+export interface SpecialistFallbackHandoffController {
+  beginFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void;
+  endFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void;
+  getFallbackHandoffSnapshot(
+    agentId: string,
+    suppressedRuntimeToken?: number
+  ): SpecialistFallbackHandoffSnapshot | undefined;
+  reconcileBufferedCallbacksOnAbort(
+    agentId: string,
+    suppressedRuntimeToken: number | undefined,
+    handlers: {
+      handleRuntimeStatus(
+        runtimeToken: number,
+        targetAgentId: string,
+        status: AgentStatus,
+        pendingCount: number,
+        contextUsage?: AgentContextUsage
+      ): Promise<void>;
+      handleRuntimeAgentEnd(runtimeToken: number, targetAgentId: string): Promise<void>;
+    }
+  ): Promise<void>;
 }
 
 export interface SwarmSpecialistFallbackManagerOptions {
@@ -100,89 +119,18 @@ export interface SwarmSpecialistFallbackManagerOptions {
 }
 
 export class SwarmSpecialistFallbackManager {
-  private readonly specialistFallbackHandoffsByAgentId = new Map<string, SpecialistFallbackHandoffState>();
+  private fallbackHandoffController: SpecialistFallbackHandoffController | null = null;
 
   constructor(private readonly options: SwarmSpecialistFallbackManagerOptions) {}
+
+  setFallbackHandoffController(controller: SpecialistFallbackHandoffController): void {
+    this.fallbackHandoffController = controller;
+  }
 
   resolveSpecialistFallbackModelForDescriptor(
     descriptor: AgentDescriptor
   ): Promise<AgentModelDescriptor | undefined> {
     return this.doResolveSpecialistFallbackModelForDescriptor(descriptor);
-  }
-
-  isSuppressedRuntimeCallback(agentId: string, runtimeToken?: number): boolean {
-    return this.getSuppressedSpecialistFallbackHandoff(agentId, runtimeToken) !== undefined;
-  }
-
-  bufferStatusDuringHandoff(
-    agentId: string,
-    runtimeToken: number,
-    status: AgentStatus,
-    pendingCount: number,
-    contextUsage?: AgentContextUsage
-  ): boolean {
-    const handoff = this.getSuppressedSpecialistFallbackHandoff(agentId, runtimeToken);
-    if (!handoff) {
-      return false;
-    }
-
-    handoff.bufferedStatus = {
-      status,
-      pendingCount,
-      contextUsage: normalizeContextUsage(contextUsage)
-    };
-    this.specialistFallbackHandoffsByAgentId.set(agentId, handoff);
-    return true;
-  }
-
-  bufferAgentEndDuringHandoff(agentId: string, runtimeToken: number): boolean {
-    const handoff = this.getSuppressedSpecialistFallbackHandoff(agentId, runtimeToken);
-    if (!handoff) {
-      return false;
-    }
-
-    handoff.receivedAgentEnd = true;
-    this.specialistFallbackHandoffsByAgentId.set(agentId, handoff);
-    return true;
-  }
-
-  async reconcileBufferedCallbacksOnAbort(
-    agentId: string,
-    suppressedRuntimeToken: number | undefined,
-    options: {
-      handleRuntimeStatus(
-        runtimeToken: number,
-        targetAgentId: string,
-        status: AgentStatus,
-        pendingCount: number,
-        contextUsage?: AgentContextUsage
-      ): Promise<void>;
-      handleRuntimeAgentEnd(runtimeToken: number, targetAgentId: string): Promise<void>;
-    }
-  ): Promise<void> {
-    if (suppressedRuntimeToken === undefined) {
-      return;
-    }
-
-    const handoffState = this.getSuppressedSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-    this.endSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-    if (!handoffState) {
-      return;
-    }
-
-    if (handoffState.bufferedStatus) {
-      await options.handleRuntimeStatus(
-        suppressedRuntimeToken,
-        agentId,
-        handoffState.bufferedStatus.status,
-        handoffState.bufferedStatus.pendingCount,
-        handoffState.bufferedStatus.contextUsage
-      );
-    }
-
-    if (handoffState.receivedAgentEnd) {
-      await options.handleRuntimeAgentEnd(suppressedRuntimeToken, agentId);
-    }
   }
 
   async maybeRecoverWorkerWithSpecialistFallback(input: {
@@ -492,40 +440,31 @@ export class SwarmSpecialistFallbackManager {
     return this.options.resolveSpawnModelWithCapacityFallback(fallbackModel);
   }
 
-  private getSuppressedSpecialistFallbackHandoff(
+  private getSpecialistFallbackHandoffSnapshot(
     agentId: string,
     runtimeToken?: number
-  ): SpecialistFallbackHandoffState | undefined {
-    if (runtimeToken === undefined) {
-      return undefined;
-    }
-
-    const handoff = this.specialistFallbackHandoffsByAgentId.get(agentId);
-    if (handoff?.suppressedRuntimeToken === runtimeToken) {
-      return handoff;
-    }
-
-    return undefined;
+  ): SpecialistFallbackHandoffSnapshot | undefined {
+    return this.fallbackHandoffController?.getFallbackHandoffSnapshot(agentId, runtimeToken);
   }
 
   private beginSpecialistFallbackHandoff(agentId: string, suppressedRuntimeToken: number): void {
-    this.specialistFallbackHandoffsByAgentId.set(agentId, {
-      suppressedRuntimeToken,
-      startedAt: this.options.now()
-    });
+    this.fallbackHandoffController?.beginFallbackHandoff(agentId, suppressedRuntimeToken);
   }
 
   private endSpecialistFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void {
-    const handoff = this.specialistFallbackHandoffsByAgentId.get(agentId);
-    if (!handoff) {
-      return;
-    }
+    this.fallbackHandoffController?.endFallbackHandoff(agentId, suppressedRuntimeToken);
+  }
 
-    if (suppressedRuntimeToken !== undefined && handoff.suppressedRuntimeToken !== suppressedRuntimeToken) {
-      return;
-    }
-
-    this.specialistFallbackHandoffsByAgentId.delete(agentId);
+  private async reconcileBufferedCallbacksOnAbort(
+    agentId: string,
+    suppressedRuntimeToken: number | undefined,
+    handlers: Parameters<SpecialistFallbackHandoffController["reconcileBufferedCallbacksOnAbort"]>[2]
+  ): Promise<void> {
+    await this.fallbackHandoffController?.reconcileBufferedCallbacksOnAbort(
+      agentId,
+      suppressedRuntimeToken,
+      handlers
+    );
   }
 
   private async replaySpecialistFallbackSnapshot(
@@ -617,10 +556,7 @@ export class SwarmSpecialistFallbackManager {
       return "interrupted";
     }
 
-    const handoffState =
-      suppressedRuntimeToken !== undefined
-        ? this.getSuppressedSpecialistFallbackHandoff(agentId, suppressedRuntimeToken)
-        : undefined;
+    const handoffState = this.getSpecialistFallbackHandoffSnapshot(agentId, suppressedRuntimeToken);
     const originalRuntimeStatus = handoffState?.bufferedStatus?.status ?? currentRuntime.getStatus();
     if (isNonRunningAgentStatus(originalRuntimeStatus)) {
       return "original_runtime_unavailable";
@@ -707,10 +643,7 @@ export class SwarmSpecialistFallbackManager {
       fallbackRerouteUpdatedAt?: string;
     }
   ): Promise<void> {
-    const handoffState =
-      suppressedRuntimeToken !== undefined
-        ? this.getSuppressedSpecialistFallbackHandoff(agentId, suppressedRuntimeToken)
-        : undefined;
+    const handoffState = this.getSpecialistFallbackHandoffSnapshot(agentId, suppressedRuntimeToken);
     const reconciledStatus = handoffState?.bufferedStatus?.status ?? currentRuntime.getStatus();
     const reconciledContextUsage =
       handoffState?.bufferedStatus?.contextUsage ?? currentRuntime.getContextUsage() ?? previousState.previousContextUsage;

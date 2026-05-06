@@ -1,20 +1,33 @@
 import type { AgentContextUsage, AgentStatus } from "../types.js";
+import { normalizeContextUsage } from "../swarm-manager-utils.js";
 
-export interface RuntimeCallbackFallbackHandoffAdapter {
-  bufferStatusDuringHandoff(
-    agentId: string,
+export interface RuntimeCallbackFallbackHandoffBufferedStatus {
+  status: AgentStatus;
+  pendingCount: number;
+  contextUsage?: AgentContextUsage;
+}
+
+export interface RuntimeCallbackFallbackHandoffSnapshot {
+  suppressedRuntimeToken: number;
+  startedAt: string;
+  bufferedStatus?: RuntimeCallbackFallbackHandoffBufferedStatus;
+  receivedAgentEnd?: boolean;
+}
+
+export interface RuntimeCallbackFallbackHandoffReplayHandlers {
+  handleRuntimeStatus(
     runtimeToken: number,
+    targetAgentId: string,
     status: AgentStatus,
     pendingCount: number,
     contextUsage?: AgentContextUsage
-  ): boolean;
-  bufferAgentEndDuringHandoff(agentId: string, runtimeToken: number): boolean;
-  isSuppressedRuntimeCallback(agentId: string, runtimeToken?: number): boolean;
+  ): Promise<void>;
+  handleRuntimeAgentEnd(runtimeToken: number, targetAgentId: string): Promise<void>;
 }
 
 export interface RuntimeCallbackGateOptions {
   getCurrentRuntimeToken(agentId: string): number | undefined;
-  fallbackHandoff?: RuntimeCallbackFallbackHandoffAdapter | null;
+  now?: () => string;
 }
 
 /**
@@ -26,15 +39,9 @@ export interface RuntimeCallbackGateOptions {
  */
 export class RuntimeCallbackGate {
   private readonly intentionallyStoppedRuntimeTokensByAgentId = new Map<string, Set<number>>();
-  private fallbackHandoff: RuntimeCallbackFallbackHandoffAdapter | null;
+  private readonly fallbackHandoffsByAgentId = new Map<string, RuntimeCallbackFallbackHandoffSnapshot>();
 
-  constructor(private readonly options: RuntimeCallbackGateOptions) {
-    this.fallbackHandoff = options.fallbackHandoff ?? null;
-  }
-
-  setFallbackHandoffAdapter(adapter: RuntimeCallbackFallbackHandoffAdapter | null): void {
-    this.fallbackHandoff = adapter;
-  }
+  constructor(private readonly options: RuntimeCallbackGateOptions) {}
 
   suppressIntentionalStopRuntimeCallbacks(agentId: string, runtimeToken?: number): void {
     if (runtimeToken === undefined) {
@@ -67,6 +74,86 @@ export class RuntimeCallbackGate {
     }
   }
 
+  beginFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void {
+    if (suppressedRuntimeToken === undefined) {
+      return;
+    }
+
+    this.fallbackHandoffsByAgentId.set(agentId, {
+      suppressedRuntimeToken,
+      startedAt: this.options.now?.() ?? new Date().toISOString()
+    });
+  }
+
+  endFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void {
+    const handoff = this.fallbackHandoffsByAgentId.get(agentId);
+    if (!handoff) {
+      return;
+    }
+
+    if (suppressedRuntimeToken !== undefined && handoff.suppressedRuntimeToken !== suppressedRuntimeToken) {
+      return;
+    }
+
+    this.fallbackHandoffsByAgentId.delete(agentId);
+  }
+
+  getFallbackHandoffSnapshot(
+    agentId: string,
+    suppressedRuntimeToken?: number
+  ): RuntimeCallbackFallbackHandoffSnapshot | undefined {
+    if (suppressedRuntimeToken === undefined) {
+      return undefined;
+    }
+
+    const handoff = this.getSuppressedFallbackHandoff(agentId, suppressedRuntimeToken);
+    if (!handoff) {
+      return undefined;
+    }
+
+    return {
+      ...handoff,
+      bufferedStatus: handoff.bufferedStatus
+        ? {
+            ...handoff.bufferedStatus,
+            contextUsage: handoff.bufferedStatus.contextUsage
+              ? { ...handoff.bufferedStatus.contextUsage }
+              : undefined
+          }
+        : undefined
+    };
+  }
+
+  async reconcileBufferedCallbacksOnAbort(
+    agentId: string,
+    suppressedRuntimeToken: number | undefined,
+    handlers: RuntimeCallbackFallbackHandoffReplayHandlers
+  ): Promise<void> {
+    if (suppressedRuntimeToken === undefined) {
+      return;
+    }
+
+    const handoff = this.getFallbackHandoffSnapshot(agentId, suppressedRuntimeToken);
+    this.endFallbackHandoff(agentId, suppressedRuntimeToken);
+    if (!handoff) {
+      return;
+    }
+
+    if (handoff.bufferedStatus) {
+      await handlers.handleRuntimeStatus(
+        suppressedRuntimeToken,
+        agentId,
+        handoff.bufferedStatus.status,
+        handoff.bufferedStatus.pendingCount,
+        handoff.bufferedStatus.contextUsage
+      );
+    }
+
+    if (handoff.receivedAgentEnd) {
+      await handlers.handleRuntimeAgentEnd(suppressedRuntimeToken, agentId);
+    }
+  }
+
   bufferStatusDuringHandoff(
     agentId: string,
     runtimeToken: number | undefined,
@@ -78,13 +165,18 @@ export class RuntimeCallbackGate {
       return false;
     }
 
-    return this.fallbackHandoff?.bufferStatusDuringHandoff(
-      agentId,
-      runtimeToken,
+    const handoff = this.getSuppressedFallbackHandoff(agentId, runtimeToken);
+    if (!handoff) {
+      return false;
+    }
+
+    handoff.bufferedStatus = {
       status,
       pendingCount,
-      contextUsage
-    ) === true;
+      contextUsage: normalizeContextUsage(contextUsage)
+    };
+    this.fallbackHandoffsByAgentId.set(agentId, handoff);
+    return true;
   }
 
   bufferAgentEndDuringHandoff(agentId: string, runtimeToken?: number): boolean {
@@ -92,7 +184,14 @@ export class RuntimeCallbackGate {
       return false;
     }
 
-    return this.fallbackHandoff?.bufferAgentEndDuringHandoff(agentId, runtimeToken) === true;
+    const handoff = this.getSuppressedFallbackHandoff(agentId, runtimeToken);
+    if (!handoff) {
+      return false;
+    }
+
+    handoff.receivedAgentEnd = true;
+    this.fallbackHandoffsByAgentId.set(agentId, handoff);
+    return true;
   }
 
   isSuppressedRuntimeCallback(agentId: string, runtimeToken?: number): boolean {
@@ -104,7 +203,7 @@ export class RuntimeCallbackGate {
       return true;
     }
 
-    return this.fallbackHandoff?.isSuppressedRuntimeCallback(agentId, runtimeToken) === true;
+    return this.getSuppressedFallbackHandoff(agentId, runtimeToken) !== undefined;
   }
 
   shouldIgnoreRuntimeCallback(agentId: string, runtimeToken?: number): boolean {
@@ -121,5 +220,17 @@ export class RuntimeCallbackGate {
 
   private isIntentionalStopRuntimeCallbackSuppressed(agentId: string, runtimeToken: number): boolean {
     return this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId)?.has(runtimeToken) === true;
+  }
+
+  private getSuppressedFallbackHandoff(
+    agentId: string,
+    runtimeToken: number
+  ): RuntimeCallbackFallbackHandoffSnapshot | undefined {
+    const handoff = this.fallbackHandoffsByAgentId.get(agentId);
+    if (handoff?.suppressedRuntimeToken === runtimeToken) {
+      return handoff;
+    }
+
+    return undefined;
   }
 }

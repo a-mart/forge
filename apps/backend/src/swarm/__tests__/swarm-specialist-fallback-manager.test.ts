@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
+import { RuntimeCallbackGate } from "../runtime/runtime-callback-gate.js";
 import { SwarmSpecialistFallbackManager } from "../swarm-specialist-fallback-manager.js";
 import { SwarmWorkerHealthService } from "../swarm-worker-health-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
@@ -116,6 +117,26 @@ function buildWorkerDescriptor(config: SwarmConfig, overrides: Partial<AgentDesc
     },
     ...overrides
   };
+}
+
+function attachRealFallbackHandoff(
+  manager: SwarmSpecialistFallbackManager,
+  runtimeTokensByAgentId: Map<string, number>
+): RuntimeCallbackGate {
+  const gate = new RuntimeCallbackGate({
+    getCurrentRuntimeToken: (agentId) => runtimeTokensByAgentId.get(agentId)
+  });
+  manager.setFallbackHandoffController({
+    beginFallbackHandoff: (agentId, suppressedRuntimeToken) =>
+      gate.beginFallbackHandoff(agentId, suppressedRuntimeToken),
+    endFallbackHandoff: (agentId, suppressedRuntimeToken) =>
+      gate.endFallbackHandoff(agentId, suppressedRuntimeToken),
+    getFallbackHandoffSnapshot: (agentId, suppressedRuntimeToken) =>
+      gate.getFallbackHandoffSnapshot(agentId, suppressedRuntimeToken),
+    reconcileBufferedCallbacksOnAbort: (agentId, suppressedRuntimeToken, handlers) =>
+      gate.reconcileBufferedCallbacksOnAbort(agentId, suppressedRuntimeToken, handlers)
+  });
+  return gate;
 }
 
 afterEach(() => {
@@ -554,6 +575,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       clearTrackedToolPaths: vi.fn(),
       logDebug: vi.fn()
     });
+    const gate = attachRealFallbackHandoff(manager, runtimeTokensByAgentId);
 
     const handleRuntimeStatus = vi.fn();
     const handleRuntimeAgentEnd = vi.fn();
@@ -567,7 +589,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       handleRuntimeAgentEnd
     });
 
-    expect(manager.bufferStatusDuringHandoff(worker.agentId, 9, "streaming", 2, { tokens: 1, contextWindow: 10, percent: 5 })).toBe(
+    expect(gate.bufferStatusDuringHandoff(worker.agentId, 9, "streaming", 2, { tokens: 1, contextWindow: 10, percent: 5 })).toBe(
       true
     );
 
@@ -914,13 +936,13 @@ describe("SwarmSpecialistFallbackManager", () => {
     });
 
     const replayOrder: string[] = [];
-    const managerRef: { current?: SwarmSpecialistFallbackManager } = {};
+    const gateRef: { current?: RuntimeCallbackGate } = {};
     const handleRuntimeStatus = vi.fn(async () => {
-      expect(managerRef.current?.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
+      expect(gateRef.current?.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
       replayOrder.push("status");
     });
     const handleRuntimeAgentEnd = vi.fn(async () => {
-      expect(managerRef.current?.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
+      expect(gateRef.current?.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
       replayOrder.push("agent_end");
     });
     const manager = new SwarmSpecialistFallbackManager({
@@ -945,7 +967,8 @@ describe("SwarmSpecialistFallbackManager", () => {
       clearTrackedToolPaths: vi.fn(),
       logDebug: vi.fn()
     });
-    managerRef.current = manager;
+    const gate = attachRealFallbackHandoff(manager, runtimeTokensByAgentId);
+    gateRef.current = gate;
 
     const recovery = manager.maybeRecoverWorkerWithSpecialistFallback({
       agentId: worker.agentId,
@@ -956,13 +979,13 @@ describe("SwarmSpecialistFallbackManager", () => {
       handleRuntimeAgentEnd
     });
 
-    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(true);
-    expect(manager.bufferStatusDuringHandoff(worker.agentId, 41, "streaming", 2, {
+    expect(gate.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(true);
+    expect(gate.bufferStatusDuringHandoff(worker.agentId, 41, "streaming", 2, {
       tokens: 5,
       contextWindow: 50,
       percent: 10
     })).toBe(true);
-    expect(manager.bufferAgentEndDuringHandoff(worker.agentId, 41)).toBe(true);
+    expect(gate.bufferAgentEndDuringHandoff(worker.agentId, 41)).toBe(true);
 
     continueRoster([]);
 
@@ -977,7 +1000,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       expect.objectContaining({ tokens: 5 })
     );
     expect(handleRuntimeAgentEnd).toHaveBeenCalledWith(41, worker.agentId);
-    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
+    expect(gate.isSuppressedRuntimeCallback(worker.agentId, 41)).toBe(false);
   });
 
   it("ends successful fallback handoff without replaying buffered old-runtime callbacks", async () => {
@@ -1055,6 +1078,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       clearTrackedToolPaths: vi.fn(),
       logDebug: vi.fn()
     });
+    const gate = attachRealFallbackHandoff(manager, runtimeTokensByAgentId);
 
     const recovery = manager.maybeRecoverWorkerWithSpecialistFallback({
       agentId: worker.agentId,
@@ -1067,12 +1091,12 @@ describe("SwarmSpecialistFallbackManager", () => {
 
     await createStarted;
     expect(runtimeTokensByAgentId.get(worker.agentId)).toBe(replacementRuntimeToken);
-    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 42)).toBe(true);
-    expect(manager.isSuppressedRuntimeCallback(worker.agentId, replacementRuntimeToken)).toBe(false);
-    expect(manager.bufferStatusDuringHandoff(worker.agentId, 42, "idle", 0)).toBe(true);
-    expect(manager.bufferStatusDuringHandoff(worker.agentId, replacementRuntimeToken, "streaming", 1)).toBe(false);
-    expect(manager.bufferAgentEndDuringHandoff(worker.agentId, 42)).toBe(true);
-    expect(manager.bufferAgentEndDuringHandoff(worker.agentId, replacementRuntimeToken)).toBe(false);
+    expect(gate.isSuppressedRuntimeCallback(worker.agentId, 42)).toBe(true);
+    expect(gate.isSuppressedRuntimeCallback(worker.agentId, replacementRuntimeToken)).toBe(false);
+    expect(gate.bufferStatusDuringHandoff(worker.agentId, 42, "idle", 0)).toBe(true);
+    expect(gate.bufferStatusDuringHandoff(worker.agentId, replacementRuntimeToken, "streaming", 1)).toBe(false);
+    expect(gate.bufferAgentEndDuringHandoff(worker.agentId, 42)).toBe(true);
+    expect(gate.bufferAgentEndDuringHandoff(worker.agentId, replacementRuntimeToken)).toBe(false);
 
     const replacement = new FakeRuntime(
       {
@@ -1087,8 +1111,8 @@ describe("SwarmSpecialistFallbackManager", () => {
 
     expect(handleRuntimeStatus).not.toHaveBeenCalled();
     expect(handleRuntimeAgentEnd).not.toHaveBeenCalled();
-    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 42)).toBe(false);
-    expect(manager.isSuppressedRuntimeCallback(worker.agentId, replacementRuntimeToken)).toBe(false);
+    expect(gate.isSuppressedRuntimeCallback(worker.agentId, 42)).toBe(false);
+    expect(gate.isSuppressedRuntimeCallback(worker.agentId, replacementRuntimeToken)).toBe(false);
     expect(runtimeTokensByAgentId.get(worker.agentId)).toBe(replacementRuntimeToken);
     expect(attachRuntime).toHaveBeenCalledWith(worker.agentId, replacement);
   });
@@ -1153,6 +1177,7 @@ describe("SwarmSpecialistFallbackManager", () => {
       clearTrackedToolPaths: vi.fn(),
       logDebug: vi.fn()
     });
+    const gate = attachRealFallbackHandoff(manager, runtimeTokensByAgentId);
 
     const recovery = manager.maybeRecoverWorkerWithSpecialistFallback({
       agentId: worker.agentId,
@@ -1164,7 +1189,7 @@ describe("SwarmSpecialistFallbackManager", () => {
     });
 
     await Promise.resolve();
-    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 31)).toBe(true);
+    expect(gate.isSuppressedRuntimeCallback(worker.agentId, 31)).toBe(true);
 
     const replacement = new FakeRuntime(
       {
@@ -1177,7 +1202,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
     await recovery;
 
-    expect(manager.isSuppressedRuntimeCallback(worker.agentId, 31)).toBe(false);
+    expect(gate.isSuppressedRuntimeCallback(worker.agentId, 31)).toBe(false);
   });
 
   it("is wired on SwarmManager after booting a default manager", async () => {
