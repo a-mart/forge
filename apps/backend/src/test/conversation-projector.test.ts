@@ -1588,6 +1588,57 @@ describe('ConversationProjector session tree continuity', () => {
     expect(regularEntry && 'pinned' in regularEntry ? regularEntry.pinned : undefined).toBeUndefined()
   })
 
+  it('toggles in-memory pinned state through the facade without touching other messages', () => {
+    const descriptor = makeDescriptor(join(tmpdir(), 'conversation-projector-pin-facade.jsonl'), tmpdir())
+    const entries: ConversationEntryEvent[] = [
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        id: 'target-msg',
+        role: 'assistant',
+        text: 'Target message',
+        timestamp: FIXED_NOW,
+        source: 'system',
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        id: 'other-msg',
+        role: 'assistant',
+        text: 'Other message',
+        timestamp: FIXED_NOW,
+        source: 'system',
+        pinned: true,
+      },
+      {
+        type: 'conversation_log',
+        agentId: descriptor.agentId,
+        timestamp: FIXED_NOW,
+        source: 'runtime_log',
+        kind: 'message_start',
+        text: 'Non-message entry',
+        pinned: true,
+      } as ConversationEntryEvent,
+    ]
+    const projector = makeProjector({
+      descriptor,
+      conversationEntriesByAgentId: new Map([[descriptor.agentId, entries]]),
+    })
+
+    projector.setConversationMessagePinned(descriptor.agentId, 'target-msg', true)
+
+    expect(entries[0]).toMatchObject({ type: 'conversation_message', id: 'target-msg', pinned: true })
+    expect(entries[1]).toMatchObject({ type: 'conversation_message', id: 'other-msg', pinned: true })
+    expect(entries[2]).toHaveProperty('pinned', true)
+
+    projector.setConversationMessagePinned(descriptor.agentId, 'target-msg', false)
+
+    expect(entries[0]).toMatchObject({ type: 'conversation_message', id: 'target-msg' })
+    expect(entries[0] && 'pinned' in entries[0] ? entries[0].pinned : undefined).toBeUndefined()
+    expect(entries[1]).toMatchObject({ type: 'conversation_message', id: 'other-msg', pinned: true })
+    expect(entries[2]).toHaveProperty('pinned', true)
+  })
+
   it('treats pinned-message sidecar state as authoritative over cached pinned flags', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-cache-pins-'))
     const sessionFile = join(root, 'manager.jsonl')

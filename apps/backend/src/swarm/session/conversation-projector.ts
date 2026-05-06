@@ -19,6 +19,7 @@ import {
   shouldPersistConversationEntry,
   trimConversationHistory
 } from "./history-policy.js";
+import { applyPinOverlay, setPinnedFlagInMemory } from "./pin-overlay.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import {
@@ -130,17 +131,7 @@ export class ConversationProjector {
       return;
     }
 
-    for (const entry of history) {
-      if (entry.type !== "conversation_message" || entry.id !== messageId) {
-        continue;
-      }
-
-      if (pinned) {
-        entry.pinned = true;
-      } else {
-        delete entry.pinned;
-      }
-    }
+    setPinnedFlagInMemory(history, messageId, pinned);
   }
 
   resetConversationHistory(agentId: string, sessionFile?: string): void {
@@ -622,27 +613,7 @@ export class ConversationProjector {
   }
 
   private applyPinnedState(agentId: string, entries: ConversationEntryEvent[]): void {
-    const pinnedMessageIds = this.deps.getPinnedMessageIds?.(agentId);
-    if (!pinnedMessageIds || pinnedMessageIds.size === 0) {
-      for (const entry of entries) {
-        if (entry.type === "conversation_message") {
-          delete entry.pinned;
-        }
-      }
-      return;
-    }
-
-    for (const entry of entries) {
-      if (entry.type !== "conversation_message") {
-        continue;
-      }
-
-      if (entry.id && pinnedMessageIds.has(entry.id)) {
-        entry.pinned = true;
-      } else {
-        delete entry.pinned;
-      }
-    }
+    applyPinOverlay(entries, this.deps.getPinnedMessageIds?.(agentId));
   }
 
   private readSessionFileCanonicalStat(sessionFile: string) {
