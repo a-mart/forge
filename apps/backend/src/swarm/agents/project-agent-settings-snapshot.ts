@@ -19,12 +19,10 @@ export class ProjectAgentSettingsSnapshotReader {
 
   async read(agentId: string): Promise<ProjectAgentSettingsSnapshot> {
     const scope = this.options.registry.assertReferenceScope(agentId);
-    const [references, record] = await Promise.all([
-      listProjectAgentReferenceDocs(this.options.dataDir, scope.profileId, scope.handle),
-      this.options.registry.readRecord(scope.profileId, scope.handle)
-    ]);
+    const record = await this.options.registry.readRecord(scope.profileId, scope.handle);
 
-    if (record) {
+    if (record?.config.agentId === agentId) {
+      const references = await listProjectAgentReferenceDocs(this.options.dataDir, scope.profileId, scope.handle);
       return {
         config: record.config,
         systemPrompt: record.systemPrompt,
@@ -35,7 +33,7 @@ export class ProjectAgentSettingsSnapshotReader {
     return {
       config: this.options.registry.buildFallbackConfig(scope, this.options.now?.()),
       systemPrompt: scope.descriptor.projectAgent.systemPrompt ?? null,
-      references
+      references: []
     };
   }
 }

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileBackedPromptRegistry } from "../prompts/prompt-registry.js";
 import { writeProjectAgentRecord } from "../project-agent-storage.js";
+import { writeProjectAgentReferenceDoc } from "../reference-docs.js";
 import { writeReferenceDoc } from "../storage/asset-root-storage.js";
 import { SwarmPromptService } from "../swarm-prompt-service.js";
 import type { SkillMetadata } from "../skills/skill-metadata-service.js";
@@ -581,6 +582,82 @@ describe("SwarmPromptService", () => {
     expect(resolved).not.toContain("Legacy reference should not be injected.");
   });
 
+  it("buildResolvedManagerPrompt and prompt override ignore foreign project-agent handle records", async () => {
+    const { config } = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const profileId = "manager";
+    const sharedHandle = "shared-handle";
+    await writeProjectAgentRecord(
+      dataDir,
+      profileId,
+      {
+        version: 1,
+        agentId: "agent-b",
+        handle: sharedHandle,
+        whenToUse: "winner",
+        promotedAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-02T00:00:00.000Z"
+      },
+      "Winner on-disk prompt"
+    );
+    await writeProjectAgentReferenceDoc(dataDir, profileId, sharedHandle, "winner.md", "Winner reference");
+
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "agent-a",
+      projectAgent: {
+        handle: sharedHandle,
+        whenToUse: "loser",
+        systemPrompt: "Loser descriptor prompt"
+      }
+    });
+    const promptRegistry = new FileBackedPromptRegistry({
+      dataDir: config.paths.dataDir,
+      repoDir: config.paths.rootDir,
+      builtinArchetypesDir: BUILTIN_ARCHETYPES,
+      builtinOperationalDir: BUILTIN_OPERATIONAL
+    });
+    const sessionMemoryPath = resolveMemoryFilePath(dataDir, descriptor, undefined);
+    await ensureMemoryFile(sessionMemoryPath, "# Session mem\n");
+    await ensureMemoryFile(getProfileMemoryPath(dataDir, profileId), "# Profile mem\n");
+    await ensureMemoryFile(getCommonKnowledgePath(dataDir), "");
+    const service = new SwarmPromptService({
+      config,
+      descriptors: new Map([[descriptor.agentId, descriptor]]),
+      profiles: new Map([[profileId, createProfile(descriptor.agentId)]]),
+      promptRegistry,
+      skillMetadataService: {
+        ensureSkillMetadataLoaded: async () => {},
+        getSkillMetadata: () => [],
+        getAdditionalSkillPaths: () => []
+      } as never,
+      getAgentMemoryPath: () => sessionMemoryPath,
+      ensureAgentMemoryFile: async (path) => ensureMemoryFile(path, "# m\n"),
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => profileId,
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [descriptor],
+      loadSpecialistRegistryModule: async () => specialistRegistryStub(),
+      getIntegrationContext: () => undefined,
+      logDebug: () => {}
+    });
+
+    const override = await service.resolveProjectAgentSystemPromptOverride(descriptor);
+    expect(override).toEqual({ prompt: "Loser descriptor prompt", sourcePath: undefined });
+
+    const resolved = await service.buildResolvedManagerPrompt(descriptor);
+    expect(resolved).not.toContain("Winner reference");
+    expect(resolved).not.toContain("Winner on-disk prompt");
+
+    const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
+    const systemSection = preview.sections.find((section) => section.label === "System Prompt");
+    expect(systemSection).toBeDefined();
+    expect(systemSection?.source).toBe(`project-agent-descriptor:${sharedHandle}`);
+    expect(typeof systemSection?.source).toBe("string");
+    expect(systemSection?.content).toContain("Loser descriptor prompt");
+    expect(systemSection?.content).not.toContain("Winner on-disk prompt");
+  });
+
   it("resolveProjectAgentSystemPromptOverride prefers on-disk project agent prompt.md", async () => {
     const { config } = await makeConfig();
     const dataDir = config.paths.dataDir;
@@ -598,6 +675,7 @@ describe("SwarmPromptService", () => {
     await writeProjectAgentRecord(dataDir, profileId, paConfig, "On-disk override body for tests.");
 
     const descriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "agent-1",
       projectAgent: {
         handle,
         whenToUse: "test"

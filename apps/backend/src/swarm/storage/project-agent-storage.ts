@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { readPromptFile, writePromptFile } from "./asset-root-storage.js";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -84,15 +84,38 @@ export async function deleteProjectAgentRecordByDirPath(
   profileId: string,
   dirPath: string
 ): Promise<void> {
-  const projectAgentsDir = resolve(getProjectAgentsDir(dataDir, profileId));
-  const targetDir = resolve(dirPath);
-  const relativeTarget = relative(projectAgentsDir, targetDir);
+  const targetDir = assertProjectAgentDirPathInProfile(dataDir, profileId, dirPath, "delete");
+  await rm(targetDir, { recursive: true, force: true });
+}
 
-  if (!relativeTarget || relativeTarget.startsWith("..") || isAbsolute(relativeTarget)) {
-    throw new Error(`Refusing to delete project-agent directory outside profile scope: ${dirPath}`);
+export async function normalizeProjectAgentRecordDirectory(
+  dataDir: string,
+  profileId: string,
+  record: ProjectAgentOnDiskRecord
+): Promise<ProjectAgentOnDiskRecord> {
+  const sourceDir = assertProjectAgentDirPathInProfile(dataDir, profileId, record.dirPath, "move");
+  const canonicalDir = resolve(getProjectAgentDir(dataDir, profileId, record.config.handle));
+
+  if (sourceDir === canonicalDir) {
+    return record;
   }
 
-  await rm(targetDir, { recursive: true, force: true });
+  try {
+    await access(canonicalDir);
+    throw new Error(`Refusing to move project-agent directory onto existing canonical directory: ${canonicalDir}`);
+  } catch (error) {
+    if (!isEnoentError(error)) {
+      throw error;
+    }
+  }
+
+  await mkdir(dirname(canonicalDir), { recursive: true });
+  await rename(sourceDir, canonicalDir);
+
+  return {
+    ...record,
+    dirPath: canonicalDir
+  };
 }
 
 export async function readProjectAgentRecord(
@@ -245,6 +268,23 @@ export function normalizeProjectAgentCapabilities(value: unknown): ProjectAgentC
       )
     )
   ).sort((left, right) => PROJECT_AGENT_CAPABILITIES.indexOf(left) - PROJECT_AGENT_CAPABILITIES.indexOf(right));
+}
+
+function assertProjectAgentDirPathInProfile(
+  dataDir: string,
+  profileId: string,
+  dirPath: string,
+  operation: string
+): string {
+  const projectAgentsDir = resolve(getProjectAgentsDir(dataDir, profileId));
+  const targetDir = resolve(dirPath);
+  const relativeTarget = relative(projectAgentsDir, targetDir);
+
+  if (!relativeTarget || relativeTarget.startsWith("..") || isAbsolute(relativeTarget)) {
+    throw new Error(`Refusing to ${operation} project-agent directory outside profile scope: ${dirPath}`);
+  }
+
+  return targetDir;
 }
 
 function buildTempSiblingPath(targetPath: string): string {

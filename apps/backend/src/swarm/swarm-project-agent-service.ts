@@ -301,12 +301,12 @@ export class SwarmProjectAgentService {
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {
-    const { profileId, handle } = this.registry.assertReferenceScope(agentId);
+    const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
     return listProjectAgentReferenceDocs(this.options.dataDir, profileId, handle);
   }
 
   async getProjectAgentReference(agentId: string, fileName: string): Promise<string> {
-    const { profileId, handle } = this.registry.assertReferenceScope(agentId);
+    const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
     const content = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
     if (content === null) {
       throw new Error(`Reference document ${fileName} does not exist`);
@@ -315,7 +315,7 @@ export class SwarmProjectAgentService {
   }
 
   async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<ProjectAgentMutationFlags> {
-    const { profileId, handle } = this.registry.assertReferenceScope(agentId);
+    const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
     const existingContent = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
     const mutation = planProjectAgentReferenceWriteMutation({ fileName, content, existingContent });
     if (mutation.changed) {
@@ -325,7 +325,7 @@ export class SwarmProjectAgentService {
   }
 
   async deleteProjectAgentReference(agentId: string, fileName: string): Promise<ProjectAgentMutationFlags> {
-    const { profileId, handle } = this.registry.assertReferenceScope(agentId);
+    const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
     const existingContent = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
     const mutation = planProjectAgentReferenceDeleteMutation({ fileName, existingContent });
     if (mutation.changed) {

@@ -1,3 +1,4 @@
+import { basename, resolve } from "node:path";
 import {
   PROJECT_AGENT_CAPABILITIES,
   type PersistedProjectAgentConfig,
@@ -5,12 +6,13 @@ import {
 } from "@forge/protocol";
 import {
   deleteProjectAgentRecordByDirPath,
+  normalizeProjectAgentRecordDirectory,
   readProjectAgentRecord,
   scanProjectAgentRecords,
   writeProjectAgentRecord,
   type ProjectAgentOnDiskRecord
 } from "../storage/project-agent-storage.js";
-import { sanitizePathSegment } from "../storage/data-paths.js";
+import { getProjectAgentDir, sanitizePathSegment } from "../storage/data-paths.js";
 import type { AgentDescriptor } from "../types.js";
 
 export interface ProjectAgentDirectoryEntry {
@@ -182,6 +184,18 @@ export class ProjectAgentRegistry {
     };
   }
 
+  async assertOwnedReferenceScope(agentId: string): Promise<ProjectAgentReferenceScope> {
+    const scope = this.assertReferenceScope(agentId);
+    const record = await this.readRecord(scope.profileId, scope.handle);
+    if (record && record.config.agentId !== agentId) {
+      throw new Error(
+        `Project agent ${agentId} handle ${scope.handle} is owned on disk by ${record.config.agentId}; refusing to access another agent's data`
+      );
+    }
+
+    return scope;
+  }
+
   buildFallbackConfig(scope: ProjectAgentReferenceScope, now = new Date().toISOString()): PersistedProjectAgentConfig {
     return {
       version: 1,
@@ -213,7 +227,8 @@ export class ProjectAgentRegistry {
     const descriptorsByAgentId = new Map(profileDescriptors.map((descriptor) => [descriptor.agentId, descriptor]));
 
     const scannedRecords = await this.scanRecords(profileId);
-    const dedupedRecords = await this.resolveDuplicateRecords(profileId, scannedRecords);
+    const collisionFilteredRecords = await this.filterCollidingDriftRecords(profileId, scannedRecords);
+    const dedupedRecords = await this.resolveDuplicateRecords(profileId, collisionFilteredRecords);
     const survivingRecords: ProjectAgentOnDiskRecord[] = [];
 
     for (const record of dedupedRecords) {
@@ -227,9 +242,14 @@ export class ProjectAgentRegistry {
         continue;
       }
 
-      survivingRecords.push(record);
+      const normalizedRecord = await this.normalizeRecordDirectory(profileId, record);
+      if (!normalizedRecord) {
+        continue;
+      }
 
-      if (hydrateDescriptorFromRecord(descriptor, record)) {
+      survivingRecords.push(normalizedRecord);
+
+      if (hydrateDescriptorFromRecord(descriptor, normalizedRecord)) {
         result.hydrated.push(descriptor.agentId);
       }
     }
@@ -287,6 +307,100 @@ export class ProjectAgentRegistry {
     }
 
     return result;
+  }
+
+  private async normalizeRecordDirectory(
+    profileId: string,
+    record: ProjectAgentOnDiskRecord
+  ): Promise<ProjectAgentOnDiskRecord | null> {
+    const sourceDir = resolve(record.dirPath);
+    const canonicalDir = resolve(getProjectAgentDir(this.options.dataDir, profileId, record.config.handle));
+    if (sourceDir !== canonicalDir) {
+      const canonicalRecord = await this.readRecord(profileId, record.config.handle);
+      if (canonicalRecord && canonicalRecord.config.agentId !== record.config.agentId) {
+        console.warn(
+          `[swarm] project-agent-registry:remove_colliding_drift profile=${profileId} agentId=${record.config.agentId} handle=${record.config.handle} dirPath=${record.dirPath} canonicalAgentId=${canonicalRecord.config.agentId}`
+        );
+        await deleteProjectAgentRecordByDirPath(this.options.dataDir, profileId, record.dirPath);
+        return null;
+      }
+    }
+
+    try {
+      const normalizedRecord = await normalizeProjectAgentRecordDirectory(this.options.dataDir, profileId, record);
+      if (normalizedRecord.dirPath !== record.dirPath) {
+        console.info(
+          `[swarm] project-agent-registry:normalize_dir profile=${profileId} agentId=${record.config.agentId} handle=${record.config.handle} oldDirPath=${record.dirPath} newDirPath=${normalizedRecord.dirPath}`
+        );
+      }
+      return normalizedRecord;
+    } catch (error) {
+      console.warn(
+        `[swarm] project-agent-registry:normalize_dir_failed profile=${profileId} agentId=${record.config.agentId} handle=${record.config.handle} dirPath=${record.dirPath} error=${error instanceof Error ? error.message : String(error)}`
+      );
+      return record;
+    }
+  }
+
+  private async filterCollidingDriftRecords(
+    profileId: string,
+    records: ProjectAgentOnDiskRecord[]
+  ): Promise<ProjectAgentOnDiskRecord[]> {
+    const filteredRecords: ProjectAgentOnDiskRecord[] = [];
+    for (const record of records) {
+      const sourceDir = resolve(record.dirPath);
+      const canonicalDir = resolve(getProjectAgentDir(this.options.dataDir, profileId, record.config.handle));
+      if (sourceDir !== canonicalDir) {
+        const canonicalRecord = await this.readRecord(profileId, record.config.handle);
+        if (canonicalRecord && canonicalRecord.config.agentId !== record.config.agentId) {
+          this.repairDescriptorHandleFromCollidingDrift(profileId, record, canonicalRecord.config.agentId);
+          console.warn(
+            `[swarm] project-agent-registry:remove_colliding_drift profile=${profileId} agentId=${record.config.agentId} handle=${record.config.handle} dirPath=${record.dirPath} canonicalAgentId=${canonicalRecord.config.agentId}`
+          );
+          await deleteProjectAgentRecordByDirPath(this.options.dataDir, profileId, record.dirPath);
+          continue;
+        }
+      }
+
+      filteredRecords.push(record);
+    }
+
+    return filteredRecords;
+  }
+
+  private repairDescriptorHandleFromCollidingDrift(
+    profileId: string,
+    record: ProjectAgentOnDiskRecord,
+    canonicalAgentId: string
+  ): void {
+    const descriptor = this.options.descriptors.get(record.config.agentId);
+    if (descriptor?.role !== "manager" || descriptor.profileId !== profileId || !descriptor.projectAgent) {
+      return;
+    }
+
+    if (descriptor.projectAgent.handle !== record.config.handle) {
+      return;
+    }
+
+    const recoveredHandle = basename(record.dirPath);
+    let normalizedRecoveredHandle: string;
+    try {
+      normalizedRecoveredHandle = sanitizePathSegment(recoveredHandle);
+    } catch {
+      return;
+    }
+
+    if (!isNonEmptyString(normalizedRecoveredHandle) || normalizedRecoveredHandle === record.config.handle) {
+      return;
+    }
+
+    descriptor.projectAgent = {
+      ...descriptor.projectAgent,
+      handle: normalizedRecoveredHandle
+    };
+    console.warn(
+      `[swarm] project-agent-registry:repair_descriptor_handle_from_colliding_drift profile=${profileId} agentId=${descriptor.agentId} oldHandle=${record.config.handle} recoveredHandle=${normalizedRecoveredHandle} canonicalAgentId=${canonicalAgentId}`
+    );
   }
 
   private async resolveDuplicateRecords(
