@@ -282,6 +282,12 @@ describe("SwarmManager project-agent sendMessage routing", () => {
 
     await secondBoot.sendMessage(sender.agentId, target.agentId, "Need a release summary", "auto");
 
+    const secondBootTargetRuntime = secondBoot.runtimeByAgentId.get(target.agentId);
+    expect(secondBootTargetRuntime?.sendCalls[0]).toEqual({
+      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager"}\n\nNeed a release summary`,
+      delivery: "auto"
+    });
+
     const cacheFile = getConversationHistoryCacheFilePath(target.sessionFile);
     await waitForFileText(cacheFile, {
       matches: (text) =>
@@ -298,13 +304,22 @@ describe("SwarmManager project-agent sendMessage routing", () => {
           entry.type === "conversation_message" && entry.text === "persisted history before async delivery"
       )
     ).toBe(true);
-    expect(
-      history.some(
-        (entry) =>
-          entry.type === "conversation_message" &&
-          entry.source === "project_agent_input" &&
-          entry.text === "Need a release summary"
-      )
-    ).toBe(true);
+    const deliveredMessage = history.find(
+      (entry) =>
+        entry.type === "conversation_message" &&
+        entry.source === "project_agent_input" &&
+        entry.text === "Need a release summary"
+    );
+    expect(deliveredMessage).toMatchObject({
+      type: "conversation_message",
+      source: "project_agent_input",
+      text: "Need a release summary",
+      projectAgentContext: {
+        fromAgentId: sender.agentId,
+        fromDisplayName: "manager"
+      }
+    });
+    expect(deliveredMessage).not.toHaveProperty("sourceContext");
+    expect(deliveredMessage).not.toHaveProperty("attachments");
   });
 });

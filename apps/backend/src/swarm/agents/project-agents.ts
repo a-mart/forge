@@ -1,7 +1,7 @@
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
 import type {
   AgentDescriptor,
-  ConversationMessageEvent,
+  ProjectAgentMessageContext,
   RequestedDeliveryMode,
   SendMessageReceipt
 } from "../types.js";
@@ -58,8 +58,6 @@ const PROJECT_AGENT_RATE_LIMIT_ERROR =
 interface DeliverProjectAgentMessageDependencies {
   now: () => string;
   getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<SwarmAgentRuntime>;
-  emitConversationMessage: (event: ConversationMessageEvent) => void;
-  markSessionActivity?: (agentId: string, timestamp?: string) => void;
   rateLimitBuckets: Map<string, number[]>;
 }
 
@@ -68,6 +66,16 @@ interface DeliverProjectAgentMessageOptions {
   target: AgentDescriptor;
   message: string;
   delivery: RequestedDeliveryMode;
+}
+
+export interface ProjectAgentDeliveryResult {
+  receipt: SendMessageReceipt;
+  inboundPayload: {
+    text: string;
+    runtimeText: string;
+    timestamp: string;
+    projectAgentContext: ProjectAgentMessageContext;
+  };
 }
 
 export function formatProjectAgentRuntimeMessage(context: {
@@ -80,7 +88,7 @@ export function formatProjectAgentRuntimeMessage(context: {
 export async function deliverProjectAgentMessage(
   deps: DeliverProjectAgentMessageDependencies,
   options: DeliverProjectAgentMessageOptions
-): Promise<SendMessageReceipt> {
+): Promise<ProjectAgentDeliveryResult> {
   const sender = assertManagerSession(options.sender, "sender");
   const target = assertManagerSession(options.target, "target");
 
@@ -102,24 +110,19 @@ export async function deliverProjectAgentMessage(
     fromDisplayName: getProjectAgentPublicName(sender)
   };
 
+  const runtimeText = formatProjectAgentRuntimeMessage(projectAgentContext, options.message);
   const runtime = await deps.getOrCreateRuntimeForDescriptor(target);
-  const receipt = await runtime.sendMessage(
-    formatProjectAgentRuntimeMessage(projectAgentContext, options.message),
-    options.delivery
-  );
+  const receipt = await runtime.sendMessage(runtimeText, options.delivery);
 
-  deps.emitConversationMessage({
-    type: "conversation_message",
-    agentId: target.agentId,
-    role: "user",
-    text: options.message,
-    timestamp,
-    source: "project_agent_input",
-    projectAgentContext
-  });
-  deps.markSessionActivity?.(target.agentId, timestamp);
-
-  return receipt;
+  return {
+    receipt,
+    inboundPayload: {
+      text: options.message,
+      runtimeText,
+      timestamp,
+      projectAgentContext
+    }
+  };
 }
 
 function assertManagerSession(

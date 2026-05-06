@@ -36,7 +36,7 @@ vi.mock('../project-agent-analysis.js', async () => {
   }
 })
 
-import type { AgentDescriptor, SwarmConfig } from '../types.js'
+import type { AgentDescriptor, ConversationAttachment, SwarmConfig } from '../types.js'
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from '../runtime-contracts.js'
 import { FakeRuntime, TestSwarmManager as TestSwarmManagerBase, bootWithDefaultManager } from '../../test-support/index.js'
 
@@ -783,8 +783,18 @@ describe('SwarmManager', () => {
     state.runtimes.delete(sessionAgent.agentId)
     manager.runtimeByAgentId.delete(sessionAgent.agentId)
 
+    const attachments: ConversationAttachment[] = [
+      {
+        type: 'text',
+        mimeType: 'text/plain',
+        text: 'attachment content that must not be expanded for project-agent delivery',
+        fileName: 'notes.txt',
+      },
+    ]
     const createdRuntimeCountBeforeSend = manager.createdRuntimeIds.length
-    const receipt = await manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto')
+    const receipt = await manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto', {
+      attachments,
+    })
 
     expect(receipt.targetAgentId).toBe(sessionAgent.agentId)
     expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforeSend + 1)
@@ -810,6 +820,7 @@ describe('SwarmManager', () => {
     expect(projectAgentMessage?.type).toBe('conversation_message')
     if (projectAgentMessage?.type === 'conversation_message') {
       expect(projectAgentMessage.sourceContext).toBeUndefined()
+      expect(projectAgentMessage.attachments).toBeUndefined()
       expect(projectAgentMessage.projectAgentContext).toEqual({
         fromAgentId: 'manager',
         fromDisplayName: 'manager',
@@ -829,6 +840,43 @@ describe('SwarmManager', () => {
           entry.text === 'Please draft release notes.',
       ),
     ).toBe(true)
+  })
+
+  it('does not append target transcript or mark activity when project-agent runtime send fails', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    state.runtimes.delete(sessionAgent.agentId)
+    manager.runtimeByAgentId.delete(sessionAgent.agentId)
+    manager.onCreateRuntime = ({ runtime }) => {
+      runtime.sendMessageError = new Error('runtime send failed')
+    }
+    const updatedAtBeforeSend = manager.getAgent(sessionAgent.agentId)?.updatedAt
+
+    await expect(
+      manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto'),
+    ).rejects.toThrow('runtime send failed')
+
+    expect(manager.getAgent(sessionAgent.agentId)?.updatedAt).toBe(updatedAtBeforeSend)
+    expect(
+      manager
+        .getConversationHistory(sessionAgent.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.source === 'project_agent_input' &&
+            entry.text === 'Please draft release notes.',
+        ),
+    ).toBe(false)
   })
 
   it('keeps promoted-session self-sends on the generic manager path', async () => {

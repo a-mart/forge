@@ -99,11 +99,7 @@ import {
   type ProjectAgentRecommendations
 } from "./project-agent-analysis.js";
 import { deleteProjectAgentRecord } from "./project-agent-storage.js";
-import {
-  deliverProjectAgentMessage,
-  formatProjectAgentRuntimeMessage,
-  getProjectAgentPublicName
-} from "./project-agents.js";
+import { deliverProjectAgentMessage } from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
 import { ForgeExtensionHost } from "./forge-extension-host.js";
 import type { VersioningCommitEvent as ForgeVersioningCommitEvent } from "./forge-extension-types.js";
@@ -305,6 +301,23 @@ export interface DispatchRuntimeUserMessageOptions {
   runtimeAttachments?: ConversationAttachment[];
   persistedAttachmentCount?: number;
   delivery?: RequestedDeliveryMode;
+}
+
+interface PreparedInboundConversationPayload {
+  text: string;
+  runtimeText?: string;
+  timestamp?: string;
+  source: "user_input" | "project_agent_input";
+  sourceContext?: MessageSourceContext;
+  collaborationAuthor?: CollaborationAuthor;
+  projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
+  attachments?: ConversationAttachment[];
+}
+
+interface AppendPreparedInboundConversationPayloadResult {
+  event: ConversationMessageEvent;
+  persistedAttachments: ConversationAttachment[];
+  runtimeAttachments: ConversationAttachment[];
 }
 
 export interface CodexTransportDebugAgentDiagnostics {
@@ -3248,12 +3261,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       (target.projectAgent !== undefined || target.creatorAgentId === fromAgentId);
 
     if (isProjectAgentDelivery) {
-      const receipt = await deliverProjectAgentMessage(
+      const deliveryResult = await deliverProjectAgentMessage(
         {
           now: this.now,
           getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
-          emitConversationMessage: (event) => this.emitConversationMessage(event),
-          markSessionActivity: (agentId, timestamp) => this.markSessionActivity(agentId, timestamp),
           rateLimitBuckets: this.projectAgentMessageTimestampsBySender
         },
         {
@@ -3263,6 +3274,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           delivery
         }
       );
+      const { receipt, inboundPayload } = deliveryResult;
+      await this.appendPreparedInboundConversationPayload(target, {
+        text: inboundPayload.text,
+        runtimeText: inboundPayload.runtimeText,
+        timestamp: inboundPayload.timestamp,
+        source: "project_agent_input",
+        projectAgentContext: inboundPayload.projectAgentContext
+      });
 
       this.logDebug("agent:send_message", {
         fromAgentId,
@@ -3273,13 +3292,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         textPreview: previewForLog(message),
         attachmentCount: attachments.length,
         modelTextPreview: previewForLog(
-          formatProjectAgentRuntimeMessage(
-            {
-              fromAgentId,
-              fromDisplayName: getProjectAgentPublicName(sender)
-            },
-            message
-          )
+          inboundPayload.runtimeText
         )
       });
 
@@ -3884,12 +3897,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceContext: MessageSourceContext,
     collaborationAuthor?: CollaborationAuthor,
   ): Promise<AppendConversationUserMessageResult> {
-    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
-    const attachmentMetadata = toConversationAttachmentMetadata(
-      persistedAttachments,
-      this.config.paths.uploadsDir
-    );
-    const runtimeAttachments = toRuntimeDispatchAttachments(attachments, persistedAttachments);
     const receivedAt = this.now();
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
 
@@ -3898,7 +3905,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerContextId,
       sourceContext,
       textPreview: previewForLog(text),
-      attachmentCount: persistedAttachments.length,
+      attachmentCount: attachments.length,
       collaborationAuthor: collaborationAuthor
         ? {
             userId: collaborationAuthor.userId,
@@ -3909,26 +3916,57 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         : undefined,
     });
 
-    const userEvent: ConversationMessageEvent = {
-      type: "conversation_message",
-      agentId: target.agentId,
-      role: "user",
+    const appended = await this.appendPreparedInboundConversationPayload(target, {
       text,
-      attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
       timestamp: receivedAt,
       source: "user_input",
       sourceContext,
       collaborationAuthor,
-    };
-    this.emitConversationMessage(userEvent);
-    this.markSessionActivity(target.agentId, receivedAt);
+      attachments,
+    });
 
     return {
       target,
       text,
       sourceContext,
       receivedAt,
-      event: userEvent,
+      event: appended.event,
+      persistedAttachments: appended.persistedAttachments,
+      runtimeAttachments: appended.runtimeAttachments
+    };
+  }
+
+  private async appendPreparedInboundConversationPayload(
+    target: AgentDescriptor,
+    payload: PreparedInboundConversationPayload
+  ): Promise<AppendPreparedInboundConversationPayloadResult> {
+    const attachments = payload.source === "user_input"
+      ? normalizeConversationAttachments(payload.attachments)
+      : [];
+    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
+    const attachmentMetadata = toConversationAttachmentMetadata(
+      persistedAttachments,
+      this.config.paths.uploadsDir
+    );
+    const runtimeAttachments = toRuntimeDispatchAttachments(attachments, persistedAttachments);
+    const timestamp = payload.timestamp ?? this.now();
+    const event: ConversationMessageEvent = {
+      type: "conversation_message",
+      agentId: target.agentId,
+      role: "user",
+      text: payload.text,
+      attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
+      timestamp,
+      source: payload.source,
+      sourceContext: payload.source === "user_input" ? payload.sourceContext : undefined,
+      collaborationAuthor: payload.source === "user_input" ? payload.collaborationAuthor : undefined,
+      projectAgentContext: payload.source === "project_agent_input" ? payload.projectAgentContext : undefined,
+    };
+    this.emitConversationMessage(event);
+    this.markSessionActivity(target.agentId, timestamp);
+
+    return {
+      event,
       persistedAttachments,
       runtimeAttachments
     };
