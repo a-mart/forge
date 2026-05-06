@@ -52,6 +52,7 @@ describe('ws command parser session commands', () => {
       get_project_agent_config: { type: 'get_project_agent_config', agentId: 'session-a' },
       list_project_agent_references: { type: 'list_project_agent_references', agentId: 'session-a' },
       get_project_agent_reference: { type: 'get_project_agent_reference', agentId: 'session-a', fileName: 'README.md' },
+      set_project_agent_reference: { type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs' },
     } as const
 
     for (const contract of WS_REQUEST_CONTRACTS) {
@@ -171,6 +172,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'get_project_agent_reference', agentId: 'session-a', fileName: 'README.md', requestId: 123 })).toEqual({
       ok: false,
       error: 'get_project_agent_reference.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs' })).toEqual({
+      ok: true,
+      command: { type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'set_project_agent_reference.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'stop_session', agentId: 'session-a' })).toEqual({
       ok: true,
@@ -910,6 +919,13 @@ describe('ws command parser session commands', () => {
         agentId: 'manager--s2',
         fileName: 'README.md',
         requestId: 'req-project-agent-reference',
+      },
+      {
+        type: 'set_project_agent_reference',
+        agentId: 'manager--s2',
+        fileName: 'README.md',
+        content: 'docs',
+        requestId: 'req-set-project-agent-reference',
       },
       {
         type: 'request_project_agent_recommendations',

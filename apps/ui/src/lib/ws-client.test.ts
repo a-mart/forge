@@ -93,6 +93,7 @@ describe('ManagerWsClient', () => {
       'get_project_agent_config',
       'list_project_agent_references',
       'get_project_agent_reference',
+      'set_project_agent_reference',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1917,6 +1918,95 @@ describe('ManagerWsClient', () => {
     await expect(referencePromise).rejects.toThrow(
       'GET_PROJECT_AGENT_REFERENCE_FAILED: Project agent reference rejected for testing.',
     )
+
+    client.destroy()
+  })
+
+  it('sends set_project_agent_reference commands and resolves project_agent_reference_saved events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const referencePromise = client.setProjectAgentReference(' agent-a ', ' README.md ', '# Reference')
+    const referencePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(referencePayload).toMatchObject({
+      type: 'set_project_agent_reference',
+      agentId: 'agent-a',
+      fileName: 'README.md',
+      content: '# Reference',
+    })
+    expect(referencePayload.requestId).toMatch(/^set_project_agent_reference-/)
+
+    emitServerEvent(socket, {
+      type: 'project_agent_reference_saved',
+      requestId: referencePayload.requestId,
+      agentId: 'agent-a',
+      fileName: 'README.md',
+    })
+
+    await expect(referencePromise).resolves.toEqual({ agentId: 'agent-a', fileName: 'README.md' })
+
+    client.destroy()
+  })
+
+  it('rejects set_project_agent_reference via fallback error hints without broad get-reference interception', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const getReferencePromise = client.getProjectAgentReference('agent-a', 'README.md')
+    const setReferencePromise = client.setProjectAgentReference('agent-a', 'README.md', '# Reference')
+    let getSettled = false
+    void getReferencePromise.finally(() => {
+      getSettled = true
+    })
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'SET_PROJECT_AGENT_REFERENCE_FAILED',
+      message: 'Set project agent reference rejected for testing.',
+    })
+    await Promise.resolve()
+
+    await expect(setReferencePromise).rejects.toThrow(
+      'SET_PROJECT_AGENT_REFERENCE_FAILED: Set project agent reference rejected for testing.',
+    )
+    expect(getSettled).toBe(false)
+
+    emitServerEvent(socket, {
+      type: 'project_agent_reference',
+      requestId: JSON.parse(socket.sentPayloads.at(-2) ?? '{}').requestId,
+      agentId: 'agent-a',
+      fileName: 'README.md',
+      content: '# Reference',
+    })
+
+    await expect(getReferencePromise).resolves.toEqual({
+      agentId: 'agent-a',
+      fileName: 'README.md',
+      content: '# Reference',
+    })
 
     client.destroy()
   })
