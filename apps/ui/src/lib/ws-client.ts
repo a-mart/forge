@@ -43,17 +43,16 @@ import {
 } from './ws-client/request-definitions'
 import { WebSocketTransport } from './ws-client/websocket-transport'
 import { BootstrapBuffer } from './ws-client/bootstrap-buffer'
+import { SessionWorkerCache } from './ws-client/session-worker-cache'
 import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
-  SESSION_WORKERS_REFETCH_DEBOUNCE_MS,
 } from './ws-client/runtime-types'
 import {
   reduceAgentStatus,
   reduceAgentsSnapshot,
   reduceManagerDeleted,
   reduceSessionDeleted,
-  reduceSessionWorkersSnapshot,
 } from './ws-client/snapshot-reducers'
 import type {
   DirectoriesListedResult,
@@ -128,8 +127,7 @@ export class ManagerWsClient {
 
   private readonly requestDispatcher: RequestDispatcher
   private readonly bootstrapBuffer: BootstrapBuffer
-  private readonly pendingWorkerFetches = new Map<string, Promise<SessionWorkersResult>>()
-  private readonly pendingSessionWorkerRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly sessionWorkerCache: SessionWorkerCache
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
@@ -144,6 +142,17 @@ export class ManagerWsClient {
       getState: () => this.state,
       updateState: (patch) => this.updateState(patch),
       applyConversationEvent: handleConversationEvent,
+    })
+
+    this.sessionWorkerCache = new SessionWorkerCache({
+      getState: () => this.state,
+      updateState: (patch) => this.updateState(patch),
+      requestSessionWorkers: (sessionAgentId) => {
+        assertConnectedSocket(this.socket)
+        return this.requestDispatcher.enqueueRequest('get_session_workers', (requestId) =>
+          buildGetSessionWorkersCommand(sessionAgentId, requestId),
+        )
+      },
     })
 
     this.transport = new WebSocketTransport({
@@ -217,8 +226,7 @@ export class ManagerWsClient {
 
   destroy(): void {
     this.requestDispatcher.rejectAllPendingRequests('Client destroyed before request completed.')
-    this.pendingWorkerFetches.clear()
-    this.clearQueuedSessionWorkerRefetches()
+    this.sessionWorkerCache.destroy()
     this.bootstrapBuffer.clear()
 
     this.transport.disconnect()
@@ -599,49 +607,8 @@ export class ManagerWsClient {
     )
   }
 
-  async getSessionWorkers(sessionAgentId: string): Promise<SessionWorkersResult> {
-    const trimmed = sessionAgentId.trim()
-    if (!trimmed) {
-      throw new Error('Session agent id is required.')
-    }
-
-    if (this.state.loadedSessionIds.has(trimmed)) {
-      const cachedWorkers = this.state.agents.filter(
-        (agent) => agent.role === 'worker' && agent.managerId === trimmed,
-      )
-      const manager = this.state.agents.find(
-        (agent) => agent.role === 'manager' && agent.agentId === trimmed,
-      )
-      if (manager?.workerCount !== undefined && cachedWorkers.length !== manager.workerCount) {
-        const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
-        nextLoadedSessionIds.delete(trimmed)
-        this.updateState({ loadedSessionIds: nextLoadedSessionIds })
-      } else {
-        return {
-          sessionAgentId: trimmed,
-          workers: cachedWorkers,
-        }
-      }
-    }
-
-    const existingRequest = this.pendingWorkerFetches.get(trimmed)
-    if (existingRequest) {
-      return existingRequest
-    }
-
-    assertConnectedSocket(this.socket)
-
-    const request = this.requestDispatcher.enqueueRequest('get_session_workers', (requestId) =>
-      buildGetSessionWorkersCommand(trimmed, requestId),
-    )
-
-    this.pendingWorkerFetches.set(trimmed, request)
-
-    try {
-      return await request
-    } finally {
-      this.pendingWorkerFetches.delete(trimmed)
-    }
+  getSessionWorkers(sessionAgentId: string): Promise<SessionWorkersResult> {
+    return this.sessionWorkerCache.getSessionWorkers(sessionAgentId)
   }
 
   // -----------------------------------------------------------------------
@@ -685,7 +652,7 @@ export class ManagerWsClient {
       subscribedAgentId: null,
     })
 
-    this.clearQueuedSessionWorkerRefetches()
+    this.sessionWorkerCache.clearQueuedRefetches()
     this.requestDispatcher.rejectAllPendingRequests('WebSocket disconnected before request completed.')
   }
 
@@ -778,7 +745,7 @@ export class ManagerWsClient {
     this.updateState(result.patch)
 
     if (result.queueSessionWorkersRefetchId) {
-      this.queueSessionWorkersRefetch(result.queueSessionWorkersRefetchId)
+      this.sessionWorkerCache.queueRefetch(result.queueSessionWorkersRefetchId)
     }
 
     if (result.managerIdleTransitionAgentId) {
@@ -795,7 +762,7 @@ export class ManagerWsClient {
     })
 
     for (const sessionAgentId of result.queueSessionWorkersRefetchIds) {
-      this.queueSessionWorkersRefetch(sessionAgentId)
+      this.sessionWorkerCache.queueRefetch(sessionAgentId)
     }
 
     if (result.shouldClearExplicitSelection) {
@@ -816,13 +783,7 @@ export class ManagerWsClient {
     workers: AgentDescriptor[],
     requestId?: string,
   ): void {
-    const result = reduceSessionWorkersSnapshot({
-      state: this.state,
-      sessionAgentId,
-      workers,
-    })
-
-    this.updateState(result.patch)
+    this.sessionWorkerCache.applySessionWorkersSnapshot(sessionAgentId, workers)
 
     if (requestId) {
       this.requestDispatcher.tracker.resolve('get_session_workers', requestId, {
@@ -847,7 +808,7 @@ export class ManagerWsClient {
       socketOpen: isSocketOpen(this.socket),
     })
 
-    this.clearQueuedSessionWorkerRefetch(managerId)
+    this.sessionWorkerCache.clearQueuedRefetch(managerId)
     removeMutedAgents(result.deletedAgentIds)
 
     if (result.nextDesiredAgentId !== undefined) {
@@ -871,7 +832,7 @@ export class ManagerWsClient {
       socketOpen: isSocketOpen(this.socket),
     })
 
-    this.clearQueuedSessionWorkerRefetch(agentId)
+    this.sessionWorkerCache.clearQueuedRefetch(agentId)
     removeMutedAgent(result.mutedAgentIdToRemove)
 
     if (result.nextDesiredAgentId !== undefined) {
@@ -886,48 +847,6 @@ export class ManagerWsClient {
 
     this.updateState(result.patch)
   }
-
-  private queueSessionWorkersRefetch(sessionAgentId: string): void {
-    const normalizedSessionAgentId = sessionAgentId.trim()
-    if (!normalizedSessionAgentId) {
-      return
-    }
-
-    this.clearQueuedSessionWorkerRefetch(normalizedSessionAgentId)
-
-    const timer = setTimeout(() => {
-      this.pendingSessionWorkerRefetchTimers.delete(normalizedSessionAgentId)
-      void this.getSessionWorkers(normalizedSessionAgentId).catch(() => {
-        // Best-effort refresh to keep worker cache in sync after session invalidation.
-      })
-    }, SESSION_WORKERS_REFETCH_DEBOUNCE_MS)
-
-    this.pendingSessionWorkerRefetchTimers.set(normalizedSessionAgentId, timer)
-  }
-
-  private clearQueuedSessionWorkerRefetch(sessionAgentId: string): void {
-    const normalizedSessionAgentId = sessionAgentId.trim()
-    if (!normalizedSessionAgentId) {
-      return
-    }
-
-    const timer = this.pendingSessionWorkerRefetchTimers.get(normalizedSessionAgentId)
-    if (!timer) {
-      return
-    }
-
-    clearTimeout(timer)
-    this.pendingSessionWorkerRefetchTimers.delete(normalizedSessionAgentId)
-  }
-
-  private clearQueuedSessionWorkerRefetches(): void {
-    for (const timer of this.pendingSessionWorkerRefetchTimers.values()) {
-      clearTimeout(timer)
-    }
-
-    this.pendingSessionWorkerRefetchTimers.clear()
-  }
-
 
   private pushSystemMessage(text: string): void {
     const message = createSystemConversationMessage(
