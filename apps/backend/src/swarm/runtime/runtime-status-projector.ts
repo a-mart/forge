@@ -3,7 +3,7 @@ import type {
   WorkerActivityStateLike,
   WorkerStallStateLike,
   WorkerWatchdogStateLike
-} from "../swarm-runtime-controller.js";
+} from "./worker-health-types.js";
 import type { AgentContextUsage, AgentDescriptor, AgentStatus } from "../types.js";
 import {
   areContextUsagesEqual,

@@ -19,6 +19,12 @@ import { RuntimeBinding } from "./runtime/runtime-binding.js";
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import { RuntimeErrorProjector } from "./runtime/runtime-error-projector.js";
+import { RuntimeEventProjector } from "./runtime/runtime-event-projector.js";
+import type {
+  WorkerActivityStateLike,
+  WorkerStallStateLike,
+  WorkerWatchdogStateLike
+} from "./runtime/worker-health-types.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type {
   AgentContextUsage,
@@ -29,27 +35,10 @@ import type {
   SwarmConfig,
   SwarmReasoningLevel
 } from "./types.js";
-import {
-  extractVersionedToolPath,
-  formatToolExecutionPayload,
-  isVersionedWriteToolName,
-  previewForLog,
-  safeJson,
-  trimToMaxChars,
-  trimToMaxCharsFromEnd,
-  withManagerTimeout
-} from "./swarm-manager-utils.js";
-import {
-  extractMessageErrorMessage,
-  extractMessageStopReason,
-  extractMessageText,
-  extractRole,
-  isAbortLikeErrorMessage
-} from "./message-utils.js";
+import { withManagerTimeout } from "./swarm-manager-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 
-const MANUAL_MANAGER_STOP_NOTICE = "Session stopped.";
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
 
@@ -57,34 +46,6 @@ interface ResolvedSpecialistDefinitionLike {
   specialistId: string;
   fallbackModelId?: string;
   fallbackReasoningLevel?: SwarmReasoningLevel;
-}
-
-export interface WorkerWatchdogStateLike {
-  turnSeq: number;
-  reportedThisTurn: boolean;
-  pendingReportTurnSeq: number | null;
-  deferredFinalizeTurnSeq: number | null;
-  hadStreamingThisTurn: boolean;
-  lastFinalizedTurnSeq: number | null;
-}
-
-export interface WorkerStallStateLike {
-  lastProgressAt: number;
-  nudgeSent: boolean;
-  nudgeSentAt: number | null;
-  lastToolName: string | null;
-  lastToolInput: string | null;
-  lastToolOutput: string | null;
-  lastDetailedReportAt: number | null;
-}
-
-export interface WorkerActivityStateLike {
-  currentToolName: string | null;
-  currentToolStartedAt: number | null;
-  lastProgressAt: number;
-  toolCallCount: number;
-  errorCount: number;
-  turnCount: number;
 }
 
 export interface SwarmRuntimeControllerHost extends SwarmToolHost {
@@ -190,13 +151,12 @@ export class SwarmRuntimeController {
   readonly runtimeExtensionSnapshotsByAgentId: Map<string, AgentRuntimeExtensionSnapshot>;
 
   private specialistFallbackManager: SwarmSpecialistFallbackManager | null = null;
-  private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
-  private readonly recoveryAbortedWorkerTurnAgentIds = new Set<string>();
   private readonly runtimeBinding: RuntimeBinding;
   private readonly runtimeCallbackGate: RuntimeCallbackGate;
   private readonly runtimeFactory: RuntimeFactory;
   private runtimeStatusProjector: RuntimeStatusProjector | null = null;
   private runtimeErrorProjector: RuntimeErrorProjector | null = null;
+  private runtimeEventProjector: RuntimeEventProjector | null = null;
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
     this.runtimeBinding = new RuntimeBinding({
@@ -292,8 +252,12 @@ export class SwarmRuntimeController {
     this.runtimeBinding.attachRuntime(agentId, runtime);
   }
 
+  get trackedToolPathsByAgentId(): Map<string, Map<string, { toolName: string; path: string }>> {
+    return this.getRuntimeEventProjector().getTrackedToolPathsByAgentId();
+  }
+
   clearTrackedToolPaths(agentId: string): void {
-    this.trackedToolPathsByAgentId.delete(agentId);
+    this.getRuntimeEventProjector().clearTrackedToolPaths(agentId);
   }
 
   suppressIntentionalStopRuntimeCallbacks(agentId: string, runtimeToken?: number): void {
@@ -495,6 +459,31 @@ export class SwarmRuntimeController {
     return this.runtimeErrorProjector;
   }
 
+  private getRuntimeEventProjector(): RuntimeEventProjector {
+    if (!this.runtimeEventProjector) {
+      this.runtimeEventProjector = new RuntimeEventProjector({
+        config: this.host.config,
+        descriptors: this.host.descriptors,
+        workerStallState: this.host.workerStallState,
+        workerActivityState: this.host.workerActivityState,
+        now: () => this.now(),
+        conversationProjector: this.host.conversationProjector,
+        maybeRecordModelCapacityBlock: (agentId, descriptor, error) =>
+          this.host.maybeRecordModelCapacityBlock(agentId, descriptor, error),
+        maybeRecoverWorkerWithSpecialistFallback: (agentId, errorMessage, sourcePhase, runtimeToken) =>
+          this.maybeRecoverWorkerWithSpecialistFallback(agentId, errorMessage, sourcePhase, runtimeToken),
+        consumePendingManualManagerStopNoticeIfApplicable: (agentId, event) =>
+          this.host.consumePendingManualManagerStopNoticeIfApplicable(agentId, event),
+        stripManagerAbortErrorFromEvent: (event) => this.host.stripManagerAbortErrorFromEvent(event),
+        isRuntimeRecoveryActive: (agentId) => this.host.isRuntimeRecoveryActive(agentId),
+        queueVersionedToolMutation: (descriptor, mutation) => this.host.queueVersionedToolMutation(descriptor, mutation),
+        logDebug: (message, details) => this.logDebug(message, details)
+      });
+    }
+
+    return this.runtimeEventProjector;
+  }
+
   async handleRuntimeStatus(
     runtimeToken: number,
     agentId: string,
@@ -533,130 +522,7 @@ export class SwarmRuntimeController {
       return;
     }
 
-    const descriptor = this.descriptors.get(agentId);
-    if (
-      descriptor?.role === "worker" &&
-      event.type === "message_end" &&
-      extractMessageStopReason(event.message) === "error"
-    ) {
-      const errorText =
-        extractMessageErrorMessage(event.message) ??
-        extractMessageText(event.message) ??
-        "Unknown runtime error";
-      const parentRecoveryActive = descriptor.managerId
-        ? this.host.isRuntimeRecoveryActive(descriptor.managerId)
-        : false;
-      if (
-        extractRole(event.message) === "assistant" &&
-        isAbortLikeErrorMessage(errorText) &&
-        (this.host.isRuntimeRecoveryActive(agentId) || parentRecoveryActive)
-      ) {
-        this.recoveryAbortedWorkerTurnAgentIds.add(agentId);
-        return;
-      }
-
-      this.host.maybeRecordModelCapacityBlock(agentId, descriptor, {
-        phase: "prompt_start",
-        message: errorText
-      });
-
-      const recoveredWithFallback = await this.maybeRecoverWorkerWithSpecialistFallback(
-        agentId,
-        errorText,
-        "prompt_start",
-        runtimeToken
-      );
-      if (recoveredWithFallback) {
-        return;
-      }
-    }
-
-    const shouldSurfaceManualStopNotice =
-      descriptor?.role === "manager" && this.host.consumePendingManualManagerStopNoticeIfApplicable(agentId, event);
-
-    // Also suppress abort errors during context recovery (smart compaction) — the abort is intentional
-    const isContextRecoveryAbort =
-      !shouldSurfaceManualStopNotice &&
-      descriptor?.role === "manager" &&
-      this.host.isRuntimeRecoveryActive(agentId) &&
-      event.type === "message_end" &&
-      extractMessageStopReason(event.message) === "error" &&
-      isAbortLikeErrorMessage(extractMessageErrorMessage(event.message) ?? extractMessageText(event.message));
-
-    const effectiveEvent = (shouldSurfaceManualStopNotice || isContextRecoveryAbort)
-      ? this.host.stripManagerAbortErrorFromEvent(event)
-      : event;
-
-    this.host.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent);
-    if (shouldSurfaceManualStopNotice) {
-      this.host.conversationProjector.emitConversationMessage({
-        type: "conversation_message",
-        agentId,
-        role: "system",
-        text: MANUAL_MANAGER_STOP_NOTICE,
-        timestamp: this.now(),
-        source: "system"
-      });
-    }
-    this.maybeRecordVersionedToolMutation(agentId, effectiveEvent);
-
-    if (descriptor?.role === "worker") {
-      this.trackWorkerStallProgressEvent(descriptor.agentId, effectiveEvent);
-      this.updateWorkerActivity(descriptor.agentId, effectiveEvent);
-    }
-
-    if (!this.host.config.debug) return;
-
-    if (!descriptor || descriptor.role !== "manager") {
-      return;
-    }
-
-    switch (effectiveEvent.type) {
-      case "agent_start":
-      case "agent_end":
-      case "turn_start":
-        this.logDebug(`manager:event:${event.type}`);
-        return;
-
-      case "turn_end":
-        this.logDebug("manager:event:turn_end", {
-          toolResults: effectiveEvent.toolResults.length
-        });
-        return;
-
-      case "tool_execution_start":
-        this.logDebug("manager:tool:start", {
-          toolName: effectiveEvent.toolName,
-          toolCallId: effectiveEvent.toolCallId,
-          args: previewForLog(safeJson(effectiveEvent.args), 240)
-        });
-        return;
-
-      case "tool_execution_end":
-        this.logDebug("manager:tool:end", {
-          toolName: effectiveEvent.toolName,
-          toolCallId: effectiveEvent.toolCallId,
-          isError: effectiveEvent.isError,
-          result: previewForLog(safeJson(effectiveEvent.result), 240)
-        });
-        return;
-
-      case "message_start":
-      case "message_end":
-        this.logDebug(`manager:event:${effectiveEvent.type}`, {
-          role: extractRole(effectiveEvent.message),
-          textPreview: previewForLog(extractMessageText(effectiveEvent.message) ?? "")
-        });
-        break;
-
-      case "message_update":
-      case "tool_execution_update":
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        break;
-    }
+    await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
   }
 
   async handleRuntimeError(
@@ -715,7 +581,7 @@ export class SwarmRuntimeController {
 
       this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
       this.clearWatchdogTimer(agentId);
-      this.recoveryAbortedWorkerTurnAgentIds.delete(agentId);
+      this.getRuntimeEventProjector().clearRecoveryAbortedWorkerTurn(agentId);
       return;
     }
 
@@ -723,7 +589,7 @@ export class SwarmRuntimeController {
   }
 
   private shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {
-    return this.recoveryAbortedWorkerTurnAgentIds.has(descriptor.agentId) || this.host.isRuntimeRecoveryActive(descriptor.agentId);
+    return this.getRuntimeEventProjector().shouldSuppressWorkerIdleFinalization(descriptor);
   }
 
   private get descriptors(): Map<string, AgentDescriptor> {
@@ -732,14 +598,6 @@ export class SwarmRuntimeController {
 
   private get workerWatchdogState(): Map<string, WorkerWatchdogStateLike> {
     return this.host.workerWatchdogState;
-  }
-
-  private get workerStallState(): Map<string, WorkerStallStateLike> {
-    return this.host.workerStallState;
-  }
-
-  private get workerActivityState(): Map<string, WorkerActivityStateLike> {
-    return this.host.workerActivityState;
   }
 
   private get watchdogTimerTokens(): Map<string, number> {
@@ -815,169 +673,8 @@ export class SwarmRuntimeController {
     this.runtimeBinding.recordRuntimeExtensionSnapshot(agentId, snapshot);
   }
 
-  private trackWorkerStallProgressEvent(agentId: string, event: RuntimeSessionEvent): void {
-    const stallState = this.workerStallState.get(agentId);
-    if (!stallState) {
-      return;
-    }
-
-    switch (event.type) {
-      case "tool_execution_start": {
-        stallState.lastToolName = event.toolName;
-        stallState.lastToolInput = trimToMaxChars(formatToolExecutionPayload(event.args), 500);
-        stallState.lastToolOutput = null;
-        this.workerStallState.set(agentId, stallState);
-        return;
-      }
-
-      case "tool_execution_update": {
-        stallState.lastToolName = event.toolName;
-        const chunk = formatToolExecutionPayload(event.partialResult);
-        const mergedOutput = `${stallState.lastToolOutput ?? ""}${chunk}`;
-        stallState.lastToolOutput = trimToMaxCharsFromEnd(mergedOutput, 500);
-        this.workerStallState.set(agentId, stallState);
-        return;
-      }
-
-      case "tool_execution_end":
-      case "turn_end":
-        this.recordWorkerStallProgress(agentId);
-        return;
-
-      case "message_update":
-      case "message_end": {
-        const role = extractRole(event.message);
-        if (role === "assistant" || role === "system") {
-          this.recordWorkerStallProgress(agentId);
-        }
-        return;
-      }
-
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        this.recordWorkerStallProgress(agentId);
-        break;
-
-      default:
-        break;
-    }
-  }
-
   updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
-    if (!this.workerStallState.has(agentId)) {
-      this.workerActivityState.delete(agentId);
-      return;
-    }
-
-    let state = this.workerActivityState.get(agentId);
-    if (!state) {
-      state = {
-        currentToolName: null,
-        currentToolStartedAt: null,
-        lastProgressAt: Date.now(),
-        toolCallCount: 0,
-        errorCount: 0,
-        turnCount: 0
-      };
-      this.workerActivityState.set(agentId, state);
-    }
-
-    switch (event.type) {
-      case "tool_execution_start":
-        state.currentToolName = event.toolName;
-        state.currentToolStartedAt = Date.now();
-        state.toolCallCount++;
-        state.lastProgressAt = Date.now();
-        break;
-
-      case "tool_execution_end":
-        state.currentToolName = null;
-        state.currentToolStartedAt = null;
-        if (event.isError) {
-          state.errorCount++;
-        }
-        state.lastProgressAt = Date.now();
-        break;
-
-      case "turn_end":
-        state.turnCount++;
-        state.lastProgressAt = Date.now();
-        break;
-
-      case "message_update":
-      case "message_end":
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        state.lastProgressAt = Date.now();
-        break;
-
-      default:
-        break;
-    }
-  }
-
-  private recordWorkerStallProgress(agentId: string): void {
-    const stallState = this.workerStallState.get(agentId);
-    if (!stallState) {
-      return;
-    }
-
-    stallState.lastProgressAt = Date.now();
-    stallState.lastDetailedReportAt = null;
-    stallState.lastToolName = null;
-    stallState.lastToolInput = null;
-    stallState.lastToolOutput = null;
-
-    if (stallState.nudgeSent) {
-      stallState.nudgeSent = false;
-      stallState.nudgeSentAt = null;
-    }
-
-    this.workerStallState.set(agentId, stallState);
-  }
-
-  private maybeRecordVersionedToolMutation(agentId: string, event: RuntimeSessionEvent): void {
-    if (event.type === "tool_execution_start") {
-      if (!isVersionedWriteToolName(event.toolName)) {
-        return;
-      }
-
-      const path = extractVersionedToolPath(event.args);
-      if (!path) {
-        return;
-      }
-
-      const byToolCallId = this.trackedToolPathsByAgentId.get(agentId) ?? new Map<string, { toolName: string; path: string }>();
-      byToolCallId.set(event.toolCallId, { toolName: event.toolName, path });
-      this.trackedToolPathsByAgentId.set(agentId, byToolCallId);
-      return;
-    }
-
-    if (event.type !== "tool_execution_end" || event.isError || !isVersionedWriteToolName(event.toolName)) {
-      return;
-    }
-
-    const descriptor = this.descriptors.get(agentId);
-    const tracked = this.trackedToolPathsByAgentId.get(agentId)?.get(event.toolCallId);
-    this.trackedToolPathsByAgentId.get(agentId)?.delete(event.toolCallId);
-
-    const path = tracked?.path ?? extractVersionedToolPath(event.result);
-    if (!descriptor || !path) {
-      return;
-    }
-
-    void this.host.queueVersionedToolMutation(descriptor, {
-      path,
-      action: "write",
-      source: tracked?.toolName === "edit" ? "agent-edit-tool" : "agent-write-tool",
-      profileId: descriptor.profileId ?? descriptor.agentId,
-      sessionId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
-      agentId
-    });
+    this.getRuntimeEventProjector().updateWorkerActivity(agentId, event);
   }
 
   async resolveSpecialistFallbackModelForDescriptor(

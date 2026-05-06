@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeStatusProjector, type RuntimeStatusProjectorDeps } from "../runtime/runtime-status-projector.js";
-import type { WorkerActivityStateLike, WorkerStallStateLike, WorkerWatchdogStateLike } from "../swarm-runtime-controller.js";
+import type { WorkerActivityStateLike, WorkerStallStateLike, WorkerWatchdogStateLike } from "../runtime/worker-health-types.js";
 import type { AgentDescriptor, AgentStatus } from "../types.js";
 
 function baseDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescriptor, "agentId" | "role" | "managerId">): AgentDescriptor {
