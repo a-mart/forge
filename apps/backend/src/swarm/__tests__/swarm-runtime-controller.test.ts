@@ -290,6 +290,80 @@ describe("SwarmRuntimeController", () => {
     expect(controller.runtimes.has(worker.agentId)).toBe(false);
   });
 
+  it("clears an allocated runtime token when factory creation throws", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const worker = baseDescriptor({
+      agentId: "w-factory-fail",
+      role: "worker",
+      managerId: "m1",
+      status: "idle"
+    });
+    descriptors.set(worker.agentId, worker);
+    const token = controller.allocateRuntimeToken(worker.agentId);
+    const factory = (controller as unknown as {
+      runtimeFactory: {
+        createRuntimeForDescriptor: ReturnType<typeof vi.fn>;
+      };
+    }).runtimeFactory;
+    factory.createRuntimeForDescriptor = vi.fn(async () => {
+      throw new Error("factory boom");
+    });
+
+    await expect(controller.createRuntimeForDescriptor(worker, "prompt", token)).rejects.toThrow("factory boom");
+
+    expect(factory.createRuntimeForDescriptor).toHaveBeenCalledWith(worker, "prompt", token, undefined);
+    expect(controller.getRuntimeToken(worker.agentId)).toBeUndefined();
+  });
+
+  it("keeps manager idle status persistence before emit and emits a post-recycle snapshot", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, emitStatus, applyManagerRuntimeRecyclePolicy } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+    const manager = baseDescriptor({
+      agentId: "m-idle-recycle",
+      role: "manager",
+      managerId: "m-idle-recycle",
+      profileId: "m-idle-recycle",
+      status: "streaming"
+    });
+    descriptors.set(manager.agentId, manager);
+    applyManagerRuntimeRecyclePolicy.mockResolvedValue("recycled");
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeStatus(token, manager.agentId, "idle", 0);
+
+    expect(host.patchDescriptorFromRuntimeStatus).toHaveBeenCalledWith(
+      manager.agentId,
+      expect.objectContaining({ status: "idle" })
+    );
+    expect(vi.mocked(host.refreshSessionMetaStats).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ agentId: manager.agentId })
+    );
+    expect(host.saveStore).toHaveBeenCalledTimes(2);
+    expect(emitStatus).toHaveBeenCalledWith(manager.agentId, "idle", 0, undefined);
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledWith(manager.agentId, "idle_transition");
+    expect(host.emitAgentsSnapshot).toHaveBeenCalledTimes(1);
+
+    const patchOrder = vi.mocked(host.patchDescriptorFromRuntimeStatus).mock.invocationCallOrder[0];
+    const statsOrder = vi.mocked(host.refreshSessionMetaStats).mock.invocationCallOrder[0];
+    const firstSaveOrder = vi.mocked(host.saveStore).mock.invocationCallOrder[0];
+    const emitStatusOrder = emitStatus.mock.invocationCallOrder[0];
+    const recycleOrder = applyManagerRuntimeRecyclePolicy.mock.invocationCallOrder[0];
+    const secondSaveOrder = vi.mocked(host.saveStore).mock.invocationCallOrder[1];
+    const snapshotOrder = vi.mocked(host.emitAgentsSnapshot).mock.invocationCallOrder[0];
+
+    expect(patchOrder).toBeLessThan(statsOrder);
+    expect(statsOrder).toBeLessThan(firstSaveOrder);
+    expect(firstSaveOrder).toBeLessThan(emitStatusOrder);
+    expect(emitStatusOrder).toBeLessThan(recycleOrder);
+    expect(recycleOrder).toBeLessThan(secondSaveOrder);
+    expect(secondSaveOrder).toBeLessThan(snapshotOrder);
+  });
+
   it("routes status updates through emitStatus and persists worker descriptor transitions", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

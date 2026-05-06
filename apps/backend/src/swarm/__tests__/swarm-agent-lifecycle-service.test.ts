@@ -216,6 +216,185 @@ describe("SwarmAgentLifecycleService", () => {
     expect(out.modelId).toBe("gpt-5.3-codex");
   });
 
+  it("getOrCreateRuntimeForDescriptor preserves manager runtime attach ordering", async () => {
+    const order: string[] = [];
+    const manager = createAgentDescriptor({
+      agentId: "m-order",
+      role: "manager",
+      managerId: "m-order",
+      profileId: "m-order",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtime = makeRuntimeStub({
+      descriptor: manager,
+      getSystemPrompt: () => "persisted prompt",
+      getContextUsage: () => ({ tokens: 2, contextWindow: 100, percent: 2 })
+    });
+    const runtimeOptions = { startupRecoveryContext: { reason: "model_change" as const, blockText: "recover" } };
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-1",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", runtimeKind: "pi" as const }
+    };
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        ensureSessionFileParentDirectory: vi.fn(async () => {
+          order.push("session-parent");
+        }),
+        resolveSystemPromptForDescriptor: vi.fn(async () => {
+          order.push("prompt");
+          return "resolved prompt";
+        }),
+        prepareManagerRuntimeCreation: vi.fn(async () => {
+          order.push("prepare");
+          return { continuityRequest, runtimeCreationOptions: runtimeOptions };
+        }),
+        allocateRuntimeToken: vi.fn(() => {
+          order.push("allocate");
+          return 42;
+        }),
+        createRuntimeForDescriptor: vi.fn(async (_descriptor, _prompt, token, options) => {
+          order.push(`create:${token}:${options === runtimeOptions}`);
+          return runtime;
+        }),
+        syncPinnedContentForManagerRuntime: vi.fn(async (_descriptor, options) => {
+          expect(options?.runtime).toBe(runtime);
+          order.push("pinned");
+        }),
+        appendAppliedModelChangeContinuity: vi.fn(async (_descriptor, request, appliedRuntime) => {
+          expect(request).toBe(continuityRequest);
+          expect(appliedRuntime).toBe(runtime);
+          expect(runtimes.has(manager.agentId)).toBe(false);
+          order.push("append");
+        }),
+        attachRuntime: vi.fn((agentId, attachedRuntime) => {
+          order.push("attach");
+          runtimes.set(agentId, attachedRuntime);
+        }),
+        captureSessionRuntimePromptMeta: vi.fn(async () => {
+          order.push("prompt-meta");
+        }),
+        refreshSessionMetaStats: vi.fn(async () => {
+          order.push("stats");
+        }),
+        emitStatus: vi.fn(() => {
+          order.push("status");
+        })
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).resolves.toBe(runtime);
+
+    expect(order.slice(0, 8)).toEqual([
+      "session-parent",
+      "prompt",
+      "prepare",
+      "allocate",
+      "create:42:true",
+      "pinned",
+      "append",
+      "attach"
+    ]);
+    expect(order).toEqual(expect.arrayContaining(["prompt-meta", "stats", "status"]));
+
+    const position = (step: string) => order.indexOf(step);
+    expect(position("append")).toBeLessThan(position("attach"));
+    expect(position("attach")).toBeLessThan(position("status"));
+    expect(position("attach")).toBeLessThan(position("prompt-meta"));
+    expect(position("attach")).toBeLessThan(position("stats"));
+  });
+
+  it("terminates and clears a replacement runtime when the descriptor disappears before attach", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w-gone", status: "idle" });
+    const descriptors = new Map([[worker.agentId, worker]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtime = makeRuntimeStub({ descriptor: worker });
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const clearRuntimeToken = vi.fn();
+    const attachRuntime = vi.fn();
+    const updateSessionMetaForWorkerDescriptor = vi.fn(async () => {});
+    const refreshSessionMetaStatsBySessionId = vi.fn(async () => {});
+    const emitStatus = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        runtimeCreationPromisesByAgentId,
+        allocateRuntimeToken: vi.fn(() => 7),
+        clearRuntimeToken,
+        createRuntimeForDescriptor: vi.fn(async () => {
+          descriptors.delete(worker.agentId);
+          return runtime;
+        }),
+        attachRuntime,
+        updateSessionMetaForWorkerDescriptor,
+        refreshSessionMetaStatsBySessionId,
+        emitStatus
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(worker)).rejects.toThrow(/Target agent is not running/);
+
+    expect(runtime.terminate).toHaveBeenCalledWith({ abort: true, shutdownTimeoutMs: 1_500, drainTimeoutMs: 500 });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(worker.agentId, 7);
+    expect(attachRuntime).not.toHaveBeenCalled();
+    expect(updateSessionMetaForWorkerDescriptor).not.toHaveBeenCalled();
+    expect(refreshSessionMetaStatsBySessionId).not.toHaveBeenCalled();
+    expect(emitStatus).not.toHaveBeenCalled();
+    expect(runtimeCreationPromisesByAgentId.has(worker.agentId)).toBe(false);
+  });
+
+  it("returns the existing runtime and preserves the runtime map when a concurrent runtime appears before attach", async () => {
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w-concurrent", status: "idle" });
+    const descriptors = new Map([[worker.agentId, worker]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const replacementRuntime = makeRuntimeStub({ descriptor: worker });
+    const existingRuntime = makeRuntimeStub({ descriptor: worker });
+    const clearRuntimeToken = vi.fn();
+    const attachRuntime = vi.fn((agentId: string, runtimeToAttach: SwarmAgentRuntime) => {
+      runtimes.set(agentId, runtimeToAttach);
+    });
+    const seedWorkerCompletionReportTimestamp = vi.fn();
+    const updateSessionMetaForWorkerDescriptor = vi.fn(async () => {});
+    const refreshSessionMetaStatsBySessionId = vi.fn(async () => {});
+    const emitStatus = vi.fn();
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        allocateRuntimeToken: vi.fn(() => 8),
+        clearRuntimeToken,
+        createRuntimeForDescriptor: vi.fn(async () => {
+          runtimes.set(worker.agentId, existingRuntime);
+          return replacementRuntime;
+        }),
+        attachRuntime,
+        seedWorkerCompletionReportTimestamp,
+        updateSessionMetaForWorkerDescriptor,
+        refreshSessionMetaStatsBySessionId,
+        emitStatus
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(worker)).resolves.toBe(existingRuntime);
+
+    expect(replacementRuntime.terminate).toHaveBeenCalledWith({ abort: true, shutdownTimeoutMs: 1_500, drainTimeoutMs: 500 });
+    expect(clearRuntimeToken).toHaveBeenCalledWith(worker.agentId, 8);
+    expect(attachRuntime).not.toHaveBeenCalled();
+    expect(seedWorkerCompletionReportTimestamp).not.toHaveBeenCalled();
+    expect(updateSessionMetaForWorkerDescriptor).not.toHaveBeenCalled();
+    expect(refreshSessionMetaStatsBySessionId).not.toHaveBeenCalled();
+    expect(emitStatus).not.toHaveBeenCalled();
+    expect(runtimes.get(worker.agentId)).toBe(existingRuntime);
+  });
+
   it("resumeSession throws when a runtime is already attached", async () => {
     const manager = createAgentDescriptor({
       agentId: "m1",
