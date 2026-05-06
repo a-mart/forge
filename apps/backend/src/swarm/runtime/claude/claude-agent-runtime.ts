@@ -2,17 +2,14 @@ import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ClaudeAuthResolver } from "../../claude-auth-resolver.js";
-import {
-  buildClaudeRecoveryContext,
-  type ClaudeRecoveryPendingTurnExclusion
-} from "../../claude-recovery-context.js";
+import type { ClaudeRecoveryPendingTurnExclusion } from "../../claude-recovery-context.js";
+import { planClaudeResumeRecoveryStart } from "./claude-resume-recovery-helper.js";
 import { claudeSessionDir, claudeWorkerDir } from "../../claude-data-paths.js";
 import {
   probeClaudeSdkPersistence,
   type ClaudeSdkPersistenceProbeResult
 } from "../../claude-sdk-persistence.js";
 import { isEnoentError, normalizeOptionalString } from "../../claude-utils.js";
-import { isConversationEntryEvent } from "../../conversation-validators.js";
 import { getSessionFilePath, getWorkerSessionFilePath } from "../../data-paths.js";
 import { ClaudeQuerySession, type ClaudeEffort, type ClaudeThinkingConfig } from "../../claude-query-session.js";
 import { loadClaudeSdkModule } from "../../claude-sdk-loader.js";
@@ -575,61 +572,29 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     probeResult: ClaudeSdkPersistenceProbeResult;
     reason: "missing_persistence" | "resume_failed";
   }): Promise<ClaudeQuerySession> {
-    this.generation += 1;
-    this.persistRuntimeState({ claudeSessionId: null, generationId: this.generation });
+    const recoveryPlan = planClaudeResumeRecoveryStart({
+      descriptor: this.descriptor,
+      durableConversationEntries: this.getCustomEntries(CLAUDE_CONVERSATION_ENTRY_TYPE),
+      persistedCompactionSummary: this.persistedCompactionSummary,
+      activeSystemPrompt: this.activeSystemPrompt,
+      pendingTurnExclusion: options.pendingTurnExclusion,
+      modelContextWindow: this.modelContextWindow,
+      hasPinnedContent: Boolean(this.pinnedMessageContent),
+      probeResult: options.probeResult,
+      reason: options.reason,
+      currentGenerationId: this.generation,
+      logDebug: (event, details) => this.logDebug(event, details)
+    });
 
-    const systemPromptOverride = this.buildRecoverySystemPrompt(options.pendingTurnExclusion, options.reason, options.probeResult);
+    this.generation = recoveryPlan.nextGenerationId;
+    this.persistRuntimeState(recoveryPlan.persistedRuntimeState);
+
     return await this.startQuerySession({
       sdk: options.sdk,
       runtimeEnv: options.runtimeEnv,
       thinkingConfig: options.thinkingConfig,
-      systemPromptOverride
+      systemPromptOverride: recoveryPlan.systemPromptOverride
     });
-  }
-
-  private buildRecoverySystemPrompt(
-    pendingTurnExclusion: ClaudeRecoveryPendingTurnExclusion | undefined,
-    reason: "missing_persistence" | "resume_failed",
-    probeResult: ClaudeSdkPersistenceProbeResult
-  ): string | undefined {
-    try {
-      const conversationEntries = this.getCustomEntries(CLAUDE_CONVERSATION_ENTRY_TYPE).filter(isConversationEntryEvent);
-      const recoveryContext = buildClaudeRecoveryContext({
-        descriptor: this.descriptor,
-        entries: conversationEntries,
-        compactedAt: this.persistedCompactionSummary?.compactedAt,
-        pendingTurnExclusion,
-        modelContextWindow: this.modelContextWindow,
-        existingPrompt: this.activeSystemPrompt,
-        hasPinnedContent: Boolean(this.pinnedMessageContent)
-      });
-
-      this.logDebug("thread_resume:recovery_context", {
-        reason,
-        probeStatus: probeResult.status,
-        sessionFilePath: probeResult.sessionFilePath,
-        eligibleEntryCount: recoveryContext.eligibleEntryCount,
-        includedEntryCount: recoveryContext.includedEntryCount,
-        omittedEntryCount: recoveryContext.omittedEntryCount,
-        pendingTurnExcluded: recoveryContext.pendingTurnExcluded,
-        truncated: recoveryContext.truncated,
-        approxTokenCount: recoveryContext.approxTokenCount
-      });
-
-      if (!recoveryContext.blockText) {
-        return undefined;
-      }
-
-      return [this.activeSystemPrompt, recoveryContext.blockText].filter(Boolean).join("\n\n");
-    } catch (error) {
-      this.logDebug("thread_resume:recovery_context_error", {
-        reason,
-        probeStatus: probeResult.status,
-        sessionFilePath: probeResult.sessionFilePath,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return undefined;
-    }
   }
 
   private async startQuerySession(options: {
