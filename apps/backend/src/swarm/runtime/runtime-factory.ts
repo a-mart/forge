@@ -34,8 +34,7 @@ import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
   RuntimeSessionEvent,
-  SwarmAgentRuntime,
-  RuntimeStartupRecoveryContext
+  SwarmAgentRuntime
 } from "../runtime-contracts.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import { modelCatalogService } from "../model-catalog-service.js";
@@ -47,6 +46,7 @@ import {
   getProfilePiThemesDir,
 } from "../data-paths.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "./runtime-tool-plan.js";
+import { planClaudeRuntimePrompt, planPiRuntimePrompt } from "./runtime-prompt-plan.js";
 import { createPiModelRegistry } from "../pi-model-registry.js";
 import type {
   AgentContextUsage,
@@ -172,12 +172,12 @@ export class RuntimeFactory {
     const profilePiSkillsDir = getProfilePiSkillsDir(this.deps.config.paths.dataDir, profileId);
     const profilePiPromptsDir = getProfilePiPromptsDir(this.deps.config.paths.dataDir, profileId);
     const profilePiThemesDir = getProfilePiThemesDir(this.deps.config.paths.dataDir, profileId);
-    const startupRecoveryContextFile = options?.startupRecoveryContext?.blockText
-      ? {
-          path: join(descriptor.cwd, ".forge", "ephemeral-model-change-recovery.md"),
-          content: options.startupRecoveryContext.blockText
-        }
-      : undefined;
+    const promptPlan = planPiRuntimePrompt({
+      descriptor,
+      systemPrompt,
+      cwd: descriptor.cwd,
+      startupRecoveryContext: options?.startupRecoveryContext
+    });
     const authFilePath = await ensureCanonicalAuthFilePath(this.deps.config);
 
     this.deps.logDebug("runtime:create:start", {
@@ -214,7 +214,7 @@ export class RuntimeFactory {
           memoryContextFile: memoryResources.memoryContextFile,
           swarmContextFiles
         }),
-        ...(startupRecoveryContextFile ? [startupRecoveryContextFile] : [])
+        ...(promptPlan.startupRecoveryContextFile ? [promptPlan.startupRecoveryContextFile] : [])
       ]
     });
 
@@ -249,8 +249,8 @@ export class RuntimeFactory {
             extensionFactories,
             ...(skillsOverride ? { skillsOverride } : {}),
             // Manager prompt comes from the archetype prompt registry.
-            systemPrompt,
-            appendSystemPromptOverride: () => []
+            ...(promptPlan.systemPrompt !== undefined ? { systemPrompt: promptPlan.systemPrompt } : {}),
+            appendSystemPromptOverride: promptPlan.appendSystemPromptOverride
           })
         : new DefaultResourceLoader({
             cwd: descriptor.cwd,
@@ -262,7 +262,7 @@ export class RuntimeFactory {
             agentsFilesOverride: applyRuntimeContext,
             extensionFactories,
             ...(skillsOverride ? { skillsOverride } : {}),
-            appendSystemPromptOverride: (base) => [...base, systemPrompt]
+            appendSystemPromptOverride: promptPlan.appendSystemPromptOverride
           });
 
     try {
@@ -477,11 +477,10 @@ export class RuntimeFactory {
       allowedToolCount: mcpBridge.allowedTools.length
     });
 
-    const startupSystemPromptOverride = appendStartupRecoveryContext(
-      claudeSystemPrompt,
-      options?.startupRecoveryContext
-    );
-    const skipInitialSessionResume = Boolean(options?.startupRecoveryContext);
+    const promptPlan = planClaudeRuntimePrompt({
+      systemPrompt: claudeSystemPrompt,
+      startupRecoveryContext: options?.startupRecoveryContext
+    });
     const runtime = new ClaudeAgentRuntime({
       descriptor: cloneRuntimeDescriptor(descriptor),
       systemPrompt: claudeSystemPrompt,
@@ -516,9 +515,12 @@ export class RuntimeFactory {
         descriptor.model.modelId,
         descriptor.model.provider
       ),
-      startupSystemPromptOverride:
-        startupSystemPromptOverride !== claudeSystemPrompt ? startupSystemPromptOverride : undefined,
-      skipInitialSessionResume
+      ...(promptPlan.startupSystemPromptOverride !== undefined
+        ? { startupSystemPromptOverride: promptPlan.startupSystemPromptOverride }
+        : {}),
+      ...(promptPlan.skipInitialSessionResume !== undefined
+        ? { skipInitialSessionResume: promptPlan.skipInitialSessionResume }
+        : {})
     });
 
     this.deps.logDebug("runtime:create:ready", {
@@ -892,17 +894,6 @@ function normalizeExtensionDisplayName(pathValue: string, resolvedPathValue: str
   }
 
   return normalizedBase || candidate;
-}
-
-function appendStartupRecoveryContext(
-  systemPrompt: string,
-  startupRecoveryContext: RuntimeStartupRecoveryContext | undefined
-): string {
-  if (!startupRecoveryContext?.blockText) {
-    return systemPrompt;
-  }
-
-  return [systemPrompt, startupRecoveryContext.blockText].filter(Boolean).join("\n\n");
 }
 
 const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
