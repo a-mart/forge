@@ -4,7 +4,6 @@ import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import { createForgeBindingToken } from "./forge-extension-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
 import type { SkillMetadata } from "./skills/skill-metadata-service.js";
-import { isNonRunningAgentStatus, transitionAgentStatus } from "./agent-state-machine.js";
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
@@ -19,6 +18,7 @@ import {
 } from "./runtime/runtime-callback-gate.js";
 import { RuntimeBinding } from "./runtime/runtime-binding.js";
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
+import { RuntimeStatusProjector } from "./runtime/runtime-status-projector.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type {
   AgentContextUsage,
@@ -30,11 +30,9 @@ import type {
   SwarmReasoningLevel
 } from "./types.js";
 import {
-  areContextUsagesEqual,
   extractVersionedToolPath,
   formatToolExecutionPayload,
   isVersionedWriteToolName,
-  normalizeContextUsage,
   previewForLog,
   readPositiveIntegerDetail,
   readStringDetail,
@@ -199,6 +197,7 @@ export class SwarmRuntimeController {
   private readonly runtimeBinding: RuntimeBinding;
   private readonly runtimeCallbackGate: RuntimeCallbackGate;
   private readonly runtimeFactory: RuntimeFactory;
+  private runtimeStatusProjector: RuntimeStatusProjector | null = null;
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
     this.runtimeBinding = new RuntimeBinding({
@@ -439,6 +438,40 @@ export class SwarmRuntimeController {
     }
   }
 
+  private getRuntimeStatusProjector(): RuntimeStatusProjector {
+    if (!this.runtimeStatusProjector) {
+      this.runtimeStatusProjector = new RuntimeStatusProjector({
+        descriptors: this.host.descriptors,
+        workerWatchdogState: this.host.workerWatchdogState,
+        workerStallState: this.host.workerStallState,
+        workerActivityState: this.host.workerActivityState,
+        watchdogTimerTokens: this.host.watchdogTimerTokens,
+        now: () => this.now(),
+        patchDescriptorFromRuntimeStatus: (agentId, patch) => this.host.patchDescriptorFromRuntimeStatus(agentId, patch),
+        updateSessionMetaForWorkerDescriptor: (descriptor) => this.host.updateSessionMetaForWorkerDescriptor(descriptor),
+        refreshSessionMetaStatsBySessionId: (sessionAgentId) => this.host.refreshSessionMetaStatsBySessionId(sessionAgentId),
+        refreshSessionMetaStats: (descriptor) => this.host.refreshSessionMetaStats(descriptor),
+        saveStore: () => this.host.saveStore(),
+        emitStatus: (agentId, status, pendingCount, contextUsage) =>
+          this.host.emitStatus(agentId, status, pendingCount, contextUsage),
+        emitAgentsSnapshot: () => this.host.emitAgentsSnapshot(),
+        logDebug: (message, details) => this.logDebug(message, details),
+        getOrCreateWorkerWatchdogState: (agentId) => this.host.getOrCreateWorkerWatchdogState(agentId),
+        clearWatchdogTimer: (agentId) => this.host.clearWatchdogTimer(agentId),
+        removeWorkerFromWatchdogBatchQueues: (agentId) => this.host.removeWorkerFromWatchdogBatchQueues(agentId),
+        finalizeWorkerIdleTurn: (agentId, descriptor, source) =>
+          this.host.finalizeWorkerIdleTurn(agentId, descriptor, source),
+        shouldSuppressWorkerIdleFinalization: (descriptor) => this.shouldSuppressWorkerIdleFinalization(descriptor),
+        handleManagerStatusTransition: (descriptor, status, pendingCount) =>
+          this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount),
+        applyManagerRuntimeRecyclePolicy: (agentId, reason) =>
+          this.host.applyManagerRuntimeRecyclePolicy(agentId, reason)
+      });
+    }
+
+    return this.runtimeStatusProjector;
+  }
+
   async handleRuntimeStatus(
     runtimeToken: number,
     agentId: string,
@@ -454,107 +487,7 @@ export class SwarmRuntimeController {
       return;
     }
 
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor) return;
-
-    const normalizedContextUsage = normalizeContextUsage(contextUsage);
-    const contextUsageChanged = !areContextUsagesEqual(descriptor.contextUsage, normalizedContextUsage);
-    let shouldPersist = false;
-    const descriptorPatch: Partial<AgentDescriptor> = {};
-
-    if (contextUsageChanged) {
-      descriptorPatch.contextUsage = normalizedContextUsage;
-    }
-
-    const previousStatus = descriptor.status;
-    const nextStatus = transitionAgentStatus(previousStatus, status);
-    const statusChanged = previousStatus !== nextStatus;
-    if (statusChanged) {
-      descriptorPatch.status = nextStatus;
-      descriptorPatch.updatedAt = this.now();
-      shouldPersist = true;
-    }
-
-    if (previousStatus !== "streaming" && nextStatus === "streaming") {
-      descriptorPatch.streamingStartedAt = Date.now();
-      shouldPersist = true;
-    }
-
-    const effectiveContextUsage = Object.prototype.hasOwnProperty.call(descriptorPatch, "contextUsage")
-      ? descriptorPatch.contextUsage
-      : descriptor.contextUsage;
-    if (isNonRunningAgentStatus(nextStatus) && effectiveContextUsage) {
-      descriptorPatch.contextUsage = undefined;
-      shouldPersist = true;
-    }
-
-    const updatedDescriptor = Object.keys(descriptorPatch).length > 0
-      ? await this.host.patchDescriptorFromRuntimeStatus(agentId, descriptorPatch) ?? descriptor
-      : descriptor;
-
-    if (updatedDescriptor.role === "worker") {
-      const effectiveStatus = nextStatus;
-      if (effectiveStatus === "streaming" && !this.workerStallState.has(agentId)) {
-        this.workerStallState.set(agentId, {
-          lastProgressAt: Date.now(),
-          nudgeSent: false,
-          nudgeSentAt: null,
-          lastToolName: null,
-          lastToolInput: null,
-          lastToolOutput: null,
-          lastDetailedReportAt: null
-        });
-      } else if (effectiveStatus !== "streaming" && this.workerStallState.has(agentId)) {
-        this.workerStallState.delete(agentId);
-        this.workerActivityState.delete(agentId);
-      }
-    }
-
-    if (updatedDescriptor.role === "worker" && (statusChanged || contextUsageChanged || nextStatus === "terminated")) {
-      await this.updateSessionMetaForWorkerDescriptor(updatedDescriptor);
-      await this.refreshSessionMetaStatsBySessionId(updatedDescriptor.managerId);
-    } else if (updatedDescriptor.role === "manager" && statusChanged) {
-      await this.refreshSessionMetaStats(updatedDescriptor);
-    }
-
-    if (shouldPersist) {
-      await this.saveStore();
-    }
-
-    this.emitStatus(agentId, status, pendingCount, updatedDescriptor.contextUsage);
-    this.logDebug("runtime:status", {
-      agentId,
-      status,
-      pendingCount,
-      contextUsage: updatedDescriptor.contextUsage
-    });
-
-    if (updatedDescriptor.role === "worker") {
-      if (nextStatus === "streaming") {
-        const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
-        watchdogState.hadStreamingThisTurn = true;
-        this.workerWatchdogState.set(agentId, watchdogState);
-        this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
-        this.clearWatchdogTimer(agentId);
-        this.removeWorkerFromWatchdogBatchQueues(agentId);
-      } else if (nextStatus === "idle" && pendingCount === 0) {
-        const watchdogState = this.workerWatchdogState.get(agentId);
-        if (watchdogState?.hadStreamingThisTurn && !this.shouldSuppressWorkerIdleFinalization(updatedDescriptor)) {
-          await this.finalizeWorkerIdleTurn(agentId, updatedDescriptor, "status_idle");
-        }
-      }
-    }
-
-    if (updatedDescriptor.role === "manager") {
-      await this.host.cortexService.handleManagerStatusTransition(updatedDescriptor, nextStatus, pendingCount);
-      if (nextStatus === "idle" && pendingCount === 0) {
-        const recycleDisposition = await this.host.applyManagerRuntimeRecyclePolicy(updatedDescriptor.agentId, "idle_transition");
-        if (recycleDisposition === "recycled") {
-          await this.saveStore();
-          this.emitAgentsSnapshot();
-        }
-      }
-    }
+    await this.getRuntimeStatusProjector().projectStatus({ agentId, status, pendingCount, contextUsage });
   }
 
   async handleRuntimeSessionEvent(
@@ -897,30 +830,6 @@ export class SwarmRuntimeController {
     this.host.logDebug(message, details);
   }
 
-  private async saveStore(): Promise<void> {
-    await this.host.saveStore();
-  }
-
-  private emitStatus(
-    agentId: string,
-    status: AgentStatus,
-    pendingCount: number,
-    contextUsage?: AgentContextUsage
-  ): void {
-    this.host.emitStatus(agentId, status, pendingCount, contextUsage);
-  }
-
-  private emitAgentsSnapshot(): void {
-    this.host.emitAgentsSnapshot();
-  }
-
-  private async updateSessionMetaForWorkerDescriptor(
-    descriptor: AgentDescriptor,
-    resolvedSystemPrompt?: string | null
-  ): Promise<void> {
-    await this.host.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt);
-  }
-
   private async refreshSessionMetaStatsBySessionId(
     sessionAgentId: string,
     sessionFileOverride?: string
@@ -941,10 +850,6 @@ export class SwarmRuntimeController {
 
   private clearWatchdogTimer(agentId: string): void {
     this.host.clearWatchdogTimer(agentId);
-  }
-
-  private removeWorkerFromWatchdogBatchQueues(agentId: string): void {
-    this.host.removeWorkerFromWatchdogBatchQueues(agentId);
   }
 
   private async finalizeWorkerIdleTurn(
