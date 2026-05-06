@@ -1,7 +1,9 @@
 import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { WsRequestContractType } from '@forge/protocol'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { ManagerWsClient } from './ws-client'
 import { REQUEST_TIMEOUT_MS, WS_REQUEST_ERROR_HINTS, WS_REQUEST_TYPES } from './ws-client/runtime-types'
+import type { WsRequestType } from './ws-client/types'
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
 
@@ -70,7 +72,12 @@ describe('ManagerWsClient', () => {
   })
 
   it('keeps promise request policy aligned with protocol contracts', () => {
+    expectTypeOf<Exclude<WsRequestType, WsRequestContractType>>().toEqualTypeOf<never>()
+    expectTypeOf<Exclude<WsRequestContractType, WsRequestType>>().toEqualTypeOf<never>()
+
     const contractTypes = WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)
+    const contractTypeSet = new Set(contractTypes)
+    const requestTypeSet = new Set(WS_REQUEST_TYPES)
 
     expect(contractTypes).toEqual([
       'list_directories',
@@ -102,10 +109,15 @@ describe('ManagerWsClient', () => {
       'delete_project_agent_reference',
       'request_project_agent_recommendations',
     ])
-    expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
-    expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
+    expect(contractTypeSet.size).toBe(contractTypes.length)
+    expect(WS_REQUEST_TYPES.every((type) => contractTypeSet.has(type))).toBe(true)
+    expect(contractTypes.every((type) => requestTypeSet.has(type))).toBe(true)
+    expect(requestTypeSet.size).toBe(WS_REQUEST_TYPES.length)
     expect(WS_REQUEST_TYPES.filter((type) => type === 'create_manager')).toHaveLength(1)
     expect(WS_REQUEST_TYPES.filter((type) => type === 'delete_manager')).toHaveLength(1)
+
+    const hintKeys = WS_REQUEST_ERROR_HINTS.map((hint) => `${hint.requestType}:${hint.codeFragment}`)
+    expect(new Set(hintKeys).size).toBe(WS_REQUEST_ERROR_HINTS.length)
     expect(
       WS_REQUEST_CONTRACTS.every((contract) =>
         contract.errorCodeFragments.every((codeFragment) =>
@@ -113,9 +125,6 @@ describe('ManagerWsClient', () => {
         ),
       ),
     ).toBe(true)
-    expect(new Set(WS_REQUEST_ERROR_HINTS.map((hint) => `${hint.requestType}:${hint.codeFragment}`)).size).toBe(
-      WS_REQUEST_ERROR_HINTS.length,
-    )
   })
 
   it('subscribes on connect and sends user_message commands to the active agent', () => {

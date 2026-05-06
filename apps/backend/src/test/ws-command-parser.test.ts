@@ -1,4 +1,5 @@
 import { WS_REQUEST_CONTRACTS } from '@forge/protocol'
+import type { WsRequestContractType } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 import { extractRequestId, parseClientCommand } from '../ws/ws-command-parser.js'
 
@@ -60,7 +61,7 @@ describe('ws command parser session commands', () => {
       set_project_agent_reference: { type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs' },
       delete_project_agent_reference: { type: 'delete_project_agent_reference', agentId: 'session-a', fileName: 'README.md' },
       request_project_agent_recommendations: { type: 'request_project_agent_recommendations', agentId: 'session-a' },
-    } as const
+    } as const satisfies { [Type in WsRequestContractType]: { type: Type } & Record<string, unknown> }
 
     for (const contract of WS_REQUEST_CONTRACTS) {
       const basePayload = payloadByType[contract.commandType]
