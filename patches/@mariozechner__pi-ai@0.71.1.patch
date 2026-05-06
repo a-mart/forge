@@ -99,3 +99,282 @@ index 3081455..f48eddb 100644
              if (output.length === 0)
                  continue;
              messages.push(...output);
+diff --git a/dist/providers/openai-codex-responses.js b/dist/providers/openai-codex-responses.js
+index 0000000..0000000 100644
+--- a/dist/providers/openai-codex-responses.js
++++ b/dist/providers/openai-codex-responses.js
+@@ -90,12 +90,14 @@
+             const websocketHeaders = buildWebSocketHeaders(model.headers, options?.headers, accountId, apiKey, websocketRequestId);
+             const bodyJson = JSON.stringify(body);
+             const transport = options?.transport || "sse";
++            let streamStarted = false;
++            const initialOutputState = cloneOutputState(output);
+             if (transport !== "sse") {
+-                let websocketStarted = false;
+-                try {
+-                    await processWebSocketStream(resolveCodexWebSocketUrl(model.baseUrl), body, websocketHeaders, output, stream, model, () => {
+-                        websocketStarted = true;
+-                    }, options);
++                const markWebSocketStarted = () => {
++                    streamStarted = true;
++                };
++                const runWebSocketAttempt = async ({ suppressStart = false, forceFresh = false, forceFullBody = false } = {}) => {
++                    await processWebSocketStream(resolveCodexWebSocketUrl(model.baseUrl), body, websocketHeaders, output, stream, model, markWebSocketStarted, options, { suppressStart, forceFresh, forceFullBody });
+                     if (options?.signal?.aborted) {
+                         throw new Error("Request was aborted");
+                     }
+@@ -105,10 +107,30 @@
+                         message: output,
+                     });
+                     stream.end();
++                };
++                try {
++                    await runWebSocketAttempt();
+                     return;
+                 }
+                 catch (error) {
+-                    if (transport === "websocket" || transport === "websocket-cached" || websocketStarted) {
++                    const canReplaySafely = canReplayWebSocketFailure(error, output, options);
++                    if (canReplaySafely) {
++                        resetOutputState(output, initialOutputState);
++                    }
++                    if (canReplaySafely && (transport === "websocket" || transport === "websocket-cached")) {
++                        try {
++                            await runWebSocketAttempt({ suppressStart: streamStarted, forceFresh: true, forceFullBody: true });
++                            return;
++                        }
++                        catch (retryError) {
++                            const canFallbackSafely = transport === "websocket-cached" && canReplayWebSocketFailure(retryError, output, options);
++                            if (!canFallbackSafely) {
++                                throw retryError;
++                            }
++                            resetOutputState(output, initialOutputState);
++                        }
++                    }
++                    else if (transport === "websocket" || transport === "websocket-cached" || !canReplaySafely) {
+                         throw error;
+                     }
+                 }
+@@ -167,7 +189,9 @@
+             if (!response.body) {
+                 throw new Error("No response body");
+             }
+-            stream.push({ type: "start", partial: output });
++            if (!streamStarted) {
++                stream.push({ type: "start", partial: output });
++            }
+             await processStream(response, output, stream, model, options);
+             if (options?.signal?.aborted) {
+                 throw new Error("Request was aborted");
+@@ -495,7 +519,7 @@
+             reject(error);
+         };
+         const onClose = (event) => {
+-            const error = extractWebSocketCloseError(event);
++            const error = extractWebSocketCloseError(event, "connect");
+             if (settled)
+                 return;
+             settled = true;
+@@ -522,7 +546,16 @@
+         signal?.addEventListener("abort", onAbort);
+     });
+ }
+-async function acquireWebSocket(url, headers, sessionId, signal) {
++async function acquireWebSocket(url, headers, sessionId, signal, forceFresh = false) {
++    if (forceFresh && sessionId) {
++        const cached = websocketSessionCache.get(sessionId);
++        if (cached) {
++            closeWebSocketSilently(cached.socket);
++            if (cached.idleTimer)
++                clearTimeout(cached.idleTimer);
++            websocketSessionCache.delete(sessionId);
++        }
++    }
+     if (!sessionId) {
+         const socket = await connectWebSocket(url, headers, signal);
+         return {
+@@ -606,16 +639,68 @@
+     }
+     return new Error("WebSocket error");
+ }
+-function extractWebSocketCloseError(event) {
++function createWebSocketCloseError(message, details = {}) {
++    const error = new Error(message);
++    error.name = "WebSocketCloseError";
++    if (details.code !== undefined)
++        error.websocketCloseCode = details.code;
++    if (details.reason !== undefined)
++        error.websocketCloseReason = details.reason;
++    if (details.phase !== undefined)
++        error.websocketPhase = details.phase;
++    if (details.beforeCompletion !== undefined)
++        error.websocketClosedBeforeCompletion = details.beforeCompletion;
++    return error;
++}
++function extractWebSocketCloseError(event, phase) {
+     if (event && typeof event === "object") {
+         const code = "code" in event ? event.code : undefined;
+         const reason = "reason" in event ? event.reason : undefined;
+         const codeText = typeof code === "number" ? ` ${code}` : "";
+         const reasonText = typeof reason === "string" && reason.length > 0 ? ` ${reason}` : "";
+-        return new Error(`WebSocket closed${codeText}${reasonText}`.trim());
++        const phaseText = phase ? ` (phase: ${phase})` : "";
++        return createWebSocketCloseError(`WebSocket closed${codeText}${reasonText}${phaseText}`.trim(), {
++            code,
++            reason,
++            phase,
++            beforeCompletion: phase !== "connect",
++        });
+     }
+-    return new Error("WebSocket closed");
++    return createWebSocketCloseError(`WebSocket closed${phase ? ` (phase: ${phase})` : ""}`, { phase, beforeCompletion: phase !== "connect" });
+ }
++function isAbortError(error) {
++    return error instanceof Error && (error.name === "AbortError" || error.message === "Request was aborted");
++}
++function isRetryableWebSocketCloseBeforeOutput(error) {
++    if (!(error instanceof Error) || isAbortError(error))
++        return false;
++    const closeCode = error.websocketCloseCode;
++    if (closeCode === 1006)
++        return true;
++    return error.name === "WebSocketCloseError" && (error.websocketClosedBeforeCompletion === true || /WebSocket stream closed before response\.completed/i.test(error.message));
++}
++function canReplayWebSocketFailure(error, output, options) {
++    return !options?.signal?.aborted && output.content.length === 0 && isRetryableWebSocketCloseBeforeOutput(error);
++}
++function cloneOutputState(output) {
++    return {
++        ...output,
++        content: output.content.map((block) => ({ ...block })),
++        usage: { ...output.usage },
++        cost: { ...output.cost },
++    };
++}
++function resetOutputState(output, state) {
++    for (const key of Object.keys(output)) {
++        delete output[key];
++    }
++    Object.assign(output, {
++        ...state,
++        content: state.content.map((block) => ({ ...block })),
++        usage: { ...state.usage },
++        cost: { ...state.cost },
++    });
++}
+ async function decodeWebSocketData(data) {
+     if (typeof data === "string")
+         return data;
+@@ -639,29 +724,54 @@
+     let done = false;
+     let failed = null;
+     let sawCompletion = false;
++    let phase = "awaiting_message";
+     const wake = () => {
+         if (!pending)
+             return;
+         const resolve = pending;
+         pending = null;
+         resolve();
++    };
++    const enqueueParsedMessage = (parsed) => {
++        const type = typeof parsed.type === "string" ? parsed.type : "";
++        if (type === "response.created") {
++            phase = "response_created";
++        }
++        else if (type === "response.output_item.added") {
++            const itemType = typeof parsed.item?.type === "string" ? parsed.item.type : "unknown";
++            phase = `output_item_added:${itemType}`;
++        }
++        else if (type === "response.output_text.delta" || type === "response.function_call_arguments.delta" || type === "response.reasoning_summary_text.delta") {
++            phase = type;
++        }
++        else if (type === "response.output_item.done") {
++            const itemType = typeof parsed.item?.type === "string" ? parsed.item.type : "unknown";
++            phase = `output_item_done:${itemType}`;
++        }
++        else if (type === "response.completed" || type === "response.done" || type === "response.incomplete") {
++            phase = type;
++            sawCompletion = true;
++            done = true;
++        }
++        queue.push(parsed);
++        wake();
+     };
+     const onMessage = (event) => {
++        if (!event || typeof event !== "object" || !("data" in event))
++            return;
++        if (typeof event.data === "string") {
++            try {
++                enqueueParsedMessage(JSON.parse(event.data));
++            }
++            catch { }
++            return;
++        }
+         void (async () => {
+-            if (!event || typeof event !== "object" || !("data" in event))
+-                return;
+             const text = await decodeWebSocketData(event.data);
+             if (!text)
+                 return;
+             try {
+-                const parsed = JSON.parse(text);
+-                const type = typeof parsed.type === "string" ? parsed.type : "";
+-                if (type === "response.completed" || type === "response.done" || type === "response.incomplete") {
+-                    sawCompletion = true;
+-                    done = true;
+-                }
+-                queue.push(parsed);
+-                wake();
++                enqueueParsedMessage(JSON.parse(text));
+             }
+             catch { }
+         })();
+@@ -678,7 +788,7 @@
+             return;
+         }
+         if (!failed) {
+-            failed = extractWebSocketCloseError(event);
++            failed = extractWebSocketCloseError(event, phase);
+         }
+         done = true;
+         wake();
+@@ -711,7 +821,7 @@
+             throw failed;
+         }
+         if (!sawCompletion) {
+-            throw new Error("WebSocket stream closed before response.completed");
++            throw createWebSocketCloseError(`WebSocket stream closed before response.completed (phase: ${phase})`, { phase, beforeCompletion: true });
+         }
+     }
+     finally {
+@@ -762,14 +872,15 @@
+         input: delta,
+     };
+ }
+-async function processWebSocketStream(url, body, headers, output, stream, model, onStart, options) {
+-    const { socket, entry, reused, release } = await acquireWebSocket(url, headers, options?.sessionId, options?.signal);
++async function processWebSocketStream(url, body, headers, output, stream, model, onStart, options, attemptOptions = {}) {
++    const { suppressStart = false, forceFresh = false, forceFullBody = false } = attemptOptions;
++    const { socket, entry, reused, release } = await acquireWebSocket(url, headers, options?.sessionId, options?.signal, forceFresh);
+     let keepConnection = true;
+     const useCachedContext = options?.transport === "websocket-cached";
+     // ChatGPT Codex Responses rejects `store: true` ("Store must be set to false").
+     // WebSocket continuation still works via connection-scoped previous_response_id state.
+     const fullBody = body;
+-    const requestBody = useCachedContext && entry ? buildCachedWebSocketRequestBody(entry, fullBody) : fullBody;
++    const requestBody = useCachedContext && entry && !forceFullBody ? buildCachedWebSocketRequestBody(entry, fullBody) : fullBody;
+     const stats = options?.sessionId ? getOrCreateWebSocketDebugStats(options.sessionId) : undefined;
+     if (stats) {
+         stats.requests++;
+@@ -796,7 +907,9 @@
+     try {
+         socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
+         onStart();
+-        stream.push({ type: "start", partial: output });
++        if (!suppressStart) {
++            stream.push({ type: "start", partial: output });
++        }
+         await processResponsesStream(mapCodexEvents(parseWebSocket(socket, options?.signal)), output, stream, model, {
+             serviceTier: options?.serviceTier,
+             resolveServiceTier: resolveCodexServiceTier,
