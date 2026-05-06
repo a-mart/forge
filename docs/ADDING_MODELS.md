@@ -98,7 +98,7 @@ The current guidance points complex coding work at `pi-5.5` when it exists, with
 
 Pi has its own built-in model registry, and Forge normally resolves models through that registry first.
 
-If the new model is not in Pi upstream yet, Forge still has a synthetic resolution bridge in the backend runtime path. The relevant helper is `resolveExactModel()` in `apps/backend/src/swarm/swarm-manager-utils.ts`, and it is used by `apps/backend/src/swarm/runtime/runtime-factory.ts` when a runtime needs an exact Pi model.
+If the new model is not in Pi upstream yet, Forge still has a synthetic resolution bridge in the backend runtime path. Runtime construction now flows through the runtime provider dispatch facade and provider-specific runtime creators (for example, the Pi runtime creator). The relevant helper is `resolveExactModel()` in `apps/backend/src/swarm/swarm-manager-utils.ts`, and the Pi runtime creation path uses it when a runtime needs an exact Pi model.
 
 The bridge works by:
 
