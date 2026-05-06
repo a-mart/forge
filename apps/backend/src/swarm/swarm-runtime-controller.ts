@@ -12,6 +12,7 @@ import type {
   RuntimeShutdownOptions,
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
+import { RuntimeCallbackGate } from "./runtime/runtime-callback-gate.js";
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type {
@@ -191,11 +192,14 @@ export class SwarmRuntimeController {
   private specialistFallbackManager: SwarmSpecialistFallbackManager | null = null;
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
   private readonly recoveryAbortedWorkerTurnAgentIds = new Set<string>();
-  private readonly intentionallyStoppedRuntimeTokensByAgentId = new Map<string, Set<number>>();
   private nextRuntimeToken = 1;
+  private readonly runtimeCallbackGate: RuntimeCallbackGate;
   private readonly runtimeFactory: RuntimeFactory;
 
   constructor(private readonly host: SwarmRuntimeControllerHost) {
+    this.runtimeCallbackGate = new RuntimeCallbackGate({
+      getCurrentRuntimeToken: (agentId) => this.runtimeTokensByAgentId.get(agentId)
+    });
     this.runtimeFactory = new RuntimeFactory({
       host,
       forgeExtensionHost: host.forgeExtensionHost,
@@ -216,7 +220,8 @@ export class SwarmRuntimeController {
       getMemoryRuntimeResources: async (descriptor) => this.host.getMemoryRuntimeResources(descriptor),
       getSwarmContextFiles: async (cwd) => this.host.getSwarmContextFiles(cwd),
       buildClaudeRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
-        this.host.promptService.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),      buildAcpRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
+        this.host.promptService.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),
+      buildAcpRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
         this.host.promptService.buildAcpRuntimeSystemPrompt(descriptor, systemPrompt),
       mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
         this.mergeRuntimeContextFiles(baseAgentsFiles, options),
@@ -242,6 +247,7 @@ export class SwarmRuntimeController {
 
   setSpecialistFallbackManager(manager: SwarmSpecialistFallbackManager): void {
     this.specialistFallbackManager = manager;
+    this.runtimeCallbackGate.setFallbackHandoffAdapter(manager);
   }
 
   listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
@@ -267,34 +273,11 @@ export class SwarmRuntimeController {
   }
 
   suppressIntentionalStopRuntimeCallbacks(agentId: string, runtimeToken?: number): void {
-    if (runtimeToken === undefined) {
-      return;
-    }
-
-    let suppressedTokens = this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId);
-    if (!suppressedTokens) {
-      suppressedTokens = new Set<number>();
-      this.intentionallyStoppedRuntimeTokensByAgentId.set(agentId, suppressedTokens);
-    }
-
-    suppressedTokens.add(runtimeToken);
+    this.runtimeCallbackGate.suppressIntentionalStopRuntimeCallbacks(agentId, runtimeToken);
   }
 
   clearIntentionalStopRuntimeCallbackSuppression(agentId: string, runtimeToken?: number): void {
-    if (runtimeToken === undefined) {
-      this.intentionallyStoppedRuntimeTokensByAgentId.delete(agentId);
-      return;
-    }
-
-    const suppressedTokens = this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId);
-    if (!suppressedTokens) {
-      return;
-    }
-
-    suppressedTokens.delete(runtimeToken);
-    if (suppressedTokens.size === 0) {
-      this.intentionallyStoppedRuntimeTokensByAgentId.delete(agentId);
-    }
+    this.runtimeCallbackGate.clearIntentionalStopRuntimeCallbackSuppression(agentId, runtimeToken);
   }
 
   async createRuntimeForDescriptor(
@@ -412,15 +395,7 @@ export class SwarmRuntimeController {
     pendingCount: number,
     contextUsage?: AgentContextUsage
   ): Promise<void> {
-    if (
-      this.specialistFallbackManager?.bufferStatusDuringHandoff(
-        agentId,
-        runtimeToken,
-        status,
-        pendingCount,
-        contextUsage
-      )
-    ) {
+    if (this.runtimeCallbackGate.bufferStatusDuringHandoff(agentId, runtimeToken, status, pendingCount, contextUsage)) {
       return;
     }
 
@@ -807,10 +782,7 @@ export class SwarmRuntimeController {
       return;
     }
 
-    if (
-      runtimeToken !== undefined &&
-      this.specialistFallbackManager?.bufferAgentEndDuringHandoff(agentId, runtimeToken)
-    ) {
+    if (this.runtimeCallbackGate.bufferAgentEndDuringHandoff(agentId, runtimeToken)) {
       return;
     }
 
@@ -951,28 +923,8 @@ export class SwarmRuntimeController {
     return this.runtimeTokensByAgentId.get(agentId) === runtimeToken;
   }
 
-  private isIntentionalStopRuntimeCallbackSuppressed(agentId: string, runtimeToken?: number): boolean {
-    if (runtimeToken === undefined) {
-      return false;
-    }
-
-    return this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId)?.has(runtimeToken) === true;
-  }
-
   private shouldIgnoreRuntimeCallback(agentId: string, runtimeToken?: number): boolean {
-    if (runtimeToken === undefined) {
-      return false;
-    }
-
-    if (this.isIntentionalStopRuntimeCallbackSuppressed(agentId, runtimeToken)) {
-      return true;
-    }
-
-    if (this.specialistFallbackManager?.isSuppressedRuntimeCallback(agentId, runtimeToken)) {
-      return true;
-    }
-
-    return !this.isCurrentRuntimeToken(agentId, runtimeToken);
+    return this.runtimeCallbackGate.shouldIgnoreRuntimeCallback(agentId, runtimeToken);
   }
 
   private handleRuntimeExtensionSnapshot(
