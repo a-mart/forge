@@ -440,6 +440,7 @@ describe('SwarmManager', () => {
     await manager.setSessionProjectAgent(first.sessionAgent.agentId, {
       whenToUse: 'Draft release notes.',
     })
+    await rm(getProjectAgentDir(config.paths.dataDir, 'manager', 'release-notes'), { recursive: true, force: true })
 
     await expect(
       manager.setSessionProjectAgent(second.sessionAgent.agentId, {

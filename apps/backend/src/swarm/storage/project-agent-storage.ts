@@ -231,7 +231,7 @@ function coercePersistedProjectAgentConfig(value: unknown): PersistedProjectAgen
   };
 }
 
-function normalizeProjectAgentCapabilities(value: unknown): ProjectAgentCapability[] {
+export function normalizeProjectAgentCapabilities(value: unknown): ProjectAgentCapability[] {
   if (!Array.isArray(value)) {
     return [];
   }
