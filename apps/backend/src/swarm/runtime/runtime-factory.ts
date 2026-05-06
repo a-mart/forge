@@ -19,13 +19,12 @@ import { AgentRuntime } from "../agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "../auth-storage-paths.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import { openSessionManagerWithSizeGuard } from "../session-file-guard.js";
-import { AcpAgentRuntime } from "../acp-agent-runtime.js";
 import { ClaudeAgentRuntime } from "../claude-agent-runtime.js";
 import { ClaudeAuthResolver } from "../claude-auth-resolver.js";
 import { createClaudeMcpToolBridge } from "../claude-mcp-tool-bridge.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
-import { createAcpMcpToolBridge } from "./acp/acp-mcp-tool-bridge.js";
+import { AcpRuntimeCreator } from "./acp/acp-runtime-creator.js";
 import { installOpenAICodexWebSocketDiagnostics } from "../runtime-utils.js";
 import type {
   RuntimeCreationOptions,
@@ -94,7 +93,11 @@ interface RuntimeFactoryDependencies {
 }
 
 export class RuntimeFactory {
-  constructor(private readonly deps: RuntimeFactoryDependencies) {}
+  private readonly acpRuntimeCreator: AcpRuntimeCreator;
+
+  constructor(private readonly deps: RuntimeFactoryDependencies) {
+    this.acpRuntimeCreator = new AcpRuntimeCreator(deps);
+  }
 
   async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
@@ -124,7 +127,12 @@ export class RuntimeFactory {
     }
 
     if (isAcpModelDescriptor(descriptor.model)) {
-      return this.createAcpRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
+      return this.acpRuntimeCreator.createRuntimeForDescriptor({
+        descriptor,
+        systemPrompt,
+        runtimeToken,
+        sessionDescriptor: this.getForgeSessionDescriptor(descriptor)
+      });
     }
     return this.createPiRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
   }
@@ -492,90 +500,6 @@ export class RuntimeFactory {
     return runtime;
   }
 
-  private async createAcpRuntimeForDescriptor(
-    descriptor: AgentDescriptor,
-    systemPrompt: string,
-    runtimeToken: number,
-    _options?: RuntimeCreationOptions
-  ): Promise<SwarmAgentRuntime> {
-    const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
-      descriptor,
-      sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
-      runtimeType: "acp",
-      runtimeToken
-    });
-    const { swarmTools } = this.buildRuntimeToolPlan(descriptor, preparedForgeBindings);
-    const [acpSystemPrompt, memoryResources] = await Promise.all([
-      this.deps.buildAcpRuntimeSystemPrompt(descriptor, systemPrompt),
-      this.deps.getMemoryRuntimeResources(descriptor)
-    ]);
-    const mcpBridge = await createAcpMcpToolBridge(swarmTools);
-
-    this.deps.logDebug("runtime:create:start", {
-      runtime: "cursor-acp",
-      agentId: descriptor.agentId,
-      role: descriptor.role,
-      model: descriptor.model,
-      archetypeId: descriptor.archetypeId,
-      cwd: descriptor.cwd,
-      mcpServer: mcpBridge.mcpDescriptor.name,
-      mcpUrl: mcpBridge.mcpDescriptor.url
-    });
-
-    let runtime: SwarmAgentRuntime;
-    try {
-      runtime = await AcpAgentRuntime.create({
-        descriptor: cloneRuntimeDescriptor(descriptor),
-        callbacks: {
-          onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
-            await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
-          },
-          onSessionEvent: async (agentId, event) => {
-            await this.deps.callbacks.onSessionEvent(runtimeToken, agentId, event);
-          },
-          onAgentEnd: async (agentId) => {
-            await this.deps.callbacks.onAgentEnd(runtimeToken, agentId);
-          },
-          onRuntimeError: async (agentId, error) => {
-            await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
-          }
-        },
-        now: this.deps.now,
-        systemPrompt: acpSystemPrompt,
-        mcpServers: [mcpBridge.mcpDescriptor],
-        runtimeEnv: planRuntimeEnv({
-          dataDir: this.deps.config.paths.dataDir,
-          memoryContextFile: memoryResources.memoryContextFile
-        }),
-        onSessionFileRotated: async (sessionFile) => {
-          await this.deps.onSessionFileRotated?.(descriptor, sessionFile);
-        },
-        onUnexpectedExit: async () => {
-          await mcpBridge.shutdown();
-        }
-      });
-    } catch (error) {
-      await mcpBridge.shutdown().catch(() => undefined);
-      throw error;
-    }
-
-    bindRuntimeCleanup(runtime, () => mcpBridge.shutdown());
-
-    this.deps.logDebug("runtime:create:ready", {
-      runtime: "cursor-acp",
-      agentId: descriptor.agentId,
-      activeTools: swarmTools.map((tool) => tool.name),
-      mcpServer: mcpBridge.mcpDescriptor.name,
-      systemPromptPreview: previewForLog(acpSystemPrompt, 240)
-    });
-
-    if (preparedForgeBindings) {
-      this.deps.forgeExtensionHost.activateRuntimeBindings(preparedForgeBindings);
-    }
-
-    return runtime;
-  }
-
   private buildRuntimeToolPlan(
     descriptor: AgentDescriptor,
     preparedForgeBindings?: Parameters<typeof planRuntimeTools>[0]["preparedForgeBindings"]
@@ -904,27 +828,4 @@ function cloneRuntimeDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
 function omitSystemPrompt<T extends { systemPrompt?: string }>(plan: T): Omit<T, "systemPrompt"> {
   const { systemPrompt: _systemPrompt, ...rest } = plan;
   return rest;
-}
-
-function bindRuntimeCleanup(runtime: SwarmAgentRuntime, cleanup: () => Promise<void>): void {
-  let cleanupPromise: Promise<void> | undefined;
-  const runCleanup = async () => {
-    cleanupPromise ??= cleanup();
-    await cleanupPromise;
-  };
-
-  const wrap = (methodName: "terminate" | "shutdownForReplacement" | "recycle") => {
-    const original = runtime[methodName].bind(runtime) as (...args: any[]) => Promise<void>;
-    runtime[methodName] = (async (...args: any[]) => {
-      try {
-        await original(...args);
-      } finally {
-        await runCleanup();
-      }
-    }) as typeof runtime[typeof methodName];
-  };
-
-  wrap("terminate");
-  wrap("shutdownForReplacement");
-  wrap("recycle");
 }
