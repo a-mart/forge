@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createWorkerDescriptor } from "../../test-support/index.js";
 import {
   SwarmAgentLifecycleService,
-  type ManagerRuntimeRecycleReason,
   type SwarmAgentLifecycleServiceOptions
 } from "../swarm-agent-lifecycle-service.js";
+import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { SessionProvisioner } from "../session-provisioner.js";
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor, ManagerProfile, SpawnAgentInput } from "../types.js";
@@ -43,9 +43,7 @@ function baseLifecycleOptions(
   const runtimeCreationPromisesByAgentId = overrides.runtimeCreationPromisesByAgentId ?? new Map<string, Promise<SwarmAgentRuntime>>();
   const modelCapacityBlocks =
     overrides.modelCapacityBlocks ?? new Map<string, { provider: string; modelId: string; blockedUntilMs: number }>();
-  const pendingRecycle = overrides.pendingManagerRuntimeRecycleAgentIds ?? new Set<string>();
-  const pendingReasons =
-    overrides.pendingManagerRuntimeRecycleReasonsByAgentId ?? new Map<string, ManagerRuntimeRecycleReason>();
+  const runtimeRecoveryState = overrides.runtimeRecoveryState ?? new RuntimeRecoveryState();
 
   const sessionProvisioner =
     overrides.sessionProvisioner ??
@@ -74,8 +72,7 @@ function baseLifecycleOptions(
         runtimeCreationPromisesByAgentId.delete(agentId);
         return true;
       }),
-    pendingManagerRuntimeRecycleAgentIds: pendingRecycle,
-    pendingManagerRuntimeRecycleReasonsByAgentId: pendingReasons,
+    runtimeRecoveryState,
     modelCapacityBlocks,
     sessionProvisioner,
     descriptorMutations: overrides.descriptorMutations ?? {
@@ -178,8 +175,7 @@ function baseLifecycleOptions(
         runtimes: _r,
         sessionProvisioner: _s,
         modelCapacityBlocks: _m,
-        pendingManagerRuntimeRecycleAgentIds: _pa,
-        pendingManagerRuntimeRecycleReasonsByAgentId: _pr,
+        runtimeRecoveryState: _rr,
         runtimeCreationPromisesByAgentId: _rc,
         ...rest
       } = overrides;
@@ -601,21 +597,19 @@ describe("SwarmAgentLifecycleService", () => {
     const runtimes = new Map([
       [manager.agentId, makeRuntimeStub({ descriptor: manager, getStatus: () => "idle", getPendingCount: () => 0 })]
     ]);
-    const pending = new Set<string>();
-    const pendingReasons = new Map<string, "cwd_change">();
+    const runtimeRecoveryState = new RuntimeRecoveryState();
 
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
         descriptors,
         runtimes,
-        pendingManagerRuntimeRecycleAgentIds: pending,
-        pendingManagerRuntimeRecycleReasonsByAgentId: pendingReasons
+        runtimeRecoveryState
       })
     );
 
     const result = await svc.applyManagerRuntimeRecyclePolicy("m1", "cwd_change");
     expect(result).toBe("deferred");
-    expect(pending.has("m1")).toBe(true);
+    expect(runtimeRecoveryState.hasPendingManagerRuntimeRecycle("m1")).toBe(true);
   });
 
   it("applyManagerRuntimeRecyclePolicy defers while recovery grace is active", async () => {
@@ -639,22 +633,20 @@ describe("SwarmAgentLifecycleService", () => {
         })
       ]
     ]);
-    const pending = new Set<string>();
-    const pendingReasons = new Map<string, "cwd_change">();
+    const runtimeRecoveryState = new RuntimeRecoveryState();
 
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
         descriptors,
         runtimes,
-        pendingManagerRuntimeRecycleAgentIds: pending,
-        pendingManagerRuntimeRecycleReasonsByAgentId: pendingReasons
+        runtimeRecoveryState
       })
     );
 
     const result = await svc.applyManagerRuntimeRecyclePolicy("m1", "cwd_change");
     expect(result).toBe("deferred");
     expect(recycle).not.toHaveBeenCalled();
-    expect(pending.has("m1")).toBe(true);
+    expect(runtimeRecoveryState.hasPendingManagerRuntimeRecycle("m1")).toBe(true);
   });
 
   it("applyManagerRuntimeRecyclePolicy recycles immediately when idle and clears pending state", async () => {
@@ -670,22 +662,21 @@ describe("SwarmAgentLifecycleService", () => {
     const runtimes = new Map([
       [manager.agentId, makeRuntimeStub({ descriptor: manager, recycle, isContextRecoveryInProgress: () => false })]
     ]);
-    const pending = new Set<string>(["m1"]);
-    const pendingReasons = new Map<string, "specialist_roster_change">([["m1", "specialist_roster_change"]]);
+    const runtimeRecoveryState = new RuntimeRecoveryState();
+    runtimeRecoveryState.setPendingManagerRuntimeRecycle("m1", "specialist_roster_change");
 
     const svc = new SwarmAgentLifecycleService(
       baseLifecycleOptions({
         descriptors,
         runtimes,
-        pendingManagerRuntimeRecycleAgentIds: pending,
-        pendingManagerRuntimeRecycleReasonsByAgentId: pendingReasons
+        runtimeRecoveryState
       })
     );
 
     const result = await svc.applyManagerRuntimeRecyclePolicy("m1", "idle_transition");
     expect(result).toBe("recycled");
     expect(recycle).toHaveBeenCalled();
-    expect(pending.has("m1")).toBe(false);
+    expect(runtimeRecoveryState.hasPendingManagerRuntimeRecycle("m1")).toBe(false);
   });
 
   it("stopWorker shuts down the worker runtime and clears health hooks via options", async () => {

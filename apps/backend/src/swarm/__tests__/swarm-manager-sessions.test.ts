@@ -819,7 +819,7 @@ describe('SwarmManager', () => {
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
       runtimeTokensByAgentId: Map<string, number>
-      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
       handleRuntimeStatus: (
         runtimeToken: number,
         agentId: string,
@@ -846,7 +846,7 @@ describe('SwarmManager', () => {
     expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(0)
     expect(sessionRuntime.recycleCalls).toBe(0)
     expect(sessionRuntime.terminateCalls).toHaveLength(0)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
 
     const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
@@ -858,7 +858,7 @@ describe('SwarmManager', () => {
     expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(1)
     expect(sessionRuntime.recycleCalls).toBe(0)
     expect(sessionRuntime.terminateCalls).toHaveLength(0)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
     expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
@@ -1112,7 +1112,7 @@ describe('SwarmManager', () => {
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
       runtimeTokensByAgentId: Map<string, number>
-      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
       handleRuntimeStatus: (
         runtimeToken: number,
         agentId: string,
@@ -1151,8 +1151,8 @@ describe('SwarmManager', () => {
     expect(state.runtimes.has(rootSession.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
     expect(state.runtimes.has(otherManager.agentId)).toBe(true)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(otherManager.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(otherManager.agentId)).toBe(false)
 
     const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
     expect(runtimeToken).toBeTypeOf('number')
@@ -1161,7 +1161,7 @@ describe('SwarmManager', () => {
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
     expect(sessionRuntime.recycleCalls).toBe(1)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
     expect(manager.runtimeByAgentId.get(otherManager.agentId)).toBe(otherRuntime)
 
@@ -1261,7 +1261,7 @@ describe('SwarmManager', () => {
     const state = manager as unknown as {
       runtimes: Map<string, SwarmAgentRuntime>
       runtimeTokensByAgentId: Map<string, number>
-      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
       handleRuntimeStatus: (
         runtimeToken: number,
         agentId: string,
@@ -1289,7 +1289,7 @@ describe('SwarmManager', () => {
     expect(sessionRuntime.recycleCalls).toBe(0)
     expect(state.runtimes.has(rootSession.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
 
     const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
     expect(runtimeToken).toBeTypeOf('number')
@@ -1298,7 +1298,7 @@ describe('SwarmManager', () => {
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
     expect(sessionRuntime.recycleCalls).toBe(1)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
   })
 
@@ -1407,7 +1407,7 @@ describe('SwarmManager', () => {
     const descriptor = manager.getAgent(sessionAgent.agentId)
     const state = manager as unknown as {
       runtimeTokensByAgentId: Map<string, number>
-      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
       handleRuntimeStatus: (
         runtimeToken: number,
         agentId: string,
@@ -1435,7 +1435,7 @@ describe('SwarmManager', () => {
 
     expect(rootRuntime.recycleCalls).toBe(rootCallsAfterAttach)
     expect(sessionRuntime.recycleCalls).toBe(sessionCallsAfterAttach)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
 
     const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
     expect(runtimeToken).toBeTypeOf('number')
@@ -1444,7 +1444,7 @@ describe('SwarmManager', () => {
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
     expect(sessionRuntime.recycleCalls).toBe(sessionCallsAfterAttach + 1)
-    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(false)
   })
 
   it.each([

@@ -9,6 +9,10 @@ import type {
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
 import type { ModelChangeContinuityRequest } from "./runtime/model-change-continuity.js";
+import type {
+  ManagerRuntimeRecycleReason as RuntimeManagerRuntimeRecycleReason,
+  RuntimeRecoveryState
+} from "./runtime/runtime-recovery-state.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import { isNonRunningAgentStatus, transitionAgentStatus } from "./agent-state-machine.js";
 import type {
@@ -80,13 +84,7 @@ export type AgentLifecycleStopSessionOptions = {
   deleteWorkers?: boolean;
 };
 
-export type ManagerRuntimeRecycleReason =
-  | "model_change"
-  | "cwd_change"
-  | "idle_transition"
-  | "prompt_mode_change"
-  | "project_agent_directory_change"
-  | "specialist_roster_change";
+export type ManagerRuntimeRecycleReason = RuntimeManagerRuntimeRecycleReason;
 
 export interface SwarmAgentLifecycleServiceOptions {
   dataDir: string;
@@ -98,8 +96,13 @@ export interface SwarmAgentLifecycleServiceOptions {
   getRuntimeCreationPromise: (agentId: string) => Promise<SwarmAgentRuntime> | undefined;
   setRuntimeCreationPromise: (agentId: string, promise: Promise<SwarmAgentRuntime>) => void;
   clearRuntimeCreationPromiseIfCurrent: (agentId: string, promise: Promise<SwarmAgentRuntime>) => boolean;
-  pendingManagerRuntimeRecycleAgentIds: Set<string>;
-  pendingManagerRuntimeRecycleReasonsByAgentId: Map<string, ManagerRuntimeRecycleReason>;
+  runtimeRecoveryState: Pick<
+    RuntimeRecoveryState,
+    | "hasPendingManagerRuntimeRecycle"
+    | "getPendingManagerRuntimeRecycleReason"
+    | "setPendingManagerRuntimeRecycle"
+    | "clearPendingManagerRuntimeRecycle"
+  >;
   modelCapacityBlocks: Map<string, ModelCapacityBlockLike>;
   sessionProvisioner: SessionProvisioner;
   descriptorMutations: AgentLifecycleDescriptorMutations;
@@ -1158,13 +1161,13 @@ export class SwarmAgentLifecycleService {
       return "none";
     }
 
-    if (reason === "idle_transition" && !this.options.pendingManagerRuntimeRecycleAgentIds.has(agentId)) {
+    if (reason === "idle_transition" && !this.options.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(agentId)) {
       return "none";
     }
 
     const effectiveReason =
       reason === "idle_transition"
-        ? this.options.pendingManagerRuntimeRecycleReasonsByAgentId.get(agentId) ?? reason
+        ? this.options.runtimeRecoveryState.getPendingManagerRuntimeRecycleReason(agentId) ?? reason
         : reason;
 
     const runtime = this.options.runtimes.get(agentId);
@@ -1323,13 +1326,11 @@ export class SwarmAgentLifecycleService {
   }
 
   private setPendingManagerRuntimeRecycle(agentId: string, reason: ManagerRuntimeRecycleReason): void {
-    this.options.pendingManagerRuntimeRecycleAgentIds.add(agentId);
-    this.options.pendingManagerRuntimeRecycleReasonsByAgentId.set(agentId, reason);
+    this.options.runtimeRecoveryState.setPendingManagerRuntimeRecycle(agentId, reason);
   }
 
   private clearPendingManagerRuntimeRecycle(agentId: string): void {
-    this.options.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
-    this.options.pendingManagerRuntimeRecycleReasonsByAgentId.delete(agentId);
+    this.options.runtimeRecoveryState.clearPendingManagerRuntimeRecycle(agentId);
   }
 
   private async createAndAttachRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {

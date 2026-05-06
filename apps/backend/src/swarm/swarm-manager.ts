@@ -113,6 +113,7 @@ import {
   type ModelChangeContinuityRequest
 } from "./runtime/model-change-continuity.js";
 import { resolvePendingModelChangeRuntimeStartup } from "./runtime/model-change-runtime-startup.js";
+import { RuntimeRecoveryState } from "./runtime/runtime-recovery-state.js";
 import {
   SwarmRuntimeController,
   type SwarmRuntimeControllerHost
@@ -1068,8 +1069,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimes: Map<string, SwarmAgentRuntime>;
   readonly runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
   readonly runtimeTokensByAgentId: Map<string, number>;
-  private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
-  private readonly pendingManagerRuntimeRecycleReasonsByAgentId = new Map<string, ManagerRuntimeRecycleReason>();
+  private readonly runtimeRecoveryState = new RuntimeRecoveryState();
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
@@ -1409,8 +1409,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.runtimeController.setRuntimeCreationPromise(agentId, promise),
       clearRuntimeCreationPromiseIfCurrent: (agentId, promise) =>
         this.runtimeController.clearRuntimeCreationPromiseIfCurrent(agentId, promise),
-      pendingManagerRuntimeRecycleAgentIds: this.pendingManagerRuntimeRecycleAgentIds,
-      pendingManagerRuntimeRecycleReasonsByAgentId: this.pendingManagerRuntimeRecycleReasonsByAgentId,
+      runtimeRecoveryState: this.runtimeRecoveryState,
       modelCapacityBlocks: this.modelCapacityBlocks,
       sessionProvisioner: this.sessionProvisioner,
       descriptorMutations: {
@@ -4047,7 +4046,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    if (this.pendingManagerRuntimeRecycleAgentIds.has(target.agentId)) {
+    if (this.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(target.agentId)) {
       const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(target.agentId, "idle_transition");
       if (recycleDisposition === "recycled") {
         await this.saveStore();
