@@ -435,6 +435,124 @@ describe('OpenAI Codex transport forwarding and websocket recovery', () => {
     expect(result.responseId).toBe('resp_healthy_2')
   })
 
+  it('falls back to SSE for auto transport when the WebSocket constructor throws', async () => {
+    class FakeWebSocket extends EventTarget {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSING = 2
+      static CLOSED = 3
+
+      constructor(_url: string | URL, _protocols?: unknown) {
+        super()
+        throw new Error('WebSocket unavailable')
+      }
+    }
+
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof globalThis.WebSocket
+    const fetchSpy = vi.fn(async () => sseResponse([completedSseEvent('resp_sse_constructor_fallback')]))
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch
+
+    const result = await streamSimple(codexModel, { messages: [] }, {
+      apiKey: fakeCodexToken,
+      transport: 'auto',
+      sessionId: 'test-session-auto-constructor-fallback',
+      reasoning: 'low',
+    }).result()
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(result.stopReason).toBe('stop')
+    expect(result.responseId).toBe('resp_sse_constructor_fallback')
+    expect(Object.prototype.hasOwnProperty.call(result, 'cost')).toBe(false)
+  })
+
+  it('falls back to SSE for auto transport after a connect-stage 1011 close before open', async () => {
+    const sockets: EventTarget[] = []
+
+    class FakeWebSocket extends EventTarget {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSING = 2
+      static CLOSED = 3
+      readyState = FakeWebSocket.CONNECTING
+
+      constructor(_url: string | URL, _protocols?: unknown) {
+        super()
+        sockets.push(this)
+        queueMicrotask(() => this.dispatchEvent(closeEvent(1011, 'connect failed')))
+      }
+
+      send(_payload: string) {
+        throw new Error('send should not be called before open')
+      }
+
+      close(_code?: number, _reason?: string) {
+        this.readyState = FakeWebSocket.CLOSED
+      }
+    }
+
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof globalThis.WebSocket
+    const fetchSpy = vi.fn(async () => sseResponse([completedSseEvent('resp_sse_connect_close_fallback')]))
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch
+
+    const result = await streamSimple(codexModel, { messages: [] }, {
+      apiKey: fakeCodexToken,
+      transport: 'auto',
+      sessionId: 'test-session-auto-connect-close-fallback',
+      reasoning: 'low',
+    }).result()
+
+    expect(sockets).toHaveLength(1)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(result.stopReason).toBe('stop')
+    expect(result.responseId).toBe('resp_sse_connect_close_fallback')
+  })
+
+  it('falls back to SSE for auto transport after a connect-stage onerror before open', async () => {
+    const sockets: EventTarget[] = []
+
+    class FakeWebSocket extends EventTarget {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSING = 2
+      static CLOSED = 3
+      readyState = FakeWebSocket.CONNECTING
+
+      constructor(_url: string | URL, _protocols?: unknown) {
+        super()
+        sockets.push(this)
+        queueMicrotask(() => {
+          const event = new Event('error') as Event & { message: string }
+          Object.defineProperty(event, 'message', { value: 'connect failed 1011' })
+          this.dispatchEvent(event)
+        })
+      }
+
+      send(_payload: string) {
+        throw new Error('send should not be called before open')
+      }
+
+      close(_code?: number, _reason?: string) {
+        this.readyState = FakeWebSocket.CLOSED
+      }
+    }
+
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof globalThis.WebSocket
+    const fetchSpy = vi.fn(async () => sseResponse([completedSseEvent('resp_sse_connect_error_fallback')]))
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch
+
+    const result = await streamSimple(codexModel, { messages: [] }, {
+      apiKey: fakeCodexToken,
+      transport: 'auto',
+      sessionId: 'test-session-auto-connect-error-fallback',
+      reasoning: 'low',
+    }).result()
+
+    expect(sockets).toHaveLength(1)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(result.stopReason).toBe('stop')
+    expect(result.responseId).toBe('resp_sse_connect_error_fallback')
+  })
+
   it('falls back to SSE for auto transport after a replay-safe websocket failure', async () => {
     const sockets: EventTarget[] = []
 

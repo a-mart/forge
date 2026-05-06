@@ -123,7 +123,7 @@ index 0000000..0000000 100644
                      if (options?.signal?.aborted) {
                          throw new Error("Request was aborted");
                      }
-@@ -105,10 +107,30 @@
+@@ -105,10 +107,33 @@
                          message: output,
                      });
                      stream.end();
@@ -150,6 +150,9 @@ index 0000000..0000000 100644
 +                            }
 +                            resetOutputState(output, initialOutputState);
 +                        }
++                    }
++                    else if (transport === "auto" && !streamStarted) {
++                        resetOutputState(output, initialOutputState);
 +                    }
 +                    else if (transport === "websocket" || transport === "websocket-cached" || !canReplaySafely) {
                          throw error;
@@ -193,7 +196,7 @@ index 0000000..0000000 100644
      if (!sessionId) {
          const socket = await connectWebSocket(url, headers, signal);
          return {
-@@ -606,16 +639,68 @@
+@@ -606,16 +639,66 @@
      }
      return new Error("WebSocket error");
  }
@@ -247,8 +250,7 @@ index 0000000..0000000 100644
 +    return {
 +        ...output,
 +        content: output.content.map((block) => ({ ...block })),
-+        usage: { ...output.usage },
-+        cost: { ...output.cost },
++        usage: { ...output.usage, cost: { ...output.usage.cost } },
 +    };
 +}
 +function resetOutputState(output, state) {
@@ -258,8 +260,7 @@ index 0000000..0000000 100644
 +    Object.assign(output, {
 +        ...state,
 +        content: state.content.map((block) => ({ ...block })),
-+        usage: { ...state.usage },
-+        cost: { ...state.cost },
++        usage: { ...state.usage, cost: { ...state.usage.cost } },
 +    });
 +}
  async function decodeWebSocketData(data) {
