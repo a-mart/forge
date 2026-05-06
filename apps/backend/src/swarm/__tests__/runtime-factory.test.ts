@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPiModelsProjectionPath } from "../model-catalog-projection.js";
+import { planPiExtensionFactories } from "../runtime/runtime-tool-plan.js";
 
 const piAiMockState = vi.hoisted(() => ({
   getModel: vi.fn(),
@@ -379,12 +380,12 @@ function createMockRuntime(options: {
   };
 }
 
-function buildExtensionFactories(factory: RuntimeFactory, descriptor: AgentDescriptor) {
-  return (
-    factory as unknown as {
-      buildExtensionFactories: (agentDescriptor: AgentDescriptor) => Array<(pi: any) => void>;
-    }
-  ).buildExtensionFactories(descriptor);
+function buildExtensionFactories(rootDir: string, descriptor: AgentDescriptor) {
+  return planPiExtensionFactories({
+    descriptor,
+    config: createConfig(rootDir),
+    logDebug: () => {},
+  });
 }
 
 function fakeSkillMetadata(directoryName: string, rootPath: string, skillName = directoryName) {
@@ -1247,7 +1248,6 @@ describe("RuntimeFactory", () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
 
-    const factory = createFactory(rootDir);
     const descriptor = createManagerDescriptor(rootDir);
     await savePins(join(rootDir, "data", "profiles", descriptor.profileId!, "sessions", descriptor.agentId), {
       version: 1,
@@ -1261,7 +1261,7 @@ describe("RuntimeFactory", () => {
       },
     });
 
-    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const extensionFactories = buildExtensionFactories(rootDir, descriptor);
 
     const handlers = new Map<string, (...args: any[]) => unknown>();
     for (const extensionFactory of extensionFactories) {
@@ -1337,7 +1337,6 @@ describe("RuntimeFactory", () => {
 
   it("injects the catalog request behavior extension for xAI workers without re-registering the provider", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    const factory = createFactory(rootDir);
     const descriptor = createDescriptor(rootDir, {
       model: {
         provider: "xai",
@@ -1346,7 +1345,7 @@ describe("RuntimeFactory", () => {
       },
     });
 
-    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const extensionFactories = buildExtensionFactories(rootDir, descriptor);
     const handlers = new Map<string, (...args: any[]) => unknown>();
     const registerProvider = vi.fn();
 
@@ -1365,7 +1364,6 @@ describe("RuntimeFactory", () => {
 
   it("does not inject request-behavior handling for non-xAI workers", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    const factory = createFactory(rootDir);
     const descriptor = createDescriptor(rootDir, {
       model: {
         provider: "openai-codex",
@@ -1374,7 +1372,7 @@ describe("RuntimeFactory", () => {
       },
     });
 
-    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const extensionFactories = buildExtensionFactories(rootDir, descriptor);
     const handlers = new Map<string, (...args: any[]) => unknown>();
 
     for (const extensionFactory of extensionFactories) {
@@ -1391,7 +1389,6 @@ describe("RuntimeFactory", () => {
 
   it("registers before_provider_request injection when xAI web search is enabled", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    const factory = createFactory(rootDir);
     const descriptor = createDescriptor(rootDir, {
       model: {
         provider: "xai",
@@ -1401,7 +1398,7 @@ describe("RuntimeFactory", () => {
       webSearch: true,
     });
 
-    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const extensionFactories = buildExtensionFactories(rootDir, descriptor);
     const handlers = new Map<string, (...args: any[]) => unknown>();
 
     for (const extensionFactory of extensionFactories) {
@@ -1440,7 +1437,6 @@ describe("RuntimeFactory", () => {
 
   it("registers before_provider_request handling when xAI web search is disabled", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    const factory = createFactory(rootDir);
     const descriptor = createDescriptor(rootDir, {
       model: {
         provider: "xai",
@@ -1450,7 +1446,7 @@ describe("RuntimeFactory", () => {
       webSearch: false,
     });
 
-    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const extensionFactories = buildExtensionFactories(rootDir, descriptor);
     const handlers = new Map<string, (...args: any[]) => unknown>();
 
     for (const extensionFactory of extensionFactories) {
