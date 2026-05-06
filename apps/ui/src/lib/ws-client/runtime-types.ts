@@ -31,6 +31,7 @@ const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
 const UPDATE_SESSION_MODEL_CONTRACT = getWsRequestContract('update_session_model')
 const FORK_SESSION_CONTRACT = getWsRequestContract('fork_session')
+const UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT = getWsRequestContract('update_profile_default_model')
 const UPDATE_MANAGER_MODEL_CONTRACT = getWsRequestContract('update_manager_model')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
@@ -44,6 +45,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   PIN_SESSION_CONTRACT.commandType,
   UPDATE_SESSION_MODEL_CONTRACT.commandType,
   FORK_SESSION_CONTRACT.commandType,
+  UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   CREATE_SESSION_CONTRACT.commandType,
@@ -73,6 +75,10 @@ const UPDATE_SESSION_MODEL_ERROR_HINTS = UPDATE_SESSION_MODEL_CONTRACT.errorCode
 }))
 const FORK_SESSION_ERROR_HINTS = FORK_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: FORK_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const UPDATE_PROFILE_DEFAULT_MODEL_ERROR_HINTS = UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
   codeFragment,
 }))
 const UPDATE_MANAGER_MODEL_ERROR_HINTS = UPDATE_MANAGER_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -107,7 +113,7 @@ const DELETE_SESSION_ERROR_HINTS = DELETE_SESSION_CONTRACT.errorCodeFragments.ma
 export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'create_manager',
   'delete_manager',
-  'update_profile_default_model',
+  UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
   'stop_all_agents',
@@ -135,7 +141,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
 export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'create_manager', codeFragment: 'create_manager' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
-  { requestType: 'update_profile_default_model', codeFragment: 'update_profile_default_model' },
+  ...UPDATE_PROFILE_DEFAULT_MODEL_ERROR_HINTS,
   ...UPDATE_MANAGER_MODEL_ERROR_HINTS,
   ...UPDATE_MANAGER_CWD_ERROR_HINTS,
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },

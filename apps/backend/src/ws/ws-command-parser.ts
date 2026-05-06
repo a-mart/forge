@@ -50,6 +50,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "api_proxy":
     case "create_manager":
     case "delete_manager":
+    case "update_profile_default_model":
     case "update_manager_model":
     case "update_manager_cwd":
     case "create_session":

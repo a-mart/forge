@@ -28,6 +28,7 @@ type ContractCommandType = Extract<
   | 'pin_session'
   | 'update_session_model'
   | 'fork_session'
+  | 'update_profile_default_model'
   | 'update_manager_model'
   | 'update_manager_cwd'
   | 'create_session'
@@ -47,6 +48,7 @@ type ContractSuccessEventType = Extract<
   | 'session_pinned'
   | 'session_model_updated'
   | 'session_forked'
+  | 'profile_default_model_updated'
   | 'manager_model_updated'
   | 'manager_cwd_updated'
   | 'session_created'
@@ -119,6 +121,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_forked'],
     errorCodeFragments: ['fork_session'],
+  },
+  {
+    commandType: 'update_profile_default_model',
+    resultFamily: 'profile_default_model_update',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['profile_default_model_updated'],
+    errorCodeFragments: ['update_profile_default_model'],
   },
   {
     commandType: 'update_manager_model',

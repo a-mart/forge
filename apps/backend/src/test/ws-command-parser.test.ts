@@ -41,6 +41,7 @@ describe('ws command parser session commands', () => {
       pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
       update_session_model: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' },
       fork_session: { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', fromMessageId: 'message-1' },
+      update_profile_default_model: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4', reasoningLevel: undefined },
       update_manager_model: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', reasoningLevel: undefined },
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
       create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
@@ -103,6 +104,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'fork_session', sourceAgentId: 'session-a', requestId: 123 })).toEqual({
       ok: false,
       error: 'fork_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4' })).toEqual({
+      ok: true,
+      command: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4', reasoningLevel: undefined, requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'update_profile_default_model.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4' })).toEqual({
       ok: true,
@@ -868,6 +877,7 @@ describe('ws command parser session commands', () => {
       { type: 'merge_session_memory', agentId: 'manager--s2', requestId: 'req-merge' },
       { type: 'get_session_workers', sessionAgentId: 'manager--s2', requestId: 'req-workers' },
       { type: 'mark_unread', agentId: 'manager--s2', requestId: 'req-mark-unread' },
+      { type: 'update_profile_default_model', profileId: 'manager', model: 'pi-5.4', requestId: 'req-update-profile-model' },
       { type: 'update_manager_model', managerId: 'manager', model: 'pi-5.4', requestId: 'req-update-model' },
       { type: 'update_manager_cwd', managerId: 'manager', cwd: '/tmp/project', requestId: 'req-update-cwd' },
     ] as const
