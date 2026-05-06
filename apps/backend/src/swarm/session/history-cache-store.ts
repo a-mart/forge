@@ -7,8 +7,8 @@ import type { ConversationEntryEvent } from "../types.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { CONVERSATION_ENTRY_TYPE, extractSessionEntryId, hasValidSessionHeader } from "./conversation-timeline.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
+import { MAX_CONVERSATION_HISTORY, shouldPersistConversationEntry } from "./history-policy.js";
 
-const MAX_CONVERSATION_HISTORY = 2000;
 const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
 const CONVERSATION_CACHE_META_TYPE = "swarm_conversation_cache_meta";
@@ -1037,18 +1037,6 @@ function parsePersistedConversationEntryIdentity(line: string | undefined): Pers
       : data;
 
   return extractPersistedConversationEntryIdentity(hydratedEntry);
-}
-
-function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean {
-  if (entry.type === "conversation_log") {
-    return false;
-  }
-
-  if (entry.type === "agent_tool_call") {
-    return entry.kind !== "tool_execution_update";
-  }
-
-  return true;
 }
 
 function isEnoentError(error: unknown): boolean {

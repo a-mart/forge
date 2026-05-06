@@ -15,6 +15,10 @@ import {
   HistoryCacheStore,
   type ValidatedConversationHistoryCanonicalProof
 } from "./history-cache-store.js";
+import {
+  shouldPersistConversationEntry,
+  trimConversationHistory
+} from "./history-policy.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import {
@@ -38,7 +42,6 @@ import type {
   ConversationMessageEvent
 } from "../types.js";
 
-const MAX_CONVERSATION_HISTORY = 2000;
 const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
 const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
@@ -1003,58 +1006,4 @@ function formatManagerErrorMessage(errorMessage: string): string {
   }
 
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
-}
-
-function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean {
-  if (entry.type === "conversation_log") {
-    return false;
-  }
-
-  if (entry.type === "agent_tool_call") {
-    return entry.kind !== "tool_execution_update";
-  }
-
-  return true;
-}
-
-function isPreservedWebTranscriptEntry(entry: ConversationEntryEvent): boolean {
-  if (entry.type !== "conversation_message") {
-    return false;
-  }
-
-  if (entry.source === "project_agent_input") {
-    return true;
-  }
-
-  if (entry.source !== "user_input" && entry.source !== "speak_to_user") {
-    return false;
-  }
-
-  return (entry.sourceContext?.channel ?? "web") === "web";
-}
-
-function trimConversationHistory(entries: ConversationEntryEvent[]): void {
-  const overflow = entries.length - MAX_CONVERSATION_HISTORY;
-  if (overflow <= 0) {
-    return;
-  }
-
-  const removableIndexes: number[] = [];
-  for (let index = 0; index < entries.length; index += 1) {
-    if (removableIndexes.length >= overflow) {
-      break;
-    }
-
-    if (!isPreservedWebTranscriptEntry(entries[index])) {
-      removableIndexes.push(index);
-    }
-  }
-
-  if (removableIndexes.length === 0) {
-    return;
-  }
-
-  for (let index = removableIndexes.length - 1; index >= 0; index -= 1) {
-    entries.splice(removableIndexes[index], 1);
-  }
 }
