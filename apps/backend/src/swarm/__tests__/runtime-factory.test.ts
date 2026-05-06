@@ -1479,7 +1479,7 @@ describe("RuntimeFactory", () => {
     ]);
   });
 
-  it("shuts down the ACP MCP bridge when prompt assembly fails before runtime creation", async () => {
+  it("fails ACP prompt assembly before bridge creation or runtime creation", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
 
@@ -1519,6 +1519,196 @@ describe("RuntimeFactory", () => {
     expect(acpRuntimeMockState.createMcpBridge).not.toHaveBeenCalled();
     expect(shutdown).not.toHaveBeenCalled();
     expect(acpRuntimeMockState.create).not.toHaveBeenCalled();
+  });
+
+  it("shuts down the ACP MCP bridge when runtime creation fails after bridge creation", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const shutdown = vi.fn(async () => undefined);
+    const creationError = new Error("acp runtime failed");
+    acpRuntimeMockState.createMcpBridge.mockResolvedValue({
+      mcpDescriptor: {
+        type: "http",
+        name: "forge-tools",
+        url: "http://127.0.0.1:4321/mcp",
+        headers: [],
+      },
+      shutdown,
+    });
+    acpRuntimeMockState.create.mockRejectedValue(creationError);
+
+    const forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const activateSpy = vi.spyOn(forgeExtensionHost, "activateRuntimeBindings");
+    const factory = createFactory(rootDir, { forgeExtensionHost });
+
+    await expect(
+      factory.createRuntimeForDescriptor(
+        createDescriptor(rootDir, {
+          model: {
+            provider: "cursor-acp",
+            modelId: "default",
+            thinkingLevel: "high",
+          },
+        }),
+        "Base ACP prompt",
+        8
+      )
+    ).rejects.toBe(creationError);
+
+    expect(acpRuntimeMockState.createMcpBridge).toHaveBeenCalledTimes(1);
+    expect(acpRuntimeMockState.create).toHaveBeenCalledTimes(1);
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(activateSpy).not.toHaveBeenCalled();
+  });
+
+  it("closes the ACP MCP bridge once across successful runtime lifecycle cleanup methods", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const shutdown = vi.fn(async () => undefined);
+    acpRuntimeMockState.createMcpBridge.mockResolvedValue({
+      mcpDescriptor: {
+        type: "http",
+        name: "forge-tools",
+        url: "http://127.0.0.1:4321/mcp",
+        headers: [],
+      },
+      shutdown,
+    });
+    const runtimeImpl = createMockRuntime({ runtimeType: "acp" });
+    const originalTerminate = runtimeImpl.terminate;
+    const originalShutdownForReplacement = runtimeImpl.shutdownForReplacement;
+    const originalRecycle = runtimeImpl.recycle;
+    acpRuntimeMockState.create.mockResolvedValue(runtimeImpl);
+
+    const factory = createFactory(rootDir);
+    const runtime = await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "cursor-acp",
+          modelId: "default",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      9
+    );
+
+    await runtime.terminate();
+    await runtime.shutdownForReplacement();
+    await runtime.recycle();
+
+    expect(originalTerminate).toHaveBeenCalledTimes(1);
+    expect(originalShutdownForReplacement).toHaveBeenCalledTimes(1);
+    expect(originalRecycle).toHaveBeenCalledTimes(1);
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("orders ACP Forge binding preparation, bridge creation, cleanup binding, and activation", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
+
+    const sequence: string[] = [];
+    const shutdown = vi.fn(async () => undefined);
+    const runtimeImpl = createMockRuntime({ runtimeType: "acp" });
+    const originalTerminate = runtimeImpl.terminate;
+    let cleanupWasBoundAtActivation = false;
+
+    acpRuntimeMockState.createMcpBridge.mockImplementation(async () => {
+      sequence.push("bridge");
+      return {
+        mcpDescriptor: {
+          type: "http",
+          name: "forge-tools",
+          url: "http://127.0.0.1:4321/mcp",
+          headers: [],
+        },
+        shutdown,
+      };
+    });
+    acpRuntimeMockState.create.mockImplementation(async () => {
+      sequence.push("create");
+      return runtimeImpl;
+    });
+
+    const forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const originalPrepare = forgeExtensionHost.prepareRuntimeBindings.bind(forgeExtensionHost);
+    vi.spyOn(forgeExtensionHost, "prepareRuntimeBindings").mockImplementation(async (...args) => {
+      sequence.push("prepare");
+      return originalPrepare(...args);
+    });
+    const originalActivate = forgeExtensionHost.activateRuntimeBindings.bind(forgeExtensionHost);
+    vi.spyOn(forgeExtensionHost, "activateRuntimeBindings").mockImplementation((...args) => {
+      cleanupWasBoundAtActivation = runtimeImpl.terminate !== originalTerminate;
+      sequence.push("activate");
+      return originalActivate(...args);
+    });
+
+    const factory = createFactory(rootDir, { forgeExtensionHost });
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "cursor-acp",
+          modelId: "default",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      10
+    );
+
+    expect(sequence).toEqual(["prepare", "bridge", "create", "activate"]);
+    expect(cleanupWasBoundAtActivation).toBe(true);
+    expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it("passes an ACP unexpected-exit hook that shuts down the MCP bridge", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const shutdown = vi.fn(async () => undefined);
+    acpRuntimeMockState.createMcpBridge.mockResolvedValue({
+      mcpDescriptor: {
+        type: "http",
+        name: "forge-tools",
+        url: "http://127.0.0.1:4321/mcp",
+        headers: [],
+      },
+      shutdown,
+    });
+    acpRuntimeMockState.create.mockImplementation(async (options: { onUnexpectedExit: () => Promise<void> }) => {
+      expect(options.onUnexpectedExit).toEqual(expect.any(Function));
+      return createMockRuntime({ runtimeType: "acp" });
+    });
+
+    const factory = createFactory(rootDir);
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "cursor-acp",
+          modelId: "default",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      11
+    );
+
+    const acpOptions = acpRuntimeMockState.create.mock.calls.at(-1)?.[0] as {
+      onUnexpectedExit: () => Promise<void>;
+    };
+    await acpOptions.onUnexpectedExit();
+
+    expect(shutdown).toHaveBeenCalledTimes(1);
   });
 
   it("prepares ACP Forge extension bindings with runtimeType acp", async () => {
