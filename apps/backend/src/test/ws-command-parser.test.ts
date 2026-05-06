@@ -50,6 +50,7 @@ describe('ws command parser session commands', () => {
       delete_session: { type: 'delete_session', agentId: 'session-a' },
       clear_session: { type: 'clear_session', agentId: 'session-a' },
       get_project_agent_config: { type: 'get_project_agent_config', agentId: 'session-a' },
+      list_project_agent_references: { type: 'list_project_agent_references', agentId: 'session-a' },
     } as const
 
     for (const contract of WS_REQUEST_CONTRACTS) {
@@ -153,6 +154,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'get_project_agent_config', agentId: 'session-a', requestId: 123 })).toEqual({
       ok: false,
       error: 'get_project_agent_config.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'list_project_agent_references', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'list_project_agent_references', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'list_project_agent_references', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'list_project_agent_references.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'stop_session', agentId: 'session-a' })).toEqual({
       ok: true,
@@ -881,6 +890,11 @@ describe('ws command parser session commands', () => {
         type: 'get_project_agent_config',
         agentId: 'manager--s2',
         requestId: 'req-project-agent-config',
+      },
+      {
+        type: 'list_project_agent_references',
+        agentId: 'manager--s2',
+        requestId: 'req-project-agent-references',
       },
       {
         type: 'request_project_agent_recommendations',

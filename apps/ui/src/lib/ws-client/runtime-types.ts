@@ -37,6 +37,7 @@ const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
 const CREATE_SESSION_CONTRACT = getWsRequestContract('create_session')
 const CLEAR_SESSION_CONTRACT = getWsRequestContract('clear_session')
 const GET_PROJECT_AGENT_CONFIG_CONTRACT = getWsRequestContract('get_project_agent_config')
+const LIST_PROJECT_AGENT_REFERENCES_CONTRACT = getWsRequestContract('list_project_agent_references')
 const STOP_SESSION_CONTRACT = getWsRequestContract('stop_session')
 const RESUME_SESSION_CONTRACT = getWsRequestContract('resume_session')
 const DELETE_SESSION_CONTRACT = getWsRequestContract('delete_session')
@@ -52,6 +53,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   CREATE_SESSION_CONTRACT.commandType,
   CLEAR_SESSION_CONTRACT.commandType,
   GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
+  LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
   STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
   DELETE_SESSION_CONTRACT.commandType,
@@ -103,6 +105,10 @@ const GET_PROJECT_AGENT_CONFIG_ERROR_HINTS = GET_PROJECT_AGENT_CONFIG_CONTRACT.e
   requestType: GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
   codeFragment,
 }))
+const LIST_PROJECT_AGENT_REFERENCES_ERROR_HINTS = LIST_PROJECT_AGENT_REFERENCES_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
+  codeFragment,
+}))
 const STOP_SESSION_ERROR_HINTS = STOP_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: STOP_SESSION_CONTRACT.commandType,
   codeFragment,
@@ -136,7 +142,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   'merge_session_memory',
   'set_session_project_agent',
   GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
-  'list_project_agent_references',
+  LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
   'get_project_agent_reference',
   'set_project_agent_reference',
   'delete_project_agent_reference',
@@ -164,7 +170,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
   { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
   ...GET_PROJECT_AGENT_CONFIG_ERROR_HINTS,
-  { requestType: 'list_project_agent_references', codeFragment: 'project_agent_references' },
+  ...LIST_PROJECT_AGENT_REFERENCES_ERROR_HINTS,
   { requestType: 'get_project_agent_reference', codeFragment: 'project_agent_reference' },
   { requestType: 'set_project_agent_reference', codeFragment: 'project_agent_reference_saved' },
   { requestType: 'delete_project_agent_reference', codeFragment: 'project_agent_reference_deleted' },

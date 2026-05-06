@@ -91,6 +91,7 @@ describe('ManagerWsClient', () => {
       'delete_session',
       'clear_session',
       'get_project_agent_config',
+      'list_project_agent_references',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -1773,6 +1774,76 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(configPromise).rejects.toThrow('PROJECT_AGENT_CONFIG_FAILED: Project agent config rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends list_project_agent_references commands and resolves project_agent_references events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const referencesPromise = client.listProjectAgentReferences(' agent-a ')
+    const referencesPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(referencesPayload).toMatchObject({
+      type: 'list_project_agent_references',
+      agentId: 'agent-a',
+    })
+    expect(referencesPayload.requestId).toMatch(/^list_project_agent_references-/)
+
+    const result = {
+      agentId: 'agent-a',
+      references: ['README.md', 'notes.md'],
+    }
+
+    emitServerEvent(socket, {
+      type: 'project_agent_references',
+      requestId: referencesPayload.requestId,
+      ...result,
+    })
+
+    await expect(referencesPromise).resolves.toEqual(result)
+
+    client.destroy()
+  })
+
+  it('rejects list_project_agent_references via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const referencesPromise = client.listProjectAgentReferences('agent-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'PROJECT_AGENT_REFERENCES_FAILED',
+      message: 'Project agent references rejected for testing.',
+    })
+
+    await expect(referencesPromise).rejects.toThrow(
+      'PROJECT_AGENT_REFERENCES_FAILED: Project agent references rejected for testing.',
+    )
 
     client.destroy()
   })
