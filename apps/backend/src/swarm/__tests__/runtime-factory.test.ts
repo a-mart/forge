@@ -801,8 +801,9 @@ describe("RuntimeFactory", () => {
 
   it.each([
     [undefined, "unset"],
+    ["", "blank"],
     ["invalid-transport", "invalid"],
-  ])("defaults OpenAI Codex transport to websocket-cached when env is %s", async (transportEnv) => {
+  ])("defaults OpenAI Codex transport to sse when env is %s", async (transportEnv) => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
     await seedProjectionFile(rootDir);
@@ -823,14 +824,14 @@ describe("RuntimeFactory", () => {
       session: createMockPiSession(),
       extensionsResult: { extensions: [], errors: [] },
     });
-    if (transportEnv) {
+    if (transportEnv !== undefined) {
       process.env.FORGE_OPENAI_CODEX_TRANSPORT = transportEnv;
     }
 
     const factory = createFactory(rootDir);
     await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
 
-    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({ transport: "websocket-cached" });
+    expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({ transport: "sse" });
   });
 
   it("fails fast when the generated Pi projection file is missing", async () => {

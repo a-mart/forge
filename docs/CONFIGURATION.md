@@ -36,8 +36,8 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `XAI_API_KEY` | — | API key for xAI/Grok models (when using external API key mode). |
-| `FORGE_OPENAI_CODEX_TRANSPORT` | `websocket-cached` | Transport override for OpenAI Codex Responses models. Supported values: `websocket-cached` (default), `sse` (rollback to the previous SSE transport), `websocket`, and `auto`. Invalid values fail safe to `websocket-cached`. |
-| `FORGE_CODEX_TRANSPORT_DEBUG` | — | Optional debugging flag. Set to `1` to enable the Codex transport diagnostics endpoint at `/api/debug/codex-transport`. |
+| `FORGE_OPENAI_CODEX_TRANSPORT` | `sse` | Transport override for OpenAI Codex Responses models. Supported values: `sse` (reliability default and rollback), `websocket`, `websocket-cached` (experimental opt-in; may trigger WebSocket 1006 failures), and `auto`. Invalid values fail safe to `sse`. |
+| `FORGE_CODEX_TRANSPORT_DEBUG` | — | Optional debugging flag. Set to `1` to enable the Codex transport diagnostics endpoint at `/api/debug/codex-transport` for transport selection and counter inspection. |
 
 ### Collaboration
 
