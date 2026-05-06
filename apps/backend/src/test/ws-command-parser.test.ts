@@ -41,6 +41,7 @@ describe('ws command parser session commands', () => {
       pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
       update_session_model: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' },
       fork_session: { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', fromMessageId: 'message-1' },
+      merge_session_memory: { type: 'merge_session_memory', agentId: 'session-a' },
       update_profile_default_model: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4', reasoningLevel: undefined },
       update_manager_model: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', reasoningLevel: undefined },
       update_manager_cwd: { type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' },
@@ -114,6 +115,14 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'fork_session', sourceAgentId: 'session-a', requestId: 123 })).toEqual({
       ok: false,
       error: 'fork_session.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'merge_session_memory', agentId: 'session-a' })).toEqual({
+      ok: true,
+      command: { type: 'merge_session_memory', agentId: 'session-a', requestId: undefined },
+    })
+    expect(parseJsonCommand({ type: 'merge_session_memory', agentId: 'session-a', requestId: 123 })).toEqual({
+      ok: false,
+      error: 'merge_session_memory.requestId must be a string when provided',
     })
     expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'pi-5.4' })).toEqual({
       ok: true,

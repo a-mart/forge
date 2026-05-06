@@ -82,6 +82,7 @@ describe('ManagerWsClient', () => {
       'pin_session',
       'update_session_model',
       'fork_session',
+      'merge_session_memory',
       'update_profile_default_model',
       'update_manager_model',
       'update_manager_cwd',
@@ -2777,6 +2778,122 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(forkPromise).rejects.toThrow('FORK_SESSION_FAILED: Fork session rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends merge_session_memory commands, ignores start events, and resolves session_memory_merged events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const mergePromise = client.mergeSessionMemory(' session-1 ')
+    const mergePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    let settled = false
+    mergePromise.finally(() => {
+      settled = true
+    }).catch(() => undefined)
+
+    expect(mergePayload).toMatchObject({
+      type: 'merge_session_memory',
+      agentId: 'session-1',
+    })
+    expect(mergePayload.requestId).toMatch(/^merge_session_memory-/)
+
+    emitServerEvent(socket, {
+      type: 'session_memory_merge_started',
+      requestId: mergePayload.requestId,
+      agentId: 'session-1',
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    emitServerEvent(socket, {
+      type: 'session_memory_merged',
+      requestId: mergePayload.requestId,
+      agentId: 'session-1',
+      status: 'applied',
+      strategy: 'llm',
+      mergedAt: '2026-05-05T00:00:00.000Z',
+      auditPath: '/tmp/audit.json',
+    })
+
+    await expect(mergePromise).resolves.toEqual({
+      agentId: 'session-1',
+      status: 'applied',
+      strategy: 'llm',
+      mergedAt: '2026-05-05T00:00:00.000Z',
+      auditPath: '/tmp/audit.json',
+    })
+
+    client.destroy()
+  })
+
+  it('rejects merge_session_memory from typed session_memory_merge_failed events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const mergePromise = client.mergeSessionMemory('session-1')
+    const mergePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    emitServerEvent(socket, {
+      type: 'session_memory_merge_failed',
+      requestId: mergePayload.requestId,
+      agentId: 'session-1',
+      message: 'Merge failed for testing.',
+      status: 'failed',
+    })
+
+    await expect(mergePromise).rejects.toThrow('Merge failed for testing.')
+
+    client.destroy()
+  })
+
+  it('rejects merge_session_memory via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const mergePromise = client.mergeSessionMemory('session-1')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'MERGE_SESSION_MEMORY_FAILED',
+      message: 'Merge rejected for testing.',
+    })
+
+    await expect(mergePromise).rejects.toThrow('MERGE_SESSION_MEMORY_FAILED: Merge rejected for testing.')
 
     client.destroy()
   })

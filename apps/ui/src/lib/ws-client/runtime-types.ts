@@ -31,6 +31,7 @@ const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
 const UPDATE_SESSION_MODEL_CONTRACT = getWsRequestContract('update_session_model')
 const FORK_SESSION_CONTRACT = getWsRequestContract('fork_session')
+const MERGE_SESSION_MEMORY_CONTRACT = getWsRequestContract('merge_session_memory')
 const UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT = getWsRequestContract('update_profile_default_model')
 const UPDATE_MANAGER_MODEL_CONTRACT = getWsRequestContract('update_manager_model')
 const UPDATE_MANAGER_CWD_CONTRACT = getWsRequestContract('update_manager_cwd')
@@ -55,6 +56,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   PIN_SESSION_CONTRACT.commandType,
   UPDATE_SESSION_MODEL_CONTRACT.commandType,
   FORK_SESSION_CONTRACT.commandType,
+  MERGE_SESSION_MEMORY_CONTRACT.commandType,
   UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_MODEL_CONTRACT.commandType,
   UPDATE_MANAGER_CWD_CONTRACT.commandType,
@@ -95,6 +97,10 @@ const UPDATE_SESSION_MODEL_ERROR_HINTS = UPDATE_SESSION_MODEL_CONTRACT.errorCode
 }))
 const FORK_SESSION_ERROR_HINTS = FORK_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: FORK_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const MERGE_SESSION_MEMORY_ERROR_HINTS = MERGE_SESSION_MEMORY_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: MERGE_SESSION_MEMORY_CONTRACT.commandType,
   codeFragment,
 }))
 const UPDATE_PROFILE_DEFAULT_MODEL_ERROR_HINTS = UPDATE_PROFILE_DEFAULT_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -187,7 +193,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   UPDATE_SESSION_MODEL_CONTRACT.commandType,
   RENAME_PROFILE_CONTRACT.commandType,
   FORK_SESSION_CONTRACT.commandType,
-  'merge_session_memory',
+  MERGE_SESSION_MEMORY_CONTRACT.commandType,
   SET_SESSION_PROJECT_AGENT_CONTRACT.commandType,
   GET_PROJECT_AGENT_CONFIG_CONTRACT.commandType,
   LIST_PROJECT_AGENT_REFERENCES_CONTRACT.commandType,
@@ -215,7 +221,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   ...UPDATE_SESSION_MODEL_ERROR_HINTS,
   ...RENAME_PROFILE_ERROR_HINTS,
   ...FORK_SESSION_ERROR_HINTS,
-  { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
+  ...MERGE_SESSION_MEMORY_ERROR_HINTS,
   ...SET_SESSION_PROJECT_AGENT_ERROR_HINTS,
   ...GET_PROJECT_AGENT_CONFIG_ERROR_HINTS,
   ...LIST_PROJECT_AGENT_REFERENCES_ERROR_HINTS,

@@ -293,6 +293,7 @@ describe('protocol root barrel contract', () => {
       'pin_session',
       'update_session_model',
       'fork_session',
+      'merge_session_memory',
       'update_profile_default_model',
       'update_manager_model',
       'update_manager_cwd',
@@ -356,6 +357,12 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_fork',
       successEvents: ['session_forked'],
       errorCodeFragments: ['fork_session'],
+    })
+    expect(getWsRequestContract('merge_session_memory')).toMatchObject({
+      commandType: 'merge_session_memory',
+      resultFamily: 'session_memory_merge',
+      successEvents: ['session_memory_merged'],
+      errorCodeFragments: ['merge_session_memory'],
     })
     expect(getWsRequestContract('update_profile_default_model')).toMatchObject({
       commandType: 'update_profile_default_model',

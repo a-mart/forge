@@ -28,6 +28,7 @@ type ContractCommandType = Extract<
   | 'pin_session'
   | 'update_session_model'
   | 'fork_session'
+  | 'merge_session_memory'
   | 'update_profile_default_model'
   | 'update_manager_model'
   | 'update_manager_cwd'
@@ -58,6 +59,7 @@ type ContractSuccessEventType = Extract<
   | 'session_pinned'
   | 'session_model_updated'
   | 'session_forked'
+  | 'session_memory_merged'
   | 'profile_default_model_updated'
   | 'manager_model_updated'
   | 'manager_cwd_updated'
@@ -141,6 +143,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_forked'],
     errorCodeFragments: ['fork_session'],
+  },
+  {
+    commandType: 'merge_session_memory',
+    resultFamily: 'session_memory_merge',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_memory_merged'],
+    errorCodeFragments: ['merge_session_memory'],
   },
   {
     commandType: 'update_profile_default_model',
