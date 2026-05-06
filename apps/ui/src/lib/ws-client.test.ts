@@ -86,6 +86,7 @@ describe('ManagerWsClient', () => {
       'update_manager_model',
       'update_manager_cwd',
       'stop_all_agents',
+      'create_manager',
       'create_session',
       'stop_session',
       'resume_session',
@@ -101,6 +102,7 @@ describe('ManagerWsClient', () => {
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
+    expect(WS_REQUEST_TYPES.filter((type) => type === 'create_manager')).toHaveLength(1)
     expect(
       WS_REQUEST_CONTRACTS.every((contract) =>
         contract.errorCodeFragments.every((codeFragment) =>
@@ -4338,6 +4340,26 @@ describe('ManagerWsClient', () => {
 
       await expect(createPromise).rejects.toThrow('CREATE_MANAGER_FAILED: Something went wrong')
       expect(client.getState().lastError).toBe('Something went wrong')
+
+      client.destroy()
+    })
+
+    it('rejects create_manager via fallback error hints from the shared request contract', async () => {
+      const { client, socket } = setupReadyClient()
+
+      const createPromise = client.createManager({
+        name: 'fail-manager',
+        cwd: '/tmp',
+        modelSelection: { provider: 'openai-codex', modelId: 'gpt-5.3-codex' },
+      })
+
+      emitServerEvent(socket, {
+        type: 'error',
+        code: 'CREATE_MANAGER_FAILED',
+        message: 'Something went wrong',
+      })
+
+      await expect(createPromise).rejects.toThrow('CREATE_MANAGER_FAILED: Something went wrong')
 
       client.destroy()
     })
