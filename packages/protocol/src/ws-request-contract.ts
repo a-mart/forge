@@ -42,6 +42,7 @@ type ContractCommandType = Extract<
   | 'get_project_agent_reference'
   | 'set_project_agent_reference'
   | 'delete_project_agent_reference'
+  | 'request_project_agent_recommendations'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
@@ -68,6 +69,7 @@ type ContractSuccessEventType = Extract<
   | 'project_agent_reference'
   | 'project_agent_reference_saved'
   | 'project_agent_reference_deleted'
+  | 'project_agent_recommendations'
 >
 
 export const WS_REQUEST_CONTRACTS = [
@@ -231,6 +233,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['project_agent_reference_deleted'],
     errorCodeFragments: ['delete_project_agent_reference'],
+  },
+  {
+    commandType: 'request_project_agent_recommendations',
+    resultFamily: 'project_agent_recommendations',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['project_agent_recommendations'],
+    errorCodeFragments: ['project_agent_recommendations'],
   },
 ] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 

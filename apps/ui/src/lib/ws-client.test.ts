@@ -96,6 +96,7 @@ describe('ManagerWsClient', () => {
       'get_project_agent_reference',
       'set_project_agent_reference',
       'delete_project_agent_reference',
+      'request_project_agent_recommendations',
     ])
     expect(contractTypes.every((type) => WS_REQUEST_TYPES.includes(type))).toBe(true)
     expect(new Set(WS_REQUEST_TYPES).size).toBe(WS_REQUEST_TYPES.length)
@@ -2106,6 +2107,129 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(referencePromise).resolves.toEqual({ agentId: 'agent-a', fileName: 'README.md' })
+
+    client.destroy()
+  })
+
+  it('sends request_project_agent_recommendations commands and resolves project_agent_recommendations events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const recommendationsPromise = client.requestProjectAgentRecommendations(' agent-a ')
+    const recommendationsPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(recommendationsPayload).toMatchObject({
+      type: 'request_project_agent_recommendations',
+      agentId: 'agent-a',
+    })
+    expect(recommendationsPayload.requestId).toMatch(/^request_project_agent_recommendations-/)
+
+    emitServerEvent(socket, {
+      type: 'project_agent_recommendations',
+      requestId: recommendationsPayload.requestId,
+      agentId: 'agent-a',
+      whenToUse: 'Use for docs.',
+      systemPrompt: 'You maintain docs.',
+    })
+
+    await expect(recommendationsPromise).resolves.toEqual({
+      agentId: 'agent-a',
+      whenToUse: 'Use for docs.',
+      systemPrompt: 'You maintain docs.',
+    })
+
+    client.destroy()
+  })
+
+  it('rejects only matching request_project_agent_recommendations requests from project_agent_recommendations_error events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const firstPromise = client.requestProjectAgentRecommendations('agent-a')
+    const firstPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    const secondPromise = client.requestProjectAgentRecommendations('agent-b')
+    const secondPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    let firstSettled = false
+    void firstPromise.finally(() => {
+      firstSettled = true
+    })
+
+    emitServerEvent(socket, {
+      type: 'project_agent_recommendations_error',
+      requestId: secondPayload.requestId,
+      agentId: 'agent-b',
+      message: 'Recommendation failed for testing.',
+    })
+    await Promise.resolve()
+
+    await expect(secondPromise).rejects.toThrow('Recommendation failed for testing.')
+    expect(firstSettled).toBe(false)
+
+    emitServerEvent(socket, {
+      type: 'project_agent_recommendations',
+      requestId: firstPayload.requestId,
+      agentId: 'agent-a',
+      whenToUse: 'Use for docs.',
+      systemPrompt: 'You maintain docs.',
+    })
+
+    await expect(firstPromise).resolves.toEqual({
+      agentId: 'agent-a',
+      whenToUse: 'Use for docs.',
+      systemPrompt: 'You maintain docs.',
+    })
+
+    client.destroy()
+  })
+
+  it('rejects request_project_agent_recommendations via contract-derived fallback error hints', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const recommendationsPromise = client.requestProjectAgentRecommendations('agent-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'PROJECT_AGENT_RECOMMENDATIONS_FAILED',
+      message: 'Recommendation rejected for testing.',
+    })
+
+    await expect(recommendationsPromise).rejects.toThrow(
+      'PROJECT_AGENT_RECOMMENDATIONS_FAILED: Recommendation rejected for testing.',
+    )
 
     client.destroy()
   })

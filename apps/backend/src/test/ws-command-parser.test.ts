@@ -55,6 +55,7 @@ describe('ws command parser session commands', () => {
       get_project_agent_reference: { type: 'get_project_agent_reference', agentId: 'session-a', fileName: 'README.md' },
       set_project_agent_reference: { type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs' },
       delete_project_agent_reference: { type: 'delete_project_agent_reference', agentId: 'session-a', fileName: 'README.md' },
+      request_project_agent_recommendations: { type: 'request_project_agent_recommendations', agentId: 'session-a' },
     } as const
 
     for (const contract of WS_REQUEST_CONTRACTS) {
