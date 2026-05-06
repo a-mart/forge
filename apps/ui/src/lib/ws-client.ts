@@ -42,6 +42,7 @@ import {
   RECONNECTING_SOCKET_ERROR,
 } from './ws-client/request-definitions'
 import { WebSocketTransport } from './ws-client/websocket-transport'
+import { BootstrapBuffer } from './ws-client/bootstrap-buffer'
 import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
@@ -75,11 +76,7 @@ import {
   createInitialManagerWsState,
   type ManagerWsState,
 } from './ws-state'
-import {
-  BOOTSTRAP_COALESCIBLE_EVENT_TYPES,
-  BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES,
-  handleConversationEvent,
-} from './ws-client/event-handlers/conversation-event-handlers'
+import { handleConversationEvent } from './ws-client/event-handlers/conversation-event-handlers'
 import { handleTerminalEvent } from './ws-client/event-handlers/terminal-event-handlers'
 import { handleAgentEvent } from './ws-client/event-handlers/agent-event-handlers'
 import { handleSessionEvent } from './ws-client/event-handlers/session-event-handlers'
@@ -112,14 +109,6 @@ export type {
   ProjectAgentReferenceSavedResult,
 } from './ws-client/types'
 
-const BOOTSTRAP_FLUSH_TIMEOUT_MS = 100
-
-interface BootstrapBuffer {
-  targetAgentId: string
-  pendingPatch: Partial<ManagerWsState>
-  timeoutId: ReturnType<typeof setTimeout> | undefined
-}
-
 export class ManagerWsClient {
   private readonly transport: WebSocketTransport
   private desiredAgentId: string | null
@@ -138,9 +127,9 @@ export class ManagerWsClient {
   private readonly listeners = new Set<Listener>()
 
   private readonly requestDispatcher: RequestDispatcher
+  private readonly bootstrapBuffer: BootstrapBuffer
   private readonly pendingWorkerFetches = new Map<string, Promise<SessionWorkersResult>>()
   private readonly pendingSessionWorkerRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private bootstrapBuffer: BootstrapBuffer | null = null
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
@@ -149,6 +138,12 @@ export class ManagerWsClient {
 
     this.requestDispatcher = new RequestDispatcher({
       send: (command) => this.send(command),
+    })
+
+    this.bootstrapBuffer = new BootstrapBuffer({
+      getState: () => this.state,
+      updateState: (patch) => this.updateState(patch),
+      applyConversationEvent: handleConversationEvent,
     })
 
     this.transport = new WebSocketTransport({
@@ -224,6 +219,7 @@ export class ManagerWsClient {
     this.requestDispatcher.rejectAllPendingRequests('Client destroyed before request completed.')
     this.pendingWorkerFetches.clear()
     this.clearQueuedSessionWorkerRefetches()
+    this.bootstrapBuffer.clear()
 
     this.transport.disconnect()
   }
@@ -257,7 +253,7 @@ export class ManagerWsClient {
       return
     }
 
-    this.startBootstrapBuffer(trimmed)
+    this.bootstrapBuffer.begin(trimmed)
     this.send(buildSubscribeCommand(trimmed))
   }
 
@@ -680,7 +676,7 @@ export class ManagerWsClient {
 
     this.hasExplicitAgentSelection = false
     this.explicitAgentSelectionAgentId = null
-    this.clearBootstrapBuffer()
+    this.bootstrapBuffer.clear()
 
     this.updateState({
       connected: false,
@@ -703,14 +699,9 @@ export class ManagerWsClient {
   private handleServerEvent(parsed: unknown): void {
     const event = parsed as ServerEvent
 
-    if (this.bootstrapBuffer) {
-      if (BOOTSTRAP_COALESCIBLE_EVENT_TYPES.has(event.type)) {
-        this.handleBootstrapCoalescibleEvent(event)
-        return
-      }
-      if (this.shouldForceFlushBootstrap(event)) {
-        this.flushBootstrapBuffer()
-      }
+    if (this.bootstrapBuffer.active) {
+      const consumed = this.bootstrapBuffer.handleEvent(event)
+      if (consumed) return
     }
 
     if (
@@ -937,99 +928,6 @@ export class ManagerWsClient {
     this.pendingSessionWorkerRefetchTimers.clear()
   }
 
-  private startBootstrapBuffer(targetAgentId: string): void {
-    this.clearBootstrapBuffer()
-
-    this.bootstrapBuffer = {
-      targetAgentId,
-      pendingPatch: {},
-      timeoutId: undefined,
-    }
-  }
-
-  private flushBootstrapBuffer(): void {
-    const buffer = this.bootstrapBuffer
-    if (!buffer) return
-
-    if (buffer.timeoutId !== undefined) {
-      clearTimeout(buffer.timeoutId)
-    }
-
-    this.bootstrapBuffer = null
-
-    if (Object.keys(buffer.pendingPatch).length > 0) {
-      this.updateState(buffer.pendingPatch)
-    }
-  }
-
-  private clearBootstrapBuffer(): void {
-    if (this.bootstrapBuffer?.timeoutId !== undefined) {
-      clearTimeout(this.bootstrapBuffer.timeoutId)
-    }
-    this.bootstrapBuffer = null
-  }
-
-  private resetBootstrapTimeout(buffer: BootstrapBuffer): void {
-    if (buffer.timeoutId !== undefined) {
-      clearTimeout(buffer.timeoutId)
-    }
-    const targetAgentId = buffer.targetAgentId
-    buffer.timeoutId = setTimeout(() => {
-      if (this.bootstrapBuffer?.targetAgentId === targetAgentId) {
-        this.flushBootstrapBuffer()
-      }
-    }, BOOTSTRAP_FLUSH_TIMEOUT_MS)
-  }
-
-  private handleBootstrapCoalescibleEvent(event: ServerEvent): void {
-    const buffer = this.bootstrapBuffer
-    if (!buffer) return
-
-    if (!this.isBootstrapEventForTarget(event, buffer.targetAgentId)) {
-      return
-    }
-
-    this.resetBootstrapTimeout(buffer)
-
-    const effectiveState: ManagerWsState = { ...this.state, ...buffer.pendingPatch }
-
-    handleConversationEvent(event, {
-      state: effectiveState,
-      updateState: (patch) => {
-        buffer.pendingPatch = { ...buffer.pendingPatch, ...patch }
-      },
-    })
-
-    if (event.type === 'unread_counts_snapshot') {
-      this.flushBootstrapBuffer()
-    }
-  }
-
-  private isBootstrapEventForTarget(event: ServerEvent, targetAgentId: string): boolean {
-    if (event.type === 'ready') {
-      return event.subscribedAgentId === targetAgentId
-    }
-    if (event.type === 'conversation_history' || event.type === 'pending_choices_snapshot') {
-      return event.agentId === targetAgentId
-    }
-    return true
-  }
-
-  private shouldForceFlushBootstrap(event: ServerEvent): boolean {
-    const targetAgentId = this.bootstrapBuffer?.targetAgentId
-    if (!targetAgentId) return false
-
-    if (BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES.has(event.type)) {
-      return 'agentId' in event && (event as { agentId: string }).agentId === targetAgentId
-    }
-
-    if (event.type === 'agent_status') {
-      return event.agentId === targetAgentId ||
-        (event.managerId !== undefined && event.managerId === targetAgentId)
-    }
-
-    return false
-  }
 
   private pushSystemMessage(text: string): void {
     const message = createSystemConversationMessage(

@@ -4390,6 +4390,47 @@ describe('ManagerWsClient', () => {
       unsub()
       client.destroy()
     })
+
+    it('destroy() clears bootstrap buffer synchronously even when socket close is delayed', () => {
+      const { client, socket } = setupConnectedClient()
+
+      // Switch to session-b — starts bootstrap buffer
+      client.subscribeToAgent('session-b')
+
+      // Partial bootstrap — timer is pending (no terminal signal)
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'buffered', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+
+      // Override socket.close() to NOT fire the close event synchronously,
+      // simulating a real WebSocket where the close event arrives later.
+      socket.close = () => {
+        socket.readyState = FakeWebSocket.CLOSED
+        // Intentionally do NOT emit 'close' here
+      }
+
+      // Capture state before destroy
+      const stateBeforeDestroy = { ...client.getState() }
+
+      // Destroy the client — bootstrap buffer timer should be cleared
+      // synchronously, even though the socket close event hasn't fired yet.
+      client.destroy()
+
+      // Advance time well past the bootstrap flush timeout
+      vi.advanceTimersByTime(500)
+
+      // State should NOT have been modified by a delayed bootstrap flush.
+      // The subscribedAgentId should remain what it was before destroy
+      // (session-a from initial bootstrap), NOT session-b from the
+      // pending bootstrap buffer that should have been cleared.
+      expect(client.getState().subscribedAgentId).toBe(stateBeforeDestroy.subscribedAgentId)
+      expect(client.getState().messages).toEqual(stateBeforeDestroy.messages)
+    })
   })
 
   // -------------------------------------------------------------------------
