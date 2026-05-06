@@ -36,6 +36,7 @@ const piCodingAgentMockState = vi.hoisted(() => ({
   modelRegistryFind: vi.fn(),
   modelRegistryGetAll: vi.fn(),
   defaultResourceLoaderCtor: vi.fn(),
+  defaultResourceLoaderReload: vi.fn(async () => undefined),
   settingsManagerCreate: vi.fn(),
   settingsManagerApplyOverrides: vi.fn(),
 }));
@@ -73,7 +74,9 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
       piCodingAgentMockState.defaultResourceLoaderCtor(options)
     }
 
-    async reload(): Promise<void> {}
+    async reload(): Promise<void> {
+      await piCodingAgentMockState.defaultResourceLoaderReload()
+    }
 
     getPathMetadata(): Map<string, unknown> {
       return new Map();
@@ -266,6 +269,10 @@ function createFactory(
       skillMetadata: SkillMetadata[];
     }>;
     buildAcpRuntimeSystemPrompt?: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
+    callbacks?: Partial<{
+      onRuntimeError: (runtimeToken: number, agentId: string, error: unknown) => Promise<void>;
+      onRuntimeExtensionSnapshot: (runtimeToken: number, agentId: string, snapshot: unknown) => Promise<void>;
+    }>;
     skipProjectionBootstrap?: boolean;
   } = {},
 ): RuntimeFactory {
@@ -323,8 +330,8 @@ function createFactory(
       onStatusChange: async () => {},
       onSessionEvent: async () => {},
       onAgentEnd: async () => {},
-      onRuntimeError: async () => {},
-      onRuntimeExtensionSnapshot: async () => {},
+      onRuntimeError: overrides.callbacks?.onRuntimeError ?? (async () => {}),
+      onRuntimeExtensionSnapshot: overrides.callbacks?.onRuntimeExtensionSnapshot ?? (async () => {}),
     },
   });
 }
@@ -405,6 +412,21 @@ function fakePiSkill(name: string, filePath: string, baseDir: string) {
   };
 }
 
+function setupPiModel(provider = "openai-codex", modelId = "gpt-5.4-mini") {
+  piCodingAgentMockState.modelRegistryFind.mockReturnValue({
+    id: modelId,
+    name: modelId,
+    api: provider === "openai-codex" ? "openai-codex-responses" : "anthropic-messages",
+    provider,
+    baseUrl: `https://example.test/${provider}`,
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000,
+    maxTokens: 1000,
+  });
+}
+
 const providerRuntimeCases = [
   {
     runtimeName: "Claude SDK",
@@ -460,6 +482,8 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.modelRegistryFind.mockReset();
     piCodingAgentMockState.modelRegistryGetAll.mockReset();
     piCodingAgentMockState.defaultResourceLoaderCtor.mockReset();
+    piCodingAgentMockState.defaultResourceLoaderReload.mockReset();
+    piCodingAgentMockState.defaultResourceLoaderReload.mockResolvedValue(undefined);
     piCodingAgentMockState.settingsManagerCreate.mockReset();
     piCodingAgentMockState.settingsManagerApplyOverrides.mockReset();
     delete process.env.FORGE_OPENAI_CODEX_TRANSPORT;
@@ -933,9 +957,16 @@ describe("RuntimeFactory", () => {
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
 
-  it("selects pooled Anthropic credentials for Pi runtimes", async () => {
+  it("selects pooled Anthropic credentials through black-box Pi runtime creation", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    setupPiModel("anthropic", "claude-opus-4-6");
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
 
     const pool = {
       getPoolSize: vi.fn().mockResolvedValue(2),
@@ -949,15 +980,12 @@ describe("RuntimeFactory", () => {
         "openai-codex": { type: "oauth", access: "openai-token" },
       }),
       markUsed: vi.fn().mockResolvedValue(undefined),
-    }
+    };
 
     const factory = createFactory(rootDir, {
       getCredentialPoolService: () => pool as any,
-    })
-
-    const selection = await (factory as unknown as {
-      selectPooledCredential: (descriptor: AgentDescriptor) => Promise<unknown>
-    }).selectPooledCredential(
+    });
+    const runtime = await factory.createRuntimeForDescriptor(
       createDescriptor(rootDir, {
         model: {
           provider: "anthropic",
@@ -965,27 +993,255 @@ describe("RuntimeFactory", () => {
           thinkingLevel: "high",
         },
       }),
-    )
+      "system prompt",
+    );
 
-    expect(pool.getPoolSize).toHaveBeenCalledWith("anthropic")
-    expect(pool.select).toHaveBeenCalledWith("anthropic")
-    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_anthropic_second")
-    expect(pool.markUsed).toHaveBeenCalledWith("anthropic", "cred_anthropic_second")
+    expect(pool.getPoolSize).toHaveBeenCalledWith("anthropic");
+    expect(pool.select).toHaveBeenCalledWith("anthropic");
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_anthropic_second");
+    expect(pool.markUsed).toHaveBeenCalledWith("anthropic", "cred_anthropic_second");
     expect(piCodingAgentMockState.authStorageInMemory).toHaveBeenCalledWith({
       anthropic: { type: "oauth", access: "anthropic-token" },
       "openai-codex": { type: "oauth", access: "openai-token" },
-    })
-    expect(selection).toEqual({
-      authStorage: {
-        kind: "in-memory",
-        data: {
-          anthropic: { type: "oauth", access: "anthropic-token" },
-          "openai-codex": { type: "oauth", access: "openai-token" },
-        },
+    });
+    const createOptions = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0] as {
+      authStorage?: unknown;
+    };
+    expect(createOptions.authStorage).toEqual({
+      kind: "in-memory",
+      data: {
+        anthropic: { type: "oauth", access: "anthropic-token" },
+        "openai-codex": { type: "oauth", access: "openai-token" },
       },
-      credentialId: "cred_anthropic_second",
-    })
-  })
+    });
+    expect(runtime).toMatchObject({
+      pooledCredentialId: "cred_anthropic_second",
+      pooledCredentialProvider: "anthropic",
+      credentialPoolService: pool,
+    });
+  });
+
+  it("swallows and logs DefaultResourceLoader reload errors while still creating Pi runtime", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    setupPiModel();
+    const logDebug = vi.fn();
+    piCodingAgentMockState.defaultResourceLoaderReload.mockRejectedValueOnce(new Error("reload failed"));
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+
+    const factory = createFactory(rootDir, { logDebug });
+    const runtime = await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
+
+    expect(runtime.runtimeType).toBe("pi");
+    expect(logDebug).toHaveBeenCalledWith("runtime:resource_loader:reload_error", {
+      agentId: "worker-1",
+      message: "reload failed",
+    });
+    expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes systemPrompt only to manager DefaultResourceLoader options and preserves worker append overrides", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    setupPiModel();
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const factory = createFactory(rootDir);
+
+    await factory.createRuntimeForDescriptor(createManagerDescriptor(rootDir), "manager prompt");
+    const managerOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
+      systemPrompt?: string;
+      agentsFilesOverride?: unknown;
+    };
+    expect(managerOptions.systemPrompt).toBe("manager prompt");
+    expect(managerOptions.agentsFilesOverride).toEqual(expect.any(Function));
+
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "worker prompt");
+    const workerOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
+      systemPrompt?: string;
+      agentsFilesOverride?: unknown;
+    };
+    expect(workerOptions).not.toHaveProperty("systemPrompt");
+    expect(workerOptions.agentsFilesOverride).toEqual(expect.any(Function));
+  });
+
+  it("guards Pi session manager opening before createAgentSession", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    setupPiModel();
+    sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReturnValueOnce(null);
+    const descriptor = createDescriptor(rootDir);
+    const factory = createFactory(rootDir);
+
+    await expect(factory.createRuntimeForDescriptor(descriptor, "system prompt")).rejects.toThrow(
+      `Unable to open session file for agent worker-1: ${descriptor.sessionFile}`,
+    );
+
+    expect(sessionFileGuardMockState.openSessionManagerWithSizeGuard).toHaveBeenCalledWith(descriptor.sessionFile, {
+      context: "runtime:create:pi:worker-1",
+      rotateOversizedFile: true,
+      logWarning: expect.any(Function),
+    });
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("captures Pi extension snapshots, active tools, and bind error behavior", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    setupPiModel();
+    const logDebug = vi.fn();
+    const onRuntimeError = vi.fn(async () => undefined);
+    const onRuntimeExtensionSnapshot = vi.fn(async () => undefined);
+    const session = createMockPiSession();
+    session.getActiveToolNames.mockReturnValue(["z_existing", "send_message_to_agent"]);
+    session.bindExtensions.mockImplementationOnce(async ({ onError }: { onError: (error: any) => void }) => {
+      onError({
+        extensionPath: join(rootDir, "agent", "extensions", "broken.ts"),
+        event: "session_start",
+        error: " handler exploded ",
+        stack: "stack trace",
+      });
+      throw new Error("bind failed");
+    });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session,
+      extensionsResult: {
+        extensions: [
+          {
+            path: "<inline forge bridge>",
+            resolvedPath: "<inline forge bridge>",
+            handlers: new Map(),
+            tools: new Map(),
+          },
+          {
+            path: join(rootDir, "agent", "extensions", "zeta.ts"),
+            resolvedPath: join(rootDir, "agent", "extensions", "zeta.ts"),
+            sourceInfo: undefined,
+            handlers: new Map([["b_event", vi.fn()], ["a_event", vi.fn()]]),
+            tools: new Map([["tool_b", vi.fn()], ["tool_a", vi.fn()]]),
+          },
+          {
+            path: join(rootDir, "data", "profiles", "profile-1", "pi", "extensions", "alpha", "index.ts"),
+            resolvedPath: join(rootDir, "data", "profiles", "profile-1", "pi", "extensions", "alpha", "index.ts"),
+            sourceInfo: undefined,
+            handlers: new Map([["c_event", vi.fn()]]),
+            tools: new Map(),
+          },
+        ],
+        errors: [
+          { path: "<inline forge error>", error: "ignore" },
+          { path: join(rootDir, "agent", "extensions", "bad-b.ts"), error: "bad b" },
+          { path: join(rootDir, "agent", "extensions", "bad-a.ts"), error: "bad a" },
+        ],
+      },
+    });
+
+    const factory = createFactory(rootDir, {
+      logDebug,
+      callbacks: { onRuntimeError, onRuntimeExtensionSnapshot },
+    });
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 42);
+
+    expect(onRuntimeExtensionSnapshot).toHaveBeenCalledWith(42, "worker-1", {
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager-1",
+      profileId: "profile-1",
+      loadedAt: "2026-01-01T00:00:00.000Z",
+      extensions: [
+        expect.objectContaining({
+          displayName: "alpha",
+          source: "profile",
+          events: ["c_event"],
+          tools: [],
+        }),
+        expect.objectContaining({
+          displayName: "zeta.ts",
+          source: "global-worker",
+          events: ["a_event", "b_event"],
+          tools: ["tool_a", "tool_b"],
+        }),
+      ],
+      loadErrors: [
+        { path: join(rootDir, "agent", "extensions", "bad-a.ts"), error: "bad a" },
+        { path: join(rootDir, "agent", "extensions", "bad-b.ts"), error: "bad b" },
+      ],
+    });
+    expect(onRuntimeError).toHaveBeenCalledWith(42, "worker-1", {
+      phase: "extension",
+      message: "handler exploded",
+      stack: "stack trace",
+      details: {
+        extensionPath: join(rootDir, "agent", "extensions", "broken.ts"),
+        event: "session_start",
+      },
+    });
+    expect(logDebug).toHaveBeenCalledWith("extension:bind_error", {
+      agentId: "worker-1",
+      message: "bind failed",
+    });
+    expect(session.setActiveToolsByName).toHaveBeenCalledWith(
+      expect.arrayContaining(["z_existing", "send_message_to_agent", "list_agents"]),
+    );
+  });
+
+  it("orders Pi Forge binding creation and does not activate bindings when createAgentSession fails", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
+    setupPiModel();
+    const sequence: string[] = [];
+    const session = createMockPiSession();
+    session.bindExtensions.mockImplementation(async () => {
+      sequence.push("bindExtensions");
+    });
+    session.setActiveToolsByName.mockImplementation(() => {
+      sequence.push("setActiveTools");
+    });
+    session.subscribe.mockImplementation(() => {
+      sequence.push("constructRuntime");
+      return () => undefined;
+    });
+    piCodingAgentMockState.createAgentSession.mockImplementation(async () => {
+      sequence.push("createAgentSession");
+      return { session, extensionsResult: { extensions: [], errors: [] } };
+    });
+    const forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const originalPrepare = forgeExtensionHost.prepareRuntimeBindings.bind(forgeExtensionHost);
+    vi.spyOn(forgeExtensionHost, "prepareRuntimeBindings").mockImplementation(async (...args) => {
+      sequence.push("prepare");
+      return originalPrepare(...args);
+    });
+    const originalActivate = forgeExtensionHost.activateRuntimeBindings.bind(forgeExtensionHost);
+    const activateSpy = vi.spyOn(forgeExtensionHost, "activateRuntimeBindings").mockImplementation((...args) => {
+      sequence.push("activate");
+      return originalActivate(...args);
+    });
+
+    const factory = createFactory(rootDir, { forgeExtensionHost });
+    await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 9);
+
+    expect(sequence).toEqual(["prepare", "createAgentSession", "bindExtensions", "setActiveTools", "constructRuntime", "activate"]);
+
+    sequence.length = 0;
+    activateSpy.mockClear();
+    piCodingAgentMockState.createAgentSession.mockImplementationOnce(async () => {
+      sequence.push("createAgentSession");
+      throw new Error("session failed");
+    });
+    await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 10)).rejects.toThrow("session failed");
+    expect(sequence).toEqual(["prepare", "createAgentSession"]);
+    expect(activateSpy).not.toHaveBeenCalled();
+  });
 
   it("passes auth headers and custom instructions to Pi compaction in the correct argument order", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
