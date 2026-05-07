@@ -355,6 +355,12 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             description:
               "Enable xAI native web search for this worker. Only effective with Grok models in ad-hoc mode. Ignored when specialist is provided (specialist config controls web search)."
           })
+        ),
+        fastMode: Type.Optional(
+          Type.Boolean({
+            description:
+              "Override this session Fast mode policy for the worker. Omit to inherit. false forces standard tier. true requests Fast mode only when the final model is compatible OpenAI Codex GPT-5.4/GPT-5.5 with ChatGPT/OAuth auth."
+          })
         )
       }),
       async execute(_toolCallId, params) {
@@ -369,6 +375,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           cwd?: string;
           initialMessage?: string;
           webSearch?: boolean;
+          fastMode?: boolean;
         };
 
         const spawnInput: SpawnAgentInput = {
@@ -381,7 +388,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           reasoningLevel: parseSwarmReasoningLevel(parsed.reasoningLevel, "spawn_agent.reasoningLevel"),
           cwd: parsed.cwd,
           initialMessage: parsed.initialMessage,
-          webSearch: parsed.webSearch
+          webSearch: parsed.webSearch,
+          fastMode: parsed.fastMode
         };
 
         const spawned = await host.spawnAgent(descriptor.agentId, spawnInput);

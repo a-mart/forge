@@ -29,6 +29,7 @@ function uniqueErrorHints(errorHints: readonly WsRequestErrorHint[]): WsRequestE
 const RENAME_PROFILE_CONTRACT = getWsRequestContract('rename_profile')
 const RENAME_SESSION_CONTRACT = getWsRequestContract('rename_session')
 const PIN_SESSION_CONTRACT = getWsRequestContract('pin_session')
+const UPDATE_SESSION_FAST_MODE_POLICY_CONTRACT = getWsRequestContract('update_session_fast_mode_policy')
 const UPDATE_SESSION_MODEL_CONTRACT = getWsRequestContract('update_session_model')
 const FORK_SESSION_CONTRACT = getWsRequestContract('fork_session')
 const MERGE_SESSION_MEMORY_CONTRACT = getWsRequestContract('merge_session_memory')
@@ -54,6 +55,7 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   RENAME_PROFILE_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
+  UPDATE_SESSION_FAST_MODE_POLICY_CONTRACT.commandType,
   UPDATE_SESSION_MODEL_CONTRACT.commandType,
   FORK_SESSION_CONTRACT.commandType,
   MERGE_SESSION_MEMORY_CONTRACT.commandType,
@@ -89,6 +91,10 @@ const RENAME_SESSION_ERROR_HINTS = RENAME_SESSION_CONTRACT.errorCodeFragments.ma
 }))
 const PIN_SESSION_ERROR_HINTS = PIN_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: PIN_SESSION_CONTRACT.commandType,
+  codeFragment,
+}))
+const UPDATE_SESSION_FAST_MODE_POLICY_ERROR_HINTS = UPDATE_SESSION_FAST_MODE_POLICY_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: UPDATE_SESSION_FAST_MODE_POLICY_CONTRACT.commandType,
   codeFragment,
 }))
 const UPDATE_SESSION_MODEL_ERROR_HINTS = UPDATE_SESSION_MODEL_CONTRACT.errorCodeFragments.map((codeFragment) => ({
@@ -190,6 +196,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   CLEAR_SESSION_CONTRACT.commandType,
   RENAME_SESSION_CONTRACT.commandType,
   PIN_SESSION_CONTRACT.commandType,
+  UPDATE_SESSION_FAST_MODE_POLICY_CONTRACT.commandType,
   UPDATE_SESSION_MODEL_CONTRACT.commandType,
   RENAME_PROFILE_CONTRACT.commandType,
   FORK_SESSION_CONTRACT.commandType,
@@ -218,6 +225,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   ...CLEAR_SESSION_ERROR_HINTS,
   ...RENAME_SESSION_ERROR_HINTS,
   ...PIN_SESSION_ERROR_HINTS,
+  ...UPDATE_SESSION_FAST_MODE_POLICY_ERROR_HINTS,
   ...UPDATE_SESSION_MODEL_ERROR_HINTS,
   ...RENAME_PROFILE_ERROR_HINTS,
   ...FORK_SESSION_ERROR_HINTS,

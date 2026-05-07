@@ -7,7 +7,10 @@ import {
   resetModelOverride,
   setModelOverride,
 } from "../../../swarm/model-overrides.js";
-import { getManagedModelProviderCredentialAvailability } from "../../../swarm/secrets-env-service.js";
+import {
+  getManagedModelProviderCredentialAvailability,
+  getManagedModelProviderCredentialSummaries,
+} from "../../../swarm/secrets-env-service.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -62,15 +65,20 @@ async function handleModelOverridesRequest(
 
   if (request.method === "GET" && requestUrl.pathname === MODEL_OVERRIDES_ENDPOINT_PATH) {
     try {
-      const [overridesFile, providerAvailability] = await Promise.all([
+      const credentialPoolService = typeof swarmManager.getCredentialPoolService === "function"
+        ? swarmManager.getCredentialPoolService()
+        : undefined;
+      const [overridesFile, providerAvailability, providerCredentials] = await Promise.all([
         readModelOverrides(dataDir),
         getManagedModelProviderCredentialAvailability(swarmManager.getConfig()),
+        getManagedModelProviderCredentialSummaries(swarmManager.getConfig(), { credentialPoolService }),
       ]);
 
       sendJson(response, 200, {
         version: overridesFile.version,
         overrides: overridesFile.overrides,
         providerAvailability: Object.fromEntries(providerAvailability),
+        providerCredentials: Object.fromEntries(providerCredentials),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

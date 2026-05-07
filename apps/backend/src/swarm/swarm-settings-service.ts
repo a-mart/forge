@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AuthCredential } from "@mariozechner/pi-coding-agent";
 import {
   getCatalogModelKey,
+  getEffectiveForgeServiceTier,
   type CredentialPoolState,
   type ManagerExactModelSelection,
   type CredentialPoolStrategy,
@@ -27,7 +28,16 @@ import {
   findLatestUnappliedModelChangeContinuityRequestForSession,
   loadModelChangeContinuityState
 } from "./runtime/model-change-continuity.js";
-import { getManagedModelProviderCredentialAvailability, type SecretsEnvService } from "./secrets-env-service.js";
+import {
+  getManagedModelProviderCredentialAvailability,
+  getManagedModelProviderCredentialSummaries,
+  type SecretsEnvService
+} from "./secrets-env-service.js";
+import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
+import {
+  resolveAgentServiceTierFromSessionPolicy,
+  validateSessionFastModePolicySelection,
+} from "./catalog/service-tier-policy.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
 import { modelCatalogService } from "./model-catalog-service.js";
@@ -53,7 +63,7 @@ interface SettingsDescriptorTransactionStore {
   ) => ManagerProfile;
 }
 
-export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change" | "prompt_mode_change";
+export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change" | "prompt_mode_change" | "fast_mode_policy_change";
 
 type ManagerRuntimeRecycleDisposition = "recycled" | "deferred" | "none";
 type SessionDescriptor = AgentDescriptor & { role: "manager"; profileId: string };
@@ -179,6 +189,56 @@ export class SwarmSettingsService {
       allowMetadataOnlyOriginChange: true,
       logContext: "session:update_model"
     });
+  }
+
+  async updateSessionFastModePolicy(sessionAgentId: string, enabled: boolean): Promise<void> {
+    const session = this.options.getSessionById(sessionAgentId);
+    if (!session) {
+      throw new Error(`Unknown manager session: ${sessionAgentId}`);
+    }
+
+    const credentialSummaries = await getManagedModelProviderCredentialSummaries(this.options.config, {
+      credentialPoolService: this.options.secretsEnvService.getCredentialPoolService(),
+    });
+    const validation = validateSessionFastModePolicySelection({
+      enabled,
+      credentialSummary: credentialSummaries.get("openai-codex"),
+      validationMode: "user_command",
+      now: this.options.now,
+    });
+    if (!validation.ok || !validation.policy) {
+      throw new Error(validation.message ?? "Fast mode policy is not valid");
+    }
+
+    const policy = validation.policy;
+    const resolved = resolveAgentServiceTierFromSessionPolicy({
+      model: session.model,
+      sessionPolicy: policy,
+      credentialSummary: credentialSummaries.get("openai-codex"),
+      source: "manager_runtime",
+    });
+    const previousTier = session.model.serviceTier;
+    const nextModel = resolved.model;
+
+    await this.runDescriptorTransaction(async (store) => {
+      store.patchDescriptor(sessionAgentId, (descriptor) => ({
+        ...descriptor,
+        fastModePolicy: policy,
+        model: { ...nextModel },
+        updatedAt: this.options.now?.() ?? new Date().toISOString(),
+      }));
+    }, async () => {
+      session.fastModePolicy = policy;
+      session.model = { ...nextModel };
+      session.updatedAt = this.options.now?.() ?? new Date().toISOString();
+      await this.writeSessionFastModeMeta(session, policy);
+      await this.options.saveStore();
+    });
+
+    if (previousTier !== nextModel.serviceTier) {
+      await this.options.applyManagerRuntimeRecyclePolicy(sessionAgentId, "fast_mode_policy_change");
+    }
+    this.options.emitAgentsSnapshot();
   }
 
   async updateManagerCwd(managerId: string, newCwd: string): Promise<string> {
@@ -683,6 +743,26 @@ export class SwarmSettingsService {
     });
   }
 
+  private async writeSessionFastModeMeta(
+    session: SessionDescriptor,
+    policy: NonNullable<AgentDescriptor["fastModePolicy"]>
+  ): Promise<void> {
+    const existing = await readSessionMeta(this.options.config.paths.dataDir, session.profileId, session.agentId);
+    if (!existing) {
+      return;
+    }
+
+    await writeSessionMeta(this.options.config.paths.dataDir, {
+      ...existing,
+      fastModePolicy: policy,
+      model: {
+        provider: session.model.provider,
+        modelId: session.model.modelId,
+      },
+      updatedAt: this.options.now?.() ?? new Date().toISOString(),
+    });
+  }
+
   private async applySessionModelMutations(
     mutations: Array<{
       session: SessionDescriptor;
@@ -856,7 +936,8 @@ function sameModelDescriptor(left: AgentDescriptor["model"], right: AgentDescrip
   return (
     left.provider === right.provider &&
     left.modelId === right.modelId &&
-    normalizeThinkingLevel(left.thinkingLevel) === normalizeThinkingLevel(right.thinkingLevel)
+    normalizeThinkingLevel(left.thinkingLevel) === normalizeThinkingLevel(right.thinkingLevel) &&
+    getEffectiveForgeServiceTier(left) === getEffectiveForgeServiceTier(right)
   );
 }
 

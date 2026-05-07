@@ -122,6 +122,7 @@ export class SwarmSessionMetaService {
       createdAt: descriptor.createdAt,
       updatedAt: this.options.now(),
       cwd: descriptor.cwd,
+      fastModePolicy: descriptor.fastModePolicy,
       stats: this.buildSessionMetaStats(base.workers, {
         sessionFileSize: base.stats.sessionFileSize,
         memoryFileSize: base.stats.memoryFileSize
@@ -172,6 +173,7 @@ export class SwarmSessionMetaService {
           modelId: descriptor.model.modelId
         },
         cwd: descriptor.cwd,
+        fastModePolicy: descriptor.fastModePolicy,
         resolvedSystemPrompt: resolvedSystemPromptForMeta,
         promptComponents,
         promptFingerprint: computePromptFingerprint(promptComponents),
@@ -471,6 +473,6 @@ export class SwarmSessionMetaService {
       return null;
     }
 
-    return `${provider}/${modelId}`;
+    return descriptor.model.serviceTier === "priority" ? `${provider}/${modelId} (Fast)` : `${provider}/${modelId}`;
   }
 }

@@ -69,6 +69,13 @@ export interface SessionModelUpdatedEvent {
   requestId?: string
 }
 
+export interface SessionFastModePolicyUpdatedEvent {
+  type: 'session_fast_mode_policy_updated'
+  sessionAgentId: string
+  enabled: boolean
+  requestId?: string
+}
+
 export interface SessionForkedEvent {
   type: 'session_forked'
   sourceAgentId: string

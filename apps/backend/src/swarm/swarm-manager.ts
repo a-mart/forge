@@ -5,7 +5,7 @@ import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:
 import { dirname, join } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
-import { isSystemProfile, type SpecialistTargetSpace } from "@forge/protocol";
+import { getEffectiveForgeServiceTier, isSystemProfile, normalizeForgeServiceTier, type SpecialistTargetSpace } from "@forge/protocol";
 import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
@@ -125,7 +125,11 @@ import {
   type WorkerWatchdogState
 } from "./swarm-worker-health-service.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
-import { getManagedModelProviderCredentialAvailability, SecretsEnvService } from "./secrets-env-service.js";
+import {
+  getManagedModelProviderCredentialAvailability,
+  getManagedModelProviderCredentialSummaries,
+  SecretsEnvService
+} from "./secrets-env-service.js";
 import { SwarmMemoryMergeService, type SessionMemoryMergeAuditEntry } from "./swarm-memory-merge-service.js";
 import { SwarmSessionMetaService, type SessionMemoryMergeAttemptMetaUpdate } from "./swarm-session-meta-service.js";
 import { SkillFileService } from "./skill-file-service.js";
@@ -1441,6 +1445,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
       resolveDefaultModelDescriptor: () => this.resolveDefaultModelDescriptor(),
       getManagedModelProviderAvailability: () => getManagedModelProviderCredentialAvailability(this.config),
+      getManagedModelProviderCredentialSummaries: () => getManagedModelProviderCredentialSummaries(this.config, {
+        credentialPoolService: this.secretsEnvService.getCredentialPoolService(),
+      }),
       resolveSpawnWorkerArchetypeId: (input, normalizedAgentId, profileId) =>
         this.resolveSpawnWorkerArchetypeId(input, normalizedAgentId, profileId),
       resolveSpecialistRosterForProfile: (profileId, targetSpace) => this.resolveSpecialistRosterForProfile(profileId, targetSpace),
@@ -2670,6 +2677,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<AgentDescriptor["model"]> {
     return this.settingsService.updateSessionExactModel(sessionAgentId, modelSelection, reasoningLevel);
+  }
+
+  async updateSessionFastModePolicy(sessionAgentId: string, enabled: boolean): Promise<void> {
+    await this.settingsService.updateSessionFastModePolicy(sessionAgentId, enabled);
   }
 
   async updateManagerCwd(managerId: string, newCwd: string): Promise<string> {
@@ -6339,7 +6350,8 @@ function cloneModelDescriptor(model: AgentDescriptor["model"]): AgentDescriptor[
   return normalizePersistedSwarmModelDescriptor(model) ?? {
     provider: model.provider,
     modelId: model.modelId,
-    thinkingLevel: model.thinkingLevel
+    thinkingLevel: model.thinkingLevel,
+    ...(normalizeForgeServiceTier(model.serviceTier) === "priority" ? { serviceTier: "priority" as const } : {})
   };
 }
 
@@ -6347,7 +6359,8 @@ function sameModelDescriptor(left: AgentDescriptor["model"], right: AgentDescrip
   return (
     left.provider === right.provider &&
     left.modelId === right.modelId &&
-    normalizeModelThinkingLevel(left.thinkingLevel) === normalizeModelThinkingLevel(right.thinkingLevel)
+    normalizeModelThinkingLevel(left.thinkingLevel) === normalizeModelThinkingLevel(right.thinkingLevel) &&
+    getEffectiveForgeServiceTier(left) === getEffectiveForgeServiceTier(right)
   );
 }
 

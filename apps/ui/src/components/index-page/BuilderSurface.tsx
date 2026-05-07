@@ -52,6 +52,8 @@ import {
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import { useTerminalPanel } from '@/hooks/useTerminalPanel'
+import { fetchModelOverrides } from '@/components/settings/models-api'
+import { isOpenAICodexChatGptAuthAvailable, type ForgeProviderCredentialSummary } from '@forge/protocol'
 import type {
   AgentDescriptor,
   ChoiceAnswer,
@@ -127,6 +129,8 @@ export function BuilderSurface({
   } = useOnboardingState(wsUrl)
 
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
+  const [fastModeUpdatingAgentId, setFastModeUpdatingAgentId] = useState<string | null>(null)
+  const [providerCredentials, setProviderCredentials] = useState<Record<string, ForgeProviderCredentialSummary>>({})
 
   const activeAgentId = useMemo(() => {
     return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
@@ -917,6 +921,20 @@ export function BuilderSurface({
     clientRef.current?.markAllRead(profileId)
   }, [clientRef])
 
+  useEffect(() => {
+    let cancelled = false
+    void fetchModelOverrides(wsUrl)
+      .then((response) => {
+        if (!cancelled) setProviderCredentials(response.providerCredentials)
+      })
+      .catch(() => {
+        if (!cancelled) setProviderCredentials({})
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [wsUrl])
+
   const handleUpdateManagerModel = useCallback(async (profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => {
     const client = clientRef.current
     if (!client) return
@@ -947,6 +965,22 @@ export function BuilderSurface({
         ...previous,
         lastError: `Failed to update session model: ${error instanceof Error ? error.message : 'Unknown error'}`,
       }))
+    }
+  }, [clientRef, setState])
+
+  const handleUpdateSessionFastModePolicy = useCallback(async (sessionAgentId: string, enabled: boolean) => {
+    const client = clientRef.current
+    if (!client) return
+    setFastModeUpdatingAgentId(sessionAgentId)
+    try {
+      await client.updateSessionFastModePolicy(sessionAgentId, enabled)
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        lastError: `Failed to update Fast mode: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      }))
+    } finally {
+      setFastModeUpdatingAgentId((current) => current === sessionAgentId ? null : current)
     }
   }, [clientRef, setState])
 
@@ -1269,6 +1303,16 @@ export function BuilderSurface({
                   activeAgentUpdatedAt: activeAgent?.updatedAt ?? null,
                   channelView: messageSourceView,
                   onChannelViewChange: setMessageSourceView,
+                  fastMode: isActiveManager && activeAgent ? {
+                    enabled: activeAgent.fastModePolicy?.enabled === true,
+                    updating: fastModeUpdatingAgentId === activeAgent.agentId,
+                    available: isOpenAICodexChatGptAuthAvailable(providerCredentials['openai-codex']),
+                    unavailableReason: 'missing_oauth',
+                    costSummary: 'GPT-5.5 2.5x, GPT-5.4 2x',
+                  } : undefined,
+                  onFastModeChange: isActiveManager && activeAgentId
+                    ? (enabled) => handleUpdateSessionFastModePolicy(activeAgentId, enabled)
+                    : undefined,
                   contextWindowUsage,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
