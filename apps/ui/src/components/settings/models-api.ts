@@ -16,11 +16,14 @@ export interface ModelOverridesResponse {
   providerCredentials: Record<string, ForgeProviderCredentialSummary>
 }
 
-export async function fetchModelOverrides(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<ModelOverridesResponse> {
+export async function fetchModelOverrides(
+  clientOrWsUrl: SettingsApiClient | string | undefined,
+  init?: RequestInit,
+): Promise<ModelOverridesResponse> {
   const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
     ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
     : clientOrWsUrl
-  const response = await client.fetch('/api/settings/model-overrides', { cache: 'no-store' })
+  const response = await client.fetch('/api/settings/model-overrides', { ...init, cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 
   const data = (await response.json()) as Partial<ModelOverridesResponse>

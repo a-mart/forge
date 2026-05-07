@@ -3,7 +3,10 @@ import type { AuthCredential } from "@mariozechner/pi-coding-agent";
 import {
   getCatalogModelKey,
   getEffectiveForgeServiceTier,
+  isOpenAICodexChatGptAuthAvailable,
+  isServiceTierSupportedForModel,
   type CredentialPoolState,
+  type ForgeProviderCredentialSummary,
   type ManagerExactModelSelection,
   type CredentialPoolStrategy,
   type PooledCredentialInfo,
@@ -76,6 +79,7 @@ export interface SwarmSettingsServiceOptions {
   secretsEnvService: SecretsEnvService;
   getSessionsForProfile: (profileId: string) => SessionDescriptor[];
   getSessionById: (agentId: string) => SessionDescriptor | undefined;
+  getAllDescriptors?: () => AgentDescriptor[];
   resolveAndValidateCwd: (cwd: string) => Promise<string>;
   assertCanChangeManagerCwd: (profileId: string, sessions: SessionDescriptor[]) => void;
   applyManagerRuntimeRecyclePolicy: (
@@ -197,8 +201,12 @@ export class SwarmSettingsService {
       throw new Error(`Unknown manager session: ${sessionAgentId}`);
     }
 
+    const credentialPoolService =
+      typeof this.options.secretsEnvService.getCredentialPoolService === "function"
+        ? this.options.secretsEnvService.getCredentialPoolService()
+        : undefined;
     const credentialSummaries = await getManagedModelProviderCredentialSummaries(this.options.config, {
-      credentialPoolService: this.options.secretsEnvService.getCredentialPoolService(),
+      credentialPoolService,
     });
     const validation = validateSessionFastModePolicySelection({
       enabled,
@@ -462,10 +470,12 @@ export class SwarmSettingsService {
 
   async updateSettingsAuth(values: Record<string, string>): Promise<void> {
     await this.options.secretsEnvService.updateSettingsAuth(values);
+    await this.reconcileFastModePoliciesForCredentialState("auth_change");
   }
 
   async deleteSettingsAuth(provider: string): Promise<void> {
     await this.options.secretsEnvService.deleteSettingsAuth(provider);
+    await this.reconcileFastModePoliciesForCredentialState("auth_change");
   }
 
   getCredentialPoolService(): CredentialPoolService {
@@ -482,18 +492,22 @@ export class SwarmSettingsService {
 
   async removePooledCredential(provider: string, credentialId: string): Promise<void> {
     await this.getCredentialPoolService().removeCredential(provider, credentialId);
+    await this.reconcileFastModePoliciesForCredentialState("auth_change");
   }
 
   async setPrimaryPooledCredential(provider: string, credentialId: string): Promise<void> {
     await this.getCredentialPoolService().setPrimary(provider, credentialId);
+    await this.reconcileFastModePoliciesForCredentialState("auth_change");
   }
 
   async setCredentialPoolStrategy(provider: string, strategy: CredentialPoolStrategy): Promise<void> {
     await this.getCredentialPoolService().setStrategy(provider, strategy);
+    await this.reconcileFastModePoliciesForCredentialState("auth_change");
   }
 
   async resetPooledCredentialCooldown(provider: string, credentialId: string): Promise<void> {
     await this.getCredentialPoolService().resetCooldown(provider, credentialId);
+    await this.reconcileFastModePoliciesForCredentialState("auth_change");
   }
 
   async addPooledCredential(
@@ -501,7 +515,9 @@ export class SwarmSettingsService {
     oauthCredential: AuthCredential,
     identity?: { label?: string; autoLabel?: string; accountId?: string }
   ): Promise<PooledCredentialInfo> {
-    return this.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
+    const added = await this.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
+    await this.reconcileFastModePoliciesForCredentialState("auth_change");
+    return added;
   }
 
   private async applyProfileDefaultModel(
@@ -520,12 +536,13 @@ export class SwarmSettingsService {
     }
 
     const profileDefaultChanged = !sameModelDescriptor(profile.defaultModel, targetModel);
+    const credentialSummary = await this.getOpenAICodexCredentialSummary();
     const mutations = this.options
       .getSessionsForProfile(profile.profileId)
       .filter((session) => session.modelOrigin !== "session_override")
       .map((session) => ({
         session,
-        targetModel,
+        targetModel: this.resolveEffectiveManagerModelForSession(session, targetModel, credentialSummary),
         targetModelOrigin: "profile_default" as const
       }))
       .filter(
@@ -629,13 +646,13 @@ export class SwarmSettingsService {
     options: { allowMetadataOnlyOriginChange: boolean; logContext: string }
   ): Promise<AgentDescriptor["model"]> {
     const targetModel = await this.resolveExactManagerModel(modelSelection, "change", reasoningLevel);
-    await this.setSessionModelOverrideTarget(sessionAgentId, targetModel, {
+    const effectiveModel = await this.setSessionModelOverrideTarget(sessionAgentId, targetModel, {
       allowMetadataOnlyOriginChange: options.allowMetadataOnlyOriginChange,
       logContext: options.logContext,
       modelSelection,
       reasoningLevel,
     });
-    return { ...targetModel };
+    return { ...effectiveModel };
   }
 
   private async setSessionModelOverride(
@@ -667,14 +684,17 @@ export class SwarmSettingsService {
       modelPreset?: SwarmModelPreset;
       modelSelection?: ManagerExactModelSelection;
     }
-  ): Promise<void> {
+  ): Promise<AgentDescriptor["model"]> {
     const session = this.options.getSessionById(sessionAgentId);
     if (!session) {
       throw new Error(`Unknown session: ${sessionAgentId}`);
     }
 
+    const credentialSummary = await this.getOpenAICodexCredentialSummary();
+    const effectiveTargetModel = this.resolveEffectiveManagerModelForSession(session, targetModel, credentialSummary);
+
     const shouldUpdate =
-      !sameModelDescriptor(session.model, targetModel) ||
+      !sameModelDescriptor(session.model, effectiveTargetModel) ||
       (details.allowMetadataOnlyOriginChange && session.modelOrigin !== "session_override");
 
     if (!shouldUpdate) {
@@ -686,11 +706,11 @@ export class SwarmSettingsService {
         reasoningLevel: details.reasoningLevel,
         updatedSessions: []
       });
-      return;
+      return { ...effectiveTargetModel };
     }
 
     const result = await this.applySessionModelMutations(
-      [{ session, targetModel, targetModelOrigin: "session_override" }],
+      [{ session, targetModel: effectiveTargetModel, targetModelOrigin: "session_override" }],
       { emitProfilesSnapshot: false }
     );
 
@@ -705,6 +725,8 @@ export class SwarmSettingsService {
       recycledSessions: result.recycledSessions,
       deferredSessions: result.deferredSessions
     });
+
+    return { ...effectiveTargetModel };
   }
 
   private async setSessionModelInheritance(sessionAgentId: string): Promise<void> {
@@ -718,7 +740,8 @@ export class SwarmSettingsService {
       throw new Error(`Unknown manager profile: ${session.profileId}`);
     }
 
-    const targetModel = { ...profile.defaultModel };
+    const credentialSummary = await this.getOpenAICodexCredentialSummary();
+    const targetModel = this.resolveEffectiveManagerModelForSession(session, { ...profile.defaultModel }, credentialSummary);
     if (sameModelDescriptor(session.model, targetModel) && session.modelOrigin === "profile_default") {
       this.options.logDebug("session:update_model:noop", {
         sessionAgentId,
@@ -741,6 +764,127 @@ export class SwarmSettingsService {
       recycledSessions: result.recycledSessions,
       deferredSessions: result.deferredSessions
     });
+  }
+
+  async reconcileFastModePoliciesForCredentialState(
+    validationMode: "startup" | "auth_change"
+  ): Promise<{ sessionsUpdated: string[]; workersUpdated: string[] }> {
+    const credentialSummary = await this.getOpenAICodexCredentialSummary();
+    const sessions = Array.from(this.options.profiles.values()).flatMap((profile) =>
+      this.options.getSessionsForProfile(profile.profileId)
+    );
+    const descriptors = this.options.getAllDescriptors?.() ?? sessions;
+    const sessionUpdates: Array<{
+      session: SessionDescriptor;
+      policy?: NonNullable<AgentDescriptor["fastModePolicy"]>;
+      model: AgentDescriptor["model"];
+      policyChanged: boolean;
+      modelChanged: boolean;
+    }> = [];
+    const workerUpdates: Array<{ descriptor: AgentDescriptor; model: AgentDescriptor["model"] }> = [];
+
+    for (const session of sessions) {
+      const currentPolicy = session.fastModePolicy;
+      const validation = validateSessionFastModePolicySelection({
+        enabled: currentPolicy?.enabled === true,
+        credentialSummary,
+        validationMode,
+        now: this.options.now,
+      });
+      const nextPolicy = currentPolicy || validation.policy?.enabled ? validation.policy : undefined;
+      const nextModel = this.resolveEffectiveManagerModelForSession(session, session.model, credentialSummary, nextPolicy);
+      const policyChanged = !sameFastModePolicy(currentPolicy, nextPolicy);
+      const modelChanged = !sameModelDescriptor(session.model, nextModel);
+      if (policyChanged || modelChanged) {
+        sessionUpdates.push({ session, policy: nextPolicy, model: nextModel, policyChanged, modelChanged });
+      }
+    }
+
+    const canUseFast = isOpenAICodexChatGptAuthAvailable(credentialSummary);
+    for (const descriptor of descriptors) {
+      if (descriptor.role !== "worker" || descriptor.model.serviceTier !== "priority") {
+        continue;
+      }
+      if (!canUseFast || !isServiceTierSupportedForModel(descriptor.model, "priority")) {
+        workerUpdates.push({ descriptor, model: stripModelServiceTier(descriptor.model) });
+      }
+    }
+
+    if (sessionUpdates.length === 0 && workerUpdates.length === 0) {
+      return { sessionsUpdated: [], workersUpdated: [] };
+    }
+
+    await this.runDescriptorTransaction(async (store) => {
+      for (const update of sessionUpdates) {
+        store.patchDescriptor(update.session.agentId, (descriptor) => ({
+          ...descriptor,
+          ...(update.policy ? { fastModePolicy: update.policy } : { fastModePolicy: undefined }),
+          model: { ...update.model },
+          updatedAt: this.options.now?.() ?? new Date().toISOString(),
+        }));
+      }
+      for (const update of workerUpdates) {
+        store.patchDescriptor(update.descriptor.agentId, { model: { ...update.model } });
+      }
+    }, async () => {
+      for (const update of sessionUpdates) {
+        update.session.fastModePolicy = update.policy;
+        update.session.model = { ...update.model };
+        update.session.updatedAt = this.options.now?.() ?? new Date().toISOString();
+        if (update.policy) {
+          await this.writeSessionFastModeMeta(update.session, update.policy);
+        }
+      }
+      for (const update of workerUpdates) {
+        update.descriptor.model = { ...update.model };
+      }
+      await this.options.saveStore();
+    });
+
+    if (validationMode === "auth_change") {
+      for (const update of sessionUpdates) {
+        if (update.modelChanged) {
+          await this.options.applyManagerRuntimeRecyclePolicy(update.session.agentId, "fast_mode_policy_change");
+        }
+      }
+    }
+
+    this.options.emitAgentsSnapshot();
+    this.options.logDebug("fast_mode:policy:degraded", {
+      validationMode,
+      sessionsUpdated: sessionUpdates.map((update) => update.session.agentId),
+      workersUpdated: workerUpdates.map((update) => update.descriptor.agentId),
+    });
+
+    return {
+      sessionsUpdated: sessionUpdates.map((update) => update.session.agentId),
+      workersUpdated: workerUpdates.map((update) => update.descriptor.agentId),
+    };
+  }
+
+  private async getOpenAICodexCredentialSummary(): Promise<ForgeProviderCredentialSummary | undefined> {
+    const credentialPoolService =
+      typeof this.options.secretsEnvService.getCredentialPoolService === "function"
+        ? this.options.secretsEnvService.getCredentialPoolService()
+        : undefined;
+    const credentialSummaries = await getManagedModelProviderCredentialSummaries(this.options.config, {
+      credentialPoolService,
+    });
+    return credentialSummaries.get("openai-codex");
+  }
+
+  private resolveEffectiveManagerModelForSession(
+    session: SessionDescriptor,
+    model: AgentDescriptor["model"],
+    credentialSummary: ForgeProviderCredentialSummary | undefined,
+    policy: AgentDescriptor["fastModePolicy"] = session.fastModePolicy
+  ): AgentDescriptor["model"] {
+    return resolveAgentServiceTierFromSessionPolicy({
+      model,
+      sessionPolicy: policy,
+      credentialSummary,
+      source: "manager_runtime",
+    }).model;
   }
 
   private async writeSessionFastModeMeta(
@@ -930,6 +1074,18 @@ export class SwarmSettingsService {
 
 function errorToMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sameFastModePolicy(
+  left: AgentDescriptor["fastModePolicy"],
+  right: AgentDescriptor["fastModePolicy"]
+): boolean {
+  return left?.enabled === right?.enabled && (left?.updatedAt ?? undefined) === (right?.updatedAt ?? undefined);
+}
+
+function stripModelServiceTier(model: AgentDescriptor["model"]): AgentDescriptor["model"] {
+  const { serviceTier: _serviceTier, ...rest } = model;
+  return rest;
 }
 
 function sameModelDescriptor(left: AgentDescriptor["model"], right: AgentDescriptor["model"]): boolean {

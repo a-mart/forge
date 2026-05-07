@@ -16,10 +16,16 @@ describe("service-tier policy", () => {
     expect(validateSessionFastModePolicySelection({ enabled: true, credentialSummary: oauth, validationMode: "user_command" }).ok).toBe(true);
   });
 
-  it("rejects user enablement with API-key-only OpenAI Codex auth", () => {
+  it("rejects user enablement with API-key-only OpenAI Codex auth but degrades during startup/auth-change", () => {
     const result = validateSessionFastModePolicySelection({ enabled: true, credentialSummary: apiKey, validationMode: "user_command" });
     expect(result.ok).toBe(false);
     expect(result.message).toBe(FAST_MODE_OAUTH_REQUIRED_MESSAGE);
+
+    expect(validateSessionFastModePolicySelection({ enabled: true, credentialSummary: apiKey, validationMode: "startup" })).toMatchObject({
+      ok: true,
+      policy: { enabled: false },
+      reason: "missing_oauth",
+    });
   });
 
   it("applies priority for inherited compatible workers and strips unsupported models", () => {

@@ -121,6 +121,8 @@ function createService(options: {
   emitProfilesSnapshot?: ReturnType<typeof vi.fn>;
   logDebug?: ReturnType<typeof vi.fn>;
   now?: () => string;
+  secretsEnvService?: any;
+  allDescriptors?: AgentDescriptor[];
 }): SwarmSettingsService {
   const profiles = options.profiles ?? new Map<string, ManagerProfile>([["manager", createProfile(options.profileDefaultModel)]]);
 
@@ -129,9 +131,10 @@ function createService(options: {
     profiles,
     skillMetadataService: {} as any,
     skillFileService: {} as any,
-    secretsEnvService: {} as any,
+    secretsEnvService: options.secretsEnvService ?? ({} as any),
     getSessionsForProfile: () => options.sessions,
     getSessionById: (agentId) => options.sessions.find((session) => session.agentId === agentId),
+    getAllDescriptors: () => options.allDescriptors ?? options.sessions,
     resolveAndValidateCwd: async (cwd) => cwd,
     assertCanChangeManagerCwd: () => {},
     applyManagerRuntimeRecyclePolicy: options.applyManagerRuntimeRecyclePolicy ?? vi.fn(async () => "none"),
@@ -144,7 +147,116 @@ function createService(options: {
   });
 }
 
+function createOpenAICodexOAuthSecretsEnvService(): any {
+  return {
+    getCredentialPoolService: () => ({
+      listPool: async (provider: string) => ({
+        provider,
+        strategy: "fill_first",
+        credentials: [
+          {
+            id: "oauth-primary",
+            provider,
+            label: "OAuth Primary",
+            addedAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            health: "healthy",
+          },
+        ],
+      }),
+    }),
+  };
+}
+
 describe("SwarmSettingsService.updateManagerModel", () => {
+  it("keeps priority service tier when a fast-mode-enabled session switches to another eligible model", async () => {
+    const root = await createTempRoot();
+    const session = createSession(
+      root,
+      "manager",
+      { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "xhigh", serviceTier: "priority" },
+      "session_override"
+    );
+    session.fastModePolicy = { enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" };
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      secretsEnvService: createOpenAICodexOAuthSecretsEnvService(),
+    });
+
+    await service.updateSessionModel(session.agentId, "override", "pi-5.4", "xhigh");
+
+    expect(session.model).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "xhigh",
+      serviceTier: "priority",
+    });
+  });
+
+  it("strips priority and disables fast mode when OpenAI Codex OAuth is lost", async () => {
+    const root = await createTempRoot();
+    const session = createSession(
+      root,
+      "manager",
+      { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "xhigh", serviceTier: "priority" },
+      "session_override"
+    );
+    session.fastModePolicy = { enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" };
+    const worker: AgentDescriptor = {
+      agentId: "worker",
+      displayName: "worker",
+      role: "worker",
+      managerId: session.agentId,
+      status: "idle",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      cwd: root,
+      model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "xhigh", serviceTier: "priority" },
+    };
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      allDescriptors: [session, worker],
+      applyManagerRuntimeRecyclePolicy,
+      now: () => "2026-01-02T00:00:00.000Z",
+    });
+
+    const result = await service.reconcileFastModePoliciesForCredentialState("auth_change");
+
+    expect(result).toEqual({ sessionsUpdated: [session.agentId], workersUpdated: [worker.agentId] });
+    expect(session.fastModePolicy).toMatchObject({ enabled: false, updatedAt: "2026-01-02T00:00:00.000Z" });
+    expect(session.model.serviceTier).toBeUndefined();
+    expect(worker.model.serviceTier).toBeUndefined();
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledWith(session.agentId, "fast_mode_policy_change");
+  });
+
+  it("coerces stale startup fast-mode descriptors without recycling active runtimes", async () => {
+    const root = await createTempRoot();
+    const session = createSession(
+      root,
+      "manager",
+      { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "xhigh", serviceTier: "priority" },
+      "session_override"
+    );
+    session.fastModePolicy = { enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" };
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      applyManagerRuntimeRecyclePolicy,
+      now: () => "2026-01-02T00:00:00.000Z",
+    });
+
+    const result = await service.reconcileFastModePoliciesForCredentialState("startup");
+
+    expect(result.sessionsUpdated).toEqual([session.agentId]);
+    expect(session.fastModePolicy).toMatchObject({ enabled: false, updatedAt: "2026-01-02T00:00:00.000Z" });
+    expect(session.model.serviceTier).toBeUndefined();
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+
   it("writes continuity requests before mutating models for both active and inactive sessions", async () => {
     const root = await createTempRoot();
     const activeSession = createSession(root, "manager");

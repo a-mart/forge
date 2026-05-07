@@ -1361,6 +1361,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
         return descriptor as AgentDescriptor & { role: "manager"; profileId: string };
       },
+      getAllDescriptors: () => Array.from(this.descriptors.values()),
       resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
       assertCanChangeManagerCwd: (profileId, sessions) => this.assertCanChangeManagerCwd(profileId, sessions),
       applyManagerRuntimeRecyclePolicy: (agentId, reason) => this.applyManagerRuntimeRecyclePolicy(agentId, reason),
@@ -1687,6 +1688,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.normalizeStreamingStatusesForBoot();
     await this.cortexService.recoverIncompleteReviewRunDispatchesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
+    await this.settingsService.reconcileFastModePoliciesForCredentialState("startup");
 
     // Reconcile project agent storage: hydrate descriptors from on-disk config,
     // materialize missing directories from descriptor data (first-boot migration).

@@ -921,19 +921,40 @@ export function BuilderSurface({
     clientRef.current?.markAllRead(profileId)
   }, [clientRef])
 
-  useEffect(() => {
-    let cancelled = false
-    void fetchModelOverrides(wsUrl)
-      .then((response) => {
-        if (!cancelled) setProviderCredentials(response.providerCredentials)
-      })
-      .catch(() => {
-        if (!cancelled) setProviderCredentials({})
-      })
-    return () => {
-      cancelled = true
+  const refreshProviderCredentials = useCallback(async (options?: { signal?: AbortSignal }) => {
+    try {
+      const response = await fetchModelOverrides(wsUrl, options)
+      setProviderCredentials(response.providerCredentials)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      setProviderCredentials({})
     }
   }, [wsUrl])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void refreshProviderCredentials({ signal: controller.signal })
+    return () => {
+      controller.abort()
+    }
+  }, [refreshProviderCredentials])
+
+  useEffect(() => {
+    const handleFocus = () => {
+      void refreshProviderCredentials()
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshProviderCredentials()
+      }
+    }
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [refreshProviderCredentials])
 
   const handleUpdateManagerModel = useCallback(async (profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => {
     const client = clientRef.current
