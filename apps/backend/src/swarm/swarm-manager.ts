@@ -5770,7 +5770,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private emitProfilesSnapshot(): void {
     const payload = {
       type: "profiles_snapshot",
-      profiles: this.listUserProfiles()
+      profiles: this.listProfiles()
     } satisfies ServerEvent;
 
     this.profilesSnapshotVersion += 1;

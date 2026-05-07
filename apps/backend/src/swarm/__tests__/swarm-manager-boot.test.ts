@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthStorage, SessionManager } from '@mariozechner/pi-coding-agent'
-import { getCatalogModelKey } from '@forge/protocol'
+import { getCatalogModelKey, type ManagerProfile } from '@forge/protocol'
 import { getConversationHistoryCacheFilePath } from '../conversation-history-cache.js'
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import {
@@ -1078,6 +1078,27 @@ describe('SwarmManager', () => {
       sessionAgentId: run.sessionAgentId,
       trigger: 'manual',
     })
+  })
+
+  it('keeps Cortex in live profile snapshots when review sessions are created', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const liveProfileSnapshots: ManagerProfile[][] = []
+    manager.on('profiles_snapshot', (event: { profiles: ManagerProfile[] }) => {
+      liveProfileSnapshots.push(event.profiles)
+    })
+
+    const run = expectStartedReviewRun(await manager.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    }))
+
+    expect(run.sessionAgentId).toMatch(/^cortex--s\d+$/)
+    expect(liveProfileSnapshots.length).toBeGreaterThan(0)
+    expect(liveProfileSnapshots.at(-1)?.map((profile) => profile.profileId)).toContain('cortex')
   })
 
   it('routes root Cortex review messages into fresh review-run sessions instead of the interactive root session', async () => {
