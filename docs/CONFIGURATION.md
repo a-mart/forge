@@ -106,7 +106,8 @@ All persistent state lives in a single data directory:
 │   │   └── provider-usage-history.jsonl   # Historical provider usage samples
 │   ├── state/                 # Runtime state & markers
 │   │   ├── mobile-devices.json            # Registered mobile devices
-│   │   ├── .compaction-count-backfill-v2-done  # Compaction-count backfill sentinel
+│   │   ├── .compaction-count-backfill-v2-done  # Legacy compaction-count backfill sentinel
+│   │   ├── .compaction-count-reconcile-v3-done  # Monotonic compaction-count reconciliation sentinel
 │   │   ├── .shared-config-migration-done  # Shared-config layout migration sentinel
 │   │   └── .shared-config-cleanup-done    # Shared-config old-path cleanup sentinel
 │   ├── knowledge/             # Knowledge base
