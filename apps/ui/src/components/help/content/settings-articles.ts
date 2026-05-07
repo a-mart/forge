@@ -40,7 +40,7 @@ Edit the default preferences Forge shares with new manager sessions. These are t
 
 ## Collaboration
 
-Open **Settings > Collaboration** to connect Forge to a collaboration server. Enter the server URL, click **Save** and **Test** to confirm it is reachable, then sign in with an admin or member email and password. After sign-in succeeds, the Builder/Collab toggle becomes available.
+Open **Settings > Collaboration** to connect Forge to a collaboration server. Enter the server URL, click **Save** and **Test** to confirm it is reachable, then use the Builder/Collab toggle to open the collaboration sign-in surface. For configured remote servers, the toggle can take you to sign-in before you are authenticated. After sign-in succeeds, the collaboration channels become available.
 
 Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the collaboration backend instead of copying or sharing the local Builder auth file.
 

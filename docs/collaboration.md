@@ -99,8 +99,8 @@ The Builder/Collab toggle lives in the sidebar header. When collaboration is ena
 1. Open **Settings → Collaboration**.
 2. Enter the collaboration server URL.
 3. Click **Save** and **Test** to confirm the server is reachable.
-4. Sign in with the collaboration server admin or member email and password.
-5. After sign-in succeeds, the Builder/Collab toggle becomes available in the UI.
+4. Use the Builder/Collab toggle to open the collaboration surface. For configured remote servers, the toggle can open the collaboration sign-in surface before you are authenticated.
+5. Sign in with the collaboration server admin or member email and password. After sign-in succeeds, the collaboration channels become available.
 
 The collaboration status panel reports the configured collaboration server, not the local Builder backend. It reflects the enabled state and auth status of the connected collaboration service. If a collaboration session or socket is invalidated by a lifecycle change, the UI shows sign-in recovery instead of retrying forever or leaving the screen stuck loading.
 
