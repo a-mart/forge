@@ -479,7 +479,7 @@ Right-click any existing session and choose **Promote to Project Agent**. A sett
 - **Handle** — A unique identifier like \`@releases\` or \`@docs\`. Must be unique within the profile and cannot change after promotion.
 - **When to use** — A description that tells other sessions when to message this agent.
 - **System prompt** (optional) — Custom instructions tailored to the agent's role, stored in the agent's \`prompt.md\` file and editable in your preferred editor.
-- **Reference docs** — Optional markdown documents scoped to this agent and injected into its prompt context.
+- **Reference docs** — Optional markdown documents scoped to this agent and injected into its prompt context. Add them from Project Agent Settings by entering a filename and content, or importing a \`.md\` / \`.txt\` file.
 
 Click **Generate recommendations** to have AI suggest both the "when to use" text and system prompt based on the session's conversation history. You can edit the suggestions before saving.
 
