@@ -72,7 +72,7 @@ If you need more control over the runtime environment or want to contribute to d
 **Setup:**
 ```bash
 git clone https://github.com/a-mart/forge.git
-cd middleman
+cd forge
 cp .env.example .env          # Review and set any needed env vars
 pnpm install
 pnpm prod:daemon              # Run as background daemon
@@ -246,9 +246,11 @@ Forge runs three layers on your machine:
 |-------|-------------|
 | **Dashboard UI** (`apps/ui`) | TanStack Start + Vite SPA. Real-time agent monitoring, chat, file browser, settings. |
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
-| **Agents** | Manager and worker agents powered by [pi](https://github.com/badlogic/pi-mono). Each worker runs in its own worktree. |
+| **Agents** | Manager and worker agents run through Forge's runtime facade, backed by Pi, Claude SDK, or Cursor ACP depending on the selected model/provider. Each worker runs in its own worktree. |
 
 Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling. Agents are extensible through both [Forge Extensions](docs/FORGE_EXTENSIONS.md) and Pi's [extension system](docs/PI_EXTENSIONS.md).
+
+Backend internals are split into thin facades and leaf modules. Runtime selection now goes through a provider-dispatch facade, with provider-specific creators under `apps/backend/src/swarm/runtime/{acp,claude,pi}/` and shared planning/projector helpers in `runtime-*` modules. When changing those areas, keep the public facade stable and move new behavior behind it.
 
 All runtime data lives locally. No cloud, no database. Just JSON, JSONL, and markdown files under `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows). Backup means copying a folder. Recovery means pasting it back. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full data layout.
 

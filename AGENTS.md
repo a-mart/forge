@@ -33,7 +33,7 @@ For any Collab SQLite schema or migration work, follow [docs/collaboration.md](d
 
 ```bash
 git clone https://github.com/a-mart/forge.git
-cd middleman
+cd forge
 cp .env.example .env          # Review and set any needed env vars
 pnpm install
 pnpm dev                      # Starts backend + UI in dev mode
@@ -88,7 +88,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Cortex** | `swarm/operational/` | `components/chat/cortex/` | AI self-improvement, first-launch welcome preferences, and knowledge management |
 | **Cortex auto-review** | `swarm/cortex-auto-review-settings.ts`, `ws/routes/cortex-auto-review-routes.ts` | `components/settings/SettingsGeneral.tsx`, `components/settings/cortex-auto-review-api.ts` | Periodic automated reviews that run only when sessions have changed (deterministic pre-check prevents unnecessary LLM sessions) |
 | **Playwright dashboard** | `playwright/*` | `components/playwright/*` | Live browser preview and automation dashboard |
-| **Claude SDK runtime** | `swarm/claude-*.ts` | Settings UI (model selectors) | Native Claude Agent SDK runtime with MCP tool bridge, OAuth auth via Claude Code CLI, and SDK-native auto-compaction via `autoCompactWindow`. Graceful fallback to Pi when SDK is unavailable. Session context recovery from Forge history when SDK resume fails, with pre-resume persistence probing. |
+| **Agent runtime dispatch** | `swarm/runtime/runtime-factory.ts`, `swarm/runtime/runtime-{binding,callback-gate,prompt-plan,resource-plan,recovery-state,tool-plan}.ts`, `swarm/runtime/{acp,claude,pi}/` | Settings UI (model selectors) | Thin provider-dispatch facade plus shared planning/projector helpers and provider-specific runtime creators. Keep provider construction inside the creator modules, keep the facade stable, and preserve the public import surface while refactoring. |
 | **Cursor ACP runtime** | `swarm/runtime/acp/` | — | Cursor ACP agent runtime with HTTP MCP tool bridge for worker specialists. Requires Cursor CLI installed and `agent login`. Experimental; disable with `FORGE_ACP_ENABLED=false`. Cross-vendor fallback to OpenAI Codex. |
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
 | **Voice/transcription** | `ws/routes/transcription-routes.ts` | `lib/voice-transcription-client.ts` | Voice input and transcription |
@@ -347,14 +347,14 @@ When changing file layout or module boundaries, keep the old surface stable unti
 ### Core rules
 
 - **Test first for risky refactors:** add characterization tests before structural changes so behavior stays pinned.
-- **Seam first:** keep facades thin and stable, then delegate into extracted services or modules behind compatibility seams.
+- **Seam first:** keep facades thin and stable, then delegate into extracted services or modules behind compatibility seams. For runtime construction, keep provider-specific setup in `swarm/runtime/{acp,claude,pi}/` creator modules and shared planning in `runtime-*plan.ts` helpers.
 - **Compatibility shims:** use re-exports from old paths during moves; remove them only after dependent imports are updated.
 - **Protocol DTO placement:** shared message and transport types live in `packages/protocol/`; keep domain-specific leaf modules there and re-export through package barrels.
 - **Worktree and rollback:** use isolated git worktree branches for non-trivial or high-risk structural changes, and keep a rollback path before merging.
 
 ### Directory-specific rules
 
-- **`swarm/`:** treat `swarm-manager.ts` as the facade/orchestrator. Extract runtime, agents, storage, catalog, skills, prompts, and session logic into dedicated subdirectories and services.
+- **`swarm/`:** treat `swarm-manager.ts` as the facade/orchestrator. Extract runtime, agents, storage, catalog, skills, prompts, and session logic into dedicated subdirectories and services. Keep runtime provider dispatch in `swarm/runtime/runtime-factory.ts` and move provider-specific construction into creator modules rather than widening the facade.
 - **`ws/`:** keep HTTP routes in `ws/http/routes/`, WebSocket commands in `ws/commands/`, and shared HTTP services in `ws/http/services/`.
 - **`packages/protocol/`:** organize by domain leaf modules, with barrel re-exports at package boundaries and event-family files grouped by protocol surface.
 - **Frontend:** decompose large components into leaf components and hooks, then expose stable barrel exports for shared UI surfaces.
