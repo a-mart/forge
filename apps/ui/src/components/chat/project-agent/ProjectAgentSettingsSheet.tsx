@@ -277,25 +277,24 @@ export function ProjectAgentSettingsSheet({
     }
   }, [agentId, onDeleteReference, refreshReferenceDocs])
 
-  const handleAddReference = useCallback(async () => {
+  const handleAddReference = useCallback(async (fileName: string, content: string) => {
     if (!onSetReference) return
-    const requestedFileName = typeof window !== 'undefined'
-      ? window.prompt('Reference document filename', 'notes.md')
-      : null
-    const fileName = requestedFileName?.trim()
-    if (!fileName) {
-      return
-    }
 
     setReferenceError(null)
     try {
-      await onSetReference(agentId, fileName, '')
+      await onSetReference(agentId, fileName, content)
       await refreshReferenceDocs()
-      setReferenceContents((prev) => ({ ...prev, [fileName]: prev[fileName] ?? '' }))
+      setReferenceContents((prev) => ({ ...prev, [fileName]: content }))
       setLoadedReferenceFiles((prev) => new Set(prev).add(fileName))
-      setExpandedReferenceFile(fileName)
+      setDirtyReferenceFiles((prev) => {
+        const next = new Set(prev)
+        next.delete(fileName)
+        return next
+      })
+      setExpandedReferenceFile(null)
     } catch (err) {
       setReferenceError(err instanceof Error ? err.message : `Failed to create ${fileName}.`)
+      throw err
     }
   }, [agentId, onSetReference, refreshReferenceDocs])
 
