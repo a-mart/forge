@@ -15,7 +15,7 @@ import {
 import { useCollaborationSession } from '@/hooks/use-collaboration-session'
 import type { AgentDescriptor } from '@forge/protocol'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
-import { resolveCollaborationWsUrl, getCollabServerUrl } from '@/lib/collaboration-endpoints'
+import { resolveCollaborationWsUrl, isCollabServerRemote } from '@/lib/collaboration-endpoints'
 import { isElectron } from '@/lib/electron-bridge'
 import { getConfiguredDefaultSurface } from '@/lib/web-runtime-flags'
 import { useBackendHealthPoll } from '@/hooks/index-page/use-backend-health-poll'
@@ -61,9 +61,11 @@ export function IndexPage() {
 
   const inElectron = isElectron()
   const defaultSurface = getConfiguredDefaultSurface()
-  const hasConfiguredCollabServer = Boolean(getCollabServerUrl())
-  // Allow Electron to participate in collab if a remote server URL is configured
-  const shouldLoadCollabSession = !inElectron || hasConfiguredCollabServer
+  // True only when the configured URL points to a genuinely different origin
+  // from the local Forge backend — same-origin configured URLs preserve local behavior.
+  const hasRemoteCollabServer = isCollabServerRemote()
+  // Allow Electron to participate in collab only if a genuinely remote server is configured
+  const shouldLoadCollabSession = !inElectron || hasRemoteCollabServer
   const collabSession = useCollaborationSession({
     enabled: shouldLoadCollabSession,
   })
@@ -76,14 +78,14 @@ export function IndexPage() {
   const effectiveSurface = useMemo<ActiveSurface>(() => {
     // In Electron, only show collab if a remote server URL is configured.
     // Keep Builder accessible when the remote collab server is configured but the user is not signed in.
-    if (inElectron && !hasConfiguredCollabServer) return 'builder'
+    if (inElectron && !hasRemoteCollabServer) return 'builder'
     if (activeSurface !== 'collab') return 'builder'
     if (shouldBlockOnCollabBootstrap) return 'collab'
     // Forced collab settings must stay on collab even when unauthenticated — renders blocked state
     if (isForcedCollabSettings) return 'collab'
-    if (isCollabUnauthenticated && defaultSurface !== 'collab') return 'builder'
-    return (collabSession.isCollabEnabled || hasConfiguredCollabServer) ? 'collab' : 'builder'
-  }, [activeSurface, collabSession.isCollabEnabled, defaultSurface, hasConfiguredCollabServer, inElectron, isForcedCollabSettings, isCollabUnauthenticated, shouldBlockOnCollabBootstrap])
+    if (isCollabUnauthenticated && !hasRemoteCollabServer && defaultSurface !== 'collab') return 'builder'
+    return (collabSession.isCollabEnabled || hasRemoteCollabServer) ? 'collab' : 'builder'
+  }, [activeSurface, collabSession.isCollabEnabled, defaultSurface, hasRemoteCollabServer, inElectron, isForcedCollabSettings, isCollabUnauthenticated, shouldBlockOnCollabBootstrap])
 
   useEffect(() => {
     if (shouldBlockOnCollabBootstrap) {
@@ -217,7 +219,7 @@ export function IndexPage() {
             activeView={activeView}
             navigateToRoute={navigateToRoute}
             collaborationModeSwitch={
-              activeView === 'chat' && ((collabSession.isCollabEnabled && collabSession.isAdmin) || hasConfiguredCollabServer)
+              activeView === 'chat' && ((collabSession.isCollabEnabled && collabSession.isAdmin) || hasRemoteCollabServer)
                 ? {
                     activeSurface: 'builder',
                     onSelectSurface: (surface) => {

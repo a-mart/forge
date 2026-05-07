@@ -70,6 +70,35 @@ export function resolveCollaborationApiBaseUrl(): string {
 }
 
 /**
+ * Whether the user-configured collab server URL points to a truly remote
+ * origin (different host/port from the local Forge backend).
+ *
+ * Returns `false` when no URL is configured or when the configured URL
+ * resolves to the same origin as the Forge backend — preserving same-origin
+ * behavior (e.g. unauthenticated bounce to builder).
+ */
+export function isCollabServerRemote(): boolean {
+  const configured = getCollabServerUrl()
+  if (!configured) return false
+
+  try {
+    return normalizeOrigin(configured) !== normalizeOrigin(resolveBackendWsUrl())
+  } catch {
+    return false
+  }
+}
+
+/** Normalize a URL (http(s)/ws(s)) to a canonical origin for comparison. */
+function normalizeOrigin(url: string): string {
+  const httpUrl = url.replace(/^ws(s?):\/\//, 'http$1://')
+  const parsed = new URL(httpUrl)
+  if (parsed.hostname === 'localhost') {
+    parsed.hostname = '127.0.0.1'
+  }
+  return parsed.origin
+}
+
+/**
  * Resolve the WebSocket URL for the collaboration transport.
  *
  * Returns a ws(s):// URL ready for `WebSocketTransport`.

@@ -99,4 +99,60 @@ describe('collaboration-endpoints', () => {
     setCollabServerUrl('  https://my-server.com  ')
     expect(getCollabServerUrl()).toBe('https://my-server.com')
   })
+
+  describe('isCollabServerRemote', () => {
+    it('returns false when no URL is configured', async () => {
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(false)
+    })
+
+    it('returns true for a remote https URL', async () => {
+      localStorageMock.setItem('forge-collab-server-url', 'https://collab.example.com')
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(true)
+    })
+
+    it('returns true for a remote http URL with different port', async () => {
+      localStorageMock.setItem('forge-collab-server-url', 'http://192.168.1.10:3000')
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(true)
+    })
+
+    it('returns false when configured URL matches backend origin (http)', async () => {
+      // Backend is mocked at ws://127.0.0.1:47187
+      localStorageMock.setItem('forge-collab-server-url', 'http://127.0.0.1:47187')
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(false)
+    })
+
+    it('returns false when configured URL matches backend origin (ws protocol)', async () => {
+      localStorageMock.setItem('forge-collab-server-url', 'ws://127.0.0.1:47187')
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(false)
+    })
+
+    it('treats localhost as equivalent to 127.0.0.1', async () => {
+      localStorageMock.setItem('forge-collab-server-url', 'http://localhost:47187')
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(false)
+    })
+
+    it('returns false for malformed URL (graceful fallback)', async () => {
+      localStorageMock.setItem('forge-collab-server-url', 'not a url at all')
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(false)
+    })
+
+    it('ignores path component when comparing origins', async () => {
+      localStorageMock.setItem('forge-collab-server-url', 'http://127.0.0.1:47187/collab/v1')
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(false)
+    })
+
+    it('distinguishes same hostname with different port as remote', async () => {
+      localStorageMock.setItem('forge-collab-server-url', 'http://127.0.0.1:9999')
+      const { isCollabServerRemote } = await import('./collaboration-endpoints')
+      expect(isCollabServerRemote()).toBe(true)
+    })
+  })
 })

@@ -28,6 +28,9 @@ const builderSurfacePropsMock = vi.hoisted(() => ({
 const collabServerUrlMock = vi.hoisted(() => ({
   value: null as string | null,
 }))
+const isElectronMock = vi.hoisted(() => ({
+  value: false,
+}))
 
 vi.mock('@/components/index-page/BuilderSurface', () => ({
   BuilderSurface: (props: Record<string, unknown>) => {
@@ -56,10 +59,26 @@ vi.mock('@/lib/backend-url', () => ({
 vi.mock('@/lib/collaboration-endpoints', () => ({
   resolveCollaborationWsUrl: () => 'ws://forge.test/ws',
   getCollabServerUrl: () => collabServerUrlMock.value,
+  isCollabServerRemote: () => {
+    const url = collabServerUrlMock.value
+    if (!url) return false
+    try {
+      const normalize = (u: string): string => {
+        const httpUrl = u.replace(/^ws(s?):\/\//, 'http$1://')
+        const parsed = new URL(httpUrl)
+        if (parsed.hostname === 'localhost') parsed.hostname = '127.0.0.1'
+        return parsed.origin
+      }
+      // Backend is mocked at ws://forge.test/ws
+      return normalize(url) !== normalize('ws://forge.test/ws')
+    } catch {
+      return false
+    }
+  },
 }))
 
 vi.mock('@/lib/electron-bridge', () => ({
-  isElectron: () => false,
+  isElectron: () => isElectronMock.value,
 }))
 
 vi.mock('@/lib/web-runtime-flags', () => ({
@@ -95,6 +114,7 @@ beforeEach(() => {
   builderSurfacePropsMock.value = null
   defaultSurfaceMock.value = 'builder'
   collabServerUrlMock.value = null
+  isElectronMock.value = false
   collabSessionHookMock.mockReturnValue({
     isCollabEnabled: false,
     isAdmin: false,
@@ -380,6 +400,155 @@ describe('IndexPage collab bootstrap gating', () => {
 
     expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
     expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
+  })
+
+  it('renders collab surface when server URL is configured and user is unauthenticated (toggle click regression)', () => {
+    // Regression: when hasConfiguredCollabServer is true and the collab backend
+    // reports enabled=true but the user is not authenticated, the effectiveSurface
+    // check would force the user back to builder — making the toggle click a no-op.
+    collabServerUrlMock.value = 'https://collab.example.com'
+    const navigateToRoute = vi.fn()
+    routeStateMock.value = {
+      routeState: {
+        view: 'chat',
+        agentId: '__default__',
+        surface: 'collab',
+      },
+      activeView: 'chat',
+      activeSurface: 'collab',
+      navigateToRoute,
+    }
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    // Must render collab surface, NOT revert to builder
+    expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
+    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
+    // Must NOT navigate back to builder
+    expect(navigateToRoute).not.toHaveBeenCalled()
+  })
+
+  it('still bounces unauthenticated same-origin collab users to builder', () => {
+    // When no remote server is configured (same-origin collab), unauthenticated
+    // users should still be bounced to builder.
+    collabServerUrlMock.value = null
+    const navigateToRoute = vi.fn()
+    routeStateMock.value = {
+      routeState: {
+        view: 'chat',
+        agentId: '__default__',
+        surface: 'collab',
+      },
+      activeView: 'chat',
+      activeSurface: 'collab',
+      navigateToRoute,
+    }
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    // Same-origin unauthenticated: should render builder, not collab
+    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    expect(container.querySelector('[data-testid="collab-surface"]')).toBeNull()
+    // Should navigate back to builder surface
+    expect(navigateToRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: 'builder' }),
+      true,
+    )
+  })
+
+  it('bounces unauthenticated users to builder when configured collab URL is same-origin as backend', () => {
+    // Regression: an explicitly configured URL that resolves to the same origin
+    // as the Forge backend should behave identically to "no configured URL" for
+    // the unauthenticated bounce — only truly remote origins bypass the bounce.
+    collabServerUrlMock.value = 'http://forge.test'
+    const navigateToRoute = vi.fn()
+    routeStateMock.value = {
+      routeState: {
+        view: 'chat',
+        agentId: '__default__',
+        surface: 'collab',
+      },
+      activeView: 'chat',
+      activeSurface: 'collab',
+      navigateToRoute,
+    }
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    // Same-origin configured URL: unauthenticated users must bounce to builder
+    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    expect(container.querySelector('[data-testid="collab-surface"]')).toBeNull()
+    expect(navigateToRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: 'builder' }),
+      true,
+    )
+  })
+
+  it('disables collab session loading in Electron when configured URL is same-origin', () => {
+    // Regression: in Electron with an explicitly configured URL that resolves to
+    // the same origin as the embedded backend, collab should not load at all —
+    // same-origin in Electron means the user accidentally configured their own
+    // embedded backend URL, which doesn't provide a remote collab server.
+    isElectronMock.value = true
+    collabServerUrlMock.value = 'http://forge.test'
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: false,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    // Collab session should be disabled (enabled: false)
+    expect(collabSessionHookMock).toHaveBeenCalledWith({ enabled: false })
+    // Should render builder surface
+    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    expect(container.querySelector('[data-testid="collab-surface"]')).toBeNull()
+  })
+
+  it('hides mode switch when configured collab URL is same-origin and collab is not admin-enabled', () => {
+    // Same-origin configured URL should not show mode switch by itself
+    collabServerUrlMock.value = 'http://forge.test'
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: false,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
+    expect(builderSurfacePropsMock.value?.collaborationModeSwitch).toBeUndefined()
   })
 
   it('hides mode switch when no server URL is configured and collab is not enabled', () => {
