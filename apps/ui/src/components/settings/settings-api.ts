@@ -231,16 +231,25 @@ export async function fetchSettingsAuthProviders(clientOrWsUrl: SettingsApiClien
   return SETTINGS_AUTH_PROVIDER_ORDER.map((provider) => configuredByProvider.get(provider) ?? { provider, configured: false })
 }
 
+export const SETTINGS_AUTH_CHANGED_EVENT = 'forge:settings-auth-changed'
+
+function dispatchSettingsAuthChanged(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(SETTINGS_AUTH_CHANGED_EVENT))
+}
+
 export async function updateSettingsAuthProviders(clientOrWsUrl: SettingsApiClient | string, values: Partial<Record<SettingsAuthProviderId, string>>): Promise<void> {
   const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch('/api/settings/auth', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(values) })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
 }
 
 export async function deleteSettingsAuthProvider(clientOrWsUrl: SettingsApiClient | string, provider: SettingsAuthProviderId): Promise<void> {
   const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
 }
 
 export async function startSettingsAuthOAuthLoginStream(
@@ -281,6 +290,7 @@ export async function startSettingsAuthOAuthLoginStream(
       const providerId = normalizeSettingsAuthLoginProviderId(payload.provider)
       if (!providerId || payload.status !== 'connected') throw new Error('OAuth complete event payload is invalid.')
       handlers.onComplete({ provider: providerId, status: 'connected' })
+      dispatchSettingsAuthChanged()
     } else if (eventName === 'error') {
       const payload = parseSettingsAuthOAuthEventData(rawData)
       const message = typeof payload.message === 'string' && payload.message.trim() ? payload.message : 'OAuth login failed.'
@@ -522,6 +532,7 @@ export async function setCredentialPoolStrategy(clientOrWsUrl: SettingsApiClient
     body: JSON.stringify({ strategy }),
   })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
 }
 
 export async function renamePooledCredential(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string, label: string): Promise<void> {
@@ -538,18 +549,21 @@ export async function setPrimaryPooledCredential(clientOrWsUrl: SettingsApiClien
   const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/primary`, { method: 'POST' })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
 }
 
 export async function resetPooledCredentialCooldown(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string): Promise<void> {
   const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/cooldown`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
 }
 
 export async function removePooledCredential(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string): Promise<void> {
   const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
 }
 
 /**
@@ -594,6 +608,7 @@ export async function startPoolAddAccountOAuthStream(
       const providerId = normalizeSettingsAuthLoginProviderId(payload.provider)
       if (!providerId || payload.status !== 'connected') throw new Error('OAuth complete event payload is invalid.')
       handlers.onComplete({ provider: providerId, status: 'connected' })
+      dispatchSettingsAuthChanged()
     } else if (eventName === 'error') {
       const payload = parseSettingsAuthOAuthEventData(rawData)
       const message = typeof payload.message === 'string' && payload.message.trim() ? payload.message : 'OAuth login failed.'

@@ -161,6 +161,7 @@ export function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
     ...descriptor,
     model: { ...descriptor.model },
     contextUsage: cloneContextUsage(descriptor.contextUsage),
+    fastModePolicy: descriptor.fastModePolicy ? { ...descriptor.fastModePolicy } : undefined,
     projectAgent: cloneProjectAgentInfo(descriptor),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
     ...(descriptor.agentCreatorResult !== undefined

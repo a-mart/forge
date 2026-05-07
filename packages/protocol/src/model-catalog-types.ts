@@ -1,10 +1,40 @@
 export type ForgeProviderAvailabilityMode = 'managed-auth' | 'external'
 export type ForgePiProjectionMode = 'built-in-overrides' | 'custom-provider-merge' | 'none'
 export type ForgeProjectionScope = 'catalog-only' | 'full-upstream-provider'
-export type ForgeRequestBehaviorId = 'xai-responses' | null
+export type ForgeRequestBehaviorId = 'xai-responses' | 'openai-codex-service-tier' | null
 export type ForgeWebSearchCapability = 'none' | 'native'
 export type ForgeInputMode = 'text' | 'image'
 export type ForgeReasoningLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh'
+export const FORGE_SERVICE_TIERS = ['default', 'priority'] as const
+export type ForgeServiceTier = (typeof FORGE_SERVICE_TIERS)[number]
+export type OpenAICodexRequestServiceTier = 'priority' | 'fast'
+export type OpenAICodexReturnedServiceTier = 'default' | 'priority' | 'unverified'
+export type ForgeProviderCredentialAuthType = 'api_key' | 'oauth' | 'unknown'
+export type ForgeProviderCredentialSource = 'auth_file' | 'env' | 'secrets' | 'pool'
+
+export interface ForgeProviderCredentialSummary {
+  configured: boolean
+  authTypes: readonly ForgeProviderCredentialAuthType[]
+  sources: readonly ForgeProviderCredentialSource[]
+  pooled?: boolean
+  /** True only when OpenAI Codex has ChatGPT/OAuth auth available. */
+  chatgptAuthAvailable?: boolean
+}
+
+export interface SessionFastModePolicy {
+  /** Session-level user intent. Omitted/false means standard by default. */
+  enabled: boolean
+  updatedAt?: string
+}
+
+export interface ForgeModelServiceTierCapability {
+  provider: 'openai-codex'
+  supportedTiers: readonly ForgeServiceTier[]
+  defaultTier: 'default'
+  fastModeTier: 'priority'
+  costMultipliers: Partial<Record<ForgeServiceTier, number>>
+  requiresCredentialAuthTypes: readonly ForgeProviderCredentialAuthType[]
+}
 export type ForgeModelApiProtocol =
   | 'openai-codex-responses'
   | 'openai-responses'
@@ -60,6 +90,7 @@ export interface ForgeModelDefinition {
   piUpstreamId: string | null
   /** Notes when Forge intentionally diverges from Pi metadata */
   intentionalDivergenceNotes: string | null
+  serviceTierCapability?: ForgeModelServiceTierCapability
 }
 
 export interface ForgeModelCatalog {

@@ -13,6 +13,12 @@ import {
   getEffectiveManagerEnabled,
   getSpawnPresetFamilies,
   getSpecialistFamilies,
+  getModelServiceTierCapability,
+  getServiceTierCostMultiplier,
+  isOpenAICodexChatGptAuthAvailable,
+  isServiceTierSupportedForModel,
+  normalizeForgeServiceTier,
+  normalizeSessionFastModePolicy,
   inferCatalogFamily,
   inferCatalogProvider,
   isCatalogModelId,
@@ -473,5 +479,36 @@ describe('model-catalog', () => {
       'sdk-sonnet',
       'pi-grok',
     ])
+  })
+})
+
+describe('service tier helpers', () => {
+  it('normalizes Forge service tiers and session Fast policies', () => {
+    expect(normalizeForgeServiceTier('priority')).toBe('priority')
+    expect(normalizeForgeServiceTier('default')).toBe('default')
+    expect(normalizeForgeServiceTier('fast')).toBeUndefined()
+    expect(normalizeSessionFastModePolicy({ enabled: true, updatedAt: '2026-01-01T00:00:00.000Z' })).toEqual({
+      enabled: true,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+    expect(normalizeSessionFastModePolicy({ enabled: 'true' })).toBeUndefined()
+  })
+
+  it('declares OAuth-only Fast capability for GPT-5.4 and GPT-5.5', () => {
+    expect(getCatalogProvider('openai-codex')?.requestBehaviorId).toBe('openai-codex-service-tier')
+    expect(getModelServiceTierCapability('gpt-5.4', 'openai-codex')).toMatchObject({
+      provider: 'openai-codex',
+      fastModeTier: 'priority',
+      requiresCredentialAuthTypes: ['oauth'],
+    })
+    expect(getServiceTierCostMultiplier({ provider: 'openai-codex', modelId: 'gpt-5.4' }, 'priority')).toBe(2)
+    expect(getServiceTierCostMultiplier({ provider: 'openai-codex', modelId: 'gpt-5.5' }, 'priority')).toBe(2.5)
+    expect(isServiceTierSupportedForModel({ provider: 'openai-codex', modelId: 'gpt-5.4-mini' }, 'priority')).toBe(false)
+  })
+
+  it('requires OpenAI Codex OAuth/ChatGPT auth for Fast availability', () => {
+    expect(isOpenAICodexChatGptAuthAvailable({ configured: true, authTypes: ['api_key'], sources: ['env'] })).toBe(false)
+    expect(isOpenAICodexChatGptAuthAvailable({ configured: true, authTypes: ['oauth'], sources: ['auth_file'] })).toBe(true)
+    expect(isOpenAICodexChatGptAuthAvailable({ configured: true, authTypes: ['api_key'], sources: ['auth_file'], chatgptAuthAvailable: true })).toBe(true)
   })
 })

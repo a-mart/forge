@@ -1,4 +1,4 @@
-import type { ManagerExactModelSelection, SpecialistTargetSpace } from "@forge/protocol";
+import type { ForgeProviderCredentialSummary, ManagerExactModelSelection, SpecialistTargetSpace } from "@forge/protocol";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
@@ -41,6 +41,7 @@ import {
   isCollabSession
 } from "./swarm-manager-utils.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
+import { applySessionFastModeToResolvedAgentModel } from "./catalog/service-tier-policy.js";
 
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
@@ -117,6 +118,7 @@ export interface SwarmAgentLifecycleServiceOptions {
   resolveAndValidateCwd: (cwd: string) => Promise<string>;
   resolveDefaultModelDescriptor: () => AgentModelDescriptor;
   getManagedModelProviderAvailability: () => Promise<Map<string, boolean>>;
+  getManagedModelProviderCredentialSummaries?: () => Promise<Map<string, ForgeProviderCredentialSummary>>;
   resolveSpawnWorkerArchetypeId: (
     input: SpawnAgentInput,
     normalizedAgentId: string,
@@ -490,6 +492,22 @@ export class SwarmAgentLifecycleService {
       webSearch = input.webSearch === true;
     }
 
+    const credentialSummaries = await this.options.getManagedModelProviderCredentialSummaries?.();
+    model = applySessionFastModeToResolvedAgentModel(model, {
+      sessionPolicy: manager.fastModePolicy,
+      spawnOverride: input.fastMode,
+      credentialSummary: credentialSummaries?.get("openai-codex"),
+      source: specialist ? "specialist_spawn" : "worker_spawn",
+    });
+    if (specialistFallbackModel) {
+      specialistFallbackModel = applySessionFastModeToResolvedAgentModel(specialistFallbackModel, {
+        sessionPolicy: manager.fastModePolicy,
+        spawnOverride: input.fastMode,
+        credentialSummary: credentialSummaries?.get("openai-codex"),
+        source: "fallback_recovery",
+      });
+    }
+
     const descriptor: AgentDescriptor = {
       agentId,
       displayName: agentId,
@@ -508,6 +526,7 @@ export class SwarmAgentLifecycleService {
         manager.agentId,
         agentId
       ),
+      ...(input.fastMode !== undefined ? { fastModeOverride: input.fastMode } : {}),
       ...(webSearch ? { webSearch: true } : {})
     };
 

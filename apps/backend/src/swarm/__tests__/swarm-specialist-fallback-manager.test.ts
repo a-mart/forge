@@ -244,6 +244,209 @@ describe("SwarmSpecialistFallbackManager", () => {
     expect(resolved?.modelId).toBe("gpt-5.3-codex-spark");
   });
 
+  it("applies session Fast mode to compatible specialist fallback recovery models", async () => {
+    const config = await makeTempConfig();
+    const parentManager = buildWorkerDescriptor(config, {
+      agentId: "mgr-1",
+      role: "manager",
+      managerId: "mgr-1",
+      specialistId: undefined,
+      fastModePolicy: { enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" },
+    });
+    const worker = buildWorkerDescriptor(config, { managerId: parentManager.agentId });
+    const descriptors = new Map<string, AgentDescriptor>([
+      [parentManager.agentId, parentManager],
+      [worker.agentId, worker],
+    ]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn(),
+    });
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        { specialistId: "backend", fallbackModelId: "gpt-5.4", fallbackReasoningLevel: "high" },
+      ]),
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      getManagedModelProviderCredentialSummaries: vi.fn(async () => new Map([
+        ["openai-codex", { configured: true, authTypes: ["oauth"], sources: ["pool"], chatgptAuthAvailable: true }],
+      ])),
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor: vi.fn(),
+      attachRuntime: vi.fn(),
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn(),
+    });
+
+    const resolved = await manager.resolveSpecialistFallbackModelForDescriptor(worker);
+
+    expect(resolved).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "high",
+      serviceTier: "priority",
+    });
+  });
+
+  it("preserves explicit worker Fast opt-out during compatible specialist fallback recovery", async () => {
+    const config = await makeTempConfig();
+    const parentManager = buildWorkerDescriptor(config, {
+      agentId: "mgr-1",
+      role: "manager",
+      managerId: "mgr-1",
+      specialistId: undefined,
+      fastModePolicy: { enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" },
+    });
+    const worker = buildWorkerDescriptor(config, { managerId: parentManager.agentId, fastModeOverride: false });
+    const descriptors = new Map<string, AgentDescriptor>([
+      [parentManager.agentId, parentManager],
+      [worker.agentId, worker],
+    ]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn(),
+    });
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        { specialistId: "backend", fallbackModelId: "gpt-5.4", fallbackReasoningLevel: "high" },
+      ]),
+      resolveSpawnModelWithCapacityFallback: (m) => m,
+      getManagedModelProviderCredentialSummaries: vi.fn(async () => new Map([
+        ["openai-codex", { configured: true, authTypes: ["oauth"], sources: ["pool"], chatgptAuthAvailable: true }],
+      ])),
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor: vi.fn(),
+      attachRuntime: vi.fn(),
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn(),
+    });
+
+    const resolved = await manager.resolveSpecialistFallbackModelForDescriptor(worker);
+
+    expect(resolved).toMatchObject({ provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "high" });
+    expect(resolved?.serviceTier).toBeUndefined();
+  });
+
+  it("strips priority from unsupported specialist fallback recovery models even when Fast mode is enabled", async () => {
+    const config = await makeTempConfig();
+    const parentManager = buildWorkerDescriptor(config, {
+      agentId: "mgr-1",
+      role: "manager",
+      managerId: "mgr-1",
+      specialistId: undefined,
+      fastModePolicy: { enabled: true, updatedAt: "2026-01-01T00:00:00.000Z" },
+    });
+    const worker = buildWorkerDescriptor(config, { managerId: parentManager.agentId });
+    const descriptors = new Map<string, AgentDescriptor>([
+      [parentManager.agentId, parentManager],
+      [worker.agentId, worker],
+    ]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+    const runtimeTokensByAgentId = new Map<string, number>();
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes,
+      getConversationHistory: () => [],
+      sendMessage: vi.fn(),
+      publishToUser: vi.fn(),
+      terminateDescriptor: vi.fn(),
+      saveStore: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_c, _p, _f, fb) => fb),
+      isRuntimeInContextRecovery: () => false,
+      logDebug: vi.fn(),
+    });
+    const manager = new SwarmSpecialistFallbackManager({
+      descriptors,
+      runtimes,
+      runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId,
+      ...runtimeBindingOptionHelpers(runtimes, runtimeCreationPromisesByAgentId, runtimeTokensByAgentId),
+      workerHealthService: health,
+      now: () => new Date().toISOString(),
+      resolveSpecialistRosterForProfile: vi.fn(async () => [
+        { specialistId: "backend", fallbackModelId: "claude-sonnet-4-20250514", fallbackReasoningLevel: "high" },
+      ]),
+      resolveSpawnModelWithCapacityFallback: (m) => ({ ...m, serviceTier: "priority" }),
+      getManagedModelProviderCredentialSummaries: vi.fn(async () => new Map([
+        ["openai-codex", { configured: true, authTypes: ["oauth"], sources: ["pool"], chatgptAuthAvailable: true }],
+      ])),
+      resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
+      injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
+      createRuntimeForDescriptor: vi.fn(),
+      attachRuntime: vi.fn(),
+      detachRuntime: vi.fn(),
+      updateSessionMetaForWorkerDescriptor: vi.fn(),
+      refreshSessionMetaStatsBySessionId: vi.fn(),
+      saveStore: vi.fn(),
+      emitStatus: vi.fn(),
+      emitAgentsSnapshot: vi.fn(),
+      clearTrackedToolPaths: vi.fn(),
+      logDebug: vi.fn(),
+    });
+
+    const resolved = await manager.resolveSpecialistFallbackModelForDescriptor(worker);
+
+    expect(resolved).toMatchObject({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      thinkingLevel: "high",
+    });
+    expect(resolved?.serviceTier).toBeUndefined();
+  });
+
   it("currently infers fallback provider from fallbackModelId even when roster carries fallbackProvider", async () => {
     const config = await makeTempConfig();
     const worker = buildWorkerDescriptor(config);

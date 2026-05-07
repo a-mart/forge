@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchServerVersion, fetchSkillsList } from './settings-api'
+import {
+  fetchServerVersion,
+  fetchSkillsList,
+  removePooledCredential,
+  resetPooledCredentialCooldown,
+  SETTINGS_AUTH_CHANGED_EVENT,
+  setCredentialPoolStrategy,
+  setPrimaryPooledCredential,
+  startPoolAddAccountOAuthStream,
+  startSettingsAuthOAuthLoginStream,
+} from './settings-api'
+import type { SettingsApiClient } from './settings-api-client'
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -14,6 +25,94 @@ function mockJsonResponse(body: unknown, init?: ResponseInit): Response {
     headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
   })
 }
+
+function mockSseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder()
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  }))
+}
+
+function createMockClient(response: Response): SettingsApiClient {
+  return {
+    endpoint: (path: string) => path,
+    fetch: vi.fn(async () => response),
+    fetchJson: vi.fn(),
+    readApiError: vi.fn(async () => 'API error'),
+    target: {
+      kind: 'builder',
+      label: 'Builder backend',
+      description: 'Local Forge Builder backend on this machine.',
+      wsUrl: 'ws://127.0.0.1:47187',
+      apiBaseUrl: 'http://127.0.0.1:47187/',
+      fetchCredentials: 'same-origin',
+      requiresAdmin: false,
+      availableTabs: [],
+    },
+  }
+}
+
+function listenForAuthChanged(): ReturnType<typeof vi.fn> {
+  const testWindow = new EventTarget()
+  vi.stubGlobal('window', testWindow)
+  const listener = vi.fn()
+  testWindow.addEventListener(SETTINGS_AUTH_CHANGED_EVENT, listener)
+  return listener
+}
+
+describe('settings-api auth changed events', () => {
+
+  it('dispatches after successful direct OAuth completion', async () => {
+    const listener = listenForAuthChanged()
+    const client = createMockClient(mockSseResponse([
+      'event: complete\n',
+      'data: {"provider":"openai-codex","status":"connected"}\n\n',
+    ]))
+
+    await startSettingsAuthOAuthLoginStream(client, 'openai-codex', {
+      onAuthUrl: vi.fn(),
+      onPrompt: vi.fn(),
+      onProgress: vi.fn(),
+      onComplete: vi.fn(),
+      onError: vi.fn(),
+    }, new AbortController().signal)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatches after successful pooled OAuth completion', async () => {
+    const listener = listenForAuthChanged()
+    const client = createMockClient(mockSseResponse([
+      'event: complete\n',
+      'data: {"provider":"openai-codex","status":"connected"}\n\n',
+    ]))
+
+    await startPoolAddAccountOAuthStream(client, 'openai-codex', {
+      onAuthUrl: vi.fn(),
+      onPrompt: vi.fn(),
+      onProgress: vi.fn(),
+      onComplete: vi.fn(),
+      onError: vi.fn(),
+    }, new AbortController().signal)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatches after credential-pool availability mutations', async () => {
+    const listener = listenForAuthChanged()
+    const client = createMockClient(mockJsonResponse({ ok: true }))
+
+    await setCredentialPoolStrategy(client, 'openai-codex', 'least_used')
+    await setPrimaryPooledCredential(client, 'openai-codex', 'cred-1')
+    await resetPooledCredentialCooldown(client, 'openai-codex', 'cred-1')
+    await removePooledCredential(client, 'openai-codex', 'cred-1')
+
+    expect(listener).toHaveBeenCalledTimes(4)
+  })
+})
 
 describe('settings-api skills list', () => {
   it('keeps skills whose description is omitted', async () => {

@@ -1363,12 +1363,12 @@ describe("RuntimeFactory", () => {
     expect(handlers.has("before_provider_request")).toBe(true);
   });
 
-  it("does not inject request-behavior handling for non-xAI workers", async () => {
+  it("does not inject request-behavior handling for providers without catalog request behaviors", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     const descriptor = createDescriptor(rootDir, {
       model: {
-        provider: "openai-codex",
-        modelId: "gpt-5.4",
+        provider: "anthropic",
+        modelId: "claude-opus-4-6",
         thinkingLevel: "high",
       },
     });

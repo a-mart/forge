@@ -144,6 +144,29 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
     });
   }
 
+  if (maybe.type === "update_session_fast_mode_policy") {
+    const sessionAgentId = (maybe as { sessionAgentId?: unknown }).sessionAgentId;
+    const enabled = (maybe as { enabled?: unknown }).enabled;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof sessionAgentId !== "string" || sessionAgentId.trim().length === 0) {
+      return fail("update_session_fast_mode_policy.sessionAgentId must be a non-empty string");
+    }
+    if (typeof enabled !== "boolean") {
+      return fail("update_session_fast_mode_policy.enabled must be a boolean");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("update_session_fast_mode_policy.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "update_session_fast_mode_policy",
+      sessionAgentId: sessionAgentId.trim(),
+      enabled,
+      requestId
+    });
+  }
+
   if (maybe.type === "pin_session") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const pinned = (maybe as { pinned?: unknown }).pinned;

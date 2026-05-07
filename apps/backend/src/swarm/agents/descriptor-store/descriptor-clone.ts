@@ -33,6 +33,7 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
   return {
     ...descriptor,
     model: { ...descriptor.model },
+    fastModePolicy: descriptor.fastModePolicy ? { ...descriptor.fastModePolicy } : undefined,
     contextUsage: cloneContextUsage(descriptor),
     projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: true }),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,

@@ -6,6 +6,11 @@ import { CredentialPoolService } from "./credential-pool.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type {
+  ForgeProviderCredentialAuthType,
+  ForgeProviderCredentialSource,
+  ForgeProviderCredentialSummary,
+} from "@forge/protocol";
+import type {
   SettingsAuthProvider,
   SettingsAuthProviderName,
   SkillEnvRequirement,
@@ -335,19 +340,14 @@ export class SecretsEnvService {
 }
 
 export async function getManagedModelProviderCredentialAvailability(
-  config: SwarmConfig
+  config: SwarmConfig,
+  options: { credentialPoolService?: CredentialPoolService } = {}
 ): Promise<Map<string, boolean>> {
-  const [configuredAuthProviders, secrets] = await Promise.all([
-    readConfiguredSettingsAuthProviders(config),
-    readSecretsStoreFromConfig(config)
-  ]);
-
+  const summaries = await getManagedModelProviderCredentialSummaries(config, options);
   const availability = new Map<string, boolean>();
 
-  for (const [provider, envVars] of Object.entries(MANAGED_MODEL_PROVIDER_ENV_VARS)) {
-    const hasStoredEnv = envVars.some((name) => resolveStoredOrProcessEnvValue(secrets, name) !== undefined);
-    const hasStoredAuth = configuredAuthProviders.has(provider as SettingsAuthProviderName);
-    availability.set(provider, hasStoredEnv || hasStoredAuth);
+  for (const [provider, summary] of summaries) {
+    availability.set(provider, summary.configured);
   }
 
   // Native Claude SDK runtimes do not require Anthropic API credentials. Keep the provider
@@ -358,22 +358,69 @@ export async function getManagedModelProviderCredentialAvailability(
   return availability;
 }
 
-export async function readConfiguredSettingsAuthProviders(
-  config: SwarmConfig
-): Promise<Set<SettingsAuthProviderName>> {
-  const authFile = await resolveAuthFileForReadFromConfig(config);
+export async function getManagedModelProviderCredentialSummaries(
+  config: SwarmConfig,
+  options: { credentialPoolService?: CredentialPoolService } = {}
+): Promise<Map<string, ForgeProviderCredentialSummary>> {
+  const [authFile, secrets] = await Promise.all([
+    resolveAuthFileForReadFromConfig(config),
+    readSecretsStoreFromConfig(config)
+  ]);
   const authStorage = AuthStorage.create(authFile);
-  const configuredProviders = new Set<SettingsAuthProviderName>();
+  const summaries = new Map<string, ForgeProviderCredentialSummary>();
 
-  for (const definition of SETTINGS_AUTH_PROVIDER_DEFINITIONS) {
-    const credential = authStorage.get(definition.storageProvider);
-    const resolvedToken = extractAuthCredentialToken(credential);
-    if (typeof resolvedToken === "string" && resolvedToken.length > 0) {
-      configuredProviders.add(definition.provider);
+  for (const [provider, envVars] of Object.entries(MANAGED_MODEL_PROVIDER_ENV_VARS)) {
+    const authTypes = new Set<ForgeProviderCredentialAuthType>();
+    const sources = new Set<ForgeProviderCredentialSource>();
+
+    const definition = SETTINGS_AUTH_PROVIDER_DEFINITIONS.find((entry) => entry.provider === provider);
+    const credential = definition ? authStorage.get(definition.storageProvider) : undefined;
+    if (extractAuthCredentialToken(credential)) {
+      authTypes.add(resolveForgeCredentialAuthType(credential));
+      sources.add("auth_file");
     }
+
+    for (const name of envVars) {
+      if (resolveStoredOrProcessEnvValue(secrets, name) !== undefined) {
+        authTypes.add("api_key");
+        sources.add(name in secrets ? "secrets" : "env");
+      }
+    }
+
+    let pooled = false;
+    const poolService = options.credentialPoolService;
+    if (poolService && definition && POOLED_SETTINGS_AUTH_PROVIDERS.has(definition.storageProvider)) {
+      try {
+        const pool = await poolService.listPool(definition.storageProvider);
+        for (const pooledCredential of pool.credentials) {
+          if (pooledCredential.health !== "auth_error") {
+            pooled = true;
+            sources.add("pool");
+            authTypes.add("oauth");
+          }
+        }
+      } catch {
+        // Pool inspection is best-effort for availability summaries.
+      }
+    }
+
+    const summary: ForgeProviderCredentialSummary = {
+      configured: authTypes.size > 0,
+      authTypes: [...authTypes].sort(),
+      sources: [...sources].sort(),
+      ...(pooled ? { pooled: true } : {}),
+      ...(provider === "openai-codex" ? { chatgptAuthAvailable: authTypes.has("oauth") } : {})
+    };
+    summaries.set(provider, summary);
   }
 
-  return configuredProviders;
+  summaries.set("claude-sdk", {
+    configured: true,
+    authTypes: ["unknown"],
+    sources: [],
+  });
+
+  return summaries;
 }
 
 async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<string, string>> {
@@ -488,6 +535,16 @@ function resolveSettingsAuthProvider(
     provider: definition.provider,
     storageProvider: definition.storageProvider
   };
+}
+
+function resolveForgeCredentialAuthType(credential: AuthCredential | undefined): ForgeProviderCredentialAuthType {
+  if (!credential) {
+    return "unknown";
+  }
+  if (credential.type === "api_key" || credential.type === "oauth") {
+    return credential.type;
+  }
+  return "unknown";
 }
 
 function resolveAuthCredentialType(

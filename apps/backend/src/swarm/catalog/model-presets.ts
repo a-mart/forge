@@ -1,4 +1,4 @@
-import type { ModelPresetInfo } from "@forge/protocol";
+import { normalizeForgeServiceTier, type ModelPresetInfo } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "../types.js";
 import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "../types.js";
 import { modelCatalogService } from "./model-catalog-service.js";
@@ -130,7 +130,7 @@ export function resolveRemovedSwarmModelPresetAlias(preset: string): SwarmModelP
 }
 
 export function normalizePersistedSwarmModelDescriptor(
-  descriptor: (Pick<AgentModelDescriptor, "provider" | "modelId"> & { thinkingLevel?: string }) | undefined,
+  descriptor: (Pick<AgentModelDescriptor, "provider" | "modelId"> & { thinkingLevel?: string; serviceTier?: unknown }) | undefined,
 ): AgentModelDescriptor | undefined {
   if (!descriptor) {
     return undefined;
@@ -139,10 +139,12 @@ export function normalizePersistedSwarmModelDescriptor(
   const provider = descriptor.provider.trim().toLowerCase();
   const replacementPreset = REMOVED_PROVIDER_REPLACEMENTS[provider];
   if (!replacementPreset) {
+    const serviceTier = normalizeForgeServiceTier(descriptor.serviceTier);
     return {
       provider: descriptor.provider,
       modelId: descriptor.modelId,
       thinkingLevel: normalizeDescriptorThinkingLevel(descriptor.thinkingLevel),
+      ...(serviceTier === "priority" ? { serviceTier } : {}),
     };
   }
 

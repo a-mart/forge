@@ -50,6 +50,13 @@ export function handleSessionEvent(
       })
       return true
 
+    case 'session_fast_mode_policy_updated':
+      context.requestTracker.resolve('update_session_fast_mode_policy', event.requestId, {
+        sessionAgentId: event.sessionAgentId,
+        enabled: event.enabled,
+      })
+      return true
+
     case 'session_model_updated':
       context.requestTracker.resolve('update_session_model', event.requestId, {
         sessionAgentId: event.sessionAgentId,

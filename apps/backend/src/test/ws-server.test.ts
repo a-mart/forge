@@ -1381,17 +1381,17 @@ describe('SwarmWebSocketServer', () => {
       const deleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/openai-codex`, {
         method: 'DELETE',
       })
-      expect(deleteResponse.status).toBe(400)
+      expect(deleteResponse.status).toBe(200)
 
       const deletePayload = (await deleteResponse.json()) as {
-        error?: string
+        ok?: boolean
       }
-      expect(deletePayload.error).toBe('Use pool management to remove OpenAI Codex accounts.')
+      expect(deletePayload.ok).toBe(true)
 
       const afterDeleteAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<string, unknown>
       const afterDeleteLegacyAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<string, unknown>
-      expect(afterDeleteAuth['openai-codex']).toBeDefined()
-      expect(afterDeleteLegacyAuth['openai-codex']).toBeDefined()
+      expect(afterDeleteAuth['openai-codex']).toBeUndefined()
+      expect(afterDeleteLegacyAuth['openai-codex']).toBeUndefined()
     } finally {
       await server.stop()
     }

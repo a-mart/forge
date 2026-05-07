@@ -1569,6 +1569,7 @@ describe('SwarmManager', () => {
 
     const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
     const persisted = persistedStore.agents.find((agent) => agent.agentId === 'release-notes')
+    expect(persisted?.model.serviceTier).toBeUndefined()
     expect(persisted).toMatchObject({
       creatorAgentId: 'agent-creator',
       status: 'stopped',
@@ -1576,7 +1577,6 @@ describe('SwarmManager', () => {
         provider: 'openai-codex',
         modelId: 'gpt-5.5',
         thinkingLevel: 'xhigh',
-        serviceTier: 'priority',
       },
       modelOrigin: 'session_override',
       sessionFile: normalizedProjectSessionFile,

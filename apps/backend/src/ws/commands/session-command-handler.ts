@@ -47,6 +47,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "clear_session" &&
     command.type !== "rename_session" &&
     command.type !== "pin_session" &&
+    command.type !== "update_session_fast_mode_policy" &&
     command.type !== "update_session_model" &&
     command.type !== "set_session_project_agent" &&
     command.type !== "get_project_agent_config" &&
@@ -280,6 +281,34 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         code: "PIN_SESSION_FAILED",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "update_session_fast_mode_policy") {
+    try {
+      requireNonSystemSessionProfile(
+        command.sessionAgentId,
+        swarmManager.listProfiles(),
+        (agentId) => swarmManager.getAgent(agentId),
+      );
+
+      await swarmManager.updateSessionFastModePolicy(command.sessionAgentId, command.enabled);
+
+      send(socket, {
+        type: "session_fast_mode_policy_updated",
+        sessionAgentId: command.sessionAgentId,
+        enabled: command.enabled,
+        requestId: command.requestId,
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "UPDATE_SESSION_FAST_MODE_POLICY_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId,
       });
     }
 

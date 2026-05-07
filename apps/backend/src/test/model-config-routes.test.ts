@@ -18,6 +18,7 @@ interface ModelConfigRouteHarness {
   readonly broadcastEvent: ReturnType<typeof vi.fn>;
   readonly swarmManager: {
     getConfig: () => { paths: { dataDir: string } };
+    getCredentialPoolService: ReturnType<typeof vi.fn>;
     reloadModelCatalogOverridesAndProjection: ReturnType<typeof vi.fn>;
     notifyModelSpecificInstructionsChanged: ReturnType<typeof vi.fn>;
   };
@@ -108,6 +109,42 @@ describe("model config routes", () => {
     );
   });
 
+  it("reports pooled-only OpenAI Codex credentials as provider-available", async () => {
+    const harness = await createModelConfigRouteHarness({
+      credentialPoolService: {
+        listPool: vi.fn(async (provider: string) => ({
+          provider,
+          strategy: "fill_first",
+          credentials: [
+            {
+              id: "oauth-primary",
+              provider,
+              label: "OAuth Primary",
+              addedAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              health: "healthy",
+            },
+          ],
+        })),
+      },
+    });
+
+    const response = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      providerAvailability: {
+        "openai-codex": true,
+      },
+      providerCredentials: {
+        "openai-codex": {
+          configured: true,
+          chatgptAuthAvailable: true,
+        },
+      },
+    });
+  });
+
   it("reports claude-sdk as provider-available without Anthropic credentials", async () => {
     const harness = await createModelConfigRouteHarness();
 
@@ -123,7 +160,7 @@ describe("model config routes", () => {
   });
 });
 
-async function createModelConfigRouteHarness(): Promise<ModelConfigRouteHarness> {
+async function createModelConfigRouteHarness(options: { credentialPoolService?: unknown } = {}): Promise<ModelConfigRouteHarness> {
   const tempConfig = await createTempConfig({ prefix: "forge-model-config-routes-" });
   const dataDir = tempConfig.config.paths.dataDir;
   tempRoots.push(tempConfig.tempRootDir);
@@ -131,6 +168,7 @@ async function createModelConfigRouteHarness(): Promise<ModelConfigRouteHarness>
 
   const swarmManager = {
     getConfig: () => tempConfig.config,
+    getCredentialPoolService: vi.fn(() => options.credentialPoolService),
     reloadModelCatalogOverridesAndProjection: vi.fn(async () => {
       await modelCatalogService.loadOverrides(dataDir);
     }),

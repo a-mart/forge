@@ -1,5 +1,7 @@
 import {
   MANAGER_MODEL_PRESETS,
+  type ForgeServiceTier,
+  type SessionFastModePolicy,
   type AgentCollaborationLink,
   type AgentCreatorResult,
   type AgentModelOrigin,
@@ -40,6 +42,8 @@ export interface AgentModelDescriptor {
   provider: string;
   modelId: string;
   thinkingLevel: string;
+  /** Effective per-agent runtime tier. Omitted/default means standard. */
+  serviceTier?: ForgeServiceTier;
 }
 
 /** Active context-window occupancy, not per-request or billing usage. */
@@ -85,6 +89,10 @@ export interface AgentDescriptor {
   projectAgent?: ProjectAgentInfo;
   agentCreatorResult?: AgentCreatorResult;
   webSearch?: boolean;
+  /** Manager sessions only. Controls future compatible manager requests and worker spawns. */
+  fastModePolicy?: SessionFastModePolicy;
+  /** Worker descriptors only. undefined = inherit manager policy; false/null = force standard; true = force Fast. */
+  fastModeOverride?: boolean | null;
 }
 
 export interface AgentsStoreFile {
@@ -131,6 +139,8 @@ export interface SpawnAgentInput {
   cwd?: string;
   initialMessage?: string;
   webSearch?: boolean;
+  /** undefined = inherit session policy; false/null = force standard; true = explicit Fast request. */
+  fastMode?: boolean | null;
 }
 
 export interface SwarmPaths {

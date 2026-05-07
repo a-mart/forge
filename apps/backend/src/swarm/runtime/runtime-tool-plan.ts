@@ -1,4 +1,4 @@
-import { getCatalogProvider } from "@forge/protocol";
+import { getCatalogProvider, getEffectiveForgeServiceTier } from "@forge/protocol";
 import type { Model } from "@mariozechner/pi-ai";
 import {
   compact as runPiCompaction,
@@ -171,7 +171,11 @@ export function planPiExtensionFactories(options: PlanPiExtensionFactoriesOption
   if (provider?.requestBehaviorId) {
     factories.push(
       createCatalogRequestBehaviorExtensionFactory({
-        webSearchEnabled: descriptor.webSearch === true
+        agentId: descriptor.agentId,
+        providerId: descriptor.model.provider,
+        modelId: descriptor.model.modelId,
+        webSearchEnabled: descriptor.webSearch === true,
+        serviceTier: getEffectiveForgeServiceTier(descriptor.model)
       })
     );
   }
