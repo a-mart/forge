@@ -1,4 +1,4 @@
-import type { SpecialistTargetSpace } from "@forge/protocol";
+import type { ForgeProviderCredentialSummary, SpecialistTargetSpace } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import { inferProviderFromModelId } from "./model-presets.js";
 import type {
@@ -23,6 +23,7 @@ import {
   isCollabSession
 } from "./swarm-manager-utils.js";
 import type { SwarmWorkerHealthService } from "./swarm-worker-health-service.js";
+import { resolveAgentServiceTierFromSessionPolicy } from "./catalog/service-tier-policy.js";
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
@@ -90,6 +91,7 @@ export interface SwarmSpecialistFallbackManagerOptions {
     targetSpace?: SpecialistTargetSpace
   ): Promise<ResolvedSpecialistDefinitionLike[]>;
   resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor;
+  getManagedModelProviderCredentialSummaries?: () => Promise<Map<string, ForgeProviderCredentialSummary>>;
   resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string>;
   injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string;
   createRuntimeForDescriptor(
@@ -480,7 +482,14 @@ export class SwarmSpecialistFallbackManager {
         specialist.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
       )
     };
-    return this.options.resolveSpawnModelWithCapacityFallback(fallbackModel);
+    const capacityResolvedFallbackModel = this.options.resolveSpawnModelWithCapacityFallback(fallbackModel);
+    const credentialSummaries = await this.options.getManagedModelProviderCredentialSummaries?.();
+    return resolveAgentServiceTierFromSessionPolicy({
+      model: capacityResolvedFallbackModel,
+      sessionPolicy: managerDescriptor?.fastModePolicy,
+      credentialSummary: credentialSummaries?.get("openai-codex"),
+      source: "fallback_recovery",
+    }).model;
   }
 
   private getSpecialistFallbackHandoffSnapshot(

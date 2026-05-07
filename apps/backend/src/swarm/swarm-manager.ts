@@ -1184,6 +1184,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolveSpecialistRosterForProfile: (profileId, targetSpace) => this.resolveSpecialistRosterForProfile(profileId, targetSpace),
       resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSpawnModelWithCapacityFallback: (model) => this.resolveSpawnModelWithCapacityFallback(model),
+      getManagedModelProviderCredentialSummaries: () => getManagedModelProviderCredentialSummaries(this.config, {
+        credentialPoolService: this.secretsEnvService.getCredentialPoolService(),
+      }),
       resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor),
       injectWorkerIdentityContext: (descriptor, systemPrompt) =>
         this.injectWorkerIdentityContext(descriptor, systemPrompt),

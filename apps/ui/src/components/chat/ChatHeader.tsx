@@ -213,13 +213,16 @@ export function ChatHeader({
   const isFramelessDesktop = false
   const terminalShortcutLabel = isMacPlatform ? '⌘`' : 'Ctrl+`'
   const [promptOpen, setPromptOpen] = useState(false)
+  const fastModeCanInteract = Boolean(fastMode && !fastMode.updating && (fastMode.available || fastMode.enabled))
   const fastModeTooltip = fastMode?.available === false
-    ? 'Fast mode requires OpenAI Codex ChatGPT login. API-key OpenAI Codex credentials can use standard tier only.'
+    ? fastMode.enabled
+      ? 'Fast mode is enabled but OpenAI Codex ChatGPT login is unavailable. Turn it off, or reconnect ChatGPT login to use priority tier.'
+      : 'Fast mode requires OpenAI Codex ChatGPT login. API-key OpenAI Codex credentials can use standard tier only.'
     : fastMode?.enabled
       ? 'Fast mode is ON for this session. Compatible OpenAI Codex GPT-5.5 requests use priority tier (~2.5x); GPT-5.4 uses priority tier (~2x). New compatible workers inherit it unless spawned with fastMode: false.'
       : 'Fast mode is OFF. New workers use standard tier unless explicitly spawned with Fast mode.'
   const handleFastModeClick = () => {
-    if (!fastMode || !onFastModeChange || fastMode.updating || !fastMode.available) return
+    if (!fastMode || !onFastModeChange || !fastModeCanInteract) return
     const nextEnabled = !fastMode.enabled
     if (nextEnabled) {
       const confirmed = window.confirm(
@@ -414,7 +417,7 @@ export function ChatHeader({
                       ? 'border-amber-500/40 bg-amber-500/15 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400'
                       : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground',
                   )}
-                  disabled={fastMode.updating || !fastMode.available}
+                  disabled={!fastModeCanInteract}
                   onClick={handleFastModeClick}
                   aria-pressed={fastMode.enabled}
                   aria-label={fastMode.enabled ? 'Turn Fast mode off' : 'Turn Fast mode on'}
@@ -468,7 +471,7 @@ export function ChatHeader({
                 {fastMode ? (
                   <DropdownMenuItem
                     onClick={handleFastModeClick}
-                    disabled={fastMode.updating || !fastMode.available}
+                    disabled={!fastModeCanInteract}
                     className="gap-2 text-xs sm:hidden"
                   >
                     {fastMode.updating ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}
