@@ -953,8 +953,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       if (needsCompaction) {
         try {
+          const beforeCompactionEntries = this.getCompactionEntryKeys();
           await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "context_guard_compact", {
             onTimeout: () => this.abortCompactionSafely("context_guard_compact_timeout_abort")
+          });
+          await this.reportContextGuardCompactionSuccesses(beforeCompactionEntries, {
+            handoffWritten: handoffContent !== undefined,
+            contextTokens: postHandoffUsage.tokens,
+            contextWindow: postHandoffUsage.contextWindow
           });
         } catch (error) {
           const normalized = normalizeRuntimeError(error);
@@ -992,6 +998,76 @@ export class AgentRuntime implements SwarmAgentRuntime {
           handoffContentLength: handoffContent?.length ?? 0
         });
       }
+    }
+  }
+
+  private getCompactionEntryKeys(): Set<string> {
+    const entries = this.session.sessionManager.getEntries();
+    const keys = new Set<string>();
+
+    entries.forEach((entry: unknown, index: number) => {
+      if (!entry || typeof entry !== "object") {
+        return;
+      }
+
+      const record = entry as Record<string, unknown>;
+      if (record.type !== "compaction") {
+        return;
+      }
+
+      const id = typeof record.id === "string" && record.id.length > 0 ? record.id : undefined;
+      keys.add(id ? `id:${id}` : `index:${index}`);
+    });
+
+    return keys;
+  }
+
+  private getNewCompactionEntries(previousKeys: Set<string>): Array<{ key: string; id?: string }> {
+    const entries = this.session.sessionManager.getEntries();
+    const next: Array<{ key: string; id?: string }> = [];
+
+    entries.forEach((entry: unknown, index: number) => {
+      if (!entry || typeof entry !== "object") {
+        return;
+      }
+
+      const record = entry as Record<string, unknown>;
+      if (record.type !== "compaction") {
+        return;
+      }
+
+      const id = typeof record.id === "string" && record.id.length > 0 ? record.id : undefined;
+      const key = id ? `id:${id}` : `index:${index}`;
+      if (!previousKeys.has(key)) {
+        next.push({ key, id });
+      }
+    });
+
+    return next;
+  }
+
+  private async reportContextGuardCompactionSuccesses(
+    previousKeys: Set<string>,
+    details: {
+      handoffWritten: boolean;
+      contextTokens: number | null;
+      contextWindow: number;
+    }
+  ): Promise<void> {
+    const newEntries = this.getNewCompactionEntries(previousKeys);
+    for (const entry of newEntries) {
+      await this.reportRuntimeError({
+        phase: "compaction",
+        message: "Context compacted by context guard",
+        details: {
+          recoveryStage: "context_guard_compaction_succeeded",
+          source: "pi_context_guard",
+          handoffWritten: details.handoffWritten,
+          contextTokens: details.contextTokens,
+          contextWindow: details.contextWindow,
+          compactionEntryId: entry.id ?? entry.key
+        }
+      });
     }
   }
 

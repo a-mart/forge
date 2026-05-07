@@ -96,7 +96,7 @@ export async function incrementSessionCompactionCount(
   return newCount;
 }
 
-const BACKFILL_SENTINEL = ".compaction-count-backfill-v2-done";
+const BACKFILL_SENTINEL = ".compaction-count-reconcile-v3-done";
 
 interface BackfillResult {
   /** Map of sessionAgentId → corrected compactionCount */
@@ -104,23 +104,25 @@ interface BackfillResult {
 }
 
 /**
- * One-time background backfill of compactionCount for existing sessions.
+ * One-time background reconciliation of compactionCount for existing sessions.
  * Counts `"type":"compaction"` JSONL events (the authoritative compaction records)
- * and persists the count to meta.json. Returns a map so the caller can update
- * in-memory descriptors.
+ * and persists max(existing meta count, JSONL count) to meta.json. Returns a map
+ * so the caller can update in-memory descriptors.
  *
- * Writes a sentinel file after completion so it never re-runs.
+ * Writes a v3 sentinel file after completion so it never re-runs. The legacy v2
+ * sentinel is intentionally ignored here so installs that already ran v2 still
+ * receive the monotonic v3 reconciliation.
  */
 export async function backfillCompactionCounts(dataDir: string): Promise<BackfillResult> {
   const result: BackfillResult = { counts: new Map() };
   const sentinelPath = join(getSharedStateDir(dataDir), BACKFILL_SENTINEL);
 
-  // Check sentinel — if already done, skip entirely
+  // Check v3 sentinel — if already done, skip entirely
   try {
     await stat(sentinelPath);
-    return result; // Sentinel exists — backfill already completed
+    return result; // Sentinel exists — reconciliation already completed
   } catch {
-    // Sentinel doesn't exist — proceed with backfill
+    // Sentinel doesn't exist — proceed with reconciliation
   }
 
   const profilesDir = getProfilesDir(dataDir);
@@ -165,22 +167,20 @@ export async function backfillCompactionCounts(dataDir: string): Promise<Backfil
           }
         }
 
-        // Update meta.json with the correct count
+        // Update meta.json monotonically from the authoritative JSONL count.
         const metaPath = getSessionMetaPath(dataDir, profileId, sessionId);
         const metaRaw = await readFile(metaPath, "utf-8").catch(() => "");
         if (!metaRaw) continue;
 
         const meta = JSON.parse(metaRaw) as Record<string, unknown>;
         const existingCount = typeof meta.compactionCount === "number" ? meta.compactionCount : 0;
+        const reconciledCount = Math.max(existingCount, count);
 
-        // Only write if the count differs from what's stored
-        if (count !== existingCount) {
-          meta.compactionCount = count;
+        // Only write if JSONL proves the stored count is stale. Never decrement.
+        if (reconciledCount !== existingCount) {
+          meta.compactionCount = reconciledCount;
           await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
-        }
-
-        if (count > 0) {
-          result.counts.set(sessionId, count);
+          result.counts.set(sessionId, reconciledCount);
         }
       } catch {
         // Skip individual session errors — best-effort backfill

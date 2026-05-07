@@ -842,6 +842,105 @@ describe("SwarmRuntimeController", () => {
     );
   });
 
+  it("suppresses aborted stopReason plus abort errorMessage during context recovery", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      stripManagerAbortErrorFromEvent
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-compact-aborted",
+      role: "manager",
+      managerId: "mgr-compact-aborted",
+      status: "streaming"
+    });
+    descriptors.set(manager.agentId, { ...manager });
+
+    (host.isRuntimeRecoveryActive as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    stripManagerAbortErrorFromEvent.mockImplementation((event: RuntimeSessionEvent) => {
+      const { errorMessage: _errorMessage, ...message } = (event as { message: Record<string, unknown> }).message;
+      return {
+        ...event,
+        message: {
+          ...message,
+          stopReason: "stop"
+        }
+      };
+    });
+
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "partial response" }],
+        stopReason: "aborted",
+        errorMessage: "Request was aborted"
+      }
+    };
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, event);
+
+    expect(stripManagerAbortErrorFromEvent).toHaveBeenCalled();
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledWith(
+      manager.agentId,
+      expect.objectContaining({
+        type: "message_end",
+        message: expect.not.objectContaining({ errorMessage: expect.anything() })
+      })
+    );
+    expect(emitConversationMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "system",
+        text: "Session stopped."
+      })
+    );
+  });
+
+  it("counts context-guard compaction success through the runtime error projector", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, emitConversationMessage } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-context-guard-success",
+      role: "manager",
+      managerId: "mgr-context-guard-success",
+      profileId: "profile-1",
+      status: "streaming",
+      compactionCount: 0
+    });
+    descriptors.set(manager.agentId, { ...manager });
+    vi.mocked(host.incrementSessionCompactionCount).mockResolvedValue(1);
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeError(token, manager.agentId, {
+      phase: "compaction",
+      message: "Context compacted by context guard",
+      details: { recoveryStage: "context_guard_compaction_succeeded" }
+    });
+
+    expect(host.incrementSessionCompactionCount).toHaveBeenCalledWith(
+      "profile-1",
+      manager.agentId,
+      "runtime:compact:count-increment-failed"
+    );
+    expect(host.patchDescriptorFromRuntimeStatus).toHaveBeenCalledWith(manager.agentId, { compactionCount: 1 });
+    expect(emitConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "system",
+        text: "📋 Context compacted by context guard."
+      })
+    );
+  });
+
   it("finalizes a normal worker completion during parent recovery instead of dropping it", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

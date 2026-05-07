@@ -95,14 +95,16 @@ export class RuntimeErrorProjector {
     const extensionBaseName = extensionPath ? basename(extensionPath) : undefined;
     const userFacingMessage = readStringDetail(error.details, "userFacingMessage");
 
-    if (error.phase === "compaction" && recoveryStage === "auto_compaction_succeeded" && descriptor.profileId) {
-      const autoCount = await this.deps.incrementSessionCompactionCount(
+    const isSuccessfulCompactionStage = isCompactionSuccessRecoveryStage(recoveryStage);
+
+    if (error.phase === "compaction" && isSuccessfulCompactionStage && descriptor.profileId) {
+      const count = await this.deps.incrementSessionCompactionCount(
         descriptor.profileId,
         agentId,
         "runtime:compact:count-increment-failed"
       );
-      if (autoCount !== undefined) {
-        await this.deps.patchDescriptorFromRuntimeStatus(agentId, { compactionCount: autoCount });
+      if (count !== undefined) {
+        await this.deps.patchDescriptorFromRuntimeStatus(agentId, { compactionCount: count });
       }
     }
 
@@ -110,7 +112,7 @@ export class RuntimeErrorProjector {
       userFacingMessage
       ?? (
         error.phase === "compaction"
-          ? recoveryStage === "auto_compaction_succeeded"
+          ? isSuccessfulCompactionStage
             ? `📋 ${message}.`
             : recoveryStage === "recovery_failed"
               ? `🚨 Context recovery failed: ${message}. Start a new session or manually trim history/compact before continuing.`
@@ -139,4 +141,8 @@ export class RuntimeErrorProjector {
       source: "system"
     });
   }
+}
+
+function isCompactionSuccessRecoveryStage(stage: string | undefined): boolean {
+  return stage === "auto_compaction_succeeded" || stage === "context_guard_compaction_succeeded";
 }

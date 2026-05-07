@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
@@ -83,6 +83,30 @@ function buildService(
     resolveSystemPromptForDescriptor:
       options.resolveSystemPromptForDescriptor ?? (async () => "resolved-prompt-for-meta")
   });
+}
+
+function sessionMetaFixture(sessionId: string, profileId: string, compactionCount: number): string {
+  return `${JSON.stringify({
+    sessionId,
+    profileId,
+    label: null,
+    model: { provider: "openai-codex", modelId: "gpt-5.4" },
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    cwd: "/tmp",
+    compactionCount,
+    resolvedSystemPrompt: null,
+    promptFingerprint: null,
+    promptComponents: null,
+    workers: [],
+    stats: {
+      totalWorkers: 0,
+      activeWorkers: 0,
+      totalTokens: { input: null, output: null },
+      sessionFileSize: null,
+      memoryFileSize: null
+    }
+  })}\n`;
 }
 
 describe("SwarmSessionMetaService", () => {
@@ -268,31 +292,7 @@ describe("SwarmSessionMetaService", () => {
 
     await mkdir(join(dataDir, "profiles", profileId, "sessions", sessionId), { recursive: true });
     await writeFile(sessionFile, `${JSON.stringify({ type: "compaction", id: "c1" })}\n`, "utf8");
-    await writeFile(
-      metaPath,
-      `${JSON.stringify({
-        sessionId,
-        profileId,
-        label: null,
-        model: { provider: "openai-codex", modelId: "gpt-5.4" },
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        cwd: "/tmp",
-        compactionCount: 0,
-        resolvedSystemPrompt: null,
-        promptFingerprint: null,
-        promptComponents: null,
-        workers: [],
-        stats: {
-          totalWorkers: 0,
-          activeWorkers: 0,
-          totalTokens: { input: null, output: null },
-          sessionFileSize: null,
-          memoryFileSize: null
-        }
-      })}\n`,
-      "utf8"
-    );
+    await writeFile(metaPath, sessionMetaFixture(sessionId, profileId, 0), "utf8");
 
     const descriptor = createAgentDescriptor({
       agentId: "manager",
@@ -318,5 +318,83 @@ describe("SwarmSessionMetaService", () => {
       { timeout: 5000 }
     );
     expect(emitAgentsSnapshot).toHaveBeenCalled();
+  });
+
+  it("startCompactionCountBackfill runs v3 reconciliation even when v2 sentinel exists", async () => {
+    const config = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const profileId = "manager";
+    const sessionId = "manager";
+    const sessionFile = getSessionFilePath(dataDir, profileId, sessionId);
+    const sessionDir = join(dataDir, "profiles", profileId, "sessions", sessionId);
+
+    await mkdir(sessionDir, { recursive: true });
+    await mkdir(join(dataDir, "shared", "state"), { recursive: true });
+    await writeFile(join(dataDir, "shared", "state", ".compaction-count-backfill-v2-done"), "done\n", "utf8");
+    await writeFile(sessionFile, `${JSON.stringify({ type: "compaction", id: "c1" })}\n`, "utf8");
+    await writeFile(join(sessionDir, "meta.json"), sessionMetaFixture(sessionId, profileId, 0), "utf8");
+
+    const descriptor = createAgentDescriptor({
+      agentId: sessionId,
+      role: "manager",
+      managerId: sessionId,
+      profileId,
+      rootDir: config.defaultCwd,
+      sessionFile,
+      model: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "medium" }
+    }) as AgentDescriptor & { role: "manager"; profileId: string };
+    const descriptors = new Map<string, AgentDescriptor>([[sessionId, descriptor]]);
+    const service = buildService(config, descriptors);
+
+    descriptor.compactionCount = 0;
+    service.startCompactionCountBackfill();
+
+    await vi.waitFor(
+      () => {
+        expect(descriptor.compactionCount).toBe(1);
+      },
+      { timeout: 5000 }
+    );
+    await expect(stat(join(dataDir, "shared", "state", ".compaction-count-reconcile-v3-done"))).resolves.toBeDefined();
+  });
+
+  it("startCompactionCountBackfill never decrements counts above the JSONL record count", async () => {
+    const config = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const profileId = "manager";
+    const sessionId = "manager";
+    const sessionFile = getSessionFilePath(dataDir, profileId, sessionId);
+    const sessionDir = join(dataDir, "profiles", profileId, "sessions", sessionId);
+
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(sessionFile, `${JSON.stringify({ type: "compaction", id: "c1" })}\n`, "utf8");
+    await writeFile(join(sessionDir, "meta.json"), sessionMetaFixture(sessionId, profileId, 3), "utf8");
+
+    const descriptor = createAgentDescriptor({
+      agentId: sessionId,
+      role: "manager",
+      managerId: sessionId,
+      profileId,
+      rootDir: config.defaultCwd,
+      sessionFile,
+      model: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "medium" }
+    }) as AgentDescriptor & { role: "manager"; profileId: string };
+    const emitAgentsSnapshot = vi.fn();
+    const descriptors = new Map<string, AgentDescriptor>([[sessionId, descriptor]]);
+    const service = buildService(config, descriptors, { emitAgentsSnapshot });
+
+    descriptor.compactionCount = 3;
+    service.startCompactionCountBackfill();
+
+    await vi.waitFor(
+      async () => {
+        await expect(stat(join(dataDir, "shared", "state", ".compaction-count-reconcile-v3-done"))).resolves.toBeDefined();
+      },
+      { timeout: 5000 }
+    );
+    const meta = await readSessionMeta(dataDir, profileId, sessionId);
+    expect(meta?.compactionCount).toBe(3);
+    expect(descriptor.compactionCount).toBe(3);
+    expect(emitAgentsSnapshot).not.toHaveBeenCalled();
   });
 });

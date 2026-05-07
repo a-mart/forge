@@ -180,13 +180,15 @@ export class RuntimeEventProjector {
     const shouldSurfaceManualStopNotice =
       descriptor?.role === "manager" && this.deps.consumePendingManualManagerStopNoticeIfApplicable(agentId, event);
 
+    const managerStopReason = event.type === "message_end" ? extractMessageStopReason(event.message) : undefined;
+    const managerErrorMessage = event.type === "message_end" ? extractMessageErrorMessage(event.message) : undefined;
     const isContextRecoveryAbort =
       !shouldSurfaceManualStopNotice &&
       descriptor?.role === "manager" &&
       this.deps.isRuntimeRecoveryActive(agentId) &&
       event.type === "message_end" &&
-      extractMessageStopReason(event.message) === "error" &&
-      isAbortLikeErrorMessage(extractMessageErrorMessage(event.message) ?? extractMessageText(event.message));
+      (managerStopReason === "error" || managerStopReason === "aborted" || managerErrorMessage !== undefined) &&
+      isAbortLikeErrorMessage(managerErrorMessage ?? extractMessageText(event.message));
 
     const effectiveEvent = (shouldSurfaceManualStopNotice || isContextRecoveryAbort)
       ? this.deps.stripManagerAbortErrorFromEvent(event)

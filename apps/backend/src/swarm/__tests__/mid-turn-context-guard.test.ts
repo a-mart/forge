@@ -41,9 +41,10 @@ class FakeSession {
   compactImpl: (() => Promise<unknown>) | undefined;
   abortCompactionImpl: (() => void) | undefined;
   private readonly authStorageData: Record<string, unknown> = {};
+  entries: Array<Record<string, unknown>> = [];
 
   readonly sessionManager = {
-    getEntries: () => [],
+    getEntries: () => this.entries,
     buildSessionContext: () => ({ messages: [] as unknown[] }),
     resetLeaf: () => {},
     appendModelChange: () => {},
@@ -99,6 +100,7 @@ class FakeSession {
     if (this.compactImpl) {
       return this.compactImpl();
     }
+    this.entries.push({ type: "compaction", id: `compact-${this.compactCalls}` });
     return { ok: true };
   }
 
@@ -676,6 +678,79 @@ describe("mid-turn context guard", () => {
     expect(rmMock).toHaveBeenCalledWith(handoffPath, { force: true });
     expect((runtime as any).contextRecoveryInProgress).toBe(false);
     expect((runtime as any).guardAbortController).toBeUndefined();
+  });
+
+  it("runContextGuard reports context-guard compaction success only after a compaction record is written", async () => {
+    const { runtime, session, runtimeErrors } = createRuntime();
+    session.contextUsage = {
+      tokens: 175_000,
+      contextWindow: 200_000,
+      percent: 87.5
+    };
+
+    await (runtime as any).runContextGuard({
+      tokens: 172_000,
+      contextWindow: 200_000,
+      percent: 86
+    });
+
+    expect(session.compactCalls).toBe(1);
+    expect(runtimeErrors).toContainEqual(
+      expect.objectContaining({
+        phase: "compaction",
+        message: "Context compacted by context guard",
+        details: expect.objectContaining({
+          recoveryStage: "context_guard_compaction_succeeded",
+          source: "pi_context_guard",
+          compactionEntryId: "compact-1"
+        })
+      })
+    );
+  });
+
+  it("runContextGuard reports compaction success before a later resume failure", async () => {
+    const { runtime, session, runtimeErrors } = createRuntime();
+    session.contextUsage = {
+      tokens: 175_000,
+      contextWindow: 200_000,
+      percent: 87.5
+    };
+    session.promptImpl = async (message: string) => {
+      if (message.startsWith("Your context was compacted")) {
+        throw new Error("resume failed");
+      }
+    };
+
+    await (runtime as any).runContextGuard({
+      tokens: 172_000,
+      contextWindow: 200_000,
+      percent: 86
+    });
+
+    const successIndex = runtimeErrors.findIndex(
+      (entry) => entry.details?.recoveryStage === "context_guard_compaction_succeeded"
+    );
+    const resumeFailureIndex = runtimeErrors.findIndex((entry) => entry.details?.stage === "resume_prompt_failed");
+    expect(successIndex).toBeGreaterThanOrEqual(0);
+    expect(resumeFailureIndex).toBeGreaterThan(successIndex);
+  });
+
+  it("runContextGuard does not report compaction success when no compaction record is written", async () => {
+    const { runtime, session, runtimeErrors } = createRuntime();
+    session.contextUsage = {
+      tokens: 175_000,
+      contextWindow: 200_000,
+      percent: 87.5
+    };
+    session.compactImpl = async () => ({ ok: true });
+
+    await (runtime as any).runContextGuard({
+      tokens: 172_000,
+      contextWindow: 200_000,
+      percent: 86
+    });
+
+    expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "context_guard_compaction_succeeded")).toBe(false);
   });
 
   it("runContextGuard skips handoff when triggering usage is above hard threshold", async () => {
