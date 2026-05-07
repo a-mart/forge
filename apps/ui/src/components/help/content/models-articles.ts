@@ -41,7 +41,7 @@ const modelsProviders: HelpArticle = {
 
 ## OpenAI / Codex
 
-OpenAI offers the GPT-5 model family through the Codex runtime.
+OpenAI offers the GPT-5 model family through the Codex runtime. Fast Mode is available only on eligible GPT-5.4/GPT-5.5 Codex sessions with ChatGPT/OAuth auth; API-key-only or incompatible setups ignore it safely.
 
 - **GPT-5.3 Codex** — The original Codex coding model. Strong at implementation tasks, refactors, and debugging. Supports all reasoning levels from none to max.
 - **GPT-5.4** — The newest and most capable OpenAI model. Better than 5.3 at complex planning, architecture, and multi-step reasoning. Good default for backend work and code review.

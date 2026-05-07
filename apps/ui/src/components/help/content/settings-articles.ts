@@ -154,6 +154,8 @@ If clicking a file link does nothing, check that the editor is installed and tha
 
 Each row also shows whether that provider is configured. Saved credentials are masked and stored on disk at \`~/.forge/shared/config/auth/auth.json\`. Pooled OAuth credentials refresh through the shared auth path before runtime selection and save refreshed tokens back under the pooled key; missing or clearly expired pooled creds surface as \`auth_error\`. Use the eye icon to toggle visibility of any entered secret. Click **Remove** to delete saved credentials.
 
+Fast Mode eligibility is re-evaluated when auth or pooled credentials change, and incompatible providers or models ignore the tier.
+
 Each provider row includes a **Get key** link when API key auth is supported, which opens the provider's key management page in your browser.
 
 ## OAuth login

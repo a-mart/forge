@@ -32,6 +32,8 @@ Forge owns model metadata end-to-end:
 5. Every Pi `ModelRegistry` is constructed with that generated projection path.
 6. Request-time provider quirks are handled by `apps/backend/src/swarm/model-catalog-request-behaviors.ts`. xAI native search is future/experimental pending a dedicated adapter; it is not a current production path.
 
+Fast Mode/service-tier support applies only to eligible OpenAI Codex GPT-5.4/GPT-5.5 sessions with ChatGPT/OAuth auth. Incompatible providers or API-key-only auth safely ignore the tier.
+
 ## Override semantics
 
 Local overrides are intentionally narrow and safe.

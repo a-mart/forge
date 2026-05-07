@@ -78,6 +78,8 @@ Provider auth for **OpenAI**, **Anthropic**, and **xAI** is configured through t
 
 OpenAI and Anthropic support either OAuth or API key auth. Claude SDK is separate and OAuth-only: it uses Claude Code CLI OAuth, with credentials stored in macOS Keychain on macOS and `~/.claude/.credentials.json` on Linux and Windows.
 
+Fast Mode is not an environment variable. It is a session/runtime setting that only applies to eligible OpenAI Codex GPT-5.4/GPT-5.5 sessions with ChatGPT/OAuth auth, and credential/auth changes re-evaluate whether the UI can offer it. Incompatible providers or models safely ignore the tier.
+
 Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. Those visibility settings also control whether a model can appear in manager create-session, change-default, and per-session override selectors. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 
 ## Data Directory

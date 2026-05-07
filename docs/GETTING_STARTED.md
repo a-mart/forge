@@ -44,6 +44,8 @@ After adding credentials, you may need to restart the backend (`Ctrl+C` and re-r
 
 If you use pooled OAuth credentials, Forge refreshes them through the shared auth path before runtime selection, then writes refreshed tokens back into `auth.json` under the pooled key. Missing or clearly expired pooled credentials show up as `auth_error` instead of looking healthy.
 
+Fast Mode is a session-level runtime toggle for eligible OpenAI Codex GPT-5.4/GPT-5.5 sessions using ChatGPT/OAuth auth. Compatible workers and specialists inherit it by default, but a specialist can explicitly opt out and keep that choice through fallback recovery. If a session later moves to an incompatible provider or model, Forge safely ignores or strips the tier instead of failing.
+
 > **Tip:** You don't need all providers to get started. One is enough. But having multiple options gives you access to multi-model routing (more on this in [Advanced Usage](#10-advanced-usage)).
 
 ### First Impressions
