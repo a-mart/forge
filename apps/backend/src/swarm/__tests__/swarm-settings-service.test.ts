@@ -123,6 +123,7 @@ function createService(options: {
   now?: () => string;
   secretsEnvService?: any;
   allDescriptors?: AgentDescriptor[];
+  stopWorkerRuntimeForServiceTierChange?: ReturnType<typeof vi.fn>;
 }): SwarmSettingsService {
   const profiles = options.profiles ?? new Map<string, ManagerProfile>([["manager", createProfile(options.profileDefaultModel)]]);
 
@@ -138,6 +139,7 @@ function createService(options: {
     resolveAndValidateCwd: async (cwd) => cwd,
     assertCanChangeManagerCwd: () => {},
     applyManagerRuntimeRecyclePolicy: options.applyManagerRuntimeRecyclePolicy ?? vi.fn(async () => "none"),
+    stopWorkerRuntimeForServiceTierChange: options.stopWorkerRuntimeForServiceTierChange,
     now: options.now,
     transactionDescriptors: options.transactionDescriptors,
     saveStore: options.saveStore ?? vi.fn(async () => {}),
@@ -169,6 +171,25 @@ function createOpenAICodexOAuthSecretsEnvService(): any {
 }
 
 describe("SwarmSettingsService.updateManagerModel", () => {
+  it("allows exact model selection with pooled-only OpenAI Codex OAuth availability", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      secretsEnvService: createOpenAICodexOAuthSecretsEnvService(),
+    });
+
+    const resolved = await service.updateSessionExactModel(
+      session.agentId,
+      { provider: "openai-codex", modelId: "gpt-5.5" },
+      "xhigh"
+    );
+
+    expect(resolved).toMatchObject({ provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "xhigh" });
+    expect(session.model).toMatchObject(resolved);
+  });
+
   it("keeps priority service tier when a fast-mode-enabled session switches to another eligible model", async () => {
     const root = await createTempRoot();
     const session = createSession(
@@ -215,11 +236,13 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "xhigh", serviceTier: "priority" },
     };
     const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const stopWorkerRuntimeForServiceTierChange = vi.fn(async () => {});
     const service = createService({
       rootDir: root,
       sessions: [session],
       allDescriptors: [session, worker],
       applyManagerRuntimeRecyclePolicy,
+      stopWorkerRuntimeForServiceTierChange,
       now: () => "2026-01-02T00:00:00.000Z",
     });
 
@@ -230,6 +253,7 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     expect(session.model.serviceTier).toBeUndefined();
     expect(worker.model.serviceTier).toBeUndefined();
     expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledWith(session.agentId, "fast_mode_policy_change");
+    expect(stopWorkerRuntimeForServiceTierChange).toHaveBeenCalledWith(worker);
   });
 
   it("coerces stale startup fast-mode descriptors without recycling active runtimes", async () => {

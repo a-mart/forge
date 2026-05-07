@@ -86,6 +86,7 @@ export interface SwarmSettingsServiceOptions {
     agentId: string,
     reason: ManagerRuntimeRecycleReason
   ) => Promise<ManagerRuntimeRecycleDisposition>;
+  stopWorkerRuntimeForServiceTierChange?: (descriptor: AgentDescriptor) => Promise<void>;
   now?: () => string;
   transactionDescriptors?: <T>(callback: (store: SettingsDescriptorTransactionStore) => T | Promise<T>) => Promise<T>;
   saveStore: () => Promise<void>;
@@ -632,9 +633,13 @@ export class SwarmSettingsService {
     surface: "create" | "change",
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<AgentDescriptor["model"]> {
+    const credentialPoolService =
+      typeof this.options.secretsEnvService.getCredentialPoolService === "function"
+        ? this.options.secretsEnvService.getCredentialPoolService()
+        : undefined;
     return resolveExactManagerModelSelection(modelSelection, {
       surface,
-      providerAvailability: await getManagedModelProviderCredentialAvailability(this.options.config),
+      providerAvailability: await getManagedModelProviderCredentialAvailability(this.options.config, { credentialPoolService }),
       reasoningLevel,
     });
   }
@@ -846,6 +851,9 @@ export class SwarmSettingsService {
         if (update.modelChanged) {
           await this.options.applyManagerRuntimeRecyclePolicy(update.session.agentId, "fast_mode_policy_change");
         }
+      }
+      for (const update of workerUpdates) {
+        await this.options.stopWorkerRuntimeForServiceTierChange?.(update.descriptor);
       }
     }
 

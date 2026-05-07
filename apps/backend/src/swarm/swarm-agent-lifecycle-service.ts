@@ -526,6 +526,7 @@ export class SwarmAgentLifecycleService {
         manager.agentId,
         agentId
       ),
+      ...(input.fastMode !== undefined ? { fastModeOverride: input.fastMode } : {}),
       ...(webSearch ? { webSearch: true } : {})
     };
 

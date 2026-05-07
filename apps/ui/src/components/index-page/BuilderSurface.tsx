@@ -53,6 +53,7 @@ import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import { useTerminalPanel } from '@/hooks/useTerminalPanel'
 import { fetchModelOverrides } from '@/components/settings/models-api'
+import { SETTINGS_AUTH_CHANGED_EVENT } from '@/components/settings/settings-api'
 import { isOpenAICodexChatGptAuthAvailable, type ForgeProviderCredentialSummary } from '@forge/protocol'
 import type {
   AgentDescriptor,
@@ -949,9 +950,11 @@ export function BuilderSurface({
       }
     }
     window.addEventListener('focus', handleFocus)
+    window.addEventListener(SETTINGS_AUTH_CHANGED_EVENT, handleFocus)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {
       window.removeEventListener('focus', handleFocus)
+      window.removeEventListener(SETTINGS_AUTH_CHANGED_EVENT, handleFocus)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [refreshProviderCredentials])

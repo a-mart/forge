@@ -1368,6 +1368,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
       assertCanChangeManagerCwd: (profileId, sessions) => this.assertCanChangeManagerCwd(profileId, sessions),
       applyManagerRuntimeRecyclePolicy: (agentId, reason) => this.applyManagerRuntimeRecyclePolicy(agentId, reason),
+      stopWorkerRuntimeForServiceTierChange: async (descriptor) => {
+        const runtimeToken = this.runtimeController.getRuntimeToken(descriptor.agentId);
+        const shutdown = await this.runtimeController.runRuntimeShutdown(descriptor, "terminate", {
+          shutdownTimeoutMs: 1_500,
+          drainTimeoutMs: 500,
+        });
+        this.runtimeController.detachRuntime(descriptor.agentId, shutdown.runtimeToken ?? runtimeToken);
+        if (descriptor.status !== "terminated" && descriptor.status !== "stopped") {
+          descriptor.status = "idle";
+          this.emitStatus(descriptor.agentId, "idle", 0, descriptor.contextUsage);
+        }
+      },
       now: this.now,
       transactionDescriptors: (callback) => this.descriptorStoreAdapter.transactionDescriptors(callback),
       saveStore: async () => {
@@ -1448,7 +1460,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       generateUniqueManagerId: (source) => this.generateUniqueManagerId(source),
       resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
       resolveDefaultModelDescriptor: () => this.resolveDefaultModelDescriptor(),
-      getManagedModelProviderAvailability: () => getManagedModelProviderCredentialAvailability(this.config),
+      getManagedModelProviderAvailability: () => getManagedModelProviderCredentialAvailability(this.config, {
+        credentialPoolService: this.secretsEnvService.getCredentialPoolService(),
+      }),
       getManagedModelProviderCredentialSummaries: () => getManagedModelProviderCredentialSummaries(this.config, {
         credentialPoolService: this.secretsEnvService.getCredentialPoolService(),
       }),

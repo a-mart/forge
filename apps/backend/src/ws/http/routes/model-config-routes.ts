@@ -70,7 +70,7 @@ async function handleModelOverridesRequest(
         : undefined;
       const [overridesFile, providerAvailability, providerCredentials] = await Promise.all([
         readModelOverrides(dataDir),
-        getManagedModelProviderCredentialAvailability(swarmManager.getConfig()),
+        getManagedModelProviderCredentialAvailability(swarmManager.getConfig(), { credentialPoolService }),
         getManagedModelProviderCredentialSummaries(swarmManager.getConfig(), { credentialPoolService }),
       ]);
 

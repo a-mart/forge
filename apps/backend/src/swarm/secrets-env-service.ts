@@ -340,9 +340,10 @@ export class SecretsEnvService {
 }
 
 export async function getManagedModelProviderCredentialAvailability(
-  config: SwarmConfig
+  config: SwarmConfig,
+  options: { credentialPoolService?: CredentialPoolService } = {}
 ): Promise<Map<string, boolean>> {
-  const summaries = await getManagedModelProviderCredentialSummaries(config);
+  const summaries = await getManagedModelProviderCredentialSummaries(config, options);
   const availability = new Map<string, boolean>();
 
   for (const [provider, summary] of summaries) {

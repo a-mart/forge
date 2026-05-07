@@ -91,6 +91,8 @@ export interface AgentDescriptor {
   webSearch?: boolean;
   /** Manager sessions only. Controls future compatible manager requests and worker spawns. */
   fastModePolicy?: SessionFastModePolicy;
+  /** Worker descriptors only. undefined = inherit manager policy; false/null = force standard; true = force Fast. */
+  fastModeOverride?: boolean | null;
 }
 
 export interface AgentsStoreFile {

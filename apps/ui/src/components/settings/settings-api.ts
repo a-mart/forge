@@ -231,16 +231,25 @@ export async function fetchSettingsAuthProviders(clientOrWsUrl: SettingsApiClien
   return SETTINGS_AUTH_PROVIDER_ORDER.map((provider) => configuredByProvider.get(provider) ?? { provider, configured: false })
 }
 
+export const SETTINGS_AUTH_CHANGED_EVENT = 'forge:settings-auth-changed'
+
+function dispatchSettingsAuthChanged(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(SETTINGS_AUTH_CHANGED_EVENT))
+}
+
 export async function updateSettingsAuthProviders(clientOrWsUrl: SettingsApiClient | string, values: Partial<Record<SettingsAuthProviderId, string>>): Promise<void> {
   const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch('/api/settings/auth', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(values) })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
 }
 
 export async function deleteSettingsAuthProvider(clientOrWsUrl: SettingsApiClient | string, provider: SettingsAuthProviderId): Promise<void> {
   const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
 }
 
 export async function startSettingsAuthOAuthLoginStream(

@@ -487,6 +487,7 @@ export class SwarmSpecialistFallbackManager {
     return resolveAgentServiceTierFromSessionPolicy({
       model: capacityResolvedFallbackModel,
       sessionPolicy: managerDescriptor?.fastModePolicy,
+      spawnOverride: descriptor.fastModeOverride,
       credentialSummary: credentialSummaries?.get("openai-codex"),
       source: "fallback_recovery",
     }).model;
