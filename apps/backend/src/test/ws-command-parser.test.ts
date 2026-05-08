@@ -40,7 +40,6 @@ describe('ws command parser session commands', () => {
       rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },
       rename_session: { type: 'rename_session', agentId: 'session-a', label: 'Session A' },
       pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
-      update_session_fast_mode_policy: { type: 'update_session_fast_mode_policy', sessionAgentId: 'session-a', enabled: true },
       update_session_model: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' },
       fork_session: { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', fromMessageId: 'message-1' },
       merge_session_memory: { type: 'merge_session_memory', agentId: 'session-a' },

@@ -23,10 +23,6 @@ export const WorkerRow = React.memo(function WorkerRow({
     `${agent.model.provider}/${agent.model.modelId}`,
     ...(agent.model.thinkingLevel ? [`reasoning: ${agent.model.thinkingLevel}`] : []),
   ]
-  const isFastWorker = agent.model.serviceTier === 'priority'
-  if (isFastWorker) {
-    tooltipLines.push('Fast mode: priority tier')
-  }
   const statusValue = liveStatus.status
   const isActive = statusValue === 'streaming'
   const isRunning = statusValue === 'streaming' || statusValue === 'idle'
@@ -61,11 +57,6 @@ export const WorkerRow = React.memo(function WorkerRow({
                   <span className="min-w-0 flex-1 truncate text-sm leading-5">
                     {highlightQuery ? <HighlightedText text={name} query={highlightQuery} /> : name}
                   </span>
-                  {isFastWorker ? (
-                    <span className="inline-flex h-4 shrink-0 items-center rounded border border-amber-500/30 bg-amber-500/10 px-1 text-[9px] font-semibold uppercase tracking-wide text-amber-500" aria-label="Fast worker">
-                      Fast
-                    </span>
-                  ) : null}
                   {agent.specialistId && agent.specialistDisplayName && agent.specialistColor ? (
                     <SpecialistBadge
                       displayName={agent.specialistDisplayName}

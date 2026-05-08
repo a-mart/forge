@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, ScrollText, Sparkles, Square, SquareTerminal, Trash2, Zap } from 'lucide-react'
+import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -21,14 +21,6 @@ import type { AgentStatus, AgentSessionPurpose } from '@forge/protocol'
 
 export type MessageSourceView = 'web' | 'all'
 
-export interface ChatHeaderFastModeState {
-  enabled: boolean
-  updating: boolean
-  available: boolean
-  unavailableReason?: 'missing_oauth' | 'unsupported_runtime' | 'unknown'
-  costSummary: string
-}
-
 interface ChatHeaderProps {
   connected: boolean
   activeAgentId: string | null
@@ -45,8 +37,6 @@ interface ChatHeaderProps {
   activeAgentUpdatedAt?: string | null
   channelView: MessageSourceView
   onChannelViewChange: (view: MessageSourceView) => void
-  fastMode?: ChatHeaderFastModeState
-  onFastModeChange?: (enabled: boolean) => Promise<void> | void
   contextWindowUsage: { usedTokens: number; contextWindow: number } | null
   compactionCount?: number
   showCompact: boolean
@@ -154,8 +144,6 @@ export function ChatHeader({
   activeAgentUpdatedAt,
   channelView,
   onChannelViewChange,
-  fastMode,
-  onFastModeChange,
   contextWindowUsage,
   compactionCount,
   showCompact,
@@ -213,26 +201,6 @@ export function ChatHeader({
   const isFramelessDesktop = false
   const terminalShortcutLabel = isMacPlatform ? '⌘`' : 'Ctrl+`'
   const [promptOpen, setPromptOpen] = useState(false)
-  const fastModeCanInteract = Boolean(fastMode && !fastMode.updating && (fastMode.available || fastMode.enabled))
-  const fastModeTooltip = fastMode?.available === false
-    ? fastMode.enabled
-      ? 'Fast mode is enabled but OpenAI Codex ChatGPT login is unavailable. Turn it off, or reconnect ChatGPT login to use priority tier.'
-      : 'Fast mode requires OpenAI Codex ChatGPT login. API-key OpenAI Codex credentials can use standard tier only.'
-    : fastMode?.enabled
-      ? 'Fast mode is ON for this session. Compatible OpenAI Codex GPT-5.5 requests use priority tier (~2.5x); GPT-5.4 uses priority tier (~2x). New compatible workers inherit it unless spawned with fastMode: false.'
-      : 'Fast mode is OFF. New workers use standard tier unless explicitly spawned with Fast mode.'
-  const handleFastModeClick = () => {
-    if (!fastMode || !onFastModeChange || !fastModeCanInteract) return
-    const nextEnabled = !fastMode.enabled
-    if (nextEnabled) {
-      const confirmed = window.confirm(
-        'Turn on Fast mode for this session? New compatible OpenAI Codex workers and specialists will use the priority tier by default. GPT-5.5 is about 2.5x standard cost; GPT-5.4 is about 2x. Other models ignore Fast mode, and active workers are unchanged.',
-      )
-      if (!confirmed) return
-    }
-    void onFastModeChange(nextEnabled)
-  }
-
   return (
     <header
       className={cn(
@@ -404,35 +372,6 @@ export function ChatHeader({
           ) : null}
         </div>
 
-        {fastMode ? (
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={cn(
-                    'hidden h-7 shrink-0 gap-1.5 px-2 text-xs sm:inline-flex',
-                    fastMode.enabled
-                      ? 'border-amber-500/40 bg-amber-500/15 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400'
-                      : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground',
-                  )}
-                  disabled={!fastModeCanInteract}
-                  onClick={handleFastModeClick}
-                  aria-pressed={fastMode.enabled}
-                  aria-label={fastMode.enabled ? 'Turn Fast mode off' : 'Turn Fast mode on'}
-                >
-                  {fastMode.updating ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}
-                  <span>Fast</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={6} className="max-w-80">
-                {fastModeTooltip}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : null}
-
         {/* ── Pinned message navigator ── */}
         {pinnedCount > 0 && pinnedMessageIds && onScrollToMessage && onClearAllPins ? (
           <>
@@ -468,17 +407,6 @@ export function ChatHeader({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={6} className="min-w-44">
-                {fastMode ? (
-                  <DropdownMenuItem
-                    onClick={handleFastModeClick}
-                    disabled={!fastModeCanInteract}
-                    className="gap-2 text-xs sm:hidden"
-                  >
-                    {fastMode.updating ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}
-                    {fastMode.enabled ? 'Fast mode on' : 'Fast mode off'}
-                  </DropdownMenuItem>
-                ) : null}
-
                 {showCompact ? (
                   <DropdownMenuItem
                     onClick={onCompact}

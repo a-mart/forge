@@ -97,6 +97,27 @@ describe('SwarmManager', () => {
     expect(fallback.sessionAgent.agentId).toBe('manager--s2')
   })
 
+  it('createSession strips stale service-tier fields from profile default models', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const profile = (manager as unknown as { profiles: Map<string, { defaultModel: AgentDescriptor['model'] }> }).profiles.get('manager')
+    expect(profile).toBeDefined()
+    profile!.defaultModel = {
+      ...resolveModelDescriptorFromPreset('pi-5.5'),
+      serviceTier: 'priority',
+    } as AgentDescriptor['model'] & { serviceTier: string }
+
+    const created = await manager.createSession('manager', { label: 'Stale Default' })
+
+    expect(created.sessionAgent.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'xhigh',
+    })
+    expect((created.sessionAgent.model as AgentDescriptor['model'] & { serviceTier?: unknown }).serviceTier).toBeUndefined()
+  })
+
   it('renameSession appends rename-history.json entries in the session directory', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

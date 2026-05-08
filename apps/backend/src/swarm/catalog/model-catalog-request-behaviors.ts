@@ -1,16 +1,10 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
-import { getCatalogProvider, getEffectiveForgeServiceTier, type ForgeServiceTier } from "@forge/protocol";
-import { toOpenAICodexPayloadServiceTier } from "./service-tier-policy.js";
+import { getCatalogProvider } from "@forge/protocol";
 
 const RESPONSES_REASONING_INCLUDE = "reasoning.encrypted_content";
 
 interface CatalogRequestBehaviorOptions {
-  agentId?: string;
-  providerId?: string;
-  modelId?: string;
   webSearchEnabled: boolean;
-  serviceTier?: ForgeServiceTier;
-  codexTierVocabulary?: "priority" | "fast";
 }
 
 /**
@@ -19,7 +13,6 @@ interface CatalogRequestBehaviorOptions {
  * Currently handles:
  * - xAI: strip unsupported reasoning fields from Responses payloads
  * - xAI: inject native web_search / x_search tools when enabled
- * - OpenAI Codex: inject service_tier for Fast mode runtimes
  */
 export function createCatalogRequestBehaviorExtensionFactory(options: CatalogRequestBehaviorOptions): ExtensionFactory {
   return (pi) => {
@@ -43,43 +36,9 @@ export function createCatalogRequestBehaviorExtensionFactory(options: CatalogReq
         return payload === event.payload ? undefined : payload;
       }
 
-      if (provider.requestBehaviorId === "openai-codex-service-tier") {
-        if (options.providerId && options.providerId !== ctx.model.provider) {
-          return undefined;
-        }
-        if (options.modelId && "id" in ctx.model && options.modelId !== ctx.model.id) {
-          return undefined;
-        }
-        const tier = getEffectiveForgeServiceTier({ serviceTier: options.serviceTier });
-        const payload = injectOpenAICodexServiceTier(
-          event.payload,
-          tier,
-          options.codexTierVocabulary ?? "priority",
-        );
-        return payload === event.payload ? undefined : payload;
-      }
-
       return undefined;
     });
   };
-}
-
-export function injectOpenAICodexServiceTier(
-  payload: unknown,
-  tier: ForgeServiceTier | undefined,
-  vocabulary: "priority" | "fast" = "priority",
-): unknown {
-  const payloadTier = toOpenAICodexPayloadServiceTier(tier, vocabulary);
-  if (!payloadTier || !payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return payload;
-  }
-
-  const objectPayload = payload as Record<string, unknown>;
-  if (objectPayload.service_tier === payloadTier) {
-    return payload;
-  }
-
-  return { ...objectPayload, service_tier: payloadTier };
 }
 
 export function stripReasoningFromResponsesPayload(payload: unknown): unknown {

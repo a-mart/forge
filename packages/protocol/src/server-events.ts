@@ -75,7 +75,6 @@ import type {
   SessionClearedEvent,
   SessionCreatedEvent,
   SessionDeletedEvent,
-  SessionFastModePolicyUpdatedEvent,
   SessionForkedEvent,
   SessionMemoryMergeFailedEvent,
   SessionMemoryMergedEvent,
@@ -161,7 +160,6 @@ export type ServerEvent =
   | SessionClearedEvent
   | SessionRenamedEvent
   | SessionPinnedEvent
-  | SessionFastModePolicyUpdatedEvent
   | SessionModelUpdatedEvent
   | SessionProjectAgentUpdatedEvent
   | ProjectAgentRecommendationsEvent

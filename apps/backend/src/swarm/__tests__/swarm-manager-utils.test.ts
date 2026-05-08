@@ -398,7 +398,7 @@ describe("validateAgentDescriptor", () => {
         modelId: "gpt-5.5",
         thinkingLevel: "xhigh",
         serviceTier: "priority"
-      } as AgentDescriptor["model"],
+      } as AgentDescriptor["model"] & { serviceTier: string },
       contextUsage: { tokens: 10, contextWindow: 100, percent: 10 },
       projectAgent: {
         handle: "release-notes",
@@ -416,7 +416,14 @@ describe("validateAgentDescriptor", () => {
 
     const result = validateAgentDescriptor(descriptor);
 
-    expect(result).toEqual(descriptor);
+    expect(result).toEqual({
+      ...descriptor,
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.5",
+        thinkingLevel: "xhigh"
+      }
+    });
   });
 });
 

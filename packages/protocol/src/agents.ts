@@ -1,4 +1,4 @@
-import { CATALOG_FAMILY_IDS, type ForgeServiceTier, type SessionFastModePolicy } from './model-catalog.js'
+import { CATALOG_FAMILY_IDS } from './model-catalog.js'
 
 export type AgentStatus = 'idle' | 'streaming' | 'terminated' | 'stopped' | 'error'
 
@@ -69,8 +69,6 @@ export interface AgentModelDescriptor {
   provider: string
   modelId: string
   thinkingLevel: string
-  /** Effective per-agent runtime tier. Omitted/default means standard. */
-  serviceTier?: ForgeServiceTier
 }
 
 export const AGENT_MODEL_ORIGINS = ['profile_default', 'session_override'] as const
@@ -131,6 +129,4 @@ export interface AgentDescriptor {
   projectAgent?: ProjectAgentInfo
   agentCreatorResult?: AgentCreatorResult
   webSearch?: boolean
-  /** Manager sessions only. Controls future compatible manager requests and worker spawns. */
-  fastModePolicy?: SessionFastModePolicy
 }

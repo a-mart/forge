@@ -409,7 +409,6 @@ export async function getManagedModelProviderCredentialSummaries(
       authTypes: [...authTypes].sort(),
       sources: [...sources].sort(),
       ...(pooled ? { pooled: true } : {}),
-      ...(provider === "openai-codex" ? { chatgptAuthAvailable: authTypes.has("oauth") } : {})
     };
     summaries.set(provider, summary);
   }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { normalizeForgeServiceTier, normalizeSessionFastModePolicy, type SessionMeta, type SessionWorkerMeta } from "@forge/protocol";
+import { type SessionMeta, type SessionWorkerMeta } from "@forge/protocol";
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import {
   getProfilesDir,
@@ -258,7 +258,6 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
             resolvedSystemPrompt: existingMeta?.resolvedSystemPrompt ?? null,
             promptFingerprint: existingMeta?.promptFingerprint ?? null,
             promptComponents: existingMeta?.promptComponents ?? null,
-            fastModePolicy: normalizeSessionFastModePolicy(sessionDescriptor.fastModePolicy) ?? existingMeta?.fastModePolicy,
             cortexReviewedAt: existingMeta?.cortexReviewedAt,
             cortexReviewedBytes: existingMeta?.cortexReviewedBytes,
             cortexReviewExcludedAt: existingMeta?.cortexReviewExcludedAt ?? null,
@@ -524,7 +523,7 @@ function buildWorkerModelString(descriptor: AgentDescriptor): string | null {
     return null;
   }
 
-  return descriptor.model.serviceTier === "priority" ? `${provider}/${modelId} (Fast)` : `${provider}/${modelId}`;
+  return `${provider}/${modelId}`;
 }
 
 function mapWorkerStatus(status: AgentDescriptor["status"]): SessionWorkerMeta["status"] {
@@ -684,9 +683,6 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
     return undefined;
   }
 
-  const serviceTier = normalizeForgeServiceTier(model?.serviceTier);
-  const fastModePolicy = normalizeSessionFastModePolicy(value.fastModePolicy);
-
   return {
     agentId,
     managerId,
@@ -700,8 +696,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
     model: {
       provider,
       modelId,
-      thinkingLevel: thinkingLevel ?? "default",
-      ...(serviceTier === "priority" ? { serviceTier } : {})
+      thinkingLevel: thinkingLevel ?? "default"
     },
     sessionFile,
     contextUsage: undefined,
@@ -714,7 +709,6 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
           ? "agent_creator"
           : undefined,
     mergedAt: normalizeOptionalString(value.mergedAt),
-    ...(fastModePolicy ? { fastModePolicy } : {}),
     specialistId,
     projectAgent:
       projectAgentHandle && projectAgentWhenToUse

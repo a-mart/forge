@@ -312,19 +312,6 @@ export function buildCreateSessionCommand(
   }
 }
 
-export function buildUpdateSessionFastModePolicyCommand(
-  sessionAgentId: string,
-  enabled: boolean,
-  requestId: string,
-): ClientCommand {
-  return {
-    type: 'update_session_fast_mode_policy',
-    sessionAgentId: requireTrimmedValue(sessionAgentId, 'Session agent id is required.'),
-    enabled,
-    requestId,
-  }
-}
-
 export function buildUpdateSessionModelCommand(
   sessionAgentId: string,
   mode: SessionModelUpdateMode,

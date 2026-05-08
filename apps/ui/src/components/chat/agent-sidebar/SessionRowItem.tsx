@@ -127,7 +127,6 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
   const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
   const isPinned = Boolean(sessionAgent.pinnedAt)
-  const isFastModeSession = sessionAgent.fastModePolicy?.enabled === true
   const isModelOverridden = sessionAgent.modelOrigin === 'session_override'
   const creatorLabel = sessionAgent.creatorAgentId && getCreatorAttribution
     ? getCreatorAttribution(sessionAgent.creatorAgentId)
@@ -236,11 +235,6 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                         </span>
                       ) : null}
                     </span>
-                    {isFastModeSession ? (
-                      <span className="inline-flex h-4 shrink-0 items-center rounded border border-amber-500/30 bg-amber-500/10 px-1 text-[9px] font-semibold uppercase tracking-wide text-amber-500" aria-label="Fast mode on">
-                        Fast
-                      </span>
-                    ) : null}
                     {isPinned && !isProjectAgent && sessionAgent.profileId ? (
                       <Pin className="size-3 shrink-0 text-muted-foreground/60" aria-label="Pinned" />
                     ) : null}
@@ -267,7 +261,6 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                   {sessionAgent.model.thinkingLevel ? (
                     <p className="opacity-80">reasoning: {sessionAgent.model.thinkingLevel}</p>
                   ) : null}
-                  {isFastModeSession ? <p className="text-amber-500">Fast mode on for this session</p> : null}
                   <p className="opacity-60">{isModelOverridden ? 'session override' : 'project default'}</p>
                 </TooltipContent>
               </Tooltip>

@@ -87,7 +87,6 @@ describe('ManagerWsClient', () => {
       'rename_profile',
       'rename_session',
       'pin_session',
-      'update_session_fast_mode_policy',
       'update_session_model',
       'fork_session',
       'merge_session_memory',
