@@ -11,7 +11,7 @@ export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 export type StatsTab = 'overview' | 'tokens'
 export type AppRouteState =
   | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string }
-  | { view: 'settings'; surface: ActiveSurface }
+  | { view: 'settings'; surface: ActiveSurface; settingsTab?: string }
   | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
   | { view: 'stats'; statsTab?: StatsTab }
 
@@ -23,6 +23,7 @@ type AppRouteSearch = {
   playwrightSession?: string
   playwrightMode?: string
   statsTab?: string
+  settingsTab?: string
 }
 
 function normalizeAgentId(agentId?: string): string {
@@ -82,7 +83,8 @@ export function parseRouteStateFromLocation(
   const channel = typeof routeSearch.channel === 'string' ? routeSearch.channel : undefined
 
   if (view === 'settings') {
-    return { view: 'settings', surface: parseSurface(surface, defaultSurface) }
+    const settingsTab = typeof routeSearch.settingsTab === 'string' ? routeSearch.settingsTab : undefined
+    return { view: 'settings', surface: parseSurface(surface, defaultSurface), settingsTab }
   }
 
   if (view === 'stats') {
@@ -129,7 +131,7 @@ export function parseRouteStateFromLocation(
  */
 function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   if (routeState.view === 'settings') {
-    return { view: 'settings', surface: routeState.surface }
+    return { view: 'settings', surface: routeState.surface, settingsTab: routeState.settingsTab }
   }
 
   if (routeState.view === 'stats') {
@@ -157,6 +159,7 @@ export function toRouteSearch(
     // Preserve sticky agent and channel through non-chat views
     const search: AppRouteSearch = { view: 'settings' }
     if (routeState.surface !== defaultSurface) search.surface = routeState.surface
+    if (routeState.settingsTab) search.settingsTab = routeState.settingsTab
     if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
     if (stickyParams?.channel) search.channel = stickyParams.channel
     return search
@@ -198,7 +201,7 @@ export function toRouteSearch(
 
 function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   if (left.view === 'settings' && right.view === 'settings') {
-    return left.surface === right.surface
+    return left.surface === right.surface && left.settingsTab === right.settingsTab
   }
 
   if (left.view === 'stats' && right.view === 'stats') {

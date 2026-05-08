@@ -36,6 +36,13 @@ interface SettingsPanelProps {
   } | null
   /** Optional target for target-aware Settings shell. When omitted, Builder target is created from wsUrl. */
   target?: SettingsBackendTarget
+  /**
+   * Optional initial tab to select when the panel mounts.
+   * Used for deep-link navigation (e.g. sign-in recovery → Collaboration tab).
+   * Must be a valid {@link SettingsTab} string; ignored if not in the target's
+   * `availableTabs`.
+   */
+  initialTab?: string
 }
 
 export function SettingsPanel({
@@ -51,8 +58,16 @@ export function SettingsPanel({
   onPlaywrightSettingsLoaded,
   previewSession,
   target: externalTarget,
+  initialTab,
 }: SettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    if (initialTab) {
+      // Validated against available tabs in the useEffect below; for the
+      // initial render, trust the caller — the effect corrects mismatches.
+      return initialTab as SettingsTab
+    }
+    return 'general'
+  })
 
   // Resolve target: external (from collab) or auto-create Builder target from wsUrl
   const target = useMemo<SettingsBackendTarget>(
@@ -68,6 +83,14 @@ export function SettingsPanel({
 
   const availableTabs = target.availableTabs
   const targetLabel = target.label
+
+  // Sync activeTab when initialTab prop changes while panel is already mounted
+  // (e.g. deep-link navigation to Collaboration tab after sign-in recovery).
+  useEffect(() => {
+    if (initialTab && availableTabs?.includes(initialTab as SettingsTab)) {
+      setActiveTab(initialTab as SettingsTab)
+    }
+  }, [initialTab, availableTabs])
 
   // Reset active tab when it becomes unavailable after target change
   useEffect(() => {

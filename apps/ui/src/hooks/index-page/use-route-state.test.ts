@@ -201,3 +201,84 @@ describe('default surface helpers', () => {
     })
   })
 })
+
+describe('useRouteState — settingsTab deep-link', () => {
+  it('parses settingsTab from search params', () => {
+    const result = parseRouteStateFromLocation(
+      '/',
+      { view: 'settings', surface: 'builder', settingsTab: 'collaboration' },
+      'builder',
+    )
+
+    expect(result).toEqual({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'collaboration',
+    })
+  })
+
+  it('omits settingsTab when not present', () => {
+    const result = parseRouteStateFromLocation(
+      '/',
+      { view: 'settings', surface: 'builder' },
+      'builder',
+    )
+
+    expect(result).toEqual({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: undefined,
+    })
+  })
+
+  it('serialises settingsTab into search params', () => {
+    const search = toRouteSearch(
+      { view: 'settings', surface: 'builder', settingsTab: 'collaboration' },
+      undefined,
+      'builder',
+    )
+
+    expect(search).toEqual({
+      view: 'settings',
+      settingsTab: 'collaboration',
+    })
+  })
+
+  it('omits settingsTab from search when absent', () => {
+    const search = toRouteSearch(
+      { view: 'settings', surface: 'builder' },
+      undefined,
+      'builder',
+    )
+
+    expect(search).toEqual({ view: 'settings' })
+    expect(search.settingsTab).toBeUndefined()
+  })
+
+  it('treats settings routes with different settingsTab as distinct', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'settings', surface: 'builder' },
+      navigate,
+    })
+
+    // Navigate to the same surface but with a settingsTab — should NOT be a no-op
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'collaboration',
+      })
+    })
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: expect.objectContaining({
+          view: 'settings',
+          settingsTab: 'collaboration',
+        }),
+      }),
+    )
+  })
+})

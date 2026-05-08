@@ -5,7 +5,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getProjectAgentSuggestions, IndexPage, isCortexDiffViewerSession } from './index'
+import { getProjectAgentSuggestions, IndexPage, isCortexDiffViewerSession, parseWindowRouteSearch } from './index'
 import { HelpProvider } from '@/components/help/HelpProvider'
 import { buildManagerModelRows } from '@/lib/manager-model-selection'
 
@@ -520,5 +520,41 @@ describe('IndexPage create project model selection', () => {
         (payload) => payload.type === 'subscribe' && payload.agentId === 'alpha--s2',
       ),
     ).toBe(true)
+  })
+})
+
+describe('parseWindowRouteSearch', () => {
+  it('returns empty object for empty search string', () => {
+    expect(parseWindowRouteSearch('')).toEqual({})
+  })
+
+  it('parses settingsTab from URL search params', () => {
+    const result = parseWindowRouteSearch('?view=settings&surface=builder&settingsTab=collaboration')
+    expect(result).toMatchObject({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'collaboration',
+    })
+  })
+
+  it('returns undefined settingsTab when not present', () => {
+    const result = parseWindowRouteSearch('?view=settings&surface=builder')
+    expect(result.settingsTab).toBeUndefined()
+  })
+
+  it('parses all known params including settingsTab and statsTab', () => {
+    const result = parseWindowRouteSearch(
+      '?view=settings&agent=mgr&surface=builder&channel=ch1&playwrightSession=ps&playwrightMode=pm&statsTab=st&settingsTab=auth',
+    )
+    expect(result).toEqual({
+      view: 'settings',
+      agent: 'mgr',
+      surface: 'builder',
+      channel: 'ch1',
+      playwrightSession: 'ps',
+      playwrightMode: 'pm',
+      statsTab: 'st',
+      settingsTab: 'auth',
+    })
   })
 })

@@ -1278,6 +1278,7 @@ export function BuilderSurface({
                 onPlaywrightSnapshotUpdate={handlePlaywrightSnapshotUpdate}
                 onPlaywrightSettingsLoaded={handlePlaywrightSettingsLoaded}
                 previewSession={previewSession}
+                initialTab={routeState.view === 'settings' ? routeState.settingsTab : undefined}
               />
             ) : activeView === 'playwright' ? (
               <PlaywrightDashboardView

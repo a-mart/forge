@@ -30,9 +30,10 @@ export function CollaborationAuthError({ message, onSignIn }: CollaborationAuthE
             onSignIn()
             return
           }
-          // Navigate to builder settings within the SPA where the Collaboration
-          // sign-in form is available.  Avoids leaving the SPA entirely.
-          window.location.href = '/?view=settings'
+          // Navigate to builder settings → Collaboration tab where the sign-in
+          // form is available.  Explicit surface=builder avoids landing on the
+          // collab blocked screen when collab is the default surface.
+          window.location.href = '/?view=settings&surface=builder&settingsTab=collaboration'
         }}
       >
         Sign in again

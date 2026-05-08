@@ -43,6 +43,7 @@ type RouteSearch = {
   playwrightSession?: string
   playwrightMode?: string
   statsTab?: string
+  settingsTab?: string
 }
 
 export function IndexPage() {
@@ -212,7 +213,7 @@ export function IndexPage() {
               })
             }}
             onSignIn={() => {
-              navigateToRoute({ view: 'settings', surface: 'builder' })
+              navigateToRoute({ view: 'settings', surface: 'builder', settingsTab: 'collaboration' })
             }}
           />
         ) : (
@@ -313,6 +314,9 @@ function useOptionalNavigate(): NavigateFn {
     if (search?.statsTab) {
       params.set('statsTab', search.statsTab)
     }
+    if (search?.settingsTab) {
+      params.set('settingsTab', search.settingsTab)
+    }
 
     const query = params.toString()
     const nextUrl = query ? `${to}?${query}` : to
@@ -338,7 +342,8 @@ function useOptionalNavigate(): NavigateFn {
   }
 }
 
-function parseWindowRouteSearch(search: string): RouteSearch {
+/** @internal Exported for testing only. */
+export function parseWindowRouteSearch(search: string): RouteSearch {
   if (!search) {
     return {}
   }
@@ -353,5 +358,6 @@ function parseWindowRouteSearch(search: string): RouteSearch {
     playwrightSession: params.get('playwrightSession') ?? undefined,
     playwrightMode: params.get('playwrightMode') ?? undefined,
     statsTab: params.get('statsTab') ?? undefined,
+    settingsTab: params.get('settingsTab') ?? undefined,
   }
 }
