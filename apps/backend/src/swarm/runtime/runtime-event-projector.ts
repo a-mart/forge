@@ -14,7 +14,8 @@ import {
   extractMessageStopReason,
   extractMessageText,
   extractRole,
-  isAbortLikeErrorMessage
+  isAbortLikeErrorMessage,
+  isLocalRuntimeShutdownErrorMessage
 } from "../message-utils.js";
 import type { VersioningMutation } from "../../versioning/versioning-types.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "./worker-health-types.js";
@@ -154,8 +155,12 @@ export class RuntimeEventProjector {
         : false;
       if (
         extractRole(event.message) === "assistant" &&
-        isAbortLikeErrorMessage(errorText) &&
-        (this.deps.isRuntimeRecoveryActive(agentId) || parentRecoveryActive)
+        isLocalRuntimeShutdownErrorMessage(errorText) &&
+        (
+          this.deps.isRuntimeRecoveryActive(agentId) ||
+          parentRecoveryActive ||
+          isIntendedWorkerShutdownStatus(descriptor.status)
+        )
       ) {
         this.deps.runtimeRecoveryState.markRecoveryAbortedWorkerTurn(agentId);
         return;
@@ -383,4 +388,8 @@ export class RuntimeEventProjector {
       agentId
     });
   }
+}
+
+function isIntendedWorkerShutdownStatus(status: AgentDescriptor["status"]): boolean {
+  return status === "terminated" || status === "stopped";
 }

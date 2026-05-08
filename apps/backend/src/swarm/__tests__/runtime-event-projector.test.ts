@@ -111,7 +111,7 @@ describe("RuntimeEventProjector", () => {
     expect(deps.conversationProjector.captureConversationEventFromRuntime).not.toHaveBeenCalled();
   });
 
-  it("drops abort-like worker message_end during own or parent recovery and suppresses idle finalization until agent_end cleanup", async () => {
+  it("drops exact local shutdown-shaped worker message_end during own or parent recovery and suppresses idle finalization until agent_end cleanup", async () => {
     const { projector, deps, descriptors, runtimeRecoveryState } = createHarness();
     const worker = baseDescriptor({ agentId: "worker-abort", role: "worker", managerId: "manager-1" });
     descriptors.set(worker.agentId, worker);
@@ -129,6 +129,42 @@ describe("RuntimeEventProjector", () => {
     expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(false);
     vi.mocked(deps.isRuntimeRecoveryActive).mockReturnValue(false);
     expect(projector.shouldSuppressWorkerIdleFinalization(worker)).toBe(false);
+  });
+
+  it("does not suppress provider-flavored worker errors during parent recovery", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({ agentId: "worker-provider-error", role: "worker", managerId: "manager-1" });
+    descriptors.set(worker.agentId, worker);
+    vi.mocked(deps.isRuntimeRecoveryActive).mockImplementation((agentId) => agentId === "manager-1");
+    const event = assistantEnd("provider failed", {
+      stopReason: "error",
+      errorMessage: "Request was aborted by provider transport"
+    });
+
+    await projector.projectEvent({ agentId: worker.agentId, event });
+
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, event);
+    expect(deps.maybeRecordModelCapacityBlock).toHaveBeenCalledWith(worker.agentId, worker, {
+      phase: "prompt_start",
+      message: "Request was aborted by provider transport"
+    });
+    expect(projector.shouldSuppressWorkerIdleFinalization(worker)).toBe(false);
+  });
+
+  it("drops exact local terminated worker message_end during intended shutdown", async () => {
+    const { projector, deps, descriptors, runtimeRecoveryState } = createHarness();
+    const worker = baseDescriptor({ agentId: "worker-terminated", role: "worker", managerId: "manager-1", status: "terminated" });
+    descriptors.set(worker.agentId, worker);
+    const event = assistantEnd("", {
+      stopReason: "error",
+      errorMessage: "Agent worker-terminated is terminated"
+    });
+
+    await projector.projectEvent({ agentId: worker.agentId, event });
+
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(deps.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
+    expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(true);
   });
 
   it("does not suppress normal worker completion during parent recovery", async () => {

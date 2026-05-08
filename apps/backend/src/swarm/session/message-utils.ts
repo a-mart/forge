@@ -78,6 +78,19 @@ export function isAbortLikeErrorMessage(message: string | undefined): boolean {
   );
 }
 
+export function isLocalRuntimeShutdownErrorMessage(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.replace(/\s+/g, " ").trim();
+  return (
+    /^(?:request was aborted|operation was aborted|aborterror|aborted)\.?$/i.test(normalized) ||
+    /^agent \S+ is terminated\.?$/i.test(normalized) ||
+    /^claude query session is terminated\.?$/i.test(normalized)
+  );
+}
+
 export function extractRole(message: unknown): string | undefined {
   if (!message || typeof message !== "object") return undefined;
   const maybeRole = (message as { role?: unknown }).role;

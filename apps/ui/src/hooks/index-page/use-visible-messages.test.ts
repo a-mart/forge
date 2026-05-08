@@ -77,6 +77,77 @@ describe('deriveVisibleMessages', () => {
     expect(result.visibleMessages).toEqual(result.allMessages)
   })
 
+  it('shows worker tool activity in manager all view', () => {
+    const messages: ConversationEntry[] = [
+      {
+        type: 'conversation_message',
+        agentId: 'worker-1',
+        role: 'assistant',
+        text: 'after',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        source: 'speak_to_user',
+      },
+    ]
+
+    const activityMessages: ConversationEntry[] = [
+      {
+        type: 'agent_tool_call',
+        agentId: 'manager',
+        actorAgentId: 'worker-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        kind: 'tool_execution_start',
+        toolName: 'bash',
+        toolCallId: 'call-1',
+        text: '{"command":"echo hi"}',
+      },
+    ]
+
+    const result = deriveVisibleMessages({
+      messages,
+      activityMessages,
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+    })
+
+    expect(result.visibleMessages.map((entry) => entry.type)).toEqual([
+      'agent_tool_call',
+      'conversation_message',
+    ])
+  })
+
+  it('keeps manager-influencing worker auto-reports visible in manager all view', () => {
+    const autoReport: ConversationEntry = {
+      type: 'agent_message',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: 'worker-1',
+      toAgentId: 'manager',
+      text: 'status: done',
+    }
+
+    const foreignContextMessage: ConversationEntry = {
+      type: 'agent_message',
+      agentId: 'foreign-manager',
+      timestamp: '2026-01-01T00:00:02.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: 'foreign-worker',
+      toAgentId: 'foreign-manager',
+      text: 'foreign-only',
+    }
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages: [autoReport, foreignContextMessage],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+    })
+
+    expect(result.visibleMessages).toEqual([autoReport])
+  })
+
   it('keeps worker timelines merged in all view', () => {
     const messages: ConversationEntry[] = [
       {
