@@ -52,9 +52,6 @@ import {
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import { useTerminalPanel } from '@/hooks/useTerminalPanel'
-import { fetchModelOverrides } from '@/components/settings/models-api'
-import { SETTINGS_AUTH_CHANGED_EVENT } from '@/components/settings/settings-api'
-import { isOpenAICodexChatGptAuthAvailable, type ForgeProviderCredentialSummary } from '@forge/protocol'
 import type {
   AgentDescriptor,
   ChoiceAnswer,
@@ -130,8 +127,6 @@ export function BuilderSurface({
   } = useOnboardingState(wsUrl)
 
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
-  const [fastModeUpdatingAgentId, setFastModeUpdatingAgentId] = useState<string | null>(null)
-  const [providerCredentials, setProviderCredentials] = useState<Record<string, ForgeProviderCredentialSummary>>({})
 
   const activeAgentId = useMemo(() => {
     return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
@@ -922,42 +917,6 @@ export function BuilderSurface({
     clientRef.current?.markAllRead(profileId)
   }, [clientRef])
 
-  const refreshProviderCredentials = useCallback(async (options?: { signal?: AbortSignal }) => {
-    try {
-      const response = await fetchModelOverrides(wsUrl, options)
-      setProviderCredentials(response.providerCredentials)
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return
-      setProviderCredentials({})
-    }
-  }, [wsUrl])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    void refreshProviderCredentials({ signal: controller.signal })
-    return () => {
-      controller.abort()
-    }
-  }, [refreshProviderCredentials])
-
-  useEffect(() => {
-    const handleFocus = () => {
-      void refreshProviderCredentials()
-    }
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void refreshProviderCredentials()
-      }
-    }
-    window.addEventListener('focus', handleFocus)
-    window.addEventListener(SETTINGS_AUTH_CHANGED_EVENT, handleFocus)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => {
-      window.removeEventListener('focus', handleFocus)
-      window.removeEventListener(SETTINGS_AUTH_CHANGED_EVENT, handleFocus)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
-  }, [refreshProviderCredentials])
 
   const handleUpdateManagerModel = useCallback(async (profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => {
     const client = clientRef.current
@@ -989,22 +948,6 @@ export function BuilderSurface({
         ...previous,
         lastError: `Failed to update session model: ${error instanceof Error ? error.message : 'Unknown error'}`,
       }))
-    }
-  }, [clientRef, setState])
-
-  const handleUpdateSessionFastModePolicy = useCallback(async (sessionAgentId: string, enabled: boolean) => {
-    const client = clientRef.current
-    if (!client) return
-    setFastModeUpdatingAgentId(sessionAgentId)
-    try {
-      await client.updateSessionFastModePolicy(sessionAgentId, enabled)
-    } catch (error) {
-      setState((previous) => ({
-        ...previous,
-        lastError: `Failed to update Fast mode: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      }))
-    } finally {
-      setFastModeUpdatingAgentId((current) => current === sessionAgentId ? null : current)
     }
   }, [clientRef, setState])
 
@@ -1328,16 +1271,6 @@ export function BuilderSurface({
                   activeAgentUpdatedAt: activeAgent?.updatedAt ?? null,
                   channelView: messageSourceView,
                   onChannelViewChange: setMessageSourceView,
-                  fastMode: isActiveManager && activeAgent ? {
-                    enabled: activeAgent.fastModePolicy?.enabled === true,
-                    updating: fastModeUpdatingAgentId === activeAgent.agentId,
-                    available: isOpenAICodexChatGptAuthAvailable(providerCredentials['openai-codex']),
-                    unavailableReason: 'missing_oauth',
-                    costSummary: 'GPT-5.5 2.5x, GPT-5.4 2x',
-                  } : undefined,
-                  onFastModeChange: isActiveManager && activeAgentId
-                    ? (enabled) => handleUpdateSessionFastModePolicy(activeAgentId, enabled)
-                    : undefined,
                   contextWindowUsage,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,

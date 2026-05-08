@@ -291,7 +291,6 @@ describe('protocol root barrel contract', () => {
       'rename_profile',
       'rename_session',
       'pin_session',
-      'update_session_fast_mode_policy',
       'update_session_model',
       'fork_session',
       'merge_session_memory',
@@ -346,12 +345,6 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_pin',
       successEvents: ['session_pinned'],
       errorCodeFragments: ['pin_session'],
-    })
-    expect(getWsRequestContract('update_session_fast_mode_policy')).toMatchObject({
-      commandType: 'update_session_fast_mode_policy',
-      resultFamily: 'session_fast_mode_policy_update',
-      successEvents: ['session_fast_mode_policy_updated'],
-      errorCodeFragments: ['update_session_fast_mode_policy'],
     })
     expect(getWsRequestContract('update_session_model')).toMatchObject({
       commandType: 'update_session_model',

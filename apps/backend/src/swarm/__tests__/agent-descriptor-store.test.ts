@@ -94,6 +94,33 @@ describe("AgentDescriptorStore", () => {
     expect(loaded.agents[0]?.sessionFile).toBe(currentSessionFile);
   });
 
+  it("strips stale service-tier fields from persisted profile default models on load and save", async () => {
+    const config = await makeTempConfig();
+    const staleProfile = profile(config, {
+      defaultModel: {
+        provider: "openai-codex",
+        modelId: "gpt-5.5",
+        thinkingLevel: "xhigh",
+        serviceTier: "priority"
+      } as ManagerProfile["defaultModel"] & { serviceTier: string }
+    });
+    await writeStore(config, [descriptor(config)], [staleProfile]);
+
+    const store = createStore(config);
+    const loaded = await store.load();
+
+    expect((loaded.profiles?.[0]?.defaultModel as ManagerProfile["defaultModel"] & { serviceTier?: unknown }).serviceTier).toBeUndefined();
+    expect(loaded.profiles?.[0]?.defaultModel).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      thinkingLevel: "xhigh"
+    });
+
+    await store.save();
+    const persisted = JSON.parse(await readFile(config.paths.agentsStoreFile, "utf8")) as { profiles: ManagerProfile[] };
+    expect((persisted.profiles[0]?.defaultModel as ManagerProfile["defaultModel"] & { serviceTier?: unknown }).serviceTier).toBeUndefined();
+  });
+
   it("normalizes stopped_on_restart to stopped on load", async () => {
     const config = await makeTempConfig();
     await writeStore(config, [descriptor(config, { status: "stopped_on_restart" })]);

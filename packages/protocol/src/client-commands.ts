@@ -67,7 +67,6 @@ export type ClientCommand =
       requestId?: string
     } & ManagerModelSelectionInput)
   | { type: 'update_manager_cwd'; managerId: string; cwd: string; requestId?: string }
-  | { type: 'update_session_fast_mode_policy'; sessionAgentId: string; enabled: boolean; requestId?: string }
   | ({
       type: 'update_session_model'
       sessionAgentId: string

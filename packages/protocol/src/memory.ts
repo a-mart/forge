@@ -1,5 +1,3 @@
-import type { SessionFastModePolicy } from './model-catalog.js'
-
 export type SessionMemoryMergeStatus = 'applied' | 'skipped'
 export type SessionMemoryMergeAttemptStatus = SessionMemoryMergeStatus | 'failed'
 export type SessionMemoryMergeStrategy =
@@ -54,8 +52,6 @@ export interface SessionMeta {
   updatedAt: string
   cwd: string | null
   resolvedSystemPrompt?: string | null
-  fastModePolicy?: SessionFastModePolicy
-
   promptFingerprint: string | null
   promptComponents:
     | {

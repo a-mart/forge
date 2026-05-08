@@ -35,7 +35,6 @@ import {
   buildUpdateManagerCwdCommand,
   buildUpdateManagerModelCommand,
   buildUpdateProfileDefaultModelCommand,
-  buildUpdateSessionFastModePolicyCommand,
   buildUpdateSessionModelCommand,
   buildUserMessageCommand,
   buildValidateDirectoryCommand,
@@ -463,16 +462,6 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('create_session', (requestId) =>
       buildCreateSessionCommand(profileId, name, opts, requestId),
-    )
-  }
-
-  async updateSessionFastModePolicy(
-    sessionAgentId: string,
-    enabled: boolean,
-  ): Promise<{ sessionAgentId: string; enabled: boolean }> {
-    assertReconnectableSocket(this.socket)
-    return this.requestDispatcher.enqueueRequest('update_session_fast_mode_policy', (requestId) =>
-      buildUpdateSessionFastModePolicyCommand(sessionAgentId, enabled, requestId),
     )
   }
 

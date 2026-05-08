@@ -159,9 +159,12 @@ export function assertCollabSession(
 export function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...descriptor,
-    model: { ...descriptor.model },
+    model: {
+      provider: descriptor.model.provider,
+      modelId: descriptor.model.modelId,
+      thinkingLevel: descriptor.model.thinkingLevel
+    },
     contextUsage: cloneContextUsage(descriptor.contextUsage),
-    fastModePolicy: descriptor.fastModePolicy ? { ...descriptor.fastModePolicy } : undefined,
     projectAgent: cloneProjectAgentInfo(descriptor),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
     ...(descriptor.agentCreatorResult !== undefined
@@ -445,14 +448,17 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
           handle: normalizedProjectAgentHandle
         }
       : descriptor.projectAgent;
-
-  if (descriptor.status === normalizedStatus && normalizedProjectAgent === descriptor.projectAgent) {
-    return descriptor;
-  }
+  const { fastModePolicy: _fastModePolicy, fastModeOverride: _fastModeOverride, ...descriptorWithoutFastMode } =
+    descriptor as AgentDescriptor & { fastModePolicy?: unknown; fastModeOverride?: unknown };
 
   return {
-    ...descriptor,
+    ...descriptorWithoutFastMode,
     status: normalizedStatus,
+    model: {
+      provider: descriptor.model.provider,
+      modelId: descriptor.model.modelId,
+      thinkingLevel: descriptor.model.thinkingLevel
+    },
     ...(normalizedProjectAgent !== descriptor.projectAgent ? { projectAgent: normalizedProjectAgent } : {})
   };
 }

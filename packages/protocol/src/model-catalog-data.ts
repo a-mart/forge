@@ -16,7 +16,7 @@ export const FORGE_MODEL_CATALOG = {
       availabilityMode: 'managed-auth',
       piProjectionMode: 'built-in-overrides',
       projectionScope: 'catalog-only',
-      requestBehaviorId: 'openai-codex-service-tier',
+      requestBehaviorId: null,
     },
     anthropic: {
       providerId: 'anthropic',
@@ -209,14 +209,6 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.4',
       intentionalDivergenceNotes: null,
-      serviceTierCapability: {
-        provider: 'openai-codex',
-        supportedTiers: ['default', 'priority'],
-        defaultTier: 'default',
-        fastModeTier: 'priority',
-        costMultipliers: { default: 1, priority: 2 },
-        requiresCredentialAuthTypes: ['oauth'],
-      },
     },
     'gpt-5.4-mini': {
       modelId: 'gpt-5.4-mini',
@@ -251,14 +243,6 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: 'gpt-5.5',
       intentionalDivergenceNotes: null,
-      serviceTierCapability: {
-        provider: 'openai-codex',
-        supportedTiers: ['default', 'priority'],
-        defaultTier: 'default',
-        fastModeTier: 'priority',
-        costMultipliers: { default: 1, priority: 2.5 },
-        requiresCredentialAuthTypes: ['oauth'],
-      },
     },
 
     // ── Anthropic models ────────────────────────────────

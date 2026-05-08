@@ -139,7 +139,6 @@ describe("model config routes", () => {
       providerCredentials: {
         "openai-codex": {
           configured: true,
-          chatgptAuthAvailable: true,
         },
       },
     });

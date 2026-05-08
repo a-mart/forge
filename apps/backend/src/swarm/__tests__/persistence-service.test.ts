@@ -71,7 +71,6 @@ describe("PersistenceService.loadStore", () => {
         provider: "openai-codex",
         modelId: "gpt-5.5",
         thinkingLevel: "xhigh",
-        serviceTier: "priority",
       } as AgentDescriptor["model"],
       contextUsage: { tokens: 1234, contextWindow: 200000, percent: 0.617 },
       projectAgent: {

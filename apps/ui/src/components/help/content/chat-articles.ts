@@ -36,7 +36,7 @@ The ring icon next to the channel toggle shows how full the context window is. G
 
 ## Header controls
 
-The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. If the session is an eligible OpenAI Codex GPT-5.4/GPT-5.5 session with ChatGPT/OAuth auth, you can toggle Fast Mode here; incompatible providers or models ignore it safely. A pin count badge opens the pinned-message navigator/popover, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted.`,
+The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count badge opens the pinned-message navigator/popover, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted.`,
     keywords: ['chat', 'streaming', 'stop', 'status', 'channel', 'context window', 'overview'],
     relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction'],
     contextKeys: ['chat.main'],

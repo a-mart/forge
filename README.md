@@ -268,7 +268,6 @@ The `.env.example` file documents all available options with comments. Key categ
 - **UI** — WebSocket URL override (dev only, production auto-resolves)
 - **Skills** — API keys for Brave Search, Gemini image generation
 - **Agent Runtimes** — OpenAI Codex Responses transport defaults to `sse` for reliability when `FORGE_OPENAI_CODEX_TRANSPORT` is unset, blank, or invalid; `websocket-cached` remains an explicit experimental/canary opt-in via `FORGE_OPENAI_CODEX_TRANSPORT=websocket-cached`, with `websocket` and `auto` also supported. Sanitized transport diagnostics stay opt-in via `FORGE_CODEX_TRANSPORT_DEBUG=1` at `GET /api/debug/codex-transport`.
-- **Fast Mode** — Session Fast Mode is a runtime setting, not an environment variable. It applies only to eligible OpenAI Codex GPT-5.4/GPT-5.5 sessions with ChatGPT/OAuth auth; incompatible models or API-key-only auth safely ignore it.
 - **Playwright** — dashboard toggle (macOS/Linux only)
 
 Provider auth for LLM providers (OpenAI, Anthropic, xAI) is configured in the dashboard UI under **Settings → Authentication**, where each row shows the provider label plus an auth-mode badge. OpenAI and Anthropic can use OAuth or API key auth; Claude SDK stays OAuth-only via Claude Code CLI. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.

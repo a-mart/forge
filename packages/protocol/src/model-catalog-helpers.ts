@@ -2,57 +2,13 @@ import { FORGE_MODEL_CATALOG } from './model-catalog-data.js'
 import type {
   ForgeFamilyDefinition,
   ForgeModelDefinition,
-  ForgeProviderCredentialSummary,
-  ForgeServiceTier,
   ForgeProviderDefinition,
   ModelOverrideEntry,
-  SessionFastModePolicy,
 } from './model-catalog-types.js'
 
 const CATALOG_PROVIDERS = FORGE_MODEL_CATALOG.providers as Record<string, ForgeProviderDefinition>
 const CATALOG_FAMILIES = FORGE_MODEL_CATALOG.families as Record<string, ForgeFamilyDefinition>
 const CATALOG_MODELS = FORGE_MODEL_CATALOG.models as Record<string, ForgeModelDefinition>
-
-export function normalizeForgeServiceTier(value: unknown): ForgeServiceTier | undefined {
-  if (typeof value !== 'string') {
-    return undefined
-  }
-  const normalized = value.trim().toLowerCase()
-  if (normalized === 'priority') {
-    return 'priority'
-  }
-  if (normalized === 'default' || normalized === '') {
-    return 'default'
-  }
-  return undefined
-}
-
-export function getEffectiveForgeServiceTier(descriptor?: { serviceTier?: unknown } | null): ForgeServiceTier {
-  const normalized = normalizeForgeServiceTier(descriptor?.serviceTier)
-  return normalized === 'priority' ? 'priority' : 'default'
-}
-
-export function normalizeSessionFastModePolicy(value: unknown): SessionFastModePolicy | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined
-  }
-  const record = value as Record<string, unknown>
-  if (typeof record.enabled !== 'boolean') {
-    return undefined
-  }
-  return {
-    enabled: record.enabled,
-    ...(typeof record.updatedAt === 'string' && record.updatedAt.trim() ? { updatedAt: record.updatedAt } : {}),
-  }
-}
-
-export function isSessionFastModeEnabled(policy?: SessionFastModePolicy | null): boolean {
-  return policy?.enabled === true
-}
-
-export function isFastModeServiceTier(tier: unknown): boolean {
-  return normalizeForgeServiceTier(tier) === 'priority'
-}
 
 /** Return the stable catalog key for a model definition. */
 export function getCatalogModelKey(model: ForgeModelDefinition): string {
@@ -163,41 +119,6 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
 /** Get context window for a specific model ID. Returns undefined if unknown. */
 export function getCatalogContextWindow(modelId: string, provider?: string): number | undefined {
   return getCatalogModel(modelId, provider)?.contextWindow
-}
-
-export function getModelServiceTierCapability(modelId: string, provider?: string) {
-  return getCatalogModel(modelId, provider)?.serviceTierCapability
-}
-
-export function isServiceTierSupportedForModel(
-  model: { provider: string; modelId: string },
-  tier: ForgeServiceTier,
-): boolean {
-  if (tier === 'default') {
-    return true
-  }
-  const capability = getModelServiceTierCapability(model.modelId, model.provider)
-  return capability?.supportedTiers.includes(tier) === true
-}
-
-export function getServiceTierCostMultiplier(
-  model: { provider: string; modelId: string },
-  tier: ForgeServiceTier,
-): number | undefined {
-  const normalizedTier = normalizeForgeServiceTier(tier)
-  if (!normalizedTier) {
-    return undefined
-  }
-  if (normalizedTier === 'default') {
-    return 1
-  }
-  return getModelServiceTierCapability(model.modelId, model.provider)?.costMultipliers[normalizedTier]
-}
-
-export function isOpenAICodexChatGptAuthAvailable(summary?: ForgeProviderCredentialSummary | null): boolean {
-  return summary?.configured === true && (
-    summary.chatgptAuthAvailable === true || summary.authTypes.includes('oauth')
-  )
 }
 
 export type ManagerModelSurface = 'create' | 'change'

@@ -1569,7 +1569,7 @@ describe('SwarmManager', () => {
 
     const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
     const persisted = persistedStore.agents.find((agent) => agent.agentId === 'release-notes')
-    expect(persisted?.model.serviceTier).toBeUndefined()
+    expect((persisted?.model as AgentDescriptor["model"] & { serviceTier?: unknown } | undefined)?.serviceTier).toBeUndefined()
     expect(persisted).toMatchObject({
       creatorAgentId: 'agent-creator',
       status: 'stopped',

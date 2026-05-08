@@ -1378,7 +1378,9 @@ describe('SwarmWebSocketServer', () => {
       expect(legacyStoredAuth.anthropic.key ?? legacyStoredAuth.anthropic.access).toBe('sk-ant-test-1234')
       expect(legacyStoredAuth['openai-codex'].key ?? legacyStoredAuth['openai-codex'].access).toBe('sk-openai-test-5678')
 
-      const deleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/openai-codex`, {
+      // OpenAI Codex auth deletion is intentionally handled through the pooled-credential path;
+      // this REST auth-delete smoke uses Anthropic to cover the direct API-key delete route.
+      const deleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/anthropic`, {
         method: 'DELETE',
       })
       expect(deleteResponse.status).toBe(200)
@@ -1390,8 +1392,8 @@ describe('SwarmWebSocketServer', () => {
 
       const afterDeleteAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<string, unknown>
       const afterDeleteLegacyAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<string, unknown>
-      expect(afterDeleteAuth['openai-codex']).toBeUndefined()
-      expect(afterDeleteLegacyAuth['openai-codex']).toBeUndefined()
+      expect(afterDeleteAuth.anthropic).toBeUndefined()
+      expect(afterDeleteLegacyAuth.anthropic).toBeUndefined()
     } finally {
       await server.stop()
     }

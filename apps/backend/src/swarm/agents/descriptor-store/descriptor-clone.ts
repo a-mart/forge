@@ -1,4 +1,4 @@
-import type { AgentDescriptor, ManagerProfile } from "../../types.js";
+import type { AgentDescriptor, AgentModelDescriptor, ManagerProfile } from "../../types.js";
 
 function cloneContextUsage(descriptor: AgentDescriptor): AgentDescriptor["contextUsage"] {
   return descriptor.contextUsage
@@ -32,8 +32,11 @@ function cloneProjectAgent(
 export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...descriptor,
-    model: { ...descriptor.model },
-    fastModePolicy: descriptor.fastModePolicy ? { ...descriptor.fastModePolicy } : undefined,
+    model: {
+      provider: descriptor.model.provider,
+      modelId: descriptor.model.modelId,
+      thinkingLevel: descriptor.model.thinkingLevel
+    },
     contextUsage: cloneContextUsage(descriptor),
     projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: true }),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
@@ -56,9 +59,17 @@ export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDesc
   };
 }
 
+function cloneModelDescriptor(model: AgentModelDescriptor): AgentModelDescriptor {
+  return {
+    provider: model.provider,
+    modelId: model.modelId,
+    thinkingLevel: model.thinkingLevel
+  };
+}
+
 export function cloneProfile(profile: ManagerProfile): ManagerProfile {
   return {
     ...profile,
-    defaultModel: profile.defaultModel ? { ...profile.defaultModel } : profile.defaultModel
+    defaultModel: profile.defaultModel ? cloneModelDescriptor(profile.defaultModel) : profile.defaultModel
   };
 }

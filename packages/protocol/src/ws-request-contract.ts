@@ -26,7 +26,6 @@ type ContractCommandType = Extract<
   | 'rename_profile'
   | 'rename_session'
   | 'pin_session'
-  | 'update_session_fast_mode_policy'
   | 'update_session_model'
   | 'fork_session'
   | 'merge_session_memory'
@@ -58,7 +57,6 @@ type ContractSuccessEventType = Extract<
   | 'profile_renamed'
   | 'session_renamed'
   | 'session_pinned'
-  | 'session_fast_mode_policy_updated'
   | 'session_model_updated'
   | 'session_forked'
   | 'session_memory_merged'
@@ -131,13 +129,6 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_pinned'],
     errorCodeFragments: ['pin_session'],
-  },
-  {
-    commandType: 'update_session_fast_mode_policy',
-    resultFamily: 'session_fast_mode_policy_update',
-    requestId: { ui: 'required', wire: 'optional' },
-    successEvents: ['session_fast_mode_policy_updated'],
-    errorCodeFragments: ['update_session_fast_mode_policy'],
   },
   {
     commandType: 'update_session_model',

@@ -1419,35 +1419,6 @@ describe("SwarmAgentLifecycleService", () => {
     expect(spawned.model.modelId).toBe("gpt-5.4");
   });
 
-  it("spawnAgent persists explicit Fast mode opt-out on worker descriptors", async () => {
-    const manager = createAgentDescriptor({
-      agentId: "m1",
-      role: "manager",
-      managerId: "m1",
-      profileId: "profile-1",
-      status: "idle",
-      cwd: "/proj",
-      fastModePolicy: { enabled: true, updatedAt: NOW },
-    });
-    const descriptors = new Map([[manager.agentId, manager]]);
-    const svc = new SwarmAgentLifecycleService(
-      baseLifecycleOptions({
-        descriptors,
-        assertManager: () => manager,
-      })
-    );
-
-    const spawned = await svc.spawnAgent("m1", {
-      agentId: "standard-worker",
-      modelId: "gpt-5.4",
-      fastMode: false,
-    });
-
-    expect(spawned.fastModeOverride).toBe(false);
-    expect(descriptors.get("standard-worker")?.fastModeOverride).toBe(false);
-    expect(spawned.model.serviceTier).toBeUndefined();
-  });
-
   it("notifySpecialistRosterChanged syncs worker metadata from builder and collaboration rosters", async () => {
     const builderManager = createAgentDescriptor({
       agentId: "builder-manager",

@@ -124,7 +124,6 @@ Only exhausted fallback failures surface upward.
 
 **Built-in specialists intentionally pair across vendors when practical** for resilience: OpenAI-primary builtins generally fall back to Anthropic, and Anthropic-primary builtins generally fall back to OpenAI. Built-in `web-researcher` is an exception to the cross-vendor default only because it uses OpenAI Codex `gpt-5.4-mini` with Brave-backed research guidance and follows normal fallback/model config semantics.
 
-Compatible OpenAI Codex specialists inherit Fast Mode by default when the parent session has it enabled. An explicit specialist opt-out stays in effect through fallback recovery, and any fallback to an incompatible provider or model safely clears or ignores the tier.
 
 **Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 
