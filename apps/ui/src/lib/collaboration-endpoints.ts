@@ -23,7 +23,11 @@ export function getCollabServerUrl(): string | null {
   if (typeof window === 'undefined') return null
   try {
     const stored = localStorage.getItem(COLLAB_SERVER_URL_KEY)
-    return stored && stored.trim().length > 0 ? stored.trim() : null
+    const normalized = normalizeConfiguredServerUrl(stored)
+    if (stored && normalized && stored.trim() !== normalized) {
+      localStorage.setItem(COLLAB_SERVER_URL_KEY, normalized)
+    }
+    return normalized
   } catch {
     return null
   }
@@ -36,8 +40,9 @@ export function getCollabServerUrl(): string | null {
 export function setCollabServerUrl(url: string | null): void {
   if (typeof window === 'undefined') return
   try {
-    if (url && url.trim().length > 0) {
-      localStorage.setItem(COLLAB_SERVER_URL_KEY, url.trim())
+    const normalized = normalizeConfiguredServerUrl(url)
+    if (normalized) {
+      localStorage.setItem(COLLAB_SERVER_URL_KEY, normalized)
     } else {
       localStorage.removeItem(COLLAB_SERVER_URL_KEY)
     }
@@ -86,6 +91,23 @@ export function isCollabServerRemote(): boolean {
   } catch {
     return false
   }
+}
+
+/** Normalize a configured server URL to a canonical HTTP(S) origin. */
+function normalizeConfiguredServerUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim()
+  if (!trimmed) return null
+
+  const parsed = new URL(trimmed)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return trimmed
+  }
+
+  if (parsed.hostname === 'localhost') {
+    parsed.hostname = '127.0.0.1'
+  }
+
+  return parsed.origin
 }
 
 /** Normalize a URL (http(s)/ws(s)) to a canonical origin for comparison. */

@@ -100,6 +100,21 @@ describe('collaboration-endpoints', () => {
     expect(getCollabServerUrl()).toBe('https://my-server.com')
   })
 
+  it('canonicalizes localhost to 127.0.0.1 for loopback auth cookies', async () => {
+    const { getCollabServerUrl, resolveCollaborationApiBaseUrl, resolveCollaborationWsUrl, setCollabServerUrl } = await import('./collaboration-endpoints')
+    setCollabServerUrl('http://localhost:47387')
+    expect(getCollabServerUrl()).toBe('http://127.0.0.1:47387')
+    expect(resolveCollaborationApiBaseUrl()).toBe('http://127.0.0.1:47387/')
+    expect(resolveCollaborationWsUrl()).toBe('ws://127.0.0.1:47387')
+  })
+
+  it('self-heals a previously stored localhost collaboration URL', async () => {
+    localStorageMock.setItem('forge-collab-server-url', 'http://localhost:47387')
+    const { getCollabServerUrl } = await import('./collaboration-endpoints')
+    expect(getCollabServerUrl()).toBe('http://127.0.0.1:47387')
+    expect(localStorageMock.getItem('forge-collab-server-url')).toBe('http://127.0.0.1:47387')
+  })
+
   describe('isCollabServerRemote', () => {
     it('returns false when no URL is configured', async () => {
       const { isCollabServerRemote } = await import('./collaboration-endpoints')

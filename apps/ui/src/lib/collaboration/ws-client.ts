@@ -154,6 +154,12 @@ export class CollabWsClient {
           return
         }
 
+        // If the connection closed before we ever completed bootstrap, surface
+        // a generic error so the UI can show a recovery action instead of
+        // spinning indefinitely.  If reconnect succeeds, onOpen clears lastError
+        // and a successful bootstrap restores normal state.
+        const preBootstrapClose = !this.state.hasBootstrapped
+
         this.updateState({
           connected: false,
           hasBootstrapped: false,
@@ -161,6 +167,9 @@ export class CollabWsClient {
           sessionWorkers: [],
           sessionActivity: [],
           sessionAgentStatuses: {},
+          ...(preBootstrapClose
+            ? { lastError: 'Connection to collaboration server lost. Reconnecting…', lastErrorCode: null }
+            : {}),
         })
       },
       onMessage: (data) => {

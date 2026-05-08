@@ -582,3 +582,75 @@ describe('CollabWorkspace session invalidation (4001)', () => {
     expect(authError).toBeNull()
   })
 })
+
+describe('CollabWorkspace pre-bootstrap error recovery', () => {
+  it('shows error recovery instead of infinite spinner when disconnected with error before bootstrap', () => {
+    collabContextMock.value = {
+      clientRef: { current: null },
+      state: buildState({
+        hasBootstrapped: false,
+        connected: false,
+        lastError: 'Collab WebSocket connection error',
+        lastErrorCode: null,
+      }),
+    }
+
+    renderWorkspace({})
+
+    // Should NOT show loading spinner
+    const spinner = container.querySelector('.animate-spin')
+    expect(spinner).toBeNull()
+
+    // Should show auth error with recovery option
+    const authError = container.querySelector('[data-testid="collab-auth-error"]')
+    expect(authError).not.toBeNull()
+    expect(authError!.textContent).toContain('Collab WebSocket connection error')
+  })
+
+  it('keeps loading spinner when connected but not yet bootstrapped (no error)', () => {
+    collabContextMock.value = {
+      clientRef: { current: null },
+      state: buildState({
+        hasBootstrapped: false,
+        connected: true,
+        lastError: null,
+        lastErrorCode: null,
+      }),
+    }
+
+    renderWorkspace({})
+
+    // Should show loading spinner (waiting for bootstrap event)
+    const spinner = container.querySelector('.animate-spin')
+    expect(spinner).not.toBeNull()
+    expect(container.textContent).toContain('Loading workspace')
+
+    // Should NOT show error
+    const authError = container.querySelector('[data-testid="collab-auth-error"]')
+    expect(authError).toBeNull()
+  })
+
+  it('keeps loading spinner when connected with a transient error (bootstrap still pending)', () => {
+    // During reconnection, the WS might briefly connect (clearing lastError on open)
+    // while bootstrap is still pending — show spinner, not error.
+    collabContextMock.value = {
+      clientRef: { current: null },
+      state: buildState({
+        hasBootstrapped: false,
+        connected: true,
+        lastError: 'Collab WebSocket connection error',
+        lastErrorCode: null,
+      }),
+    }
+
+    renderWorkspace({})
+
+    // Should show loading spinner (WS is connected, bootstrap pending)
+    const spinner = container.querySelector('.animate-spin')
+    expect(spinner).not.toBeNull()
+
+    // Should NOT show auth error recovery (connection is active)
+    const authError = container.querySelector('[data-testid="collab-auth-error"]')
+    expect(authError).toBeNull()
+  })
+})

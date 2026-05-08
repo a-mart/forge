@@ -726,17 +726,18 @@ describe('SettingsCollaboration', () => {
   /* ---- Auth error handling ---- */
 
   describe('auth error handling', () => {
-    it('shows auth error banner when backend returns 200 { authenticated: false }', async () => {
+    it('does NOT show auth error banner for normal unauthenticated state', async () => {
       collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
       collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
       renderCollab()
       await flush()
       await flush()
 
+      // Normal unauthenticated response should show the sign-in form, not an error banner
       const errorBanner = container.querySelector('[data-testid="collab-auth-error"]')
-      expect(errorBanner).not.toBeNull()
-      expect(errorBanner!.textContent).toContain('session has ended')
-      expect(errorBanner!.textContent).toContain('Sign in again')
+      expect(errorBanner).toBeNull()
+      // Sign-in form should still be visible
+      expect(container.textContent).toContain('Authentication')
     })
 
     it('shows auth error banner on thrown 401/403', async () => {
@@ -753,6 +754,30 @@ describe('SettingsCollaboration', () => {
       expect(errorBanner).not.toBeNull()
       expect(errorBanner!.textContent).toContain('session has ended')
       expect(errorBanner!.textContent).toContain('Sign in again')
+    })
+
+    it('clears auth error when onSignIn callback is invoked', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      const authErr = new Error('401: Unauthorized') as Error & { status?: number }
+      authErr.status = 401
+      collabApiMock.fetchCollaborationMe.mockRejectedValue(authErr)
+      collabApiMock.isAuthError.mockReturnValue(true)
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Error banner should be visible
+      let errorBanner = container.querySelector('[data-testid="collab-auth-error"]')
+      expect(errorBanner).not.toBeNull()
+
+      // Click "Sign in again" — should clear the error (onSignIn callback)
+      const signInButton = getByRole(errorBanner as HTMLElement, 'button', { name: /sign in again/i })
+      fireEvent.click(signInButton)
+      await flush()
+
+      // Error banner should be gone
+      errorBanner = container.querySelector('[data-testid="collab-auth-error"]')
+      expect(errorBanner).toBeNull()
     })
   })
 

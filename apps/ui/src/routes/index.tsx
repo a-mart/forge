@@ -211,6 +211,9 @@ export function IndexPage() {
                 channel: stickyChannel,
               })
             }}
+            onSignIn={() => {
+              navigateToRoute({ view: 'settings', surface: 'builder' })
+            }}
           />
         ) : (
           <BuilderSurface

@@ -68,7 +68,9 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
       const data = await fetchCollaborationMe()
       if (!data.authenticated) {
         setSession(null)
-        setAuthError(true)
+        // Normal unauthenticated state (user hasn't signed in yet) — just show
+        // the sign-in form. Do NOT set authError here; that flag is reserved for
+        // actual 401/403 auth failures from management API calls.
         return
       }
       setSession(data)
@@ -529,8 +531,10 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
         </SettingsSection>
       )}
 
-      {/* Auth error banner */}
-      {authError && !sessionLoading && <CollaborationAuthError />}
+      {/* Auth error banner — only for true 401/403 failures, not initial unauthenticated state */}
+      {authError && !sessionLoading && (
+        <CollaborationAuthError onSignIn={() => setAuthError(false)} />
+      )}
 
       {/* Password change required — blocks other panels */}
       {passwordChangeRequired && !authError && (

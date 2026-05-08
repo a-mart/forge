@@ -27,8 +27,13 @@ vi.mock('@/components/chat/collab-sidebar/CollabSidebar', () => ({
   CollabSidebar: () => createElement('div', { 'data-testid': 'collab-sidebar' }),
 }))
 
+const collabWorkspaceMountSpy = vi.hoisted(() => vi.fn())
+
 vi.mock('./CollabWorkspace', () => ({
-  CollabWorkspace: () => createElement('div', { 'data-testid': 'collab-workspace' }),
+  CollabWorkspace: (props: Record<string, unknown>) => {
+    collabWorkspaceMountSpy(props)
+    return createElement('div', { 'data-testid': 'collab-workspace' })
+  },
 }))
 
 vi.mock('@/hooks/index-page/use-collab-ws-connection', () => ({
@@ -114,6 +119,7 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   settingsPanelMountSpy.mockReset()
+  collabWorkspaceMountSpy.mockReset()
   backendStateMock.value = {
     ready: false,
     blockedReason: null,
@@ -198,5 +204,33 @@ describe('CollabSurface — blocked states', () => {
 
     expect(settingsPanelMountSpy).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="collab-workspace"]')).not.toBeNull()
+  })
+})
+
+describe('CollabSurface — onSignIn threading', () => {
+  it('passes onSignIn callback to CollabWorkspace in chat view', () => {
+    const onSignIn = vi.fn()
+    root = createRoot(container)
+    act(() => {
+      root?.render(
+        createElement(CollabSurface, {
+          wsUrl: 'wss://collab.example.com',
+          activeView: 'chat' as ActiveView,
+          activeSurface: 'collab' as const,
+          isAdmin: true,
+          isMember: false,
+          hasLoaded: true,
+          onSelectChannel: vi.fn(),
+          onSelectSurface: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onBackToChat: vi.fn(),
+          onSignIn,
+        }),
+      )
+    })
+
+    expect(collabWorkspaceMountSpy).toHaveBeenCalledTimes(1)
+    const props = collabWorkspaceMountSpy.mock.calls[0][0]
+    expect(props.onSignIn).toBe(onSignIn)
   })
 })

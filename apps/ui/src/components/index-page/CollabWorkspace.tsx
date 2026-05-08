@@ -23,6 +23,12 @@ interface CollabWorkspaceProps {
   wsUrl: string
   channelId?: string
   onSelectChannel?: (channelId?: string) => void
+  /**
+   * Callback invoked when the user requests to sign in after an auth error.
+   * When provided, the "Sign in again" button uses this instead of a full
+   * page navigation, keeping the user inside the SPA.
+   */
+  onSignIn?: () => void
 }
 
 /**
@@ -55,6 +61,7 @@ export function CollabWorkspace({
   wsUrl,
   channelId,
   onSelectChannel,
+  onSignIn,
 }: CollabWorkspaceProps) {
   const { clientRef, state } = useCollabWsContext()
   const previousChannelIdRef = useRef<string | undefined>(undefined)
@@ -330,7 +337,17 @@ export function CollabWorkspace({
     if (state.lastErrorCode === 'COLLAB_SESSION_INVALIDATED') {
       return (
         <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-10">
-          <CollaborationAuthError message={state.lastError ?? undefined} />
+          <CollaborationAuthError message={state.lastError ?? undefined} onSignIn={onSignIn} />
+        </div>
+      )
+    }
+
+    // Server returned an error before bootstrap completed — show the error with
+    // a recovery option instead of an infinite spinner.
+    if (state.lastError && !state.connected) {
+      return (
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-10">
+          <CollaborationAuthError message={state.lastError} onSignIn={onSignIn} />
         </div>
       )
     }

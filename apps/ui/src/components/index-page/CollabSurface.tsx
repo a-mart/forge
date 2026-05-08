@@ -22,6 +22,12 @@ interface CollabSurfaceProps {
   onSelectSurface: (surface: ActiveSurface) => void
   onOpenSettings: () => void
   onBackToChat: () => void
+  /**
+   * Callback invoked when the user requests to sign in after an auth/connection
+   * error.  Navigates to the settings view (builder surface) in-SPA rather
+   * than triggering a full page reload.
+   */
+  onSignIn?: () => void
 }
 
 export function CollabSurface({
@@ -36,6 +42,7 @@ export function CollabSurface({
   onSelectSurface,
   onOpenSettings,
   onBackToChat,
+  onSignIn,
 }: CollabSurfaceProps) {
   const collab = useCollabWsConnection(wsUrl)
 
@@ -74,6 +81,7 @@ export function CollabSurface({
           wsUrl={wsUrl}
           channelId={channel}
           onSelectChannel={onSelectChannel}
+          onSignIn={onSignIn}
         />
       )}
     </CollabWsProvider>

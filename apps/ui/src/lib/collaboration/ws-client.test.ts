@@ -717,7 +717,16 @@ describe('CollabWsClient (transport-backed)', () => {
       const socket = FakeWebSocket.instances[0]
       socket.emit('open')
 
-      // Normal close (no code)
+      // Simulate bootstrap so hasBootstrapped=true
+      emitServerEvent(socket, {
+        type: 'collab_bootstrap',
+        workspace: { workspaceId: 'ws-1', displayName: 'Test', memberCount: 3 },
+        categories: [],
+        channels: [],
+        currentUser: { userId: 'user-1', username: 'test', role: 'admin' },
+      })
+
+      // Normal close (no code) AFTER bootstrap — should NOT set lastError
       socket.readyState = FakeWebSocket.CLOSED
       socket.emit('close', new Event('close'))
 
@@ -728,6 +737,50 @@ describe('CollabWsClient (transport-backed)', () => {
       // Should reconnect
       vi.advanceTimersByTime(1_300)
       expect(FakeWebSocket.instances).toHaveLength(2)
+
+      client.destroy()
+    })
+
+    it('sets a generic lastError on pre-bootstrap close to avoid infinite spinner', () => {
+      const client = new CollabWsClient('ws://127.0.0.1:8787/collab')
+
+      client.start()
+      vi.advanceTimersByTime(60)
+
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+
+      // Close BEFORE bootstrap arrives — the UI would spin forever without lastError
+      socket.readyState = FakeWebSocket.CLOSED
+      socket.emit('close', new Event('close'))
+
+      expect(client.getState().connected).toBe(false)
+      expect(client.getState().hasBootstrapped).toBe(false)
+      expect(client.getState().lastError).toBe(
+        'Connection to collaboration server lost. Reconnecting…',
+      )
+      expect(client.getState().lastErrorCode).toBeNull()
+
+      // Transport should still attempt reconnect
+      vi.advanceTimersByTime(1_300)
+      expect(FakeWebSocket.instances).toHaveLength(2)
+
+      // On successful reconnect + bootstrap, the error should clear
+      const socket2 = FakeWebSocket.instances[1]
+      socket2.emit('open')
+
+      expect(client.getState().lastError).toBeNull()
+      expect(client.getState().connected).toBe(true)
+
+      emitServerEvent(socket2, {
+        type: 'collab_bootstrap',
+        workspace: { workspaceId: 'ws-1', displayName: 'Test', memberCount: 3 },
+        categories: [],
+        channels: [],
+        currentUser: { userId: 'user-1', username: 'test', role: 'admin' },
+      })
+
+      expect(client.getState().hasBootstrapped).toBe(true)
 
       client.destroy()
     })

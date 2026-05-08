@@ -1,13 +1,18 @@
 import { Button } from '@/components/ui/button'
-import { resolveCollaborationApiBaseUrl } from '@/lib/collaboration-endpoints'
 
 interface CollaborationAuthErrorProps {
   message?: string
+  /**
+   * Optional callback when the user requests to sign in.
+   *
+   * When provided, the button invokes this callback instead of navigating.
+   * When omitted, the button navigates to the builder Settings view within
+   * the SPA so the user can reach the Collaboration sign-in form.
+   */
+  onSignIn?: () => void
 }
 
-export function CollaborationAuthError({ message }: CollaborationAuthErrorProps) {
-  const signInUrl = new URL('/collaboration/login', resolveCollaborationApiBaseUrl()).toString()
-
+export function CollaborationAuthError({ message, onSignIn }: CollaborationAuthErrorProps) {
   return (
     <div
       className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 flex flex-col gap-2"
@@ -21,7 +26,13 @@ export function CollaborationAuthError({ message }: CollaborationAuthErrorProps)
         size="sm"
         className="w-fit"
         onClick={() => {
-          window.location.href = signInUrl
+          if (onSignIn) {
+            onSignIn()
+            return
+          }
+          // Navigate to builder settings within the SPA where the Collaboration
+          // sign-in form is available.  Avoids leaving the SPA entirely.
+          window.location.href = '/?view=settings'
         }}
       >
         Sign in again
