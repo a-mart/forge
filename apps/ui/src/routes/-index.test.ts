@@ -305,7 +305,7 @@ describe('IndexPage create project model selection', () => {
     await vi.advanceTimersByTimeAsync(0)
   })
 
-  it('hides worker tool calls in all-tab activity for the selected manager context', async () => {
+  it('shows scoped worker tool calls in all-tab activity for the selected manager context', async () => {
     const socket = await renderPage()
 
     emitServerEvent(socket, {
@@ -387,7 +387,7 @@ describe('IndexPage create project model selection', () => {
 
     expect(queryByText(container, 'owned worker chatter')).not.toBeNull()
     expect(queryByText(container, /manager-call/)).not.toBeNull()
-    expect(queryByText(container, /owned-call/)).toBeNull()
+    expect(queryByText(container, /owned-call/)).not.toBeNull()
     expect(queryByText(container, 'foreign worker chatter')).toBeNull()
     expect(queryByText(container, /foreign-call/)).toBeNull()
   })
