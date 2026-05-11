@@ -1,3 +1,5 @@
+import type { CliSessionMetadata } from './cli.js'
+
 export type SessionMemoryMergeStatus = 'applied' | 'skipped'
 export type SessionMemoryMergeAttemptStatus = SessionMemoryMergeStatus | 'failed'
 export type SessionMemoryMergeStrategy =
@@ -43,6 +45,7 @@ export interface SessionMeta {
   sessionId: string
   profileId: string
   label: string | null
+  cli?: CliSessionMetadata
   compactionCount?: number
   model: {
     provider: string | null

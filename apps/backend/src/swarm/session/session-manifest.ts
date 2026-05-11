@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { type SessionMeta, type SessionWorkerMeta } from "@forge/protocol";
+import { type CliSessionMetadata, type SessionMeta, type SessionWorkerMeta } from "@forge/protocol";
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import {
   getProfilesDir,
@@ -247,6 +247,7 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
             sessionId: sessionDescriptor.agentId,
             profileId,
             label: normalizeOptionalString(sessionDescriptor.sessionLabel) ?? null,
+            cli: resolveSessionCliMetadata(sessionDescriptor, existingMeta),
             model: {
               provider: normalizeOptionalString(sessionDescriptor.model.provider) ?? null,
               modelId: normalizeOptionalString(sessionDescriptor.model.modelId) ?? null
@@ -672,6 +673,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
   const projectAgentWhenToUse = normalizeOptionalString(projectAgentRecord?.whenToUse);
   const projectAgentSystemPrompt = normalizeOptionalString(projectAgentRecord?.systemPrompt);
   const projectAgentCreatorSessionId = normalizeOptionalString(projectAgentRecord?.creatorSessionId);
+  const cli = coerceCliSessionMetadata(value.cli);
 
   // agentCreatorResult (set on wizard sessions after successful agent creation)
   const creatorResultRecord = isRecord(value.agentCreatorResult) ? value.agentCreatorResult : undefined;
@@ -702,6 +704,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
     contextUsage: undefined,
     profileId: normalizeOptionalString(value.profileId),
     sessionLabel: normalizeOptionalString(value.sessionLabel),
+    cli,
     sessionPurpose:
       normalizeOptionalString(value.sessionPurpose) === "cortex_review"
         ? "cortex_review"
@@ -766,6 +769,7 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
     sessionId,
     profileId,
     label: normalizeOptionalString(value.label) ?? null,
+    cli: coerceCliSessionMetadata(value.cli),
     model: {
       provider: normalizeOptionalString(modelRecord.provider) ?? null,
       modelId: normalizeOptionalString(modelRecord.modelId) ?? null
@@ -832,6 +836,47 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
       memoryFileSize: normalizeOptionalString(statsRecord.memoryFileSize) ?? null
     }
   };
+}
+
+function coerceCliSessionMetadata(value: unknown): CliSessionMetadata | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (value.createdBy !== "forge-cli") {
+    return undefined;
+  }
+
+  const runId = normalizeOptionalString(value.runId);
+  const command = normalizeOptionalString(value.command);
+  const startedAt = normalizeOptionalString(value.startedAt);
+
+  if (!runId || !isCliSessionCommand(command) || !startedAt) {
+    return undefined;
+  }
+
+  const invocationCwd = normalizeOptionalString(value.invocationCwd);
+  const label = normalizeOptionalString(value.label);
+
+  return {
+    createdBy: "forge-cli",
+    runId,
+    command,
+    startedAt,
+    ...(invocationCwd !== undefined ? { invocationCwd } : {}),
+    ...(label !== undefined ? { label } : {})
+  };
+}
+
+function resolveSessionCliMetadata(
+  descriptor: AgentDescriptor,
+  existingMeta: SessionMeta | undefined
+): CliSessionMetadata | undefined {
+  return coerceCliSessionMetadata(descriptor.cli) ?? existingMeta?.cli;
+}
+
+function isCliSessionCommand(command: string | undefined): command is CliSessionMetadata["command"] {
+  return command === "run" || command === "launch" || command === "sessions create";
 }
 
 function coerceSessionWorkerMeta(value: unknown): SessionWorkerMeta | undefined {

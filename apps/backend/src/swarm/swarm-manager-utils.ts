@@ -29,6 +29,7 @@ import type {
   AgentContextUsage,
   AgentDescriptor,
   AgentModelDescriptor,
+  CliSessionMetadata,
   ConversationAttachment,
   ConversationAttachmentMetadata,
   ConversationBinaryAttachment,
@@ -48,6 +49,7 @@ const SYNTHETIC_PI_MODEL_BLUEPRINTS: Readonly<Record<string, Readonly<Record<str
 };
 const VALID_PERSISTED_PROJECT_AGENT_CAPABILITIES = new Set<string>(PROJECT_AGENT_CAPABILITIES);
 const VALID_PERSISTED_SESSION_SURFACES = new Set(["builder", "collab"]);
+const VALID_PERSISTED_CLI_SESSION_COMMANDS = new Set(["run", "launch", "sessions create"]);
 const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "idle",
   "streaming",
@@ -79,6 +81,21 @@ function cloneContextUsage(contextUsage: AgentContextUsage | undefined): AgentCo
     tokens: contextUsage.tokens,
     contextWindow: contextUsage.contextWindow,
     percent: contextUsage.percent
+  };
+}
+
+function cloneCliSessionMetadata(cli: CliSessionMetadata | undefined): CliSessionMetadata | undefined {
+  if (!cli) {
+    return undefined;
+  }
+
+  return {
+    createdBy: cli.createdBy,
+    runId: cli.runId,
+    command: cli.command,
+    startedAt: cli.startedAt,
+    ...(cli.invocationCwd !== undefined ? { invocationCwd: cli.invocationCwd } : {}),
+    ...(cli.label !== undefined ? { label: cli.label } : {})
   };
 }
 
@@ -167,6 +184,7 @@ export function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
     contextUsage: cloneContextUsage(descriptor.contextUsage),
     projectAgent: cloneProjectAgentInfo(descriptor),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
+    cli: cloneCliSessionMetadata(descriptor.cli),
     ...(descriptor.agentCreatorResult !== undefined
       ? {
           agentCreatorResult: {
@@ -359,6 +377,13 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return 'collab metadata must be omitted unless sessionSurface is "collab"';
   }
 
+  if (value.cli !== undefined) {
+    const cliError = validatePersistedCliSessionMetadata(value.cli);
+    if (cliError) {
+      return cliError;
+    }
+  }
+
   if (value.sessionSystemPrompt !== undefined && typeof value.sessionSystemPrompt !== "string") {
     return "sessionSystemPrompt must be a string when provided";
   }
@@ -477,6 +502,38 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function validatePersistedCliSessionMetadata(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return "cli must be an object when provided";
+  }
+
+  if (value.createdBy !== "forge-cli") {
+    return 'cli.createdBy must be "forge-cli"';
+  }
+
+  if (!isNonEmptyString(value.runId)) {
+    return "cli.runId must be a non-empty string";
+  }
+
+  if (!isNonEmptyString(value.command) || !VALID_PERSISTED_CLI_SESSION_COMMANDS.has(value.command)) {
+    return 'cli.command must be one of "run", "launch", or "sessions create"';
+  }
+
+  if (!isNonEmptyString(value.startedAt)) {
+    return "cli.startedAt must be a non-empty string";
+  }
+
+  if (value.invocationCwd !== undefined && typeof value.invocationCwd !== "string") {
+    return "cli.invocationCwd must be a string when provided";
+  }
+
+  if (value.label !== undefined && typeof value.label !== "string") {
+    return "cli.label must be a string when provided";
+  }
+
+  return undefined;
 }
 
 export function isEnoentError(error: unknown): boolean {

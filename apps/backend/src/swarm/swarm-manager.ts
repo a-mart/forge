@@ -2116,6 +2116,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const createdSession = await this.sessionService.createSession(profileId, options);
@@ -2133,6 +2134,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     } = {},
     overrides: {
       model?: AgentModelDescriptor;
@@ -2167,6 +2169,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     } = {},
     overrides: {
       sessionSurface?: AgentDescriptor["sessionSurface"];
@@ -2965,6 +2968,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
     const profile = this.profiles.get(profileId);
@@ -3010,6 +3014,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
     const preparedIdentity = this.prepareSessionIdentity(profileId, options);
@@ -3022,6 +3027,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profileId: preparedIdentity.profile.profileId,
       sessionLabel: preparedIdentity.sessionLabel,
       sessionPurpose: options?.sessionPurpose,
+      cli: options?.cli ? { ...options.cli } : undefined,
       status: "idle",
       createdAt: preparedIdentity.createdAt,
       updatedAt: preparedIdentity.createdAt,
@@ -3064,6 +3070,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     }
   ): {
     profile: ManagerProfile;

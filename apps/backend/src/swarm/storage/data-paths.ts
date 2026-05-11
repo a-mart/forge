@@ -286,7 +286,7 @@ export function getSharedAuthFilePath(dataDir: string): string {
 }
 
 export function getCliAccessFilePath(dataDir: string): string {
-  return join(getSharedConfigDir(dataDir), "cli-access.json");
+  return join(getSharedAuthDir(dataDir), "cli-access.json");
 }
 
 export function getSharedCollaborationConfigDir(dataDir: string): string {

@@ -125,7 +125,15 @@ describe("SwarmSessionMetaService", () => {
       sessionLabel: "Main",
       rootDir: config.defaultCwd,
       sessionFile,
-      model: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "medium" }
+      model: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "medium" },
+      cli: {
+        createdBy: "forge-cli",
+        runId: "run-initial",
+        command: "sessions create",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        invocationCwd: config.defaultCwd,
+        label: "Main"
+      }
     }) as AgentDescriptor & { role: "manager"; profileId: string };
 
     const descriptors = new Map<string, AgentDescriptor>([["manager", descriptor]]);
@@ -137,6 +145,7 @@ describe("SwarmSessionMetaService", () => {
     expect(meta?.sessionId).toBe("manager");
     expect(meta?.label).toBe("Main");
     expect(meta?.model).toEqual({ provider: "openai-codex", modelId: "gpt-5.4" });
+    expect(meta?.cli).toEqual(descriptor.cli);
     expect(meta?.cwd).toBe(descriptor.cwd);
   });
 
@@ -239,7 +248,13 @@ describe("SwarmSessionMetaService", () => {
       profileId,
       rootDir: config.defaultCwd,
       sessionFile,
-      model: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "medium" }
+      model: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "medium" },
+      cli: {
+        createdBy: "forge-cli",
+        runId: "run-stats",
+        command: "run",
+        startedAt: "2026-01-01T00:00:00.000Z"
+      }
     }) as AgentDescriptor & { role: "manager"; profileId: string };
 
     const descriptors = new Map<string, AgentDescriptor>([["manager", descriptor]]);
@@ -250,6 +265,7 @@ describe("SwarmSessionMetaService", () => {
     const meta = await readSessionMeta(dataDir, profileId, sessionAgentId);
     expect(meta?.stats?.sessionFileSize).toBe("5");
     expect(meta?.stats?.memoryFileSize).toBe("5");
+    expect(meta?.cli).toEqual(descriptor.cli);
   });
 
   it("hydrateCompactionCountsForBoot hydrates manager descriptor compactionCount from meta", async () => {

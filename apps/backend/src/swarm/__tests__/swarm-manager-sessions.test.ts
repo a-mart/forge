@@ -97,6 +97,39 @@ describe('SwarmManager', () => {
     expect(fallback.sessionAgent.agentId).toBe('manager--s2')
   })
 
+  it('preserves CLI session metadata across create, clear, fork, and persistence', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const cli = {
+      createdBy: 'forge-cli' as const,
+      runId: 'run-manager-session',
+      command: 'run' as const,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      invocationCwd: config.defaultCwd,
+      label: 'CLI Automation Run',
+    }
+
+    const created = await manager.createSession('manager', { label: 'CLI Session', cli })
+
+    expect(created.sessionAgent.cli).toEqual(cli)
+    let meta = await readSessionMeta(config.paths.dataDir, 'manager', created.sessionAgent.agentId)
+    expect(meta?.cli).toEqual(cli)
+
+    await manager.clearSessionConversation(created.sessionAgent.agentId)
+    meta = await readSessionMeta(config.paths.dataDir, 'manager', created.sessionAgent.agentId)
+    expect(meta?.cli).toEqual(cli)
+
+    const forked = await manager.forkSession(created.sessionAgent.agentId, { label: 'CLI Session Fork' })
+    expect(forked.sessionAgent.cli).toEqual(cli)
+    const forkedMeta = await readSessionMeta(config.paths.dataDir, 'manager', forked.sessionAgent.agentId)
+    expect(forkedMeta?.cli).toEqual(cli)
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(store.agents.find((agent) => agent.agentId === created.sessionAgent.agentId)?.cli).toEqual(cli)
+    expect(store.agents.find((agent) => agent.agentId === forked.sessionAgent.agentId)?.cli).toEqual(cli)
+  })
+
   it('createSession strips stale service-tier fields from profile default models', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
