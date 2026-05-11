@@ -6,6 +6,7 @@ import {
   getGlobalForgeExtensionsDir,
   getLegacyAgentMemoryPath,
   getLegacyAuthDirPath,
+  getLegacyCliAccessFilePath,
   getLegacyAuthFilePath,
   getLegacyMemoryDirPath,
   getLegacySecretsFilePath,
@@ -169,6 +170,7 @@ describe("data-paths", () => {
     expect(getSharedAuthDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "auth"));
     expect(getSharedAuthFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "auth", "auth.json"));
     expect(getCliAccessFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "auth", "cli-access.json"));
+    expect(getLegacyCliAccessFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "cli-access.json"));
     expect(getSharedSecretsFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "secrets.json"));
     expect(getCortexAutoReviewSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "cortex-auto-review.json"));
     expect(getSharedCacheGeneratedDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "generated"));

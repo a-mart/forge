@@ -1,10 +1,11 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { unlink } from "node:fs/promises";
 import type {
   CliAccessKeyCreatedResponse,
   CliAccessKeyDescriptor,
   CliAccessKeyLastUsedSource,
 } from "@forge/protocol";
-import { getCliAccessFilePath } from "./data-paths.js";
+import { getCliAccessFilePath, getLegacyCliAccessFilePath } from "./data-paths.js";
 import { readJsonFileIfExists, writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 const CLI_ACCESS_FILE_VERSION = 1;
@@ -48,6 +49,7 @@ export interface CliAccessServiceOptions {
 
 export class CliAccessService {
   private readonly filePath: string;
+  private readonly legacyFilePath: string;
   private readonly envApiKey: string | undefined;
   private readonly now: () => string;
   private readonly generateKeyBytes: () => Buffer;
@@ -56,6 +58,7 @@ export class CliAccessService {
 
   constructor(options: CliAccessServiceOptions) {
     this.filePath = getCliAccessFilePath(options.dataDir);
+    this.legacyFilePath = getLegacyCliAccessFilePath(options.dataDir);
     this.envApiKey = normalizeSecret(options.envApiKey);
     this.now = options.now ?? (() => new Date().toISOString());
     this.generateKeyBytes = options.generateKeyBytes ?? (() => randomBytes(GENERATED_KEY_BYTES));
@@ -179,15 +182,31 @@ export class CliAccessService {
   }
 
   private async readFile(): Promise<StoredCliAccessFile> {
-    const parsed = await readJsonFileIfExists<Partial<StoredCliAccessFile>>(this.filePath);
-    if (!parsed || !Array.isArray(parsed.keys)) {
+    const current = await this.readStoredFile(this.filePath);
+    if (current) {
+      return current;
+    }
+
+    const legacy = await this.readStoredFile(this.legacyFilePath);
+    if (!legacy) {
       return { version: CLI_ACCESS_FILE_VERSION, keys: [] };
     }
 
-    return {
+    await writeJsonFileAtomic(this.filePath, legacy);
+    await unlink(this.legacyFilePath).catch(() => undefined);
+    return legacy;
+  }
+
+  private async readStoredFile(filePath: string): Promise<StoredCliAccessFile | undefined> {
+    const parsed = await readJsonFileIfExists<Partial<StoredCliAccessFile>>(filePath);
+    if (!parsed || !Array.isArray(parsed.keys)) {
+      return undefined;
+    }
+
+    return normalizeFile({
       version: CLI_ACCESS_FILE_VERSION,
       keys: parsed.keys.filter(isStoredCliAccessKey),
-    };
+    });
   }
 
   private async updateFile(mutator: (file: StoredCliAccessFile) => StoredCliAccessFile): Promise<StoredCliAccessFile> {
