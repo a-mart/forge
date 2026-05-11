@@ -90,11 +90,7 @@ function isSameOrigin(origin: string, request: IncomingMessage): boolean {
     return false;
   }
 
-  // Derive the expected origin from the request protocol and Host header.
-  // Node http server: not encrypted → http. If behind TLS proxy, the
-  // Origin from the browser would use https, and the Host header would
-  // match, so the comparison still holds.
-  const scheme = (request.socket as { encrypted?: boolean }).encrypted ? "https" : "http";
+  const scheme = resolveRequestProtocol(request);
   const expectedOrigin = `${scheme}://${host}`;
 
   try {
@@ -106,6 +102,33 @@ function isSameOrigin(origin: string, request: IncomingMessage): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolve the effective request protocol, honoring proxy headers.
+ *
+ * Priority: `X-Forwarded-Proto` → `Forwarded: proto=` → socket encryption
+ * → `http`. Follows the same convention as the collaboration auth adapter
+ * in `collaboration/auth/node-http-adapter.ts`.
+ */
+function resolveRequestProtocol(request: IncomingMessage): "http" | "https" {
+  // 1. X-Forwarded-Proto (de-facto standard, first value if comma-separated)
+  const xfp = request.headers["x-forwarded-proto"];
+  const xfpValue = (Array.isArray(xfp) ? xfp[0] : xfp)?.split(",")[0]?.trim().toLowerCase();
+  if (xfpValue === "https") return "https";
+  if (xfpValue === "http") return "http";
+
+  // 2. RFC 7239 Forwarded header
+  const forwarded = request.headers.forwarded;
+  const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const protoMatch = forwardedValue?.match(/proto=(https|http)/i);
+  if (protoMatch?.[1]?.toLowerCase() === "https") return "https";
+  if (protoMatch?.[1]?.toLowerCase() === "http") return "http";
+
+  // 3. Direct socket encryption (native TLS)
+  if ((request.socket as { encrypted?: boolean }).encrypted) return "https";
+
+  return "http";
 }
 
 /* ------------------------------------------------------------------ */

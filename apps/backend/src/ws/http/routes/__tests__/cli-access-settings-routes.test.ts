@@ -364,6 +364,119 @@ describe("CLI access settings routes — cross-origin protection", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/*  TLS terminator / reverse proxy (X-Forwarded-Proto / Forwarded)     */
+/* ------------------------------------------------------------------ */
+
+describe("CLI access settings routes — HTTPS behind proxy", () => {
+  it("accepts same-origin HTTPS via X-Forwarded-Proto", async () => {
+    const { server } = await setup();
+    const port = new URL(server.baseUrl).port;
+    const httpsOrigin = `https://forge.example.test:${port}`;
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Host: `forge.example.test:${port}`,
+        Origin: httpsOrigin,
+        "X-Forwarded-Proto": "https",
+      },
+    });
+    expect(result.status).toBe(200);
+    expect(result.headers["access-control-allow-origin"]).toBe(httpsOrigin);
+  });
+
+  it("accepts same-origin HTTPS via Forwarded: proto=https", async () => {
+    const { server } = await setup();
+    const port = new URL(server.baseUrl).port;
+    const httpsOrigin = `https://forge.example.test:${port}`;
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "POST",
+      headers: {
+        Host: `forge.example.test:${port}`,
+        Origin: httpsOrigin,
+        Forwarded: `proto=https;host=forge.example.test:${port}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    expect(result.status).toBe(201);
+    expect(result.headers["access-control-allow-origin"]).toBe(httpsOrigin);
+  });
+
+  it("rejects hostile origin even when X-Forwarded-Proto is https", async () => {
+    const { server } = await setup();
+    const port = new URL(server.baseUrl).port;
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "POST",
+      headers: {
+        Host: `forge.example.test:${port}`,
+        Origin: "https://evil.example.com",
+        "X-Forwarded-Proto": "https",
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("rejects http Origin when proxy reports https", async () => {
+    const { server } = await setup();
+    const port = new URL(server.baseUrl).port;
+
+    // Origin says http but the proxy terminated TLS — scheme mismatch
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Host: `forge.example.test:${port}`,
+        Origin: `http://forge.example.test:${port}`,
+        "X-Forwarded-Proto": "https",
+      },
+    });
+    expect(result.status).toBe(403);
+  });
+
+  it("falls back to http when no proxy header is present", async () => {
+    const { server } = await setup();
+    const port = new URL(server.baseUrl).port;
+
+    // HTTPS origin without any proxy header → scheme mismatch (server is http)
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Host: `forge.example.test:${port}`,
+        Origin: `https://forge.example.test:${port}`,
+      },
+    });
+    expect(result.status).toBe(403);
+  });
+
+  it("handles comma-separated X-Forwarded-Proto (first value wins)", async () => {
+    const { server } = await setup();
+    const port = new URL(server.baseUrl).port;
+    const httpsOrigin = `https://forge.example.test:${port}`;
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Host: `forge.example.test:${port}`,
+        Origin: httpsOrigin,
+        "X-Forwarded-Proto": "https, http",
+      },
+    });
+    expect(result.status).toBe(200);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /*  Malformed percent-encoded key IDs (correctness)                    */
 /* ------------------------------------------------------------------ */
 
