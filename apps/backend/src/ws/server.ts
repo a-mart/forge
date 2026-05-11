@@ -55,6 +55,7 @@ import {
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
+import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings-routes.js";
 import { createCliRoutes } from "./http/routes/cli-routes.js";
 import { createCollaborationRoutes } from "./http/routes/collaboration-routes.js";
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
@@ -470,6 +471,10 @@ export class SwarmWebSocketServer {
             swarmManager: this.swarmManager,
           })
         : []),
+      ...createCliAccessSettingsRoutes({
+        cliAccessService: this.cliAccessService,
+        runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+      }),
       ...(this.collaborationSettingsService
         ? createCollaborationRoutes({
             config: this.swarmManager.getConfig(),

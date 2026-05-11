@@ -25,6 +25,7 @@ export type SettingsTab =
   | 'specialists'
   | 'slash-commands'
   | 'extensions'
+  | 'cli-access'
   | 'collaboration'
   | 'about'
 
@@ -54,6 +55,7 @@ const BUILDER_TABS: SettingsTab[] = [
   'specialists',
   'slash-commands',
   'extensions',
+  'cli-access',
   'collaboration',
   'about',
 ]
