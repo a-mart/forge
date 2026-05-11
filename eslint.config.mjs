@@ -62,6 +62,7 @@ export default tseslint.config(
       'apps/ui/**/*.{ts,tsx}',
       'apps/electron/**/*.{ts,tsx}',
       'packages/protocol/**/*.{ts,tsx}',
+      'packages/cli/**/*.{ts,tsx}',
     ],
     languageOptions: {
       parser: tseslint.parser,
@@ -71,6 +72,7 @@ export default tseslint.config(
           path.join(repoRoot, 'apps/ui/tsconfig.json'),
           path.join(repoRoot, 'apps/electron/tsconfig.eslint.json'),
           path.join(repoRoot, 'packages/protocol/tsconfig.eslint.json'),
+          path.join(repoRoot, 'packages/cli/tsconfig.eslint.json'),
         ],
         tsconfigRootDir: repoRoot,
       },

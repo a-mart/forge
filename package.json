@@ -12,18 +12,19 @@
     "apps/backend",
     "apps/ui",
     "apps/electron",
-    "packages/protocol"
+    "packages/protocol",
+    "packages/cli"
   ],
   "scripts": {
     "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @forge/backend dev\" \"pnpm --filter @forge/ui dev\"",
     "dev:backend": "pnpm --filter @forge/backend dev",
     "dev:ui": "pnpm --filter @forge/ui dev",
     "dev:electron": "concurrently --kill-others-on-fail -n ui,electron -c green,magenta \"cross-env VITE_FORGE_WS_URL=ws://127.0.0.1:47287 pnpm dev:ui\" \"wait-on tcp:127.0.0.1:47188 && cd apps/electron && pnpm dev\"",
-    "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build",
+    "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/cli build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build",
     "build:electron": "pnpm --filter @forge/electron run build:all",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "typecheck": "cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../ui && pnpm exec tsc --noEmit && cd ../../packages/protocol && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../../apps/electron && pnpm exec tsc --noEmit",
+    "typecheck": "cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../ui && pnpm exec tsc --noEmit && cd ../../packages/protocol && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../cli && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../../apps/electron && pnpm exec tsc --noEmit",
     "model-catalog:audit": "node scripts/model-catalog-audit.mjs",
     "verify:dockerignore": "node scripts/verify-dockerignore-sensitive-context.mjs",
     "package:electron": "pnpm --filter @forge/electron run package",
@@ -32,7 +33,7 @@
     "prod:start": "node scripts/check-data-migration.mjs && concurrently --kill-others-on-fail --names backend,ui \"cross-env NODE_ENV=production FORGE_PORT=47287 pnpm --filter @forge/backend start\" \"pnpm --filter @forge/ui preview\"",
     "prod:daemon": "node scripts/prod-daemon.mjs",
     "prod:restart": "node scripts/prod-daemon-restart.mjs",
-    "test": "pnpm --filter @forge/backend test && pnpm --filter @forge/ui test",
+    "test": "pnpm --filter @forge/backend test && pnpm --filter @forge/ui test && pnpm --filter @forge/cli test",
     "postinstall": "node scripts/fix-node-pty-spawn-helper-permissions.mjs"
   },
   "pnpm": {

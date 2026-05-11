@@ -101,6 +101,20 @@
       "project": [
         "src/**/*.ts"
       ]
+    },
+    "packages/cli": {
+      "entry": [
+        "src/cli.ts",
+        "src/**/*.test.ts",
+        "scripts/**/*.mjs"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "scripts/**/*.mjs"
+      ],
+      "ignoreDependencies": [
+        "@forge/protocol"
+      ]
     }
   }
 }
