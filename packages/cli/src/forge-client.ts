@@ -11,6 +11,7 @@ import type {
   CliHeadlessReadyEvent,
   CliHttpErrorResponse,
   CliMessageDispatchResult,
+  CliMessageTarget,
   CliProfileShowResponse,
   CliProfilesListResponse,
   CliProjectAgentShowResponse,
@@ -246,10 +247,9 @@ export class ForgeClient implements ForgeClientLike {
     const startedAt = Date.now()
     let sessionAgentId: string | undefined
     try {
-      const dispatch = await connection.request<CliMessageDispatchResult>(buildRunCommand(options))
-      sessionAgentId = dispatch.sessionAgentId
-      const ready = await connection.subscribe(sessionAgentId)
-      const tracker = new RunWaitTracker(ready, {
+      const prepared = await this.prepareRunTarget(connection, options)
+      sessionAgentId = prepared.sessionAgentId
+      const tracker = new RunWaitTracker(prepared.ready, {
         startedAt,
         dispatchGateStartedAt: Date.now(),
         timeoutMs: options.timeoutMs,
@@ -258,6 +258,7 @@ export class ForgeClient implements ForgeClientLike {
       })
       tracker.attach(connection)
       try {
+        await connection.request<CliMessageDispatchResult>(prepared.dispatchCommand)
         const result = await tracker.wait()
         if (result.status === 'timeout' && options.stopOnTimeout) {
           await connection.request({ type: 'stop_session', requestId: randomUUID(), agentId: sessionAgentId })
@@ -374,6 +375,39 @@ export class ForgeClient implements ForgeClientLike {
     }
   }
 
+  private async prepareRunTarget(
+    connection: CliWsConnection,
+    options: ClientRunOptions,
+  ): Promise<{ sessionAgentId: string; ready: CliHeadlessReadyEvent; dispatchCommand: CliWsCommand & { requestId: string } }> {
+    if (options.target.kind === 'new_session') {
+      const cli = buildCliMetadata(options.command, options.invocationCwd, options.label)
+      const created = await connection.request<CliSessionCreatedResult>({
+        type: 'cli_create_session',
+        requestId: randomUUID(),
+        profileId: options.target.profileId,
+        ...(options.target.label ? { label: options.target.label } : {}),
+        ...(options.target.name ? { name: options.target.name } : {}),
+        cli,
+      })
+      const ready = await connection.subscribe(created.session.agentId)
+      return {
+        sessionAgentId: created.session.agentId,
+        ready,
+        dispatchCommand: buildSendMessageCommand({ kind: 'session', agentId: created.session.agentId }, options, cli.runId),
+      }
+    }
+
+    const sessionAgentId = options.target.kind === 'project_agent'
+      ? (await this.showProjectAgent(options.target.profileId, options.target.handle)).projectAgent.agentId
+      : options.target.agentId
+    const ready = await connection.subscribe(sessionAgentId)
+    return {
+      sessionAgentId,
+      ready,
+      dispatchCommand: buildRunCommand(options),
+    }
+  }
+
   private async ensureFeatures(features: Array<keyof CliStatusResponse['capabilities']['features']>): Promise<void> {
     const status = await this.getStatus()
     assertSupportedCapabilities(status)
@@ -480,7 +514,9 @@ export function normalizeBaseUrl(value: string): URL {
 
 class CliWsConnection {
   private socket: WebSocket | null = null
+  private manualClosing = false
   private readonly listeners = new Set<(event: ServerEvent) => void>()
+  private readonly disconnectListeners = new Set<(error: CliError) => void>()
   private readonly pending = new Map<string, {
     resolve: (value: unknown) => void
     reject: (error: Error) => void
@@ -505,8 +541,8 @@ class CliWsConnection {
       socket.once('open', () => {
         socket.off('error', onError)
         socket.on('message', (raw) => this.handleMessage(raw.toString()))
-        socket.on('close', () => this.rejectPending('CLI WebSocket closed.'))
-        socket.on('error', (error) => this.rejectPending(`CLI WebSocket error: ${redactSecret(error.message, this.apiKey)}`))
+        socket.on('close', () => this.handleDisconnect('CLI WebSocket closed.'))
+        socket.on('error', (error) => this.handleDisconnect(`CLI WebSocket error: ${redactSecret(error.message, this.apiKey)}`))
         resolve()
       })
       socket.once('error', onError)
@@ -514,6 +550,7 @@ class CliWsConnection {
   }
 
   close(): void {
+    this.manualClosing = true
     this.socket?.close()
     this.socket = null
   }
@@ -550,6 +587,11 @@ class CliWsConnection {
   onEvent(listener: (event: ServerEvent) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  onDisconnect(listener: (error: CliError) => void): () => void {
+    this.disconnectListeners.add(listener)
+    return () => this.disconnectListeners.delete(listener)
   }
 
   private waitForEvent<T extends ServerEvent>(predicate: (event: ServerEvent) => event is T, timeoutMs: number): Promise<T> {
@@ -607,10 +649,18 @@ class CliWsConnection {
     }))
   }
 
-  private rejectPending(message: string): void {
+  private handleDisconnect(message: string): void {
+    const error = new CliError(message, { exitCode: EXIT_CODES.connection, code: 'ws_closed' })
+    this.rejectPending(error)
+    if (!this.manualClosing) {
+      for (const listener of [...this.disconnectListeners]) listener(error)
+    }
+  }
+
+  private rejectPending(error: CliError): void {
     for (const [requestId, pending] of this.pending) {
       this.pending.delete(requestId)
-      pending.reject(new CliError(message, { exitCode: EXIT_CODES.connection, code: 'ws_closed' }))
+      pending.reject(error)
     }
   }
 
@@ -638,7 +688,10 @@ class RunWaitTracker {
   private finalMessage: string | null = null
   private observedPostDispatchActivity = false
   private quiescentSince: number | null = null
+  private disconnectedError: CliError | null = null
+  private wakeWaiters = new Set<() => void>()
   private unsubscribe: (() => void) | null = null
+  private unsubscribeDisconnect: (() => void) | null = null
 
   constructor(
     ready: CliHeadlessReadyEvent,
@@ -667,6 +720,7 @@ class RunWaitTracker {
   async wait(): Promise<CliRunResult> {
     const start = Date.now()
     while (true) {
+      if (this.disconnectedError) throw this.disconnectedError
       const now = Date.now()
       const blocked = this.pendingChoices.filter((choice) => choice.status === 'pending')
       if (blocked.length > 0) {
@@ -686,17 +740,23 @@ class RunWaitTracker {
         this.quiescentSince = null
       }
 
-      await sleep(50)
+      await this.sleepUntilActivity(50)
     }
   }
 
   attach(connection: CliWsConnection): void {
     this.unsubscribe = connection.onEvent((event) => this.apply(event))
+    this.unsubscribeDisconnect = connection.onDisconnect((error) => {
+      this.disconnectedError = error
+      this.wake()
+    })
   }
 
   detach(): void {
     this.unsubscribe?.()
+    this.unsubscribeDisconnect?.()
     this.unsubscribe = null
+    this.unsubscribeDisconnect = null
   }
 
   private apply(event: ServerEvent): void {
@@ -762,6 +822,26 @@ class RunWaitTracker {
   private markActivity(): void {
     this.observedPostDispatchActivity = true
     this.quiescentSince = null
+    this.wake()
+  }
+
+  private sleepUntilActivity(ms: number): Promise<void> {
+    if (this.disconnectedError) return Promise.resolve()
+    return new Promise((resolve) => {
+      const wake = () => {
+        clearTimeout(timeout)
+        this.wakeWaiters.delete(wake)
+        resolve()
+      }
+      const timeout = setTimeout(wake, ms)
+      this.wakeWaiters.add(wake)
+    })
+  }
+
+  private wake(): void {
+    const waiters = [...this.wakeWaiters]
+    this.wakeWaiters.clear()
+    for (const waiter of waiters) waiter()
   }
 
   private result(
@@ -808,6 +888,20 @@ function buildRunCommand(options: ClientRunOptions): CliRunCommand {
   }
 }
 
+function buildSendMessageCommand(
+  target: CliMessageTarget,
+  options: ClientMessageOptions,
+  requestId = randomUUID(),
+): CliWsCommand & { requestId: string } {
+  return {
+    type: 'cli_send_message',
+    requestId,
+    target,
+    text: options.text,
+    ...(options.delivery ? { delivery: options.delivery } : {}),
+  }
+}
+
 function toCliRunTarget(target: ClientRunTarget): CliRunTarget {
   if (target.kind === 'new_session') {
     return {
@@ -847,20 +941,16 @@ function featuresForTarget(target: ClientRunTarget): Array<keyof CliStatusRespon
 }
 
 function mapHttpErrorExitCode(status: number) {
-  if (status === 401 || status === 403) return EXIT_CODES.auth
+  if (status === 401) return EXIT_CODES.auth
   if (status >= 400 && status < 500) return EXIT_CODES.usage
   return EXIT_CODES.connection
 }
 
 function mapCliRequestErrorExitCode(event: CliRequestErrorEvent) {
-  if (event.status === 401 || event.status === 403) return EXIT_CODES.auth
+  if (event.status === 401) return EXIT_CODES.auth
   if (event.code === 'unsupported_command' || event.code === 'unsupported_target') return EXIT_CODES.unsupported
   if (event.status && event.status >= 400 && event.status < 500) return EXIT_CODES.usage
   return EXIT_CODES.connection
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function redactSecret(message: string, secret: string): string {
