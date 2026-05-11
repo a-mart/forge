@@ -469,11 +469,11 @@ export function installCli(): CliInstallResult {
  * This runs the actual shim file (not a direct Electron invocation), so the
  * full chain is verified: shim → hint reading → Electron resolution → CLI.
  *
- * @param installedPath Absolute path to the shim to verify. When omitted,
- *   auto-discovers the platform-appropriate shim in `~/.forge/bin/`.
+ * The shim path is always resolved internally to the expected platform
+ * location under `~/.forge/bin/` — never accepted from the renderer.
  */
-export function verifyCliInstall(installedPath?: string): { ok: boolean; output: string } {
-  const shimPath = installedPath ?? resolveInstalledShimPath()
+export function verifyCliInstall(): { ok: boolean; output: string } {
+  const shimPath = resolveInstalledShimPath()
 
   if (!existsSync(shimPath)) {
     return { ok: false, output: `CLI shim not found at ${shimPath}. Run "Install CLI" first.` }

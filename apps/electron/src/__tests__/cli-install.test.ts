@@ -11,12 +11,18 @@ import { mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
+// Hoisted mutable state so verify tests can redirect the resolved home dir.
+// vi.hoisted runs before vi.mock, making this safe for mock factory capture.
+const mockState = vi.hoisted(() => ({
+  homeDir: null as string | null,
+}))
+
 // Mock Electron app module before importing cli-install
 vi.mock('electron', () => ({
   app: {
     isPackaged: false,
     getPath: (name: string) => {
-      if (name === 'home') return os.homedir()
+      if (name === 'home') return mockState.homeDir ?? os.homedir()
       if (name === 'exe') return process.execPath
       return os.tmpdir()
     },
@@ -152,8 +158,6 @@ describe('generateWindowsPs1Shim (real)', () => {
 
 describe('windows CMD stale-hint fallback', () => {
   it('falls back to known location when hint exe path is stale', () => {
-    // Simulate: hint has a defined ELECTRON_EXE but pointing to nonexistent path.
-    // The CMD shim must detect this via "if not exist" and jump to :use_fallback.
     const fallbackExe = 'C:\\Programs\\Forge\\Forge.exe'
     const fallbackCli = 'C:\\Programs\\Forge\\resources\\cli\\cli.js'
     const shim = generateWindowsCmdShim('hint', fallbackExe, fallbackCli)
@@ -280,37 +284,44 @@ describe('idempotent shim generation', () => {
 })
 
 /* ------------------------------------------------------------------ */
-/*  verifyCliInstall — runs the actual installed shim                  */
+/*  verifyCliInstall — runs the actual installed shim (no args)        */
 /* ------------------------------------------------------------------ */
 
 describe('verifyCliInstall', () => {
-  it('returns error when shim does not exist', () => {
-    const result = verifyCliInstall('/tmp/nonexistent-forge-shim')
-    expect(result.ok).toBe(false)
-    expect(result.output).toContain('not found')
-  })
-
   // Skip shim execution tests on Windows (these POSIX shims won't run there)
   const describePosix = process.platform === 'win32' ? describe.skip : describe
 
-  describePosix('executes the actual shim file (POSIX)', () => {
+  describePosix('resolves and executes the shim at ~/.forge/bin/forge', () => {
+    // Redirect the mock home to a temp dir so verifyCliInstall() resolves
+    // to a controlled location without touching the real home directory.
     const tmpDir = path.join(os.tmpdir(), `forge-cli-verify-test-${process.pid}`)
-    const shimPath = path.join(tmpDir, SHIM_NAME_POSIX)
+    const shimBinDir = path.join(tmpDir, '.forge', 'bin')
+    const shimPath = path.join(shimBinDir, SHIM_NAME_POSIX)
 
     beforeEach(() => {
-      mkdirSync(tmpDir, { recursive: true })
+      mockState.homeDir = tmpDir
+      mkdirSync(shimBinDir, { recursive: true })
     })
 
     afterEach(() => {
+      mockState.homeDir = null
       rmSync(tmpDir, { recursive: true, force: true })
     })
 
+    it('returns error when shim does not exist at expected path', () => {
+      // shimBinDir exists but no shim file written → should fail
+      rmSync(shimPath, { force: true })
+      const result = verifyCliInstall()
+      expect(result.ok).toBe(false)
+      expect(result.output).toContain('not found')
+      expect(result.output).toContain('.forge')
+    })
+
     it('succeeds when shim outputs a version', () => {
-      // Write a real executable shim that prints a version
       writeFileSync(shimPath, '#!/bin/sh\necho "1.2.3"\n', 'utf8')
       chmodSync(shimPath, 0o755)
 
-      const result = verifyCliInstall(shimPath)
+      const result = verifyCliInstall()
       expect(result.ok).toBe(true)
       expect(result.output).toBe('1.2.3')
     })
@@ -319,7 +330,7 @@ describe('verifyCliInstall', () => {
       writeFileSync(shimPath, '#!/bin/sh\necho "boom" >&2\nexit 1\n', 'utf8')
       chmodSync(shimPath, 0o755)
 
-      const result = verifyCliInstall(shimPath)
+      const result = verifyCliInstall()
       expect(result.ok).toBe(false)
       expect(result.output.length).toBeGreaterThan(0)
     })
@@ -328,7 +339,7 @@ describe('verifyCliInstall', () => {
       writeFileSync(shimPath, '#!/bin/sh\necho "1.0.0"\n', 'utf8')
       chmodSync(shimPath, 0o644) // not executable
 
-      const result = verifyCliInstall(shimPath)
+      const result = verifyCliInstall()
       expect(result.ok).toBe(false)
     })
 
@@ -341,7 +352,7 @@ describe('verifyCliInstall', () => {
       writeFileSync(mockCliPath, '// placeholder cli', 'utf8')
 
       // Write a hint file pointing to the mock
-      const hintDir = path.join(tmpDir, 'cli')
+      const hintDir = path.join(tmpDir, '.forge', 'cli')
       const hintPath = path.join(hintDir, 'install-hint')
       mkdirSync(hintDir, { recursive: true })
       writeFileSync(
@@ -359,14 +370,14 @@ describe('verifyCliInstall', () => {
       writeFileSync(shimPath, realShim, 'utf8')
       chmodSync(shimPath, 0o755)
 
-      const result = verifyCliInstall(shimPath)
+      const result = verifyCliInstall()
       expect(result.ok).toBe(true)
       expect(result.output).toContain('mock-forge 2.0.0')
     })
 
     it('runs a real generated shim that falls back when hint is stale', () => {
       // Hint points to nonexistent paths → shim should fall through to fallback
-      const hintDir = path.join(tmpDir, 'cli')
+      const hintDir = path.join(tmpDir, '.forge', 'cli')
       const hintPath = path.join(hintDir, 'install-hint')
       mkdirSync(hintDir, { recursive: true })
       writeFileSync(
@@ -391,7 +402,7 @@ describe('verifyCliInstall', () => {
       writeFileSync(shimPath, realShim, 'utf8')
       chmodSync(shimPath, 0o755)
 
-      const result = verifyCliInstall(shimPath)
+      const result = verifyCliInstall()
       expect(result.ok).toBe(true)
       expect(result.output).toContain('fallback 3.0.0')
     })

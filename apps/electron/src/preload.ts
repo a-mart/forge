@@ -49,7 +49,7 @@ contextBridge.exposeInMainWorld('electronBridge', {
     pathInstructions: string | null
     error?: string
   }> => ipcRenderer.invoke('install-cli'),
-  verifyCliInstall: (installedPath?: string): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('verify-cli-install', installedPath),
+  verifyCliInstall: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('verify-cli-install'),
   onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => {
       callback(status)
