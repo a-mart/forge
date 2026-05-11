@@ -1974,6 +1974,109 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('routes active-tool snapshots to exact subscribed sessions', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
+    const rootWorker = await manager.spawnAgent('manager', { agentId: 'Root Worker' })
+    const secondaryWorker = await manager.spawnAgent(secondarySession.agentId, { agentId: 'Secondary Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const rootClient = new WebSocket(`ws://${config.host}:${config.port}`)
+    const rootEvents: ServerEvent[] = []
+    const secondaryEvents: ServerEvent[] = []
+
+    rootClient.on('message', (raw) => {
+      rootEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(rootClient, 'open')
+    rootClient.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(rootEvents, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    const secondaryClient = new WebSocket(`ws://${config.host}:${config.port}`)
+    secondaryClient.on('message', (raw) => {
+      secondaryEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+    await once(secondaryClient, 'open')
+    secondaryClient.send(JSON.stringify({ type: 'subscribe', agentId: secondarySession.agentId }))
+    await waitForEvent(
+      secondaryEvents,
+      (event) => event.type === 'ready' && event.subscribedAgentId === secondarySession.agentId,
+    )
+
+    const rootBaseline = rootEvents.length
+    const secondaryBaseline = secondaryEvents.length
+    await manager.handleRuntimeSessionEvent(secondaryWorker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'secondary-tool',
+      args: { command: 'echo secondary' },
+    })
+    expect(manager.getSessionActiveToolsSnapshot(secondarySession.agentId).activeTools).toMatchObject([
+      { actorAgentId: secondaryWorker.agentId, toolCallId: 'secondary-tool' },
+    ])
+
+    await waitForEventAfter(
+      secondaryEvents,
+      secondaryBaseline,
+      (event) =>
+        event.type === 'session_active_tools_snapshot' &&
+        event.sessionAgentId === secondarySession.agentId &&
+        event.activeTools.some((tool) => tool.actorAgentId === secondaryWorker.agentId),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(
+      rootEvents
+        .slice(rootBaseline)
+        .some((event) => event.type === 'session_active_tools_snapshot' && event.sessionAgentId === secondarySession.agentId),
+    ).toBe(false)
+
+    const rootSecondBaseline = rootEvents.length
+    const secondarySecondBaseline = secondaryEvents.length
+    await manager.handleRuntimeSessionEvent(rootWorker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'root-tool',
+      args: { command: 'echo root' },
+    })
+    expect(manager.getSessionActiveToolsSnapshot('manager').activeTools).toMatchObject([
+      { actorAgentId: rootWorker.agentId, toolCallId: 'root-tool' },
+    ])
+
+    await waitForEventAfter(
+      rootEvents,
+      rootSecondBaseline,
+      (event) =>
+        event.type === 'session_active_tools_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.activeTools.some((tool) => tool.actorAgentId === rootWorker.agentId),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(
+      secondaryEvents
+        .slice(secondarySecondBaseline)
+        .some((event) => event.type === 'session_active_tools_snapshot' && event.sessionAgentId === 'manager'),
+    ).toBe(false)
+
+    rootClient.close()
+    await once(rootClient, 'close')
+    secondaryClient.close()
+    await once(secondaryClient, 'close')
+    await server.stop()
+  })
+
   it('returns session workers on demand over websocket', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)

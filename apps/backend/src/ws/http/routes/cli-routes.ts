@@ -68,7 +68,7 @@ function buildCliCapabilities(runtimeTarget: RuntimeTarget): CliCapabilities {
       cliSourceContext: true,
       cliSessionMetadata: true,
       choiceOwnerLookup: false,
-      activeToolSnapshot: true,
+      activeToolSnapshot: false,
       projectAgentRunTarget: false,
       builderRuntimeOnly: true,
     },

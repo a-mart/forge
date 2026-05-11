@@ -255,7 +255,7 @@ export class SwarmWebSocketServer {
 
   private readonly onSessionActiveToolsSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_active_tools_snapshot") return;
-    this.wsHandler.broadcastToSession(event.sessionAgentId, event);
+    this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
   };
 
   private readonly onAgentsSnapshot = (event: ServerEvent): void => {
