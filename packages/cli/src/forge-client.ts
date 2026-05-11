@@ -254,6 +254,7 @@ export class ForgeClient implements ForgeClientLike {
         dispatchGateStartedAt: Date.now(),
         timeoutMs: options.timeoutMs,
         requirePostDispatch: true,
+        projectAgentHandle: options.target.kind === 'project_agent' ? options.target.handle : null,
       })
       tracker.attach(connection)
       try {
@@ -627,6 +628,7 @@ class RunWaitTracker {
   private readonly requirePostDispatch: boolean
   private readonly dispatchGateStartedAt: number
   private readonly sessionAgentId: string
+  private readonly projectAgentHandle: string | null
   private profileId: string | undefined
   private managerStatus = 'idle'
   private pendingCount = 0
@@ -640,12 +642,19 @@ class RunWaitTracker {
 
   constructor(
     ready: CliHeadlessReadyEvent,
-    options: { startedAt: number; dispatchGateStartedAt?: number; timeoutMs?: number; requirePostDispatch: boolean },
+    options: {
+      startedAt: number
+      dispatchGateStartedAt?: number
+      timeoutMs?: number
+      requirePostDispatch: boolean
+      projectAgentHandle?: string | null
+    },
   ) {
     this.startedAt = options.startedAt
     this.dispatchGateStartedAt = options.dispatchGateStartedAt ?? options.startedAt
     this.timeoutMs = options.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
     this.requirePostDispatch = options.requirePostDispatch
+    this.projectAgentHandle = options.projectAgentHandle ?? null
     this.sessionAgentId = ready.subscribed.agentId ?? ready.targetAgent?.agentId ?? ''
     this.profileId = ready.subscribed.profileId ?? ready.profile?.profileId ?? ready.targetAgent?.profileId
     this.managerStatus = ready.status?.status ?? ready.targetAgent?.status ?? 'idle'
@@ -765,7 +774,7 @@ class RunWaitTracker {
       status,
       sessionAgentId: this.sessionAgentId,
       profileId: this.profileId,
-      projectAgentHandle: null,
+      projectAgentHandle: this.projectAgentHandle,
       finalMessage: this.finalMessage,
       blocked,
       timedOut,
