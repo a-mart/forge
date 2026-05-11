@@ -41,6 +41,15 @@ contextBridge.exposeInMainWorld('electronBridge', {
   setSleepBlockerSettings: (patch: SleepBlockerSettingsPatch): Promise<SleepBlockerStatus | null> =>
     ipcRenderer.invoke('set-sleep-blocker-settings', patch),
   revealInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('reveal-in-folder', filePath),
+  installCli: (): Promise<{
+    success: boolean
+    installedPath: string
+    binDir: string
+    pathIncluded: boolean
+    pathInstructions: string | null
+    error?: string
+  }> => ipcRenderer.invoke('install-cli'),
+  verifyCliInstall: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('verify-cli-install'),
   onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => {
       callback(status)

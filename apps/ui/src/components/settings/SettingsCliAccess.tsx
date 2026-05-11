@@ -1,19 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
+  CheckCircle2,
   Copy,
+  Download,
   Key,
   Loader2,
   Plus,
   RefreshCw,
+  Terminal,
   Trash2,
+  XCircle,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { SettingsSection } from './settings-row'
+import { isElectron, type CliInstallResult } from '@/lib/electron-bridge'
 import type { CliAccessKeyDescriptor } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 import {
@@ -231,7 +236,21 @@ function KeyRow({
 /*  Main component                                                     */
 /* ------------------------------------------------------------------ */
 
+/** Derive the backend HTTP base URL from the wsUrl prop, respecting the Electron bridge. */
+function resolveBackendBaseUrl(wsUrl: string): string {
+  // In Electron, the ws URL points to the real backend — use it.
+  // On web, the ws URL also resolves correctly via protocol swap.
+  try {
+    const parsed = new URL(wsUrl)
+    parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
+    return parsed.origin
+  } catch {
+    return 'http://127.0.0.1:47187'
+  }
+}
+
 export function SettingsCliAccess({
+  wsUrl,
   apiClient,
 }: {
   wsUrl: string
@@ -430,28 +449,171 @@ export function SettingsCliAccess({
         )}
       </SettingsSection>
 
-      <SettingsSection
-        label="CLI Installation"
-        description="Install the Forge CLI to interact with this backend from a terminal."
-      >
-        <div className="space-y-3 text-sm text-muted-foreground">
-          <div className="space-y-1.5">
-            <p className="font-medium text-foreground text-xs">npm (requires Node.js 22+)</p>
-            <code className="block rounded-md bg-muted/50 px-3 py-2 text-xs font-mono">
-              npm install -g @forge/cli
-            </code>
-          </div>
-          <div className="space-y-1.5">
-            <p className="font-medium text-foreground text-xs">Configure</p>
-            <code className="block rounded-md bg-muted/50 px-3 py-2 text-xs font-mono whitespace-pre">{`forge config set url ${typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:47187'}\nforge config set api-key <your-key>`}</code>
-          </div>
-          <p className="text-xs text-muted-foreground/70">
-            Or set <code className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[11px]">FORGE_URL</code> and{' '}
-            <code className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[11px]">FORGE_CLI_API_KEY</code> environment
-            variables.
-          </p>
-        </div>
-      </SettingsSection>
+      <CliInstallSection wsUrl={wsUrl} />
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  CLI Installation section                                           */
+/* ------------------------------------------------------------------ */
+
+function CliInstallSection({ wsUrl }: { wsUrl: string }) {
+  const [installing, setInstalling] = useState(false)
+  const [installResult, setInstallResult] = useState<CliInstallResult | null>(null)
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; output: string } | null>(null)
+  const isDesktop = useMemo(() => isElectron(), [])
+  const backendUrl = useMemo(() => resolveBackendBaseUrl(wsUrl), [wsUrl])
+
+  const handleDesktopInstall = useCallback(async () => {
+    const bridge = window.electronBridge
+    if (!bridge?.installCli) return
+
+    setInstalling(true)
+    setInstallResult(null)
+    setVerifyResult(null)
+
+    try {
+      const result = await bridge.installCli()
+      setInstallResult(result)
+
+      // Auto-verify if install succeeded
+      if (result.success && bridge.verifyCliInstall) {
+        const verify = await bridge.verifyCliInstall()
+        setVerifyResult(verify)
+      }
+    } catch (err) {
+      setInstallResult({
+        success: false,
+        installedPath: '',
+        binDir: '',
+        pathIncluded: false,
+        pathInstructions: null,
+        error: err instanceof Error ? err.message : 'Install failed',
+      })
+    } finally {
+      setInstalling(false)
+    }
+  }, [])
+
+  return (
+    <SettingsSection
+      label="CLI Installation"
+      description="Install the Forge CLI to interact with this backend from a terminal."
+    >
+      {/* Desktop install */}
+      {isDesktop && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              disabled={installing}
+              onClick={handleDesktopInstall}
+            >
+              {installing ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              {installResult?.success ? 'Reinstall CLI' : 'Install CLI'}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              No Node.js required — uses the bundled Forge Desktop runtime.
+            </span>
+          </div>
+
+          {/* Install result */}
+          {installResult && (
+            <div
+              className={`rounded-md border p-3 space-y-2 ${
+                installResult.success
+                  ? 'border-emerald-500/30 bg-emerald-500/5'
+                  : 'border-red-500/30 bg-red-500/5'
+              }`}
+            >
+              {installResult.success ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
+                    <span className="text-sm font-medium text-foreground">CLI installed</span>
+                  </div>
+                  <div className="space-y-1 pl-6">
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-medium">Path:</span>{' '}
+                      <code className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[11px]">
+                        {installResult.installedPath}
+                      </code>
+                    </p>
+                    {installResult.pathIncluded ? (
+                      <p className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                        <Check className="size-3" />
+                        Already on PATH — run <code className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[11px]">forge --version</code> to verify.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="size-3" />
+                          Not on PATH yet. Add the directory to use <code className="font-mono">forge</code> from any terminal:
+                        </p>
+                        <pre className="rounded-md bg-muted/50 px-3 py-2 text-xs font-mono whitespace-pre-wrap">
+                          {installResult.pathInstructions}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Verify result */}
+                  {verifyResult && (
+                    <div className="pl-6">
+                      {verifyResult.ok ? (
+                        <p className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                          <Terminal className="size-3" />
+                          Verified: forge {verifyResult.output}
+                        </p>
+                      ) : (
+                        <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                          <XCircle className="size-3" />
+                          Verification issue: {verifyResult.output}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <XCircle className="size-4 shrink-0 text-red-500" />
+                  <span className="text-sm text-red-600 dark:text-red-400">
+                    {installResult.error ?? 'Installation failed'}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <Separator />
+        </div>
+      )}
+
+      {/* npm / manual install instructions */}
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <div className="space-y-1.5">
+          <p className="font-medium text-foreground text-xs">npm (requires Node.js 22+)</p>
+          <code className="block rounded-md bg-muted/50 px-3 py-2 text-xs font-mono">
+            npm install -g @forge/cli
+          </code>
+        </div>
+        <div className="space-y-1.5">
+          <p className="font-medium text-foreground text-xs">Configure</p>
+          <code className="block rounded-md bg-muted/50 px-3 py-2 text-xs font-mono whitespace-pre">{`forge config set url ${backendUrl}\nforge config set api-key <your-key>`}</code>
+        </div>
+        <p className="text-xs text-muted-foreground/70">
+          Or set <code className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[11px]">FORGE_URL</code> and{' '}
+          <code className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[11px]">FORGE_CLI_API_KEY</code> environment
+          variables.
+        </p>
+      </div>
+    </SettingsSection>
   )
 }

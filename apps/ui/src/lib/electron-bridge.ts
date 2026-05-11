@@ -25,6 +25,21 @@ export type UpdateStatus =
   | { type: 'downloaded'; version?: string }
   | { type: 'error'; message?: string }
 
+export interface CliInstallResult {
+  /** Whether the shim was installed successfully. */
+  success: boolean
+  /** Absolute path to the installed shim. */
+  installedPath: string
+  /** Directory containing the shim. */
+  binDir: string
+  /** Whether binDir is already present on PATH. */
+  pathIncluded: boolean
+  /** Shell/PowerShell instructions for adding to PATH, or null when already included. */
+  pathInstructions: string | null
+  /** Error message when success is false. */
+  error?: string
+}
+
 export interface ElectronBridge {
   /** HTTP base URL for the backend, e.g. "http://127.0.0.1:47187" */
   backendUrl: string
@@ -58,6 +73,10 @@ export interface ElectronBridge {
   onUpdateStatus?(callback: (status: UpdateStatus) => void): () => void
   /** Reveal a file in the native file manager (Finder / File Explorer). */
   revealInFolder?(filePath: string): Promise<void>
+  /** Install (or update) the Forge CLI shim for desktop. Returns install result with PATH instructions. */
+  installCli?(): Promise<CliInstallResult>
+  /** Verify the installed CLI shim can run. Returns version string on success. */
+  verifyCliInstall?(): Promise<{ ok: boolean; output: string }>
   /** Get current sleep blocker settings and status. */
   getSleepBlockerSettings?(): Promise<SleepBlockerStatus>
   /** Update sleep blocker settings. Returns updated status. */

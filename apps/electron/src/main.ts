@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel } from './auto-updater.js'
+import { installCli, verifyCliInstall, writeInstallHint, type CliInstallResult } from './cli-install.js'
 import { fixPath } from './fix-path.js'
 import { SleepBlockerService, type SleepBlockerSettingsPatch, type SleepBlockerStatus } from './sleep-blocker.js'
 import { loadWindowState, trackWindowState } from './window-state.js'
@@ -488,6 +489,14 @@ if (!hasSingleInstanceLock) {
     return sleepBlockerService?.updateSettings(patch) ?? null
   })
 
+  ipcMain.handle('install-cli', (): CliInstallResult => {
+    return installCli()
+  })
+
+  ipcMain.handle('verify-cli-install', (): { ok: boolean; output: string } => {
+    return verifyCliInstall()
+  })
+
   app.whenReady().then(async () => {
     nativeTheme.themeSource = 'dark'
     fixPath()
@@ -512,6 +521,9 @@ if (!hasSingleInstanceLock) {
       app.exit(1)
       return
     }
+
+    // Write CLI install hint on every launch so the shim can find the current app
+    writeInstallHint()
 
     mainWindow = createMainWindow()
     initAutoUpdater({
