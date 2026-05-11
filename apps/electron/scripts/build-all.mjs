@@ -249,6 +249,17 @@ async function stageCliArtifact() {
   await mkdir(cliStageDir, { recursive: true })
   await cp(cliBuiltEntry, cliStagedEntry)
 
+  // The CLI bundle uses ESM syntax (import/import.meta), but the nearest
+  // ancestor package.json (apps/electron/package.json) declares "type": "commonjs".
+  // Without an explicit ESM marker, Node treats the .js file as CJS and fails.
+  // Drop a minimal package.json so both the build-time preflight and the
+  // packaged Electron app (resources/cli/) resolve the correct module type.
+  await writeFile(
+    path.join(cliStageDir, 'package.json'),
+    JSON.stringify({ type: 'module' }) + '\n',
+    'utf8',
+  )
+
   console.log(`[electron/build-all] Staged CLI artifact at ${path.relative(electronDir, cliStagedEntry)}`)
 }
 

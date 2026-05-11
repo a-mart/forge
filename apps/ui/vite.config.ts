@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type PluginOption } from 'vite'
 import { devtools } from '@tanstack/devtools-vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
@@ -66,6 +66,19 @@ const config = defineConfig(({ mode }) => {
             }),
           ]),
       nitro({ rollupConfig: { external: [/^@sentry\//] } }),
+      // Nitro's preview plugin defaults port to 3000 when the incoming value
+      // is 0 (falsy).  TanStack Start's SPA prerender calls vite.preview()
+      // with port 0 expecting a random port, but Nitro overrides it to 3000.
+      // If another process already occupies port 3000 (e.g. Cursor IDE) the
+      // prerender fetch hangs indefinitely.  This plugin runs after Nitro's
+      // config hook and restores port 0 so the OS assigns a free port.
+      {
+        name: 'fix-prerender-preview-port',
+        apply: (_config, configEnv) => !!configEnv.isPreview,
+        config() {
+          return { preview: { port: 0 } }
+        },
+      } satisfies PluginOption,
       // this is the plugin that enables path aliases
       viteTsConfigPaths({
         projects: ['./tsconfig.json'],
