@@ -27,7 +27,8 @@ export function isProtectedWebTranscriptEntry(entry: ConversationEntryEvent): bo
     return false;
   }
 
-  return (entry.sourceContext?.channel ?? "web") === "web";
+  const channel = entry.sourceContext?.channel ?? "web";
+  return channel === "web" || channel === "cli";
 }
 
 export function trimConversationHistory(entries: ConversationEntryEvent[]): void {

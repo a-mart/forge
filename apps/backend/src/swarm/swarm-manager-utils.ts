@@ -1352,7 +1352,7 @@ export function parseCompactSlashCommand(text: string): { customInstructions?: s
 
 export function normalizeMessageTargetContext(input: MessageTargetContext): MessageTargetContext {
   return {
-    channel: input.channel === "telegram" ? input.channel : "web",
+    channel: normalizeMessageChannel(input.channel),
     channelId: normalizeOptionalMetadataValue(input.channelId),
     userId: normalizeOptionalMetadataValue(input.userId),
     threadTs: normalizeOptionalMetadataValue(input.threadTs),
@@ -1362,7 +1362,7 @@ export function normalizeMessageTargetContext(input: MessageTargetContext): Mess
 
 export function normalizeMessageSourceContext(input: MessageSourceContext): MessageSourceContext {
   return {
-    channel: input.channel === "telegram" ? input.channel : "web",
+    channel: normalizeMessageChannel(input.channel),
     channelId: normalizeOptionalMetadataValue(input.channelId),
     userId: normalizeOptionalMetadataValue(input.userId),
     messageId: normalizeOptionalMetadataValue(input.messageId),
@@ -1377,6 +1377,14 @@ export function normalizeMessageSourceContext(input: MessageSourceContext): Mess
         : undefined,
     teamId: normalizeOptionalMetadataValue(input.teamId)
   };
+}
+
+function normalizeMessageChannel(channel: MessageSourceContext["channel"]): MessageSourceContext["channel"] {
+  if (channel === "telegram" || channel === "cli") {
+    return channel;
+  }
+
+  return "web";
 }
 
 export function normalizeMemoryTemplateLines(content: string): string[] {

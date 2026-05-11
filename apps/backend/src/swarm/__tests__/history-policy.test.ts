@@ -92,10 +92,14 @@ describe("history policy", () => {
     expect(shouldPersistConversationEntry(choice("choice"))).toBe(true);
   });
 
-  it("identifies protected web transcript entries", () => {
+  it("identifies protected web and CLI transcript entries", () => {
     expect(isProtectedWebTranscriptEntry(message("project", { source: "project_agent_input" }))).toBe(true);
     expect(isProtectedWebTranscriptEntry(message("web-user", { source: "user_input" }))).toBe(true);
     expect(isProtectedWebTranscriptEntry(message("web-assistant", { source: "speak_to_user" }))).toBe(true);
+    expect(isProtectedWebTranscriptEntry(message("cli-user", {
+      source: "user_input",
+      sourceContext: { channel: "cli" }
+    }))).toBe(true);
     expect(isProtectedWebTranscriptEntry(message("telegram-user", {
       source: "user_input",
       sourceContext: { channel: "telegram" }
@@ -109,17 +113,18 @@ describe("history policy", () => {
     const entries: ConversationEntryEvent[] = [
       message("protected-1", { source: "user_input" }),
       agentActivity("remove-1"),
+      message("protected-cli", { source: "user_input", sourceContext: { channel: "cli" } }),
       message("protected-2", { source: "speak_to_user" }),
       tool("remove-2", "tool_execution_start"),
       message("remove-3", { source: "system" }),
-      ...Array.from({ length: MAX_CONVERSATION_HISTORY - 2 }, (_, index) => message(`tail-${index}`, { source: "user_input" }))
+      ...Array.from({ length: MAX_CONVERSATION_HISTORY - 3 }, (_, index) => message(`tail-${index}`, { source: "user_input" }))
     ];
 
     expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY + overflow);
     trimConversationHistory(entries);
 
     expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY);
-    expect(ids(entries).slice(0, 3)).toEqual(["protected-1", "protected-2", "tail-0"]);
+    expect(ids(entries).slice(0, 4)).toEqual(["protected-1", "protected-cli", "protected-2", "tail-0"]);
     expect(ids(entries)).not.toContain("remove-1");
     expect(ids(entries)).not.toContain("remove-2");
     expect(ids(entries)).not.toContain("remove-3");

@@ -6,6 +6,7 @@ import {
   type AgentSessionSurface,
   type ChoiceRequestEvent,
   type CollaborationAuthor,
+  type MessageChannel as ProtocolMessageChannel,
   type ManagerProfile,
   type ProjectAgentInfo,
   type ProjectAgentMessageContext,
@@ -96,7 +97,7 @@ export type RequestedDeliveryMode = "auto" | "followUp" | "steer";
 
 export type AcceptedDeliveryMode = "prompt" | "followUp" | "steer";
 
-export type MessageChannel = "web" | "telegram";
+export type MessageChannel = ProtocolMessageChannel;
 
 export interface MessageSourceContext {
   channel: MessageChannel;

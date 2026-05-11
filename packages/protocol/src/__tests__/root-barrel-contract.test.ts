@@ -152,7 +152,7 @@ const cliCommand = {
 
 const cliRunResult = {
   status: 'success',
-  sessionId: 'agent-1',
+  sessionAgentId: 'agent-1',
   profileId: 'profile-1',
   projectAgentHandle: null,
   finalMessage: 'Done',

@@ -367,7 +367,7 @@ export interface CliBlockedChoiceResult {
 
 export interface CliRunResult {
   status: CliRunStatus
-  sessionId: string
+  sessionAgentId: string
   profileId?: string
   projectAgentHandle?: string | null
   finalMessage?: string | null

@@ -747,7 +747,7 @@ describe("parseCompactSlashCommand", () => {
 });
 
 describe("normalizeMessageTargetContext / normalizeMessageSourceContext", () => {
-  it("defaults non-telegram channels to web", () => {
+  it("normalizes web metadata", () => {
     expect(
       normalizeMessageTargetContext({
         channel: "web",
@@ -774,6 +774,27 @@ describe("normalizeMessageTargetContext / normalizeMessageSourceContext", () => 
         teamId: "t"
       }).channel
     ).toBe("telegram");
+  });
+
+  it("preserves cli source and target channels", () => {
+    expect(normalizeMessageSourceContext({ channel: "cli", userId: "  cli-user  " })).toEqual({
+      channel: "cli",
+      channelId: undefined,
+      userId: "cli-user",
+      messageId: undefined,
+      threadTs: undefined,
+      integrationProfileId: undefined,
+      channelType: undefined,
+      teamId: undefined
+    });
+
+    expect(normalizeMessageTargetContext({ channel: "cli", userId: "  cli-user  " })).toEqual({
+      channel: "cli",
+      channelId: undefined,
+      userId: "cli-user",
+      threadTs: undefined,
+      integrationProfileId: undefined
+    });
   });
 });
 

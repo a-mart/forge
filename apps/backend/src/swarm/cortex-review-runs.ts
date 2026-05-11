@@ -394,6 +394,6 @@ function isMessageSourceContext(value: unknown): value is MessageSourceContext {
   }
 
   const candidate = value as Partial<MessageSourceContext>;
-  return candidate.channel === "web" || candidate.channel === "telegram";
+  return candidate.channel === "web" || candidate.channel === "telegram" || candidate.channel === "cli";
 }
 
