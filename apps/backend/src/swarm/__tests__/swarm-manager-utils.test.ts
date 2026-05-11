@@ -394,20 +394,28 @@ describe("validateAgentDescriptor", () => {
     }
   });
 
-  it("validates optional cli session metadata", () => {
+  it("validates and sanitizes optional cli session metadata", () => {
     const cli = {
       createdBy: "forge-cli" as const,
-      runId: "run-1",
+      runId: "  run-1  ",
       command: "sessions create" as const,
-      startedAt: "2026-01-01T00:00:00.000Z",
-      invocationCwd: "/tmp/project",
-      label: "CLI Session"
-    };
+      startedAt: "  2026-01-01T00:00:00.000Z  ",
+      invocationCwd: "   ",
+      label: "  CLI Session  ",
+      extraSecret: "drop-me"
+    } as AgentDescriptor["cli"] & { extraSecret: string };
 
     const accepted = validateAgentDescriptor(baseDescriptor({ cli }));
     expect(typeof accepted).not.toBe("string");
     if (typeof accepted !== "string") {
-      expect(accepted.cli).toEqual(cli);
+      expect(accepted.cli).toEqual({
+        createdBy: "forge-cli",
+        runId: "run-1",
+        command: "sessions create",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        label: "CLI Session"
+      });
+      expect(JSON.stringify(accepted.cli)).not.toContain("drop-me");
     }
 
     expect(

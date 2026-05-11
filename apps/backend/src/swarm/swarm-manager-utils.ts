@@ -49,7 +49,7 @@ const SYNTHETIC_PI_MODEL_BLUEPRINTS: Readonly<Record<string, Readonly<Record<str
 };
 const VALID_PERSISTED_PROJECT_AGENT_CAPABILITIES = new Set<string>(PROJECT_AGENT_CAPABILITIES);
 const VALID_PERSISTED_SESSION_SURFACES = new Set(["builder", "collab"]);
-const VALID_PERSISTED_CLI_SESSION_COMMANDS = new Set(["run", "launch", "sessions create"]);
+const VALID_PERSISTED_CLI_SESSION_COMMANDS = new Set<CliSessionMetadata["command"]>(["run", "launch", "sessions create"]);
 const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "idle",
   "streaming",
@@ -377,10 +377,12 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return 'collab metadata must be omitted unless sessionSurface is "collab"';
   }
 
+  let normalizedCli: CliSessionMetadata | undefined;
   if (value.cli !== undefined) {
-    const cliError = validatePersistedCliSessionMetadata(value.cli);
-    if (cliError) {
-      return cliError;
+    try {
+      normalizedCli = sanitizeCliSessionMetadata(value.cli);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
     }
   }
 
@@ -484,6 +486,7 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
       modelId: descriptor.model.modelId,
       thinkingLevel: descriptor.model.thinkingLevel
     },
+    ...(value.cli !== undefined ? { cli: normalizedCli } : {}),
     ...(normalizedProjectAgent !== descriptor.projectAgent ? { projectAgent: normalizedProjectAgent } : {})
   };
 }
@@ -504,36 +507,62 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function validatePersistedCliSessionMetadata(value: unknown): string | undefined {
+export function sanitizeCliSessionMetadata(value: unknown): CliSessionMetadata | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
   if (!isRecord(value)) {
-    return "cli must be an object when provided";
+    throw new Error("cli must be an object when provided");
   }
 
   if (value.createdBy !== "forge-cli") {
-    return 'cli.createdBy must be "forge-cli"';
+    throw new Error('cli.createdBy must be "forge-cli"');
   }
 
-  if (!isNonEmptyString(value.runId)) {
-    return "cli.runId must be a non-empty string";
+  const runId = normalizeRequiredCliString(value.runId, "cli.runId");
+  const command = normalizeRequiredCliString(value.command, "cli.command");
+  if (!isCliSessionCommand(command)) {
+    throw new Error('cli.command must be one of "run", "launch", or "sessions create"');
   }
 
-  if (!isNonEmptyString(value.command) || !VALID_PERSISTED_CLI_SESSION_COMMANDS.has(value.command)) {
-    return 'cli.command must be one of "run", "launch", or "sessions create"';
+  const startedAt = normalizeRequiredCliString(value.startedAt, "cli.startedAt");
+  const invocationCwd = normalizeOptionalCliString(value.invocationCwd, "cli.invocationCwd");
+  const label = normalizeOptionalCliString(value.label, "cli.label");
+
+  return {
+    createdBy: "forge-cli",
+    runId,
+    command,
+    startedAt,
+    ...(invocationCwd !== undefined ? { invocationCwd } : {}),
+    ...(label !== undefined ? { label } : {})
+  };
+}
+
+function isCliSessionCommand(value: string): value is CliSessionMetadata["command"] {
+  return VALID_PERSISTED_CLI_SESSION_COMMANDS.has(value as CliSessionMetadata["command"]);
+}
+
+function normalizeRequiredCliString(value: unknown, fieldName: string): string {
+  if (!isNonEmptyString(value)) {
+    throw new Error(`${fieldName} must be a non-empty string`);
   }
 
-  if (!isNonEmptyString(value.startedAt)) {
-    return "cli.startedAt must be a non-empty string";
+  return value.trim();
+}
+
+function normalizeOptionalCliString(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
   }
 
-  if (value.invocationCwd !== undefined && typeof value.invocationCwd !== "string") {
-    return "cli.invocationCwd must be a string when provided";
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string when provided`);
   }
 
-  if (value.label !== undefined && typeof value.label !== "string") {
-    return "cli.label must be a string when provided";
-  }
-
-  return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export function isEnoentError(error: unknown): boolean {

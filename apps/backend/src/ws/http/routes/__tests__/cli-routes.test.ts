@@ -8,6 +8,7 @@ import {
   parseP0HttpRouteJsonResponse as parseJsonResponse,
 } from "../../../../test-support/ws-integration-harness.js";
 import { CliAccessService } from "../../../../swarm/cli-access-service.js";
+import type { AgentDescriptor, ManagerProfile } from "../../../../swarm/types.js";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 import { SwarmWebSocketServer } from "../../../server.js";
 import { createCliRoutes } from "../cli-routes.js";
@@ -29,7 +30,7 @@ describe("CLI routes and bearer auth", () => {
   it("requires bearer auth for /api/cli/* and returns capabilities for a valid stored key", async () => {
     const { service } = await makeCliAccessService();
     const generated = await service.generateKey({ name: "Route test" });
-    const server = await createCliRouteTestServer(service);
+    const server = await createCliRouteTestServer(service, createCliRouteState());
 
     const missing = await fetch(`${server.baseUrl}/api/cli/capabilities`);
     expect(missing.status).toBe(401);
@@ -61,7 +62,10 @@ describe("CLI routes and bearer auth", () => {
           bearerAuth: true,
           headlessWs: false,
           cliSourceContext: true,
-          cliSessionMetadata: false,
+          cliSessionMetadata: true,
+          choiceOwnerLookup: false,
+          activeToolSnapshot: false,
+          projectAgentRunTarget: false,
           builderRuntimeOnly: true,
         },
       },
@@ -81,7 +85,7 @@ describe("CLI routes and bearer auth", () => {
 
   it("allows authorization in CORS preflight responses", async () => {
     const { service } = await makeCliAccessService();
-    const server = await createCliRouteTestServer(service);
+    const server = await createCliRouteTestServer(service, createCliRouteState());
 
     const response = await fetch(`${server.baseUrl}/api/cli/capabilities`, {
       method: "OPTIONS",
@@ -93,6 +97,143 @@ describe("CLI routes and bearer auth", () => {
 
     expect(response.status).toBe(204);
     expect(response.headers.get("access-control-allow-headers")).toContain("authorization");
+  });
+
+  it("requires bearer auth for every CLI read endpoint", async () => {
+    const { service } = await makeCliAccessService();
+    const server = await createCliRouteTestServer(service, createCliRouteState());
+    const endpoints = [
+      "/api/cli/status",
+      "/api/cli/profiles",
+      "/api/cli/profiles/profile-a",
+      "/api/cli/agents?profileId=profile-a",
+      "/api/cli/agents/session-a",
+      "/api/cli/sessions?profileId=profile-a",
+      "/api/cli/sessions/session-a",
+      "/api/cli/project-agents?profileId=profile-a",
+      "/api/cli/project-agents/docs?profileId=profile-a",
+    ];
+
+    for (const endpoint of endpoints) {
+      await expect(parseJsonResponse(await fetch(`${server.baseUrl}${endpoint}`))).resolves.toMatchObject({
+        status: 401,
+        json: { error: { code: "missing_authorization", status: 401 } },
+      });
+      await expect(
+        parseJsonResponse(await fetch(`${server.baseUrl}${endpoint}`, { headers: { authorization: "Bearer invalid" } }))
+      ).resolves.toMatchObject({
+        status: 401,
+        json: { error: { code: "invalid_token", status: 401 } },
+      });
+    }
+  });
+
+  it("serves CLI status and read-only profile, session, agent, and project-agent DTOs", async () => {
+    const { service } = await makeCliAccessService();
+    const generated = await service.generateKey({ name: "Read route test" });
+    const server = await createCliRouteTestServer(service, createCliRouteState());
+    const headers = { authorization: `Bearer ${generated.plaintextKey}` };
+
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/status`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: {
+        status: "ok",
+        runtimeTarget: "builder",
+        capabilities: {
+          available: true,
+          features: {
+            bearerAuth: true,
+            cliSourceContext: true,
+            cliSessionMetadata: true,
+            headlessWs: false,
+          },
+        },
+        summary: { profileCount: 1, sessionCount: 2, agentCount: 3 },
+      },
+    });
+
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/profiles`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: { profiles: [{ profileId: "profile-a", displayName: "Profile A" }] },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/profiles/profile-a`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: { profile: { profileId: "profile-a", displayName: "Profile A" } },
+    });
+
+    const agents = await parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/agents?profileId=profile-a`, { headers }));
+    expect(agents.status).toBe(200);
+    expect((agents.json.agents as Array<Record<string, unknown>>).map((agent) => agent.agentId)).toEqual([
+      "session-a",
+      "worker-a",
+      "docs-agent",
+    ]);
+    expect(JSON.stringify(agents.json)).not.toContain("secret project prompt");
+    expect(JSON.stringify(agents.json)).not.toContain("secret session prompt");
+
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/agents/session-a`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: { agent: { agentId: "session-a", profileId: "profile-a" } },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/sessions?profileId=profile-a`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: { sessions: [{ agentId: "session-a" }, { agentId: "docs-agent" }] },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/sessions/session-a`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: { session: { agentId: "session-a", role: "manager" } },
+    });
+
+    const projectAgents = await parseJsonResponse(
+      await fetch(`${server.baseUrl}/api/cli/project-agents?profileId=profile-a`, { headers })
+    );
+    expect(projectAgents.status).toBe(200);
+    expect(projectAgents.json).toMatchObject({
+      projectAgents: [
+        {
+          profileId: "profile-a",
+          agentId: "docs-agent",
+          handle: "docs",
+          whenToUse: "Use for documentation.",
+          displayName: "Docs Agent",
+        },
+      ],
+    });
+    expect(JSON.stringify(projectAgents.json)).not.toContain("secret project prompt");
+    await expect(
+      parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/project-agents/docs?profileId=profile-a`, { headers }))
+    ).resolves.toMatchObject({
+      status: 200,
+      json: { projectAgent: { handle: "docs", agentId: "docs-agent" } },
+    });
+  });
+
+  it("uses stable ids only and excludes system/collaboration surfaces", async () => {
+    const { service } = await makeCliAccessService();
+    const generated = await service.generateKey({ name: "Stable ID test" });
+    const server = await createCliRouteTestServer(service, createCliRouteState());
+    const headers = { authorization: `Bearer ${generated.plaintextKey}` };
+
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/profiles/cortex`, { headers }))).resolves.toMatchObject({
+      status: 404,
+      json: { error: { code: "not_found" } },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/agents/Docs%20Agent`, { headers }))).resolves.toMatchObject({
+      status: 404,
+      json: { error: { code: "not_found" } },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/sessions/collab-session`, { headers }))).resolves.toMatchObject({
+      status: 404,
+      json: { error: { code: "not_found" } },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/agents/cortex-session`, { headers }))).resolves.toMatchObject({
+      status: 404,
+      json: { error: { code: "not_found" } },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/project-agents/Docs%20Agent?profileId=profile-a`, { headers }))).resolves.toMatchObject({
+      status: 404,
+      json: { error: { code: "not_found" } },
+    });
   });
 
   it("does not register CLI HTTP routes for collaboration runtime", async () => {
@@ -214,6 +355,77 @@ describe("CLI routes and bearer auth", () => {
   });
 });
 
+function createCliRouteState(): {
+  listProfiles(): ManagerProfile[];
+  listAgents(): AgentDescriptor[];
+} {
+  const profiles: ManagerProfile[] = [
+    {
+      profileId: "profile-a",
+      displayName: "Profile A",
+      defaultSessionAgentId: "session-a",
+      defaultModel: { provider: "openai-codex", modelId: "gpt-5.3-codex", thinkingLevel: "medium" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      profileId: "cortex",
+      displayName: "Cortex",
+      defaultSessionAgentId: "cortex-session",
+      defaultModel: { provider: "openai-codex", modelId: "gpt-5.3-codex", thinkingLevel: "medium" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      profileType: "system",
+    },
+  ];
+  const agents: AgentDescriptor[] = [
+    createRouteAgent({ agentId: "session-a", profileId: "profile-a", sessionLabel: "Session A" }),
+    createRouteAgent({ agentId: "worker-a", role: "worker", managerId: "session-a", profileId: "profile-a" }),
+    createRouteAgent({
+      agentId: "docs-agent",
+      profileId: "profile-a",
+      displayName: "Docs Agent",
+      sessionLabel: "Docs Agent",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Use for documentation.",
+        systemPrompt: "secret project prompt",
+        capabilities: ["create_session"],
+      },
+      sessionSystemPrompt: "secret session prompt",
+    }),
+    createRouteAgent({
+      agentId: "collab-session",
+      profileId: "profile-a",
+      sessionSurface: "collab",
+      collab: { workspaceId: "workspace", channelId: "channel" },
+    }),
+    createRouteAgent({ agentId: "cortex-session", profileId: "cortex" }),
+  ];
+
+  return {
+    listProfiles: () => profiles.map((profile) => ({ ...profile, defaultModel: { ...profile.defaultModel } })),
+    listAgents: () => agents.map((agent) => ({ ...agent, model: { ...agent.model } })),
+  };
+}
+
+function createRouteAgent(overrides: Partial<AgentDescriptor> & { agentId: string }): AgentDescriptor {
+  const role = overrides.role ?? "manager";
+  return {
+    agentId: overrides.agentId,
+    displayName: overrides.displayName ?? overrides.agentId,
+    role,
+    managerId: overrides.managerId ?? (role === "manager" ? overrides.agentId : "session-a"),
+    status: overrides.status ?? "idle",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    cwd: "/tmp/project",
+    model: { provider: "openai-codex", modelId: "gpt-5.3-codex", thinkingLevel: "medium" },
+    sessionFile: `/tmp/project/sessions/${overrides.agentId}.jsonl`,
+    ...overrides,
+  };
+}
+
 async function makeCliAccessService(): Promise<{ service: CliAccessService }> {
   const configHandle = await createTempConfig({ prefix: "cli-route-service-" });
   activeServers.push({
@@ -235,8 +447,11 @@ async function makeCliAccessService(): Promise<{ service: CliAccessService }> {
   };
 }
 
-async function createCliRouteTestServer(cliAccessService: CliAccessService): Promise<TestServer> {
-  const routes = createCliRoutes({ cliAccessService, runtimeTarget: "builder" });
+async function createCliRouteTestServer(
+  cliAccessService: CliAccessService,
+  swarmManager: ReturnType<typeof createCliRouteState>,
+): Promise<TestServer> {
+  const routes = createCliRoutes({ cliAccessService, runtimeTarget: "builder", swarmManager });
   const server = createServer((request, response) => {
     void handleRouteRequest(routes, request, response);
   });

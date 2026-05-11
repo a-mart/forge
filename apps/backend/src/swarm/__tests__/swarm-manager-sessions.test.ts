@@ -130,6 +130,47 @@ describe('SwarmManager', () => {
     expect(store.agents.find((agent) => agent.agentId === forked.sessionAgent.agentId)?.cli).toEqual(cli)
   })
 
+  it('sanitizes incoming CLI session metadata before persistence', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', {
+      label: 'Sanitized CLI Session',
+      cli: {
+        createdBy: 'forge-cli',
+        runId: '  shared-run-id  ',
+        command: 'launch',
+        startedAt: '  2026-01-01T00:00:00.000Z  ',
+        invocationCwd: '   ',
+        label: '  Sanitized Label  ',
+        extraSecret: 'drop-me',
+      } as AgentDescriptor['cli'] & { extraSecret: string },
+    })
+
+    expect(created.sessionAgent.cli).toEqual({
+      createdBy: 'forge-cli',
+      runId: 'shared-run-id',
+      command: 'launch',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      label: 'Sanitized Label',
+    })
+    expect(JSON.stringify(created.sessionAgent.cli)).not.toContain('drop-me')
+    const meta = await readSessionMeta(config.paths.dataDir, 'manager', created.sessionAgent.agentId)
+    expect(meta?.cli).toEqual(created.sessionAgent.cli)
+
+    await expect(
+      manager.createSession('manager', {
+        cli: {
+          createdBy: 'forge-cli',
+          runId: 'run-1',
+          command: 'delete',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        } as AgentDescriptor['cli'],
+      })
+    ).rejects.toThrow(/cli\.command/)
+  })
+
   it('createSession strips stale service-tier fields from profile default models', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

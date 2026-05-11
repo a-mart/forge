@@ -450,6 +450,7 @@ export class SwarmWebSocketServer {
         ? createCliRoutes({
             cliAccessService: this.cliAccessService,
             runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+            swarmManager: this.swarmManager,
           })
         : []),
       ...(this.collaborationSettingsService
