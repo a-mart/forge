@@ -493,8 +493,8 @@ if (!hasSingleInstanceLock) {
     return installCli()
   })
 
-  ipcMain.handle('verify-cli-install', (): { ok: boolean; output: string } => {
-    return verifyCliInstall()
+  ipcMain.handle('verify-cli-install', (_event, installedPath?: string): { ok: boolean; output: string } => {
+    return verifyCliInstall(installedPath)
   })
 
   app.whenReady().then(async () => {

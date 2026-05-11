@@ -1,286 +1,399 @@
 /**
  * Tests for the desktop CLI installation module.
  *
- * These tests validate shim content generation, hint file read/write,
- * PATH detection, and idempotent overwrite behavior.
- *
- * Note: Tests that exercise the full `installCli()` or `writeInstallHint()`
- * functions require the Electron `app` module and are not unit-testable here.
- * The functions tested below are the platform-specific generators and helpers
- * extracted via the module's internal logic.
+ * Exercises the real shim generators, hint serialization/parsing,
+ * PATH detection, verify-via-shim behavior, and Windows CMD stale-hint
+ * fallback. Mocks the Electron `app` module minimally.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 
-describe('cli-install shim content', () => {
-  // We test the shim content indirectly by validating the contract:
-  // the shims must reference the hint file, set ELECTRON_RUN_AS_NODE=1,
-  // and exec the Electron binary with the CLI resource path.
+// Mock Electron app module before importing cli-install
+vi.mock('electron', () => ({
+  app: {
+    isPackaged: false,
+    getPath: (name: string) => {
+      if (name === 'home') return os.homedir()
+      if (name === 'exe') return process.execPath
+      return os.tmpdir()
+    },
+    getVersion: () => '1.0.0-test',
+  },
+}))
 
-  describe('posix shim contract', () => {
-    it('should contain ELECTRON_RUN_AS_NODE=1', () => {
-      // The shim must set this env var to use Electron as a Node runtime
-      const shimContent = generateMockPosixShim()
-      expect(shimContent).toContain('ELECTRON_RUN_AS_NODE=1')
-    })
+// Import the real module — generators and helpers are exercised directly
+import {
+  generatePosixShim,
+  generateWindowsCmdShim,
+  generateWindowsPs1Shim,
+  parseInstallHintContent,
+  serializeInstallHint,
+  isBinDirOnPath,
+  verifyCliInstall,
+  SHIM_NAME_POSIX,
+  type InstallHint,
+} from '../cli-install.js'
 
-    it('should read from the hint file', () => {
-      const shimContent = generateMockPosixShim()
-      expect(shimContent).toContain('install-hint')
-      expect(shimContent).toContain('electronExePath')
-      expect(shimContent).toContain('cliResourcePath')
-    })
+/* ------------------------------------------------------------------ */
+/*  Real generator tests                                               */
+/* ------------------------------------------------------------------ */
 
-    it('should contain a fallback path', () => {
-      const shimContent = generateMockPosixShim()
-      expect(shimContent).toContain('/Applications/Forge.app')
-    })
+describe('generatePosixShim (real)', () => {
+  const hint = '/tmp/.forge/cli/install-hint'
+  const fallbackExe = '/Applications/Forge.app/Contents/MacOS/Forge'
+  const fallbackCli = '/Applications/Forge.app/Contents/Resources/cli/cli.js'
+  const shim = generatePosixShim(hint, fallbackExe, fallbackCli)
 
-    it('should exec with "$@" for argument passthrough', () => {
-      const shimContent = generateMockPosixShim()
-      expect(shimContent).toContain('"$@"')
-    })
-
-    it('should start with shebang', () => {
-      const shimContent = generateMockPosixShim()
-      expect(shimContent.startsWith('#!/bin/sh\n')).toBe(true)
-    })
+  it('starts with sh shebang', () => {
+    expect(shim.startsWith('#!/bin/sh\n')).toBe(true)
   })
 
-  describe('windows cmd shim contract', () => {
-    it('should set ELECTRON_RUN_AS_NODE=1', () => {
-      const shimContent = generateMockWindowsCmdShim()
-      expect(shimContent).toContain('ELECTRON_RUN_AS_NODE=1')
-    })
-
-    it('should read from the hint file', () => {
-      const shimContent = generateMockWindowsCmdShim()
-      expect(shimContent).toContain('install-hint')
-      expect(shimContent).toContain('electronExePath')
-      expect(shimContent).toContain('cliResourcePath')
-    })
-
-    it('should pass arguments with %*', () => {
-      const shimContent = generateMockWindowsCmdShim()
-      expect(shimContent).toContain('%*')
-    })
-
-    it('should start with @echo off', () => {
-      const shimContent = generateMockWindowsCmdShim()
-      expect(shimContent.startsWith('@echo off')).toBe(true)
-    })
+  it('sets ELECTRON_RUN_AS_NODE=1', () => {
+    expect(shim).toContain('ELECTRON_RUN_AS_NODE=1')
   })
 
-  describe('windows ps1 shim contract', () => {
-    it('should set ELECTRON_RUN_AS_NODE env var', () => {
-      const shimContent = generateMockWindowsPs1Shim()
-      expect(shimContent).toContain('ELECTRON_RUN_AS_NODE')
-    })
+  it('reads hint file for electronExePath and cliResourcePath', () => {
+    expect(shim).toContain(hint)
+    expect(shim).toContain('electronExePath')
+    expect(shim).toContain('cliResourcePath')
+  })
 
-    it('should pass arguments with @args', () => {
-      const shimContent = generateMockWindowsPs1Shim()
-      expect(shimContent).toContain('@args')
-    })
+  it('falls back when hint exe is missing (checks -z and ! -f)', () => {
+    expect(shim).toContain('[ -z "$ELECTRON_EXE" ] || [ ! -f "$ELECTRON_EXE" ]')
+    expect(shim).toContain(fallbackExe)
+    expect(shim).toContain(fallbackCli)
+  })
+
+  it('passes all arguments via "$@"', () => {
+    expect(shim).toContain('"$@"')
+  })
+
+  it('uses exec for clean process replacement', () => {
+    expect(shim).toContain('exec "$ELECTRON_EXE"')
+  })
+
+  it('embeds the provided hint path', () => {
+    const customHint = '/custom/path/hint'
+    const customShim = generatePosixShim(customHint, fallbackExe, fallbackCli)
+    expect(customShim).toContain(customHint)
   })
 })
 
-describe('hint file format', () => {
-  it('should be parseable key=value lines', () => {
-    const hintContent = [
-      'electronExePath=/Applications/Forge.app/Contents/MacOS/Forge',
-      'cliResourcePath=/Applications/Forge.app/Contents/Resources/cli/cli.js',
-      'version=0.17.1',
-      '',
-    ].join('\n')
+describe('generateWindowsCmdShim (real)', () => {
+  const hint = 'C:\\Users\\test\\.forge\\cli\\install-hint'
+  const fallbackExe = 'C:\\Programs\\Forge\\Forge.exe'
+  const fallbackCli = 'C:\\Programs\\Forge\\resources\\cli\\cli.js'
+  const shim = generateWindowsCmdShim(hint, fallbackExe, fallbackCli)
 
-    const parsed: Record<string, string> = {}
-    for (const line of hintContent.split('\n')) {
-      const eqIndex = line.indexOf('=')
-      if (eqIndex > 0) {
-        parsed[line.slice(0, eqIndex)] = line.slice(eqIndex + 1)
-      }
+  it('starts with @echo off', () => {
+    expect(shim.startsWith('@echo off')).toBe(true)
+  })
+
+  it('sets ELECTRON_RUN_AS_NODE=1', () => {
+    expect(shim).toContain('ELECTRON_RUN_AS_NODE=1')
+  })
+
+  it('reads hint file for electronExePath and cliResourcePath', () => {
+    expect(shim).toContain(hint)
+    expect(shim).toContain('electronExePath')
+    expect(shim).toContain('cliResourcePath')
+  })
+
+  it('passes arguments with %*', () => {
+    expect(shim).toContain('%*')
+  })
+
+  it('falls back when hint exe is stale (not just undefined)', () => {
+    // The CMD shim must check BOTH "not defined" AND "not exist" before
+    // falling back — mirroring POSIX behavior for stale hints.
+    expect(shim).toContain('if not defined ELECTRON_EXE goto :use_fallback')
+    expect(shim).toContain('if not exist "%ELECTRON_EXE%" goto :use_fallback')
+    expect(shim).toContain(':use_fallback')
+    expect(shim).toContain(fallbackExe)
+    expect(shim).toContain(fallbackCli)
+  })
+
+  it('uses goto for fallback flow control', () => {
+    // Verify the goto labels exist in the correct order
+    const lines = shim.split('\r\n')
+    const fallbackLabelIdx = lines.findIndex((l) => l === ':use_fallback')
+    const afterLabelIdx = lines.findIndex((l) => l === ':after_fallback')
+    expect(fallbackLabelIdx).toBeGreaterThan(-1)
+    expect(afterLabelIdx).toBeGreaterThan(fallbackLabelIdx)
+  })
+})
+
+describe('generateWindowsPs1Shim (real)', () => {
+  const hint = 'C:\\Users\\test\\.forge\\cli\\install-hint'
+  const fallbackExe = 'C:\\Programs\\Forge\\Forge.exe'
+  const fallbackCli = 'C:\\Programs\\Forge\\resources\\cli\\cli.js'
+  const shim = generateWindowsPs1Shim(hint, fallbackExe, fallbackCli)
+
+  it('sets ELECTRON_RUN_AS_NODE env var', () => {
+    expect(shim).toContain('ELECTRON_RUN_AS_NODE')
+  })
+
+  it('passes arguments with @args', () => {
+    expect(shim).toContain('@args')
+  })
+
+  it('checks -not $electronExe -or -not (Test-Path) for fallback', () => {
+    expect(shim).toContain('-not $electronExe -or -not (Test-Path $electronExe)')
+    expect(shim).toContain(fallbackExe)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Windows CMD stale-hint fallback behavior                           */
+/* ------------------------------------------------------------------ */
+
+describe('windows CMD stale-hint fallback', () => {
+  it('falls back to known location when hint exe path is stale', () => {
+    // Simulate: hint has a defined ELECTRON_EXE but pointing to nonexistent path.
+    // The CMD shim must detect this via "if not exist" and jump to :use_fallback.
+    const fallbackExe = 'C:\\Programs\\Forge\\Forge.exe'
+    const fallbackCli = 'C:\\Programs\\Forge\\resources\\cli\\cli.js'
+    const shim = generateWindowsCmdShim('hint', fallbackExe, fallbackCli)
+
+    // The shim has the existence check for ELECTRON_EXE
+    expect(shim).toContain('if not exist "%ELECTRON_EXE%" goto :use_fallback')
+
+    // The shim has the fallback assignment — verify it comes after the label
+    const lines = shim.split('\r\n')
+    const labelIdx = lines.findIndex((l) => l === ':use_fallback')
+    const afterLabel = lines.slice(labelIdx + 1)
+    // First set after :use_fallback should assign the fallback exe
+    const firstSet = afterLabel.find((l) => l.startsWith('set "ELECTRON_EXE='))
+    expect(firstSet).toBeDefined()
+    expect(firstSet).toContain(fallbackExe)
+  })
+
+  it('skips fallback when hint exe exists (goto :after_fallback)', () => {
+    const shim = generateWindowsCmdShim('hint', 'C:\\Good\\Forge.exe', 'C:\\Good\\cli.js')
+    // When ELECTRON_EXE IS defined AND file exists, the shim should skip past fallback
+    expect(shim).toContain('goto :after_fallback')
+    // Verify :after_fallback comes after :use_fallback
+    const lines = shim.split('\r\n')
+    const useFallbackIdx = lines.findIndex((l) => l === ':use_fallback')
+    const afterFallbackIdx = lines.findIndex((l) => l === ':after_fallback')
+    expect(afterFallbackIdx).toBeGreaterThan(useFallbackIdx)
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Hint serialization / parsing                                       */
+/* ------------------------------------------------------------------ */
+
+describe('serializeInstallHint / parseInstallHintContent', () => {
+  it('round-trips macOS paths', () => {
+    const hint: InstallHint = {
+      electronExePath: '/Applications/Forge.app/Contents/MacOS/Forge',
+      cliResourcePath: '/Applications/Forge.app/Contents/Resources/cli/cli.js',
+      version: '0.17.1',
     }
-
-    expect(parsed.electronExePath).toBe('/Applications/Forge.app/Contents/MacOS/Forge')
-    expect(parsed.cliResourcePath).toBe('/Applications/Forge.app/Contents/Resources/cli/cli.js')
-    expect(parsed.version).toBe('0.17.1')
+    const serialized = serializeInstallHint(hint)
+    const parsed = parseInstallHintContent(serialized)
+    expect(parsed).toEqual(hint)
   })
 
-  it('should handle Windows paths with drive letters', () => {
-    const hintContent = [
-      'electronExePath=C:\\Users\\test\\AppData\\Local\\Programs\\Forge\\Forge.exe',
-      'cliResourcePath=C:\\Users\\test\\AppData\\Local\\Programs\\Forge\\resources\\cli\\cli.js',
-      'version=0.17.1',
-      '',
-    ].join('\n')
-
-    const parsed: Record<string, string> = {}
-    for (const line of hintContent.split('\n')) {
-      const eqIndex = line.indexOf('=')
-      if (eqIndex > 0) {
-        parsed[line.slice(0, eqIndex)] = line.slice(eqIndex + 1)
-      }
+  it('round-trips Windows paths with drive letters', () => {
+    const hint: InstallHint = {
+      electronExePath: 'C:\\Users\\test\\AppData\\Local\\Programs\\Forge\\Forge.exe',
+      cliResourcePath: 'C:\\Users\\test\\AppData\\Local\\Programs\\Forge\\resources\\cli\\cli.js',
+      version: '0.17.1',
     }
+    const serialized = serializeInstallHint(hint)
+    const parsed = parseInstallHintContent(serialized)
+    expect(parsed).toEqual(hint)
+  })
 
-    expect(parsed.electronExePath).toBe('C:\\Users\\test\\AppData\\Local\\Programs\\Forge\\Forge.exe')
-    expect(parsed.cliResourcePath).toBe('C:\\Users\\test\\AppData\\Local\\Programs\\Forge\\resources\\cli\\cli.js')
+  it('returns null for empty content', () => {
+    expect(parseInstallHintContent('')).toBeNull()
+  })
+
+  it('returns null when electronExePath is missing', () => {
+    expect(parseInstallHintContent('cliResourcePath=/some/path\nversion=1.0.0\n')).toBeNull()
+  })
+
+  it('returns null when cliResourcePath is missing', () => {
+    expect(parseInstallHintContent('electronExePath=/some/exe\nversion=1.0.0\n')).toBeNull()
+  })
+
+  it('defaults version to empty string when missing', () => {
+    const parsed = parseInstallHintContent('electronExePath=/exe\ncliResourcePath=/cli\n')
+    expect(parsed?.version).toBe('')
   })
 })
 
-describe('PATH detection logic', () => {
-  it('should detect directory in PATH (unix separator)', () => {
-    const pathEnv = '/usr/bin:/usr/local/bin:/home/user/.forge/bin'
-    const entries = pathEnv.split(':')
-    expect(entries).toContain('/home/user/.forge/bin')
+/* ------------------------------------------------------------------ */
+/*  PATH detection (real function)                                     */
+/* ------------------------------------------------------------------ */
+
+describe('isBinDirOnPath (real)', () => {
+  let originalPath: string | undefined
+
+  beforeEach(() => {
+    originalPath = process.env.PATH
   })
 
-  it('should detect directory in PATH (windows separator)', () => {
-    const pathEnv = 'C:\\Windows;C:\\Users\\test\\AppData\\Local\\forge\\bin'
-    const entries = pathEnv.split(';')
-    expect(entries).toContain('C:\\Users\\test\\AppData\\Local\\forge\\bin')
+  afterEach(() => {
+    if (originalPath !== undefined) {
+      process.env.PATH = originalPath
+    }
   })
 
-  it('should not false-match partial paths', () => {
-    const pathEnv = '/usr/bin:/home/user/.forge/bin-extra'
-    const entries = pathEnv.split(':')
-    expect(entries).not.toContain('/home/user/.forge/bin')
+  it('detects directory present in PATH', () => {
+    const testDir = '/tmp/forge-test-bin'
+    process.env.PATH = `/usr/bin:${testDir}:/usr/local/bin`
+    expect(isBinDirOnPath(testDir)).toBe(true)
+  })
+
+  it('returns false when directory is not in PATH', () => {
+    process.env.PATH = '/usr/bin:/usr/local/bin'
+    expect(isBinDirOnPath('/tmp/forge-test-bin')).toBe(false)
+  })
+
+  it('does not false-match partial paths', () => {
+    const testDir = '/home/user/.forge/bin'
+    process.env.PATH = `/usr/bin:${testDir}-extra:/usr/local/bin`
+    expect(isBinDirOnPath(testDir)).toBe(false)
   })
 })
 
-describe('idempotent overwrite', () => {
-  it('should produce identical shim content on repeated generation', () => {
-    const first = generateMockPosixShim()
-    const second = generateMockPosixShim()
-    expect(first).toBe(second)
+/* ------------------------------------------------------------------ */
+/*  Idempotent generation                                              */
+/* ------------------------------------------------------------------ */
+
+describe('idempotent shim generation', () => {
+  it('produces identical POSIX shim on repeated calls', () => {
+    const args = ['/hint', '/fallback/exe', '/fallback/cli'] as const
+    expect(generatePosixShim(...args)).toBe(generatePosixShim(...args))
+  })
+
+  it('produces identical CMD shim on repeated calls', () => {
+    const args = ['C:\\hint', 'C:\\exe', 'C:\\cli'] as const
+    expect(generateWindowsCmdShim(...args)).toBe(generateWindowsCmdShim(...args))
   })
 })
 
-// ── Mock generators for testing shim content contracts ────────────
+/* ------------------------------------------------------------------ */
+/*  verifyCliInstall — runs the actual installed shim                  */
+/* ------------------------------------------------------------------ */
 
-function generateMockPosixShim(): string {
-  const hintPath = '$HOME/.forge/cli/install-hint'
-  const fallbackElectronExe = '/Applications/Forge.app/Contents/MacOS/Forge'
-  const fallbackCliResource = '/Applications/Forge.app/Contents/Resources/cli/cli.js'
+describe('verifyCliInstall', () => {
+  it('returns error when shim does not exist', () => {
+    const result = verifyCliInstall('/tmp/nonexistent-forge-shim')
+    expect(result.ok).toBe(false)
+    expect(result.output).toContain('not found')
+  })
 
-  return [
-    '#!/bin/sh',
-    '# Forge CLI shim — generated by Forge Desktop.',
-    '# Re-run "Install CLI" from Settings > CLI Access to update.',
-    '',
-    `HINT="${hintPath}"`,
-    'ELECTRON_EXE=""',
-    'CLI_RESOURCE=""',
-    '',
-    'if [ -f "$HINT" ]; then',
-    '  while IFS="=" read -r key value; do',
-    '    case "$key" in',
-    '      electronExePath) ELECTRON_EXE="$value" ;;',
-    '      cliResourcePath) CLI_RESOURCE="$value" ;;',
-    '    esac',
-    '  done < "$HINT"',
-    'fi',
-    '',
-    '# Fallback to known platform location',
-    'if [ -z "$ELECTRON_EXE" ] || [ ! -f "$ELECTRON_EXE" ]; then',
-    `  ELECTRON_EXE="${fallbackElectronExe}"`,
-    `  CLI_RESOURCE="${fallbackCliResource}"`,
-    'fi',
-    '',
-    'if [ ! -f "$ELECTRON_EXE" ]; then',
-    '  echo "Error: Forge Desktop not found. Install Forge or update the CLI." >&2',
-    '  exit 127',
-    'fi',
-    '',
-    'if [ ! -f "$CLI_RESOURCE" ]; then',
-    '  echo "Error: Forge CLI resource not found at $CLI_RESOURCE" >&2',
-    '  exit 127',
-    'fi',
-    '',
-    'ELECTRON_RUN_AS_NODE=1 exec "$ELECTRON_EXE" "$CLI_RESOURCE" "$@"',
-    '',
-  ].join('\n')
-}
+  // Skip shim execution tests on Windows (these POSIX shims won't run there)
+  const describePosix = process.platform === 'win32' ? describe.skip : describe
 
-function generateMockWindowsCmdShim(): string {
-  const hintPath = '%LOCALAPPDATA%\\forge\\cli\\install-hint'
-  const fallbackElectronExe = '%LOCALAPPDATA%\\Programs\\Forge\\Forge.exe'
-  const fallbackCliResource = '%LOCALAPPDATA%\\Programs\\Forge\\resources\\cli\\cli.js'
+  describePosix('executes the actual shim file (POSIX)', () => {
+    const tmpDir = path.join(os.tmpdir(), `forge-cli-verify-test-${process.pid}`)
+    const shimPath = path.join(tmpDir, SHIM_NAME_POSIX)
 
-  return [
-    '@echo off',
-    'rem Forge CLI shim — generated by Forge Desktop.',
-    'rem Re-run "Install CLI" from Settings > CLI Access to update.',
-    '',
-    'setlocal enabledelayedexpansion',
-    `set "HINT=${hintPath}"`,
-    'set "ELECTRON_EXE="',
-    'set "CLI_RESOURCE="',
-    '',
-    'if exist "%HINT%" (',
-    '  for /f "usebackq tokens=1,* delims==" %%a in ("%HINT%") do (',
-    '    if "%%a"=="electronExePath" set "ELECTRON_EXE=%%b"',
-    '    if "%%a"=="cliResourcePath" set "CLI_RESOURCE=%%b"',
-    '  )',
-    ')',
-    '',
-    'if not defined ELECTRON_EXE (',
-    `  set "ELECTRON_EXE=${fallbackElectronExe}"`,
-    `  set "CLI_RESOURCE=${fallbackCliResource}"`,
-    ')',
-    '',
-    'if not exist "%ELECTRON_EXE%" (',
-    '  echo Error: Forge Desktop not found. Install Forge or update the CLI. >&2',
-    '  exit /b 127',
-    ')',
-    '',
-    'if not exist "%CLI_RESOURCE%" (',
-    '  echo Error: Forge CLI resource not found at %CLI_RESOURCE% >&2',
-    '  exit /b 127',
-    ')',
-    '',
-    'set "ELECTRON_RUN_AS_NODE=1"',
-    '"%ELECTRON_EXE%" "%CLI_RESOURCE%" %*',
-    '',
-  ].join('\r\n')
-}
+    beforeEach(() => {
+      mkdirSync(tmpDir, { recursive: true })
+    })
 
-function generateMockWindowsPs1Shim(): string {
-  const hintPath = '$env:LOCALAPPDATA\\forge\\cli\\install-hint'
-  const fallbackElectronExe = '$env:LOCALAPPDATA\\Programs\\Forge\\Forge.exe'
-  const fallbackCliResource = '$env:LOCALAPPDATA\\Programs\\Forge\\resources\\cli\\cli.js'
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true })
+    })
 
-  return [
-    '# Forge CLI shim — generated by Forge Desktop.',
-    '# Re-run "Install CLI" from Settings > CLI Access to update.',
-    '',
-    `$hint = "${hintPath}"`,
-    '$electronExe = $null',
-    '$cliResource = $null',
-    '',
-    'if (Test-Path $hint) {',
-    '  foreach ($line in Get-Content $hint) {',
-    '    if ($line -match "^electronExePath=(.+)$") { $electronExe = $Matches[1] }',
-    '    if ($line -match "^cliResourcePath=(.+)$") { $cliResource = $Matches[1] }',
-    '  }',
-    '}',
-    '',
-    'if (-not $electronExe -or -not (Test-Path $electronExe)) {',
-    `  $electronExe = "${fallbackElectronExe}"`,
-    `  $cliResource = "${fallbackCliResource}"`,
-    '}',
-    '',
-    'if (-not (Test-Path $electronExe)) {',
-    '  Write-Error "Forge Desktop not found. Install Forge or update the CLI."',
-    '  exit 127',
-    '}',
-    '',
-    'if (-not (Test-Path $cliResource)) {',
-    '  Write-Error "Forge CLI resource not found at $cliResource"',
-    '  exit 127',
-    '}',
-    '',
-    '$env:ELECTRON_RUN_AS_NODE = "1"',
-    '& $electronExe $cliResource @args',
-    '',
-  ].join('\r\n')
-}
+    it('succeeds when shim outputs a version', () => {
+      // Write a real executable shim that prints a version
+      writeFileSync(shimPath, '#!/bin/sh\necho "1.2.3"\n', 'utf8')
+      chmodSync(shimPath, 0o755)
+
+      const result = verifyCliInstall(shimPath)
+      expect(result.ok).toBe(true)
+      expect(result.output).toBe('1.2.3')
+    })
+
+    it('reports failure when shim exits non-zero', () => {
+      writeFileSync(shimPath, '#!/bin/sh\necho "boom" >&2\nexit 1\n', 'utf8')
+      chmodSync(shimPath, 0o755)
+
+      const result = verifyCliInstall(shimPath)
+      expect(result.ok).toBe(false)
+      expect(result.output.length).toBeGreaterThan(0)
+    })
+
+    it('reports failure when shim is not executable', () => {
+      writeFileSync(shimPath, '#!/bin/sh\necho "1.0.0"\n', 'utf8')
+      chmodSync(shimPath, 0o644) // not executable
+
+      const result = verifyCliInstall(shimPath)
+      expect(result.ok).toBe(false)
+    })
+
+    it('runs a real generated shim that delegates to a mock Electron binary', () => {
+      // Create a mock "Electron" executable that outputs a version
+      const mockElectronPath = path.join(tmpDir, 'mock-electron')
+      const mockCliPath = path.join(tmpDir, 'mock-cli.js')
+      writeFileSync(mockElectronPath, '#!/bin/sh\necho "mock-forge 2.0.0"\n', 'utf8')
+      chmodSync(mockElectronPath, 0o755)
+      writeFileSync(mockCliPath, '// placeholder cli', 'utf8')
+
+      // Write a hint file pointing to the mock
+      const hintDir = path.join(tmpDir, 'cli')
+      const hintPath = path.join(hintDir, 'install-hint')
+      mkdirSync(hintDir, { recursive: true })
+      writeFileSync(
+        hintPath,
+        serializeInstallHint({
+          electronExePath: mockElectronPath,
+          cliResourcePath: mockCliPath,
+          version: '2.0.0',
+        }),
+        'utf8',
+      )
+
+      // Generate a real shim pointing at that hint
+      const realShim = generatePosixShim(hintPath, '/nonexistent/fallback', '/nonexistent/fallback')
+      writeFileSync(shimPath, realShim, 'utf8')
+      chmodSync(shimPath, 0o755)
+
+      const result = verifyCliInstall(shimPath)
+      expect(result.ok).toBe(true)
+      expect(result.output).toContain('mock-forge 2.0.0')
+    })
+
+    it('runs a real generated shim that falls back when hint is stale', () => {
+      // Hint points to nonexistent paths → shim should fall through to fallback
+      const hintDir = path.join(tmpDir, 'cli')
+      const hintPath = path.join(hintDir, 'install-hint')
+      mkdirSync(hintDir, { recursive: true })
+      writeFileSync(
+        hintPath,
+        serializeInstallHint({
+          electronExePath: '/nonexistent/stale-electron',
+          cliResourcePath: '/nonexistent/stale-cli.js',
+          version: '0.0.0',
+        }),
+        'utf8',
+      )
+
+      // Create a mock "Electron" at the fallback location
+      const fallbackExe = path.join(tmpDir, 'fallback-electron')
+      const fallbackCli = path.join(tmpDir, 'fallback-cli.js')
+      writeFileSync(fallbackExe, '#!/bin/sh\necho "fallback 3.0.0"\n', 'utf8')
+      chmodSync(fallbackExe, 0o755)
+      writeFileSync(fallbackCli, '// placeholder', 'utf8')
+
+      // Generate shim with hint pointing to stale paths, fallback pointing to real ones
+      const realShim = generatePosixShim(hintPath, fallbackExe, fallbackCli)
+      writeFileSync(shimPath, realShim, 'utf8')
+      chmodSync(shimPath, 0o755)
+
+      const result = verifyCliInstall(shimPath)
+      expect(result.ok).toBe(true)
+      expect(result.output).toContain('fallback 3.0.0')
+    })
+  })
+})

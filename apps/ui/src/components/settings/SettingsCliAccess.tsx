@@ -477,9 +477,9 @@ function CliInstallSection({ wsUrl }: { wsUrl: string }) {
       const result = await bridge.installCli()
       setInstallResult(result)
 
-      // Auto-verify if install succeeded
-      if (result.success && bridge.verifyCliInstall) {
-        const verify = await bridge.verifyCliInstall()
+      // Auto-verify the actual installed shim
+      if (result.success && result.installedPath && bridge.verifyCliInstall) {
+        const verify = await bridge.verifyCliInstall(result.installedPath)
         setVerifyResult(verify)
       }
     } catch (err) {

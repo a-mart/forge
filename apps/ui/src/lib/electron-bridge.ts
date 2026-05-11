@@ -75,8 +75,9 @@ export interface ElectronBridge {
   revealInFolder?(filePath: string): Promise<void>
   /** Install (or update) the Forge CLI shim for desktop. Returns install result with PATH instructions. */
   installCli?(): Promise<CliInstallResult>
-  /** Verify the installed CLI shim can run. Returns version string on success. */
-  verifyCliInstall?(): Promise<{ ok: boolean; output: string }>
+  /** Verify the installed CLI shim can run. Returns version string on success.
+   * @param installedPath Path to the shim to verify. Auto-discovers if omitted. */
+  verifyCliInstall?(installedPath?: string): Promise<{ ok: boolean; output: string }>
   /** Get current sleep blocker settings and status. */
   getSleepBlockerSettings?(): Promise<SleepBlockerStatus>
   /** Update sleep blocker settings. Returns updated status. */
