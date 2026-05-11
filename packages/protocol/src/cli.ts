@@ -245,6 +245,11 @@ export interface CliRequestSuccessEvent<TResult = unknown> {
   result?: TResult
 }
 
+export interface CliFieldError {
+  field: string
+  message: string
+}
+
 export interface CliRequestErrorEvent {
   type: 'cli_request_error'
   requestId?: string
@@ -253,6 +258,7 @@ export interface CliRequestErrorEvent {
   message: string
   status?: number
   retryable?: boolean
+  fieldErrors?: CliFieldError[]
 }
 
 export type CliServerEvent =

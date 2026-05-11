@@ -87,6 +87,15 @@ async function waitForCliSuccess(events: ServerEvent[], requestId: string): Prom
   return event as Extract<ServerEvent, { type: 'cli_request_success' }>
 }
 
+async function waitForCliError(events: ServerEvent[], requestId: string): Promise<Extract<ServerEvent, { type: 'cli_request_error' }>> {
+  const event = await waitForEvent(
+    events,
+    (candidate) => candidate.type === 'cli_request_error' && candidate.requestId === requestId,
+  )
+  expect(event.type).toBe('cli_request_error')
+  return event as Extract<ServerEvent, { type: 'cli_request_error' }>
+}
+
 describe('SwarmWebSocketServer', () => {
   it('connect + subscribe + user_message yields manager feed events', async () => {
     const port = await getAvailablePort()
@@ -2213,17 +2222,214 @@ describe('SwarmWebSocketServer', () => {
       text: 'hello from cli',
     }))
 
-    await waitForCliSuccess(events, 'send-1')
+    const ack = await waitForCliSuccess(events, 'send-1')
+    expect(ack.result).toMatchObject({
+      messageId: 'send-1',
+      sourceContext: { channel: 'cli', messageId: 'send-1' },
+    })
     const message = await waitForEvent(
       events,
       (event) => event.type === 'conversation_message' && event.text === 'hello from cli',
     )
     expect(message.type).toBe('conversation_message')
     if (message.type === 'conversation_message') {
-      expect(message.sourceContext).toEqual({ channel: 'cli' })
+      expect(message.sourceContext).toEqual({ channel: 'cli', messageId: 'send-1' })
     }
     expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"cli"}\n\nhello from cli',
+      '[sourceContext] {"channel":"cli","messageId":"send-1"}\n\nhello from cli',
+    )
+
+    client.send(JSON.stringify({
+      type: 'cli_run',
+      requestId: 'run-request-1',
+      target: { kind: 'session', agentId: 'manager' },
+      text: 'hello from cli run',
+      cli: {
+        createdBy: 'forge-cli',
+        runId: 'run-correlation-1',
+        command: 'run',
+        startedAt: '2026-05-11T00:00:00.000Z',
+      },
+    }))
+    const runAck = await waitForCliSuccess(events, 'run-request-1')
+    expect(runAck.result).toMatchObject({
+      messageId: 'run-correlation-1',
+      sourceContext: { channel: 'cli', messageId: 'run-correlation-1' },
+    })
+    const runMessage = await waitForEvent(
+      events,
+      (event) => event.type === 'conversation_message' && event.text === 'hello from cli run',
+    )
+    expect(runMessage.type).toBe('conversation_message')
+    if (runMessage.type === 'conversation_message') {
+      expect(runMessage.sourceContext).toEqual({ channel: 'cli', messageId: 'run-correlation-1' })
+    }
+    expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"cli","messageId":"run-correlation-1"}\n\nhello from cli run',
+    )
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('rejects CLI session creation and new-session runs for system-managed profiles', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI system profile guard' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const initialCortexAgentIds = manager
+      .listAgents()
+      .filter((agent) => agent.profileId === 'cortex' || agent.agentId === 'cortex')
+      .map((agent) => agent.agentId)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({
+      type: 'cli_create_session',
+      requestId: 'create-cortex-session',
+      profileId: 'cortex',
+      label: 'Blocked Cortex Session',
+    }))
+    const createError = await waitForCliError(events, 'create-cortex-session')
+    expect(createError).toMatchObject({
+      code: 'system_profile',
+      status: 400,
+      message: 'Cannot modify system-managed profile',
+      fieldErrors: [{ field: 'profileId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_run',
+      requestId: 'run-cortex-session',
+      target: { kind: 'new_session', profileId: 'cortex', label: 'Blocked Cortex Run' },
+      text: 'do not run this',
+    }))
+    const runError = await waitForCliError(events, 'run-cortex-session')
+    expect(runError).toMatchObject({
+      code: 'system_profile',
+      status: 400,
+      message: 'Cannot modify system-managed profile',
+      fieldErrors: [{ field: 'profileId' }],
+    })
+
+    expect(
+      manager
+        .listAgents()
+        .filter((agent) => agent.profileId === 'cortex' || agent.agentId === 'cortex')
+        .map((agent) => agent.agentId),
+    ).toEqual(initialCortexAgentIds)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns bad_request field errors for malformed CLI socket commands', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI validation' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'bad-send',
+      target: { kind: 'session' },
+      text: 42,
+      delivery: 'later',
+    }))
+
+    const error = await waitForCliError(events, 'bad-send')
+    expect(error).toMatchObject({
+      commandType: 'cli_send_message',
+      code: 'bad_request',
+      status: 400,
+    })
+    expect(error.fieldErrors).toEqual(expect.arrayContaining([
+      { field: 'target.agentId', message: 'Required field must be a string.' },
+      { field: 'text', message: 'Must be a string.' },
+      { field: 'delivery', message: 'Must be one of: auto, followUp, steer.' },
+    ]))
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('keeps a CLI headless subscription when deleting a different session', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI delete subscription' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: deletedSession } = await manager.createSession('manager', { label: 'Delete Me' })
+    const rootWorker = await manager.spawnAgent('manager', { agentId: 'Root CLI Subscription Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({ type: 'subscribe_headless', agentId: 'manager', requestId: 'sub-before-delete' }))
+    await waitForEvent(events, (event) => event.type === 'headless_ready' && event.requestId === 'sub-before-delete')
+
+    client.send(JSON.stringify({ type: 'delete_session', agentId: deletedSession.agentId, requestId: 'delete-other-session' }))
+    await waitForCliSuccess(events, 'delete-other-session')
+
+    const baseline = events.length
+    await manager.handleRuntimeSessionEvent(rootWorker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'root-after-delete',
+      args: { command: 'echo still subscribed' },
+    })
+
+    await waitForEventAfter(
+      events,
+      baseline,
+      (event) =>
+        event.type === 'session_active_tools_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.activeTools.some((tool) => tool.toolCallId === 'root-after-delete'),
     )
 
     client.close()
