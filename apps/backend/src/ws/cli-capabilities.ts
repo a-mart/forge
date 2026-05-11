@@ -17,7 +17,7 @@ export function buildCliCapabilities(runtimeTarget: RuntimeTarget): CliCapabilit
       cliSessionMetadata: available,
       choiceOwnerLookup: available,
       activeToolSnapshot: available,
-      projectAgentRunTarget: false,
+      projectAgentRunTarget: available,
       builderRuntimeOnly: true,
     },
   };

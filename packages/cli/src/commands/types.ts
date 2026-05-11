@@ -8,6 +8,16 @@ export interface ParsedArgs {
     apiKey?: string
     profile?: string
     session?: string
+    projectAgent?: string
+    message?: string
+    label?: string
+    name?: string
+    timeout?: string
+    fromMessageId?: string
+    answers?: string
+    pinned?: string
+    yes?: boolean
+    stopOnTimeout?: boolean
     help?: boolean
     version?: boolean
   }

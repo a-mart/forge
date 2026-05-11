@@ -65,7 +65,7 @@ describe("CLI routes and bearer auth", () => {
           cliSessionMetadata: true,
           choiceOwnerLookup: true,
           activeToolSnapshot: true,
-          projectAgentRunTarget: false,
+          projectAgentRunTarget: true,
           builderRuntimeOnly: true,
         },
       },

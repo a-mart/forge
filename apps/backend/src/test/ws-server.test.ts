@@ -2202,6 +2202,12 @@ describe('SwarmWebSocketServer', () => {
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
+    const { sessionAgent: docsAgent } = await manager.createSession('manager', { label: 'Docs Agent' })
+    await manager.setSessionProjectAgent(docsAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Use for CLI project-agent target tests.',
+      systemPrompt: 'You are the docs agent.',
+    })
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
       host: config.host,
@@ -2266,6 +2272,46 @@ describe('SwarmWebSocketServer', () => {
     }
     expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
       '[sourceContext] {"channel":"cli","messageId":"run-correlation-1"}\n\nhello from cli run',
+    )
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-project-agent',
+      target: { kind: 'project_agent', profileId: 'manager', handle: 'docs' },
+      text: 'hello docs agent',
+    }))
+    const projectAgentAck = await waitForCliSuccess(events, 'send-project-agent')
+    expect(projectAgentAck.result).toMatchObject({
+      sessionAgentId: docsAgent.agentId,
+      profileId: 'manager',
+      messageId: 'send-project-agent',
+      sourceContext: { channel: 'cli', messageId: 'send-project-agent' },
+    })
+    expect(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"cli","messageId":"send-project-agent"}\n\nhello docs agent',
+    )
+
+    client.send(JSON.stringify({
+      type: 'cli_run',
+      requestId: 'run-project-agent',
+      target: { kind: 'project_agent', profileId: 'manager', handle: 'docs' },
+      text: 'run docs agent',
+      cli: {
+        createdBy: 'forge-cli',
+        runId: 'run-docs-correlation',
+        command: 'run',
+        startedAt: '2026-05-11T00:00:00.000Z',
+      },
+    }))
+    const projectAgentRunAck = await waitForCliSuccess(events, 'run-project-agent')
+    expect(projectAgentRunAck.result).toMatchObject({
+      sessionAgentId: docsAgent.agentId,
+      profileId: 'manager',
+      messageId: 'run-docs-correlation',
+      sourceContext: { channel: 'cli', messageId: 'run-docs-correlation' },
+    })
+    expect(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"cli","messageId":"run-docs-correlation"}\n\nrun docs agent',
     )
 
     client.close()

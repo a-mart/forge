@@ -19,7 +19,7 @@ await build({
   target: 'node22',
   format: 'esm',
   sourcemap: false,
-  banner: { js: '#!/usr/bin/env node' },
+  banner: { js: '#!/usr/bin/env node\nimport { createRequire as __forgeCreateRequire } from "node:module";\nconst require = __forgeCreateRequire(import.meta.url);' },
   logLevel: 'silent',
 });
 

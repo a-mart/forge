@@ -12,6 +12,7 @@ import {
   saveCliConfig,
   updateCliConfigValue,
 } from './config.js'
+import { EXIT_CODES } from './version.js'
 
 const tempDirs: string[] = []
 
@@ -93,6 +94,16 @@ describe('CLI config resolution', () => {
     await updateCliConfigValue('apiKey', undefined, { configPath })
     expect(await readCliConfig(configPath)).toMatchObject({ url: 'http://forge' })
     expect((await readCliConfig(configPath)).apiKey).toBeUndefined()
+  })
+
+  it('throws a typed error for invalid config JSON', async () => {
+    const root = await makeTempDir()
+    const configPath = path.join(root, 'config.json')
+    await writeFile(configPath, '{broken')
+    await expect(readCliConfig(configPath)).rejects.toMatchObject({
+      code: 'invalid_config_json',
+      exitCode: EXIT_CODES.usage,
+    })
   })
 })
 

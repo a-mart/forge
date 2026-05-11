@@ -44,8 +44,8 @@ export async function handleDoctorCommand(context: CommandContext): Promise<numb
 
 export async function handleProfilesCommand(context: CommandContext): Promise<number> {
   const [, action, profileId] = context.args.positionals
-  const client = await context.createClient()
   if (action === 'list') {
+    const client = await context.createClient()
     const response = await client.listProfiles()
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatProfiles(response.profiles))
@@ -53,6 +53,7 @@ export async function handleProfilesCommand(context: CommandContext): Promise<nu
   }
   if (action === 'show') {
     const id = requireArg(profileId, 'profileId')
+    const client = await context.createClient()
     const response = await client.showProfile(id)
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatProfile(response.profile))
@@ -63,9 +64,9 @@ export async function handleProfilesCommand(context: CommandContext): Promise<nu
 
 export async function handleSessionsCommand(context: CommandContext): Promise<number> {
   const [, action, agentId] = context.args.positionals
-  const client = await context.createClient()
   if (action === 'list') {
     const profileId = requireOption(context.args.options.profile, '--profile')
+    const client = await context.createClient()
     const response = await client.listSessions(profileId)
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatAgents(response.sessions))
@@ -73,6 +74,7 @@ export async function handleSessionsCommand(context: CommandContext): Promise<nu
   }
   if (action === 'show') {
     const id = requireArg(agentId, 'agentId')
+    const client = await context.createClient()
     const response = await client.showSession(id)
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatAgent(response.session))
@@ -83,8 +85,8 @@ export async function handleSessionsCommand(context: CommandContext): Promise<nu
 
 export async function handleAgentsCommand(context: CommandContext): Promise<number> {
   const [, action, agentId] = context.args.positionals
-  const client = await context.createClient()
   if (action === 'list') {
+    const client = await context.createClient()
     const response = await client.listAgents(context.args.options.profile)
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatAgents(response.agents))
@@ -92,6 +94,7 @@ export async function handleAgentsCommand(context: CommandContext): Promise<numb
   }
   if (action === 'show') {
     const id = requireArg(agentId, 'agentId')
+    const client = await context.createClient()
     const response = await client.showAgent(id)
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatAgent(response.agent))
@@ -103,8 +106,8 @@ export async function handleAgentsCommand(context: CommandContext): Promise<numb
 export async function handleProjectAgentsCommand(context: CommandContext): Promise<number> {
   const [, action, handle] = context.args.positionals
   const profileId = requireOption(context.args.options.profile, '--profile')
-  const client = await context.createClient()
   if (action === 'list') {
+    const client = await context.createClient()
     const response = await client.listProjectAgents(profileId)
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatTable(response.projectAgents, [
@@ -116,7 +119,9 @@ export async function handleProjectAgentsCommand(context: CommandContext): Promi
     return EXIT_CODES.success
   }
   if (action === 'show') {
-    const response = await client.showProjectAgent(profileId, requireArg(handle, 'handle'))
+    const resolvedHandle = requireArg(handle, 'handle')
+    const client = await context.createClient()
+    const response = await client.showProjectAgent(profileId, resolvedHandle)
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatObject(response.projectAgent as unknown as Record<string, unknown>))
     return EXIT_CODES.success
@@ -126,8 +131,8 @@ export async function handleProjectAgentsCommand(context: CommandContext): Promi
 
 export async function handleChoicesCommand(context: CommandContext): Promise<number> {
   const [, action, choiceId] = context.args.positionals
-  const client = await context.createClient()
   if (action === 'list') {
+    const client = await context.createClient()
     const response = await client.listChoices({
       profileId: context.args.options.profile,
       sessionAgentId: context.args.options.session,
@@ -137,7 +142,9 @@ export async function handleChoicesCommand(context: CommandContext): Promise<num
     return EXIT_CODES.success
   }
   if (action === 'show') {
-    const response = await client.showChoice(requireArg(choiceId, 'choiceId'), context.args.options.session)
+    const resolvedChoiceId = requireArg(choiceId, 'choiceId')
+    const client = await context.createClient()
+    const response = await client.showChoice(resolvedChoiceId, context.args.options.session)
     if (context.args.options.json) writeJson(context.io, response)
     else writeHuman(context.io, context.args.options, formatObject(response.choice as unknown as Record<string, unknown>))
     return EXIT_CODES.success

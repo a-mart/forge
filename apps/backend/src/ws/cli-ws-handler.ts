@@ -140,18 +140,9 @@ export class CliWsHandler {
   }
 
   private async handleSendMessage(socket: WebSocket, command: CliSendMessageCommand): Promise<void> {
-    if (command.target.kind !== "session") {
-      this.sendRequestError(
-        socket,
-        command,
-        "unsupported_target",
-        "Project-agent CLI send targets are not enabled yet.",
-        400,
-      );
-      return;
-    }
-
-    const target = this.requireCliSession(command.target.agentId);
+    const target = command.target.kind === "project_agent"
+      ? this.requireCliProjectAgentSession(command.target.profileId, command.target.handle)
+      : this.requireCliSession(command.target.agentId);
     const sourceContext = buildCliSourceContext(command);
     await this.dispatchCliMessage(target.agentId, command.text, command.attachments, command.delivery, sourceContext);
     this.sendRequestSuccess(socket, command, {
@@ -164,20 +155,11 @@ export class CliWsHandler {
   }
 
   private async handleRun(socket: WebSocket, command: CliRunCommand): Promise<void> {
-    if (command.target.kind === "project_agent") {
-      this.sendRequestError(
-        socket,
-        command,
-        "unsupported_target",
-        "Project-agent CLI run targets are not enabled yet.",
-        400,
-      );
-      return;
-    }
-
     const target = command.target.kind === "new_session"
       ? await this.createCliRunSession(command)
-      : this.requireCliSession(command.target.agentId);
+      : command.target.kind === "project_agent"
+        ? this.requireCliProjectAgentSession(command.target.profileId, command.target.handle)
+        : this.requireCliSession(command.target.agentId);
 
     const sourceContext = buildCliSourceContext(command);
     await this.dispatchCliMessage(target.agentId, command.text, command.attachments, command.delivery, sourceContext);
@@ -367,6 +349,32 @@ export class CliWsHandler {
     }
 
     return pending;
+  }
+
+  private requireCliProjectAgentSession(
+    profileId: string,
+    handle: string,
+  ): AgentDescriptor & { role: "manager"; profileId: string } {
+    this.requireCliWritableProfile(profileId);
+    const descriptor = this.swarmManager
+      .listAgents()
+      .find(
+        (agent) =>
+          agent.role === "manager" &&
+          agent.profileId === profileId &&
+          agent.projectAgent?.handle === handle,
+      );
+
+    if (!descriptor) {
+      throw new CliCommandError(
+        "unknown_project_agent",
+        `Unknown project agent: ${handle}`,
+        404,
+        [{ field: "target.handle", message: "Project agent not found." }],
+      );
+    }
+
+    return this.requireCliSession(descriptor.agentId);
   }
 
   private requireCliSession(agentId: string): AgentDescriptor & { role: "manager"; profileId: string } {

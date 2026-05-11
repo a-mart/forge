@@ -2,6 +2,9 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { CliError } from './output.js'
+import { EXIT_CODES } from './version.js'
+
 export type CliConfigKey = 'url' | 'apiKey'
 
 export interface CliConfigFile {
@@ -83,6 +86,12 @@ export async function readCliConfig(configPath = getCliConfigPath()): Promise<Cl
     return normalizeCliConfig(parsed)
   } catch (error) {
     if (isNodeError(error) && error.code === 'ENOENT') return {}
+    if (error instanceof SyntaxError) {
+      throw new CliError(`Invalid Forge CLI config JSON at ${configPath}: ${error.message}`, {
+        exitCode: EXIT_CODES.usage,
+        code: 'invalid_config_json',
+      })
+    }
     throw error
   }
 }

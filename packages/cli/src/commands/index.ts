@@ -4,6 +4,11 @@ import { CliError, type CliIo, renderError, writeHuman } from '../output.js'
 import { CLI_VERSION, EXIT_CODES } from '../version.js'
 import { handleConfigCommand } from './config.js'
 import { commandHelp, mainHelp } from './help.js'
+import {
+  handleChoicesMutationCommand,
+  handleProjectAgentsMutationCommand,
+  handleSessionsMutationCommand,
+} from './mutations.js'
 import { parseArgs } from './parser.js'
 import {
   handleAgentsCommand,
@@ -14,6 +19,7 @@ import {
   handleSessionsCommand,
   handleStatusCommand,
 } from './read.js'
+import { handleRunCommand, handleWaitCommand } from './run.js'
 import type { CommandContext, ParsedArgs } from './types.js'
 
 export interface RunCliOptions {
@@ -65,13 +71,25 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
       case 'profiles':
         return await handleProfilesCommand(context)
       case 'sessions':
-        return await handleSessionsCommand(context)
+        return isSessionMutationAction(args.positionals[1])
+          ? await handleSessionsMutationCommand(context)
+          : await handleSessionsCommand(context)
       case 'agents':
         return await handleAgentsCommand(context)
       case 'project-agents':
-        return await handleProjectAgentsCommand(context)
+        return args.positionals[1] === 'send'
+          ? await handleProjectAgentsMutationCommand(context)
+          : await handleProjectAgentsCommand(context)
       case 'choices':
-        return await handleChoicesCommand(context)
+        return isChoiceMutationAction(args.positionals[1])
+          ? await handleChoicesMutationCommand(context)
+          : await handleChoicesCommand(context)
+      case 'run':
+        return await handleRunCommand(context, 'run')
+      case 'launch':
+        return await handleRunCommand(context, 'launch')
+      case 'wait':
+        return await handleWaitCommand(context)
       default:
         throw new CliError(`Unknown command: ${args.positionals[0]}`, { exitCode: EXIT_CODES.usage, code: 'unknown_command' })
     }
@@ -104,6 +122,24 @@ async function createDefaultClient(args: ParsedArgs, cwd: string, env: NodeJS.Pr
   }
 
   return new ForgeClient({ url: resolved.url, apiKey: resolved.apiKey })
+}
+
+function isSessionMutationAction(action: string | undefined): boolean {
+  return action === 'create' ||
+    action === 'send' ||
+    action === 'wait' ||
+    action === 'stop' ||
+    action === 'resume' ||
+    action === 'fork' ||
+    action === 'rename' ||
+    action === 'pin' ||
+    action === 'unpin' ||
+    action === 'clear' ||
+    action === 'delete'
+}
+
+function isChoiceMutationAction(action: string | undefined): boolean {
+  return action === 'answer' || action === 'cancel'
 }
 
 export { mainHelp, parseArgs }

@@ -18,6 +18,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "prepack": "pnpm run build",
@@ -27,6 +30,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.25.11",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

@@ -27,4 +27,17 @@ describe('ForgeClient', () => {
     await client.getCapabilities()
     expect(calls).toEqual([{ url: 'http://127.0.0.1:47287/api/cli/capabilities', auth: 'Bearer secret' }])
   })
+
+  it('redacts API keys from HTTP error messages', async () => {
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: async () => Response.json({ error: { code: 'bad', message: 'bad secret-token value' } }, { status: 500 }),
+    })
+
+    await expect(client.getStatus()).rejects.toMatchObject({
+      message: 'bad <redacted> value',
+      code: 'bad',
+    })
+  })
 })

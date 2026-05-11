@@ -44,10 +44,18 @@ describe('runCli', () => {
     expect(io.stdout.toString()).toContain('profile-1')
   })
 
-  it('requires a profile for session lists', async () => {
+  it('validates arguments before creating a network client', async () => {
     const io = makeIo()
-    const exit = await runCli(['sessions', 'list'], { io, createClient: async () => mockClient() })
+    let createdClient = false
+    const exit = await runCli(['sessions', 'list'], {
+      io,
+      createClient: async () => {
+        createdClient = true
+        return mockClient()
+      },
+    })
     expect(exit).toBe(EXIT_CODES.usage)
+    expect(createdClient).toBe(false)
     expect(io.stderr.toString()).toContain('Missing required --profile')
   })
 
@@ -69,6 +77,55 @@ describe('runCli', () => {
     })
     expect(exit).toBe(EXIT_CODES.auth)
     expect(JSON.parse(io.stderr.toString())).toMatchObject({ error: { code: 'unauthorized', message: 'bad key' } })
+  })
+
+  it('runs with stable JSON output and mapped success exit code', async () => {
+    const io = makeIo()
+    const client = mockClient()
+    const exit = await runCli(['run', '--profile', 'profile-1', '--message', 'hello', '--timeout', '1s', '--json'], {
+      io,
+      createClient: async () => client,
+    })
+    expect(exit).toBe(EXIT_CODES.success)
+    expect(JSON.parse(io.stdout.toString())).toMatchObject({
+      status: 'success',
+      sessionAgentId: 'session-1',
+      finalMessage: 'done',
+      timedOut: false,
+    })
+  })
+
+  it('requires --yes for destructive session commands before creating a client', async () => {
+    const io = makeIo()
+    let createdClient = false
+    const exit = await runCli(['sessions', 'delete', 'session-1'], {
+      io,
+      createClient: async () => {
+        createdClient = true
+        return mockClient()
+      },
+    })
+    expect(exit).toBe(EXIT_CODES.usage)
+    expect(createdClient).toBe(false)
+    expect(io.stderr.toString()).toContain('--yes')
+  })
+
+  it('answers choices from JSON with stable output', async () => {
+    const io = makeIo()
+    const exit = await runCli([
+      'choices',
+      'answer',
+      'choice-1',
+      '--answers',
+      '[{"questionId":"q1","selectedOptionIds":["yes"]}]',
+      '--json',
+    ], { io, createClient: async () => mockClient() })
+    expect(exit).toBe(EXIT_CODES.success)
+    expect(JSON.parse(io.stdout.toString())).toEqual({
+      choiceId: 'choice-1',
+      sessionAgentId: 'session-1',
+      status: 'answered',
+    })
   })
 })
 
@@ -97,6 +154,21 @@ function mockClient(overrides: { status?: CliStatusResponse } = {}): ForgeClient
     showProjectAgent: async () => ({ projectAgent: { profileId: 'profile-1', agentId: 'session-1', handle: 'docs', whenToUse: 'Docs', displayName: 'Docs' } }),
     listChoices: async () => ({ choices: [{ choiceId: 'choice-1', agentId: 'worker-1', sessionAgentId: 'session-1', profileId: 'profile-1', status: 'pending', questionSummary: 'Pick one' }] }),
     showChoice: async () => ({ choice: { choiceId: 'choice-1', agentId: 'worker-1', sessionAgentId: 'session-1', profileId: 'profile-1', status: 'pending', questionSummary: 'Pick one' } }),
+    createSession: async () => ({ session, profile, cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'sessions create', startedAt: '2026-05-11T00:00:00.000Z' } }),
+    sendSessionMessage: async () => ({ sessionAgentId: 'session-1', profileId: 'profile-1', messageId: 'message-1', acceptedAt: '2026-05-11T00:00:00.000Z' }),
+    sendProjectAgentMessage: async () => ({ sessionAgentId: 'session-1', profileId: 'profile-1', messageId: 'message-1', acceptedAt: '2026-05-11T00:00:00.000Z' }),
+    launch: async () => ({ sessionAgentId: 'session-1', profileId: 'profile-1', messageId: 'message-1', acceptedAt: '2026-05-11T00:00:00.000Z' }),
+    run: async () => ({ status: 'success', sessionAgentId: 'session-1', profileId: 'profile-1', projectAgentHandle: null, finalMessage: 'done', blocked: null, timedOut: false, durationMs: 123 }),
+    waitForSession: async () => ({ status: 'success', sessionAgentId: 'session-1', profileId: 'profile-1', projectAgentHandle: null, finalMessage: 'done', blocked: null, timedOut: false, durationMs: 123 }),
+    stopSession: async () => ({ agentId: 'session-1' }),
+    resumeSession: async () => ({ agentId: 'session-1' }),
+    clearSession: async () => ({ agentId: 'session-1' }),
+    deleteSession: async () => ({ agentId: 'session-1' }),
+    renameSession: async () => ({ agentId: 'session-1' }),
+    pinSession: async () => ({ agentId: 'session-1' }),
+    forkSession: async () => ({ sourceAgentId: 'session-1', session }),
+    answerChoice: async () => ({ choiceId: 'choice-1', sessionAgentId: 'session-1', status: 'answered' }),
+    cancelChoice: async () => ({ choiceId: 'choice-1', sessionAgentId: 'session-1', status: 'cancelled' }),
   }
 }
 
@@ -118,7 +190,7 @@ function statusResponse(): CliStatusResponse {
         cliSessionMetadata: true,
         choiceOwnerLookup: true,
         activeToolSnapshot: true,
-        projectAgentRunTarget: false,
+        projectAgentRunTarget: true,
         builderRuntimeOnly: true,
       },
     },
