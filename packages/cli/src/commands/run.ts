@@ -39,7 +39,7 @@ export async function handleRunCommand(context: CommandContext, command: 'run' |
 
 export async function handleWaitCommand(context: CommandContext): Promise<number> {
   const [, agentId] = context.args.positionals
-  if (!agentId) throw usage('Usage: forge wait <agentId> [--timeout <duration>]')
+  if (!agentId) throw usage('Usage: forge wait <agentId> [--timeout <duration>] [--stop-on-timeout]')
   const timeoutMs = parseTimeoutMs(context.args.options.timeout)
   const client = await context.createClient()
   const result = await client.waitForSession(agentId, {
