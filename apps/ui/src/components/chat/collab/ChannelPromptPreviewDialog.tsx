@@ -14,6 +14,8 @@ interface ChannelPromptPreviewDialogProps {
   onOpenChange: (open: boolean) => void
   channelId: string
   channelName: string
+  /** API base URL for the owning connection's backend (target-aware). */
+  apiBaseUrl?: string
 }
 
 type PromptPreviewView = 'combined' | 'sections'
@@ -23,6 +25,7 @@ export function ChannelPromptPreviewDialog({
   onOpenChange,
   channelId,
   channelName,
+  apiBaseUrl,
 }: ChannelPromptPreviewDialogProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,7 +37,7 @@ export function ChannelPromptPreviewDialog({
     setError(null)
 
     try {
-      const result = await fetchChannelPromptPreview(channelId)
+      const result = await fetchChannelPromptPreview(channelId, apiBaseUrl)
       setData(result)
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err)
@@ -46,7 +49,7 @@ export function ChannelPromptPreviewDialog({
     } finally {
       setLoading(false)
     }
-  }, [channelId])
+  }, [channelId, apiBaseUrl])
 
   useEffect(() => {
     if (!open) {

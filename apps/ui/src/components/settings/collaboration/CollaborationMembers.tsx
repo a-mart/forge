@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -29,10 +29,12 @@ import type { CollaborationUser } from '@forge/protocol'
 
 interface CollaborationMembersProps {
   currentUserId: string
+  /** API base URL for the targeted collaboration backend. */
+  apiBaseUrl?: string
   onAuthError?: () => void
 }
 
-export function CollaborationMembers({ currentUserId, onAuthError }: CollaborationMembersProps) {
+export function CollaborationMembers({ currentUserId, apiBaseUrl, onAuthError }: CollaborationMembersProps) {
   const [users, setUsers] = useState<CollaborationUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -47,34 +49,60 @@ export function CollaborationMembers({ currentUserId, onAuthError }: Collaborati
   // Inline action feedback
   const [actionError, setActionError] = useState<string | null>(null)
 
-  const loadUsers = useCallback(async () => {
+  // Abort controller: prevents stale responses from a previously selected
+  // backend from overwriting state after apiBaseUrl changes.
+  const controllerRef = useRef<AbortController | null>(null)
+
+  const loadUsers = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchCollaborationUsers()
+      const data = await fetchCollaborationUsers(apiBaseUrl, signal)
+      if (signal?.aborted) return
       setUsers(data)
     } catch (err) {
+      if (signal?.aborted) return
       if (isAuthError(err)) {
         onAuthError?.()
         return
       }
       setError(err instanceof Error ? err.message : 'Failed to load users')
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) {
+        setLoading(false)
+      }
     }
-  }, [onAuthError])
+  }, [apiBaseUrl, onAuthError])
 
   useEffect(() => {
-    void loadUsers()
+    controllerRef.current?.abort()
+    setUsers([])
+    setError(null)
+    setActionError(null)
+    // Close any open password-reset dialog — the target user belongs to the
+    // old backend and must not leak into the new backend's view.
+    setResetTarget(null)
+    setTempPassword('')
+    setTempPasswordConfirm('')
+    setResetError(null)
+    const controller = new AbortController()
+    controllerRef.current = controller
+    void loadUsers(controller.signal)
+    return () => controller.abort()
   }, [loadUsers])
 
   const handleRoleChange = useCallback(
     async (user: CollaborationUser, newRole: 'admin' | 'member') => {
+      // Capture the controller at call time so late resolution after a
+      // backend switch does not commit stale results into the new backend.
+      const controller = controllerRef.current
       setActionError(null)
       try {
-        const updated = await updateCollaborationUser(user.userId, { role: newRole })
+        const updated = await updateCollaborationUser(user.userId, { role: newRole }, apiBaseUrl)
+        if (controller?.signal.aborted) return
         setUsers((prev) => prev.map((u) => (u.userId === updated.userId ? updated : u)))
       } catch (err) {
+        if (controller?.signal.aborted) return
         if (isAuthError(err)) {
           onAuthError?.()
           return
@@ -82,16 +110,19 @@ export function CollaborationMembers({ currentUserId, onAuthError }: Collaborati
         setActionError(err instanceof Error ? err.message : 'Failed to update role')
       }
     },
-    [onAuthError],
+    [apiBaseUrl, onAuthError],
   )
 
   const handleToggleActive = useCallback(
     async (user: CollaborationUser) => {
+      const controller = controllerRef.current
       setActionError(null)
       try {
-        const updated = await updateCollaborationUser(user.userId, { disabled: !user.disabled })
+        const updated = await updateCollaborationUser(user.userId, { disabled: !user.disabled }, apiBaseUrl)
+        if (controller?.signal.aborted) return
         setUsers((prev) => prev.map((u) => (u.userId === updated.userId ? updated : u)))
       } catch (err) {
+        if (controller?.signal.aborted) return
         if (isAuthError(err)) {
           onAuthError?.()
           return
@@ -99,11 +130,12 @@ export function CollaborationMembers({ currentUserId, onAuthError }: Collaborati
         setActionError(err instanceof Error ? err.message : 'Failed to update user')
       }
     },
-    [onAuthError],
+    [apiBaseUrl, onAuthError],
   )
 
   const handlePasswordReset = useCallback(async () => {
     if (!resetTarget) return
+    const controller = controllerRef.current
     setResetError(null)
 
     if (!tempPassword) {
@@ -121,20 +153,24 @@ export function CollaborationMembers({ currentUserId, onAuthError }: Collaborati
 
     setResetting(true)
     try {
-      await resetUserPassword(resetTarget.userId, tempPassword)
+      await resetUserPassword(resetTarget.userId, tempPassword, apiBaseUrl)
+      if (controller?.signal.aborted) return
       setResetTarget(null)
       setTempPassword('')
       setTempPasswordConfirm('')
     } catch (err) {
+      if (controller?.signal.aborted) return
       if (isAuthError(err)) {
         onAuthError?.()
         return
       }
       setResetError(err instanceof Error ? err.message : 'Failed to reset password')
     } finally {
-      setResetting(false)
+      if (!controller?.signal.aborted) {
+        setResetting(false)
+      }
     }
-  }, [resetTarget, tempPassword, tempPasswordConfirm, onAuthError])
+  }, [resetTarget, tempPassword, tempPasswordConfirm, apiBaseUrl, onAuthError])
 
   return (
     <>
@@ -148,7 +184,12 @@ export function CollaborationMembers({ currentUserId, onAuthError }: Collaborati
             <span className="text-sm text-destructive">{error}</span>
             <button
               type="button"
-              onClick={() => void loadUsers()}
+              onClick={() => {
+                controllerRef.current?.abort()
+                const controller = new AbortController()
+                controllerRef.current = controller
+                void loadUsers(controller.signal)
+              }}
               className="text-xs text-primary underline hover:no-underline"
             >
               Retry

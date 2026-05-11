@@ -10,8 +10,8 @@ export type ActiveSurface = 'builder' | 'collab'
 export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 export type StatsTab = 'overview' | 'tokens'
 export type AppRouteState =
-  | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string }
-  | { view: 'settings'; surface: ActiveSurface; settingsTab?: string }
+  | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string; collab?: string }
+  | { view: 'settings'; surface: ActiveSurface; settingsTab?: string; collabApiBaseUrl?: string }
   | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
   | { view: 'stats'; statsTab?: StatsTab }
 
@@ -20,10 +20,13 @@ type AppRouteSearch = {
   agent?: string
   surface?: string
   channel?: string
+  collab?: string
   playwrightSession?: string
   playwrightMode?: string
   statsTab?: string
   settingsTab?: string
+  /** Collab backend API base URL hint for sign-in recovery deep-link. */
+  collabApiBaseUrl?: string
 }
 
 function normalizeAgentId(agentId?: string): string {
@@ -81,10 +84,12 @@ export function parseRouteStateFromLocation(
   const agentId = typeof routeSearch.agent === 'string' ? routeSearch.agent : undefined
   const surface = typeof routeSearch.surface === 'string' ? routeSearch.surface : undefined
   const channel = typeof routeSearch.channel === 'string' ? routeSearch.channel : undefined
+  const collab = typeof routeSearch.collab === 'string' ? routeSearch.collab : undefined
 
   if (view === 'settings') {
     const settingsTab = typeof routeSearch.settingsTab === 'string' ? routeSearch.settingsTab : undefined
-    return { view: 'settings', surface: parseSurface(surface, defaultSurface), settingsTab }
+    const collabApiBaseUrl = typeof routeSearch.collabApiBaseUrl === 'string' ? routeSearch.collabApiBaseUrl : undefined
+    return { view: 'settings', surface: parseSurface(surface, defaultSurface), settingsTab, collabApiBaseUrl }
   }
 
   if (view === 'stats') {
@@ -109,16 +114,18 @@ export function parseRouteStateFromLocation(
       agentId: normalizeAgentId(agentId),
       surface: parsedSurface,
       channel: channel || undefined,
+      collab: collab || undefined,
     }
   }
 
-  // Fall back to pathname parsing, but still pick up surface/channel from search params
+  // Fall back to pathname parsing, but still pick up surface/channel/collab from search params
   const pathState = parseRouteStateFromPathname(pathname, defaultSurface)
   if (pathState.view === 'chat') {
     return {
       ...pathState,
       surface: parseSurface(surface, defaultSurface),
       channel: channel || undefined,
+      collab: collab || undefined,
     }
   }
   return pathState
@@ -131,7 +138,7 @@ export function parseRouteStateFromLocation(
  */
 function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   if (routeState.view === 'settings') {
-    return { view: 'settings', surface: routeState.surface, settingsTab: routeState.settingsTab }
+    return { view: 'settings', surface: routeState.surface, settingsTab: routeState.settingsTab, collabApiBaseUrl: routeState.collabApiBaseUrl }
   }
 
   if (routeState.view === 'stats') {
@@ -147,21 +154,24 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
     agentId: normalizeAgentId(routeState.agentId),
     surface: routeState.surface,
     channel: routeState.channel,
+    collab: routeState.collab,
   }
 }
 
 export function toRouteSearch(
   routeState: AppRouteState,
-  stickyParams?: { agent?: string; channel?: string },
+  stickyParams?: { agent?: string; channel?: string; collab?: string },
   defaultSurface: DefaultSurface = getConfiguredDefaultSurface(),
 ): AppRouteSearch {
   if (routeState.view === 'settings') {
-    // Preserve sticky agent and channel through non-chat views
+    // Preserve sticky agent, channel, and collab through non-chat views
     const search: AppRouteSearch = { view: 'settings' }
     if (routeState.surface !== defaultSurface) search.surface = routeState.surface
     if (routeState.settingsTab) search.settingsTab = routeState.settingsTab
+    if (routeState.collabApiBaseUrl) search.collabApiBaseUrl = routeState.collabApiBaseUrl
     if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
     if (stickyParams?.channel) search.channel = stickyParams.channel
+    if (stickyParams?.collab) search.collab = stickyParams.collab
     return search
   }
 
@@ -170,6 +180,7 @@ export function toRouteSearch(
     if (routeState.statsTab && routeState.statsTab !== 'overview') search.statsTab = routeState.statsTab
     if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
     if (stickyParams?.channel) search.channel = stickyParams.channel
+    if (stickyParams?.collab) search.collab = stickyParams.collab
     return search
   }
 
@@ -179,6 +190,7 @@ export function toRouteSearch(
     if (routeState.playwrightMode && routeState.playwrightMode !== 'tiles') search.playwrightMode = routeState.playwrightMode
     if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
     if (stickyParams?.channel) search.channel = stickyParams.channel
+    if (stickyParams?.collab) search.collab = stickyParams.collab
     return search
   }
 
@@ -196,12 +208,16 @@ export function toRouteSearch(
     search.channel = routeState.channel
   }
 
+  if (routeState.collab) {
+    search.collab = routeState.collab
+  }
+
   return search
 }
 
 function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   if (left.view === 'settings' && right.view === 'settings') {
-    return left.surface === right.surface && left.settingsTab === right.settingsTab
+    return left.surface === right.surface && left.settingsTab === right.settingsTab && left.collabApiBaseUrl === right.collabApiBaseUrl
   }
 
   if (left.view === 'stats' && right.view === 'stats') {
@@ -213,7 +229,7 @@ function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   }
 
   if (left.view === 'chat' && right.view === 'chat') {
-    return left.agentId === right.agentId && left.surface === right.surface && left.channel === right.channel
+    return left.agentId === right.agentId && left.surface === right.surface && left.channel === right.channel && left.collab === right.collab
   }
 
   return false
@@ -257,6 +273,7 @@ export function useRouteState({
   // Extract sticky params from the current route state
   const stickyAgent = routeState.view === 'chat' ? routeState.agentId : undefined
   const stickyChannel = routeState.view === 'chat' ? routeState.channel : undefined
+  const stickyCollab = routeState.view === 'chat' ? routeState.collab : undefined
 
   const navigateToRoute = useCallback(
     (nextRouteState: AppRouteState, replace = false) => {
@@ -265,7 +282,7 @@ export function useRouteState({
         return
       }
 
-      // Compute sticky params: use current agent/channel as fallbacks when
+      // Compute sticky params: use current agent/channel/collab as fallbacks when
       // navigating to non-chat views so they survive the round-trip
       const currentSearch = (typeof search === 'object' && search !== null ? search : {}) as AppRouteSearch
       const effectiveStickyAgent = normalizedRouteState.view === 'chat'
@@ -274,6 +291,9 @@ export function useRouteState({
       const effectiveStickyChannel = normalizedRouteState.view === 'chat'
         ? undefined
         : stickyChannel ?? currentSearch.channel
+      const effectiveStickyCollab = normalizedRouteState.view === 'chat'
+        ? undefined
+        : stickyCollab ?? currentSearch.collab
 
       void navigate({
         to: '/',
@@ -282,6 +302,7 @@ export function useRouteState({
           {
             agent: effectiveStickyAgent && effectiveStickyAgent !== DEFAULT_MANAGER_AGENT_ID ? effectiveStickyAgent : undefined,
             channel: effectiveStickyChannel,
+            collab: effectiveStickyCollab,
           },
           defaultSurface,
         ),
@@ -289,7 +310,7 @@ export function useRouteState({
         resetScroll: false,
       })
     },
-    [defaultSurface, navigate, routeState, search, stickyAgent, stickyChannel],
+    [defaultSurface, navigate, routeState, search, stickyAgent, stickyChannel, stickyCollab],
   )
 
   return {

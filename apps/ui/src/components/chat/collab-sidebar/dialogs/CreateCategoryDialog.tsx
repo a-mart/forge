@@ -29,6 +29,8 @@ const NO_REASONING_LEVEL_VALUE = '__none__'
 
 interface CreateCategoryDialogProps {
   open: boolean
+  /** API base URL for the owning connection's backend (target-aware). */
+  apiBaseUrl?: string
   onClose: () => void
   onCreated?: (category: CollaborationCategory) => void
   wsUrl?: string
@@ -50,6 +52,7 @@ function getSupportedLevelsForFamily(
 
 export function CreateCategoryDialog({
   open,
+  apiBaseUrl,
   onClose,
   onCreated,
   wsUrl,
@@ -162,7 +165,7 @@ export function CreateCategoryDialog({
         ...(selectedHandles.size > 0
           ? { defaultSelectedSpecialistHandles: Array.from(selectedHandles) }
           : {}),
-      })
+      }, apiBaseUrl)
       onCreated?.(category)
       setName('')
       setDefaultModelId(NO_DEFAULT_MODEL_VALUE)

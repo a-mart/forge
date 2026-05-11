@@ -74,7 +74,7 @@ describe('ChannelPromptPreviewDialog', () => {
       await Promise.resolve()
     })
 
-    expect(apiMocks.fetchChannelPromptPreview).toHaveBeenCalledWith('channel-1')
+    expect(apiMocks.fetchChannelPromptPreview).toHaveBeenCalledWith('channel-1', undefined)
     expect(document.body.textContent).toContain('Read-only runtime prompt preview for collaboration members. Absolute Forge paths are redacted.')
     expect(document.body.textContent).toContain('## System Prompt')
     expect(document.body.textContent).toContain('Prompt body')

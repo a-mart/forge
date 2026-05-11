@@ -48,6 +48,8 @@ interface ChannelSettingsSheetProps {
   categories: CollaborationCategory[]
   isAdmin: boolean
   wsUrl?: string
+  /** API base URL for the owning connection's backend (target-aware). */
+  apiBaseUrl?: string
 }
 
 export function ChannelSettingsSheet({
@@ -57,6 +59,7 @@ export function ChannelSettingsSheet({
   categories,
   isAdmin,
   wsUrl,
+  apiBaseUrl,
 }: ChannelSettingsSheetProps) {
   const sortedCategories = useMemo(
     () => [...categories].sort((left, right) => left.position - right.position || left.name.localeCompare(right.name)),
@@ -151,7 +154,7 @@ export function ChannelSettingsSheet({
 
     let cancelled = false
 
-    void getChannel(channel.channelId)
+    void getChannel(channel.channelId, apiBaseUrl)
       .then((freshChannel) => {
         if (cancelled) {
           return
@@ -186,7 +189,7 @@ export function ChannelSettingsSheet({
     return () => {
       cancelled = true
     }
-  }, [channel.channelId, open])
+  }, [channel.channelId, open, apiBaseUrl])
 
   const trimmedName = name.trim()
   const normalizedDescription = normalizeOptionalText(description)
@@ -224,7 +227,7 @@ export function ChannelSettingsSheet({
         ...(normalizedModelId ? { modelId: normalizedModelId } : {}),
         ...(normalizedReasoningLevel ? { reasoningLevel: normalizedReasoningLevel } : {}),
         promptOverlay: normalizedPromptOverlay,
-      })
+      }, apiBaseUrl)
       onOpenChange(false)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Could not save channel settings.')

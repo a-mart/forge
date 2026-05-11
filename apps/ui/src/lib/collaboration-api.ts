@@ -3,6 +3,14 @@
  *
  * All mutations go through REST; the collab WS client receives the resulting
  * fanout events to reconcile local state across all connected clients.
+ *
+ * ## Target-aware API
+ *
+ * Every exported function accepts an optional `apiBaseUrl` parameter as its
+ * **last** argument.  When provided, the request targets that specific
+ * collaboration backend.  When omitted, the default/last-active connection
+ * is resolved via `resolveCollaborationApiBaseUrl()` — preserving
+ * backward-compatibility for single-backend callers.
  */
 
 import type {
@@ -12,12 +20,13 @@ import type {
 } from '@forge/protocol'
 import { resolveCollaborationApiBaseUrl } from './collaboration-endpoints'
 
-function apiUrl(path: string): string {
-  return new URL(path, resolveCollaborationApiBaseUrl()).toString()
+function apiUrl(path: string, baseUrl?: string): string {
+  const base = baseUrl ?? resolveCollaborationApiBaseUrl()
+  return new URL(path, base).toString()
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiUrl(path), {
+async function apiFetch<T>(path: string, init?: RequestInit, baseUrl?: string): Promise<T> {
+  const response = await fetch(apiUrl(path, baseUrl), {
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
@@ -44,14 +53,20 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-export async function getChannel(channelId: string): Promise<CollaborationChannel> {
-  const response = await apiFetch<{ channel: CollaborationChannel }>(`/api/collaboration/channels/${encodeURIComponent(channelId)}`)
+export async function getChannel(channelId: string, apiBaseUrl?: string): Promise<CollaborationChannel> {
+  const response = await apiFetch<{ channel: CollaborationChannel }>(
+    `/api/collaboration/channels/${encodeURIComponent(channelId)}`,
+    undefined,
+    apiBaseUrl,
+  )
   return response.channel
 }
 
-export function fetchChannelPromptPreview(channelId: string): Promise<CollaborationChannelPromptPreviewResponse> {
+export function fetchChannelPromptPreview(channelId: string, apiBaseUrl?: string): Promise<CollaborationChannelPromptPreviewResponse> {
   return apiFetch<CollaborationChannelPromptPreviewResponse>(
     `/api/collaboration/channels/${encodeURIComponent(channelId)}/prompt-preview`,
+    undefined,
+    apiBaseUrl,
   )
 }
 
@@ -62,6 +77,7 @@ export async function createChannel(
     description?: string
     aiEnabled?: boolean
   },
+  apiBaseUrl?: string,
 ): Promise<CollaborationChannel> {
   const response = await apiFetch<{ ok: true; channel: CollaborationChannel }>(
     '/api/collaboration/channels',
@@ -69,6 +85,7 @@ export async function createChannel(
       method: 'POST',
       body: JSON.stringify(params),
     },
+    apiBaseUrl,
   )
   return response.channel
 }
@@ -84,27 +101,35 @@ export async function updateChannel(
     reasoningLevel?: string
     promptOverlay?: string | null
   },
+  apiBaseUrl?: string,
 ): Promise<CollaborationChannel> {
-  const response = await apiFetch<{ ok: true; channel: CollaborationChannel }>(`/api/collaboration/channels/${encodeURIComponent(channelId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(params),
-  })
+  const response = await apiFetch<{ ok: true; channel: CollaborationChannel }>(
+    `/api/collaboration/channels/${encodeURIComponent(channelId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(params),
+    },
+    apiBaseUrl,
+  )
   return response.channel
 }
 
-export function archiveChannel(channelId: string): Promise<void> {
-  return apiFetch<void>(`/api/collaboration/channels/${encodeURIComponent(channelId)}/archive`, {
-    method: 'POST',
-  })
+export function archiveChannel(channelId: string, apiBaseUrl?: string): Promise<void> {
+  return apiFetch<void>(
+    `/api/collaboration/channels/${encodeURIComponent(channelId)}/archive`,
+    { method: 'POST' },
+    apiBaseUrl,
+  )
 }
 
-export function reorderChannels(channelIds: string[]): Promise<void> {
+export function reorderChannels(channelIds: string[], apiBaseUrl?: string): Promise<void> {
   return apiFetch<void>(
     '/api/collaboration/channels/reorder',
     {
       method: 'POST',
       body: JSON.stringify({ channelIds }),
     },
+    apiBaseUrl,
   )
 }
 
@@ -115,6 +140,7 @@ export async function createCategory(
     defaultModelId?: string | null
     defaultSelectedSpecialistHandles?: string[]
   },
+  apiBaseUrl?: string,
 ): Promise<CollaborationCategory> {
   const response = await apiFetch<{ ok: true; category: CollaborationCategory }>(
     '/api/collaboration/categories',
@@ -122,6 +148,7 @@ export async function createCategory(
       method: 'POST',
       body: JSON.stringify(params),
     },
+    apiBaseUrl,
   )
   return response.category
 }
@@ -134,26 +161,34 @@ export async function updateCategory(
     defaultModelId?: string | null
     defaultSelectedSpecialistHandles?: string[]
   },
+  apiBaseUrl?: string,
 ): Promise<CollaborationCategory> {
-  const response = await apiFetch<{ ok: true; category: CollaborationCategory }>(`/api/collaboration/categories/${encodeURIComponent(categoryId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(params),
-  })
+  const response = await apiFetch<{ ok: true; category: CollaborationCategory }>(
+    `/api/collaboration/categories/${encodeURIComponent(categoryId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(params),
+    },
+    apiBaseUrl,
+  )
   return response.category
 }
 
-export function deleteCategory(categoryId: string): Promise<void> {
-  return apiFetch<void>(`/api/collaboration/categories/${encodeURIComponent(categoryId)}`, {
-    method: 'DELETE',
-  })
+export function deleteCategory(categoryId: string, apiBaseUrl?: string): Promise<void> {
+  return apiFetch<void>(
+    `/api/collaboration/categories/${encodeURIComponent(categoryId)}`,
+    { method: 'DELETE' },
+    apiBaseUrl,
+  )
 }
 
-export function reorderCategories(categoryIds: string[]): Promise<void> {
+export function reorderCategories(categoryIds: string[], apiBaseUrl?: string): Promise<void> {
   return apiFetch<void>(
     '/api/collaboration/categories/reorder',
     {
       method: 'POST',
       body: JSON.stringify({ categoryIds }),
     },
+    apiBaseUrl,
   )
 }

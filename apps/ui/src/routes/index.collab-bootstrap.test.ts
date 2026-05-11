@@ -77,6 +77,45 @@ vi.mock('@/lib/collaboration-endpoints', () => ({
   },
 }))
 
+vi.mock('@/lib/collaboration-connections', () => ({
+  getCollaborationConnectionOptions: () => {
+    const url = collabServerUrlMock.value
+    if (!url) {
+      // No configured URL → same-origin virtual target
+      return [{
+        connectionId: 'conn_same_origin',
+        kind: 'same-origin',
+        label: 'Local',
+        apiBaseUrl: 'http://forge.test/',
+        wsUrl: 'ws://forge.test/ws',
+        isRemote: false,
+      }]
+    }
+    // Determine if the configured URL is remote
+    const normalize = (u: string): string => {
+      const httpUrl = u.replace(/^ws(s?):\/\//, 'http$1://')
+      const parsed = new URL(httpUrl)
+      if (parsed.hostname === 'localhost') parsed.hostname = '127.0.0.1'
+      return parsed.origin
+    }
+    const isRemote = normalize(url) !== normalize('ws://forge.test/ws')
+    const parsed = new URL(url)
+    const origin = parsed.origin
+    return [{
+      connectionId: 'conn_configured',
+      kind: 'remote',
+      label: parsed.host,
+      serverUrl: origin,
+      apiBaseUrl: origin + '/',
+      wsUrl: origin.replace(/^http(s?):\/\//, 'ws$1://'),
+      isRemote,
+    }]
+  },
+  getDefaultConnectionIdFromTargets: (targets: Array<{ connectionId: string }>) =>
+    targets.length > 0 ? targets[0].connectionId : null,
+  subscribeToRegistryChanges: () => () => {},
+}))
+
 vi.mock('@/lib/electron-bridge', () => ({
   isElectron: () => isElectronMock.value,
 }))
@@ -152,9 +191,9 @@ describe('IndexPage collab bootstrap gating', () => {
 
     expect(container.textContent).toContain('Loading…')
     expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
-    expect(collabSessionHookMock).toHaveBeenCalledWith({
-      enabled: true,
-    })
+    expect(collabSessionHookMock).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true }),
+    )
   })
 
   it('passes a builder/collab mode switch to the builder surface for collab admins', () => {
@@ -527,7 +566,9 @@ describe('IndexPage collab bootstrap gating', () => {
     renderPage()
 
     // Collab session should be disabled (enabled: false)
-    expect(collabSessionHookMock).toHaveBeenCalledWith({ enabled: false })
+    expect(collabSessionHookMock).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false }),
+    )
     // Should render builder surface
     expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
     expect(container.querySelector('[data-testid="collab-surface"]')).toBeNull()
@@ -549,6 +590,29 @@ describe('IndexPage collab bootstrap gating', () => {
 
     expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
     expect(builderSurfacePropsMock.value?.collaborationModeSwitch).toBeUndefined()
+  })
+
+  it('passes target-aware apiBaseUrl to useCollaborationSession for the resolved target', () => {
+    // Blocker 2: When a remote collab server is configured, useCollaborationSession
+    // must receive the target's apiBaseUrl — not the default/local resolution.
+    collabServerUrlMock.value = 'https://collab.example.com'
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      isAdmin: true,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(collabSessionHookMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        apiBaseUrl: 'https://collab.example.com/',
+      }),
+    )
   })
 
   it('hides mode switch when no server URL is configured and collab is not enabled', () => {

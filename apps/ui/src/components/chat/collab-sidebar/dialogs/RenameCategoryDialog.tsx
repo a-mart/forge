@@ -30,6 +30,8 @@ const NO_REASONING_LEVEL_VALUE = '__none__'
 interface RenameCategoryDialogProps {
   open: boolean
   category: CollaborationCategory
+  /** API base URL for the owning connection's backend (target-aware). */
+  apiBaseUrl?: string
   onClose: () => void
   onRenamed?: (category: CollaborationCategory) => void
   wsUrl?: string
@@ -60,6 +62,7 @@ function deriveInitialReasoningLevel(category: CollaborationCategory): string {
 export function RenameCategoryDialog({
   open,
   category,
+  apiBaseUrl,
   onClose,
   onRenamed,
   wsUrl,
@@ -172,7 +175,7 @@ export function RenameCategoryDialog({
             ? { defaultModelId }
             : { defaultModelId: null, channelCreationDefaults: null }),
         defaultSelectedSpecialistHandles: Array.from(selectedHandles),
-      })
+      }, apiBaseUrl)
       onRenamed?.(updated)
       onClose()
     } catch (err) {

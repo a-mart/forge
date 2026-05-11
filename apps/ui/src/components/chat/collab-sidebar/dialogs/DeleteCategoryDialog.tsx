@@ -15,6 +15,8 @@ import type { CollaborationCategory } from '@forge/protocol'
 interface DeleteCategoryDialogProps {
   open: boolean
   category: CollaborationCategory
+  /** API base URL for the owning connection's backend (target-aware). */
+  apiBaseUrl?: string
   onClose: () => void
   onDeleted?: (categoryId: string) => void
 }
@@ -22,6 +24,7 @@ interface DeleteCategoryDialogProps {
 export function DeleteCategoryDialog({
   open,
   category,
+  apiBaseUrl,
   onClose,
   onDeleted,
 }: DeleteCategoryDialogProps) {
@@ -36,7 +39,7 @@ export function DeleteCategoryDialog({
     setIsDeleting(true)
     setError(null)
     try {
-      await deleteCategory(category.categoryId)
+      await deleteCategory(category.categoryId, apiBaseUrl)
       onDeleted?.(category.categoryId)
       onClose()
     } catch (err) {

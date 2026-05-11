@@ -43,6 +43,13 @@ interface SettingsPanelProps {
    * `availableTabs`.
    */
   initialTab?: string
+  /**
+   * Optional collab backend API base URL to preselect in the Collaboration
+   * settings tab.  Used when the user clicks "Sign in again" from an auth
+   * error on a specific collab backend to navigate directly to the right
+   * backend's sign-in form.
+   */
+  initialCollabApiBaseUrl?: string
 }
 
 export function SettingsPanel({
@@ -59,6 +66,7 @@ export function SettingsPanel({
   previewSession,
   target: externalTarget,
   initialTab,
+  initialCollabApiBaseUrl,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     if (initialTab) {
@@ -146,7 +154,12 @@ export function SettingsPanel({
         />
       )}
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} apiClient={apiClient} />}
-      {activeTab === 'collaboration' && <SettingsCollaboration wsUrl={wsUrl} />}
+      {activeTab === 'collaboration' && (
+        <SettingsCollaboration
+          wsUrl={wsUrl}
+          initialApiBaseUrl={target.kind === 'collab' ? target.apiBaseUrl : initialCollabApiBaseUrl}
+        />
+      )}
       {activeTab === 'about' && <SettingsAbout wsUrl={wsUrl} apiClient={apiClient} />}
     </SettingsLayout>
   )

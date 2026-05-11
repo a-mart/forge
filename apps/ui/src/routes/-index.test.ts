@@ -305,7 +305,7 @@ describe('IndexPage create project model selection', () => {
     await vi.advanceTimersByTimeAsync(0)
   })
 
-  it('shows scoped worker tool calls in all-tab activity for the selected manager context', async () => {
+  it('shows only manager-owned tool calls and scoped agent messages in all-tab activity', async () => {
     const socket = await renderPage()
 
     emitServerEvent(socket, {
@@ -385,9 +385,13 @@ describe('IndexPage create project model selection', () => {
 
     click(getByRole(container, 'button', { name: 'All' }))
 
+    // Scoped agent messages from owned workers remain visible
     expect(queryByText(container, 'owned worker chatter')).not.toBeNull()
+    // Manager-owned tool calls are visible
     expect(queryByText(container, /manager-call/)).not.toBeNull()
-    expect(queryByText(container, /owned-call/)).not.toBeNull()
+    // Worker-originated tool calls are hidden (actorAgentId !== managerId)
+    expect(queryByText(container, /owned-call/)).toBeNull()
+    // Foreign worker messages and tool calls are hidden
     expect(queryByText(container, 'foreign worker chatter')).toBeNull()
     expect(queryByText(container, /foreign-call/)).toBeNull()
   })
@@ -542,19 +546,52 @@ describe('parseWindowRouteSearch', () => {
     expect(result.settingsTab).toBeUndefined()
   })
 
-  it('parses all known params including settingsTab and statsTab', () => {
+  it('parses all known params including settingsTab, statsTab, collab, and collabApiBaseUrl', () => {
     const result = parseWindowRouteSearch(
-      '?view=settings&agent=mgr&surface=builder&channel=ch1&playwrightSession=ps&playwrightMode=pm&statsTab=st&settingsTab=auth',
+      '?view=settings&agent=mgr&surface=builder&channel=ch1&collab=conn_abc&playwrightSession=ps&playwrightMode=pm&statsTab=st&settingsTab=auth&collabApiBaseUrl=https%3A%2F%2Fb.example.com%2F',
     )
     expect(result).toEqual({
       view: 'settings',
       agent: 'mgr',
       surface: 'builder',
       channel: 'ch1',
+      collab: 'conn_abc',
       playwrightSession: 'ps',
       playwrightMode: 'pm',
       statsTab: 'st',
       settingsTab: 'auth',
+      collabApiBaseUrl: 'https://b.example.com/',
     })
+  })
+
+  it('parses collab param from URL search', () => {
+    const result = parseWindowRouteSearch('?surface=collab&channel=general&collab=conn_xyz')
+    expect(result).toMatchObject({
+      surface: 'collab',
+      channel: 'general',
+      collab: 'conn_xyz',
+    })
+  })
+
+  it('returns undefined collab when not present', () => {
+    const result = parseWindowRouteSearch('?surface=collab&channel=general')
+    expect(result.collab).toBeUndefined()
+  })
+
+  it('parses collabApiBaseUrl from URL search params', () => {
+    const result = parseWindowRouteSearch(
+      '?view=settings&surface=builder&settingsTab=collaboration&collabApiBaseUrl=https%3A%2F%2Fb.example.com%2F',
+    )
+    expect(result).toMatchObject({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'collaboration',
+      collabApiBaseUrl: 'https://b.example.com/',
+    })
+  })
+
+  it('returns undefined collabApiBaseUrl when not present', () => {
+    const result = parseWindowRouteSearch('?view=settings&surface=builder&settingsTab=collaboration')
+    expect(result.collabApiBaseUrl).toBeUndefined()
   })
 })

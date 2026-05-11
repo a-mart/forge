@@ -1,26 +1,18 @@
 /**
- * React hook + context for the collab WS client lifecycle.
+ * Collab WS context type, provider, and consumer hook.
  *
- * Manages connect/disconnect/reconnect and exposes collab state to the
- * component tree. Only active when the collab surface is mounted.
- *
- * Channel selection is driven by the caller via
- * `clientRef.current.setActiveChannel(channelId)`.
+ * The multi-backend connection lifecycle is managed by
+ * `useCollabConnections()` in `use-collab-connections.ts`.  This module
+ * retains the shared context shape that downstream components import.
  */
 
 import {
   createContext,
   useContext,
-  useEffect,
-  useRef,
-  useState,
   type MutableRefObject,
 } from 'react'
-import { CollabWsClient } from '@/lib/collaboration/ws-client'
-import {
-  createInitialCollabWsState,
-  type CollabWsState,
-} from '@/lib/collab-ws-state'
+import type { CollabWsClient } from '@/lib/collaboration/ws-client'
+import type { CollabWsState } from '@/lib/collab-ws-state'
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -50,45 +42,8 @@ export function useCollabWsContext(): CollabWsConnectionValue {
 }
 
 // ---------------------------------------------------------------------------
-// Connection lifecycle hook
+// NOTE: The legacy `useCollabWsConnection` hook was removed — the multi-backend
+// `useCollabConnections()` hook (in use-collab-connections.ts) now manages all
+// per-backend WS client lifecycles.  This module retains the shared context
+// type/provider/consumer that downstream components still import.
 // ---------------------------------------------------------------------------
-
-/**
- * Manages the collab WS client lifecycle for a given backend WS URL.
- *
- * Usage (inside CollabSurface):
- * ```tsx
- * const collab = useCollabWsConnection(wsUrl)
- * return (
- *   <CollabWsProvider value={collab}>
- *     {children}
- *   </CollabWsProvider>
- * )
- * ```
- */
-export function useCollabWsConnection(wsUrl: string): CollabWsConnectionValue {
-  const clientRef = useRef<CollabWsClient | null>(null)
-  const [state, setState] = useState<CollabWsState>(() => createInitialCollabWsState())
-
-  useEffect(() => {
-    const client = new CollabWsClient(wsUrl)
-    clientRef.current = client
-    setState(client.getState())
-
-    const unsubscribe = client.subscribe((nextState) => {
-      setState(nextState)
-    })
-
-    client.start()
-
-    return () => {
-      unsubscribe()
-      if (clientRef.current === client) {
-        clientRef.current = null
-      }
-      client.destroy()
-    }
-  }, [wsUrl])
-
-  return { clientRef, state }
-}

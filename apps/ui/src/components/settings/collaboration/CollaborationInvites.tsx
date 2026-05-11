@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,6 +13,8 @@ import {
 import type { CollaborationCreatedInvite, CollaborationInvite } from '@forge/protocol'
 
 interface CollaborationInvitesProps {
+  /** API base URL for the targeted collaboration backend. */
+  apiBaseUrl?: string
   onAuthError?: () => void
 }
 
@@ -23,7 +25,7 @@ const STATUS_BADGE_VARIANT: Record<string, 'secondary' | 'destructive' | 'outlin
   consumed: 'secondary',
 }
 
-export function CollaborationInvites({ onAuthError }: CollaborationInvitesProps) {
+export function CollaborationInvites({ apiBaseUrl, onAuthError }: CollaborationInvitesProps) {
   const [invites, setInvites] = useState<CollaborationInvite[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -35,30 +37,49 @@ export function CollaborationInvites({ onAuthError }: CollaborationInvitesProps)
   const [createdInvite, setCreatedInvite] = useState<CollaborationCreatedInvite | null>(null)
   const [copied, setCopied] = useState(false)
 
-  const loadInvites = useCallback(async () => {
+  // Abort controller: prevents stale responses from a previously selected
+  // backend from overwriting state after apiBaseUrl changes.
+  const controllerRef = useRef<AbortController | null>(null)
+
+  const loadInvites = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchCollaborationInvites()
+      const data = await fetchCollaborationInvites(apiBaseUrl, signal)
+      if (signal?.aborted) return
       setInvites(data)
     } catch (err) {
+      if (signal?.aborted) return
       if (isAuthError(err)) {
         onAuthError?.()
         return
       }
       setError(err instanceof Error ? err.message : 'Failed to load invites')
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) {
+        setLoading(false)
+      }
     }
-  }, [onAuthError])
+  }, [apiBaseUrl, onAuthError])
 
   useEffect(() => {
-    void loadInvites()
+    controllerRef.current?.abort()
+    setInvites([])
+    setError(null)
+    setCreateError(null)
+    setCreatedInvite(null)
+    const controller = new AbortController()
+    controllerRef.current = controller
+    void loadInvites(controller.signal)
+    return () => controller.abort()
   }, [loadInvites])
 
   const handleCreate = useCallback(
     async (e: FormEvent) => {
       e.preventDefault()
+      // Capture the controller at call time so late resolution after a
+      // backend switch does not commit stale results into the new backend.
+      const controller = controllerRef.current
       setCreateError(null)
       setCreatedInvite(null)
 
@@ -70,28 +91,34 @@ export function CollaborationInvites({ onAuthError }: CollaborationInvitesProps)
 
       setCreating(true)
       try {
-        const invite = await createCollaborationInvite(trimmed)
+        const invite = await createCollaborationInvite(trimmed, undefined, apiBaseUrl)
+        if (controller?.signal.aborted) return
         setCreatedInvite(invite)
         setEmail('')
         // Reload list to show the new pending invite
-        void loadInvites()
+        void loadInvites(controllerRef.current?.signal)
       } catch (err) {
+        if (controller?.signal.aborted) return
         if (isAuthError(err)) {
           onAuthError?.()
           return
         }
         setCreateError(err instanceof Error ? err.message : 'Failed to create invite')
       } finally {
-        setCreating(false)
+        if (!controller?.signal.aborted) {
+          setCreating(false)
+        }
       }
     },
-    [email, loadInvites, onAuthError],
+    [email, apiBaseUrl, loadInvites, onAuthError],
   )
 
   const handleRevoke = useCallback(
     async (invite: CollaborationInvite) => {
+      const controller = controllerRef.current
       try {
-        await revokeCollaborationInvite(invite.inviteId)
+        await revokeCollaborationInvite(invite.inviteId, apiBaseUrl)
+        if (controller?.signal.aborted) return
         setInvites((prev) =>
           prev.map((i) =>
             i.inviteId === invite.inviteId
@@ -100,6 +127,7 @@ export function CollaborationInvites({ onAuthError }: CollaborationInvitesProps)
           ),
         )
       } catch (err) {
+        if (controller?.signal.aborted) return
         if (isAuthError(err)) {
           onAuthError?.()
           return
@@ -107,7 +135,7 @@ export function CollaborationInvites({ onAuthError }: CollaborationInvitesProps)
         setError(err instanceof Error ? err.message : 'Failed to revoke invite')
       }
     },
-    [onAuthError],
+    [apiBaseUrl, onAuthError],
   )
 
   const handleCopyLink = useCallback(async (url: string) => {
@@ -215,7 +243,12 @@ export function CollaborationInvites({ onAuthError }: CollaborationInvitesProps)
           <span className="text-sm text-destructive">{error}</span>
           <button
             type="button"
-            onClick={() => void loadInvites()}
+            onClick={() => {
+              controllerRef.current?.abort()
+              const controller = new AbortController()
+              controllerRef.current = controller
+              void loadInvites(controller.signal)
+            }}
             className="text-xs text-primary underline hover:no-underline"
           >
             Retry

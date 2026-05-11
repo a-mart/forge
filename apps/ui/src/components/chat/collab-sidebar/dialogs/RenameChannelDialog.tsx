@@ -15,6 +15,8 @@ import type { CollaborationChannel } from '@forge/protocol'
 interface RenameChannelDialogProps {
   open: boolean
   channel: CollaborationChannel
+  /** API base URL for the owning connection's backend (target-aware). */
+  apiBaseUrl?: string
   onClose: () => void
   onRenamed?: (channel: CollaborationChannel) => void
 }
@@ -22,6 +24,7 @@ interface RenameChannelDialogProps {
 export function RenameChannelDialog({
   open,
   channel,
+  apiBaseUrl,
   onClose,
   onRenamed,
 }: RenameChannelDialogProps) {
@@ -44,7 +47,7 @@ export function RenameChannelDialog({
     setIsSaving(true)
     setError(null)
     try {
-      const updated = await updateChannel(channel.channelId, { name: trimmedName })
+      const updated = await updateChannel(channel.channelId, { name: trimmedName }, apiBaseUrl)
       onRenamed?.(updated)
       onClose()
     } catch (err) {

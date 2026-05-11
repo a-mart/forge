@@ -1,4 +1,4 @@
-import { useCallback, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -8,16 +8,25 @@ import { changeMyPassword } from '../collaboration-settings-api'
 interface CollaborationPasswordChangeProps {
   /** When true, the banner emphasises that a password change is required before continuing. */
   required?: boolean
+  /** API base URL for the targeted collaboration backend. */
+  apiBaseUrl?: string
   onChanged?: () => void
 }
 
-export function CollaborationPasswordChange({ required, onChanged }: CollaborationPasswordChangeProps) {
+export function CollaborationPasswordChange({ required, apiBaseUrl, onChanged }: CollaborationPasswordChangeProps) {
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+
+  // Monotonic generation counter — bumped whenever apiBaseUrl changes so
+  // in-flight mutations from a prior backend can detect staleness.
+  const generationRef = useRef(0)
+  useEffect(() => {
+    generationRef.current += 1
+  }, [apiBaseUrl])
 
   const validate = useCallback((): string | null => {
     if (!currentPassword) return 'Current password is required'
@@ -40,21 +49,28 @@ export function CollaborationPasswordChange({ required, onChanged }: Collaborati
         return
       }
 
+      // Capture generation at call time so late resolution after a backend
+      // switch does not commit results into the new backend's state.
+      const gen = generationRef.current
       setSubmitting(true)
       try {
-        await changeMyPassword(currentPassword, newPassword)
+        await changeMyPassword(currentPassword, newPassword, apiBaseUrl)
+        if (generationRef.current !== gen) return
         setCurrentPassword('')
         setNewPassword('')
         setConfirmPassword('')
         setSuccess(true)
         onChanged?.()
       } catch (err) {
+        if (generationRef.current !== gen) return
         setError(err instanceof Error ? err.message : 'Failed to change password')
       } finally {
-        setSubmitting(false)
+        if (generationRef.current === gen) {
+          setSubmitting(false)
+        }
       }
     },
-    [currentPassword, newPassword, validate, onChanged],
+    [currentPassword, newPassword, apiBaseUrl, validate, onChanged],
   )
 
   return (

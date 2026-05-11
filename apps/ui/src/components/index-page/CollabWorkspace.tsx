@@ -64,7 +64,6 @@ export function CollabWorkspace({
   onSignIn,
 }: CollabWorkspaceProps) {
   const { clientRef, state } = useCollabWsContext()
-  const previousChannelIdRef = useRef<string | undefined>(undefined)
   const messageListRef = useRef<MessageListHandle>(null)
   const messageInputRef = useRef<MessageInputHandle>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -91,30 +90,12 @@ export function CollabWorkspace({
   const memberCount = typeof state.workspace?.memberCount === 'number' && Number.isFinite(state.workspace.memberCount)
     ? state.workspace.memberCount
     : undefined
-  useEffect(() => {
-    if (!state.hasBootstrapped) {
-      return
-    }
 
-    const client = clientRef.current
-    if (!client) {
-      previousChannelIdRef.current = channelId
-      return
-    }
-
-    client.setActiveChannel(channelId ?? null)
-    previousChannelIdRef.current = channelId
-  }, [channelId, clientRef, state.hasBootstrapped])
-
-  useEffect(() => {
-    const client = clientRef.current
-
-    return () => {
-      if (previousChannelIdRef.current) {
-        client?.setActiveChannel(null)
-      }
-    }
-  }, [clientRef])
+  // NOTE: Active-channel ownership (subscribe/unsubscribe) is managed by
+  // CollabSurface via the CollabConnectionManager.  CollabWorkspace must NOT
+  // call `clientRef.current.setActiveChannel()` directly — doing so bypasses
+  // the manager's single-active-detail-subscription invariant and can cause
+  // duplicate subscriptions or teardown races.
 
   useEffect(() => {
     if (!channelId || !state.hasBootstrapped) {
@@ -233,6 +214,7 @@ export function CollabWorkspace({
 
       const response = await fetch(endpoint, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({}),
       })
@@ -262,6 +244,7 @@ export function CollabWorkspace({
 
       const response = await fetch(endpoint, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({}),
       })
@@ -291,6 +274,7 @@ export function CollabWorkspace({
 
       const response = await fetch(endpoint, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({}),
       })
@@ -476,6 +460,7 @@ export function CollabWorkspace({
           onOpenChange={setPromptPreviewOpen}
           channelId={selectedChannel.channelId}
           channelName={selectedChannel.name}
+          apiBaseUrl={resolveApiEndpoint(wsUrl, '/')}
         />
       ) : null}
     </div>

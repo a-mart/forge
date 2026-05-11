@@ -202,6 +202,177 @@ describe('default surface helpers', () => {
   })
 })
 
+describe('useRouteState — collab connection param', () => {
+  it('parses collab from search params', () => {
+    const result = parseRouteStateFromLocation(
+      '/',
+      { view: 'chat', surface: 'collab', channel: 'general', collab: 'conn_abc' },
+      'builder',
+    )
+
+    expect(result).toEqual({
+      view: 'chat',
+      agentId: '__default__',
+      surface: 'collab',
+      channel: 'general',
+      collab: 'conn_abc',
+    })
+  })
+
+  it('omits collab when not present', () => {
+    const result = parseRouteStateFromLocation(
+      '/',
+      { view: 'chat', surface: 'collab', channel: 'general' },
+      'builder',
+    )
+
+    expect(result).toEqual({
+      view: 'chat',
+      agentId: '__default__',
+      surface: 'collab',
+      channel: 'general',
+    })
+  })
+
+  it('serialises collab into search params for chat view', () => {
+    const search = toRouteSearch(
+      { view: 'chat', agentId: '__default__', surface: 'collab', channel: 'general', collab: 'conn_abc' },
+      undefined,
+      'builder',
+    )
+
+    expect(search).toEqual({
+      surface: 'collab',
+      channel: 'general',
+      collab: 'conn_abc',
+    })
+  })
+
+  it('omits collab from search when absent', () => {
+    const search = toRouteSearch(
+      { view: 'chat', agentId: '__default__', surface: 'collab', channel: 'general' },
+      undefined,
+      'builder',
+    )
+
+    expect(search.collab).toBeUndefined()
+  })
+
+  it('preserves collab as sticky param through settings navigation', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'chat', surface: 'collab', channel: 'general', collab: 'conn_abc', agent: 'mgr1' },
+      navigate,
+    })
+
+    // Navigate to collab settings
+    flushSync(() => {
+      captured.current?.navigateToRoute({ view: 'settings', surface: 'collab' })
+    })
+
+    const call = navigate.mock.calls[0]?.[0]
+    expect(call?.search?.view).toBe('settings')
+    expect(call?.search?.collab).toBe('conn_abc')
+    expect(call?.search?.channel).toBe('general')
+    expect(call?.search?.agent).toBe('mgr1')
+  })
+
+  it('preserves collab as sticky param through stats navigation', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'chat', surface: 'collab', channel: 'general', collab: 'conn_abc' },
+      navigate,
+    })
+
+    flushSync(() => {
+      captured.current?.navigateToRoute({ view: 'stats' })
+    })
+
+    const call = navigate.mock.calls[0]?.[0]
+    expect(call?.search?.collab).toBe('conn_abc')
+    expect(call?.search?.channel).toBe('general')
+  })
+
+  it('preserves collab as sticky param through playwright navigation', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'chat', surface: 'collab', channel: 'ch1', collab: 'conn_xyz' },
+      navigate,
+    })
+
+    flushSync(() => {
+      captured.current?.navigateToRoute({ view: 'playwright' })
+    })
+
+    const call = navigate.mock.calls[0]?.[0]
+    expect(call?.search?.collab).toBe('conn_xyz')
+    expect(call?.search?.channel).toBe('ch1')
+  })
+
+  it('treats chat routes with different collab as distinct states', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'chat', surface: 'collab', collab: 'conn_a' },
+      navigate,
+    })
+
+    // Navigate to same channel on different connection — should NOT be a no-op
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'chat',
+        agentId: '__default__',
+        surface: 'collab',
+        collab: 'conn_b',
+      })
+    })
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: expect.objectContaining({ collab: 'conn_b' }),
+      }),
+    )
+  })
+
+  it('does not emit collab param when switching from collab to builder chat', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'chat', surface: 'collab', collab: 'conn_a' },
+      navigate,
+    })
+
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'chat',
+        agentId: '__default__',
+        surface: 'builder',
+      })
+    })
+
+    const call = navigate.mock.calls[0]?.[0]
+    expect(call?.search?.collab).toBeUndefined()
+  })
+
+  it('normalises empty collab to undefined', () => {
+    const result = parseRouteStateFromLocation(
+      '/',
+      { view: 'chat', surface: 'collab', collab: '' },
+      'builder',
+    )
+
+    expect(result).toEqual({
+      view: 'chat',
+      agentId: '__default__',
+      surface: 'collab',
+    })
+    expect((result as any).collab).toBeUndefined()
+  })
+})
+
 describe('useRouteState — settingsTab deep-link', () => {
   it('parses settingsTab from search params', () => {
     const result = parseRouteStateFromLocation(
@@ -280,5 +451,180 @@ describe('useRouteState — settingsTab deep-link', () => {
         }),
       }),
     )
+  })
+})
+
+describe('useRouteState — collabApiBaseUrl deep-link', () => {
+  it('parses collabApiBaseUrl from search params', () => {
+    const result = parseRouteStateFromLocation(
+      '/',
+      { view: 'settings', surface: 'builder', settingsTab: 'collaboration', collabApiBaseUrl: 'https://b.example.com/' },
+      'builder',
+    )
+
+    expect(result).toEqual({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'collaboration',
+      collabApiBaseUrl: 'https://b.example.com/',
+    })
+  })
+
+  it('omits collabApiBaseUrl when not present', () => {
+    const result = parseRouteStateFromLocation(
+      '/',
+      { view: 'settings', surface: 'builder', settingsTab: 'collaboration' },
+      'builder',
+    )
+
+    expect(result).toEqual({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'collaboration',
+      collabApiBaseUrl: undefined,
+    })
+  })
+
+  it('serialises collabApiBaseUrl into search params', () => {
+    const search = toRouteSearch(
+      { view: 'settings', surface: 'builder', settingsTab: 'collaboration', collabApiBaseUrl: 'https://b.example.com/' },
+      undefined,
+      'builder',
+    )
+
+    expect(search).toEqual({
+      view: 'settings',
+      settingsTab: 'collaboration',
+      collabApiBaseUrl: 'https://b.example.com/',
+    })
+  })
+
+  it('omits collabApiBaseUrl from search when absent', () => {
+    const search = toRouteSearch(
+      { view: 'settings', surface: 'builder', settingsTab: 'collaboration' },
+      undefined,
+      'builder',
+    )
+
+    expect(search.collabApiBaseUrl).toBeUndefined()
+  })
+
+  it('treats settings routes with different collabApiBaseUrl as distinct (not a no-op)', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'settings', surface: 'builder', settingsTab: 'collaboration' },
+      navigate,
+    })
+
+    // Navigate to the same tab but with a different collabApiBaseUrl — must NOT be a no-op
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'collaboration',
+        collabApiBaseUrl: 'https://b.example.com/',
+      })
+    })
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: expect.objectContaining({
+          view: 'settings',
+          settingsTab: 'collaboration',
+          collabApiBaseUrl: 'https://b.example.com/',
+        }),
+      }),
+    )
+  })
+
+  it('treats navigation to same collabApiBaseUrl as no-op', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'settings', surface: 'builder', settingsTab: 'collaboration', collabApiBaseUrl: 'https://same.example.com/' },
+      navigate,
+    })
+
+    // Navigate to the identical state — should be a no-op
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'collaboration',
+        collabApiBaseUrl: 'https://same.example.com/',
+      })
+    })
+
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('treats settings routes differing only by collabApiBaseUrl as distinct', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'settings', surface: 'builder', settingsTab: 'collaboration', collabApiBaseUrl: 'https://a.example.com/' },
+      navigate,
+    })
+
+    // Navigate to the same tab/surface but a different collabApiBaseUrl — must NOT be a no-op
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'collaboration',
+        collabApiBaseUrl: 'https://b.example.com/',
+      })
+    })
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: expect.objectContaining({
+          view: 'settings',
+          settingsTab: 'collaboration',
+          collabApiBaseUrl: 'https://b.example.com/',
+        }),
+      }),
+    )
+  })
+
+  it('round-trips collabApiBaseUrl through parse → serialise → parse', () => {
+    const url = 'https://custom.example.com/api'
+    const parsed = parseRouteStateFromLocation(
+      '/',
+      { view: 'settings', surface: 'builder', settingsTab: 'collaboration', collabApiBaseUrl: url },
+      'builder',
+    )
+
+    expect(parsed).toMatchObject({ view: 'settings', collabApiBaseUrl: url })
+
+    const search = toRouteSearch(parsed, undefined, 'builder')
+    expect(search.collabApiBaseUrl).toBe(url)
+
+    // Re-parse the serialised search back into route state
+    const reparsed = parseRouteStateFromLocation('/', search, 'builder')
+    expect(reparsed).toMatchObject({ view: 'settings', collabApiBaseUrl: url })
+  })
+
+  it('treats collabApiBaseUrl present vs absent as distinct', () => {
+    const navigate = vi.fn()
+    renderWith({
+      pathname: '/',
+      search: { view: 'settings', surface: 'builder', settingsTab: 'collaboration', collabApiBaseUrl: 'https://x.example.com/' },
+      navigate,
+    })
+
+    // Navigate to the same tab/surface but WITHOUT collabApiBaseUrl
+    flushSync(() => {
+      captured.current?.navigateToRoute({
+        view: 'settings',
+        surface: 'builder',
+        settingsTab: 'collaboration',
+      })
+    })
+
+    expect(navigate).toHaveBeenCalled()
+    const call = navigate.mock.calls[0]?.[0]
+    expect(call?.search?.collabApiBaseUrl).toBeUndefined()
   })
 })

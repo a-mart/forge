@@ -26,6 +26,8 @@ interface CreateChannelDialogProps {
   open: boolean
   categories: CollaborationCategory[]
   defaultCategoryId?: string
+  /** API base URL for the owning connection's backend (target-aware). */
+  apiBaseUrl?: string
   onClose: () => void
   onCreated?: (channel: CollaborationChannel) => void
 }
@@ -34,6 +36,7 @@ export function CreateChannelDialog({
   open,
   categories,
   defaultCategoryId,
+  apiBaseUrl,
   onClose,
   onCreated,
 }: CreateChannelDialogProps) {
@@ -70,7 +73,7 @@ export function CreateChannelDialog({
         name: trimmedName,
         categoryId: categoryValue === NO_CATEGORY_VALUE ? undefined : categoryValue,
         description: description.trim() || undefined,
-      })
+      }, apiBaseUrl)
       onCreated?.(channel)
       setName('')
       setCategoryValue(NO_CATEGORY_VALUE)

@@ -5,6 +5,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { CollaborationSessionInfo, CollaborationStatus } from '@forge/protocol'
 import { SettingsCollaboration } from './SettingsCollaboration'
 
 /* ------------------------------------------------------------------ */
@@ -24,18 +25,6 @@ const collabApiMock = vi.hoisted(() => ({
   isAuthError: vi.fn(),
 }))
 
-const endpointsMock = vi.hoisted(() => ({
-  collabServerUrl: null as string | null,
-}))
-
-vi.mock('@/lib/collaboration-endpoints', () => ({
-  resolveCollaborationApiBaseUrl: () => 'https://collab.example.com/',
-  getCollabServerUrl: () => endpointsMock.collabServerUrl,
-  setCollabServerUrl: (url: string | null) => {
-    endpointsMock.collabServerUrl = url
-  },
-}))
-
 vi.mock('./collaboration-settings-api', () => ({
   fetchCollaborationStatus: (...args: unknown[]) => collabApiMock.fetchCollaborationStatus(...args),
   fetchCollaborationMe: (...args: unknown[]) => collabApiMock.fetchCollaborationMe(...args),
@@ -47,6 +36,70 @@ vi.mock('./collaboration-settings-api', () => ({
   createCollaborationInvite: (...args: unknown[]) => collabApiMock.createCollaborationInvite(...args),
   revokeCollaborationInvite: (...args: unknown[]) => collabApiMock.revokeCollaborationInvite(...args),
   isAuthError: (...args: unknown[]) => collabApiMock.isAuthError(...args),
+}))
+
+/* ── Connection registry mock ── */
+
+const registryMock = vi.hoisted(() => ({
+  connections: [] as Array<{
+    connectionId: string
+    kind: 'remote' | 'same-origin'
+    label: string
+    serverUrl?: string
+    apiBaseUrl: string
+    wsUrl: string
+    isRemote: boolean
+  }>,
+  defaultConnectionId: 'conn_same_origin',
+  subscribeCb: null as (() => void) | null,
+}))
+
+function remoteTarget(id: string, label: string, serverUrl: string) {
+  return {
+    connectionId: id,
+    kind: 'remote' as const,
+    label,
+    serverUrl,
+    apiBaseUrl: serverUrl.endsWith('/') ? serverUrl : serverUrl + '/',
+    wsUrl: serverUrl.replace(/^http(s?):\/\//, 'ws$1://'),
+    isRemote: true,
+  }
+}
+
+function sameOriginTarget() {
+  return {
+    connectionId: 'conn_same_origin',
+    kind: 'same-origin' as const,
+    label: 'Local',
+    apiBaseUrl: 'http://127.0.0.1:47187/',
+    wsUrl: 'ws://127.0.0.1:47187',
+    isRemote: false,
+  }
+}
+
+vi.mock('@/lib/collaboration-connections', () => ({
+  getCollaborationConnectionOptions: () => registryMock.connections,
+  getDefaultCollaborationConnection: () => {
+    const found = registryMock.connections.find(
+      (c) => c.connectionId === registryMock.defaultConnectionId,
+    )
+    return found ?? registryMock.connections[0] ?? sameOriginTarget()
+  },
+  upsertCollaborationConnection: vi.fn((input: { serverUrl: string }) => {
+    const id = 'conn_new_' + input.serverUrl.replace(/[^a-z0-9]/gi, '')
+    const existing = registryMock.connections.find((c) => c.connectionId === id)
+    if (!existing) {
+      registryMock.connections.push(remoteTarget(id, new URL(input.serverUrl).host, input.serverUrl))
+    }
+    return id
+  }),
+  removeCollaborationConnection: vi.fn((connId: string) => {
+    registryMock.connections = registryMock.connections.filter((c) => c.connectionId !== connId)
+  }),
+  subscribeToRegistryChanges: vi.fn((cb: () => void) => {
+    registryMock.subscribeCb = cb
+    return () => { registryMock.subscribeCb = null }
+  }),
 }))
 
 /* ------------------------------------------------------------------ */
@@ -189,8 +242,11 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   collabApiMock.isAuthError.mockReturnValue(false)
-  // Default: remote server configured (so session/management panels appear)
-  endpointsMock.collabServerUrl = 'https://collab.example.com'
+
+  // Default: one remote connection configured
+  const remote = remoteTarget('conn_remote_1', 'collab.example.com', 'https://collab.example.com')
+  registryMock.connections = [remote]
+  registryMock.defaultConnectionId = 'conn_remote_1'
 })
 
 afterEach(() => {
@@ -201,7 +257,9 @@ afterEach(() => {
   container.remove()
   vi.clearAllMocks()
   vi.unstubAllGlobals()
-  endpointsMock.collabServerUrl = null
+  registryMock.connections = []
+  registryMock.defaultConnectionId = 'conn_same_origin'
+  registryMock.subscribeCb = null
 })
 
 async function flush(rounds = 4): Promise<void> {
@@ -213,10 +271,13 @@ async function flush(rounds = 4): Promise<void> {
   }
 }
 
-function renderCollab(): void {
+function renderCollab(extraProps?: { initialApiBaseUrl?: string }): void {
   root = createRoot(container)
   flushSync(() => {
-    root?.render(createElement(SettingsCollaboration, { wsUrl: 'ws://127.0.0.1:47187' }))
+    root?.render(createElement(SettingsCollaboration, {
+      wsUrl: 'ws://127.0.0.1:47187',
+      ...extraProps,
+    }))
   })
 }
 
@@ -225,6 +286,83 @@ function renderCollab(): void {
 /* ================================================================== */
 
 describe('SettingsCollaboration', () => {
+  /* ---- Connection list ---- */
+
+  describe('connection list', () => {
+    it('renders connection items from the registry', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      const list = container.querySelector('[data-testid="connection-list"]')
+      expect(list).not.toBeNull()
+      expect(list!.textContent).toContain('collab.example.com')
+    })
+
+    it('shows "Add connection" button', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      const addBtn = container.querySelector('[data-testid="add-connection-btn"]')
+      expect(addBtn).not.toBeNull()
+    })
+
+    it('shows multiple connections when configured', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      const list = container.querySelector('[data-testid="connection-list"]')
+      expect(list!.textContent).toContain('server-a.test')
+      expect(list!.textContent).toContain('server-b.test')
+    })
+
+    it('shows same-origin virtual fallback when no remotes exist', async () => {
+      registryMock.connections = [sameOriginTarget()]
+      registryMock.defaultConnectionId = 'conn_same_origin'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
+      renderCollab()
+      await flush()
+
+      const list = container.querySelector('[data-testid="connection-list"]')
+      expect(list!.textContent).toContain('Local')
+    })
+
+    it('shows add connection form when clicking add button', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      const addBtn = container.querySelector('[data-testid="add-connection-btn"]') as HTMLButtonElement
+      fireEvent.click(addBtn)
+      await flush()
+
+      const addForm = container.querySelector('[data-testid="add-connection-form"]')
+      expect(addForm).not.toBeNull()
+    })
+  })
+
   /* ---- Status section ---- */
 
   describe('status display', () => {
@@ -268,9 +406,20 @@ describe('SettingsCollaboration', () => {
       expect(container.textContent).toContain('Connection failed')
       expect(container.textContent).toContain('Retry')
     })
+
+    it('passes selected connection apiBaseUrl to fetchCollaborationStatus', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith('https://collab.example.com/')
+    })
   })
 
-  /* ---- Authentication section (public-specific: sign-in form for remote servers) ---- */
+  /* ---- Authentication section ---- */
 
   describe('authentication section', () => {
     it('shows sign-in form when collab is enabled but user is not authenticated', async () => {
@@ -301,6 +450,21 @@ describe('SettingsCollaboration', () => {
       expect(queryByText(container, 'Authentication')).toBeNull()
     })
 
+    it('does not show auth section for same-origin (non-remote) connections', async () => {
+      registryMock.connections = [sameOriginTarget()]
+      registryMock.defaultConnectionId = 'conn_same_origin'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Status should show enabled but no auth form for local
+      expect(container.textContent).toContain('Enabled')
+      expect(queryByText(container, 'Authentication')).toBeNull()
+    })
+
     it('shows signed-in state with user info and sign-out button', async () => {
       collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
       collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
@@ -313,7 +477,6 @@ describe('SettingsCollaboration', () => {
       await waitFor(() => {
         expect(getByText(container, 'Admin User')).toBeTruthy()
       })
-      // admin@test.com appears in both status "Signed in as" and auth section — use queryAll
       const emailElements = container.querySelectorAll('*')
       const emailMatches = Array.from(emailElements).filter(
         (el) => el.textContent === 'admin@test.com' && el.children.length === 0,
@@ -322,11 +485,10 @@ describe('SettingsCollaboration', () => {
       expect(getByRole(container, 'button', { name: 'Sign out of collaboration server' })).toBeTruthy()
     })
 
-    it('posts sign-in request with email and password', async () => {
+    it('posts sign-in request with email and password to selected connection', async () => {
       collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
       collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
 
-      // Stub global fetch for the raw sign-in POST (which bypasses the API module)
       const fetchSpy = vi.fn(async (url: string) => {
         if (typeof url === 'string' && url.includes('/api/auth/sign-in/email')) {
           return { ok: true, json: async () => ({ success: true }) }
@@ -355,6 +517,8 @@ describe('SettingsCollaboration', () => {
           (call) => typeof call[0] === 'string' && call[0].includes('/api/auth/sign-in/email'),
         ) as unknown[] | undefined
         expect(signInCall).toBeTruthy()
+        // Verify it targets the selected connection's URL
+        expect(signInCall![0]).toContain('collab.example.com')
         expect(signInCall![1]).toEqual({
           method: 'POST',
           credentials: 'include',
@@ -393,6 +557,7 @@ describe('SettingsCollaboration', () => {
           (call) => typeof call[0] === 'string' && call[0].includes('/api/auth/sign-out'),
         ) as unknown[] | undefined
         expect(signOutCall).toBeTruthy()
+        expect(signOutCall![0]).toContain('collab.example.com')
         expect(signOutCall![1]).toEqual({
           method: 'POST',
           credentials: 'include',
@@ -559,7 +724,7 @@ describe('SettingsCollaboration', () => {
       expect(collabApiMock.changeMyPassword).not.toHaveBeenCalled()
     })
 
-    it('calls changeMyPassword on valid submission', async () => {
+    it('calls changeMyPassword with apiBaseUrl on valid submission', async () => {
       collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
       collabApiMock.fetchCollaborationMe.mockResolvedValue(memberSession())
       collabApiMock.changeMyPassword.mockResolvedValue(undefined)
@@ -577,7 +742,11 @@ describe('SettingsCollaboration', () => {
       fireEvent.submit(form)
       await flush()
 
-      expect(collabApiMock.changeMyPassword).toHaveBeenCalledWith('oldpass123', 'newpass123')
+      expect(collabApiMock.changeMyPassword).toHaveBeenCalledWith(
+        'oldpass123',
+        'newpass123',
+        'https://collab.example.com/',
+      )
     })
   })
 
@@ -661,7 +830,11 @@ describe('SettingsCollaboration', () => {
       fireEvent.submit(form)
       await flush()
 
-      expect(collabApiMock.createCollaborationInvite).toHaveBeenCalledWith('new@test.com')
+      expect(collabApiMock.createCollaborationInvite).toHaveBeenCalledWith(
+        'new@test.com',
+        undefined,
+        'https://collab.example.com/',
+      )
 
       const banner = container.querySelector('[data-testid="created-invite-banner"]')
       expect(banner).not.toBeNull()
@@ -702,7 +875,7 @@ describe('SettingsCollaboration', () => {
       expect(revokeTexts.length).toBe(1)
     })
 
-    it('revoke calls revokeCollaborationInvite with inviteId', async () => {
+    it('revoke calls revokeCollaborationInvite with inviteId and apiBaseUrl', async () => {
       collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
       collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
       collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
@@ -719,7 +892,10 @@ describe('SettingsCollaboration', () => {
       fireEvent.click(revokeBtn)
       await flush()
 
-      expect(collabApiMock.revokeCollaborationInvite).toHaveBeenCalledWith('inv-1')
+      expect(collabApiMock.revokeCollaborationInvite).toHaveBeenCalledWith(
+        'inv-1',
+        'https://collab.example.com/',
+      )
     })
   })
 
@@ -733,10 +909,8 @@ describe('SettingsCollaboration', () => {
       await flush()
       await flush()
 
-      // Normal unauthenticated response should show the sign-in form, not an error banner
       const errorBanner = container.querySelector('[data-testid="collab-auth-error"]')
       expect(errorBanner).toBeNull()
-      // Sign-in form should still be visible
       expect(container.textContent).toContain('Authentication')
     })
 
@@ -766,35 +940,807 @@ describe('SettingsCollaboration', () => {
       await flush()
       await flush()
 
-      // Error banner should be visible
       let errorBanner = container.querySelector('[data-testid="collab-auth-error"]')
       expect(errorBanner).not.toBeNull()
 
-      // Click "Sign in again" — should clear the error (onSignIn callback)
       const signInButton = getByRole(errorBanner as HTMLElement, 'button', { name: /sign in again/i })
       fireEvent.click(signInButton)
       await flush()
 
-      // Error banner should be gone
       errorBanner = container.querySelector('[data-testid="collab-auth-error"]')
       expect(errorBanner).toBeNull()
     })
   })
 
-  /* ---- Public-port boundary ---- */
+  /* ---- Target-aware routing ---- */
 
-  describe('public-port boundary', () => {
-    it('API helpers use collaboration base URL plumbing, not builder wsUrl', async () => {
+  describe('target-aware API routing', () => {
+    it('status and session APIs use the selected connection apiBaseUrl, not default', async () => {
       collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
       collabApiMock.fetchCollaborationMe.mockResolvedValue(memberSession())
       renderCollab()
       await flush()
       await flush()
 
-      // fetchCollaborationStatus takes zero arguments — no wsUrl leak
-      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith()
-      // fetchCollaborationMe takes zero arguments
-      expect(collabApiMock.fetchCollaborationMe).toHaveBeenCalledWith()
+      // Status should be called with the selected connection's apiBaseUrl
+      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith('https://collab.example.com/')
+      // Session should be called with the same
+      expect(collabApiMock.fetchCollaborationMe).toHaveBeenCalledWith('https://collab.example.com/')
+    })
+
+    it('switches target when selecting a different connection', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(memberSession())
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Initially targets conn_a
+      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith('https://server-a.test/')
+
+      // Click conn_b
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Should now target conn_b
+      const calls = collabApiMock.fetchCollaborationStatus.mock.calls
+      const lastCall = calls[calls.length - 1]
+      expect(lastCall[0]).toBe('https://server-b.test/')
+    })
+  })
+
+  /* ---- Non-default target: all child components and API calls use selected, not default ---- */
+
+  describe('non-default target routing (selected != default)', () => {
+    /**
+     * Set up two connections where conn_a is default but we select conn_b.
+     * All operations must target conn_b's apiBaseUrl.
+     */
+    const NON_DEFAULT_URL = 'https://server-b.test/'
+
+    function setupTwoConnectionsSelectNonDefault() {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+    }
+
+    it('status + session calls target selected (non-default) backend after switch', async () => {
+      setupTwoConnectionsSelectNonDefault()
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(memberSession())
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to conn_b (non-default)
+      collabApiMock.fetchCollaborationStatus.mockClear()
+      collabApiMock.fetchCollaborationMe.mockClear()
+
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // After switch, ALL API calls must target server-b, not server-a (default)
+      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith(NON_DEFAULT_URL)
+      expect(collabApiMock.fetchCollaborationMe).toHaveBeenCalledWith(NON_DEFAULT_URL)
+
+      // Must NOT have been called with the default backend
+      for (const call of collabApiMock.fetchCollaborationStatus.mock.calls) {
+        expect(call[0]).not.toBe('https://server-a.test/')
+      }
+      for (const call of collabApiMock.fetchCollaborationMe.mock.calls) {
+        expect(call[0]).not.toBe('https://server-a.test/')
+      }
+    })
+
+    it('Members component receives non-default apiBaseUrl when admin on non-default backend', async () => {
+      setupTwoConnectionsSelectNonDefault()
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue(testUsers())
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to conn_b
+      collabApiMock.fetchCollaborationUsers.mockClear()
+
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Members loads via fetchCollaborationUsers — must target conn_b
+      // Second arg is the AbortSignal passed from the AbortController
+      expect(collabApiMock.fetchCollaborationUsers).toHaveBeenCalledWith(NON_DEFAULT_URL, expect.any(AbortSignal))
+    })
+
+    it('Invites component receives non-default apiBaseUrl when admin on non-default backend', async () => {
+      setupTwoConnectionsSelectNonDefault()
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue(testInvites())
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to conn_b
+      collabApiMock.fetchCollaborationInvites.mockClear()
+
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Invites loads via fetchCollaborationInvites — must target conn_b
+      expect(collabApiMock.fetchCollaborationInvites).toHaveBeenCalledWith(NON_DEFAULT_URL, expect.any(AbortSignal))
+    })
+
+    it('password change targets non-default backend', async () => {
+      setupTwoConnectionsSelectNonDefault()
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(memberSession())
+      collabApiMock.changeMyPassword.mockResolvedValue(undefined)
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to conn_b
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Fill password change form
+      const form = container.querySelector('[data-testid="password-change-form"]') as HTMLFormElement
+      const inputs = form.querySelectorAll('input[type="password"]')
+      fireEvent.change(inputs[0]!, { target: { value: 'oldpass123' } })
+      fireEvent.change(inputs[1]!, { target: { value: 'newpass123' } })
+      fireEvent.change(inputs[2]!, { target: { value: 'newpass123' } })
+      fireEvent.submit(form)
+      await flush()
+
+      // Must target conn_b, not conn_a (default)
+      expect(collabApiMock.changeMyPassword).toHaveBeenCalledWith(
+        'oldpass123',
+        'newpass123',
+        NON_DEFAULT_URL,
+      )
+    })
+
+    it('sign-in targets non-default backend', async () => {
+      setupTwoConnectionsSelectNonDefault()
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
+
+      const fetchSpy = vi.fn(async (url: string) => {
+        if (typeof url === 'string' && url.includes('/api/auth/sign-in/email')) {
+          return { ok: true, json: async () => ({ success: true }) }
+        }
+        if (typeof url === 'string' && url.includes('/api/collaboration/me')) {
+          return { ok: true, json: async () => adminSession() }
+        }
+        return { ok: false, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchSpy)
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to conn_b
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Fill sign-in form
+      await waitFor(() => {
+        expect(getByLabelText(container, 'Email')).toBeTruthy()
+      })
+      fireEvent.change(getByLabelText(container, 'Email'), { target: { value: 'user@b.com' } })
+      fireEvent.change(getByLabelText(container, 'Password'), { target: { value: 'pass' } })
+      fireEvent.click(getByRole(container, 'button', { name: 'Sign in' }))
+
+      await waitFor(() => {
+        const signInCall = fetchSpy.mock.calls.find(
+          (call) => typeof call[0] === 'string' && call[0].includes('/api/auth/sign-in/email'),
+        ) as unknown[] | undefined
+        expect(signInCall).toBeTruthy()
+        // Must target server-b, NOT server-a (default)
+        expect(signInCall![0]).toContain('server-b.test')
+        expect(signInCall![0]).not.toContain('server-a.test')
+      })
+    })
+
+    it('sign-out targets non-default backend', async () => {
+      setupTwoConnectionsSelectNonDefault()
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+
+      const fetchSpy = vi.fn(async (url: string) => {
+        if (typeof url === 'string' && url.includes('/api/auth/sign-out')) {
+          return { ok: true, json: async () => ({}) }
+        }
+        return { ok: false, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchSpy)
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to conn_b
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Click sign out
+      await waitFor(() => {
+        expect(getByRole(container, 'button', { name: 'Sign out of collaboration server' })).toBeTruthy()
+      })
+      fireEvent.click(getByRole(container, 'button', { name: 'Sign out of collaboration server' }))
+
+      await waitFor(() => {
+        const signOutCall = fetchSpy.mock.calls.find(
+          (call) => typeof call[0] === 'string' && call[0].includes('/api/auth/sign-out'),
+        ) as unknown[] | undefined
+        expect(signOutCall).toBeTruthy()
+        // Must target server-b, NOT server-a (default)
+        expect(signOutCall![0]).toContain('server-b.test')
+        expect(signOutCall![0]).not.toContain('server-a.test')
+      })
+    })
+
+    it('invite creation targets non-default backend', async () => {
+      setupTwoConnectionsSelectNonDefault()
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      collabApiMock.createCollaborationInvite.mockResolvedValue({
+        inviteId: 'new-inv',
+        email: 'x@b.com',
+        role: 'member',
+        createdAt: '2025-01-10T00:00:00Z',
+        expiresAt: '2025-01-17T00:00:00Z',
+        inviteUrl: 'https://server-b.test/invite/abc',
+      })
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to conn_b
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Create invite
+      const form = container.querySelector('[data-testid="create-invite-form"]') as HTMLFormElement
+      const emailInput = form.querySelector('input[type="email"]') as HTMLInputElement
+      fireEvent.change(emailInput, { target: { value: 'x@b.com' } })
+      fireEvent.submit(form)
+      await flush()
+
+      // Must target conn_b
+      expect(collabApiMock.createCollaborationInvite).toHaveBeenCalledWith(
+        'x@b.com',
+        undefined,
+        NON_DEFAULT_URL,
+      )
+    })
+
+    it('invite revoke targets non-default backend', async () => {
+      setupTwoConnectionsSelectNonDefault()
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue(testInvites())
+      collabApiMock.revokeCollaborationInvite.mockResolvedValue(undefined)
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to conn_b
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Revoke pending invite
+      const invitesList = container.querySelector('[data-testid="invites-list"]')!
+      const revokeBtn = Array.from(invitesList.querySelectorAll('button')).find(
+        (btn) => btn.textContent?.trim() === 'Revoke',
+      )!
+      fireEvent.click(revokeBtn)
+      await flush()
+
+      // Must target conn_b
+      expect(collabApiMock.revokeCollaborationInvite).toHaveBeenCalledWith(
+        'inv-1',
+        NON_DEFAULT_URL,
+      )
+    })
+  })
+
+  /* ---- initialApiBaseUrl pre-selection (collab surface context) ---- */
+
+  describe('initialApiBaseUrl pre-selection', () => {
+    it('pre-selects the connection matching initialApiBaseUrl on mount', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+
+      // Pass initialApiBaseUrl for conn_b (non-default)
+      renderCollab({ initialApiBaseUrl: 'https://server-b.test/' })
+      await flush()
+      await flush()
+
+      // conn_b should be pre-selected, not conn_a (the default)
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      expect(connB?.getAttribute('aria-pressed')).toBe('true')
+
+      const connA = container.querySelector('[data-testid="connection-item-conn_a"]') as HTMLButtonElement
+      expect(connA?.getAttribute('aria-pressed')).toBe('false')
+
+      // All API calls should target conn_b, NOT conn_a
+      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith('https://server-b.test/')
+      expect(collabApiMock.fetchCollaborationMe).toHaveBeenCalledWith('https://server-b.test/')
+    })
+
+    it('falls back to default when initialApiBaseUrl does not match any connection', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+
+      // Pass a URL that matches no connection
+      renderCollab({ initialApiBaseUrl: 'https://unknown-server.test/' })
+      await flush()
+      await flush()
+
+      // Should fall back to conn_a (default)
+      const connA = container.querySelector('[data-testid="connection-item-conn_a"]') as HTMLButtonElement
+      expect(connA?.getAttribute('aria-pressed')).toBe('true')
+      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith('https://server-a.test/')
+    })
+
+    it('initialApiBaseUrl ensures status/session/members/invites all target the pre-selected backend', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue(testUsers())
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue(testInvites())
+
+      renderCollab({ initialApiBaseUrl: 'https://server-b.test/' })
+      await flush()
+      await flush()
+
+      // ALL calls must target server-b, not server-a
+      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith('https://server-b.test/')
+      expect(collabApiMock.fetchCollaborationMe).toHaveBeenCalledWith('https://server-b.test/')
+      expect(collabApiMock.fetchCollaborationUsers).toHaveBeenCalledWith('https://server-b.test/', expect.any(AbortSignal))
+      expect(collabApiMock.fetchCollaborationInvites).toHaveBeenCalledWith('https://server-b.test/', expect.any(AbortSignal))
+
+      // NONE should target server-a
+      for (const call of collabApiMock.fetchCollaborationStatus.mock.calls) {
+        expect(call[0]).not.toBe('https://server-a.test/')
+      }
+    })
+
+    it('no initialApiBaseUrl falls back to default connection', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(memberSession())
+
+      // No initialApiBaseUrl — should use default (conn_a)
+      renderCollab()
+      await flush()
+      await flush()
+
+      expect(collabApiMock.fetchCollaborationStatus).toHaveBeenCalledWith('https://server-a.test/')
+      const connA = container.querySelector('[data-testid="connection-item-conn_a"]') as HTMLButtonElement
+      expect(connA?.getAttribute('aria-pressed')).toBe('true')
+    })
+  })
+
+  /* ---- Stale-request race protection ---- */
+
+  describe('stale-request race protection', () => {
+    it('late-resolving status for backend A does not overwrite state after switching to B', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      // Backend A: slow — resolves after we switch away
+      let resolveStatusA: ((v: CollaborationStatus) => void) | null = null
+      const slowStatusA = new Promise<CollaborationStatus>((resolve) => { resolveStatusA = resolve })
+      // Backend B: fast
+      const statusB = { enabled: true, adminExists: true, baseUrl: 'https://server-b.test' }
+      const sessionB = memberSession()
+
+      // First call → conn_a (slow)
+      collabApiMock.fetchCollaborationStatus.mockImplementationOnce(() => slowStatusA)
+
+      renderCollab()
+      await flush()
+
+      // Switch to conn_b before A resolves
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusB)
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(sessionB)
+
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // B should now be showing
+      expect(container.textContent).toContain('Enabled')
+
+      // Now resolve the stale A response — it should be ignored
+      resolveStatusA!({ enabled: false, adminExists: false })
+      await flush()
+      await flush()
+
+      // UI must still show B's state (enabled), NOT A's stale disabled state
+      expect(container.textContent).toContain('Enabled')
+      expect(container.textContent).not.toContain('FORGE_COLLABORATION_ENABLED=true')
+    })
+
+    it('late-resolving session for backend A does not overwrite session after switching to B', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      // Backend A: status resolves fast, but session is slow
+      let resolveSessionA: ((v: CollaborationSessionInfo) => void) | null = null
+      const slowSessionA = new Promise<CollaborationSessionInfo>((resolve) => { resolveSessionA = resolve })
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockImplementationOnce(() => slowSessionA)
+
+      renderCollab()
+      await flush()
+
+      // Switch to conn_b before A's session resolves
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(memberSession())
+
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // B's session should be showing
+      expect(container.textContent).toContain('Member User')
+
+      // Now resolve A's stale session — admin user should NOT appear
+      resolveSessionA!(adminSession())
+      await flush()
+      await flush()
+
+      // UI must still show B's member, NOT A's stale admin
+      expect(container.textContent).toContain('Member User')
+      expect(container.textContent).not.toContain('Admin User')
+    })
+
+    it('late-resolving members for backend A do not overwrite list after switching to B', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      // Both backends: admin — so Members panel renders
+      const adminA = adminSession()
+      const adminB = { ...adminSession(), user: { ...adminSession().user!, userId: 'admin-b', name: 'Admin B', email: 'b@test.com' } }
+      const usersA = [
+        { userId: 'a-u1', email: 'alice@a.test', name: 'Alice A', role: 'member' as const, disabled: false, authMethods: ['password' as const], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z' },
+      ]
+      const usersB = [
+        { userId: 'b-u1', email: 'bob@b.test', name: 'Bob B', role: 'member' as const, disabled: false, authMethods: ['password' as const], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z' },
+      ]
+
+      // Backend A: fast status/session, slow members
+      let resolveUsersA: ((v: unknown) => void) | null = null
+      const slowUsersA = new Promise((resolve) => { resolveUsersA = resolve })
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValueOnce(adminA)
+      collabApiMock.fetchCollaborationUsers.mockImplementationOnce(() => slowUsersA)
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to B before A's members resolve
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminB)
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue(usersB)
+
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+      await flush()
+
+      // B's members should be visible
+      expect(container.textContent).toContain('Bob B')
+
+      // Now resolve stale A users
+      resolveUsersA!(usersA)
+      await flush()
+      await flush()
+
+      // Must still show B's data
+      expect(container.textContent).toContain('Bob B')
+      expect(container.textContent).not.toContain('Alice A')
+    })
+
+    it('late-resolving invites for backend A do not overwrite list after switching to B', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      const adminA = adminSession()
+      const adminB = { ...adminSession(), user: { ...adminSession().user!, userId: 'admin-b', name: 'Admin B', email: 'b@test.com' } }
+      const invitesA = [
+        { inviteId: 'inv-a1', email: 'pending-a@test.com', role: 'member' as const, status: 'pending' as const, createdAt: '2025-01-01T00:00:00Z', expiresAt: '2025-01-08T00:00:00Z' },
+      ]
+      const invitesB = [
+        { inviteId: 'inv-b1', email: 'pending-b@test.com', role: 'member' as const, status: 'pending' as const, createdAt: '2025-02-01T00:00:00Z', expiresAt: '2025-02-08T00:00:00Z' },
+      ]
+
+      // Backend A: fast status/session/members, slow invites
+      let resolveInvitesA: ((v: unknown) => void) | null = null
+      const slowInvitesA = new Promise((resolve) => { resolveInvitesA = resolve })
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValueOnce(adminA)
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockImplementationOnce(() => slowInvitesA)
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Switch to B before A's invites resolve
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminB)
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue(invitesB)
+
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+      await flush()
+
+      // B's invites should be visible
+      expect(container.textContent).toContain('pending-b@test.com')
+
+      // Now resolve stale A invites
+      resolveInvitesA!(invitesA)
+      await flush()
+      await flush()
+
+      // Must still show B's data
+      expect(container.textContent).toContain('pending-b@test.com')
+      expect(container.textContent).not.toContain('pending-a@test.com')
+    })
+
+    it('late sign-in success for backend A does not set session on backend B', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      // Both backends show sign-in form (not authenticated)
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
+
+      // Sign-in on A is slow
+      let resolveSignInA: ((v: Response) => void) | null = null
+      const slowSignIn = new Promise<Response>((resolve) => { resolveSignInA = resolve })
+
+      const fetchSpy = vi.fn(async (url: string) => {
+        if (typeof url === 'string' && url.includes('server-a.test') && url.includes('/api/auth/sign-in/email')) {
+          return slowSignIn
+        }
+        if (typeof url === 'string' && url.includes('/api/collaboration/me')) {
+          return { ok: true, json: async () => adminSession() }
+        }
+        return { ok: true, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchSpy)
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Fill sign-in form on A and submit
+      await waitFor(() => {
+        expect(getByLabelText(container, 'Email')).toBeTruthy()
+      })
+      fireEvent.change(getByLabelText(container, 'Email'), { target: { value: 'user@a.com' } })
+      fireEvent.change(getByLabelText(container, 'Password'), { target: { value: 'pass-a' } })
+      fireEvent.click(getByRole(container, 'button', { name: 'Sign in' }))
+
+      // Switch to B before A's sign-in resolves
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // B should still show sign-in form (not authenticated)
+      await waitFor(() => {
+        expect(getByLabelText(container, 'Email')).toBeTruthy()
+      })
+
+      // Now resolve A's stale sign-in success
+      resolveSignInA!({ ok: true, json: async () => ({ success: true }) } as Response)
+      await flush()
+      await flush()
+
+      // Must still show B's sign-in form — A's late success must NOT set B's session
+      expect(queryByText(container, 'Admin User')).toBeNull()
+      expect(getByLabelText(container, 'Email')).toBeTruthy()
+    })
+
+    it('late sign-in failure for backend A does not set error on backend B', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
+
+      // Sign-in on A is slow and will fail
+      let resolveSignInA: ((v: Response) => void) | null = null
+      const slowSignIn = new Promise<Response>((resolve) => { resolveSignInA = resolve })
+
+      const fetchSpy = vi.fn(async (url: string) => {
+        if (typeof url === 'string' && url.includes('server-a.test') && url.includes('/api/auth/sign-in/email')) {
+          return slowSignIn
+        }
+        return { ok: true, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchSpy)
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Fill sign-in form on A and submit
+      await waitFor(() => {
+        expect(getByLabelText(container, 'Email')).toBeTruthy()
+      })
+      fireEvent.change(getByLabelText(container, 'Email'), { target: { value: 'user@a.com' } })
+      fireEvent.change(getByLabelText(container, 'Password'), { target: { value: 'bad-pass' } })
+      fireEvent.click(getByRole(container, 'button', { name: 'Sign in' }))
+
+      // Switch to B before A's sign-in resolves
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // Now resolve A's stale sign-in as failure
+      resolveSignInA!({ ok: false, json: async () => ({ message: 'Bad credentials for A' }) } as Response)
+      await flush()
+      await flush()
+
+      // B's view should NOT show A's error message
+      expect(queryByText(container, 'Bad credentials for A')).toBeNull()
+    })
+
+    it('late sign-out for backend A does not clear session on backend B', async () => {
+      registryMock.connections = [
+        remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
+        remoteTarget('conn_b', 'server-b.test', 'https://server-b.test'),
+      ]
+      registryMock.defaultConnectionId = 'conn_a'
+
+      // Both backends: authenticated admin
+      const adminA = adminSession()
+      const adminB = { ...adminSession(), user: { ...adminSession().user!, userId: 'admin-b', name: 'Admin B', email: 'b@test.com' } }
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValueOnce(adminA)
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+
+      // Sign-out on A is slow
+      let resolveSignOutA: ((v: Response) => void) | null = null
+      const slowSignOut = new Promise<Response>((resolve) => { resolveSignOutA = resolve })
+
+      const fetchSpy = vi.fn(async (url: string) => {
+        if (typeof url === 'string' && url.includes('server-a.test') && url.includes('/api/auth/sign-out')) {
+          return slowSignOut
+        }
+        return { ok: true, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchSpy)
+
+      renderCollab()
+      await flush()
+      await flush()
+
+      // Trigger sign-out on A
+      await waitFor(() => {
+        expect(getByRole(container, 'button', { name: 'Sign out of collaboration server' })).toBeTruthy()
+      })
+      fireEvent.click(getByRole(container, 'button', { name: 'Sign out of collaboration server' }))
+
+      // Switch to B before A's sign-out resolves
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminB)
+
+      const connB = container.querySelector('[data-testid="connection-item-conn_b"]') as HTMLButtonElement
+      fireEvent.click(connB)
+      await flush()
+      await flush()
+
+      // B should show the signed-in admin
+      expect(container.textContent).toContain('Admin B')
+
+      // Now resolve A's stale sign-out
+      resolveSignOutA!({ ok: true, json: async () => ({}) } as Response)
+      await flush()
+      await flush()
+
+      // Must still show B's session — A's late sign-out must NOT clear B's session
+      expect(container.textContent).toContain('Admin B')
     })
   })
 })

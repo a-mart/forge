@@ -51,6 +51,25 @@ vi.mock('@/hooks/index-page/use-collab-ws-connection', () => ({
     createElement('div', { 'data-testid': 'collab-ws-provider' }, children as string),
 }))
 
+const collabConnectionsMock = vi.hoisted(() => ({
+  value: {
+    connectionStates: {} as Record<string, unknown>,
+    connectionIds: [] as string[],
+    targets: [] as Array<{ connectionId: string; [key: string]: unknown }>,
+    activeConnectionId: null as string | null,
+    activeChannelId: null as string | null,
+    setActiveChannel: vi.fn(),
+    getClient: () => null,
+    managerRef: { current: null },
+  },
+}))
+
+vi.mock('@/hooks/index-page/use-collab-connections', () => ({
+  useCollabConnections: () => collabConnectionsMock.value,
+  CollabConnectionsProvider: ({ children }: { children: unknown; value: unknown }) =>
+    createElement('div', { 'data-testid': 'collab-connections-provider' }, children as string),
+}))
+
 const backendStateMock = vi.hoisted(() => ({
   value: {
     ready: false,
@@ -64,12 +83,12 @@ vi.mock('@/components/settings/use-settings-backend-state', () => ({
 }))
 
 vi.mock('@/components/settings/settings-target', () => ({
-  createCollabSettingsTarget: (wsUrl: string) => ({
+  createCollabSettingsTarget: (wsUrl: string, apiBaseUrl?: string) => ({
     kind: 'collab',
     label: 'Collab backend',
     description: 'Connected remote collaboration backend.',
     wsUrl,
-    apiBaseUrl: 'https://collab.example.com/',
+    apiBaseUrl: apiBaseUrl ?? 'https://collab.example.com/',
     fetchCredentials: 'include',
     requiresAdmin: true,
     availableTabs: ['general', 'auth', 'models', 'about'],
@@ -90,6 +109,18 @@ const { CollabSurface } = await import('./CollabSurface')
 let container: HTMLDivElement
 let root: Root | null = null
 
+const defaultTargets = [
+  {
+    connectionId: 'conn_test',
+    kind: 'remote' as const,
+    label: 'Test Server',
+    serverUrl: 'https://collab.example.com',
+    apiBaseUrl: 'https://collab.example.com/',
+    wsUrl: 'wss://collab.example.com',
+    isRemote: true,
+  },
+]
+
 function renderCollabSurface(overrides: Partial<{
   activeView: ActiveView
   isAdmin: boolean
@@ -100,6 +131,7 @@ function renderCollabSurface(overrides: Partial<{
   act(() => {
     root?.render(
       createElement(CollabSurface, {
+        targets: defaultTargets,
         wsUrl: 'wss://collab.example.com',
         activeView: overrides.activeView ?? ('settings' as ActiveView),
         activeSurface: 'collab' as const,
@@ -207,6 +239,276 @@ describe('CollabSurface — blocked states', () => {
   })
 })
 
+describe('CollabSurface — Blocker 2: settings target uses active apiBaseUrl', () => {
+  it('passes the active target apiBaseUrl to createCollabSettingsTarget', () => {
+    const targets = [
+      {
+        connectionId: 'conn_active',
+        kind: 'remote' as const,
+        label: 'Active Server',
+        serverUrl: 'https://active.example.com',
+        apiBaseUrl: 'https://active.example.com/',
+        wsUrl: 'wss://active.example.com',
+        isRemote: true,
+      },
+    ]
+
+    collabConnectionsMock.value = {
+      connectionStates: {},
+      connectionIds: ['conn_active'],
+      targets: [],
+      activeConnectionId: 'conn_active',
+      activeChannelId: null,
+      setActiveChannel: vi.fn(),
+      getClient: () => null,
+      managerRef: { current: null },
+    }
+
+    backendStateMock.value = {
+      ready: true,
+      blockedReason: null,
+      wsState: { agents: [], profiles: [] },
+    }
+
+    root = createRoot(container)
+    act(() => {
+      root?.render(
+        createElement(CollabSurface, {
+          targets,
+          wsUrl: 'wss://fallback.example.com', // should NOT be used for apiBaseUrl
+          collab: 'conn_active',
+          activeView: 'settings' as ActiveView,
+          activeSurface: 'collab' as const,
+          isAdmin: true,
+          isMember: false,
+          hasLoaded: true,
+          onSelectChannel: vi.fn(),
+          onSelectSurface: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onBackToChat: vi.fn(),
+        }),
+      )
+    })
+
+    expect(settingsPanelMountSpy).toHaveBeenCalledTimes(1)
+    const props = settingsPanelMountSpy.mock.calls[0][0]
+    // Should use the active target's apiBaseUrl, not the fallback wsUrl's
+    expect(props.target.apiBaseUrl).toBe('https://active.example.com/')
+    expect(props.target.wsUrl).toBe('wss://active.example.com')
+  })
+})
+
+describe('CollabSurface — Blocker 1: canonical default fallback', () => {
+  it('resolves to targets[0] (registry-ordered) when collab param is absent, not connectionIds[0]', () => {
+    // Setup: targets has conn_B first (canonical default from registry ordering),
+    // but connections mock has conn_A first in insertion order.
+    const targets = [
+      {
+        connectionId: 'conn_B',
+        kind: 'remote' as const,
+        label: 'Server B',
+        serverUrl: 'https://b.example.com',
+        apiBaseUrl: 'https://b.example.com/',
+        wsUrl: 'wss://b.example.com',
+        isRemote: true,
+      },
+      {
+        connectionId: 'conn_A',
+        kind: 'remote' as const,
+        label: 'Server A',
+        serverUrl: 'https://a.example.com',
+        apiBaseUrl: 'https://a.example.com/',
+        wsUrl: 'wss://a.example.com',
+        isRemote: true,
+      },
+    ]
+
+    collabConnectionsMock.value = {
+      connectionStates: {
+        conn_A: {
+          connected: true,
+          workspace: null,
+          categories: [],
+          channels: [],
+          currentUser: null,
+          activeChannelId: null,
+          channelHistory: [],
+          channelHistoryLoaded: false,
+          channelStatus: 'idle',
+          channelStreamingStartedAt: undefined,
+          sessionWorkers: [],
+          sessionActivity: [],
+          sessionAgentStatuses: {},
+          pendingChoiceRequests: [],
+          channelReadStates: {},
+          channelUnreadCounts: {},
+          lastError: null,
+          lastErrorCode: null,
+          hasBootstrapped: true,
+        },
+        conn_B: {
+          connected: true,
+          workspace: null,
+          categories: [],
+          channels: [],
+          currentUser: null,
+          activeChannelId: null,
+          channelHistory: [],
+          channelHistoryLoaded: false,
+          channelStatus: 'idle',
+          channelStreamingStartedAt: undefined,
+          sessionWorkers: [],
+          sessionActivity: [],
+          sessionAgentStatuses: {},
+          pendingChoiceRequests: [],
+          channelReadStates: {},
+          channelUnreadCounts: {},
+          lastError: null,
+          lastErrorCode: null,
+          hasBootstrapped: true,
+        },
+      },
+      connectionIds: ['conn_A', 'conn_B'], // insertion order differs from targets
+      targets: [],
+      activeConnectionId: null, // no in-memory selection
+      activeChannelId: null,
+      setActiveChannel: vi.fn(),
+      getClient: () => null,
+      managerRef: { current: null },
+    }
+
+    root = createRoot(container)
+    act(() => {
+      root?.render(
+        createElement(CollabSurface, {
+          targets,
+          wsUrl: 'wss://fallback.example.com',
+          // collab is absent — no route param
+          activeView: 'chat' as ActiveView,
+          activeSurface: 'collab' as const,
+          isAdmin: true,
+          isMember: false,
+          hasLoaded: true,
+          onSelectChannel: vi.fn(),
+          onSelectSurface: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onBackToChat: vi.fn(),
+        }),
+      )
+    })
+
+    // CollabWorkspace should receive the wsUrl from targets[0] (conn_B),
+    // NOT from connectionIds[0] (conn_A).
+    expect(collabWorkspaceMountSpy).toHaveBeenCalledTimes(1)
+    const wsUrlProp = collabWorkspaceMountSpy.mock.calls[0][0].wsUrl
+    expect(wsUrlProp).toBe('wss://b.example.com')
+  })
+})
+
+describe('CollabSurface — Blocker 3: stale collab param normalization', () => {
+  it('calls onSelectChannel to normalize a stale/deleted collab param', () => {
+    const onSelectChannel = vi.fn()
+
+    collabConnectionsMock.value = {
+      connectionStates: {},
+      connectionIds: ['conn_A'],
+      targets: [],
+      activeConnectionId: null,
+      activeChannelId: null,
+      setActiveChannel: vi.fn(),
+      getClient: () => null,
+      managerRef: { current: null },
+    }
+
+    root = createRoot(container)
+    act(() => {
+      root?.render(
+        createElement(CollabSurface, {
+          targets: [
+            {
+              connectionId: 'conn_A',
+              kind: 'remote' as const,
+              label: 'Server A',
+              serverUrl: 'https://a.example.com',
+              apiBaseUrl: 'https://a.example.com/',
+              wsUrl: 'wss://a.example.com',
+              isRemote: true,
+            },
+          ],
+          wsUrl: 'wss://a.example.com',
+          collab: 'conn_deleted', // stale — doesn't match any live connection
+          channel: 'some-channel',
+          activeView: 'chat' as ActiveView,
+          activeSurface: 'collab' as const,
+          isAdmin: true,
+          isMember: false,
+          hasLoaded: true,
+          onSelectChannel,
+          onSelectSurface: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onBackToChat: vi.fn(),
+        }),
+      )
+    })
+
+    // The useEffect should fire to normalize the stale param.
+    // Since resolvedConnectionId == defaultConnectionId (conn_A), the
+    // normalized connectionId should be undefined (clears param).
+    expect(onSelectChannel).toHaveBeenCalledWith('some-channel', undefined)
+  })
+
+  it('does NOT call onSelectChannel when activeView is settings (defers normalization)', () => {
+    const onSelectChannel = vi.fn()
+
+    collabConnectionsMock.value = {
+      connectionStates: {},
+      connectionIds: ['conn_A'],
+      targets: [],
+      activeConnectionId: null,
+      activeChannelId: null,
+      setActiveChannel: vi.fn(),
+      getClient: () => null,
+      managerRef: { current: null },
+    }
+
+    root = createRoot(container)
+    act(() => {
+      root?.render(
+        createElement(CollabSurface, {
+          targets: [
+            {
+              connectionId: 'conn_A',
+              kind: 'remote' as const,
+              label: 'Server A',
+              serverUrl: 'https://a.example.com',
+              apiBaseUrl: 'https://a.example.com/',
+              wsUrl: 'wss://a.example.com',
+              isRemote: true,
+            },
+          ],
+          wsUrl: 'wss://a.example.com',
+          collab: 'conn_deleted', // stale — doesn't match any live connection
+          channel: 'some-channel',
+          activeView: 'settings' as ActiveView, // <-- settings, not chat
+          activeSurface: 'collab' as const,
+          isAdmin: true,
+          isMember: false,
+          hasLoaded: true,
+          onSelectChannel,
+          onSelectSurface: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onBackToChat: vi.fn(),
+        }),
+      )
+    })
+
+    // Normalization must NOT fire during settings view — it would
+    // kick the user out to chat.  The stale param is harmless during
+    // settings; it normalizes when the user returns to chat.
+    expect(onSelectChannel).not.toHaveBeenCalled()
+  })
+})
+
 describe('CollabSurface — onSignIn threading', () => {
   it('passes onSignIn callback to CollabWorkspace in chat view', () => {
     const onSignIn = vi.fn()
@@ -214,6 +516,7 @@ describe('CollabSurface — onSignIn threading', () => {
     act(() => {
       root?.render(
         createElement(CollabSurface, {
+          targets: defaultTargets,
           wsUrl: 'wss://collab.example.com',
           activeView: 'chat' as ActiveView,
           activeSurface: 'collab' as const,
@@ -231,6 +534,39 @@ describe('CollabSurface — onSignIn threading', () => {
 
     expect(collabWorkspaceMountSpy).toHaveBeenCalledTimes(1)
     const props = collabWorkspaceMountSpy.mock.calls[0][0]
-    expect(props.onSignIn).toBe(onSignIn)
+    // onSignIn is now wrapped via useCallback to inject the active backend's
+    // apiBaseUrl, so it's not identity-equal.  Verify the wrapper forwards.
+    expect(typeof props.onSignIn).toBe('function')
+    props.onSignIn()
+    expect(onSignIn).toHaveBeenCalledTimes(1)
+  })
+
+  it('wraps onSignIn to inject active backend apiBaseUrl', () => {
+    const onSignIn = vi.fn()
+    root = createRoot(container)
+    act(() => {
+      root?.render(
+        createElement(CollabSurface, {
+          targets: defaultTargets,
+          wsUrl: 'wss://collab.example.com',
+          activeView: 'chat' as ActiveView,
+          activeSurface: 'collab' as const,
+          isAdmin: true,
+          isMember: false,
+          hasLoaded: true,
+          onSelectChannel: vi.fn(),
+          onSelectSurface: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onBackToChat: vi.fn(),
+          onSignIn,
+        }),
+      )
+    })
+
+    const props = collabWorkspaceMountSpy.mock.calls[0][0]
+    props.onSignIn()
+
+    // The wrapper should forward the active target's apiBaseUrl
+    expect(onSignIn).toHaveBeenCalledWith('https://collab.example.com/')
   })
 })

@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- TanStack route file exports Route + page utilities */
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   createFileRoute,
   useLocation,
@@ -15,7 +15,8 @@ import {
 import { useCollaborationSession } from '@/hooks/use-collaboration-session'
 import type { AgentDescriptor } from '@forge/protocol'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
-import { resolveCollaborationWsUrl, isCollabServerRemote } from '@/lib/collaboration-endpoints'
+import { resolveCollaborationWsUrl } from '@/lib/collaboration-endpoints'
+import { getCollaborationConnectionOptions, getDefaultConnectionIdFromTargets, subscribeToRegistryChanges, type CollaborationEndpointTarget } from '@/lib/collaboration-connections'
 import { isElectron } from '@/lib/electron-bridge'
 import { getConfiguredDefaultSurface } from '@/lib/web-runtime-flags'
 import { useBackendHealthPoll } from '@/hooks/index-page/use-backend-health-poll'
@@ -40,15 +41,32 @@ type RouteSearch = {
   agent?: string
   surface?: string
   channel?: string
+  collab?: string
   playwrightSession?: string
   playwrightMode?: string
   statsTab?: string
   settingsTab?: string
+  collabApiBaseUrl?: string
 }
 
 export function IndexPage() {
   const wsUrl = resolveBackendWsUrl()
   const collabWsUrl = resolveCollaborationWsUrl()
+
+  // Track registry mutations so collabTargets recomputes when connections
+  // are added, removed, renamed, or edited (not just when default wsUrl changes).
+  const [registryRevision, setRegistryRevision] = useState(0)
+  useEffect(() => {
+    return subscribeToRegistryChanges(() => {
+      setRegistryRevision((r) => r + 1)
+    })
+  }, [])
+
+  // Resolve all visible/enabled collaboration connection targets.
+  // Depends on both the default wsUrl (for same-origin derivation) and
+  // the registry revision (for add/remove/rename reactivity).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const collabTargets = useMemo(() => getCollaborationConnectionOptions(), [collabWsUrl, registryRevision])
   const navigate = useOptionalNavigate()
   const location = useOptionalLocation()
   const routeSearch = useMemo(() => normalizeRouteSearch(location.search), [location.search])
@@ -57,18 +75,46 @@ export function IndexPage() {
     search: routeSearch,
     navigate,
   })
-  // Keep connection-health-store accurate regardless of which surface is mounted
-  useBackendHealthPoll(wsUrl, collabWsUrl)
+  // Keep connection-health-store accurate regardless of which surface is mounted.
+  // Ping all configured collab backends — aggregate health drives the ModeSwitch dot.
+  const collabWsUrls = useMemo(() => collabTargets.map((t) => t.wsUrl), [collabTargets])
+  useBackendHealthPoll(wsUrl, collabWsUrls)
 
   const inElectron = isElectron()
   const defaultSurface = getConfiguredDefaultSurface()
-  // True only when the configured URL points to a genuinely different origin
-  // from the local Forge backend — same-origin configured URLs preserve local behavior.
-  const hasRemoteCollabServer = isCollabServerRemote()
+
+  // Resolve the target connection for auth/gating from the route `collab`
+  // param (or the first/default target).  This ensures `hasRemoteCollabServer`
+  // and `collabSession` reflect the connection the user is actually viewing,
+  // not an arbitrary default.
+  const routeCollabParam = normalizeOptionalSearchValue(routeSearch.collab)
+  const resolvedCollabTarget = useMemo<CollaborationEndpointTarget | null>(() => {
+    if (routeCollabParam) {
+      const match = collabTargets.find((t) => t.connectionId === routeCollabParam)
+      if (match) return match
+    }
+    // Fallback: canonical default from registry's lastActiveConnectionId,
+    // not insertion-order targets[0].
+    const defaultId = getDefaultConnectionIdFromTargets(collabTargets)
+    if (defaultId) {
+      return collabTargets.find((t) => t.connectionId === defaultId) ?? null
+    }
+    return null
+  }, [routeCollabParam, collabTargets])
+
+  // True when the resolved target is a genuinely different origin
+  // from the local Forge backend.  Also true when ANY configured target
+  // is remote (for Electron gating: allow collab if any remote exists).
+  const hasRemoteCollabServer = useMemo(() => {
+    if (resolvedCollabTarget?.isRemote) return true
+    return collabTargets.some((t) => t.isRemote)
+  }, [resolvedCollabTarget, collabTargets])
+
   // Allow Electron to participate in collab only if a genuinely remote server is configured
   const shouldLoadCollabSession = !inElectron || hasRemoteCollabServer
   const collabSession = useCollaborationSession({
     enabled: shouldLoadCollabSession,
+    apiBaseUrl: resolvedCollabTarget?.apiBaseUrl,
   })
   const isCollabUnauthenticated = shouldLoadCollabSession && collabSession.hasLoaded && collabSession.isCollabEnabled && !collabSession.isAdmin && !collabSession.isMember
   const shouldBlockOnCollabBootstrap = shouldLoadCollabSession && !collabSession.hasLoaded
@@ -95,6 +141,7 @@ export function IndexPage() {
 
     const stickyAgentId = normalizeStickyAgentId(routeSearch.agent)
     const stickyChannel = normalizeOptionalSearchValue(routeSearch.channel)
+    const stickyCollabConn = normalizeOptionalSearchValue(routeSearch.collab)
     const isMemberOnly = !inElectron && collabSession.hasLoaded && collabSession.isMember && !collabSession.isAdmin
 
     if (isMemberOnly) {
@@ -116,6 +163,7 @@ export function IndexPage() {
           agentId: stickyAgentId,
           surface: 'collab',
           channel: stickyChannel,
+          collab: stickyCollabConn,
         }, true)
       }
       return
@@ -148,23 +196,30 @@ export function IndexPage() {
     navigateToRoute,
     routeSearch.agent,
     routeSearch.channel,
+    routeSearch.collab,
     routeSearch.surface,
     routeState,
     shouldBlockOnCollabBootstrap,
   ])
 
   const stickyChannel = normalizeOptionalSearchValue(routeSearch.channel)
+  const stickyCollab = normalizeOptionalSearchValue(routeSearch.collab)
   const collabChannel = routeState.view === 'chat' ? routeState.channel : stickyChannel
-  const handleSelectCollabChannel = useCallback((channelId?: string) => {
+  const collabConnectionId = routeState.view === 'chat' ? routeState.collab : stickyCollab
+  const handleSelectCollabChannel = useCallback((channelId?: string, connectionId?: string) => {
     const nextAgentId = routeState.view === 'chat'
       ? routeState.agentId
       : normalizeStickyAgentId(routeSearch.agent)
 
+    // When connectionId is undefined the caller intends to clear the explicit
+    // collab param (e.g. stale-param normalization).  Never fall back to
+    // `collabConnectionId` here — that may itself be stale/deleted.
     navigateToRoute({
       view: 'chat',
       agentId: nextAgentId,
       surface: 'collab',
       channel: normalizeOptionalSearchValue(channelId),
+      collab: normalizeOptionalSearchValue(connectionId),
     })
   }, [navigateToRoute, routeSearch.agent, routeState])
 
@@ -183,8 +238,10 @@ export function IndexPage() {
       <div className="flex h-dvh w-full min-w-0 overflow-hidden bg-background">
         {effectiveSurface === 'collab' ? (
           <CollabSurface
+            targets={collabTargets}
             wsUrl={collabWsUrl}
             channel={collabChannel}
+            collab={collabConnectionId}
             activeView={activeView}
             activeSurface={effectiveSurface}
             isAdmin={collabSession.isAdmin}
@@ -210,10 +267,11 @@ export function IndexPage() {
                 agentId: normalizeStickyAgentId(routeSearch.agent),
                 surface: 'collab',
                 channel: stickyChannel,
+                collab: stickyCollab,
               })
             }}
-            onSignIn={() => {
-              navigateToRoute({ view: 'settings', surface: 'builder', settingsTab: 'collaboration' })
+            onSignIn={(apiBaseUrl) => {
+              navigateToRoute({ view: 'settings', surface: 'builder', settingsTab: 'collaboration', collabApiBaseUrl: apiBaseUrl })
             }}
           />
         ) : (
@@ -305,6 +363,9 @@ function useOptionalNavigate(): NavigateFn {
     if (search?.channel) {
       params.set('channel', search.channel)
     }
+    if (search?.collab) {
+      params.set('collab', search.collab)
+    }
     if (search?.playwrightSession) {
       params.set('playwrightSession', search.playwrightSession)
     }
@@ -316,6 +377,9 @@ function useOptionalNavigate(): NavigateFn {
     }
     if (search?.settingsTab) {
       params.set('settingsTab', search.settingsTab)
+    }
+    if (search?.collabApiBaseUrl) {
+      params.set('collabApiBaseUrl', search.collabApiBaseUrl)
     }
 
     const query = params.toString()
@@ -355,9 +419,11 @@ export function parseWindowRouteSearch(search: string): RouteSearch {
     agent: params.get('agent') ?? undefined,
     surface: params.get('surface') ?? undefined,
     channel: params.get('channel') ?? undefined,
+    collab: params.get('collab') ?? undefined,
     playwrightSession: params.get('playwrightSession') ?? undefined,
     playwrightMode: params.get('playwrightMode') ?? undefined,
     statsTab: params.get('statsTab') ?? undefined,
     settingsTab: params.get('settingsTab') ?? undefined,
+    collabApiBaseUrl: params.get('collabApiBaseUrl') ?? undefined,
   }
 }

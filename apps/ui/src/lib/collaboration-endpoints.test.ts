@@ -23,7 +23,12 @@ const localStorageMock = (() => {
 })()
 
 Object.defineProperty(globalThis, 'window', {
-  value: { localStorage: localStorageMock },
+  value: {
+    localStorage: localStorageMock,
+    dispatchEvent: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  },
   writable: true,
 })
 
@@ -42,6 +47,10 @@ describe('collaboration-endpoints', () => {
     vi.restoreAllMocks()
     localStorageMock.clear()
   })
+
+  // -----------------------------------------------------------------------
+  // Compatibility wrappers — must preserve exact prior behavior
+  // -----------------------------------------------------------------------
 
   it('resolveCollaborationApiBaseUrl falls back to Forge backend URL when no config', async () => {
     const { resolveCollaborationApiBaseUrl } = await import('./collaboration-endpoints')
@@ -115,6 +124,10 @@ describe('collaboration-endpoints', () => {
     expect(localStorageMock.getItem('forge-collab-server-url')).toBe('http://127.0.0.1:47387')
   })
 
+  // -----------------------------------------------------------------------
+  // isCollabServerRemote — compatibility wrapper
+  // -----------------------------------------------------------------------
+
   describe('isCollabServerRemote', () => {
     it('returns false when no URL is configured', async () => {
       const { isCollabServerRemote } = await import('./collaboration-endpoints')
@@ -168,6 +181,159 @@ describe('collaboration-endpoints', () => {
       localStorageMock.setItem('forge-collab-server-url', 'http://127.0.0.1:9999')
       const { isCollabServerRemote } = await import('./collaboration-endpoints')
       expect(isCollabServerRemote()).toBe(true)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // setCollabServerUrl registry sync (Fix 1)
+  // -----------------------------------------------------------------------
+
+  describe('setCollabServerUrl registry sync', () => {
+    it('syncs set URL to registry so no-arg resolvers see the change', async () => {
+      const { setCollabServerUrl, resolveCollaborationApiBaseUrl, resolveCollaborationWsUrl } =
+        await import('./collaboration-endpoints')
+
+      setCollabServerUrl('https://new-server.com')
+
+      // The no-arg resolvers read from registry — must see the new URL
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://new-server.com/')
+      expect(resolveCollaborationWsUrl()).toBe('wss://new-server.com')
+
+      // Legacy key also updated
+      expect(localStorageMock.getItem('forge-collab-server-url')).toBe('https://new-server.com')
+
+      // Registry must have the connection
+      const rawReg = localStorageMock.getItem('forge:collab:connections:v1')
+      expect(rawReg).toBeTruthy()
+      const reg = JSON.parse(rawReg!)
+      expect(reg.connections).toHaveLength(1)
+      expect(reg.connections[0].serverUrl).toBe('https://new-server.com')
+    })
+
+    it('switching URL via setCollabServerUrl updates resolvers', async () => {
+      const { setCollabServerUrl, resolveCollaborationApiBaseUrl } =
+        await import('./collaboration-endpoints')
+
+      setCollabServerUrl('https://first.com')
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://first.com/')
+
+      setCollabServerUrl('https://second.com')
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://second.com/')
+    })
+
+    it('clearing URL via setCollabServerUrl(null) reverts resolvers to same-origin', async () => {
+      const { setCollabServerUrl, resolveCollaborationApiBaseUrl, resolveCollaborationWsUrl } =
+        await import('./collaboration-endpoints')
+
+      setCollabServerUrl('https://remote.com')
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://remote.com/')
+
+      setCollabServerUrl(null)
+      // Should fall back to same-origin
+      expect(resolveCollaborationApiBaseUrl()).toBe('http://127.0.0.1:47187/')
+      expect(resolveCollaborationWsUrl()).toBe('ws://127.0.0.1:47187')
+
+      // Legacy key cleared
+      expect(localStorageMock.getItem('forge-collab-server-url')).toBeNull()
+    })
+
+    it('set→clear→set cycle works correctly with registry', async () => {
+      const { setCollabServerUrl, resolveCollaborationApiBaseUrl } =
+        await import('./collaboration-endpoints')
+
+      setCollabServerUrl('https://first.com')
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://first.com/')
+
+      setCollabServerUrl(null)
+      expect(resolveCollaborationApiBaseUrl()).toBe('http://127.0.0.1:47187/')
+
+      setCollabServerUrl('https://third.com')
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://third.com/')
+    })
+
+    it('setCollabServerUrl works when registry already exists from prior migration', async () => {
+      // Simulate a registry already existing from a previous migration
+      localStorageMock.setItem('forge-collab-server-url', 'https://old.com')
+      const { setCollabServerUrl, resolveCollaborationApiBaseUrl } =
+        await import('./collaboration-endpoints')
+
+      // First access triggers migration → registry now exists
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://old.com/')
+
+      // Now use legacy setter to switch — must sync to registry
+      setCollabServerUrl('https://new.com')
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://new.com/')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Registry-backed compatibility — verify wrappers delegate correctly
+  // -----------------------------------------------------------------------
+
+  describe('registry-backed compatibility', () => {
+    it('resolves from registry when both registry and legacy exist', async () => {
+      // Set up a valid registry with a different URL than legacy
+      const registry = {
+        version: 1,
+        lastActiveConnectionId: 'conn_test',
+        connections: [{
+          id: 'conn_test',
+          kind: 'remote',
+          label: 'Test',
+          serverUrl: 'https://registry.example.com',
+          apiBaseUrl: 'https://registry.example.com/',
+          wsUrl: 'wss://registry.example.com',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        }],
+      }
+      localStorageMock.setItem('forge:collab:connections:v1', JSON.stringify(registry))
+      localStorageMock.setItem('forge-collab-server-url', 'https://legacy.example.com')
+
+      const { resolveCollaborationApiBaseUrl, resolveCollaborationWsUrl } =
+        await import('./collaboration-endpoints')
+
+      // Should use registry, not legacy
+      expect(resolveCollaborationApiBaseUrl()).toBe('https://registry.example.com/')
+      expect(resolveCollaborationWsUrl()).toBe('wss://registry.example.com')
+    })
+
+    it('migrates legacy to registry on first access through wrapper', async () => {
+      localStorageMock.setItem('forge-collab-server-url', 'https://collab.example.com')
+      const { resolveCollaborationApiBaseUrl } = await import('./collaboration-endpoints')
+
+      // First call triggers migration internally
+      const baseUrl = resolveCollaborationApiBaseUrl()
+      expect(baseUrl).toBe('https://collab.example.com/')
+
+      // Registry should now be populated
+      const rawRegistry = localStorageMock.getItem('forge:collab:connections:v1')
+      expect(rawRegistry).toBeTruthy()
+      const reg = JSON.parse(rawRegistry!)
+      expect(reg.connections).toHaveLength(1)
+      expect(reg.connections[0].serverUrl).toBe('https://collab.example.com')
+    })
+
+    it('target-aware helpers exist and resolve correctly', async () => {
+      const {
+        resolveCollaborationApiBaseUrlFor,
+        resolveCollaborationWsUrlFor,
+        isCollabServerRemoteFor,
+      } = await import('./collaboration-endpoints')
+
+      const target = {
+        connectionId: 'conn_test',
+        kind: 'remote' as const,
+        label: 'Test',
+        serverUrl: 'https://test.com',
+        apiBaseUrl: 'https://test.com/',
+        wsUrl: 'wss://test.com',
+        isRemote: true,
+      }
+
+      expect(resolveCollaborationApiBaseUrlFor(target)).toBe('https://test.com/')
+      expect(resolveCollaborationWsUrlFor(target)).toBe('wss://test.com')
+      expect(isCollabServerRemoteFor(target)).toBe(true)
     })
   })
 })

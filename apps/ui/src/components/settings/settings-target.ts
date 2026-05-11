@@ -89,13 +89,17 @@ export function createBuilderSettingsTarget(localWsUrl: string): SettingsBackend
   }
 }
 
-export function createCollabSettingsTarget(collabWsUrl: string): SettingsBackendTarget {
+export function createCollabSettingsTarget(
+  collabWsUrl: string,
+  /** Explicit API base URL.  When omitted, resolves via the default connection. */
+  explicitApiBaseUrl?: string,
+): SettingsBackendTarget {
   return {
     kind: 'collab',
     label: 'Collab backend',
     description: 'Connected remote collaboration backend.',
     wsUrl: collabWsUrl,
-    apiBaseUrl: resolveCollaborationApiBaseUrl(),
+    apiBaseUrl: explicitApiBaseUrl ?? resolveCollaborationApiBaseUrl(),
     fetchCredentials: 'include',
     requiresAdmin: true,
     availableTabs: COLLAB_TABS,

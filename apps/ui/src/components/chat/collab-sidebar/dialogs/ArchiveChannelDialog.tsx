@@ -15,6 +15,8 @@ import type { CollaborationChannel } from '@forge/protocol'
 interface ArchiveChannelDialogProps {
   open: boolean
   channel: CollaborationChannel
+  /** API base URL for the owning connection's backend (target-aware). */
+  apiBaseUrl?: string
   onClose: () => void
   onArchived?: (channelId: string) => void
 }
@@ -22,6 +24,7 @@ interface ArchiveChannelDialogProps {
 export function ArchiveChannelDialog({
   open,
   channel,
+  apiBaseUrl,
   onClose,
   onArchived,
 }: ArchiveChannelDialogProps) {
@@ -36,7 +39,7 @@ export function ArchiveChannelDialog({
     setIsArchiving(true)
     setError(null)
     try {
-      await archiveChannel(channel.channelId)
+      await archiveChannel(channel.channelId, apiBaseUrl)
       onArchived?.(channel.channelId)
       onClose()
     } catch (err) {

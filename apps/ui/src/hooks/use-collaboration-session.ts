@@ -14,6 +14,12 @@ export interface CollaborationSession {
 
 interface UseCollaborationSessionOptions {
   enabled?: boolean
+  /**
+   * Explicit API base URL to use for session checks.
+   * When provided, overrides the default/last-active connection resolution.
+   * Used by multi-backend flows to target the currently resolved backend.
+   */
+  apiBaseUrl?: string
 }
 
 async function fetchJson<T>(baseUrl: string, path: string, signal: AbortSignal): Promise<T> {
@@ -42,9 +48,11 @@ export function useCollaborationSession(
   const [refreshCounter, setRefreshCounter] = useState(0)
   const controllerRef = useRef<AbortController | null>(null)
 
+  const explicitApiBaseUrl = options.apiBaseUrl
+
   const load = useCallback(async (signal: AbortSignal) => {
     setIsLoading(true)
-    const baseUrl = resolveCollaborationApiBaseUrl()
+    const baseUrl = explicitApiBaseUrl ?? resolveCollaborationApiBaseUrl()
 
     try {
       const status = await fetchJson<CollaborationStatus>(baseUrl, '/api/collaboration/status', signal)
@@ -73,7 +81,7 @@ export function useCollaborationSession(
         setHasLoaded(true)
       }
     }
-  }, [])
+  }, [explicitApiBaseUrl])
 
   const refresh = useCallback(() => {
     setRefreshCounter((c) => c + 1)
@@ -106,9 +114,11 @@ export function useCollaborationSession(
       refresh()
     }
 
+    window.addEventListener('forge-collab-connections-change', handleServerUrlChange)
     window.addEventListener('forge-collab-server-url-change', handleServerUrlChange)
     window.addEventListener('storage', handleServerUrlChange)
     return () => {
+      window.removeEventListener('forge-collab-connections-change', handleServerUrlChange)
       window.removeEventListener('forge-collab-server-url-change', handleServerUrlChange)
       window.removeEventListener('storage', handleServerUrlChange)
     }

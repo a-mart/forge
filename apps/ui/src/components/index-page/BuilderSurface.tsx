@@ -1222,6 +1222,7 @@ export function BuilderSurface({
                 onPlaywrightSettingsLoaded={handlePlaywrightSettingsLoaded}
                 previewSession={previewSession}
                 initialTab={routeState.view === 'settings' ? routeState.settingsTab : undefined}
+                initialCollabApiBaseUrl={routeState.view === 'settings' ? routeState.collabApiBaseUrl : undefined}
               />
             ) : activeView === 'playwright' ? (
               <PlaywrightDashboardView

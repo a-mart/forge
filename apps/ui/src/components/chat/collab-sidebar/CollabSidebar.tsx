@@ -1,32 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  type DragEndEvent,
-  type DragStartEvent,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  arrayMove,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FolderPlus, MoreHorizontal, Plus, Settings } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useCollabWsContext } from '@/hooks/index-page/use-collab-ws-connection'
+import { useCollabConnectionsContext } from '@/hooks/index-page/use-collab-connections'
 import type { ActiveSurface } from '@/hooks/index-page/use-route-state'
-import { reorderCategories, reorderChannels, updateChannel } from '@/lib/collaboration-api'
 import { subscribeToMuteChanges, toggleMute } from '@/lib/collab-local-channel-state'
-import {
-  getCategoryUnreadCount,
-  getChannelUnreadCount,
-  isChannelMuted,
-} from '@/lib/collab-selectors'
+import { isChannelMuted } from '@/lib/collab-selectors'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -36,9 +14,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
+import type { ConnectionHealth } from '@/lib/connection-health-store'
+import type { CollabWsState } from '@/lib/collab-ws-state'
 import { ModeSwitch } from './ModeSwitch'
-import { CategoryGroup } from './CategoryGroup'
-import { ChannelRowItem } from './ChannelRowItem'
+import { ConnectionSection } from './ConnectionSection'
+import { ConnectionSectionHeader } from './ConnectionSectionHeader'
 import { useCollabSidebarPrefs } from './hooks/use-collab-sidebar-prefs'
 import { ChannelSettingsSheet } from '@/components/chat/collab/ChannelSettingsSheet'
 import { ArchiveChannelDialog } from './dialogs/ArchiveChannelDialog'
@@ -48,21 +28,35 @@ import { DeleteCategoryDialog } from './dialogs/DeleteCategoryDialog'
 import { RenameCategoryDialog } from './dialogs/RenameCategoryDialog'
 import { RenameChannelDialog } from './dialogs/RenameChannelDialog'
 
-const UNCATEGORIZED_KEY = '__uncategorized__'
-const CATEGORY_DROP_ID_PREFIX = 'category-drop:'
+// ---------------------------------------------------------------------------
+// Dialog action context — carries the owning connection's target so dialogs
+// and mutations hit the correct backend even when the clicked item belongs
+// to an inactive connection.
+// ---------------------------------------------------------------------------
+
+interface DialogActionCtx {
+  apiBaseUrl?: string
+  /** WebSocket URL for the owning backend (used by dialogs that read model presets / specialists). */
+  wsUrl?: string
+  connectionId: string
+  sortedCategories: CollaborationCategory[]
+}
+
+interface DialogTarget<T> {
+  entity: T
+  ctx: DialogActionCtx
+}
 
 interface CollabSidebarProps {
-  wsUrl: string
   selectedChannelId?: string
   activeSurface: ActiveSurface
   isSettingsActive?: boolean
-  onSelectChannel: (channelId?: string) => void
+  onSelectChannel: (channelId?: string, connectionId?: string) => void
   onSelectSurface: (surface: ActiveSurface) => void
   onOpenSettings?: () => void
 }
 
 export function CollabSidebar({
-  wsUrl,
   selectedChannelId,
   activeSurface,
   isSettingsActive = false,
@@ -70,215 +64,135 @@ export function CollabSidebar({
   onSelectSurface,
   onOpenSettings,
 }: CollabSidebarProps) {
-  const { clientRef, state } = useCollabWsContext()
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
+  const connections = useCollabConnectionsContext()
+  const {
+    connectionIds,
+    connectionStates,
+    targets,
+    activeConnectionId,
+  } = connections
 
-  const workspace = state.workspace
-  const canManage = state.currentUser?.role === 'admin'
-  const { collapsedCategoryIds, toggleCategoryCollapsed } = useCollabSidebarPrefs(workspace?.workspaceId)
+  const isMultiBackend = connectionIds.length > 1
+
+  // Collect all workspaceIds so collapse prefs load/persist from every
+  // backend's localStorage key — not just the first.
+  const allWorkspaceIds = useMemo(() => {
+    const ids: string[] = []
+    for (const connId of connectionIds) {
+      const wsId = connectionStates[connId]?.workspace?.workspaceId
+      if (wsId) ids.push(wsId)
+    }
+    return ids
+  }, [connectionIds, connectionStates])
+
+  const { collapsedCategoryIds, toggleCategoryCollapsed } = useCollabSidebarPrefs(allWorkspaceIds)
+
+  // Determine admin capability: admin on any connection enables workspace-level actions
+  const canManageAny = useMemo(() => {
+    return connectionIds.some((connId) => connectionStates[connId]?.currentUser?.role === 'admin')
+  }, [connectionIds, connectionStates])
+
+  // ---------------------------------------------------------------------------
+  // Dialog state — every dialog target stores the owning connection's context
+  // so mutations always hit the backend that owns the entity, even when the
+  // user right-clicks an item on an inactive connection.
+  // ---------------------------------------------------------------------------
 
   const [createChannelOpen, setCreateChannelOpen] = useState(false)
   const [createChannelCategoryId, setCreateChannelCategoryId] = useState<string | undefined>()
-  const [createCategoryOpen, setCreateCategoryOpen] = useState(false)
-  const [renameChannelTarget, setRenameChannelTarget] = useState<CollaborationChannel | null>(null)
-  const [renameCategoryTarget, setRenameCategoryTarget] = useState<CollaborationCategory | null>(null)
-  const [archiveChannelTarget, setArchiveChannelTarget] = useState<CollaborationChannel | null>(null)
-  const [settingsChannelTarget, setSettingsChannelTarget] = useState<CollaborationChannel | null>(null)
-  const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<CollaborationCategory | null>(null)
+  const [createChannelCtx, setCreateChannelCtx] = useState<DialogActionCtx | null>(null)
+  const [createCategoryCtx, setCreateCategoryCtx] = useState<DialogActionCtx | null>(null)
+  const [renameChannelTarget, setRenameChannelTarget] = useState<DialogTarget<CollaborationChannel> | null>(null)
+  const [renameCategoryTarget, setRenameCategoryTarget] = useState<DialogTarget<CollaborationCategory> | null>(null)
+  const [archiveChannelTarget, setArchiveChannelTarget] = useState<DialogTarget<CollaborationChannel> | null>(null)
+  const [settingsChannelTarget, setSettingsChannelTarget] = useState<DialogTarget<CollaborationChannel> | null>(null)
+  const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<DialogTarget<CollaborationCategory> | null>(null)
   const [mutationError, setMutationError] = useState<string | null>(null)
-  const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [muteRevision, setMuteRevision] = useState(0)
 
-  const sortedCategories = useMemo(
-    () => [...state.categories].sort((left, right) => left.position - right.position || left.name.localeCompare(right.name)),
-    [state.categories],
-  )
-
-  const channelGroups = useMemo(() => {
-    const groups = new Map<string, CollaborationChannel[]>()
-    for (const category of sortedCategories) {
-      groups.set(category.categoryId, [])
-    }
-    groups.set(UNCATEGORIZED_KEY, [])
-
-    const sortedChannels = [...state.channels].sort(compareChannels)
-    for (const channel of sortedChannels) {
-      const key = channel.categoryId ?? UNCATEGORIZED_KEY
-      groups.set(key, [...(groups.get(key) ?? []), channel])
-    }
-
-    return groups
-  }, [sortedCategories, state.channels])
-
-  void muteRevision
-
-  const mutedByChannelId = Object.fromEntries(
-    state.channels.map((channel) => [channel.channelId, isChannelMuted(state, channel.channelId)]),
-  )
-
-  const activeDragLabel = useMemo(() => {
-    if (!activeDragId) {
-      return null
-    }
-
-    if (activeDragId.startsWith('category:')) {
-      const categoryId = activeDragId.slice('category:'.length)
-      const category = sortedCategories.find((entry) => entry.categoryId === categoryId)
-      return category ? category.name : null
-    }
-
-    if (activeDragId.startsWith('channel:')) {
-      const channelId = activeDragId.slice('channel:'.length)
-      const channel = state.channels.find((entry) => entry.channelId === channelId)
-      return channel ? `#${channel.name}` : null
-    }
-
-    return null
-  }, [activeDragId, sortedCategories, state.channels])
-
-  const uncategorizedChannels = channelGroups.get(UNCATEGORIZED_KEY) ?? []
-
+  // Subscribe to mute changes for all workspaces
   useEffect(() => {
-    const workspaceId = workspace?.workspaceId
-    if (!workspaceId) {
-      return
+    const workspaceIds = new Set<string>()
+    for (const connId of connectionIds) {
+      const ws = connectionStates[connId]?.workspace?.workspaceId
+      if (ws) workspaceIds.add(ws)
     }
+
+    if (workspaceIds.size === 0) return
 
     return subscribeToMuteChanges((change) => {
-      if (change.workspaceId !== workspaceId) {
-        return
+      if (workspaceIds.has(change.workspaceId)) {
+        setMuteRevision((revision) => revision + 1)
       }
-
-      setMuteRevision((revision) => revision + 1)
     })
-  }, [workspace?.workspaceId])
+  }, [connectionIds, connectionStates])
+
+  // Force re-evaluation of muted state
+  void muteRevision
 
   const handleToggleMute = (channel: CollaborationChannel) => {
-    if (!workspace) {
-      return
+    // Find the workspace this channel belongs to
+    for (const connId of connectionIds) {
+      const state = connectionStates[connId]
+      if (!state?.workspace) continue
+      if (state.channels.some((ch) => ch.channelId === channel.channelId)) {
+        toggleMute(state.workspace.workspaceId, channel.channelId)
+        return
+      }
     }
-
-    toggleMute(workspace.workspaceId, channel.channelId)
   }
 
   const handleMarkAsRead = (channel: CollaborationChannel) => {
-    clientRef.current?.markChannelRead(channel.channelId)
-  }
-
-  const handleCreateChannelInCategory = (categoryId: string) => {
-    setCreateChannelCategoryId(categoryId)
-    setCreateChannelOpen(true)
-  }
-
-  const handleDragStart = (event: DragStartEvent) => {
-    setActiveDragId(String(event.active.id))
-  }
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    setActiveDragId(null)
-
-    if (!workspace || !canManage || !event.over) {
-      return
-    }
-
-    const activeId = String(event.active.id)
-    const overId = String(event.over.id)
-    if (activeId === overId) {
-      return
-    }
-
-    try {
-      setMutationError(null)
-
-      if (activeId.startsWith('category:') && overId.startsWith('category:')) {
-        const currentIds = sortedCategories.map((category) => category.categoryId)
-        const oldIndex = currentIds.indexOf(activeId.slice('category:'.length))
-        const newIndex = currentIds.indexOf(overId.slice('category:'.length))
-        if (oldIndex < 0 || newIndex < 0) {
-          return
-        }
-
-        await reorderCategories(arrayMove(currentIds, oldIndex, newIndex))
+    // Find the connection this channel belongs to and mark via its client
+    for (const connId of connectionIds) {
+      const state = connectionStates[connId]
+      if (!state) continue
+      if (state.channels.some((ch) => ch.channelId === channel.channelId)) {
+        const client = connections.getClient(connId)
+        client?.markChannelRead(channel.channelId)
         return
       }
-
-      if (activeId.startsWith('channel:')) {
-        const activeChannelId = activeId.slice('channel:'.length)
-        const activeChannel = state.channels.find((channel) => channel.channelId === activeChannelId)
-        if (!activeChannel) {
-          return
-        }
-
-        const overChannel = overId.startsWith('channel:')
-          ? state.channels.find((channel) => channel.channelId === overId.slice('channel:'.length))
-          : null
-        const targetCategoryId = overChannel
-          ? (overChannel.categoryId ?? UNCATEGORIZED_KEY)
-          : parseCategoryDropTargetId(overId)
-
-        if (!targetCategoryId) {
-          return
-        }
-
-        const sourceKey = activeChannel.categoryId ?? UNCATEGORIZED_KEY
-        const targetKey = targetCategoryId
-        const groupEntries = new Map(
-          [...channelGroups.entries()].map(([key, channels]) => [key, channels.map((channel) => channel.channelId)]),
-        )
-
-        const sourceIds = [...(groupEntries.get(sourceKey) ?? [])]
-        const sourceIndex = sourceIds.indexOf(activeChannelId)
-        if (sourceIndex < 0) {
-          return
-        }
-
-        if (overChannel) {
-          const targetIds = sourceKey === targetKey ? sourceIds : [...(groupEntries.get(targetKey) ?? [])]
-          const targetIndex = targetIds.indexOf(overChannel.channelId)
-          if (targetIndex < 0) {
-            return
-          }
-
-          if (sourceKey === targetKey) {
-            groupEntries.set(sourceKey, arrayMove(sourceIds, sourceIndex, targetIndex))
-          } else {
-            sourceIds.splice(sourceIndex, 1)
-            targetIds.splice(targetIndex, 0, activeChannelId)
-            groupEntries.set(sourceKey, sourceIds)
-            groupEntries.set(targetKey, targetIds)
-            await updateChannel(activeChannelId, {
-              categoryId: targetKey === UNCATEGORIZED_KEY ? null : targetKey,
-            })
-          }
-        } else {
-          if (sourceKey === targetKey) {
-            return
-          }
-
-          sourceIds.splice(sourceIndex, 1)
-          const targetIds = [...(groupEntries.get(targetKey) ?? [])]
-          targetIds.push(activeChannelId)
-          groupEntries.set(sourceKey, sourceIds)
-          groupEntries.set(targetKey, targetIds)
-          await updateChannel(activeChannelId, {
-            categoryId: targetKey === UNCATEGORIZED_KEY ? null : targetKey,
-          })
-        }
-
-        await reorderChannels(flattenChannelOrder(sortedCategories, groupEntries))
-      }
-    } catch (error) {
-      setMutationError(error instanceof Error ? error.message : 'Could not reorder collaboration sidebar')
     }
   }
+
+  // Build a DialogActionCtx for a given connectionId
+  const buildCtx = useCallback((connId: string): DialogActionCtx => {
+    const target = targets.find((t) => t.connectionId === connId)
+    const state = connectionStates[connId]
+    const sorted = [...(state?.categories ?? [])].sort(
+      (a, b) => a.position - b.position || a.name.localeCompare(b.name),
+    )
+    return { apiBaseUrl: target?.apiBaseUrl, wsUrl: target?.wsUrl, connectionId: connId, sortedCategories: sorted }
+  }, [targets, connectionStates])
+
+  // Derive per-connection health from state
+  const getConnectionHealth = (state: CollabWsState): ConnectionHealth => {
+    if (state.connected) return 'connected'
+    if (state.hasBootstrapped) return 'reconnecting'
+    return 'disconnected'
+  }
+
+  // Derive total unread for a connection
+  const getConnectionTotalUnread = (state: CollabWsState): number => {
+    return Object.values(state.channelUnreadCounts).reduce((sum, count) => sum + count, 0)
+  }
+
+  // Build muted-by-channelId for a specific connection's channels
+  const buildMutedMap = (state: CollabWsState): Record<string, boolean> => {
+    return Object.fromEntries(
+      state.channels.map((channel) => [channel.channelId, isChannelMuted(state, channel.channelId)]),
+    )
+  }
+
+  // True when at least one connection has a workspace (used to gate dialog rendering)
+  const hasAnyWorkspace = useMemo(() => {
+    return connectionIds.some((connId) => connectionStates[connId]?.workspace != null)
+  }, [connectionIds, connectionStates])
 
   return (
     <>
       <aside className="flex h-full w-[320px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-        {/* Header: mode switch + actions menu (avatar moved to top-right header area) */}
+        {/* Header: mode switch + actions menu */}
         <TooltipProvider delayDuration={200}>
           <div className="flex items-center gap-1.5 px-2 pt-2 pb-3">
             <ModeSwitch
@@ -286,7 +200,7 @@ export function CollabSidebar({
               onSelectSurface={onSelectSurface}
               className="flex-1"
             />
-            {canManage ? (
+            {canManageAny ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -300,11 +214,17 @@ export function CollabSidebar({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-[180px]">
-                  <DropdownMenuItem onClick={() => setCreateCategoryOpen(true)}>
+                  <DropdownMenuItem onClick={() => {
+                    if (activeConnectionId) setCreateCategoryCtx(buildCtx(activeConnectionId))
+                  }}>
                     <FolderPlus className="size-4" />
                     New Category
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => { setCreateChannelCategoryId(undefined); setCreateChannelOpen(true) }}>
+                  <DropdownMenuItem onClick={() => {
+                    setCreateChannelCategoryId(undefined)
+                    setCreateChannelOpen(true)
+                    if (activeConnectionId) setCreateChannelCtx(buildCtx(activeConnectionId))
+                  }}>
                     <Plus className="size-4" />
                     New Channel
                   </DropdownMenuItem>
@@ -322,116 +242,66 @@ export function CollabSidebar({
           </div>
         ) : null}
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
-          onDragEnd={(event) => {
-            void handleDragEnd(event)
-          }}
-        >
-          <div className="flex-1 overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80">
-            {!state.hasBootstrapped ? (
-              <p className="rounded-md bg-sidebar-accent/40 px-3 py-4 text-center text-xs text-muted-foreground">
-                Loading workspace…
-              </p>
-            ) : null}
+        <div className="flex-1 overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80">
+          {connectionIds.length === 0 ? (
+            <p className="rounded-md bg-sidebar-accent/40 px-3 py-4 text-center text-xs text-muted-foreground">
+              No collaboration backends configured.
+            </p>
+          ) : null}
 
-            {state.hasBootstrapped && !workspace ? (
-              <p className="rounded-md bg-sidebar-accent/40 px-3 py-4 text-center text-xs text-muted-foreground">
-                Please sign in to access the collaboration workspace.
-              </p>
-            ) : null}
+          {connectionIds.map((connId, index) => {
+            const state = connectionStates[connId]
+            if (!state) return null
 
-            {workspace ? (
-              <div className="space-y-4">
-                {sortedCategories.length > 0 ? (
-                  <SortableContext
-                    items={sortedCategories.map((category) => `category:${category.categoryId}`)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="space-y-4">
-                      {sortedCategories.map((category) => (
-                        <CategoryGroup
-                          key={category.categoryId}
-                          category={category}
-                          channels={channelGroups.get(category.categoryId) ?? []}
-                          categoryUnreadCount={getCategoryUnreadCount(state, category.categoryId)}
-                          selectedChannelId={selectedChannelId}
-                          unreadByChannelId={state.channelUnreadCounts}
-                          mutedByChannelId={mutedByChannelId}
-                          collapsed={collapsedCategoryIds.has(category.categoryId)}
-                          canManage={canManage}
-                          onToggleCollapsed={toggleCategoryCollapsed}
-                          onSelectChannel={onSelectChannel}
-                          onRenameCategory={setRenameCategoryTarget}
-                          onDeleteCategory={setDeleteCategoryTarget}
-                          onCreateChannel={handleCreateChannelInCategory}
-                          onRenameChannel={setRenameChannelTarget}
-                          onArchiveChannel={setArchiveChannelTarget}
-                          onToggleMute={handleToggleMute}
-                          onMarkAsRead={handleMarkAsRead}
-                          onOpenChannelSettings={setSettingsChannelTarget}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
+            const target = targets.find((t) => t.connectionId === connId)
+            const isActive = activeConnectionId === connId
+            const connCanManage = state.currentUser?.role === 'admin'
+            const mutedMap = buildMutedMap(state)
+
+            return (
+              <div key={connId} className={cn(index > 0 && 'mt-4')}>
+                {/* Section header: only for multi-backend */}
+                {isMultiBackend ? (
+                  <ConnectionSectionHeader
+                    label={target?.label ?? connId}
+                    health={getConnectionHealth(state)}
+                    totalUnread={getConnectionTotalUnread(state)}
+                    isActive={isActive}
+                  />
                 ) : null}
 
-                {/* Uncategorized channels (no header, no empty state) */}
-                {uncategorizedChannels.length > 0 ? (
-                  <SortableContext
-                    items={uncategorizedChannels.map((channel) => `channel:${channel.channelId}`)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="space-y-1">
-                      {uncategorizedChannels.map((channel) => (
-                        <ChannelRowItem
-                          key={channel.channelId}
-                          channel={channel}
-                          unreadCount={getChannelUnreadCount(state, channel.channelId)}
-                          muted={mutedByChannelId[channel.channelId] ?? false}
-                          isActive={selectedChannelId === channel.channelId}
-                          canManage={canManage}
-                          onSelect={(channelId) => onSelectChannel(channelId)}
-                          onRename={setRenameChannelTarget}
-                          onArchive={setArchiveChannelTarget}
-                          onToggleMute={handleToggleMute}
-                          onMarkAsRead={handleMarkAsRead}
-                          onOpenSettings={setSettingsChannelTarget}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
-                ) : null}
-
-                {/* Empty state: no categories and no uncategorized channels */}
-                {sortedCategories.length === 0 && uncategorizedChannels.length === 0 && canManage ? (
-                  <div className="px-2 py-6 text-center">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5 border-sidebar-border bg-transparent text-xs"
-                      onClick={() => setCreateCategoryOpen(true)}
-                    >
-                      <FolderPlus className="size-3.5" />
-                      Create a category
-                    </Button>
-                  </div>
-                ) : null}
+                <ConnectionSection
+                  connectionId={connId}
+                  state={state}
+                  selectedChannelId={selectedChannelId}
+                  isActiveConnection={isActive}
+                  canManage={connCanManage}
+                  collapsedCategoryIds={collapsedCategoryIds}
+                  mutedByChannelId={mutedMap}
+                  apiBaseUrl={target?.apiBaseUrl}
+                  onSelectChannel={(channelId, connectionId) => onSelectChannel(channelId, connectionId)}
+                  onToggleCategoryCollapsed={toggleCategoryCollapsed}
+                  onRenameCategory={(cat) => setRenameCategoryTarget({ entity: cat, ctx: buildCtx(connId) })}
+                  onDeleteCategory={(cat) => setDeleteCategoryTarget({ entity: cat, ctx: buildCtx(connId) })}
+                  onCreateChannelInCategory={(catId) => {
+                    setCreateChannelCategoryId(catId)
+                    setCreateChannelOpen(true)
+                    setCreateChannelCtx(buildCtx(connId))
+                  }}
+                  onRenameChannel={(ch) => setRenameChannelTarget({ entity: ch, ctx: buildCtx(connId) })}
+                  onArchiveChannel={(ch) => setArchiveChannelTarget({ entity: ch, ctx: buildCtx(connId) })}
+                  onToggleMute={handleToggleMute}
+                  onMarkAsRead={handleMarkAsRead}
+                  onOpenChannelSettings={(ch) => setSettingsChannelTarget({ entity: ch, ctx: buildCtx(connId) })}
+                  onOpenCreateCategory={() => {
+                    setCreateCategoryCtx(buildCtx(connId))
+                  }}
+                  onMutationError={setMutationError}
+                />
               </div>
-            ) : null}
-          </div>
-
-          <DragOverlay>
-            {activeDragLabel ? (
-              <div className="rounded-md border border-sidebar-border bg-sidebar px-3 py-2 text-sm font-medium text-sidebar-foreground shadow-lg">
-                {activeDragLabel}
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+            )
+          })}
+        </div>
 
         {/* Footer: settings icon (admin only, mirrors Builder sidebar footer) */}
         {onOpenSettings ? (
@@ -461,25 +331,26 @@ export function CollabSidebar({
             </TooltipProvider>
           </div>
         ) : null}
-
       </aside>
 
-      {workspace ? (
+      {hasAnyWorkspace ? (
         <>
           <CreateChannelDialog
             open={createChannelOpen}
-            categories={sortedCategories}
+            categories={createChannelCtx?.sortedCategories ?? []}
             defaultCategoryId={createChannelCategoryId}
-            onClose={() => { setCreateChannelOpen(false); setCreateChannelCategoryId(undefined) }}
+            apiBaseUrl={createChannelCtx?.apiBaseUrl}
+            onClose={() => { setCreateChannelOpen(false); setCreateChannelCategoryId(undefined); setCreateChannelCtx(null) }}
             onCreated={(channel) => {
               setMutationError(null)
-              onSelectChannel(channel.channelId)
+              onSelectChannel(channel.channelId, createChannelCtx?.connectionId)
             }}
           />
           <CreateCategoryDialog
-            open={createCategoryOpen}
-            onClose={() => setCreateCategoryOpen(false)}
-            wsUrl={wsUrl}
+            open={createCategoryCtx != null}
+            apiBaseUrl={createCategoryCtx?.apiBaseUrl}
+            onClose={() => setCreateCategoryCtx(null)}
+            wsUrl={createCategoryCtx?.wsUrl}
           />
         </>
       ) : null}
@@ -487,7 +358,8 @@ export function CollabSidebar({
       {renameChannelTarget ? (
         <RenameChannelDialog
           open
-          channel={renameChannelTarget}
+          channel={renameChannelTarget.entity}
+          apiBaseUrl={renameChannelTarget.ctx.apiBaseUrl}
           onClose={() => setRenameChannelTarget(null)}
         />
       ) : null}
@@ -495,16 +367,18 @@ export function CollabSidebar({
       {renameCategoryTarget ? (
         <RenameCategoryDialog
           open
-          category={renameCategoryTarget}
+          category={renameCategoryTarget.entity}
+          apiBaseUrl={renameCategoryTarget.ctx.apiBaseUrl}
           onClose={() => setRenameCategoryTarget(null)}
-          wsUrl={wsUrl}
+          wsUrl={renameCategoryTarget.ctx.wsUrl}
         />
       ) : null}
 
       {archiveChannelTarget ? (
         <ArchiveChannelDialog
           open
-          channel={archiveChannelTarget}
+          channel={archiveChannelTarget.entity}
+          apiBaseUrl={archiveChannelTarget.ctx.apiBaseUrl}
           onClose={() => setArchiveChannelTarget(null)}
         />
       ) : null}
@@ -512,7 +386,8 @@ export function CollabSidebar({
       {deleteCategoryTarget ? (
         <DeleteCategoryDialog
           open
-          category={deleteCategoryTarget}
+          category={deleteCategoryTarget.entity}
+          apiBaseUrl={deleteCategoryTarget.ctx.apiBaseUrl}
           onClose={() => setDeleteCategoryTarget(null)}
         />
       ) : null}
@@ -521,48 +396,13 @@ export function CollabSidebar({
         <ChannelSettingsSheet
           open
           onOpenChange={(open) => { if (!open) setSettingsChannelTarget(null) }}
-          channel={settingsChannelTarget}
-          categories={sortedCategories}
-          isAdmin={canManage}
-          wsUrl={wsUrl}
+          channel={settingsChannelTarget.entity}
+          categories={settingsChannelTarget.ctx.sortedCategories}
+          isAdmin={canManageAny}
+          wsUrl={settingsChannelTarget.ctx.wsUrl}
+          apiBaseUrl={settingsChannelTarget.ctx.apiBaseUrl}
         />
       ) : null}
     </>
   )
-}
-
-function compareChannels(left: CollaborationChannel, right: CollaborationChannel): number {
-  if (left.position !== right.position) {
-    return left.position - right.position
-  }
-
-  const byName = left.name.localeCompare(right.name)
-  if (byName !== 0) {
-    return byName
-  }
-
-  return left.channelId.localeCompare(right.channelId)
-}
-
-function parseCategoryDropTargetId(overId: string): string | null {
-  if (!overId.startsWith(CATEGORY_DROP_ID_PREFIX)) {
-    return null
-  }
-
-  const categoryId = overId.slice(CATEGORY_DROP_ID_PREFIX.length)
-  return categoryId.length > 0 ? categoryId : null
-}
-
-function flattenChannelOrder(
-  categories: CollaborationCategory[],
-  groupEntries: Map<string, string[]>,
-): string[] {
-  const orderedChannelIds: string[] = []
-
-  for (const category of categories) {
-    orderedChannelIds.push(...(groupEntries.get(category.categoryId) ?? []))
-  }
-
-  orderedChannelIds.push(...(groupEntries.get(UNCATEGORIZED_KEY) ?? []))
-  return orderedChannelIds
 }

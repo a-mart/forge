@@ -5,6 +5,9 @@
  * keep connection-health-store accurate regardless of which surface is
  * currently mounted.  This prevents the ModeSwitch dot from going gray
  * when you switch away from a surface whose backend is still available.
+ *
+ * Multi-backend: pings **all** configured collab backend URLs and reports
+ * aggregate health (any available → connected).
  */
 
 import { useEffect, useRef } from 'react'
@@ -48,18 +51,23 @@ async function pingBackend(wsUrl: string): Promise<boolean> {
  *
  * Call once at the top-level page component (IndexPage) so it runs
  * regardless of which surface is currently rendered.
+ *
+ * `collabWsUrls` accepts one or more collab backend WS URLs.  The
+ * aggregate result (any reachable → connected) is reported to the
+ * health store, keeping the ModeSwitch collab dot accurate even when
+ * multiple collab backends are configured.
  */
 export function useBackendHealthPoll(
   builderWsUrl: string,
-  collabWsUrl: string,
+  collabWsUrls: readonly string[],
 ): void {
   const builderUrlRef = useRef(builderWsUrl)
-  const collabUrlRef = useRef(collabWsUrl)
+  const collabUrlsRef = useRef(collabWsUrls)
 
   // Keep refs current via effect (refs must not be assigned during render)
   useEffect(() => {
     builderUrlRef.current = builderWsUrl
-    collabUrlRef.current = collabWsUrl
+    collabUrlsRef.current = collabWsUrls
   })
 
   useEffect(() => {
@@ -68,14 +76,20 @@ export function useBackendHealthPoll(
     async function poll() {
       if (cancelled) return
 
-      const [builderOk, collabOk] = await Promise.all([
+      const urls = collabUrlsRef.current
+      const collabPings = urls.length > 0
+        ? urls.map((url) => pingBackend(url))
+        : [Promise.resolve(false)]
+
+      const [builderOk, ...collabResults] = await Promise.all([
         pingBackend(builderUrlRef.current),
-        pingBackend(collabUrlRef.current),
+        ...collabPings,
       ])
 
       if (!cancelled) {
         reportBuilderPoll(builderOk)
-        reportCollabPoll(collabOk)
+        // Aggregate: collab is available if ANY backend responds
+        reportCollabPoll(collabResults.some(Boolean))
       }
     }
 
