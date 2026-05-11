@@ -6,11 +6,15 @@ The built CLI entrypoint is bundled to `dist/cli.js`. `@forge/protocol` is used 
 
 ## Install
 
+For npm/dev installs:
+
 ```bash
 npm install -g @forge/cli
 ```
 
 Requires Node.js 22 or newer.
+
+Forge Desktop bundles the CLI. Desktop users should open **Settings → CLI Access**, generate a key, and click **Install CLI**. The installed shim uses the packaged app runtime and does not require a separate Node.js install.
 
 ## Configure
 
@@ -22,7 +26,9 @@ export FORGE_CLI_API_KEY=...
 forge status
 ```
 
-Local config is stored in the user Forge config directory and may contain a plaintext API key. Treat it as restricted local data.
+CLI access keys are managed in **Settings → CLI Access**. They are separate from model-provider credentials, are stored hash-only by the backend, and can be revoked or rotated at any time.
+
+Local config is stored in the user Forge config directory and may contain a plaintext API key. Treat it as restricted local data and prefer `FORGE_CLI_API_KEY` or `--api-key` in scripts.
 
 ## Commands
 
@@ -63,3 +69,9 @@ forge wait <agentId> [--timeout <duration>] [--stop-on-timeout]
 ```
 
 Durations accept milliseconds by default, or `ms`, `s`, and `m` suffixes.
+
+## Automation notes
+
+`forge run` sends a CLI-attributed message and waits for strict quiescence: idle manager, no pending count, no streaming workers, no active tools, no pending choices, and a debounce window without new session activity. `forge launch` returns after dispatch acknowledgement; use `forge wait <agentId>` later to wait for completion.
+
+Use `--json` for stable machine-readable output. For more detail, see the repository docs at `docs/CLI.md`.

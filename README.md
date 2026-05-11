@@ -14,6 +14,7 @@ Forge gives you one.
 
 - [Why Forge?](#why-forge)
 - [Installation](#installation)
+- [Command Line Interface](#command-line-interface)
 - [Core Concepts](#core-concepts)
 - [Dashboard](#dashboard)
 - [Skills](#skills)
@@ -60,6 +61,8 @@ On first launch, go to Settings and sign in with your OpenAI, Anthropic, or Clau
 
 Then create a manager, point it at a project directory, and start chatting. See the [Getting Started Guide](docs/GETTING_STARTED.md) for a full walkthrough.
 
+Need terminal automation? Open **Settings → CLI Access** to generate a CLI key and install the bundled `forge` command. Desktop installs do not require Node.js for CLI use.
+
 ### Building from Source
 
 If you need more control over the runtime environment or want to contribute to development:
@@ -90,6 +93,23 @@ pnpm package:electron
 The package step clears `apps/electron/release/` first, then writes the current build there and runs a staged packaged-runtime preflight before handing off to `electron-builder`.
 
 **Desktop release safety:** `pnpm package:electron` is the build step. It now treats `apps/electron/release/` as ephemeral output for the current run, so stale assets are cleared before packaging. Official desktop releases still follow a build-first, publish-last, draft-first flow. Desktop rollout is beta-first: beta versions must be published as GitHub prereleases, and stable release happens later as a separate intentional promotion. The old `pnpm release:electron` shortcut is intentionally disabled. Use the workflow documented in [`apps/electron/README.md`](apps/electron/README.md): bump and push the version first, build macOS locally, run Windows via GitHub Actions `workflow_dispatch`, create a draft GitHub Release, keep beta builds marked as prereleases, then upload the full updater asset set (installers, archives, `latest*.yml`, `*.blockmap`, and related release files) before publishing.
+
+## Command Line Interface
+
+Forge includes a first-party `forge` CLI for headless automation. Use it to inspect profiles and sessions, send messages, run one-shot tasks, wait for completion, and answer pending choices from scripts.
+
+Desktop users should configure it from **Settings → CLI Access**: generate a key, click **Install CLI**, then add the shown user-local bin directory to `PATH` if needed. The desktop shim uses the bundled app runtime, so no separate Node.js install is required.
+
+Source or server installs can use npm:
+
+```bash
+npm install -g @forge/cli
+export FORGE_URL=http://127.0.0.1:47287
+export FORGE_CLI_API_KEY=...
+forge doctor
+```
+
+For automation, prefer `FORGE_CLI_API_KEY` or `--api-key` over saved plaintext config. CLI keys are managed separately from model-provider credentials and should be rotated or revoked from Settings when no longer needed. See [`docs/CLI.md`](docs/CLI.md) for the full command reference and validation notes.
 
 ### Your First Session
 

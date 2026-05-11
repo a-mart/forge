@@ -27,7 +27,7 @@ Commands:
   project-agents send --profile <profileId> <handle> --message <text|@file>
   run (--session <agentId> | --profile <profileId> [--project-agent <handle>]) --message <text|@file>
   launch (--session <agentId> | --profile <profileId> [--project-agent <handle>]) --message <text|@file>
-  wait <agentId>
+  wait <agentId> [--timeout <duration>] [--stop-on-timeout]
   choices list [--session <agentId>] [--profile <profileId>]
   choices show|answer|cancel ...
 `
@@ -44,7 +44,7 @@ export function commandHelp(command: string | undefined): string {
     case 'profiles':
       return 'Usage: forge profiles list | forge profiles show <profileId>'
     case 'sessions':
-      return 'Usage: forge sessions list --profile <profileId> | show <agentId> | create --profile <profileId> [--label <label>] [--name <name>] | send <agentId> --message <text|@file> | wait <agentId> | stop|resume <agentId> | fork <agentId> [--label <label>] [--from-message-id <messageId>] | rename <agentId> --label <label> | pin|unpin <agentId> [--pinned true|false] | clear|delete <agentId> --yes'
+      return 'Usage: forge sessions list --profile <profileId> | show <agentId> | create --profile <profileId> [--label <label>] [--name <name>] | send <agentId> --message <text|@file> | wait <agentId> [--timeout <duration>] [--stop-on-timeout] | stop|resume <agentId> | fork <agentId> [--label <label>] [--from-message-id <messageId>] | rename <agentId> --label <label> | pin|unpin <agentId> [--pinned true|false] | clear|delete <agentId> --yes'
     case 'agents':
       return 'Usage: forge agents list [--profile <profileId>] | forge agents show <agentId>'
     case 'project-agents':
@@ -54,7 +54,7 @@ export function commandHelp(command: string | undefined): string {
     case 'launch':
       return 'Usage: forge launch (--session <agentId> | --profile <profileId> [--project-agent <handle>]) --message <text|@file> [--label <label>]'
     case 'wait':
-      return 'Usage: forge wait <agentId> [--timeout <duration>]'
+      return 'Usage: forge wait <agentId> [--timeout <duration>] [--stop-on-timeout]'
     case 'choices':
       return 'Usage: forge choices list [--session <agentId>] [--profile <profileId>] | show <choiceId> [--session <agentId>] | answer <choiceId> --answers <json> [--session <agentId>] | cancel <choiceId> [--session <agentId>]'
     default:
