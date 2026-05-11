@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTempConfig } from "../../../../test-support/index.js";
 import { CliAccessService } from "../../../../swarm/cli-access-service.js";
@@ -150,15 +150,15 @@ describe("CLI access settings routes", () => {
     expect(putResponse.status).toBe(405);
   });
 
-  it("handles CORS OPTIONS preflight from local origin", async () => {
+  it("handles CORS OPTIONS preflight from same origin", async () => {
     const { server } = await setup();
 
     const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
       method: "OPTIONS",
-      headers: { Origin: "http://127.0.0.1:47188" },
+      headers: { Origin: server.baseUrl },
     });
     expect(response.status).toBe(204);
-    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:47188");
+    expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
   });
 
   it("handles CORS OPTIONS preflight with no Origin header", async () => {
@@ -186,6 +186,8 @@ describe("CLI access settings routes", () => {
 /* ------------------------------------------------------------------ */
 
 describe("CLI access settings routes — cross-origin protection", () => {
+  // -- Hostile origin rejection --
+
   it("rejects POST with hostile cross-origin header", async () => {
     const { server } = await setup();
 
@@ -212,8 +214,7 @@ describe("CLI access settings routes — cross-origin protection", () => {
       headers: { Origin: "https://evil.example.com" },
     });
     expect(response.status).toBe(403);
-    const json = await response.json();
-    expect(json.error.code).toBe("forbidden_origin");
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "forbidden_origin" } });
   });
 
   it("rejects OPTIONS preflight with hostile cross-origin header", async () => {
@@ -251,30 +252,43 @@ describe("CLI access settings routes — cross-origin protection", () => {
     expect(response.status).toBe(403);
   });
 
-  it("allows requests from localhost origin", async () => {
+  it("rejects Origin that matches hostname but not port", async () => {
+    const { server } = await setup();
+
+    // Same host, different port — cross-origin
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "http://127.0.0.1:9999" },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  // -- Same-origin acceptance --
+
+  it("allows same-origin GET from the actual server origin", async () => {
     const { server } = await setup();
 
     const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
       method: "GET",
-      headers: { Origin: "http://localhost:47188" },
+      headers: { Origin: server.baseUrl },
     });
     expect(response.status).toBe(200);
-    expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:47188");
+    expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
   });
 
-  it("allows requests from 127.0.0.1 origin", async () => {
+  it("allows same-origin POST from the actual server origin", async () => {
     const { server } = await setup();
 
     const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Origin: "http://127.0.0.1:47188",
+        Origin: server.baseUrl,
       },
       body: "{}",
     });
     expect(response.status).toBe(201);
-    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:47188");
+    expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
   });
 
   it("allows requests with no Origin header (non-browser callers)", async () => {
@@ -287,6 +301,65 @@ describe("CLI access settings routes — cross-origin protection", () => {
       body: "{}",
     });
     expect(response.status).toBe(201);
+  });
+
+  // -- Non-loopback same-origin (LAN / Tailscale / custom hostname) --
+
+  it("allows same-origin from LAN IP when Host header matches", async () => {
+    const { server } = await setup();
+
+    // Use raw http.request so we can set a custom Host header that differs
+    // from the actual TCP destination — simulates a LAN browser session
+    // where the user accesses Forge at http://192.168.1.100:<port>.
+    const port = new URL(server.baseUrl).port;
+    const lanOrigin = `http://192.168.1.100:${port}`;
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Host: `192.168.1.100:${port}`,
+        Origin: lanOrigin,
+      },
+    });
+    expect(result.status).toBe(200);
+    expect(result.headers["access-control-allow-origin"]).toBe(lanOrigin);
+  });
+
+  it("allows same-origin from Tailscale hostname when Host header matches", async () => {
+    const { server } = await setup();
+
+    const port = new URL(server.baseUrl).port;
+    const tailscaleOrigin = `http://myhost.tail12345.ts.net:${port}`;
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "POST",
+      headers: {
+        Host: `myhost.tail12345.ts.net:${port}`,
+        "Content-Type": "application/json",
+        Origin: tailscaleOrigin,
+      },
+      body: "{}",
+    });
+    expect(result.status).toBe(201);
+    expect(result.headers["access-control-allow-origin"]).toBe(tailscaleOrigin);
+  });
+
+  it("rejects mismatched Origin against LAN Host header", async () => {
+    const { server } = await setup();
+
+    const port = new URL(server.baseUrl).port;
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "POST",
+      headers: {
+        Host: `192.168.1.100:${port}`,
+        "Content-Type": "application/json",
+        Origin: "https://evil.example.com",
+      },
+      body: "{}",
+    });
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
   });
 });
 
@@ -409,4 +482,45 @@ async function handleRoute(
     const message = error instanceof Error ? error.message : String(error);
     sendJson(response, 500, { error: message });
   }
+}
+
+/**
+ * Low-level HTTP request helper that allows overriding the Host header
+ * (unlike Node's fetch/undici which always sets Host from the URL).
+ * Needed for testing LAN IP / Tailscale same-origin scenarios.
+ */
+async function rawHttpRequest(options: {
+  url: string;
+  method: string;
+  headers?: Record<string, string>;
+  body?: string;
+}): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }> {
+  const parsed = new URL(options.url);
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname + parsed.search,
+        method: options.method,
+        headers: options.headers,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            headers: res.headers as Record<string, string | string[] | undefined>,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    if (options.body) {
+      req.write(options.body);
+    }
+    req.end();
+  });
 }

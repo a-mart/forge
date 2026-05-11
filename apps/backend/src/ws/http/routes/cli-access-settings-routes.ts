@@ -45,12 +45,10 @@ export function createCliAccessSettingsRoutes(options: {
  *
  *  - Allow requests with no Origin header (same-origin browser or
  *    non-browser callers like curl — not CSRF-vulnerable).
- *  - Allow requests whose Origin hostname is `127.0.0.1` or `localhost`
- *    (the local UI in dev/prod/Electron).
- *  - Block everything else with 403.
- *
- * For allowed-origin requests we set tight CORS headers so the browser
- * permits the response.
+ *  - Allow requests whose Origin matches the server's own origin derived
+ *    from the request Host header (covers localhost, LAN IPs, Tailscale
+ *    hostnames, and any custom bind address).
+ *  - Block everything else with 403 and no Access-Control-Allow-Origin.
  */
 function applySameOriginGate(
   request: IncomingMessage,
@@ -64,14 +62,14 @@ function applySameOriginGate(
     return true;
   }
 
-  if (!isLocalOrigin(origin)) {
+  if (!isSameOrigin(origin, request)) {
     sendJson(response, 403, {
       error: { code: "forbidden_origin", message: "Cross-origin requests are not allowed for CLI key management", status: 403 },
     });
     return false;
   }
 
-  // Local origin — set tight CORS headers.
+  // Same-origin — set tight CORS headers so the browser permits the response.
   response.setHeader("Access-Control-Allow-Origin", origin);
   response.setHeader("Access-Control-Allow-Methods", methods);
   response.setHeader("Access-Control-Allow-Headers", "content-type");
@@ -79,11 +77,32 @@ function applySameOriginGate(
   return true;
 }
 
-function isLocalOrigin(origin: string): boolean {
+/**
+ * Compare the request Origin against the server's own origin derived from
+ * the Host header. This works for localhost, LAN IPs, Tailscale hostnames,
+ * and any custom bind address — the browser's same-origin policy guarantees
+ * that a legitimate same-origin request has Origin === scheme+host+port.
+ */
+function isSameOrigin(origin: string, request: IncomingMessage): boolean {
+  const host = request.headers.host;
+  if (!host) {
+    // No Host header — cannot verify; reject to be safe.
+    return false;
+  }
+
+  // Derive the expected origin from the request protocol and Host header.
+  // Node http server: not encrypted → http. If behind TLS proxy, the
+  // Origin from the browser would use https, and the Host header would
+  // match, so the comparison still holds.
+  const scheme = (request.socket as { encrypted?: boolean }).encrypted ? "https" : "http";
+  const expectedOrigin = `${scheme}://${host}`;
+
   try {
-    const url = new URL(origin);
-    const host = url.hostname;
-    return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+    // Normalize both through URL to handle default port stripping, trailing
+    // slashes, and case differences.
+    const originUrl = new URL(origin);
+    const expectedUrl = new URL(expectedOrigin);
+    return originUrl.origin === expectedUrl.origin;
   } catch {
     return false;
   }
