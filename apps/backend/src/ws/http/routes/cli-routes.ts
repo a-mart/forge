@@ -68,7 +68,7 @@ function buildCliCapabilities(runtimeTarget: RuntimeTarget): CliCapabilities {
       cliSourceContext: true,
       cliSessionMetadata: true,
       choiceOwnerLookup: false,
-      activeToolSnapshot: false,
+      activeToolSnapshot: true,
       projectAgentRunTarget: false,
       builderRuntimeOnly: true,
     },
@@ -107,6 +107,10 @@ async function handleCliHttpRequest(
 
   const capabilities = buildCliCapabilities(options.runtimeTarget);
   const segments = getCliPathSegments(requestUrl.pathname);
+  if (!segments) {
+    sendCliError(response, 400, "bad_path", "Malformed CLI path");
+    return;
+  }
 
   if (segments.length === 1 && segments[0] === "capabilities") {
     const payload: CliCapabilitiesResponse = {
@@ -245,13 +249,17 @@ async function handleCliHttpRequest(
   sendCliError(response, 404, "not_found", "Not Found");
 }
 
-function getCliPathSegments(pathname: string): string[] {
+function getCliPathSegments(pathname: string): string[] | null {
   const relative = pathname.slice(CLI_HTTP_ROUTE_PREFIX.length).replace(/^\/+/, "");
   if (!relative) {
     return [];
   }
 
-  return relative.split("/").map((segment) => decodeURIComponent(segment));
+  try {
+    return relative.split("/").map((segment) => decodeURIComponent(segment));
+  } catch {
+    return null;
+  }
 }
 
 function listCliProfiles(swarmManager: CliRouteSwarmManager): ManagerProfile[] {

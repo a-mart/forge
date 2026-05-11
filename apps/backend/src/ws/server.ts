@@ -253,6 +253,11 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastCollaborationSessionWorkersSnapshot(event);
   };
 
+  private readonly onSessionActiveToolsSnapshot = (event: ServerEvent): void => {
+    if (event.type !== "session_active_tools_snapshot") return;
+    this.wsHandler.broadcastToSession(event.sessionAgentId, event);
+  };
+
   private readonly onAgentsSnapshot = (event: ServerEvent): void => {
     if (event.type !== "agents_snapshot") return;
     this.wsHandler.broadcastToSubscribed(event);
@@ -599,6 +604,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("message_pinned", this.onMessagePinned);
     this.swarmManager.on("agent_status", this.onAgentStatus);
     this.swarmManager.on("session_workers_snapshot", this.onSessionWorkersSnapshot);
+    this.swarmManager.on("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
@@ -657,6 +663,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("message_pinned", this.onMessagePinned);
     this.swarmManager.off("agent_status", this.onAgentStatus);
     this.swarmManager.off("session_workers_snapshot", this.onSessionWorkersSnapshot);
+    this.swarmManager.off("session_active_tools_snapshot", this.onSessionActiveToolsSnapshot);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);

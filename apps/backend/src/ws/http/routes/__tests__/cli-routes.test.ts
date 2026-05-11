@@ -64,7 +64,7 @@ describe("CLI routes and bearer auth", () => {
           cliSourceContext: true,
           cliSessionMetadata: true,
           choiceOwnerLookup: false,
-          activeToolSnapshot: false,
+          activeToolSnapshot: true,
           projectAgentRunTarget: false,
           builderRuntimeOnly: true,
         },
@@ -80,6 +80,14 @@ describe("CLI routes and bearer auth", () => {
     await expect(parseJsonResponse(unknown)).resolves.toMatchObject({
       status: 404,
       json: { error: { code: "not_found", status: 404 } },
+    });
+
+    const malformed = await fetch(`${server.baseUrl}/api/cli/profiles/%E0%A4%A`, {
+      headers: { authorization: `Bearer ${generated.plaintextKey}` },
+    });
+    await expect(parseJsonResponse(malformed)).resolves.toMatchObject({
+      status: 400,
+      json: { error: { code: "bad_path", status: 400 } },
     });
   });
 
