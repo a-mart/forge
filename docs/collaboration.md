@@ -90,21 +90,22 @@ A first boot must provide `FORGE_ADMIN_EMAIL` and `FORGE_ADMIN_PASSWORD` so the 
 
 ### Split Builder + collaboration deployment
 
-Settings → Collaboration can also connect a local Builder client to a separately hosted collaboration server. In that setup, Builder stays local, while the collaboration service runs from this repo or from any deployment that exposes the collaboration runtime over HTTPS.
+Settings → Collaboration can manage one or more configured collaboration backend connections. Each connection can point at a local or separately hosted collaboration server; Builder stays local, while the collaboration service runs from this repo or from any deployment that exposes the collaboration runtime over HTTPS.
 
 The Builder/Collab toggle lives in the sidebar header. When collaboration is enabled, the New Project action moves next to session search for quicker access.
 
 ## Remote sign-in flow
 
 1. Open **Settings → Collaboration**.
-2. Enter the collaboration server URL.
-3. Click **Save** and **Test** to confirm the server is reachable.
-4. Use the Builder/Collab toggle to open the collaboration surface. For configured remote servers, the toggle can open the collaboration sign-in surface before you are authenticated.
-5. Sign in with the collaboration server admin or member email and password. After sign-in succeeds, the collaboration channels become available.
+2. Add or select a collaboration connection/backend.
+3. Enter the backend URL for that connection.
+4. Click **Save** and **Test** for that connection to confirm it is reachable.
+5. Use the Builder/Collab toggle to open the collaboration surface. For configured remote backends, the toggle can open the collaboration sign-in surface before you are authenticated.
+6. Sign in with the selected backend's admin or member email and password. After sign-in succeeds, that backend's channels become available.
 
-The collaboration status panel reports the configured collaboration server, not the local Builder backend. It reflects the enabled state and auth status of the connected collaboration service. If a collaboration session or socket is invalidated by a lifecycle change, the UI shows sign-in recovery instead of retrying forever or leaving the screen stuck loading.
+The collaboration status panel reports the configured connection/backend, not the local Builder backend. It reflects the enabled state and auth status of the selected collaboration service. If a collaboration session or socket is invalidated by a lifecycle change, the UI shows sign-in recovery instead of retrying forever or leaving the screen stuck loading.
 
-Once connected, the main Settings surface switches context with the mode: Builder Settings continue to target the local backend, while Collab Settings target the collaboration backend. Only collaboration admins can access Collab Settings.
+Once connected, the main Settings surface switches context with the mode: Builder Settings continue to target the local backend, while Collab Settings target the collaboration backend. Only collaboration admins can access Collab Settings, and member/invite management is scoped per backend connection.
 
 Hosted deployments use:
 
@@ -112,7 +113,7 @@ Hosted deployments use:
 - `FORGE_COLLABORATION_TRUSTED_ORIGINS` to list the Builder origins that may talk to the collaboration backend
 - collaboration auth cookies with `SameSite=None; Secure`
 
-The base URL changes the canonical browser origin used for invite links and cookie handling. In split deployments, collaboration auth pages redirect back to a trusted Builder/UI origin after login, invite redemption, password changes, and member flows. Untrusted browser origins are ignored.
+The base URL changes the canonical browser origin used for invite links and cookie handling. In split deployments, collaboration auth pages redirect back to a trusted Builder/UI origin after login, invite redemption, password changes, and member flows. Untrusted browser origins are ignored. Invite, member, and password management apply to the currently selected backend connection.
 
 ## Architecture
 

@@ -40,15 +40,15 @@ Edit the default preferences Forge shares with new manager sessions. These are t
 
 ## Collaboration
 
-Open **Settings > Collaboration** to connect Forge to a collaboration server. Enter the server URL, click **Save** and **Test** to confirm it is reachable, then use the Builder/Collab toggle to open the collaboration sign-in surface. For configured remote servers, the toggle can take you to sign-in before you are authenticated. After sign-in succeeds, the collaboration channels become available.
+Open **Settings > Collaboration** to manage one or more collaboration backend connections. Add a connection, enter its backend URL, and click **Save** and **Test** for that connection to confirm it is reachable. Use the Builder/Collab toggle to open the collaboration sign-in surface. For configured remote backends, the toggle can take you to sign-in before you are authenticated. After sign-in succeeds, that backend's channels become available.
 
-Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the collaboration backend instead of copying or sharing the local Builder auth file.
+Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the selected collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the selected collaboration backend instead of copying or sharing the local Builder auth file.
 
-Collab Settings also includes members and invites, plus password management. Admins can manage members and invites, issue temporary-password resets that require a password change, and users can change their own password. If a collaboration session or socket gets invalidated by a lifecycle change, the public UI shows sign-in recovery instead of looping on reconnect or staying stuck on loading.
+Collab Settings also include members and invites, plus password management, all scoped to the selected backend connection. Admins can manage members and invites, issue temporary-password resets that require a password change, and users can change their own password. If a collaboration session or socket gets invalidated by a lifecycle change, the public UI shows sign-in recovery instead of looping on reconnect or staying stuck on loading.
 
 Collaboration channels are session-backed and can carry per-channel instructions and reference docs. Channel guidance is labeled **Additional instructions**.
 
-The Collaboration status panel reflects the configured collaboration server, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
+The Collaboration status panel reflects the configured collaboration connection/backend, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
 
 ## System
 
