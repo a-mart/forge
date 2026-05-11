@@ -9,7 +9,6 @@ import type {
   TerminalUpdatedEvent,
 } from "@forge/protocol";
 import { WebSocketServer } from "ws";
-import type { WebSocket } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { MobilePushService } from "../mobile/mobile-push-service.js";
 import {
@@ -95,6 +94,7 @@ import { TerminalSettingsService } from "../terminal/terminal-settings-service.j
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { TerminalWsProxy } from "../terminal/terminal-ws-proxy.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
+import { CliWsHandler } from "./cli-ws-handler.js";
 import { WsHandler } from "./ws-handler.js";
 
 export class SwarmWebSocketServer {
@@ -120,6 +120,7 @@ export class SwarmWebSocketServer {
   private cliWss: WebSocketServer | null = null;
 
   private readonly wsHandler: WsHandler;
+  private readonly cliWsHandler: CliWsHandler;
   private readonly cliAccessService: CliAccessService;
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
@@ -140,6 +141,7 @@ export class SwarmWebSocketServer {
   private readonly onConversationMessage = (event: ServerEvent): void => {
     if (event.type !== "conversation_message") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
     this.wsHandler.broadcastCollaborationConversationMessage(event);
 
     const shouldBroadcastUnread =
@@ -175,17 +177,20 @@ export class SwarmWebSocketServer {
   private readonly onConversationLog = (event: ServerEvent): void => {
     if (event.type !== "conversation_log") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
   };
 
   private readonly onAgentMessage = (event: ServerEvent): void => {
     if (event.type !== "agent_message") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
     this.wsHandler.broadcastCollaborationAgentMessage(event);
   };
 
   private readonly onAgentToolCall = (event: ServerEvent): void => {
     if (event.type !== "agent_tool_call") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
     this.wsHandler.broadcastCollaborationAgentToolCall(event);
   };
 
@@ -193,6 +198,7 @@ export class SwarmWebSocketServer {
     if (event.type !== "choice_request") return;
 
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
 
     const collabSessionAgentId = this.resolveChoiceSessionAgentId(event.agentId);
     if (collabSessionAgentId) {
@@ -225,11 +231,13 @@ export class SwarmWebSocketServer {
   private readonly onConversationReset = (event: ServerEvent): void => {
     if (event.type !== "conversation_reset") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
   };
 
   private readonly onMessagePinned = (event: ServerEvent): void => {
     if (event.type !== "message_pinned") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
 
     const descriptor = this.swarmManager.getAgent(event.agentId);
     if (descriptor?.role === "manager" && isCollabSession(descriptor) && descriptor.collab?.channelId) {
@@ -244,18 +252,21 @@ export class SwarmWebSocketServer {
   private readonly onAgentStatus = (event: ServerEvent): void => {
     if (event.type !== "agent_status") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
     this.wsHandler.broadcastCollaborationAgentStatus(event);
   };
 
   private readonly onSessionWorkersSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_workers_snapshot") return;
     this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
     this.wsHandler.broadcastCollaborationSessionWorkersSnapshot(event);
   };
 
   private readonly onSessionActiveToolsSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_active_tools_snapshot") return;
     this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
+    this.cliWsHandler.broadcast(event);
   };
 
   private readonly onAgentsSnapshot = (event: ServerEvent): void => {
@@ -431,6 +442,7 @@ export class SwarmWebSocketServer {
       perf: this.swarmManager.getSidebarPerfRecorder(),
       collaborationReadinessService: options.collaborationReadinessService ?? undefined,
     });
+    this.cliWsHandler = new CliWsHandler(this.swarmManager);
     wsHandlerRef = this.wsHandler;
 
     this.telemetryService = options.telemetryService ?? null;
@@ -564,7 +576,7 @@ export class SwarmWebSocketServer {
     this.cliWss = cliWss;
 
     this.wsHandler.attach(wss);
-    cliWss.on("connection", handleCliWebSocketPlaceholderConnection);
+    this.cliWsHandler.attach(cliWss);
     httpServer.on("upgrade", (request, socket, head) => {
       void this.handleUpgrade(request, socket, head);
     });
@@ -684,6 +696,7 @@ export class SwarmWebSocketServer {
     this.actualPort = null;
 
     this.wsHandler.reset();
+    this.cliWsHandler.reset();
     this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
     this.telemetryService?.stop();
 
@@ -954,15 +967,6 @@ function buildDisabledCollaborationStatus(): CollaborationStatus {
 
 function ignoreSocketErrors(socket: Duplex): void {
   socket.once("error", () => {});
-}
-
-function handleCliWebSocketPlaceholderConnection(client: WebSocket): void {
-  client.send(JSON.stringify({
-    type: "cli_request_error",
-    code: "not_implemented",
-    message: "CLI WebSocket support is not implemented yet.",
-  }));
-  client.close(1000, "not implemented");
 }
 
 function rejectWebSocketUpgrade(

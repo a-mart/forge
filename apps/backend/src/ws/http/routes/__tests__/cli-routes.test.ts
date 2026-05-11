@@ -60,11 +60,11 @@ describe("CLI routes and bearer auth", () => {
         runtimeTarget: "builder",
         features: {
           bearerAuth: true,
-          headlessWs: false,
+          headlessWs: true,
           cliSourceContext: true,
           cliSessionMetadata: true,
           choiceOwnerLookup: false,
-          activeToolSnapshot: false,
+          activeToolSnapshot: true,
           projectAgentRunTarget: false,
           builderRuntimeOnly: true,
         },
@@ -153,7 +153,7 @@ describe("CLI routes and bearer auth", () => {
             bearerAuth: true,
             cliSourceContext: true,
             cliSessionMetadata: true,
-            headlessWs: false,
+            headlessWs: true,
           },
         },
         summary: { profileCount: 1, sessionCount: 2, agentCount: 3 },
@@ -277,7 +277,7 @@ describe("CLI routes and bearer auth", () => {
     await expect(service.listKeys()).resolves.toEqual([generated.key]);
   });
 
-  it("authenticates /api/cli/ws before accepting the isolated placeholder socket", async () => {
+  it("authenticates /api/cli/ws before accepting the isolated headless socket", async () => {
     const configHandle = await createTempConfig({ prefix: "cli-ws-route-", port: await getAvailablePort() });
     activeServers.push({ baseUrl: "cleanup-only", close: configHandle.cleanup });
     const service = new CliAccessService({
@@ -315,10 +315,10 @@ describe("CLI routes and bearer auth", () => {
     await expect(
       connectWebSocket(`ws://${configHandle.config.host}:${configHandle.config.port}/api/cli/ws`, {
         authorization: `Bearer ${generated.plaintextKey}`,
-      })
+      }, "not json")
     ).resolves.toMatchObject({
       opened: true,
-      messages: [expect.objectContaining({ type: "cli_request_error", code: "not_implemented" })],
+      messages: [expect.objectContaining({ type: "cli_request_error", code: "bad_request" })],
     });
 
     await expect(service.listKeys()).resolves.toMatchObject([
@@ -517,6 +517,7 @@ async function handleRouteRequest(
 async function connectWebSocket(
   url: string,
   headers?: Record<string, string>,
+  sendOnOpen?: string,
 ): Promise<{ opened: boolean; errorMessage?: string; messages: unknown[] }> {
   return new Promise((resolve) => {
     const client = new WebSocket(url, { headers });
@@ -544,6 +545,9 @@ async function connectWebSocket(
       };
       client.once("message", finish);
       client.once("close", finish);
+      if (sendOnOpen !== undefined) {
+        client.send(sendOnOpen);
+      }
     });
   });
 }

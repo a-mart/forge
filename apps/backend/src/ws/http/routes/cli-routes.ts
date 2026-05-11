@@ -3,7 +3,6 @@ import {
   isSystemProfile,
   type CliAgentShowResponse,
   type CliAgentsListResponse,
-  type CliCapabilities,
   type CliCapabilitiesResponse,
   type CliHttpErrorResponse,
   type CliProfileShowResponse,
@@ -16,6 +15,7 @@ import {
   type CliStatusResponse,
 } from "@forge/protocol";
 import { isBuilderRuntimeTarget, type RuntimeTarget } from "../../../runtime-target.js";
+import { buildCliCapabilities, CLI_SERVER_VERSION } from "../../cli-capabilities.js";
 import type { CliAccessService } from "../../../swarm/cli-access-service.js";
 import type { AgentDescriptor, ManagerProfile } from "../../../swarm/types.js";
 import {
@@ -28,7 +28,6 @@ import {
 import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
-const SERVER_VERSION = "1.0.0";
 const HTTP_GET_ALLOW_HEADER = "GET, OPTIONS";
 
 interface CliRouteSwarmManager {
@@ -54,25 +53,6 @@ export function createCliRoutes(options: {
       },
     },
   ];
-}
-
-function buildCliCapabilities(runtimeTarget: RuntimeTarget): CliCapabilities {
-  return {
-    protocolVersion: 1,
-    minCliVersion: "0.1.0",
-    available: isBuilderRuntimeTarget(runtimeTarget),
-    runtimeTarget,
-    features: {
-      bearerAuth: true,
-      headlessWs: false,
-      cliSourceContext: true,
-      cliSessionMetadata: true,
-      choiceOwnerLookup: false,
-      activeToolSnapshot: false,
-      projectAgentRunTarget: false,
-      builderRuntimeOnly: true,
-    },
-  };
 }
 
 async function handleCliHttpRequest(
@@ -115,7 +95,7 @@ async function handleCliHttpRequest(
   if (segments.length === 1 && segments[0] === "capabilities") {
     const payload: CliCapabilitiesResponse = {
       serverTime: new Date().toISOString(),
-      serverVersion: SERVER_VERSION,
+      serverVersion: CLI_SERVER_VERSION,
       capabilities,
     };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -128,7 +108,7 @@ async function handleCliHttpRequest(
     const payload: CliStatusResponse = {
       status: "ok",
       serverTime: new Date().toISOString(),
-      serverVersion: SERVER_VERSION,
+      serverVersion: CLI_SERVER_VERSION,
       runtimeTarget: options.runtimeTarget,
       capabilities,
       summary: {
