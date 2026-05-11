@@ -63,7 +63,7 @@ describe("CLI routes and bearer auth", () => {
           headlessWs: true,
           cliSourceContext: true,
           cliSessionMetadata: true,
-          choiceOwnerLookup: false,
+          choiceOwnerLookup: true,
           activeToolSnapshot: true,
           projectAgentRunTarget: false,
           builderRuntimeOnly: true,
@@ -120,6 +120,8 @@ describe("CLI routes and bearer auth", () => {
       "/api/cli/sessions/session-a",
       "/api/cli/project-agents?profileId=profile-a",
       "/api/cli/project-agents/docs?profileId=profile-a",
+      "/api/cli/choices?sessionAgentId=session-a",
+      "/api/cli/choices/choice-manager-a",
     ];
 
     for (const endpoint of endpoints) {
@@ -153,6 +155,7 @@ describe("CLI routes and bearer auth", () => {
             bearerAuth: true,
             cliSourceContext: true,
             cliSessionMetadata: true,
+            choiceOwnerLookup: true,
             headlessWs: true,
           },
         },
@@ -213,6 +216,37 @@ describe("CLI routes and bearer auth", () => {
     ).resolves.toMatchObject({
       status: 200,
       json: { projectAgent: { handle: "docs", agentId: "docs-agent" } },
+    });
+
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/choices?sessionAgentId=session-a`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: {
+        choices: [
+          { choiceId: "choice-manager-a", agentId: "session-a", sessionAgentId: "session-a", profileId: "profile-a" },
+          { choiceId: "choice-worker-a", agentId: "worker-a", sessionAgentId: "session-a", profileId: "profile-a" },
+        ],
+      },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/choices?profileId=profile-a`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: { choices: [{ choiceId: "choice-manager-a" }, { choiceId: "choice-worker-a" }] },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/choices/choice-worker-a`, { headers }))).resolves.toMatchObject({
+      status: 200,
+      json: {
+        choice: {
+          choiceId: "choice-worker-a",
+          agentId: "worker-a",
+          sessionAgentId: "session-a",
+          profileId: "profile-a",
+          questionSummary: "Worker choice?",
+          questions: [{ id: "worker-q", question: "Worker choice?" }],
+        },
+      },
+    });
+    await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/choices/choice-cortex`, { headers }))).resolves.toMatchObject({
+      status: 404,
+      json: { error: { code: "not_found" } },
     });
   });
 
@@ -366,6 +400,12 @@ describe("CLI routes and bearer auth", () => {
 function createCliRouteState(): {
   listProfiles(): ManagerProfile[];
   listAgents(): AgentDescriptor[];
+  getPendingChoiceIdsForSession(sessionAgentId: string): string[];
+  getPendingChoice(choiceId: string): {
+    agentId: string;
+    sessionAgentId: string;
+    questions: Array<{ id: string; question: string; options?: Array<{ id: string; label: string }> }>;
+  } | undefined;
 } {
   const profiles: ManagerProfile[] = [
     {
@@ -411,9 +451,40 @@ function createCliRouteState(): {
     createRouteAgent({ agentId: "cortex-session", profileId: "cortex" }),
   ];
 
+  const choices = new Map([
+    [
+      "choice-manager-a",
+      {
+        agentId: "session-a",
+        sessionAgentId: "session-a",
+        questions: [{ id: "manager-q", question: "Manager choice?", options: [{ id: "yes", label: "Yes" }] }],
+      },
+    ],
+    [
+      "choice-worker-a",
+      {
+        agentId: "worker-a",
+        sessionAgentId: "session-a",
+        questions: [{ id: "worker-q", question: "Worker choice?", options: [{ id: "ok", label: "OK" }] }],
+      },
+    ],
+    [
+      "choice-cortex",
+      {
+        agentId: "cortex-session",
+        sessionAgentId: "cortex-session",
+        questions: [{ id: "cortex-q", question: "Cortex choice?" }],
+      },
+    ],
+  ]);
+
   return {
     listProfiles: () => profiles.map((profile) => ({ ...profile, defaultModel: { ...profile.defaultModel } })),
     listAgents: () => agents.map((agent) => ({ ...agent, model: { ...agent.model } })),
+    getPendingChoiceIdsForSession: (sessionAgentId) => Array.from(choices.entries())
+      .filter(([, choice]) => choice.sessionAgentId === sessionAgentId)
+      .map(([choiceId]) => choiceId),
+    getPendingChoice: (choiceId) => choices.get(choiceId),
   };
 }
 

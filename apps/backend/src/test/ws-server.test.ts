@@ -2450,6 +2450,117 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('routes CLI choice answer and cancel commands through owner lookup', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI choices' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Choice Worker' })
+    const { sessionAgent: wrongSession } = await manager.createSession('manager', { label: 'Wrong Choice Session' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    const answerPromise = manager.requestUserChoice(worker.agentId, [
+      {
+        id: 'worker-choice-q',
+        question: 'Worker choice?',
+        options: [{ id: 'yes', label: 'Yes' }],
+      },
+    ])
+    const answerChoiceId = manager.getPendingChoiceIdsForSession('manager')[0]
+    expect(answerChoiceId).toBeTruthy()
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
+      requestId: 'answer-wrong-session',
+      choiceId: answerChoiceId,
+      sessionAgentId: wrongSession.agentId,
+      answers: [{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'] }],
+    }))
+    expect(await waitForCliError(events, 'answer-wrong-session')).toMatchObject({
+      commandType: 'cli_choice_response',
+      code: 'choice_session_mismatch',
+      status: 409,
+      fieldErrors: [{ field: 'sessionAgentId' }],
+    })
+    expect(manager.getPendingChoice(answerChoiceId)).toBeTruthy()
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
+      requestId: 'answer-worker-choice',
+      choiceId: answerChoiceId,
+      sessionAgentId: 'manager',
+      answers: [{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'] }],
+    }))
+    expect(await waitForCliSuccess(events, 'answer-worker-choice')).toMatchObject({
+      result: { choiceId: answerChoiceId, sessionAgentId: 'manager', status: 'answered' },
+    })
+    await expect(answerPromise).resolves.toEqual([{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'] }])
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_cancel',
+      requestId: 'cancel-stale-choice',
+      choiceId: answerChoiceId,
+    }))
+    expect(await waitForCliError(events, 'cancel-stale-choice')).toMatchObject({
+      commandType: 'cli_choice_cancel',
+      code: 'choice_not_pending',
+      status: 404,
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
+      requestId: 'answer-missing-choice',
+      choiceId: 'missing-choice',
+      answers: [{ questionId: 'missing-q', selectedOptionIds: [] }],
+    }))
+    expect(await waitForCliError(events, 'answer-missing-choice')).toMatchObject({
+      commandType: 'cli_choice_response',
+      code: 'choice_not_pending',
+      status: 404,
+    })
+
+    const cancelPromise = manager.requestUserChoice('manager', [
+      {
+        id: 'manager-choice-q',
+        question: 'Manager choice?',
+        options: [{ id: 'ok', label: 'OK' }],
+      },
+    ]).catch((error: unknown) => error)
+    const cancelChoiceId = manager.getPendingChoiceIdsForSession('manager')[0]
+    expect(cancelChoiceId).toBeTruthy()
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_cancel',
+      requestId: 'cancel-manager-choice',
+      choiceId: cancelChoiceId,
+    }))
+    expect(await waitForCliSuccess(events, 'cancel-manager-choice')).toMatchObject({
+      result: { choiceId: cancelChoiceId, sessionAgentId: 'manager', status: 'cancelled' },
+    })
+    const cancelResult = await cancelPromise
+    expect(cancelResult).toBeInstanceOf(Error)
+    expect(manager.getPendingChoice(cancelChoiceId)).toBeUndefined()
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('returns bad_request field errors for malformed CLI socket commands', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
@@ -2493,17 +2604,17 @@ describe('SwarmWebSocketServer', () => {
 
     client.send(JSON.stringify({
       type: 'cli_choice_response',
-      requestId: 'choice-response-deferred',
+      requestId: 'choice-response-bad-answers',
       choiceId: 'choice-1',
-      answers: [],
+      answers: [{ questionId: '', selectedOptionIds: [] }],
     }))
-    const choiceError = await waitForCliError(events, 'choice-response-deferred')
+    const choiceError = await waitForCliError(events, 'choice-response-bad-answers')
     expect(choiceError).toMatchObject({
+      commandType: 'cli_choice_response',
       code: 'bad_request',
       status: 400,
-      fieldErrors: [{ field: 'type', message: 'Unsupported CLI command type: cli_choice_response' }],
+      fieldErrors: [{ field: 'answers', message: 'Required field must be an array of valid choice answers.' }],
     })
-    expect(choiceError.commandType).toBeUndefined()
 
     client.close()
     await once(client, 'close')

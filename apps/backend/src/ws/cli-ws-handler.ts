@@ -1,5 +1,9 @@
 import { isSystemProfile } from "@forge/protocol";
 import type {
+  ChoiceAnswer,
+  ChoiceQuestion,
+  CliChoiceCancelCommand,
+  CliChoiceResponseCommand,
   CliCreateSessionCommand,
   CliFieldError,
   CliRunCommand,
@@ -11,10 +15,12 @@ import type {
 } from "@forge/protocol";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { requireNonSystemProfile } from "../swarm/system-profile-guards.js";
+import { isValidChoiceAnswer } from "./commands/command-parse-helpers.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { AgentDescriptor, ConversationAttachment, RequestedDeliveryMode } from "../swarm/types.js";
 import { sendWsEvent } from "./ws-send.js";
 import { CliHeadlessSubscriptions } from "./cli-headless-subscriptions.js";
+import { getCliChoiceOwner } from "./cli-choice-owners.js";
 import { toPublicCliAgentDescriptor } from "./cli-public-descriptors.js";
 
 export class CliWsHandler {
@@ -85,12 +91,22 @@ export class CliWsHandler {
         return;
       }
 
+      if (command.type === "cli_choice_response") {
+        this.handleChoiceResponse(socket, command);
+        return;
+      }
+
+      if (command.type === "cli_choice_cancel") {
+        this.handleChoiceCancel(socket, command);
+        return;
+      }
+
       if (isCliSessionMutationCommand(command)) {
         await this.handleSessionMutation(socket, command);
         return;
       }
 
-      this.sendRequestError(socket, command, "unsupported_command", `Unsupported CLI command: ${command.type}`, 400);
+      this.sendRequestError(socket, command, "unsupported_command", "Unsupported CLI command.", 400);
     } catch (error) {
       if (error instanceof CliCommandError) {
         this.sendRequestError(socket, command, error.code, error.message, error.status, error.fieldErrors);
@@ -171,6 +187,36 @@ export class CliWsHandler {
       messageId: sourceContext.messageId,
       sourceContext,
       acceptedAt: new Date().toISOString(),
+    });
+  }
+
+  private handleChoiceResponse(socket: WebSocket, command: CliChoiceResponseCommand): void {
+    const pending = this.requireCliPendingChoice(command.choiceId, command.sessionAgentId);
+    const validationError = validateAnswersAgainstQuestions(pending.questions, command.answers);
+    if (validationError) {
+      throw new CliCommandError(
+        "choice_invalid_response",
+        `Invalid choice response: ${validationError}`,
+        400,
+        [{ field: "answers", message: validationError }],
+      );
+    }
+
+    this.swarmManager.resolveChoiceRequest(command.choiceId, command.answers);
+    this.sendRequestSuccess(socket, command, {
+      choiceId: command.choiceId,
+      sessionAgentId: pending.sessionAgentId,
+      status: "answered",
+    });
+  }
+
+  private handleChoiceCancel(socket: WebSocket, command: CliChoiceCancelCommand): void {
+    const pending = this.requireCliPendingChoice(command.choiceId, command.sessionAgentId);
+    this.swarmManager.cancelChoiceRequest(command.choiceId, "cancelled");
+    this.sendRequestSuccess(socket, command, {
+      choiceId: command.choiceId,
+      sessionAgentId: pending.sessionAgentId,
+      status: "cancelled",
     });
   }
 
@@ -286,6 +332,43 @@ export class CliWsHandler {
     }
   }
 
+  private requireCliPendingChoice(choiceId: string, requestedSessionAgentId?: string): {
+    agentId: string;
+    sessionAgentId: string;
+    questions: ChoiceQuestion[];
+  } {
+    const owner = getCliChoiceOwner(this.swarmManager, choiceId);
+    if (!owner) {
+      throw new CliCommandError(
+        "choice_not_pending",
+        `Choice ${choiceId} is not pending`,
+        404,
+        [{ field: "choiceId", message: "Choice is not pending or is not available to the builder CLI." }],
+      );
+    }
+
+    if (requestedSessionAgentId !== undefined && requestedSessionAgentId !== owner.sessionAgentId) {
+      throw new CliCommandError(
+        "choice_session_mismatch",
+        `Choice ${choiceId} does not belong to session ${requestedSessionAgentId}`,
+        409,
+        [{ field: "sessionAgentId", message: "Choice belongs to a different session." }],
+      );
+    }
+
+    const pending = this.swarmManager.getPendingChoice(choiceId);
+    if (!pending) {
+      throw new CliCommandError(
+        "choice_not_pending",
+        `Choice ${choiceId} is not pending`,
+        404,
+        [{ field: "choiceId", message: "Choice is not pending." }],
+      );
+    }
+
+    return pending;
+  }
+
   private requireCliSession(agentId: string): AgentDescriptor & { role: "manager"; profileId: string } {
     const descriptor = this.swarmManager.getAgent(agentId);
     if (!descriptor) {
@@ -399,6 +482,8 @@ const KNOWN_CLI_COMMAND_TYPES = new Set<CliCommandType>([
   "rename_session",
   "pin_session",
   "fork_session",
+  "cli_choice_response",
+  "cli_choice_cancel",
 ]);
 
 class CliCommandError extends Error {
@@ -515,6 +600,21 @@ function validateCliCommand(record: Record<string, unknown>, type: CliCommandTyp
       requireString(record, "sourceAgentId", errors);
       optionalString(record, "label", errors);
       optionalString(record, "fromMessageId", errors);
+      break;
+
+    case "cli_choice_response":
+      requireString(record, "requestId", errors);
+      requireString(record, "choiceId", errors);
+      optionalString(record, "sessionAgentId", errors);
+      if (!Array.isArray(record.answers) || !record.answers.every(isValidChoiceAnswer)) {
+        errors.push({ field: "answers", message: "Required field must be an array of valid choice answers." });
+      }
+      break;
+
+    case "cli_choice_cancel":
+      requireString(record, "requestId", errors);
+      requireString(record, "choiceId", errors);
+      optionalString(record, "sessionAgentId", errors);
       break;
 
   }
@@ -667,6 +767,30 @@ function buildRequestContext(record: Record<string, unknown>): CliRequestContext
     ...(typeof record.type === "string" ? { type: record.type } : {}),
     ...(typeof record.requestId === "string" ? { requestId: record.requestId } : {}),
   };
+}
+
+function validateAnswersAgainstQuestions(
+  questions: ChoiceQuestion[],
+  answers: ChoiceAnswer[],
+): string | null {
+  const questionMap = new Map(questions.map((question) => [question.id, question]));
+  const seen = new Set<string>();
+
+  for (const answer of answers) {
+    const question = questionMap.get(answer.questionId);
+    if (!question) return `Unknown questionId: ${answer.questionId}`;
+    if (seen.has(answer.questionId)) return `Duplicate answer for questionId: ${answer.questionId}`;
+    seen.add(answer.questionId);
+
+    if (question.options) {
+      const allowedOptions = new Set(question.options.map((option) => option.id));
+      for (const optionId of answer.selectedOptionIds) {
+        if (!allowedOptions.has(optionId)) return `Unknown optionId ${optionId} for question ${answer.questionId}`;
+      }
+    }
+  }
+
+  return null;
 }
 
 function buildCliSourceContext(command: CliSendMessageCommand | CliRunCommand): MessageSourceContext {

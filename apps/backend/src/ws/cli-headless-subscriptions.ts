@@ -1,6 +1,5 @@
 import type {
   CliAgentStatusSnapshot,
-  CliChoiceOwner,
   CliHeadlessReadyEvent,
   CliHeadlessSubscriptionTarget,
   CliPendingChoicesSnapshotEvent,
@@ -14,6 +13,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { AgentDescriptor } from "../swarm/types.js";
 import { buildCliCapabilities } from "./cli-capabilities.js";
+import { listCliChoiceOwnersForSession } from "./cli-choice-owners.js";
 import { toPublicCliAgentDescriptor } from "./cli-public-descriptors.js";
 
 export type CliSendEvent = (socket: WebSocket, event: CliServerEvent | ServerEvent) => void;
@@ -112,7 +112,7 @@ export class CliHeadlessSubscriptions {
     return {
       type: "cli_pending_choices_snapshot",
       sessionAgentId,
-      choices: this.listPendingChoiceOwners(sessionAgentId),
+      choices: listCliChoiceOwnersForSession(this.swarmManager, sessionAgentId),
       ...(requestId !== undefined ? { requestId } : {}),
     };
   }
@@ -136,7 +136,7 @@ export class CliHeadlessSubscriptions {
       subscribed,
       targetAgent: toPublicCliAgentDescriptor(targetAgent),
       ...(profile ? { profile: cloneProfile(profile) } : {}),
-      pendingChoices: this.listPendingChoiceOwners(targetAgent.agentId),
+      pendingChoices: listCliChoiceOwnersForSession(this.swarmManager, targetAgent.agentId),
       workers: this.swarmManager.listWorkersForSession(targetAgent.agentId).map(toPublicCliAgentDescriptor),
       activeTools,
       status: this.buildStatusSnapshot(targetAgent),
@@ -207,26 +207,6 @@ export class CliHeadlessSubscriptions {
     }
 
     return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
-  }
-
-  private listPendingChoiceOwners(sessionAgentId: string): CliChoiceOwner[] {
-    const session = this.swarmManager.getAgent(sessionAgentId);
-    return this.swarmManager.getPendingChoiceIdsForSession(sessionAgentId).flatMap((choiceId) => {
-      const choice = this.swarmManager.getPendingChoice(choiceId);
-      if (!choice) {
-        return [];
-      }
-
-      return [{
-        choiceId,
-        agentId: choice.agentId,
-        sessionAgentId: choice.sessionAgentId,
-        ...(session?.profileId !== undefined ? { profileId: session.profileId } : {}),
-        status: "pending",
-        questionSummary: choice.questions[0]?.question,
-        questions: choice.questions,
-      } satisfies CliChoiceOwner];
-    });
   }
 
   private buildStatusSnapshot(agent: AgentDescriptor & { role: "manager" }): CliHeadlessReadyEvent["status"] {

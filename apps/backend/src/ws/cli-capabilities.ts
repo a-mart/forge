@@ -15,7 +15,7 @@ export function buildCliCapabilities(runtimeTarget: RuntimeTarget): CliCapabilit
       headlessWs: available,
       cliSourceContext: available,
       cliSessionMetadata: available,
-      choiceOwnerLookup: false,
+      choiceOwnerLookup: available,
       activeToolSnapshot: available,
       projectAgentRunTarget: false,
       builderRuntimeOnly: true,

@@ -1,9 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   isSystemProfile,
+  type ChoiceQuestion,
   type CliAgentShowResponse,
   type CliAgentsListResponse,
   type CliCapabilitiesResponse,
+  type CliChoicesListResponse,
+  type CliChoiceShowResponse,
   type CliHttpErrorResponse,
   type CliProfileShowResponse,
   type CliProfilesListResponse,
@@ -16,6 +19,13 @@ import {
 } from "@forge/protocol";
 import { isBuilderRuntimeTarget, type RuntimeTarget } from "../../../runtime-target.js";
 import { buildCliCapabilities, CLI_SERVER_VERSION } from "../../cli-capabilities.js";
+import {
+  findCliVisibleChoiceSession,
+  getCliChoiceOwner,
+  listCliChoiceOwners,
+  listCliChoiceOwnersForProfile,
+  listCliChoiceOwnersForSession,
+} from "../../cli-choice-owners.js";
 import { toPublicCliAgentDescriptor } from "../../cli-public-descriptors.js";
 import type { CliAccessService } from "../../../swarm/cli-access-service.js";
 import type { AgentDescriptor, ManagerProfile } from "../../../swarm/types.js";
@@ -34,6 +44,12 @@ const HTTP_GET_ALLOW_HEADER = "GET, OPTIONS";
 interface CliRouteSwarmManager {
   listProfiles(): ManagerProfile[];
   listAgents(): AgentDescriptor[];
+  getPendingChoiceIdsForSession(sessionAgentId: string): string[];
+  getPendingChoice(choiceId: string): {
+    agentId: string;
+    sessionAgentId: string;
+    questions: ChoiceQuestion[];
+  } | undefined;
 }
 
 export function createCliRoutes(options: {
@@ -191,6 +207,47 @@ async function handleCliHttpRequest(
     }
 
     const payload: CliSessionShowResponse = { session: toPublicCliAgentDescriptor(session) };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (segments.length === 1 && segments[0] === "choices") {
+    const sessionAgentId = normalizeIdentifier(requestUrl.searchParams.get("sessionAgentId") ?? undefined);
+    const profileId = normalizeIdentifier(requestUrl.searchParams.get("profileId") ?? undefined);
+
+    let choices;
+    if (sessionAgentId) {
+      const session = findCliVisibleChoiceSession(options.swarmManager, sessionAgentId);
+      if (!session || (profileId && (session.profileId ?? session.agentId) !== profileId)) {
+        sendCliError(response, 404, "not_found", "Session not found");
+        return;
+      }
+      choices = listCliChoiceOwnersForSession(options.swarmManager, session.agentId);
+    } else if (profileId) {
+      const profile = findCliProfile(options.swarmManager, profileId);
+      if (!profile) {
+        sendCliError(response, 404, "not_found", "Profile not found");
+        return;
+      }
+      choices = listCliChoiceOwnersForProfile(options.swarmManager, profile.profileId);
+    } else {
+      choices = listCliChoiceOwners(options.swarmManager);
+    }
+
+    const payload: CliChoicesListResponse = { choices };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (segments.length === 2 && segments[0] === "choices") {
+    const choice = getCliChoiceOwner(options.swarmManager, segments[1]);
+    const requestedSessionAgentId = normalizeIdentifier(requestUrl.searchParams.get("sessionAgentId") ?? undefined);
+    if (!choice || (requestedSessionAgentId && choice.sessionAgentId !== requestedSessionAgentId)) {
+      sendCliError(response, 404, "not_found", "Choice not found");
+      return;
+    }
+
+    const payload: CliChoiceShowResponse = { choice };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
