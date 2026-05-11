@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { afterEach, describe, expect, it } from "vitest";
 import { createTempConfig } from "../../../../test-support/index.js";
 import { CliAccessService } from "../../../../swarm/cli-access-service.js";
-import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
+import { sendJson } from "../../../http-utils.js";
 import { createCliAccessSettingsRoutes } from "../cli-access-settings-routes.js";
 
 interface TestServer {
@@ -15,6 +15,10 @@ const activeServers: TestServer[] = [];
 afterEach(async () => {
   await Promise.all(activeServers.splice(0).map((server) => server.close()));
 });
+
+/* ------------------------------------------------------------------ */
+/*  Core key management                                                */
+/* ------------------------------------------------------------------ */
 
 describe("CLI access settings routes", () => {
   it("returns empty list when no keys exist", async () => {
@@ -146,13 +150,26 @@ describe("CLI access settings routes", () => {
     expect(putResponse.status).toBe(405);
   });
 
-  it("handles CORS OPTIONS preflight", async () => {
+  it("handles CORS OPTIONS preflight from local origin", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "OPTIONS",
+      headers: { Origin: "http://127.0.0.1:47188" },
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:47188");
+  });
+
+  it("handles CORS OPTIONS preflight with no Origin header", async () => {
     const { server } = await setup();
 
     const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
       method: "OPTIONS",
     });
     expect(response.status).toBe(204);
+    // No CORS headers set when no Origin header present
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("returns no routes for collaboration runtime", () => {
@@ -163,6 +180,170 @@ describe("CLI access settings routes", () => {
     expect(routes).toEqual([]);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/*  Cross-origin rejection (security)                                  */
+/* ------------------------------------------------------------------ */
+
+describe("CLI access settings routes — cross-origin protection", () => {
+  it("rejects POST with hostile cross-origin header", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://evil.example.com",
+      },
+      body: JSON.stringify({ name: "Stolen key" }),
+    });
+    expect(response.status).toBe(403);
+    const json = await response.json();
+    expect(json.error.code).toBe("forbidden_origin");
+    // Ensure no CORS header that would allow the hostile origin to read the response
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("rejects DELETE with hostile cross-origin header", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys/some-id`, {
+      method: "DELETE",
+      headers: { Origin: "https://evil.example.com" },
+    });
+    expect(response.status).toBe(403);
+    const json = await response.json();
+    expect(json.error.code).toBe("forbidden_origin");
+  });
+
+  it("rejects OPTIONS preflight with hostile cross-origin header", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "OPTIONS",
+      headers: { Origin: "https://attacker.example.com" },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("rejects POST rotate with hostile cross-origin header", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys/some-id/rotate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://evil.example.com",
+      },
+      body: "{}",
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("rejects GET list with hostile cross-origin header", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "https://evil.example.com" },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("allows requests from localhost origin", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "http://localhost:47188" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:47188");
+  });
+
+  it("allows requests from 127.0.0.1 origin", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "http://127.0.0.1:47188",
+      },
+      body: "{}",
+    });
+    expect(response.status).toBe(201);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:47188");
+  });
+
+  it("allows requests with no Origin header (non-browser callers)", async () => {
+    const { server } = await setup();
+
+    // No Origin header — same-origin browser or curl/CLI callers
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(201);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Malformed percent-encoded key IDs (correctness)                    */
+/* ------------------------------------------------------------------ */
+
+describe("CLI access settings routes — malformed key IDs", () => {
+  it("returns 400 for malformed percent-encoded key ID in DELETE", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys/%E0%A4%A`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.error.code).toBe("bad_request");
+    expect(json.error.message).toMatch(/[Mm]alformed/);
+  });
+
+  it("returns 400 for malformed percent-encoded key ID in rotate POST", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys/%E0%A4%A/rotate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.error.code).toBe("bad_request");
+  });
+
+  it("returns 400 for truncated percent encoding in DELETE", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys/%C3`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("returns 400 for truncated percent encoding in rotate", async () => {
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys/%C3/rotate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(400);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Setup helpers                                                      */
+/* ------------------------------------------------------------------ */
 
 async function setup(): Promise<{ service: CliAccessService; server: TestServer }> {
   const configHandle = await createTempConfig({ prefix: "cli-settings-" });
@@ -226,7 +407,6 @@ async function handleRoute(
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
-    applyCorsHeaders(request, response, route.methods);
     sendJson(response, 500, { error: message });
   }
 }
