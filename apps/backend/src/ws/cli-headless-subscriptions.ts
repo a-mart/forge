@@ -14,6 +14,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { AgentDescriptor } from "../swarm/types.js";
 import { buildCliCapabilities } from "./cli-capabilities.js";
+import { toPublicCliAgentDescriptor } from "./cli-public-descriptors.js";
 
 export type CliSendEvent = (socket: WebSocket, event: CliServerEvent | ServerEvent) => void;
 
@@ -133,10 +134,10 @@ export class CliHeadlessSubscriptions {
       serverTime: new Date().toISOString(),
       capabilities: buildCliCapabilities(this.swarmManager.getConfig().runtimeTarget),
       subscribed,
-      targetAgent: toPublicAgentDescriptor(targetAgent),
+      targetAgent: toPublicCliAgentDescriptor(targetAgent),
       ...(profile ? { profile: cloneProfile(profile) } : {}),
       pendingChoices: this.listPendingChoiceOwners(targetAgent.agentId),
-      workers: this.swarmManager.listWorkersForSession(targetAgent.agentId).map(toPublicAgentDescriptor),
+      workers: this.swarmManager.listWorkersForSession(targetAgent.agentId).map(toPublicCliAgentDescriptor),
       activeTools,
       status: this.buildStatusSnapshot(targetAgent),
     };
@@ -254,31 +255,6 @@ export class CliHeadlessSubscriptions {
 
     return this.swarmManager.listProfiles().find((profile) => profile.profileId === normalizedProfileId);
   }
-}
-
-function toPublicAgentDescriptor(agent: AgentDescriptor): AgentDescriptor {
-  const { sessionSystemPrompt: _sessionSystemPrompt, ...withoutPrompt } = agent;
-  const publicProjectAgent = withoutPrompt.projectAgent
-    ? {
-        handle: withoutPrompt.projectAgent.handle,
-        whenToUse: withoutPrompt.projectAgent.whenToUse,
-        ...(withoutPrompt.projectAgent.creatorSessionId !== undefined
-          ? { creatorSessionId: withoutPrompt.projectAgent.creatorSessionId }
-          : {}),
-        ...(withoutPrompt.projectAgent.capabilities !== undefined
-          ? { capabilities: [...withoutPrompt.projectAgent.capabilities] }
-          : {}),
-      }
-    : undefined;
-
-  return {
-    ...withoutPrompt,
-    model: { ...withoutPrompt.model },
-    ...(withoutPrompt.contextUsage !== undefined ? { contextUsage: { ...withoutPrompt.contextUsage } } : {}),
-    ...(withoutPrompt.collab !== undefined ? { collab: { ...withoutPrompt.collab } } : {}),
-    ...(withoutPrompt.cli !== undefined ? { cli: { ...withoutPrompt.cli } } : {}),
-    projectAgent: publicProjectAgent,
-  };
 }
 
 function cloneProfile(profile: ManagerProfile): ManagerProfile {

@@ -16,6 +16,7 @@ import {
 } from "@forge/protocol";
 import { isBuilderRuntimeTarget, type RuntimeTarget } from "../../../runtime-target.js";
 import { buildCliCapabilities, CLI_SERVER_VERSION } from "../../cli-capabilities.js";
+import { toPublicCliAgentDescriptor } from "../../cli-public-descriptors.js";
 import type { CliAccessService } from "../../../swarm/cli-access-service.js";
 import type { AgentDescriptor, ManagerProfile } from "../../../swarm/types.js";
 import {
@@ -149,7 +150,7 @@ async function handleCliHttpRequest(
 
     const profiles = profile ? [profile] : listCliProfiles(options.swarmManager);
     const payload: CliAgentsListResponse = {
-      agents: listCliAgents(options.swarmManager, profiles).map(toPublicAgentDescriptor),
+      agents: listCliAgents(options.swarmManager, profiles).map(toPublicCliAgentDescriptor),
     };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
@@ -162,7 +163,7 @@ async function handleCliHttpRequest(
       return;
     }
 
-    const payload: CliAgentShowResponse = { agent: toPublicAgentDescriptor(agent) };
+    const payload: CliAgentShowResponse = { agent: toPublicCliAgentDescriptor(agent) };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
@@ -176,7 +177,7 @@ async function handleCliHttpRequest(
     const payload: CliSessionsListResponse = {
       sessions: listCliAgents(options.swarmManager, [profile])
         .filter((agent) => agent.role === "manager")
-        .map(toPublicAgentDescriptor),
+        .map(toPublicCliAgentDescriptor),
     };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
@@ -189,7 +190,7 @@ async function handleCliHttpRequest(
       return;
     }
 
-    const payload: CliSessionShowResponse = { session: toPublicAgentDescriptor(session) };
+    const payload: CliSessionShowResponse = { session: toPublicCliAgentDescriptor(session) };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
@@ -328,31 +329,6 @@ function listCliProjectAgents(swarmManager: CliRouteSwarmManager, profileId: str
       };
     })
     .sort((left, right) => left.handle.localeCompare(right.handle));
-}
-
-function toPublicAgentDescriptor(agent: AgentDescriptor): AgentDescriptor {
-  const { sessionSystemPrompt: _sessionSystemPrompt, ...withoutPrompt } = agent;
-  const publicProjectAgent = withoutPrompt.projectAgent
-    ? {
-        handle: withoutPrompt.projectAgent.handle,
-        whenToUse: withoutPrompt.projectAgent.whenToUse,
-        ...(withoutPrompt.projectAgent.creatorSessionId !== undefined
-          ? { creatorSessionId: withoutPrompt.projectAgent.creatorSessionId }
-          : {}),
-        ...(withoutPrompt.projectAgent.capabilities !== undefined
-          ? { capabilities: [...withoutPrompt.projectAgent.capabilities] }
-          : {}),
-      }
-    : undefined;
-
-  return {
-    ...withoutPrompt,
-    model: { ...withoutPrompt.model },
-    ...(withoutPrompt.contextUsage !== undefined ? { contextUsage: { ...withoutPrompt.contextUsage } } : {}),
-    ...(withoutPrompt.collab !== undefined ? { collab: { ...withoutPrompt.collab } } : {}),
-    ...(withoutPrompt.cli !== undefined ? { cli: { ...withoutPrompt.cli } } : {}),
-    projectAgent: publicProjectAgent,
-  };
 }
 
 function cloneProfile(profile: ManagerProfile): ManagerProfile {

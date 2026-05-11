@@ -15,6 +15,7 @@ import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { AgentDescriptor, ConversationAttachment, RequestedDeliveryMode } from "../swarm/types.js";
 import { sendWsEvent } from "./ws-send.js";
 import { CliHeadlessSubscriptions } from "./cli-headless-subscriptions.js";
+import { toPublicCliAgentDescriptor } from "./cli-public-descriptors.js";
 
 export class CliWsHandler {
   private readonly subscriptions: CliHeadlessSubscriptions;
@@ -116,7 +117,7 @@ export class CliWsHandler {
     });
 
     this.sendRequestSuccess(socket, command, {
-      session: created.sessionAgent,
+      session: toPublicCliAgentDescriptor(created.sessionAgent),
       profile: created.profile,
       ...(created.sessionAgent.cli !== undefined ? { cli: created.sessionAgent.cli } : {}),
     });
@@ -225,7 +226,7 @@ export class CliWsHandler {
         });
         this.sendRequestSuccess(socket, command, {
           sourceAgentId: command.sourceAgentId,
-          session: forked.sessionAgent,
+          session: toPublicCliAgentDescriptor(forked.sessionAgent),
           profile: forked.profile,
           fromMessageId: command.fromMessageId,
         });
@@ -263,13 +264,23 @@ export class CliWsHandler {
   }
 
   private requireCliWritableProfile(profileId: string): void {
+    const profile = this.swarmManager.listProfiles().find((candidate) => candidate.profileId === profileId);
+    if (!profile) {
+      throw new CliCommandError(
+        "unknown_profile",
+        `Unknown profile: ${profileId}`,
+        404,
+        [{ field: "profileId", message: "Profile not found." }],
+      );
+    }
+
     try {
-      requireNonSystemProfile(profileId, this.swarmManager.listProfiles());
+      requireNonSystemProfile(profileId, [profile]);
     } catch (error) {
       throw new CliCommandError(
         "system_profile",
         error instanceof Error ? error.message : String(error),
-        400,
+        403,
         [{ field: "profileId", message: "System-managed profiles cannot be targeted by CLI session creation." }],
       );
     }
@@ -277,14 +288,51 @@ export class CliWsHandler {
 
   private requireCliSession(agentId: string): AgentDescriptor & { role: "manager"; profileId: string } {
     const descriptor = this.swarmManager.getAgent(agentId);
-    if (!descriptor || descriptor.role !== "manager" || descriptor.sessionSurface === "collab") {
-      throw new Error(`Unknown session agent: ${agentId}`);
+    if (!descriptor) {
+      throw new CliCommandError(
+        "unknown_session",
+        `Unknown session agent: ${agentId}`,
+        404,
+        [{ field: "agentId", message: "Session not found." }],
+      );
+    }
+
+    if (descriptor.role !== "manager") {
+      throw new CliCommandError(
+        "invalid_session_target",
+        `Agent ${agentId} is not a session manager.`,
+        400,
+        [{ field: "agentId", message: "CLI target must be a manager session." }],
+      );
+    }
+
+    if (descriptor.sessionSurface === "collab") {
+      throw new CliCommandError(
+        "unsupported_session_surface",
+        `Session ${agentId} is not available to the builder CLI.`,
+        403,
+        [{ field: "agentId", message: "Collaboration sessions cannot be targeted by the builder CLI." }],
+      );
     }
 
     const profileId = descriptor.profileId ?? descriptor.agentId;
     const profile = this.swarmManager.listProfiles().find((candidate) => candidate.profileId === profileId);
-    if (!profile || isSystemProfile(profile)) {
-      throw new Error(`Unknown session agent: ${agentId}`);
+    if (!profile) {
+      throw new CliCommandError(
+        "unknown_profile",
+        `Unknown profile for session: ${profileId}`,
+        404,
+        [{ field: "agentId", message: "Session profile not found." }],
+      );
+    }
+
+    if (isSystemProfile(profile)) {
+      throw new CliCommandError(
+        "system_profile",
+        `Session ${agentId} belongs to a system-managed profile.`,
+        403,
+        [{ field: "agentId", message: "System-managed sessions cannot be targeted by the builder CLI." }],
+      );
     }
 
     return descriptor as AgentDescriptor & { role: "manager"; profileId: string };
@@ -351,8 +399,6 @@ const KNOWN_CLI_COMMAND_TYPES = new Set<CliCommandType>([
   "rename_session",
   "pin_session",
   "fork_session",
-  "cli_choice_response",
-  "cli_choice_cancel",
 ]);
 
 class CliCommandError extends Error {
@@ -471,20 +517,6 @@ function validateCliCommand(record: Record<string, unknown>, type: CliCommandTyp
       optionalString(record, "fromMessageId", errors);
       break;
 
-    case "cli_choice_response":
-      requireString(record, "requestId", errors);
-      requireString(record, "choiceId", errors);
-      optionalString(record, "sessionAgentId", errors);
-      if (!Array.isArray(record.answers)) {
-        errors.push({ field: "answers", message: "Required field must be an array." });
-      }
-      break;
-
-    case "cli_choice_cancel":
-      requireString(record, "requestId", errors);
-      requireString(record, "choiceId", errors);
-      optionalString(record, "sessionAgentId", errors);
-      break;
   }
 
   return errors;

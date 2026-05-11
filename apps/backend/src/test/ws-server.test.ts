@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import WebSocket from 'ws'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AuthStorage } from '@mariozechner/pi-coding-agent'
 import type { AgentDescriptor } from '../swarm/types.js'
 import { DAEMONIZED_ENV_VAR, getControlPidFilePath } from '../reboot/control-pid.js'
@@ -2308,7 +2308,7 @@ describe('SwarmWebSocketServer', () => {
     const createError = await waitForCliError(events, 'create-cortex-session')
     expect(createError).toMatchObject({
       code: 'system_profile',
-      status: 400,
+      status: 403,
       message: 'Cannot modify system-managed profile',
       fieldErrors: [{ field: 'profileId' }],
     })
@@ -2322,8 +2322,34 @@ describe('SwarmWebSocketServer', () => {
     const runError = await waitForCliError(events, 'run-cortex-session')
     expect(runError).toMatchObject({
       code: 'system_profile',
-      status: 400,
+      status: 403,
       message: 'Cannot modify system-managed profile',
+      fieldErrors: [{ field: 'profileId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_create_session',
+      requestId: 'create-missing-profile-session',
+      profileId: 'missing-profile',
+      label: 'Blocked Missing Profile Session',
+    }))
+    const missingCreateError = await waitForCliError(events, 'create-missing-profile-session')
+    expect(missingCreateError).toMatchObject({
+      code: 'unknown_profile',
+      status: 404,
+      fieldErrors: [{ field: 'profileId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_run',
+      requestId: 'run-missing-profile-session',
+      target: { kind: 'new_session', profileId: 'missing-profile', label: 'Blocked Missing Profile Run' },
+      text: 'do not run this either',
+    }))
+    const missingRunError = await waitForCliError(events, 'run-missing-profile-session')
+    expect(missingRunError).toMatchObject({
+      code: 'unknown_profile',
+      status: 404,
       fieldErrors: [{ field: 'profileId' }],
     })
 
@@ -2333,6 +2359,91 @@ describe('SwarmWebSocketServer', () => {
         .filter((agent) => agent.profileId === 'cortex' || agent.agentId === 'cortex')
         .map((agent) => agent.agentId),
     ).toEqual(initialCortexAgentIds)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns explicit CLI errors for invalid session targets', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI invalid session targets' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const worker = await manager.spawnAgent('manager', { agentId: 'CLI Target Worker' })
+    const { sessionAgent: cortexSession } = await manager.createSession('cortex', {
+      label: 'Cortex Review Session',
+      sessionPurpose: 'cortex_review',
+    })
+    const { sessionAgent: collabSession } = await manager.createSessionWithOverrides(
+      'manager',
+      { label: 'Collab Session' },
+      { sessionSurface: 'collab', collab: { workspaceId: 'workspace-1', channelId: 'channel-1' } },
+    )
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-missing-session',
+      target: { kind: 'session', agentId: 'missing-session' },
+      text: 'hello?',
+    }))
+    expect(await waitForCliError(events, 'send-missing-session')).toMatchObject({
+      code: 'unknown_session',
+      status: 404,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-worker-session',
+      target: { kind: 'session', agentId: worker.agentId },
+      text: 'hello worker?',
+    }))
+    expect(await waitForCliError(events, 'send-worker-session')).toMatchObject({
+      code: 'invalid_session_target',
+      status: 400,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-system-session',
+      target: { kind: 'session', agentId: cortexSession.agentId },
+      text: 'hello system?',
+    }))
+    expect(await waitForCliError(events, 'send-system-session')).toMatchObject({
+      code: 'system_profile',
+      status: 403,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-collab-session',
+      target: { kind: 'session', agentId: collabSession.agentId },
+      text: 'hello collab?',
+    }))
+    expect(await waitForCliError(events, 'send-collab-session')).toMatchObject({
+      code: 'unsupported_session_surface',
+      status: 403,
+      fieldErrors: [{ field: 'agentId' }],
+    })
 
     client.close()
     await once(client, 'close')
@@ -2379,6 +2490,20 @@ describe('SwarmWebSocketServer', () => {
       { field: 'text', message: 'Must be a string.' },
       { field: 'delivery', message: 'Must be one of: auto, followUp, steer.' },
     ]))
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
+      requestId: 'choice-response-deferred',
+      choiceId: 'choice-1',
+      answers: [],
+    }))
+    const choiceError = await waitForCliError(events, 'choice-response-deferred')
+    expect(choiceError).toMatchObject({
+      code: 'bad_request',
+      status: 400,
+      fieldErrors: [{ field: 'type', message: 'Unsupported CLI command type: cli_choice_response' }],
+    })
+    expect(choiceError.commandType).toBeUndefined()
 
     client.close()
     await once(client, 'close')
@@ -2431,6 +2556,85 @@ describe('SwarmWebSocketServer', () => {
         event.sessionAgentId === 'manager' &&
         event.activeTools.some((tool) => tool.toolCallId === 'root-after-delete'),
     )
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('redacts prompt-bearing descriptor fields in CLI create and fork success payloads', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI descriptor redaction' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const originalCreateSession = manager.createSession.bind(manager)
+    vi.spyOn(manager, 'createSession').mockImplementation(async (profileId, options) => {
+      const created = await originalCreateSession(profileId, options)
+      created.sessionAgent.sessionSystemPrompt = 'secret create prompt'
+      created.sessionAgent.projectAgent = {
+        handle: 'secret-create-agent',
+        whenToUse: 'Use for redaction tests',
+        systemPrompt: 'secret project agent prompt',
+      }
+      return created
+    })
+    const originalForkSession = manager.forkSession.bind(manager)
+    vi.spyOn(manager, 'forkSession').mockImplementation(async (sourceAgentId, options) => {
+      const forked = await originalForkSession(sourceAgentId, options)
+      forked.sessionAgent.sessionSystemPrompt = 'secret fork prompt'
+      forked.sessionAgent.projectAgent = {
+        handle: 'secret-fork-agent',
+        whenToUse: 'Use for fork redaction tests',
+        systemPrompt: 'secret fork project agent prompt',
+      }
+      return forked
+    })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({
+      type: 'cli_create_session',
+      profileId: 'manager',
+      label: 'Secret Descriptor Source',
+      requestId: 'create-redacted-session',
+    }))
+    const created = await waitForCliSuccess(events, 'create-redacted-session')
+    const createdSession = (created.result as { session: AgentDescriptor }).session
+    expect(createdSession.sessionSystemPrompt).toBeUndefined()
+    expect(createdSession.projectAgent).toEqual({
+      handle: 'secret-create-agent',
+      whenToUse: 'Use for redaction tests',
+    })
+    expect(createdSession.projectAgent?.systemPrompt).toBeUndefined()
+
+    client.send(JSON.stringify({
+      type: 'fork_session',
+      sourceAgentId: createdSession.agentId,
+      label: 'Secret Descriptor Fork',
+      requestId: 'fork-redacted-session',
+    }))
+    const forked = await waitForCliSuccess(events, 'fork-redacted-session')
+    const forkedSession = (forked.result as { session: AgentDescriptor }).session
+    expect(forkedSession.sessionSystemPrompt).toBeUndefined()
+    expect(forkedSession.projectAgent).toEqual({
+      handle: 'secret-fork-agent',
+      whenToUse: 'Use for fork redaction tests',
+    })
+    expect(forkedSession.projectAgent?.systemPrompt).toBeUndefined()
 
     client.close()
     await once(client, 'close')
