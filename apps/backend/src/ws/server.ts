@@ -9,6 +9,7 @@ import type {
   TerminalUpdatedEvent,
 } from "@forge/protocol";
 import { WebSocketServer } from "ws";
+import type { WebSocket } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { MobilePushService } from "../mobile/mobile-push-service.js";
 import {
@@ -40,15 +41,22 @@ import {
 import {
   CortexAutoReviewSettingsService
 } from "../swarm/cortex-auto-review-settings.js";
+import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
 
+import {
+  authenticateCliWebSocketRequest,
+  isCliHttpPath,
+  isCliWebSocketPath,
+} from "./cli-auth.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
+import { createCliRoutes } from "./http/routes/cli-routes.js";
 import { createCollaborationRoutes } from "./http/routes/collaboration-routes.js";
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
 import { createCortexRoutes } from "./http/routes/cortex-routes.js";
@@ -109,8 +117,10 @@ export class SwarmWebSocketServer {
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
+  private cliWss: WebSocketServer | null = null;
 
   private readonly wsHandler: WsHandler;
+  private readonly cliAccessService: CliAccessService;
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
   private readonly statsService: StatsService;
@@ -333,6 +343,7 @@ export class SwarmWebSocketServer {
     telemetryService?: TelemetryService | null;
     collaborationSettingsService?: CollaborationSettingsService;
     collaborationReadinessService?: CollaborationReadinessRequestService;
+    cliAccessService?: CliAccessService;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -354,6 +365,10 @@ export class SwarmWebSocketServer {
       cortexEnabled,
     });
     this.playwrightEnvEnabledOverride = options.playwrightEnvEnabledOverride;
+    this.cliAccessService = options.cliAccessService ?? new CliAccessService({
+      dataDir: this.swarmManager.getConfig().paths.dataDir,
+      envApiKey: readCliApiKeyEnv(),
+    });
     this.terminalService = options.terminalService ?? null;
     this.terminalRuntimeConfig = options.terminalRuntimeConfig ?? null;
     this.terminalSettingsService =
@@ -430,6 +445,12 @@ export class SwarmWebSocketServer {
     this.httpRoutes = [
       ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
         ? [createDisabledCollaborationStatusRoute()]
+        : []),
+      ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
+        ? createCliRoutes({
+            cliAccessService: this.cliAccessService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+          })
         : []),
       ...(this.collaborationSettingsService
         ? createCollaborationRoutes({
@@ -530,11 +551,14 @@ export class SwarmWebSocketServer {
       void this.handleHttpRequest(request, response);
     });
     const wss = new WebSocketServer({ noServer: true });
+    const cliWss = new WebSocketServer({ noServer: true });
 
     this.httpServer = httpServer;
     this.wss = wss;
+    this.cliWss = cliWss;
 
     this.wsHandler.attach(wss);
+    cliWss.on("connection", handleCliWebSocketPlaceholderConnection);
     httpServer.on("upgrade", (request, socket, head) => {
       void this.handleUpgrade(request, socket, head);
     });
@@ -643,9 +667,11 @@ export class SwarmWebSocketServer {
     this.terminalService?.off("terminal_closed", this.onTerminalClosed);
 
     const currentWss = this.wss;
+    const currentCliWss = this.cliWss;
     const currentHttpServer = this.httpServer;
 
     this.wss = null;
+    this.cliWss = null;
     this.httpServer = null;
     this.actualPort = null;
 
@@ -659,6 +685,7 @@ export class SwarmWebSocketServer {
       this.terminalWsProxy?.stop() ?? Promise.resolve(),
       this.playwrightLivePreviewProxy.stop(),
       currentWss ? closeWebSocketServer(currentWss) : Promise.resolve(),
+      currentCliWss ? closeWebSocketServer(currentCliWss) : Promise.resolve(),
       currentHttpServer ? closeHttpServer(currentHttpServer) : Promise.resolve(),
     ]);
 
@@ -669,13 +696,18 @@ export class SwarmWebSocketServer {
   }
 
   private async handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
-    if (!this.httpServer || !this.wss) {
+    if (!this.httpServer || !this.wss || !this.cliWss) {
       ignoreSocketErrors(socket);
       socket.destroy();
       return;
     }
 
     const requestUrl = resolveRequestUrl(request, `${this.host}:${this.getPort()}`);
+    if (isCliWebSocketPath(requestUrl.pathname)) {
+      await this.handleCliUpgrade(request, socket, head);
+      return;
+    }
+
     if (this.terminalWsProxy?.canHandleUpgrade(requestUrl.pathname)) {
       const handled = this.terminalWsProxy.handleUpgrade(request, socket, head, requestUrl.pathname);
       if (handled) {
@@ -752,12 +784,44 @@ export class SwarmWebSocketServer {
     });
   }
 
+  private async handleCliUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+    const config = this.swarmManager.getConfig();
+    if (!isBuilderRuntimeTarget(config.runtimeTarget)) {
+      rejectWebSocketUpgrade(socket, 404, "Not Found");
+      return;
+    }
+
+    const cliWss = this.cliWss;
+    if (!cliWss) {
+      ignoreSocketErrors(socket);
+      socket.destroy();
+      return;
+    }
+
+    const authResult = await authenticateCliWebSocketRequest(this.cliAccessService, request);
+    if (!authResult.ok) {
+      rejectWebSocketUpgrade(socket, authResult.statusCode, authResult.message);
+      return;
+    }
+
+    cliWss.handleUpgrade(request, socket, head, (client) => {
+      cliWss.emit("connection", client, request);
+    });
+  }
+
   private async handleHttpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const requestUrl = resolveRequestUrl(request, `${this.host}:${this.getPort()}`);
     let route: HttpRoute | undefined;
 
     try {
       if (!isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)) {
+        if (isCliHttpPath(requestUrl.pathname)) {
+          applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+          response.statusCode = 404;
+          response.end("Not Found");
+          return;
+        }
+
         const originValidation = validateCollaborationHttpOrigin(request, this.swarmManager.getConfig());
         if (!originValidation.ok) {
           setCollaborationRequestCorsContext(request, { allowedOrigin: null });
@@ -884,9 +948,18 @@ function ignoreSocketErrors(socket: Duplex): void {
   socket.once("error", () => {});
 }
 
+function handleCliWebSocketPlaceholderConnection(client: WebSocket): void {
+  client.send(JSON.stringify({
+    type: "cli_request_error",
+    code: "not_implemented",
+    message: "CLI WebSocket support is not implemented yet.",
+  }));
+  client.close(1000, "not implemented");
+}
+
 function rejectWebSocketUpgrade(
   socket: Duplex,
-  statusCode: 401 | 403 | 500,
+  statusCode: 401 | 403 | 404 | 500,
   message: string,
 ): void {
   if (socket.destroyed) {
@@ -901,7 +974,9 @@ function rejectWebSocketUpgrade(
       ? "Unauthorized"
       : statusCode === 403
         ? "Forbidden"
-        : "Internal Server Error";
+        : statusCode === 404
+          ? "Not Found"
+          : "Internal Server Error";
 
   socket.end(
     [
