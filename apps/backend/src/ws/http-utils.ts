@@ -108,6 +108,9 @@ export function applyCorsHeaders(request: IncomingMessage, response: ServerRespo
   } else {
     const origin = typeof request.headers.origin === "string" ? request.headers.origin : "*";
     response.setHeader("Access-Control-Allow-Origin", origin);
+    if (origin !== "*") {
+      response.setHeader("Access-Control-Allow-Credentials", "true");
+    }
     response.setHeader("Vary", "Origin");
   }
 

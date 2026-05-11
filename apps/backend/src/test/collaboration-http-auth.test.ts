@@ -247,6 +247,34 @@ describe("collaboration HTTP auth middleware", () => {
     expect(getCollaborationRequestCorsContext(request)).toEqual({ allowedOrigin: "http://127.0.0.1:47188" });
   });
 
+  it("emits credentialed fallback CORS headers when echoing a non-collaboration origin", () => {
+    const request = createRequest({
+      method: "GET",
+      headers: {
+        origin: "http://127.0.0.1:47188",
+      },
+    });
+    const { response, getHeader } = createResponse();
+    applyCorsHeaders(request, response, "GET,POST,OPTIONS");
+
+    expect(getHeader("access-control-allow-origin")).toBe("http://127.0.0.1:47188");
+    expect(getHeader("access-control-allow-credentials")).toBe("true");
+    expect(getHeader("access-control-allow-methods")).toBe("GET,POST,OPTIONS");
+    expect(getHeader("access-control-allow-headers")).toBe("content-type");
+    expect(getHeader("vary")).toBe("Origin");
+  });
+
+  it("keeps wildcard fallback CORS non-credentialed when no origin is present", () => {
+    const request = createRequest({ method: "GET" });
+    const { response, getHeader } = createResponse();
+    applyCorsHeaders(request, response, "GET,POST,OPTIONS");
+
+    expect(getHeader("access-control-allow-origin")).toBe("*");
+    expect(getHeader("access-control-allow-credentials")).toBeUndefined();
+    expect(getHeader("access-control-allow-methods")).toBe("GET,POST,OPTIONS");
+    expect(getHeader("access-control-allow-headers")).toBe("content-type");
+  });
+
   it("allows same-origin and trusted-origin requests and emits credentialed CORS headers", () => {
     const request = createRequest({
       method: "GET",
