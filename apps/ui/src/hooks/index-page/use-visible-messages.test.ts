@@ -77,7 +77,7 @@ describe('deriveVisibleMessages', () => {
     expect(result.visibleMessages).toEqual(result.allMessages)
   })
 
-  it('shows worker tool activity in manager all view', () => {
+  it('hides worker tool calls from manager all view', () => {
     const messages: ConversationEntry[] = [
       {
         type: 'conversation_message',
@@ -111,8 +111,46 @@ describe('deriveVisibleMessages', () => {
     })
 
     expect(result.visibleMessages.map((entry) => entry.type)).toEqual([
-      'agent_tool_call',
       'conversation_message',
+    ])
+  })
+
+  it('shows manager-owned tool calls in manager all view', () => {
+    const messages: ConversationEntry[] = [
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'user',
+        text: 'hello',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'user_input',
+      },
+    ]
+
+    const activityMessages: ConversationEntry[] = [
+      {
+        type: 'agent_tool_call',
+        agentId: 'manager',
+        actorAgentId: 'manager',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        kind: 'tool_execution_start',
+        toolName: 'bash',
+        toolCallId: 'call-2',
+        text: '{"command":"ls"}',
+      },
+    ]
+
+    const result = deriveVisibleMessages({
+      messages,
+      activityMessages,
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+    })
+
+    expect(result.visibleMessages.map((entry) => entry.type)).toEqual([
+      'conversation_message',
+      'agent_tool_call',
     ])
   })
 
