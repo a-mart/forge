@@ -12,6 +12,7 @@ interface PackageJson {
   bin?: Record<string, string>
   files?: string[]
   publishConfig?: { access?: string }
+  scripts?: Record<string, string>
 }
 
 describe('@forge/cli package contract', () => {
@@ -22,6 +23,8 @@ describe('@forge/cli package contract', () => {
     expect(packageJson.private).not.toBe(true)
     expect(packageJson.bin?.forge).toBe('./dist/cli.js')
     expect(packageJson.files).toEqual(['dist/cli.js', 'README.md', 'LICENSE'])
+    expect(packageJson.scripts?.prepack).toBe('pnpm run build')
+    expect(packageJson.scripts?.['test:pack-clean']).toBe('node scripts/verify-pack-clean.mjs')
     expect(packageJson.publishConfig?.access).toBe('public')
   })
 })

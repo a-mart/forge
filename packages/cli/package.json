@@ -20,6 +20,8 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "prepack": "pnpm run build",
+    "test:pack-clean": "node scripts/verify-pack-clean.mjs",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "vitest run"
   },
