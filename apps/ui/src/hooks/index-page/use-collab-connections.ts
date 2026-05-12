@@ -117,17 +117,21 @@ export function useCollabConnections(
   const manager = managerRef.current
   /* eslint-enable react-hooks/refs */
 
-  // Sync connections when targets change
-  useEffect(() => {
-    manager.syncConnections(targets)
-  }, [manager, targets])
-
-  // Subscribe to manager state changes → trigger re-renders
+  // Subscribe to manager state changes → trigger re-renders.
+  // IMPORTANT: This effect must run BEFORE syncConnections so that the
+  // listener is registered when syncConnections calls notify().  Otherwise
+  // the initial sync notification is lost and consumers see stale empty
+  // state until the first async client event (WebSocket connect/bootstrap).
   useEffect(() => {
     return manager.subscribe(() => {
       forceRender((c) => c + 1)
     })
   }, [manager])
+
+  // Sync connections when targets change
+  useEffect(() => {
+    manager.syncConnections(targets)
+  }, [manager, targets])
 
   // Cleanup on unmount
   useEffect(() => {

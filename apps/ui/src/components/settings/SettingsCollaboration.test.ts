@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByLabelText, getByRole, getByText, queryByText, waitFor } from '@testing-library/dom'
+import { fireEvent, getByLabelText, getByRole, getByText, queryByRole, queryByText, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -49,6 +49,7 @@ const registryMock = vi.hoisted(() => ({
     apiBaseUrl: string
     wsUrl: string
     isRemote: boolean
+    virtual?: boolean
   }>,
   defaultConnectionId: 'conn_same_origin',
   subscribeCb: null as (() => void) | null,
@@ -66,7 +67,7 @@ function remoteTarget(id: string, label: string, serverUrl: string) {
   }
 }
 
-function sameOriginTarget() {
+function sameOriginTarget(opts?: { virtual?: boolean }) {
   return {
     connectionId: 'conn_same_origin',
     kind: 'same-origin' as const,
@@ -74,6 +75,7 @@ function sameOriginTarget() {
     apiBaseUrl: 'http://127.0.0.1:47187/',
     wsUrl: 'ws://127.0.0.1:47187',
     isRemote: false,
+    virtual: opts?.virtual ?? true,
   }
 }
 
@@ -95,6 +97,10 @@ vi.mock('@/lib/collaboration-connections', () => ({
   }),
   removeCollaborationConnection: vi.fn((connId: string) => {
     registryMock.connections = registryMock.connections.filter((c) => c.connectionId !== connId)
+  }),
+  renameCollaborationConnection: vi.fn((connId: string, label: string) => {
+    const conn = registryMock.connections.find((c) => c.connectionId === connId)
+    if (conn) conn.label = label
   }),
   subscribeToRegistryChanges: vi.fn((cb: () => void) => {
     registryMock.subscribeCb = cb
@@ -360,6 +366,202 @@ describe('SettingsCollaboration', () => {
 
       const addForm = container.querySelector('[data-testid="add-connection-form"]')
       expect(addForm).not.toBeNull()
+    })
+  })
+
+  /* ---- Connection rename ---- */
+
+  describe('connection rename', () => {
+    it('shows rename button for each connection', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      const renameBtn = getByRole(container, 'button', { name: 'Rename collab.example.com' })
+      expect(renameBtn).toBeTruthy()
+    })
+
+    it('enters inline edit mode when rename button is clicked', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      const renameBtn = getByRole(container, 'button', { name: /rename collab\.example\.com/i })
+      fireEvent.click(renameBtn)
+      await flush()
+
+      const input = getByRole(container, 'textbox', { name: /connection name/i }) as HTMLInputElement
+      expect(input).toBeTruthy()
+      expect(input.value).toBe('collab.example.com')
+    })
+
+    it('commits rename on Enter and calls renameCollaborationConnection', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      // Click rename button (accessible by aria-label)
+      const renameBtn = getByRole(container, 'button', { name: /rename collab\.example\.com/i })
+      fireEvent.click(renameBtn)
+      await flush()
+
+      // Rename input should be visible and accessible
+      const input = getByRole(container, 'textbox', { name: /connection name/i }) as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'My Server' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await flush()
+
+      // Verify rename was called
+      const { renameCollaborationConnection } = await import('@/lib/collaboration-connections')
+      expect(renameCollaborationConnection).toHaveBeenCalledWith('conn_remote_1', 'My Server')
+
+      // Input should be gone
+      expect(queryByRole(container, 'textbox', { name: /connection name/i })).toBeNull()
+    })
+
+    it('cancels rename on Escape without calling renameCollaborationConnection', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      // Click rename button
+      const renameBtn = getByRole(container, 'button', { name: /rename collab\.example\.com/i })
+      fireEvent.click(renameBtn)
+      await flush()
+
+      // Type new name then press Escape
+      const input = getByRole(container, 'textbox', { name: /connection name/i }) as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'Different Name' } })
+      fireEvent.keyDown(input, { key: 'Escape' })
+      await flush()
+
+      // Verify rename was NOT called
+      const { renameCollaborationConnection } = await import('@/lib/collaboration-connections')
+      expect(renameCollaborationConnection).not.toHaveBeenCalled()
+
+      // Input should be gone
+      expect(queryByRole(container, 'textbox', { name: /connection name/i })).toBeNull()
+    })
+
+    it('commits rename on blur', async () => {
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      // Click rename button
+      const renameBtn = getByRole(container, 'button', { name: /rename collab\.example\.com/i })
+      flushSync(() => { fireEvent.click(renameBtn) })
+      await flush()
+
+      // Type new name — flush to ensure state is committed before blur
+      const input = getByRole(container, 'textbox', { name: /connection name/i }) as HTMLInputElement
+      flushSync(() => { fireEvent.change(input, { target: { value: 'Blurred Name' } }) })
+      await flush()
+
+      // Blur the input by focusing another element
+      flushSync(() => { input.blur() })
+      await flush()
+
+      const { renameCollaborationConnection } = await import('@/lib/collaboration-connections')
+      expect(renameCollaborationConnection).toHaveBeenCalledWith('conn_remote_1', 'Blurred Name')
+    })
+
+    it('hides rename button for virtual same-origin connections', async () => {
+      registryMock.connections = [sameOriginTarget({ virtual: true })]
+      registryMock.defaultConnectionId = 'conn_same_origin'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
+      renderCollab()
+      await flush()
+
+      // No rename button should be present at all
+      expect(container.querySelector('[data-testid="rename-connection-conn_same_origin"]')).toBeNull()
+      // The connection item should still render
+      expect(container.querySelector('[data-testid="connection-item-conn_same_origin"]')).not.toBeNull()
+    })
+
+    it('shows rename button for explicitly persisted same-origin connections', async () => {
+      registryMock.connections = [sameOriginTarget({ virtual: false })]
+      registryMock.defaultConnectionId = 'conn_same_origin'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
+      renderCollab()
+      await flush()
+
+      const renameBtn = getByRole(container, 'button', { name: /rename local/i })
+      expect(renameBtn).toBeTruthy()
+    })
+
+    it('virtual same-origin is the default when no connections configured', async () => {
+      // Default fallback: getDefaultCollaborationConnection returns virtual same-origin
+      registryMock.connections = [sameOriginTarget()]
+      registryMock.defaultConnectionId = 'conn_same_origin'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue({ authenticated: false })
+      renderCollab()
+      await flush()
+
+      // Connection renders with Local badge
+      const item = container.querySelector('[data-testid="connection-item-conn_same_origin"]')
+      expect(item).not.toBeNull()
+      expect(item!.textContent).toContain('Local')
+
+      // No rename affordance for virtual fallback
+      expect(container.querySelector('[data-testid="rename-connection-conn_same_origin"]')).toBeNull()
+
+      // Verify renameCollaborationConnection is never called
+      const { renameCollaborationConnection } = await import('@/lib/collaboration-connections')
+      expect(renameCollaborationConnection).not.toHaveBeenCalled()
+    })
+
+    it('remote rename still works alongside virtual same-origin', async () => {
+      const remote = remoteTarget('conn_r1', 'my-server.com', 'https://my-server.com')
+      registryMock.connections = [sameOriginTarget(), remote]
+      registryMock.defaultConnectionId = 'conn_r1'
+
+      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
+      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
+      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
+      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
+      renderCollab()
+      await flush()
+
+      // Virtual same-origin has no rename button
+      expect(container.querySelector('[data-testid="rename-connection-conn_same_origin"]')).toBeNull()
+
+      // Remote connection has a rename button
+      const renameBtn = getByRole(container, 'button', { name: /rename my-server\.com/i })
+      expect(renameBtn).toBeTruthy()
+
+      // Rename the remote connection
+      fireEvent.click(renameBtn)
+      await flush()
+
+      const input = getByRole(container, 'textbox', { name: /connection name/i }) as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'Renamed Remote' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await flush()
+
+      const { renameCollaborationConnection } = await import('@/lib/collaboration-connections')
+      expect(renameCollaborationConnection).toHaveBeenCalledWith('conn_r1', 'Renamed Remote')
     })
   })
 

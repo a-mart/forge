@@ -173,6 +173,7 @@ describe('collaboration-connections', () => {
       expect(target.connectionId).toBe('conn_same_origin')
       expect(target.kind).toBe('same-origin')
       expect(target.isRemote).toBe(false)
+      expect(target.virtual).toBe(true)
       expect(target.wsUrl).toBe('ws://127.0.0.1:47187')
       expect(target.apiBaseUrl).toBe('http://127.0.0.1:47187/')
       expect(target.label).toBe('Local')
@@ -775,6 +776,7 @@ describe('collaboration-connections', () => {
       expect(options[0]!.connectionId).toBe(SAME_ORIGIN_CONNECTION_ID)
       expect(options[0]!.kind).toBe('same-origin')
       expect(options[0]!.isRemote).toBe(false)
+      expect(options[0]!.virtual).toBe(true)
     })
 
     it('excludes virtual same-origin when remotes exist', async () => {
@@ -799,9 +801,9 @@ describe('collaboration-connections', () => {
       const options = getCollaborationConnectionOptions()
       expect(options).toHaveLength(2)
       expect(options.some((o) => o.kind === 'remote')).toBe(true)
-      expect(
-        options.some((o) => o.connectionId === SAME_ORIGIN_CONNECTION_ID),
-      ).toBe(true)
+      const sameOrigin = options.find((o) => o.connectionId === SAME_ORIGIN_CONNECTION_ID)
+      expect(sameOrigin).toBeTruthy()
+      expect(sameOrigin!.virtual).toBeFalsy()
     })
   })
 
@@ -1121,6 +1123,30 @@ describe('collaboration-connections', () => {
       renameCollaborationConnection('conn_nonexistent', 'Test')
       const reg = loadRegistry()
       expect(reg.connections).toEqual([])
+    })
+
+    it('no-ops for virtual same-origin (not persisted)', async () => {
+      const { renameCollaborationConnection, loadRegistry, SAME_ORIGIN_CONNECTION_ID } =
+        await import('./collaboration-connections')
+      // No explicit same-origin record — rename targets the virtual fallback
+      renameCollaborationConnection(SAME_ORIGIN_CONNECTION_ID, 'Custom Local')
+      const reg = loadRegistry()
+      expect(reg.connections).toEqual([])
+    })
+
+    it('renames explicitly persisted same-origin', async () => {
+      const {
+        addSameOriginConnection,
+        renameCollaborationConnection,
+        loadRegistry,
+        SAME_ORIGIN_CONNECTION_ID,
+      } = await import('./collaboration-connections')
+      addSameOriginConnection()
+      renameCollaborationConnection(SAME_ORIGIN_CONNECTION_ID, 'My Local')
+      const reg = loadRegistry()
+      const conn = reg.connections.find((c) => c.id === SAME_ORIGIN_CONNECTION_ID)
+      expect(conn).toBeTruthy()
+      expect(conn!.label).toBe('My Local')
     })
   })
 

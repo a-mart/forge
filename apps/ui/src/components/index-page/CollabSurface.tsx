@@ -106,6 +106,15 @@ export function CollabSurface({
   useEffect(() => {
     if (activeView !== 'chat') return // defer normalization until chat view
     if (!collab) return // no param to normalize
+
+    // Wait until connections have been synced before deciding the param is
+    // stale.  On remount the connection manager starts empty and populates
+    // asynchronously via its syncConnections effect.  Without this guard the
+    // normalization fires on the first render (empty connectionIds), strips
+    // a perfectly valid `collab` param, and routes channel subscriptions to
+    // the wrong backend — causing "Unknown collaboration channel" errors.
+    if (connections.connectionIds.length === 0) return
+
     if (connections.connectionIds.includes(collab)) return // valid — nothing to do
 
     // Stale param: replace route with the resolved connection or clear

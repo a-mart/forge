@@ -20,6 +20,7 @@ import {
   getDefaultCollaborationConnection,
   upsertCollaborationConnection,
   removeCollaborationConnection,
+  renameCollaborationConnection,
   subscribeToRegistryChanges,
   type CollaborationEndpointTarget,
 } from '@/lib/collaboration-connections'
@@ -65,6 +66,10 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
   const [addUrl, setAddUrl] = useState('')
   const [addTestStatus, setAddTestStatus] = useState<ConnectionTestStatus>('idle')
   const [addTestError, setAddTestError] = useState<string | null>(null)
+
+  // ── Rename-connection inline edit ──
+  const [editingNameId, setEditingNameId] = useState<string | null>(null)
+  const [editingNameValue, setEditingNameValue] = useState('')
 
   // ── Selected-connection detail state ──
   const [status, setStatus] = useState<CollaborationStatus | null>(null)
@@ -316,6 +321,33 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
     [selectedId, refreshConnections],
   )
 
+  // ── Rename connection ──
+
+  const startRenamingConnection = useCallback(
+    (connId: string) => {
+      const conn = connections.find((c) => c.connectionId === connId)
+      if (!conn) return
+      setEditingNameId(connId)
+      setEditingNameValue(conn.label)
+    },
+    [connections],
+  )
+
+  const commitRenameConnection = useCallback(() => {
+    if (!editingNameId) return
+    const trimmed = editingNameValue.trim()
+    if (trimmed) {
+      renameCollaborationConnection(editingNameId, trimmed)
+    }
+    setEditingNameId(null)
+    setEditingNameValue('')
+  }, [editingNameId, editingNameValue])
+
+  const cancelRenameConnection = useCallback(() => {
+    setEditingNameId(null)
+    setEditingNameValue('')
+  }, [])
+
   // ── Sign in / sign out scoped to selected connection ──
 
   const handleSignIn = useCallback(
@@ -441,6 +473,7 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
         <div className="flex flex-col gap-1" data-testid="connection-list">
           {connections.map((conn) => {
             const isSelected = conn.connectionId === selectedId
+            const isEditing = editingNameId === conn.connectionId
             return (
               <button
                 key={conn.connectionId}
@@ -450,7 +483,9 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
                     ? 'bg-muted ring-1 ring-border'
                     : 'hover:bg-muted/50'
                 }`}
-                onClick={() => setSelectedId(conn.connectionId)}
+                onClick={() => {
+                  if (!isEditing) setSelectedId(conn.connectionId)
+                }}
                 data-testid={`connection-item-${conn.connectionId}`}
                 aria-pressed={isSelected}
               >
@@ -460,11 +495,36 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
                       isSelected ? 'bg-emerald-500' : 'bg-muted-foreground/40'
                     }`}
                   />
-                  <span className="text-sm font-medium truncate">{conn.label}</span>
-                  {conn.serverUrl && (
-                    <span className="text-[10px] text-muted-foreground truncate hidden sm:inline">
-                      {conn.serverUrl}
-                    </span>
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={editingNameValue}
+                      onChange={(e) => setEditingNameValue(e.target.value)}
+                      onBlur={commitRenameConnection}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          commitRenameConnection()
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault()
+                          cancelRenameConnection()
+                        }
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-sm font-medium bg-transparent border-b border-primary outline-none min-w-0 flex-1 py-0"
+                      autoFocus
+                      aria-label={`Connection name for ${conn.label}`}
+                      data-testid={`rename-connection-input-${conn.connectionId}`}
+                    />
+                  ) : (
+                    <>
+                      <span className="text-sm font-medium truncate">{conn.label}</span>
+                      {conn.serverUrl && (
+                        <span className="text-[10px] text-muted-foreground truncate hidden sm:inline">
+                          {conn.serverUrl}
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -474,7 +534,49 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
                   >
                     {conn.kind === 'same-origin' ? 'Local' : 'Remote'}
                   </Badge>
-                  {conn.kind === 'remote' && (
+                  {!isEditing && !conn.virtual && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="inline-flex items-center justify-center h-5 w-5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              startRenamingConnection(conn.connectionId)
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.stopPropagation()
+                                e.preventDefault()
+                                startRenamingConnection(conn.connectionId)
+                              }
+                            }}
+                            data-testid={`rename-connection-${conn.connectionId}`}
+                            aria-label={`Rename ${conn.label}`}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                              <path d="m15 5 4 4" />
+                            </svg>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">Rename connection</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                  {conn.kind === 'remote' && !isEditing && (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>

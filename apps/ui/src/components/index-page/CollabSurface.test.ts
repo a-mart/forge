@@ -509,6 +509,116 @@ describe('CollabSurface — Blocker 3: stale collab param normalization', () => 
   })
 })
 
+describe('CollabSurface — Blocker 3: empty connectionIds guard (remount race)', () => {
+  it('does NOT normalize a valid collab param when connectionIds is empty (connections not yet synced)', () => {
+    // Regression: on remount (e.g., switching builder → collab), the
+    // connection manager starts empty.  Without the guard, the normalization
+    // effect fires on the first render, treats the valid `collab` param as
+    // stale (because connectionIds is []), strips it from the URL, and
+    // routes subsequent channel subscriptions to the wrong backend —
+    // producing "Unknown collaboration channel" errors.
+    const onSelectChannel = vi.fn()
+
+    // Simulate the state BEFORE connections have synced: empty connectionIds
+    collabConnectionsMock.value = {
+      connectionStates: {},
+      connectionIds: [], // <-- empty, as on first render after remount
+      targets: [],
+      activeConnectionId: null,
+      activeChannelId: null,
+      setActiveChannel: vi.fn(),
+      getClient: () => null,
+      managerRef: { current: null },
+    }
+
+    root = createRoot(container)
+    act(() => {
+      root?.render(
+        createElement(CollabSurface, {
+          targets: [
+            {
+              connectionId: 'conn_47388',
+              kind: 'remote' as const,
+              label: 'Server 47388',
+              serverUrl: 'https://127.0.0.1:47388',
+              apiBaseUrl: 'https://127.0.0.1:47388/',
+              wsUrl: 'wss://127.0.0.1:47388',
+              isRemote: true,
+            },
+          ],
+          wsUrl: 'wss://127.0.0.1:47388',
+          collab: 'conn_47388', // valid — belongs to the target above
+          channel: 'channel-uuid-123',
+          activeView: 'chat' as ActiveView,
+          activeSurface: 'collab' as const,
+          isAdmin: true,
+          isMember: false,
+          hasLoaded: true,
+          onSelectChannel,
+          onSelectSurface: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onBackToChat: vi.fn(),
+        }),
+      )
+    })
+
+    // Normalization must NOT fire — connectionIds is empty, so we can't
+    // determine whether the param is stale yet.
+    expect(onSelectChannel).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a stale collab param AFTER connections have synced', () => {
+    // Verify that the guard doesn't prevent normalization once connections
+    // are populated and the param is genuinely stale.
+    const onSelectChannel = vi.fn()
+
+    collabConnectionsMock.value = {
+      connectionStates: {},
+      connectionIds: ['conn_A'], // connections synced — 'conn_deleted' is not here
+      targets: [],
+      activeConnectionId: null,
+      activeChannelId: null,
+      setActiveChannel: vi.fn(),
+      getClient: () => null,
+      managerRef: { current: null },
+    }
+
+    root = createRoot(container)
+    act(() => {
+      root?.render(
+        createElement(CollabSurface, {
+          targets: [
+            {
+              connectionId: 'conn_A',
+              kind: 'remote' as const,
+              label: 'Server A',
+              serverUrl: 'https://a.example.com',
+              apiBaseUrl: 'https://a.example.com/',
+              wsUrl: 'wss://a.example.com',
+              isRemote: true,
+            },
+          ],
+          wsUrl: 'wss://a.example.com',
+          collab: 'conn_deleted', // genuinely stale
+          channel: 'some-channel',
+          activeView: 'chat' as ActiveView,
+          activeSurface: 'collab' as const,
+          isAdmin: true,
+          isMember: false,
+          hasLoaded: true,
+          onSelectChannel,
+          onSelectSurface: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onBackToChat: vi.fn(),
+        }),
+      )
+    })
+
+    // With connections synced, the stale param should be normalized.
+    expect(onSelectChannel).toHaveBeenCalledWith('some-channel', undefined)
+  })
+})
+
 describe('CollabSurface — onSignIn threading', () => {
   it('passes onSignIn callback to CollabWorkspace in chat view', () => {
     const onSignIn = vi.fn()

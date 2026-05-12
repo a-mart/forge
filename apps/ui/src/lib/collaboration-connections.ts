@@ -68,6 +68,8 @@ export interface CollaborationEndpointTarget {
   apiBaseUrl: string
   wsUrl: string
   isRemote: boolean
+  /** True when this target is a virtual fallback not explicitly persisted in the registry. */
+  virtual?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +142,7 @@ export function buildSameOriginTarget(): CollaborationEndpointTarget {
     apiBaseUrl: resolveApiEndpoint(wsUrl, '/'),
     wsUrl,
     isRemote: false,
+    virtual: true,
   }
 }
 
