@@ -200,6 +200,7 @@ export interface SwarmConfig {
   adminEmail?: string;
   adminPassword?: string;
   collaborationAuthSecret?: string;
+  collaborationAuthCookieName?: string;
   collaborationBaseUrl?: string;
   collaborationTrustedOrigins?: string[];
   collaborationModules?: CollaborationModuleLoaders;

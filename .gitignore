@@ -8,6 +8,7 @@ node_modules/
 .middleman-test/
 .forge-test/
 .forge-collaboration-data/
+.forge-collaboration-data-secondary/
 .cta.json
 
 # Internal development artifacts

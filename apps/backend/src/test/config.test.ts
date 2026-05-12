@@ -22,6 +22,7 @@ const MANAGED_ENV_KEYS = [
   'FORGE_ADMIN_EMAIL',
   'FORGE_ADMIN_PASSWORD',
   'FORGE_COLLABORATION_AUTH_SECRET',
+  'FORGE_COLLABORATION_AUTH_COOKIE_NAME',
   'FORGE_COLLABORATION_BASE_URL',
   'FORGE_COLLABORATION_TRUSTED_ORIGINS',
 
@@ -37,6 +38,7 @@ const MANAGED_ENV_KEYS = [
   'MIDDLEMAN_ADMIN_EMAIL',
   'MIDDLEMAN_ADMIN_PASSWORD',
   'MIDDLEMAN_COLLABORATION_AUTH_SECRET',
+  'MIDDLEMAN_COLLABORATION_AUTH_COOKIE_NAME',
   'MIDDLEMAN_COLLABORATION_BASE_URL',
   'MIDDLEMAN_COLLABORATION_TRUSTED_ORIGINS',
 
@@ -403,6 +405,7 @@ describe('createConfig', () => {
         FORGE_ADMIN_EMAIL: ' admin@example.com ',
         FORGE_ADMIN_PASSWORD: ' super-secret ',
         FORGE_COLLABORATION_AUTH_SECRET: ' auth-secret ',
+        FORGE_COLLABORATION_AUTH_COOKIE_NAME: ' forge_collab_test_session ',
         FORGE_COLLABORATION_BASE_URL: ' https://forge.example.com/collab ',
         FORGE_COLLABORATION_TRUSTED_ORIGINS: ' http://127.0.0.1:47188 , https://app.example.com ',
       },
@@ -411,6 +414,7 @@ describe('createConfig', () => {
         expect(config.adminEmail).toBe('admin@example.com')
         expect(config.adminPassword).toBe('super-secret')
         expect(config.collaborationAuthSecret).toBe('auth-secret')
+        expect(config.collaborationAuthCookieName).toBe('forge_collab_test_session')
         expect(config.collaborationBaseUrl).toBe('https://forge.example.com/collab')
         expect(config.collaborationTrustedOrigins).toEqual([
           'http://127.0.0.1:47188',

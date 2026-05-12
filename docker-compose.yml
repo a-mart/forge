@@ -16,6 +16,7 @@ services:
       FORGE_ADMIN_EMAIL: ${FORGE_ADMIN_EMAIL:?set FORGE_ADMIN_EMAIL in your shell or .env}
       FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:?set FORGE_ADMIN_PASSWORD in your shell or .env}
       FORGE_COLLABORATION_BASE_URL: ${FORGE_COLLABORATION_BASE_URL:-http://127.0.0.1:47387}
+      FORGE_COLLABORATION_AUTH_COOKIE_NAME: ${FORGE_COLLABORATION_AUTH_COOKIE_NAME:-forge_collab_session}
       # Local split-deployment default: allow the Forge UI/Electron dev origins on 127.0.0.1.
       # Keep localhost out of the default list: localhost <-> 127.0.0.1 becomes cross-site for cookies
       # and would require HTTPS.
@@ -26,4 +27,33 @@ services:
       # Visible host-side collaboration data. This directory is gitignored and
       # intentionally left on disk when containers are removed.
       - ./.forge-collaboration-data:/var/lib/forge
+    restart: unless-stopped
+
+  forge-collaboration-server-secondary:
+    profiles: ['multi-backend-test']
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_FORGE_WEB_BASE: same-origin
+        VITE_FORGE_DEFAULT_SURFACE: collab
+        VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS: 'true'
+    environment:
+      NODE_ENV: production
+      FORGE_HOST: 0.0.0.0
+      FORGE_PORT: 47287
+      FORGE_RUNTIME_TARGET: collaboration-server
+      FORGE_DATA_DIR: /var/lib/forge
+      FORGE_ADMIN_EMAIL: ${FORGE_ADMIN_EMAIL:?set FORGE_ADMIN_EMAIL in your shell or .env}
+      FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:?set FORGE_ADMIN_PASSWORD in your shell or .env}
+      FORGE_COLLABORATION_BASE_URL: ${FORGE_SECONDARY_COLLABORATION_BASE_URL:-http://127.0.0.1:47388}
+      FORGE_COLLABORATION_AUTH_COOKIE_NAME: ${FORGE_SECONDARY_COLLABORATION_AUTH_COOKIE_NAME:-forge_collab_secondary_session}
+      # Secondary local test backend for multi-backend UI validation.
+      FORGE_COLLABORATION_TRUSTED_ORIGINS: ${FORGE_COLLABORATION_TRUSTED_ORIGINS:-http://127.0.0.1:47188,http://127.0.0.1:47189}
+    ports:
+      - '${FORGE_SECONDARY_PUBLIC_PORT:-47388}:47287'
+    volumes:
+      # Separate host-side data so auth, channels, and runtime files stay isolated
+      # from the primary local collaboration server.
+      - ./.forge-collaboration-data-secondary:/var/lib/forge
     restart: unless-stopped

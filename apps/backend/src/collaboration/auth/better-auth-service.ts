@@ -55,6 +55,8 @@ export interface CollaborationBetterAuthService {
   verifyUserPassword(userId: string, password: string): Promise<boolean>;
 }
 
+const DEFAULT_COLLABORATION_AUTH_COOKIE_NAME = "forge_collab_session";
+
 const serviceInstances = new Map<string, CollaborationBetterAuthService>();
 const servicePromises = new Map<string, Promise<CollaborationBetterAuthService>>();
 
@@ -116,6 +118,12 @@ async function createCollaborationBetterAuthService(
   }
 
   const useSecureCookies = originPolicy.requiresCrossOriginCookies || isHttpsOrigin(config.collaborationBaseUrl);
+  const sessionCookieName = resolveCollaborationAuthCookieName(config);
+  const cookieAttributes = {
+    httpOnly: true,
+    sameSite: originPolicy.requiresCrossOriginCookies ? "none" : "lax",
+    secure: useSecureCookies,
+  } as const;
   const auth = betterAuth({
     database,
     secret,
@@ -133,20 +141,72 @@ async function createCollaborationBetterAuthService(
     },
     advanced: {
       useSecureCookies,
-      cookies: {
-        session_token: {
-          name: "forge_collab_session",
-          attributes: {
-            httpOnly: true,
-            sameSite: originPolicy.requiresCrossOriginCookies ? "none" : "lax",
-            secure: useSecureCookies,
-          },
-        },
-      },
+      cookies: buildCollaborationAuthCookieOverrides({
+        sessionCookieName,
+        cookieAttributes,
+        namespaceAuxiliaryCookies: sessionCookieName !== DEFAULT_COLLABORATION_AUTH_COOKIE_NAME,
+      }),
     },
   });
 
   return new BetterAuthService(auth as BetterAuthRuntime, database);
+}
+
+function resolveCollaborationAuthCookieName(config: SwarmConfig): string {
+  const cookieName = config.collaborationAuthCookieName ?? DEFAULT_COLLABORATION_AUTH_COOKIE_NAME;
+  if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(cookieName)) {
+    throw new Error(
+      "Invalid FORGE_COLLABORATION_AUTH_COOKIE_NAME; use an HTTP cookie name without spaces or separators",
+    );
+  }
+
+  return cookieName;
+}
+
+function buildCollaborationAuthCookieOverrides(options: {
+  sessionCookieName: string;
+  cookieAttributes: BetterAuthCookieAttributes;
+  namespaceAuxiliaryCookies: boolean;
+}): BetterAuthCookieOverrides {
+  const cookies: BetterAuthCookieOverrides = {
+    session_token: {
+      name: options.sessionCookieName,
+      attributes: options.cookieAttributes,
+    },
+  };
+
+  if (options.namespaceAuxiliaryCookies) {
+    cookies.session_data = {
+      name: `${options.sessionCookieName}_session_data`,
+      attributes: options.cookieAttributes,
+    };
+    cookies.dont_remember = {
+      name: `${options.sessionCookieName}_dont_remember`,
+      attributes: options.cookieAttributes,
+    };
+  }
+
+  return cookies;
+}
+
+type BetterAuthCookieOverrides = Record<string, BetterAuthCookieOverride> & {
+  session_token: BetterAuthCookieOverride;
+  session_data?: BetterAuthCookieOverride;
+  dont_remember?: BetterAuthCookieOverride;
+};
+
+interface BetterAuthCookieOverride {
+  name: string;
+  attributes: BetterAuthCookieAttributes;
+}
+
+interface BetterAuthCookieAttributes {
+  domain?: string;
+  path?: string;
+  httpOnly?: boolean;
+  sameSite?: "lax" | "strict" | "none" | "Lax" | "Strict" | "None";
+  secure?: boolean;
+  maxAge?: number;
 }
 
 interface BetterAuthRuntime {

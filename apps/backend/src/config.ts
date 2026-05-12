@@ -94,6 +94,10 @@ export function createConfig(): SwarmConfig {
   const collaborationAuthSecret = parseOptionalStringEnv(
     process.env.FORGE_COLLABORATION_AUTH_SECRET ?? process.env.MIDDLEMAN_COLLABORATION_AUTH_SECRET,
   );
+  const collaborationAuthCookieName = parseOptionalStringEnv(
+    process.env.FORGE_COLLABORATION_AUTH_COOKIE_NAME ??
+      process.env.MIDDLEMAN_COLLABORATION_AUTH_COOKIE_NAME,
+  );
   const collaborationBaseUrl = parseOptionalStringEnv(
     process.env.FORGE_COLLABORATION_BASE_URL ?? process.env.MIDDLEMAN_COLLABORATION_BASE_URL,
   );
@@ -122,6 +126,7 @@ export function createConfig(): SwarmConfig {
     adminEmail,
     adminPassword,
     collaborationAuthSecret,
+    collaborationAuthCookieName,
     collaborationBaseUrl,
     collaborationTrustedOrigins,
     collaborationModules,

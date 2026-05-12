@@ -24,6 +24,7 @@ export interface TempConfigOptions {
   adminEmail?: string
   adminPassword?: string
   collaborationAuthSecret?: string
+  collaborationAuthCookieName?: string
   collaborationBaseUrl?: string
   collaborationTrustedOrigins?: string[]
   allowNonManagerSubscriptions?: boolean
@@ -152,6 +153,7 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
     adminEmail: options.adminEmail,
     adminPassword: options.adminPassword,
     collaborationAuthSecret: options.collaborationAuthSecret,
+    collaborationAuthCookieName: options.collaborationAuthCookieName,
     collaborationBaseUrl: options.collaborationBaseUrl,
     collaborationTrustedOrigins: options.collaborationTrustedOrigins,
     collaborationModules:
