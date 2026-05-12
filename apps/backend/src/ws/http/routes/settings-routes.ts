@@ -10,6 +10,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   CredentialPoolState,
   CredentialPoolStrategy,
+  NotificationSettingsMutationResponse,
+  NotificationSettingsResponse,
   SettingsAuthLoginEventName,
   SettingsAuthLoginEventPayload,
   SettingsAuthLoginProviderId,
@@ -20,6 +22,7 @@ import type {
 } from "@forge/protocol";
 import type { StatsService } from "../../../stats/stats-service.js";
 import { ensureCanonicalAuthFilePath } from "../../../swarm/auth-storage-paths.js";
+import { NotificationSettingsService, NotificationSettingsValidationError } from "../../../swarm/notification-settings-service.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -33,6 +36,8 @@ const SETTINGS_AUTH_ENDPOINT_PATH = "/api/settings/auth";
 const SETTINGS_AUTH_LOGIN_ENDPOINT_PATH = "/api/settings/auth/login";
 const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
 const SETTINGS_AUTH_METHODS = "GET, PUT, DELETE, POST, OPTIONS";
+const SETTINGS_NOTIFICATIONS_ENDPOINT_PATH = "/api/settings/notifications";
+const SETTINGS_NOTIFICATIONS_METHODS = "GET, PUT, OPTIONS";
 
 type PooledSettingsAuthProviderId = SettingsAuthLoginProviderId;
 type InvalidateProviderUsage = (...providers: string[]) => Promise<void>;
@@ -61,9 +66,10 @@ export interface SettingsRouteBundle {
 
 export function createSettingsRoutes(options: {
   swarmManager: SwarmManager;
+  notificationSettingsService: NotificationSettingsService;
   statsService?: Pick<StatsService, "invalidateProviderUsage">;
 }): SettingsRouteBundle {
-  const { swarmManager, statsService } = options;
+  const { swarmManager, notificationSettingsService, statsService } = options;
   const activeSettingsAuthLoginFlows = new Map<string, SettingsAuthLoginFlow>();
   const invalidateProviderUsage: InvalidateProviderUsage = async (...providers) => {
     if (!statsService) {
@@ -102,6 +108,13 @@ export function createSettingsRoutes(options: {
           response,
           requestUrl
         );
+      }
+    },
+    {
+      methods: SETTINGS_NOTIFICATIONS_METHODS,
+      matches: (pathname) => pathname === SETTINGS_NOTIFICATIONS_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        await handleSettingsNotificationsHttpRequest(notificationSettingsService, request, response);
       }
     }
   ];
@@ -173,6 +186,47 @@ async function handleSettingsEnvHttpRequest(
 
   applyCorsHeaders(request, response, methods);
   response.setHeader("Allow", methods);
+  sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+async function handleSettingsNotificationsHttpRequest(
+  notificationSettingsService: NotificationSettingsService,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, SETTINGS_NOTIFICATIONS_METHODS);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  if (request.method === "GET") {
+    applyCorsHeaders(request, response, SETTINGS_NOTIFICATIONS_METHODS);
+    const payload: NotificationSettingsResponse = { settings: notificationSettingsService.getSettings() };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (request.method === "PUT") {
+    applyCorsHeaders(request, response, SETTINGS_NOTIFICATIONS_METHODS);
+
+    try {
+      const settings = await notificationSettingsService.update(await readJsonBody(request));
+      const payload: NotificationSettingsMutationResponse = { ok: true, settings };
+      sendJson(response, 200, payload as unknown as Record<string, unknown>);
+    } catch (error) {
+      if (error instanceof NotificationSettingsValidationError) {
+        sendJson(response, 400, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  applyCorsHeaders(request, response, SETTINGS_NOTIFICATIONS_METHODS);
+  response.setHeader("Allow", SETTINGS_NOTIFICATIONS_METHODS);
   sendJson(response, 405, { error: "Method Not Allowed" });
 }
 

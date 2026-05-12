@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentDescriptor } from '../swarm/types.js'
 import type { SwarmManager } from '../swarm/swarm-manager.js'
 import { getSharedMobileDevicesPath } from '../swarm/data-paths.js'
+import { NotificationSettingsService } from '../swarm/notification-settings-service.js'
 import { ExpoPushClient } from '../mobile/expo-push-client.js'
 import { MobilePushService } from '../mobile/mobile-push-service.js'
 
@@ -164,6 +165,54 @@ describe('MobilePushService', () => {
       profileId: 'profile-a',
       route: '/profiles/profile-a/sessions/manager',
     })
+  })
+
+  it('suppresses pushes for CLI-originated sessions when notification settings mute them', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
+    const manager = new FakeSwarmManager([
+      createManagerDescriptor('profile-a', 'manager', undefined),
+    ])
+    const descriptor = manager.getAgent('manager')!
+    descriptor.cli = { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-05-12T00:00:00.000Z' }
+
+    const notificationSettingsService = new NotificationSettingsService({ dataDir })
+    await notificationSettingsService.load()
+    await notificationSettingsService.update({ muteCliOriginatedNotifications: true })
+
+    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-muted-1' }))
+
+    const service = new MobilePushService({
+      swarmManager: manager as unknown as SwarmManager,
+      dataDir,
+      notificationSettingsService,
+      expoPushClient: {
+        send: sendMock,
+        getReceipts: vi.fn(async () => ({})),
+      } as unknown as ExpoPushClient,
+      isSessionActive: () => false,
+      receiptPollIntervalMs: 60_000,
+    })
+
+    await service.registerDevice({
+      token: 'ExpoPushToken[test-device]',
+      platform: 'ios',
+      deviceName: 'iPhone',
+    })
+
+    await service.start()
+    manager.emit('conversation_message', {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'hello from manager',
+      timestamp: new Date().toISOString(),
+      source: 'speak_to_user',
+    })
+
+    await flushAsync()
+    await service.stop()
+
+    expect(sendMock).not.toHaveBeenCalled()
   })
 
   it('does not send error pushes for recoverable system error messages while the session keeps running', async () => {

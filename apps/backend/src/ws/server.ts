@@ -41,6 +41,10 @@ import {
   CortexAutoReviewSettingsService
 } from "../swarm/cortex-auto-review-settings.js";
 import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
+import {
+  NotificationSettingsService,
+  shouldMuteCliOriginatedNotifications,
+} from "../swarm/notification-settings-service.js";
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
@@ -115,6 +119,7 @@ export class SwarmWebSocketServer {
   private readonly terminalSettingsService: TerminalSettingsService;
   private readonly terminalWsProxy: TerminalWsProxy | null;
   private readonly unreadTracker: UnreadTracker;
+  private readonly notificationSettingsService: NotificationSettingsService;
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
@@ -145,33 +150,12 @@ export class SwarmWebSocketServer {
     this.cliWsHandler.broadcast(event);
     this.wsHandler.broadcastCollaborationConversationMessage(event);
 
-    const shouldBroadcastUnread =
-      !this.isUnreadNotificationSuppressed(event.agentId) &&
-      (
-        (event.role === "assistant" && event.source === "speak_to_user") ||
-        event.source === "project_agent_input"
-      );
+    const triggersUnread =
+      (event.role === "assistant" && event.source === "speak_to_user") ||
+      event.source === "project_agent_input";
 
-    if (shouldBroadcastUnread) {
-      const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
-      if (!sessionAgentId) {
-        return;
-      }
-
-      this.wsHandler.broadcastToSubscribed({
-        type: "unread_notification",
-        agentId: event.agentId,
-        reason: "message",
-        sessionAgentId,
-      });
-
-      if (!this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)) {
-        const { profileId } = this.resolveUnreadContext(sessionAgentId);
-        if (profileId) {
-          const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
-          this.wsHandler.broadcastUnreadCountUpdate(sessionAgentId, newCount);
-        }
-      }
+    if (triggersUnread) {
+      void this.handleUnreadTrigger(event.agentId, "message");
     }
   };
 
@@ -212,20 +196,7 @@ export class SwarmWebSocketServer {
         return;
       }
 
-      this.wsHandler.broadcastToSubscribed({
-        type: "unread_notification",
-        agentId: event.agentId,
-        reason: "choice_request",
-        sessionAgentId,
-      });
-
-      if (!this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)) {
-        const { profileId } = this.resolveUnreadContext(sessionAgentId);
-        if (profileId) {
-          const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
-          this.wsHandler.broadcastUnreadCountUpdate(sessionAgentId, newCount);
-        }
-      }
+      void this.handleUnreadTrigger(event.agentId, "choice_request", sessionAgentId);
     }
   };
 
@@ -312,9 +283,46 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSession(event.sessionAgentId, event);
   };
 
-  private isUnreadNotificationSuppressed(agentId: string): boolean {
+  private async handleUnreadTrigger(
+    agentId: string,
+    reason: "message" | "choice_request",
+    resolvedSessionAgentId?: string
+  ): Promise<void> {
+    const sessionAgentId = resolvedSessionAgentId ?? resolveSessionAgentIdForUnread(this.swarmManager, agentId);
+    if (!sessionAgentId) {
+      return;
+    }
+
+    const suppressUnreadNotification = await this.isUnreadNotificationSuppressed(agentId, sessionAgentId);
+    if (!suppressUnreadNotification) {
+      this.wsHandler.broadcastToSubscribed({
+        type: "unread_notification",
+        agentId,
+        reason,
+        sessionAgentId,
+      });
+    }
+
+    if (!this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)) {
+      const { profileId } = this.resolveUnreadContext(sessionAgentId);
+      if (profileId) {
+        const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
+        this.wsHandler.broadcastUnreadCountUpdate(sessionAgentId, newCount);
+      }
+    }
+  }
+
+  private async isUnreadNotificationSuppressed(agentId: string, sessionAgentId: string): Promise<boolean> {
     const descriptor = this.swarmManager.getAgent(agentId);
-    return descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review";
+    if (descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review") {
+      return true;
+    }
+
+    const sessionDescriptor = this.swarmManager.getAgent(sessionAgentId);
+    return shouldMuteCliOriginatedNotifications({
+      settingsService: this.notificationSettingsService,
+      descriptor: sessionDescriptor,
+    });
   }
 
   private resolveUnreadContext(sessionAgentId: string): { profileId: string | null } {
@@ -361,6 +369,7 @@ export class SwarmWebSocketServer {
     collaborationSettingsService?: CollaborationSettingsService;
     collaborationReadinessService?: CollaborationReadinessRequestService;
     cliAccessService?: CliAccessService;
+    notificationSettingsService?: NotificationSettingsService;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -386,6 +395,9 @@ export class SwarmWebSocketServer {
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       envApiKey: readCliApiKeyEnv(),
     });
+    this.notificationSettingsService =
+      options.notificationSettingsService ??
+      new NotificationSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
     this.terminalService = options.terminalService ?? null;
     this.terminalRuntimeConfig = options.terminalRuntimeConfig ?? null;
     this.terminalSettingsService =
@@ -420,7 +432,8 @@ export class SwarmWebSocketServer {
     this.mobilePushService = new MobilePushService({
       swarmManager: this.swarmManager,
       dataDir: this.swarmManager.getConfig().paths.dataDir,
-      isSessionActive: (sessionAgentId) => wsHandlerRef?.hasActiveSubscription(sessionAgentId) ?? false
+      isSessionActive: (sessionAgentId) => wsHandlerRef?.hasActiveSubscription(sessionAgentId) ?? false,
+      notificationSettingsService: this.notificationSettingsService,
     });
     this.controlPidFile = getControlPidFilePath(
       this.swarmManager.getConfig().paths.rootDir,
@@ -456,6 +469,7 @@ export class SwarmWebSocketServer {
     });
     this.settingsRoutes = createSettingsRoutes({
       swarmManager: this.swarmManager,
+      notificationSettingsService: this.notificationSettingsService,
       statsService: this.statsService,
     });
     this.tokenAnalyticsService = new TokenAnalyticsService(this.swarmManager);
@@ -568,6 +582,7 @@ export class SwarmWebSocketServer {
     }
 
     await this.cortexAutoReviewSettingsService.load();
+    await this.notificationSettingsService.load();
     await this.unreadTracker.load();
 
     const httpServer = createServer((request, response) => {

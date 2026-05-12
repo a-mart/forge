@@ -22,6 +22,23 @@ export interface SettingsEnvMutationResponse extends SettingsEnvResponse {
   ok: true
 }
 
+export interface NotificationSettings {
+  muteCliOriginatedNotifications: boolean
+  updatedAt: string | null
+}
+
+export interface UpdateNotificationSettingsRequest {
+  muteCliOriginatedNotifications?: boolean
+}
+
+export interface NotificationSettingsResponse {
+  settings: NotificationSettings
+}
+
+export interface NotificationSettingsMutationResponse extends NotificationSettingsResponse {
+  ok: true
+}
+
 export interface SettingsAuthProvider {
   provider: SettingsAuthProviderId
   configured: boolean

@@ -394,6 +394,83 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('persists notification settings and suppresses unread_notification for muted CLI-originated sessions while keeping unread counts', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'CLI Session' })
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    const descriptor = state.descriptors.get(sessionAgent.agentId)
+    expect(descriptor).toBeDefined()
+    descriptor!.cli = {
+      createdBy: 'forge-cli',
+      runId: 'run-1',
+      command: 'run',
+      startedAt: '2026-05-12T00:00:00.000Z',
+    }
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    const initialResponse = await fetch(`http://${config.host}:${config.port}/api/settings/notifications`)
+    expect(initialResponse.status).toBe(200)
+    await expect(initialResponse.json()).resolves.toEqual({
+      settings: { muteCliOriginatedNotifications: false, updatedAt: null },
+    })
+
+    const updateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/notifications`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ muteCliOriginatedNotifications: true }),
+    })
+    expect(updateResponse.status).toBe(200)
+    const updatePayload = await updateResponse.json() as { settings: { muteCliOriginatedNotifications: boolean } }
+    expect(updatePayload.settings.muteCliOriginatedNotifications).toBe(true)
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: sessionAgent.agentId,
+        role: 'assistant',
+        text: 'CLI-originated update',
+        timestamp: new Date().toISOString(),
+        source: 'speak_to_user',
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_count_update' && event.agentId === sessionAgent.agentId && event.count === 1,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(events.some((event) => event.type === 'unread_notification' && event.agentId === sessionAgent.agentId)).toBe(false)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('preserves Unicode conversation_message text over WebSocket delivery', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)

@@ -1,5 +1,9 @@
 import type { ServerEvent } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "../swarm/agent-state-machine.js";
+import {
+  NotificationSettingsService,
+  shouldMuteCliOriginatedNotifications,
+} from "../swarm/notification-settings-service.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { ExpoPushClient, type ExpoPushMessage, type ExpoSendResult } from "./expo-push-client.js";
 import {
@@ -35,6 +39,7 @@ export class MobilePushService {
   private readonly store: MobilePushStore;
   private readonly expoPushClient: ExpoPushClient;
   private readonly isSessionActive: (sessionAgentId: string) => boolean;
+  private readonly notificationSettingsService: NotificationSettingsService;
   private readonly receiptPollIntervalMs: number;
   private readonly sendRetryBackoffMs: readonly number[];
 
@@ -78,6 +83,7 @@ export class MobilePushService {
     swarmManager: SwarmManager;
     dataDir: string;
     isSessionActive?: (sessionAgentId: string) => boolean;
+    notificationSettingsService?: NotificationSettingsService;
     expoPushClient?: ExpoPushClient;
     now?: () => Date;
     receiptPollIntervalMs?: number;
@@ -87,6 +93,8 @@ export class MobilePushService {
     this.store = new MobilePushStore({ dataDir: options.dataDir, now: options.now });
     this.expoPushClient = options.expoPushClient ?? new ExpoPushClient();
     this.isSessionActive = options.isSessionActive ?? (() => false);
+    this.notificationSettingsService =
+      options.notificationSettingsService ?? new NotificationSettingsService({ dataDir: options.dataDir, now: options.now });
     this.receiptPollIntervalMs = options.receiptPollIntervalMs ?? DEFAULT_RECEIPT_POLL_INTERVAL_MS;
     this.sendRetryBackoffMs =
       options.sendRetryBackoffMs && options.sendRetryBackoffMs.length > 0
@@ -98,6 +106,8 @@ export class MobilePushService {
     if (this.started) {
       return;
     }
+
+    await this.notificationSettingsService.load();
 
     this.started = true;
     this.swarmManager.on("conversation_message", this.onConversationMessage);
@@ -305,7 +315,7 @@ export class MobilePushService {
     }
 
     const context = this.resolveAgentRoutingContext(notification.agentId);
-    if (this.isPushSuppressedForSession(context.sessionAgentId)) {
+    if (await this.isPushSuppressedForSession(context.sessionAgentId)) {
       return;
     }
 
@@ -484,9 +494,16 @@ export class MobilePushService {
     };
   }
 
-  private isPushSuppressedForSession(sessionAgentId: string): boolean {
+  private async isPushSuppressedForSession(sessionAgentId: string): Promise<boolean> {
     const descriptor = this.swarmManager.getAgent(sessionAgentId);
-    return descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review";
+    if (descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review") {
+      return true;
+    }
+
+    return shouldMuteCliOriginatedNotifications({
+      settingsService: this.notificationSettingsService,
+      descriptor,
+    });
   }
 
   private isTerminalSessionFailureStatus(agentId: string, status: string): boolean {
