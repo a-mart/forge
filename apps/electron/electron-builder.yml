@@ -31,6 +31,10 @@ extraResources:
     to: forge-resources
     filter:
       - '**/*'
+  - from: .stage/cli
+    to: cli
+    filter:
+      - '**/*'
 publish:
   - provider: github
     owner: a-mart

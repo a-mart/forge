@@ -229,6 +229,55 @@ describe('SwarmManager', () => {
     expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('[sourceContext] {"channel":"web"}\n\ninterrupt current plan')
   })
 
+  it('streams worker active-tool snapshots even when the manager is idle', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    seedManagerDescriptorForRuntimeEventTests(manager, config)
+    const state = manager as unknown as {
+      descriptors: Map<string, AgentDescriptor>
+      conversationEntriesByAgentId: Map<string, unknown[]>
+    }
+    state.descriptors.get('manager')!.profileId = 'manager'
+    state.descriptors.set('worker-1', {
+      agentId: 'worker-1',
+      displayName: 'Worker',
+      role: 'worker',
+      managerId: 'manager',
+      status: 'streaming',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cwd: config.defaultCwd,
+      model: config.defaultModel,
+      sessionFile: join(config.paths.sessionsDir, 'worker-1.jsonl'),
+    })
+    state.conversationEntriesByAgentId.set('worker-1', [])
+
+    const snapshots: Array<Record<string, unknown>> = []
+    manager.on('session_active_tools_snapshot', (event) => snapshots.push(event as Record<string, unknown>))
+
+    await manager.handleRuntimeSessionEvent('worker-1', {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'worker-tool-1',
+      args: { command: 'sleep 1' },
+    })
+
+    expect(manager.getAgent('manager')?.status).toBe('idle')
+    expect(manager.getSessionActiveToolsSnapshot('manager')).toMatchObject({
+      type: 'session_active_tools_snapshot',
+      sessionAgentId: 'manager',
+      activeTools: [
+        {
+          sessionAgentId: 'manager',
+          actorAgentId: 'worker-1',
+          toolCallId: 'worker-tool-1',
+          toolName: 'bash',
+        },
+      ],
+    })
+    expect(snapshots.at(-1)).toMatchObject({ sessionAgentId: 'manager', activeTools: [{ actorAgentId: 'worker-1' }] })
+  })
+
   it('streams tool_execution_update events live but only persists terminal tool call events', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

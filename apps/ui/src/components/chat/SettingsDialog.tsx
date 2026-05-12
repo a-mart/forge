@@ -15,6 +15,7 @@ import { SettingsSpecialists } from '@/components/settings/SettingsSpecialists'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
 import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
 import { SettingsAbout } from '@/components/settings/SettingsAbout'
+import { SettingsCliAccess } from '@/components/settings/SettingsCliAccess'
 import { SettingsCollaboration } from '@/components/settings/SettingsCollaboration'
 import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, TelegramStatusEvent } from '@forge/protocol'
 
@@ -154,6 +155,7 @@ export function SettingsPanel({
         />
       )}
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} apiClient={apiClient} />}
+      {activeTab === 'cli-access' && <SettingsCliAccess wsUrl={wsUrl} apiClient={apiClient} />}
       {activeTab === 'collaboration' && (
         <SettingsCollaboration
           wsUrl={wsUrl}

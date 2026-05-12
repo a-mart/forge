@@ -338,14 +338,24 @@ describe("cloneProjectAgentInfoValue / cloneDescriptor", () => {
     expect(cloned?.capabilities).not.toBe(pa.capabilities);
   });
 
-  it("cloneDescriptor deep-copies model and contextUsage", () => {
+  it("cloneDescriptor deep-copies model, contextUsage, and cli metadata", () => {
     const d = baseDescriptor({
-      contextUsage: { tokens: 1, contextWindow: 2, percent: 3 }
+      contextUsage: { tokens: 1, contextWindow: 2, percent: 3 },
+      cli: {
+        createdBy: "forge-cli",
+        runId: "run-1",
+        command: "run",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        invocationCwd: "/tmp/project",
+        label: "CLI Run"
+      }
     });
     const c = cloneDescriptor(d);
     expect(c.model).not.toBe(d.model);
     expect(c.contextUsage).not.toBe(d.contextUsage);
+    expect(c.cli).not.toBe(d.cli);
     expect(c.model).toEqual(d.model);
+    expect(c.cli).toEqual(d.cli);
   });
 });
 
@@ -384,12 +394,47 @@ describe("validateAgentDescriptor", () => {
     }
   });
 
+  it("validates and sanitizes optional cli session metadata", () => {
+    const cli = {
+      createdBy: "forge-cli" as const,
+      runId: "  run-1  ",
+      command: "sessions create" as const,
+      startedAt: "  2026-01-01T00:00:00.000Z  ",
+      invocationCwd: "   ",
+      label: "  CLI Session  ",
+      extraSecret: "drop-me"
+    } as AgentDescriptor["cli"] & { extraSecret: string };
+
+    const accepted = validateAgentDescriptor(baseDescriptor({ cli }));
+    expect(typeof accepted).not.toBe("string");
+    if (typeof accepted !== "string") {
+      expect(accepted.cli).toEqual({
+        createdBy: "forge-cli",
+        runId: "run-1",
+        command: "sessions create",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        label: "CLI Session"
+      });
+      expect(JSON.stringify(accepted.cli)).not.toContain("drop-me");
+    }
+
+    expect(
+      validateAgentDescriptor(baseDescriptor({ cli: { ...cli, command: "delete" } as AgentDescriptor["cli"] }))
+    ).toMatch(/cli\.command/);
+  });
+
   it("preserves critical persisted descriptor fields while validating", () => {
     const descriptor = baseDescriptor({
       creatorAgentId: "creator-session",
       sessionPurpose: "agent_creator",
       sessionSurface: "collab",
       collab: { workspaceId: "workspace", channelId: "channel" },
+      cli: {
+        createdBy: "forge-cli",
+        runId: "run-critical",
+        command: "launch",
+        startedAt: "2026-01-01T00:00:00.000Z"
+      },
       sessionSystemPrompt: "Session prompt",
       pinnedAt: "2026-01-01T00:00:00.000Z",
       modelOrigin: "session_override",
@@ -747,7 +792,7 @@ describe("parseCompactSlashCommand", () => {
 });
 
 describe("normalizeMessageTargetContext / normalizeMessageSourceContext", () => {
-  it("defaults non-telegram channels to web", () => {
+  it("normalizes web metadata", () => {
     expect(
       normalizeMessageTargetContext({
         channel: "web",
@@ -774,6 +819,27 @@ describe("normalizeMessageTargetContext / normalizeMessageSourceContext", () => 
         teamId: "t"
       }).channel
     ).toBe("telegram");
+  });
+
+  it("preserves cli source and target channels", () => {
+    expect(normalizeMessageSourceContext({ channel: "cli", userId: "  cli-user  " })).toEqual({
+      channel: "cli",
+      channelId: undefined,
+      userId: "cli-user",
+      messageId: undefined,
+      threadTs: undefined,
+      integrationProfileId: undefined,
+      channelType: undefined,
+      teamId: undefined
+    });
+
+    expect(normalizeMessageTargetContext({ channel: "cli", userId: "  cli-user  " })).toEqual({
+      channel: "cli",
+      channelId: undefined,
+      userId: "cli-user",
+      threadTs: undefined,
+      integrationProfileId: undefined
+    });
   });
 });
 

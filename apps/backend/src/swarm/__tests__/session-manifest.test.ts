@@ -33,6 +33,14 @@ describe("session-manifest", () => {
       sessionId: "manager",
       profileId: "manager",
       label: "Main",
+      cli: {
+        createdBy: "forge-cli",
+        runId: "run-meta-1",
+        command: "run",
+        startedAt: "2026-03-01T00:00:00.000Z",
+        invocationCwd: "/tmp/project",
+        label: "Meta Run"
+      },
       model: {
         provider: "openai-codex",
         modelId: "gpt-5.3-codex"
@@ -182,7 +190,15 @@ describe("session-manifest", () => {
           updatedAt,
           cwd: "/tmp/root",
           model: DEFAULT_MODEL,
-          sessionFile: rootSessionFile
+          sessionFile: rootSessionFile,
+          cli: {
+            createdBy: "forge-cli",
+            runId: "run-root",
+            command: "run",
+            startedAt: createdAt,
+            invocationCwd: "/tmp/root",
+            label: "Root CLI Run"
+          }
         },
         {
           agentId: nonRootSessionId,
@@ -242,6 +258,13 @@ describe("session-manifest", () => {
       sessionId: nonRootSessionId,
       profileId,
       label: "Child",
+      cli: {
+        createdBy: "forge-cli",
+        runId: "run-existing-child",
+        command: "launch",
+        startedAt: createdAt,
+        invocationCwd: "/tmp/child"
+      },
       model: {
         provider: "openai-codex",
         modelId: "gpt-5.3-codex"
@@ -286,6 +309,7 @@ describe("session-manifest", () => {
     expect(rebuilt).toHaveLength(2);
 
     const rootMeta = await readSessionMeta(dataDir, profileId, rootSessionId);
+    expect(rootMeta?.cli).toMatchObject({ runId: "run-root", command: "run", invocationCwd: "/tmp/root" });
     expect(rootMeta?.workers.map((worker) => worker.id)).toEqual(["worker-a"]);
     expect(rootMeta?.workers[0]?.specialistId).toBe("backend");
     expect(rootMeta?.workers[0]?.specialistAttributionKnown).toBe(true);
@@ -297,6 +321,7 @@ describe("session-manifest", () => {
 
     const childMeta = await readSessionMeta(dataDir, profileId, nonRootSessionId);
     expect(childMeta?.label).toBe("Child");
+    expect(childMeta?.cli).toMatchObject({ runId: "run-existing-child", command: "launch" });
     expect(childMeta?.workers.map((worker) => worker.id)).toEqual(["worker-b"]);
     expect(childMeta?.workers[0]?.specialistAttributionKnown).toBeUndefined();
     expect(childMeta?.workers[0]?.status).toBe("streaming");

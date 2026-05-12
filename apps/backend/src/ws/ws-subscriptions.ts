@@ -148,6 +148,25 @@ export class WsSubscriptions {
     }
   }
 
+  broadcastToExactSubscription(agentId: string, event: ServerEvent): void {
+    const wss = this.getServer();
+    if (!wss) {
+      return;
+    }
+
+    for (const client of wss.clients) {
+      if (client.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      if (this.subscriptions.get(client) !== agentId) {
+        continue;
+      }
+
+      this.send(client, event);
+    }
+  }
+
   broadcastUnreadCountUpdate(sessionAgentId: string, count: number): void {
     const wss = this.getServer();
     if (!wss) {

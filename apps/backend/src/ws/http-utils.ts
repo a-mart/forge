@@ -93,7 +93,12 @@ export async function parseJsonBody(request: IncomingMessage, maxBytes: number):
   }
 }
 
-export function applyCorsHeaders(request: IncomingMessage, response: ServerResponse, methods: string): void {
+export function applyCorsHeaders(
+  request: IncomingMessage,
+  response: ServerResponse,
+  methods: string,
+  allowedHeaders = "content-type",
+): void {
   const collabCorsContext = getCollaborationRequestCorsContext(request);
   const allowedOrigin = collabCorsContext?.allowedOrigin ?? null;
 
@@ -115,7 +120,7 @@ export function applyCorsHeaders(request: IncomingMessage, response: ServerRespo
   }
 
   response.setHeader("Access-Control-Allow-Methods", methods);
-  response.setHeader("Access-Control-Allow-Headers", "content-type");
+  response.setHeader("Access-Control-Allow-Headers", allowedHeaders);
 }
 
 export function sendJson(response: ServerResponse, statusCode: number, body: Record<string, unknown>): void {

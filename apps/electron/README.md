@@ -17,6 +17,7 @@ The Electron app is a thin wrapper around Forge's existing backend and UI:
 - **Backend runtime** — `.stage/backend/dist/index.mjs` bundled from `apps/backend/dist/index.js`, plus staged runtime dependencies under `.stage/backend/node_modules/`
 - **Renderer** — `.stage/ui/`, copied from `apps/ui/.output/public/`; `_shell.html` is promoted to `index.html` for packaged startup
 - **Forge resources** — `.stage/forge-resources/`, containing built-in skills, archetypes, operational prompts, specialists, static assets, and related runtime resources
+- **CLI runtime** — `.stage/cli/cli.js`, copied from `packages/cli/dist/cli.js` and packaged as `resources/cli/cli.js` for the desktop CLI shim
 - **Claude SDK runtime assets** — staged when available for native Claude Agent SDK support; if they are not present in the packaged build, the desktop app falls back to the Pi-proxied Anthropic path
 
 At runtime the packaged app spawns the staged backend bundle from `backend/dist/index.mjs`, waits for backend readiness, then opens the renderer from the staged `ui/` directory.
@@ -73,11 +74,34 @@ The packaging pipeline:
 3. Builds `@forge/protocol`, `@forge/backend`, `@forge/ui`, and the Electron main process
 4. Stages backend runtime assets into `apps/electron/.stage/backend/`
 5. Stages renderer assets into `apps/electron/.stage/ui/`, then validates that every asset referenced by the staged `index.html` actually exists in the staged `assets/` directory before packaging continues
-6. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
-7. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, ensuring they do not silently fall back to repo-level `node_modules`
-8. Runs `electron-builder --publish never`
+6. Builds `@forge/cli` and stages the bundled CLI entrypoint into `apps/electron/.stage/cli/cli.js`
+7. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
+8. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, ensuring they do not silently fall back to repo-level `node_modules`
+9. Runs a staged CLI preflight with Electron-as-Node against `.stage/cli/cli.js --version`
+10. Runs `electron-builder --publish never`
 
 Packaged outputs are written to `apps/electron/release/`, which is treated as ephemeral build output for the current run.
+
+## Desktop CLI
+
+The desktop app can install a user-local `forge` shim from **Settings → CLI Access** after the user generates a CLI access key. The shim launches the current Forge app with `ELECTRON_RUN_AS_NODE=1` and the packaged `resources/cli/cli.js` entrypoint, so end users do not need a system Node.js install.
+
+Install locations:
+
+- macOS/Linux: `~/.forge/bin/forge`
+- Windows: `%LOCALAPPDATA%\forge\bin\forge.cmd` plus an optional PowerShell helper
+
+The shim does not contain API keys. It reads a Forge-managed install hint to find the current app bundle/executable, then falls back to platform lookup. Re-running **Install CLI** is idempotent and overwrites only Forge-managed shim files. If the install directory is not on `PATH`, the renderer returns shell-specific instructions for the user to add it manually.
+
+Packaged smoke for release validation:
+
+```bash
+ELECTRON_RUN_AS_NODE=1 /path/to/Forge.app/Contents/MacOS/Forge /path/to/Forge.app/Contents/Resources/cli/cli.js --version
+~/.forge/bin/forge --version
+forge doctor
+```
+
+On Windows, run `%LOCALAPPDATA%\forge\bin\forge.cmd --version` and `forge doctor` from a normal terminal after installing from Settings.
 
 ## Code Signing
 

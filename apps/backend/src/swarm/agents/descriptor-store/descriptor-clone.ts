@@ -10,6 +10,19 @@ function cloneContextUsage(descriptor: AgentDescriptor): AgentDescriptor["contex
     : undefined;
 }
 
+function cloneCliSessionMetadata(descriptor: AgentDescriptor): AgentDescriptor["cli"] {
+  return descriptor.cli
+    ? {
+        createdBy: descriptor.cli.createdBy,
+        runId: descriptor.cli.runId,
+        command: descriptor.cli.command,
+        startedAt: descriptor.cli.startedAt,
+        ...(descriptor.cli.invocationCwd !== undefined ? { invocationCwd: descriptor.cli.invocationCwd } : {}),
+        ...(descriptor.cli.label !== undefined ? { label: descriptor.cli.label } : {})
+      }
+    : undefined;
+}
+
 function cloneProjectAgent(
   projectAgent: AgentDescriptor["projectAgent"],
   options: { includeSystemPrompt: boolean }
@@ -40,6 +53,7 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
     contextUsage: cloneContextUsage(descriptor),
     projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: true }),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
+    cli: cloneCliSessionMetadata(descriptor),
     ...(descriptor.agentCreatorResult !== undefined
       ? {
           agentCreatorResult: {

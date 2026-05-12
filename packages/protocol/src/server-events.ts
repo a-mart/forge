@@ -3,6 +3,7 @@ import type {
   AgentsSnapshotEvent,
   SessionWorkersSnapshotEvent,
 } from './agent-events.js'
+import type { CliServerEvent } from './cli.js'
 import type {
   ConversationEntry,
   MessagePinnedEvent,
@@ -103,6 +104,7 @@ import type {
 // Compatibility re-exports from leaf modules
 export * from './conversation-events.js'
 export * from './agent-events.js'
+export * from './cli.js'
 export * from './manager-events.js'
 export * from './session-events.js'
 export * from './project-agent-events.js'
@@ -115,6 +117,7 @@ export * from './config-events.js'
 export * from './transport-events.js'
 
 export type ServerEvent =
+  | CliServerEvent
   | ReadyEvent
   | CollaborationBootstrapEvent
   | CollaborationChannelReadyEvent

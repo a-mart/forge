@@ -3,10 +3,11 @@ import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import WebSocket from 'ws'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AuthStorage } from '@mariozechner/pi-coding-agent'
 import type { AgentDescriptor } from '../swarm/types.js'
 import { DAEMONIZED_ENV_VAR, getControlPidFilePath } from '../reboot/control-pid.js'
+import { CliAccessService } from '../swarm/cli-access-service.js'
 import { getCommonKnowledgePath, getProfileUnreadStatePath } from '../swarm/data-paths.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
@@ -65,6 +66,34 @@ async function waitForCondition(predicate: () => boolean, timeoutMs = 2000): Pro
   }
 
   throw new Error('Timed out waiting for condition')
+}
+
+async function openCliWebSocket(url: string, apiKey: string): Promise<{ client: WebSocket; events: ServerEvent[] }> {
+  const client = new WebSocket(url, { headers: { authorization: `Bearer ${apiKey}` } })
+  const events: ServerEvent[] = []
+  client.on('message', (raw) => {
+    events.push(JSON.parse(raw.toString()) as ServerEvent)
+  })
+  await once(client, 'open')
+  return { client, events }
+}
+
+async function waitForCliSuccess(events: ServerEvent[], requestId: string): Promise<Extract<ServerEvent, { type: 'cli_request_success' }>> {
+  const event = await waitForEvent(
+    events,
+    (candidate) => candidate.type === 'cli_request_success' && candidate.requestId === requestId,
+  )
+  expect(event.type).toBe('cli_request_success')
+  return event as Extract<ServerEvent, { type: 'cli_request_success' }>
+}
+
+async function waitForCliError(events: ServerEvent[], requestId: string): Promise<Extract<ServerEvent, { type: 'cli_request_error' }>> {
+  const event = await waitForEvent(
+    events,
+    (candidate) => candidate.type === 'cli_request_error' && candidate.requestId === requestId,
+  )
+  expect(event.type).toBe('cli_request_error')
+  return event as Extract<ServerEvent, { type: 'cli_request_error' }>
 }
 
 describe('SwarmWebSocketServer', () => {
@@ -1971,6 +2000,959 @@ describe('SwarmWebSocketServer', () => {
 
     client.close()
     await once(client, 'close')
+    await server.stop()
+  })
+
+  it('serves a minimal headless CLI subscription bootstrap with active tools and pending choices', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'Headless bootstrap' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'CLI Session' })
+    const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'CLI Worker' })
+    await manager.handleRuntimeSessionEvent(worker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'cli-tool-1',
+      args: { command: 'sleep 1' },
+    })
+    void manager.requestUserChoice(worker.agentId, [
+      {
+        id: 'q1',
+        question: 'Continue?',
+        options: [{ id: 'yes', label: 'Yes' }],
+      },
+    ]).catch(() => undefined)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+    manager.emit('agent_status', {
+      type: 'agent_status',
+      agentId: sessionAgent.agentId,
+      status: 'streaming',
+      pendingCount: 2,
+    } satisfies ServerEvent)
+
+    const { client, events } = await openCliWebSocket(
+      `ws://${config.host}:${config.port}/api/cli/ws`,
+      key.plaintextKey,
+    )
+
+    client.send(JSON.stringify({ type: 'subscribe_headless', agentId: sessionAgent.agentId, requestId: 'headless-1' }))
+    const ready = await waitForEvent(
+      events,
+      (event) => event.type === 'headless_ready' && event.requestId === 'headless-1',
+    )
+
+    expect(ready.type).toBe('headless_ready')
+    if (ready.type === 'headless_ready') {
+      expect(ready.subscribed).toEqual({ agentId: sessionAgent.agentId, profileId: 'manager' })
+      expect(ready.capabilities.features).toMatchObject({ headlessWs: true, activeToolSnapshot: true })
+      expect(ready.targetAgent).toMatchObject({ agentId: sessionAgent.agentId, role: 'manager' })
+      expect(ready.profile).toMatchObject({ profileId: 'manager' })
+      expect(ready.workers?.map((candidate) => candidate.agentId)).toContain(worker.agentId)
+      expect(ready.activeTools).toMatchObject([{ actorAgentId: worker.agentId, toolCallId: 'cli-tool-1' }])
+      expect(ready.pendingChoices).toMatchObject([
+        { agentId: worker.agentId, sessionAgentId: sessionAgent.agentId, questionSummary: 'Continue?' },
+      ])
+      expect(ready.status).toMatchObject({ agentId: sessionAgent.agentId, status: 'streaming', pendingCount: 2 })
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const forbiddenBootstrapEvents = new Set([
+      'conversation_history',
+      'agents_snapshot',
+      'profiles_snapshot',
+      'unread_counts_snapshot',
+      'terminals_snapshot',
+      'playwright_discovery_snapshot',
+      'telegram_status',
+    ])
+    expect(events.some((event) => forbiddenBootstrapEvents.has(event.type))).toBe(false)
+
+    const choiceBaseline = events.length
+    void manager.requestUserChoice(sessionAgent.agentId, [
+      {
+        id: 'q2',
+        question: 'Choose follow-up?',
+        options: [{ id: 'ok', label: 'OK' }],
+      },
+    ]).catch(() => undefined)
+    await waitForEventAfter(
+      events,
+      choiceBaseline,
+      (event) => event.type === 'choice_request' && event.agentId === sessionAgent.agentId && event.status === 'pending',
+    )
+    const choiceSnapshot = await waitForEventAfter(
+      events,
+      choiceBaseline,
+      (event) =>
+        event.type === 'cli_pending_choices_snapshot' &&
+        event.sessionAgentId === sessionAgent.agentId &&
+        event.choices.some((choice) => choice.questionSummary === 'Choose follow-up?'),
+    )
+    expect(choiceSnapshot.type).toBe('cli_pending_choices_snapshot')
+
+    manager.cancelAllPendingChoicesForAgent(worker.agentId)
+    manager.cancelAllPendingChoicesForAgent(sessionAgent.agentId)
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('routes live headless CLI events to exact subscribed sessions', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'Headless routing' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
+    const rootWorker = await manager.spawnAgent('manager', { agentId: 'Root CLI Worker' })
+    const secondaryWorker = await manager.spawnAgent(secondarySession.agentId, { agentId: 'Secondary CLI Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const root = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    root.client.send(JSON.stringify({ type: 'subscribe_headless', agentId: 'manager', requestId: 'sub-root' }))
+    await waitForEvent(root.events, (event) => event.type === 'headless_ready' && event.requestId === 'sub-root')
+
+    const secondary = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    secondary.client.send(JSON.stringify({ type: 'subscribe_headless', agentId: secondarySession.agentId, requestId: 'sub-secondary' }))
+    await waitForEvent(secondary.events, (event) => event.type === 'headless_ready' && event.requestId === 'sub-secondary')
+
+    const rootBaseline = root.events.length
+    const secondaryBaseline = secondary.events.length
+    await manager.handleRuntimeSessionEvent(secondaryWorker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'secondary-cli-tool',
+      args: { command: 'echo secondary' },
+    })
+
+    await waitForEventAfter(
+      secondary.events,
+      secondaryBaseline,
+      (event) =>
+        event.type === 'session_active_tools_snapshot' &&
+        event.sessionAgentId === secondarySession.agentId &&
+        event.activeTools.some((tool) => tool.actorAgentId === secondaryWorker.agentId),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(root.events.slice(rootBaseline).some((event) => event.type === 'session_active_tools_snapshot')).toBe(false)
+
+    const rootSecondBaseline = root.events.length
+    const secondarySecondBaseline = secondary.events.length
+    await manager.handleRuntimeSessionEvent(rootWorker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'root-cli-tool',
+      args: { command: 'echo root' },
+    })
+
+    await waitForEventAfter(
+      root.events,
+      rootSecondBaseline,
+      (event) =>
+        event.type === 'session_active_tools_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.activeTools.some((tool) => tool.actorAgentId === rootWorker.agentId),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(secondary.events.slice(secondarySecondBaseline).some((event) => event.type === 'session_active_tools_snapshot')).toBe(false)
+
+    root.client.close()
+    await once(root.client, 'close')
+    secondary.client.close()
+    await once(secondary.client, 'close')
+    await server.stop()
+  })
+
+  it('dispatches CLI messages with cli source context over the isolated socket', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI send' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: docsAgent } = await manager.createSession('manager', { label: 'Docs Agent' })
+    await manager.setSessionProjectAgent(docsAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Use for CLI project-agent target tests.',
+      systemPrompt: 'You are the docs agent.',
+    })
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({ type: 'subscribe_headless', agentId: 'manager', requestId: 'sub-cli-send' }))
+    await waitForEvent(events, (event) => event.type === 'headless_ready' && event.requestId === 'sub-cli-send')
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-1',
+      target: { kind: 'session', agentId: 'manager' },
+      text: 'hello from cli',
+    }))
+
+    const ack = await waitForCliSuccess(events, 'send-1')
+    expect(ack.result).toMatchObject({
+      messageId: 'send-1',
+      sourceContext: { channel: 'cli', messageId: 'send-1' },
+    })
+    const message = await waitForEvent(
+      events,
+      (event) => event.type === 'conversation_message' && event.text === 'hello from cli',
+    )
+    expect(message.type).toBe('conversation_message')
+    if (message.type === 'conversation_message') {
+      expect(message.sourceContext).toEqual({ channel: 'cli', messageId: 'send-1' })
+    }
+    expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"cli","messageId":"send-1"}\n\nhello from cli',
+    )
+
+    client.send(JSON.stringify({
+      type: 'cli_run',
+      requestId: 'run-request-1',
+      target: { kind: 'session', agentId: 'manager' },
+      text: 'hello from cli run',
+      cli: {
+        createdBy: 'forge-cli',
+        runId: 'run-correlation-1',
+        command: 'run',
+        startedAt: '2026-05-11T00:00:00.000Z',
+      },
+    }))
+    const runAck = await waitForCliSuccess(events, 'run-request-1')
+    expect(runAck.result).toMatchObject({
+      messageId: 'run-correlation-1',
+      sourceContext: { channel: 'cli', messageId: 'run-correlation-1' },
+    })
+    const runMessage = await waitForEvent(
+      events,
+      (event) => event.type === 'conversation_message' && event.text === 'hello from cli run',
+    )
+    expect(runMessage.type).toBe('conversation_message')
+    if (runMessage.type === 'conversation_message') {
+      expect(runMessage.sourceContext).toEqual({ channel: 'cli', messageId: 'run-correlation-1' })
+    }
+    expect(manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"cli","messageId":"run-correlation-1"}\n\nhello from cli run',
+    )
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-project-agent',
+      target: { kind: 'project_agent', profileId: 'manager', handle: 'docs' },
+      text: 'hello docs agent',
+    }))
+    const projectAgentAck = await waitForCliSuccess(events, 'send-project-agent')
+    expect(projectAgentAck.result).toMatchObject({
+      sessionAgentId: docsAgent.agentId,
+      profileId: 'manager',
+      messageId: 'send-project-agent',
+      sourceContext: { channel: 'cli', messageId: 'send-project-agent' },
+    })
+    expect(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"cli","messageId":"send-project-agent"}\n\nhello docs agent',
+    )
+
+    client.send(JSON.stringify({
+      type: 'cli_run',
+      requestId: 'run-project-agent',
+      target: { kind: 'project_agent', profileId: 'manager', handle: 'docs' },
+      text: 'run docs agent',
+      cli: {
+        createdBy: 'forge-cli',
+        runId: 'run-docs-correlation',
+        command: 'run',
+        startedAt: '2026-05-11T00:00:00.000Z',
+      },
+    }))
+    const projectAgentRunAck = await waitForCliSuccess(events, 'run-project-agent')
+    expect(projectAgentRunAck.result).toMatchObject({
+      sessionAgentId: docsAgent.agentId,
+      profileId: 'manager',
+      messageId: 'run-docs-correlation',
+      sourceContext: { channel: 'cli', messageId: 'run-docs-correlation' },
+    })
+    expect(manager.runtimeByAgentId.get(docsAgent.agentId)?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"cli","messageId":"run-docs-correlation"}\n\nrun docs agent',
+    )
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('rejects CLI session creation and new-session runs for system-managed profiles', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI system profile guard' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const initialCortexAgentIds = manager
+      .listAgents()
+      .filter((agent) => agent.profileId === 'cortex' || agent.agentId === 'cortex')
+      .map((agent) => agent.agentId)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({
+      type: 'cli_create_session',
+      requestId: 'create-cortex-session',
+      profileId: 'cortex',
+      label: 'Blocked Cortex Session',
+    }))
+    const createError = await waitForCliError(events, 'create-cortex-session')
+    expect(createError).toMatchObject({
+      code: 'system_profile',
+      status: 403,
+      message: 'Cannot modify system-managed profile',
+      fieldErrors: [{ field: 'profileId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_run',
+      requestId: 'run-cortex-session',
+      target: { kind: 'new_session', profileId: 'cortex', label: 'Blocked Cortex Run' },
+      text: 'do not run this',
+    }))
+    const runError = await waitForCliError(events, 'run-cortex-session')
+    expect(runError).toMatchObject({
+      code: 'system_profile',
+      status: 403,
+      message: 'Cannot modify system-managed profile',
+      fieldErrors: [{ field: 'profileId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_create_session',
+      requestId: 'create-missing-profile-session',
+      profileId: 'missing-profile',
+      label: 'Blocked Missing Profile Session',
+    }))
+    const missingCreateError = await waitForCliError(events, 'create-missing-profile-session')
+    expect(missingCreateError).toMatchObject({
+      code: 'unknown_profile',
+      status: 404,
+      fieldErrors: [{ field: 'profileId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_run',
+      requestId: 'run-missing-profile-session',
+      target: { kind: 'new_session', profileId: 'missing-profile', label: 'Blocked Missing Profile Run' },
+      text: 'do not run this either',
+    }))
+    const missingRunError = await waitForCliError(events, 'run-missing-profile-session')
+    expect(missingRunError).toMatchObject({
+      code: 'unknown_profile',
+      status: 404,
+      fieldErrors: [{ field: 'profileId' }],
+    })
+
+    expect(
+      manager
+        .listAgents()
+        .filter((agent) => agent.profileId === 'cortex' || agent.agentId === 'cortex')
+        .map((agent) => agent.agentId),
+    ).toEqual(initialCortexAgentIds)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns explicit CLI errors for invalid session targets', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI invalid session targets' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const worker = await manager.spawnAgent('manager', { agentId: 'CLI Target Worker' })
+    const { sessionAgent: cortexSession } = await manager.createSession('cortex', {
+      label: 'Cortex Review Session',
+      sessionPurpose: 'cortex_review',
+    })
+    const { sessionAgent: collabSession } = await manager.createSessionWithOverrides(
+      'manager',
+      { label: 'Collab Session' },
+      { sessionSurface: 'collab', collab: { workspaceId: 'workspace-1', channelId: 'channel-1' } },
+    )
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-missing-session',
+      target: { kind: 'session', agentId: 'missing-session' },
+      text: 'hello?',
+    }))
+    expect(await waitForCliError(events, 'send-missing-session')).toMatchObject({
+      code: 'unknown_session',
+      status: 404,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-worker-session',
+      target: { kind: 'session', agentId: worker.agentId },
+      text: 'hello worker?',
+    }))
+    expect(await waitForCliError(events, 'send-worker-session')).toMatchObject({
+      code: 'invalid_session_target',
+      status: 400,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-system-session',
+      target: { kind: 'session', agentId: cortexSession.agentId },
+      text: 'hello system?',
+    }))
+    expect(await waitForCliError(events, 'send-system-session')).toMatchObject({
+      code: 'system_profile',
+      status: 403,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'send-collab-session',
+      target: { kind: 'session', agentId: collabSession.agentId },
+      text: 'hello collab?',
+    }))
+    expect(await waitForCliError(events, 'send-collab-session')).toMatchObject({
+      code: 'unsupported_session_surface',
+      status: 403,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('routes CLI choice answer and cancel commands through owner lookup', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI choices' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Choice Worker' })
+    const { sessionAgent: wrongSession } = await manager.createSession('manager', { label: 'Wrong Choice Session' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    const answerPromise = manager.requestUserChoice(worker.agentId, [
+      {
+        id: 'worker-choice-q',
+        question: 'Worker choice?',
+        options: [{ id: 'yes', label: 'Yes' }],
+      },
+    ])
+    const answerChoiceId = manager.getPendingChoiceIdsForSession('manager')[0]
+    expect(answerChoiceId).toBeTruthy()
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
+      requestId: 'answer-wrong-session',
+      choiceId: answerChoiceId,
+      sessionAgentId: wrongSession.agentId,
+      answers: [{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'] }],
+    }))
+    expect(await waitForCliError(events, 'answer-wrong-session')).toMatchObject({
+      commandType: 'cli_choice_response',
+      code: 'choice_session_mismatch',
+      status: 409,
+      fieldErrors: [{ field: 'sessionAgentId' }],
+    })
+    expect(manager.getPendingChoice(answerChoiceId)).toBeTruthy()
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
+      requestId: 'answer-worker-choice',
+      choiceId: answerChoiceId,
+      sessionAgentId: 'manager',
+      answers: [{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'] }],
+    }))
+    expect(await waitForCliSuccess(events, 'answer-worker-choice')).toMatchObject({
+      result: { choiceId: answerChoiceId, sessionAgentId: 'manager', status: 'answered' },
+    })
+    await expect(answerPromise).resolves.toEqual([{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'] }])
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_cancel',
+      requestId: 'cancel-stale-choice',
+      choiceId: answerChoiceId,
+    }))
+    expect(await waitForCliError(events, 'cancel-stale-choice')).toMatchObject({
+      commandType: 'cli_choice_cancel',
+      code: 'choice_not_pending',
+      status: 404,
+    })
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
+      requestId: 'answer-missing-choice',
+      choiceId: 'missing-choice',
+      answers: [{ questionId: 'missing-q', selectedOptionIds: [] }],
+    }))
+    expect(await waitForCliError(events, 'answer-missing-choice')).toMatchObject({
+      commandType: 'cli_choice_response',
+      code: 'choice_not_pending',
+      status: 404,
+    })
+
+    const cancelPromise = manager.requestUserChoice('manager', [
+      {
+        id: 'manager-choice-q',
+        question: 'Manager choice?',
+        options: [{ id: 'ok', label: 'OK' }],
+      },
+    ]).catch((error: unknown) => error)
+    const cancelChoiceId = manager.getPendingChoiceIdsForSession('manager')[0]
+    expect(cancelChoiceId).toBeTruthy()
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_cancel',
+      requestId: 'cancel-manager-choice',
+      choiceId: cancelChoiceId,
+    }))
+    expect(await waitForCliSuccess(events, 'cancel-manager-choice')).toMatchObject({
+      result: { choiceId: cancelChoiceId, sessionAgentId: 'manager', status: 'cancelled' },
+    })
+    const cancelResult = await cancelPromise
+    expect(cancelResult).toBeInstanceOf(Error)
+    expect(manager.getPendingChoice(cancelChoiceId)).toBeUndefined()
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns bad_request field errors for malformed CLI socket commands', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI validation' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({
+      type: 'cli_send_message',
+      requestId: 'bad-send',
+      target: { kind: 'session' },
+      text: 42,
+      delivery: 'later',
+    }))
+
+    const error = await waitForCliError(events, 'bad-send')
+    expect(error).toMatchObject({
+      commandType: 'cli_send_message',
+      code: 'bad_request',
+      status: 400,
+    })
+    expect(error.fieldErrors).toEqual(expect.arrayContaining([
+      { field: 'target.agentId', message: 'Required field must be a string.' },
+      { field: 'text', message: 'Must be a string.' },
+      { field: 'delivery', message: 'Must be one of: auto, followUp, steer.' },
+    ]))
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
+      requestId: 'choice-response-bad-answers',
+      choiceId: 'choice-1',
+      answers: [{ questionId: '', selectedOptionIds: [] }],
+    }))
+    const choiceError = await waitForCliError(events, 'choice-response-bad-answers')
+    expect(choiceError).toMatchObject({
+      commandType: 'cli_choice_response',
+      code: 'bad_request',
+      status: 400,
+      fieldErrors: [{ field: 'answers', message: 'Required field must be an array of valid choice answers.' }],
+    })
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('keeps a CLI headless subscription when deleting a different session', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI delete subscription' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: deletedSession } = await manager.createSession('manager', { label: 'Delete Me' })
+    const rootWorker = await manager.spawnAgent('manager', { agentId: 'Root CLI Subscription Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({ type: 'subscribe_headless', agentId: 'manager', requestId: 'sub-before-delete' }))
+    await waitForEvent(events, (event) => event.type === 'headless_ready' && event.requestId === 'sub-before-delete')
+
+    client.send(JSON.stringify({ type: 'delete_session', agentId: deletedSession.agentId, requestId: 'delete-other-session' }))
+    await waitForCliSuccess(events, 'delete-other-session')
+
+    const baseline = events.length
+    await manager.handleRuntimeSessionEvent(rootWorker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'root-after-delete',
+      args: { command: 'echo still subscribed' },
+    })
+
+    await waitForEventAfter(
+      events,
+      baseline,
+      (event) =>
+        event.type === 'session_active_tools_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.activeTools.some((tool) => tool.toolCallId === 'root-after-delete'),
+    )
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('redacts prompt-bearing descriptor fields in CLI create and fork success payloads', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI descriptor redaction' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const originalCreateSession = manager.createSession.bind(manager)
+    vi.spyOn(manager, 'createSession').mockImplementation(async (profileId, options) => {
+      const created = await originalCreateSession(profileId, options)
+      created.sessionAgent.sessionSystemPrompt = 'secret create prompt'
+      created.sessionAgent.projectAgent = {
+        handle: 'secret-create-agent',
+        whenToUse: 'Use for redaction tests',
+        systemPrompt: 'secret project agent prompt',
+      }
+      return created
+    })
+    const originalForkSession = manager.forkSession.bind(manager)
+    vi.spyOn(manager, 'forkSession').mockImplementation(async (sourceAgentId, options) => {
+      const forked = await originalForkSession(sourceAgentId, options)
+      forked.sessionAgent.sessionSystemPrompt = 'secret fork prompt'
+      forked.sessionAgent.projectAgent = {
+        handle: 'secret-fork-agent',
+        whenToUse: 'Use for fork redaction tests',
+        systemPrompt: 'secret fork project agent prompt',
+      }
+      return forked
+    })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({
+      type: 'cli_create_session',
+      profileId: 'manager',
+      label: 'Secret Descriptor Source',
+      requestId: 'create-redacted-session',
+    }))
+    const created = await waitForCliSuccess(events, 'create-redacted-session')
+    const createdSession = (created.result as { session: AgentDescriptor }).session
+    expect(createdSession.sessionSystemPrompt).toBeUndefined()
+    expect(createdSession.projectAgent).toEqual({
+      handle: 'secret-create-agent',
+      whenToUse: 'Use for redaction tests',
+    })
+    expect(createdSession.projectAgent?.systemPrompt).toBeUndefined()
+
+    client.send(JSON.stringify({
+      type: 'fork_session',
+      sourceAgentId: createdSession.agentId,
+      label: 'Secret Descriptor Fork',
+      requestId: 'fork-redacted-session',
+    }))
+    const forked = await waitForCliSuccess(events, 'fork-redacted-session')
+    const forkedSession = (forked.result as { session: AgentDescriptor }).session
+    expect(forkedSession.sessionSystemPrompt).toBeUndefined()
+    expect(forkedSession.projectAgent).toEqual({
+      handle: 'secret-fork-agent',
+      whenToUse: 'Use for fork redaction tests',
+    })
+    expect(forkedSession.projectAgent?.systemPrompt).toBeUndefined()
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('handles basic session mutations over the isolated CLI socket', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI mutations' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({ type: 'cli_create_session', profileId: 'manager', label: 'CLI Created', requestId: 'create-cli-session' }))
+    const created = await waitForCliSuccess(events, 'create-cli-session')
+    const createdSession = (created.result as { session: AgentDescriptor }).session
+
+    client.send(JSON.stringify({ type: 'rename_session', agentId: createdSession.agentId, label: 'CLI Renamed', requestId: 'rename-cli-session' }))
+    await waitForCliSuccess(events, 'rename-cli-session')
+    expect(manager.getAgent(createdSession.agentId)?.sessionLabel).toBe('CLI Renamed')
+
+    client.send(JSON.stringify({ type: 'pin_session', agentId: createdSession.agentId, pinned: true, requestId: 'pin-cli-session' }))
+    await waitForCliSuccess(events, 'pin-cli-session')
+    expect(manager.getAgent(createdSession.agentId)?.pinnedAt).toBeTruthy()
+
+    client.send(JSON.stringify({ type: 'clear_session', agentId: createdSession.agentId, requestId: 'clear-cli-session' }))
+    await waitForCliSuccess(events, 'clear-cli-session')
+
+    client.send(JSON.stringify({ type: 'fork_session', sourceAgentId: createdSession.agentId, label: 'CLI Fork', requestId: 'fork-cli-session' }))
+    const forked = await waitForCliSuccess(events, 'fork-cli-session')
+    expect((forked.result as { session: AgentDescriptor }).session.agentId).not.toBe(createdSession.agentId)
+
+    client.send(JSON.stringify({ type: 'stop_session', agentId: createdSession.agentId, requestId: 'stop-cli-session' }))
+    await waitForCliSuccess(events, 'stop-cli-session')
+
+    client.send(JSON.stringify({ type: 'resume_session', agentId: createdSession.agentId, requestId: 'resume-cli-session' }))
+    await waitForCliSuccess(events, 'resume-cli-session')
+
+    client.send(JSON.stringify({ type: 'delete_session', agentId: createdSession.agentId, requestId: 'delete-cli-session' }))
+    await waitForCliSuccess(events, 'delete-cli-session')
+    expect(manager.getAgent(createdSession.agentId)).toBeUndefined()
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('routes active-tool snapshots to exact subscribed sessions', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: secondarySession } = await manager.createSession('manager', { label: 'Secondary' })
+    const rootWorker = await manager.spawnAgent('manager', { agentId: 'Root Worker' })
+    const secondaryWorker = await manager.spawnAgent(secondarySession.agentId, { agentId: 'Secondary Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const rootClient = new WebSocket(`ws://${config.host}:${config.port}`)
+    const rootEvents: ServerEvent[] = []
+    const secondaryEvents: ServerEvent[] = []
+
+    rootClient.on('message', (raw) => {
+      rootEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(rootClient, 'open')
+    rootClient.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(rootEvents, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    const secondaryClient = new WebSocket(`ws://${config.host}:${config.port}`)
+    secondaryClient.on('message', (raw) => {
+      secondaryEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+    await once(secondaryClient, 'open')
+    secondaryClient.send(JSON.stringify({ type: 'subscribe', agentId: secondarySession.agentId }))
+    await waitForEvent(
+      secondaryEvents,
+      (event) => event.type === 'ready' && event.subscribedAgentId === secondarySession.agentId,
+    )
+
+    const rootBaseline = rootEvents.length
+    const secondaryBaseline = secondaryEvents.length
+    await manager.handleRuntimeSessionEvent(secondaryWorker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'secondary-tool',
+      args: { command: 'echo secondary' },
+    })
+    expect(manager.getSessionActiveToolsSnapshot(secondarySession.agentId).activeTools).toMatchObject([
+      { actorAgentId: secondaryWorker.agentId, toolCallId: 'secondary-tool' },
+    ])
+
+    await waitForEventAfter(
+      secondaryEvents,
+      secondaryBaseline,
+      (event) =>
+        event.type === 'session_active_tools_snapshot' &&
+        event.sessionAgentId === secondarySession.agentId &&
+        event.activeTools.some((tool) => tool.actorAgentId === secondaryWorker.agentId),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(
+      rootEvents
+        .slice(rootBaseline)
+        .some((event) => event.type === 'session_active_tools_snapshot' && event.sessionAgentId === secondarySession.agentId),
+    ).toBe(false)
+
+    const rootSecondBaseline = rootEvents.length
+    const secondarySecondBaseline = secondaryEvents.length
+    await manager.handleRuntimeSessionEvent(rootWorker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      toolCallId: 'root-tool',
+      args: { command: 'echo root' },
+    })
+    expect(manager.getSessionActiveToolsSnapshot('manager').activeTools).toMatchObject([
+      { actorAgentId: rootWorker.agentId, toolCallId: 'root-tool' },
+    ])
+
+    await waitForEventAfter(
+      rootEvents,
+      rootSecondBaseline,
+      (event) =>
+        event.type === 'session_active_tools_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.activeTools.some((tool) => tool.actorAgentId === rootWorker.agentId),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(
+      secondaryEvents
+        .slice(secondarySecondBaseline)
+        .some((event) => event.type === 'session_active_tools_snapshot' && event.sessionAgentId === 'manager'),
+    ).toBe(false)
+
+    rootClient.close()
+    await once(rootClient, 'close')
+    secondaryClient.close()
+    await once(secondaryClient, 'close')
     await server.stop()
   })
 

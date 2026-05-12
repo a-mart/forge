@@ -115,6 +115,7 @@ export class SwarmSessionMetaService {
       sessionId: descriptor.agentId,
       profileId,
       label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? base.label,
+      cli: descriptor.cli ?? base.cli,
       model: {
         provider: descriptor.model.provider,
         modelId: descriptor.model.modelId
@@ -167,6 +168,7 @@ export class SwarmSessionMetaService {
         sessionId: descriptor.agentId,
         profileId,
         label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? base.label,
+        cli: descriptor.cli ?? base.cli,
         model: {
           provider: descriptor.model.provider,
           modelId: descriptor.model.modelId
@@ -317,6 +319,7 @@ export class SwarmSessionMetaService {
       sessionId: target.sessionId,
       profileId: target.profileId,
       label: normalizeOptionalAgentId(target.descriptor.sessionLabel) ?? base.label,
+      cli: target.descriptor.cli ?? base.cli,
       model: {
         provider: target.descriptor.model.provider,
         modelId: target.descriptor.model.modelId
@@ -388,6 +391,7 @@ export class SwarmSessionMetaService {
       sessionId: descriptor.agentId,
       profileId,
       label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? null,
+      cli: descriptor.cli,
       model: {
         provider: descriptor.model.provider,
         modelId: descriptor.model.modelId

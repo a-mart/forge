@@ -16,6 +16,9 @@ import {
 } from '../index.js'
 import type {
   AgentDescriptor,
+  CliCapabilities,
+  CliRunResult,
+  CliWsCommand,
   ClientCommand,
   CollaborationBootstrapEvent,
   CollaborationChannel,
@@ -23,6 +26,7 @@ import type {
   CollaborationServerEvent,
   ForgeModelCatalog,
   ManagerProfile,
+  MessageChannel,
   ResolvedSpecialistDefinition,
   ServerEvent,
   TerminalDescriptor,
@@ -123,6 +127,40 @@ const REQUEST_ID_COMMAND_TYPES = [
 const model = { provider: 'openai-codex', modelId: 'gpt-5.4', thinkingLevel: 'xhigh' }
 const now = '2026-05-05T00:00:00.000Z'
 
+const cliCapabilities = {
+  protocolVersion: 1,
+  minCliVersion: '0.1.0',
+  available: true,
+  runtimeTarget: 'builder',
+  features: {
+    bearerAuth: true,
+    headlessWs: true,
+    cliSourceContext: true,
+    cliSessionMetadata: true,
+    choiceOwnerLookup: true,
+    activeToolSnapshot: true,
+    projectAgentRunTarget: true,
+    builderRuntimeOnly: true,
+  },
+} satisfies CliCapabilities
+
+const cliCommand = {
+  type: 'subscribe_headless',
+  requestId: 'request-cli-0',
+  agentId: 'agent-1',
+} satisfies CliWsCommand
+
+const cliRunResult = {
+  status: 'success',
+  sessionAgentId: 'agent-1',
+  profileId: 'profile-1',
+  projectAgentHandle: null,
+  finalMessage: 'Done',
+  blocked: null,
+  timedOut: false,
+  durationMs: 100,
+} satisfies CliRunResult
+
 const profile = {
   profileId: 'profile-1',
   displayName: 'Profile',
@@ -191,6 +229,27 @@ const category = {
 
 const serverEventsByLeafModule = [
   { type: 'ready', serverTime: now, subscribedAgentId: agent.agentId },
+  {
+    type: 'headless_ready',
+    serverTime: now,
+    capabilities: cliCapabilities,
+    subscribed: { agentId: agent.agentId },
+    targetAgent: agent,
+    profile,
+    pendingChoices: [],
+    workers: [],
+    activeTools: [],
+    status: { agentId: agent.agentId, status: 'idle', pendingCount: 0 },
+  },
+  { type: 'session_active_tools_snapshot', sessionAgentId: agent.agentId, activeTools: [], requestId: 'request-cli-1' },
+  { type: 'cli_request_success', requestId: 'request-cli-2', commandType: 'subscribe_headless' },
+  {
+    type: 'cli_request_error',
+    requestId: 'request-cli-3',
+    commandType: 'cli_send_message',
+    code: 'bad_request',
+    message: 'Bad request',
+  },
   {
     type: 'collab_bootstrap',
     currentUser: { userId: 'user-1', email: 'user@example.com', name: 'User', role: 'admin', disabled: false },
@@ -475,7 +534,7 @@ describe('protocol root barrel contract', () => {
   })
 
   it('exports representative collaboration, terminal, and specialist contracts from the root barrel', () => {
-    const collabEvent: CollaborationBootstrapEvent = serverEventsByLeafModule[1]
+    const collabEvent: CollaborationBootstrapEvent = serverEventsByLeafModule[5]
     const collabServerEvent: CollaborationServerEvent = collabEvent
     const terminalMeta: TerminalMeta = {
       version: 1,
@@ -507,6 +566,15 @@ describe('protocol root barrel contract', () => {
     expect(specialist.targetSpace).toContain('builder')
   })
 
+  it('exports CLI protocol contracts from the root barrel', () => {
+    const channel: MessageChannel = 'cli'
+
+    expect(channel).toBe('cli')
+    expect(cliCapabilities.features.headlessWs).toBe(true)
+    expect(cliCommand.type).toBe('subscribe_headless')
+    expect(cliRunResult.status).toBe('success')
+  })
+
   it('pins current ClientCommand discriminator coverage', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
@@ -531,6 +599,10 @@ describe('protocol root barrel contract', () => {
   it('keeps representative leaf-module events assignable to ServerEvent', () => {
     expect(serverEventsByLeafModule.map((event) => event.type)).toEqual([
       'ready',
+      'headless_ready',
+      'session_active_tools_snapshot',
+      'cli_request_success',
+      'cli_request_error',
       'collab_bootstrap',
       'conversation_message',
       'agent_status',

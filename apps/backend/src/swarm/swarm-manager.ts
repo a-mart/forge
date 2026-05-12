@@ -19,6 +19,7 @@ import type {
   PromptPreviewResponse,
   ManagerExactModelSelection,
   ServerEvent,
+  SessionActiveToolsSnapshotEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
   SessionMemoryMergeResult,
@@ -146,6 +147,7 @@ import {
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
+import { SessionActiveToolsState } from "./session-active-tools.js";
 import {
   normalizeAllowlistRoots,
   validateDirectoryPath,
@@ -263,6 +265,7 @@ import {
   parseSessionNumberFromAgentId,
   previewForLog,
   readFileHead,
+  sanitizeCliSessionMetadata,
   sanitizeAttachmentFileName,
   sanitizePathSegment,
   slugifySessionName,
@@ -1083,6 +1086,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly specialistFallbackManager: SwarmSpecialistFallbackManager;
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly sidebarPerfRecorder: SidebarPerfRecorder;
+  private readonly sessionActiveTools = new SessionActiveToolsState();
   private readonly conversationProjector: ConversationProjector;
   private readonly descriptorStore: AgentDescriptorStore;
   private readonly descriptorStoreAdapter: DescriptorStoreAdapter;
@@ -1237,6 +1241,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       now: this.now,
       emitServerEvent: (eventName, payload) => {
         this.emit(eventName, payload);
+        if (payload.type === "agent_tool_call") {
+          this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.recordToolCall(payload));
+        }
       },
       logDebug: (message, details) => this.logDebug(message, details),
       perf: this.sidebarPerfRecorder,
@@ -1827,6 +1834,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return (grouped.workersByManagerId.get(sessionAgentId) ?? []).map((descriptor) => cloneDescriptor(descriptor));
   }
 
+  getSessionActiveToolsSnapshot(sessionAgentId: string): SessionActiveToolsSnapshotEvent {
+    this.getRequiredSessionDescriptor(sessionAgentId);
+    return this.sessionActiveTools.buildSnapshotEvent(sessionAgentId);
+  }
+
   listProfiles(): ManagerProfile[] {
     return this.sortedProfiles().map((profile) => ({
       ...profile,
@@ -2116,6 +2128,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const createdSession = await this.sessionService.createSession(profileId, options);
@@ -2133,6 +2146,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     } = {},
     overrides: {
       model?: AgentModelDescriptor;
@@ -2167,6 +2181,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     } = {},
     overrides: {
       sessionSurface?: AgentDescriptor["sessionSurface"];
@@ -2317,12 +2332,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     this.getRequiredBuilderSessionDescriptor(agentId, "stop Builder sessions");
-    return this.lifecycleService.stopSession(agentId);
+    const result = await this.lifecycleService.stopSession(agentId);
+    this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
+    return result;
   }
 
   async stopCollaborationSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     this.getRequiredCollaborationSessionDescriptor(agentId, "stop collaboration sessions");
-    return this.lifecycleService.stopSession(agentId);
+    const result = await this.lifecycleService.stopSession(agentId);
+    this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
+    return result;
   }
 
   async resumeSession(agentId: string): Promise<void> {
@@ -2335,6 +2354,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.getRequiredCollaborationSessionDescriptor(agentId, "delete collaboration sessions")
     );
     const result = await this.sessionService.deleteCollaborationSession(agentId);
+    this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "deleted",
       sessionDescriptor: deletedSessionDescriptor
@@ -2347,6 +2367,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder sessions")
     );
     const result = await this.sessionService.deleteSession(agentId);
+    this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "deleted",
       sessionDescriptor: deletedSessionDescriptor
@@ -2440,6 +2461,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async clearSessionConversation(agentId: string): Promise<void> {
     this.getRequiredBuilderSessionDescriptor(agentId, "clear Builder conversations");
     await this.sessionService.clearSessionConversation(agentId);
+    this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
   }
 
   async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
@@ -2965,6 +2987,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
     const profile = this.profiles.get(profileId);
@@ -3010,6 +3033,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
     const preparedIdentity = this.prepareSessionIdentity(profileId, options);
@@ -3022,6 +3046,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profileId: preparedIdentity.profile.profileId,
       sessionLabel: preparedIdentity.sessionLabel,
       sessionPurpose: options?.sessionPurpose,
+      cli: sanitizeCliSessionMetadata(options?.cli),
       status: "idle",
       createdAt: preparedIdentity.createdAt,
       updatedAt: preparedIdentity.createdAt,
@@ -3064,6 +3089,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       name?: string;
       sessionAgentId?: string;
       sessionPurpose?: AgentDescriptor["sessionPurpose"];
+      cli?: AgentDescriptor["cli"];
     }
   ): {
     profile: ManagerProfile;
@@ -5724,6 +5750,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  private emitSessionActiveToolsSnapshot(snapshot: SessionActiveToolsSnapshotEvent | null): void {
+    if (!snapshot) {
+      return;
+    }
+
+    this.emit("session_active_tools_snapshot", snapshot satisfies ServerEvent);
+  }
+
   private emitStatus(
     agentId: string,
     status: AgentStatus,
@@ -5746,6 +5780,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
 
     this.emit("agent_status", payload satisfies ServerEvent);
+    for (const snapshot of this.sessionActiveTools.recordAgentStatus(payload, descriptor)) {
+      this.emitSessionActiveToolsSnapshot(snapshot);
+    }
 
     this.cortexService.handleAgentStatusEvent(descriptor, status);
   }

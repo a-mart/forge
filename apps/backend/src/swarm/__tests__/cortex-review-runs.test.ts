@@ -93,7 +93,8 @@ describe("cortex-review-runs", () => {
             scopeLabel: "alpha/alpha--s1 (memory)",
             requestText: "Review session alpha/alpha--s1 (memory freshness)",
             requestedAt: "2026-03-17T01:00:00.000Z",
-            sessionAgentId: "cortex--s2"
+            sessionAgentId: "cortex--s2",
+            sourceContext: { channel: "cli", messageId: "cli-review-1" }
           },
           {
             runId: "review-invalid-trigger",
@@ -126,7 +127,8 @@ describe("cortex-review-runs", () => {
         scopeLabel: "alpha/alpha--s1 (memory)",
         requestText: "Review session alpha/alpha--s1 (memory freshness)",
         requestedAt: "2026-03-17T01:00:00.000Z",
-        sessionAgentId: "cortex--s2"
+        sessionAgentId: "cortex--s2",
+        sourceContext: { channel: "cli", messageId: "cli-review-1" }
       }
     ]);
   });

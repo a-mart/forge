@@ -153,6 +153,10 @@ export class WsHandler {
     this.subscriptionManager.broadcastToSession(sessionAgentId, event);
   }
 
+  broadcastToExactSubscription(agentId: string, event: ServerEvent): void {
+    this.subscriptionManager.broadcastToExactSubscription(agentId, event);
+  }
+
   broadcastUnreadCountUpdate(sessionAgentId: string, count: number): void {
     this.subscriptionManager.broadcastUnreadCountUpdate(sessionAgentId, count);
   }

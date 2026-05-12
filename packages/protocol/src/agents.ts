@@ -1,3 +1,4 @@
+import type { CliSessionMetadata } from './cli.js'
 import { CATALOG_FAMILY_IDS } from './model-catalog.js'
 
 export type AgentStatus = 'idle' | 'streaming' | 'terminated' | 'stopped' | 'error'
@@ -116,6 +117,7 @@ export interface AgentDescriptor {
   sessionPurpose?: AgentSessionPurpose
   sessionSurface?: AgentSessionSurface
   collab?: AgentCollaborationLink
+  cli?: CliSessionMetadata
   pinnedAt?: string
   mergedAt?: string
   compactionCount?: number

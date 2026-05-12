@@ -58,10 +58,10 @@ describe('SettingsLayout', () => {
   it('shows all tabs when availableTabs is omitted', () => {
     renderLayout({})
 
-    // Desktop nav should have 12 items (all tabs)
+    // Desktop nav should have 13 items (all tabs including CLI Access)
     const desktopNav = container.querySelector('nav.hidden')
     const buttons = desktopNav?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(12)
+    expect(buttons.length).toBe(13)
   })
 
   it('filters tabs to only availableTabs when provided', () => {

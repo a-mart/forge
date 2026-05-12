@@ -18,12 +18,16 @@ const backendBuildEntry = path.join(backendWorkspaceDir, 'dist', 'index.js')
 const uiWorkspaceDir = path.join(repoRoot, 'apps', 'ui')
 const uiBuildOutputDir = path.join(uiWorkspaceDir, '.output')
 const uiPublicOutputDir = path.join(uiBuildOutputDir, 'public')
+const cliWorkspaceDir = path.join(repoRoot, 'packages', 'cli')
+const cliBuiltEntry = path.join(cliWorkspaceDir, 'dist', 'cli.js')
 const stageDir = path.join(electronDir, '.stage')
 const releaseDir = path.join(electronDir, 'release')
 const backendStageDir = path.join(stageDir, 'backend')
 const backendStageBundlePath = path.join(backendStageDir, 'dist', 'index.mjs')
 const backendStageNodeModulesDir = path.join(backendStageDir, 'node_modules')
 const uiStageDir = path.join(stageDir, 'ui')
+const cliStageDir = path.join(stageDir, 'cli')
+const cliStagedEntry = path.join(cliStageDir, 'cli.js')
 const forgeResourcesDir = path.join(stageDir, 'forge-resources')
 const stagedBuiltinSkillsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins')
 const stagedBuiltinArchetypesDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'archetypes', 'builtins')
@@ -110,19 +114,23 @@ async function main() {
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/protocol', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/ui', 'build'])
+  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/cli', 'build'])
   await run(pnpmCommand, ['--dir', electronDir, 'build'])
 
   await stageBundledBackend()
   await stageRendererAssets()
   await stageBackendResources()
+  await stageCliArtifact()
 
   await assertExists(backendStageBundlePath, 'staged backend bundle entry')
   await assertExists(path.join(uiStageDir, 'index.html'), 'staged renderer entry')
   await assertExists(stagedBuiltinSkillsDir, 'staged built-in skills')
   await assertExists(stagedBuiltinArchetypesDir, 'staged built-in archetypes')
   await assertExists(stagedBuiltinSpecialistsDir, 'staged built-in specialists')
+  await assertExists(cliStagedEntry, 'staged CLI entry')
 
   await validatePackagedRuntimePreflight()
+  await validateStagedCliPreflight()
 }
 
 async function stageBundledBackend() {
@@ -228,6 +236,80 @@ export async function validatePackagedRuntimePreflight() {
   console.log(`[electron/build-all] Packaged-runtime preflight resolved and loaded ${verifiedPackages.length} staged runtime packages`)
   for (const resolution of verifiedPackages) {
     console.log(`[electron/build-all]   ${resolution}`)
+  }
+}
+
+async function stageCliArtifact() {
+  if (!existsSync(cliBuiltEntry)) {
+    throw new Error(
+      `CLI build artifact not found at ${cliBuiltEntry}. Ensure @forge/cli was built before staging.`,
+    )
+  }
+
+  await mkdir(cliStageDir, { recursive: true })
+  await cp(cliBuiltEntry, cliStagedEntry)
+
+  // The CLI bundle uses ESM syntax (import/import.meta), but the nearest
+  // ancestor package.json (apps/electron/package.json) declares "type": "commonjs".
+  // Without an explicit ESM marker, Node treats the .js file as CJS and fails.
+  // Drop a minimal package.json so both the build-time preflight and the
+  // packaged Electron app (resources/cli/) resolve the correct module type.
+  await writeFile(
+    path.join(cliStageDir, 'package.json'),
+    JSON.stringify({ type: 'module' }) + '\n',
+    'utf8',
+  )
+
+  console.log(`[electron/build-all] Staged CLI artifact at ${path.relative(electronDir, cliStagedEntry)}`)
+}
+
+async function validateStagedCliPreflight() {
+  if (!existsSync(cliStagedEntry)) {
+    throw new Error(
+      `Staged CLI preflight failed: staged entry not found at ${cliStagedEntry}`,
+    )
+  }
+
+  // Run the staged CLI entry with Node to verify the bundle is self-contained
+  // and produces valid version output. This uses the build-time Node process;
+  // the full ELECTRON_RUN_AS_NODE verification happens post-packaging.
+  try {
+    const result = spawn(process.execPath, [cliStagedEntry, '--version'], {
+      cwd: electronDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      timeout: 15_000,
+    })
+
+    const output = await new Promise((resolve, reject) => {
+      let stdout = ''
+      let stderr = ''
+
+      result.stdout?.on('data', (chunk) => { stdout += chunk.toString() })
+      result.stderr?.on('data', (chunk) => { stderr += chunk.toString() })
+
+      result.once('exit', (code) => {
+        if (code === 0) {
+          resolve(stdout.trim())
+        } else {
+          reject(new Error(
+            `Staged CLI exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`,
+          ))
+        }
+      })
+
+      result.once('error', reject)
+    })
+
+    if (typeof output !== 'string' || output.length === 0) {
+      throw new Error('Staged CLI --version produced no output')
+    }
+
+    console.log(`[electron/build-all] Staged CLI preflight: ${output}`)
+  } catch (error) {
+    throw new Error(
+      `Staged CLI preflight failed: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
 }
 

@@ -2,10 +2,12 @@ import {
   MANAGER_MODEL_PRESETS,
   type AgentCollaborationLink,
   type AgentCreatorResult,
+  type CliSessionMetadata,
   type AgentModelOrigin,
   type AgentSessionSurface,
   type ChoiceRequestEvent,
   type CollaborationAuthor,
+  type MessageChannel as ProtocolMessageChannel,
   type ManagerProfile,
   type ProjectAgentInfo,
   type ProjectAgentMessageContext,
@@ -19,7 +21,7 @@ export type AgentRole = "manager" | "worker";
 export type AgentArchetypeId = string;
 
 export type { AgentStatus };
-export type { AgentCollaborationLink, AgentModelOrigin, AgentSessionSurface, ManagerProfile };
+export type { AgentCollaborationLink, AgentModelOrigin, AgentSessionSurface, CliSessionMetadata, ManagerProfile };
 export type { ProjectAgentMessageContext };
 export type {
   ChoiceAnswer,
@@ -71,6 +73,7 @@ export interface AgentDescriptor {
   sessionPurpose?: AgentSessionPurpose;
   sessionSurface?: AgentSessionSurface;
   collab?: AgentCollaborationLink;
+  cli?: CliSessionMetadata;
   sessionSystemPrompt?: string;
   pinnedAt?: string;
   mergedAt?: string;
@@ -96,7 +99,7 @@ export type RequestedDeliveryMode = "auto" | "followUp" | "steer";
 
 export type AcceptedDeliveryMode = "prompt" | "followUp" | "steer";
 
-export type MessageChannel = "web" | "telegram";
+export type MessageChannel = ProtocolMessageChannel;
 
 export interface MessageSourceContext {
   channel: MessageChannel;

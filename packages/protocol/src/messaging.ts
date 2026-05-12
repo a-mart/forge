@@ -1,7 +1,7 @@
 export type DeliveryMode = 'auto' | 'followUp' | 'steer'
 export type AcceptedDeliveryMode = 'prompt' | 'followUp' | 'steer'
 
-export type MessageChannel = 'web' | 'telegram'
+export type MessageChannel = 'web' | 'telegram' | 'cli'
 
 export interface MessageSourceContext {
   channel: MessageChannel

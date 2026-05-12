@@ -17,6 +17,7 @@ interface SessionCreationOptions {
   name?: string;
   sessionAgentId?: string;
   sessionPurpose?: AgentDescriptor["sessionPurpose"];
+  cli?: AgentDescriptor["cli"];
 }
 
 interface SessionCreationOverrides {
@@ -365,6 +366,7 @@ export class SwarmSessionService {
     const forkedDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
     forkedDescriptor.model = { ...sourceDescriptor.model };
     forkedDescriptor.modelOrigin = sourceDescriptor.modelOrigin;
+    forkedDescriptor.cli = sourceDescriptor.cli ? { ...sourceDescriptor.cli } : undefined;
 
     await this.options.provisioner.provisionSession({
       descriptor: forkedDescriptor,

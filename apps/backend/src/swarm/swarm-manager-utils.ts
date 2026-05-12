@@ -29,6 +29,7 @@ import type {
   AgentContextUsage,
   AgentDescriptor,
   AgentModelDescriptor,
+  CliSessionMetadata,
   ConversationAttachment,
   ConversationAttachmentMetadata,
   ConversationBinaryAttachment,
@@ -48,6 +49,7 @@ const SYNTHETIC_PI_MODEL_BLUEPRINTS: Readonly<Record<string, Readonly<Record<str
 };
 const VALID_PERSISTED_PROJECT_AGENT_CAPABILITIES = new Set<string>(PROJECT_AGENT_CAPABILITIES);
 const VALID_PERSISTED_SESSION_SURFACES = new Set(["builder", "collab"]);
+const VALID_PERSISTED_CLI_SESSION_COMMANDS = new Set<CliSessionMetadata["command"]>(["run", "launch", "sessions create"]);
 const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "idle",
   "streaming",
@@ -79,6 +81,21 @@ function cloneContextUsage(contextUsage: AgentContextUsage | undefined): AgentCo
     tokens: contextUsage.tokens,
     contextWindow: contextUsage.contextWindow,
     percent: contextUsage.percent
+  };
+}
+
+function cloneCliSessionMetadata(cli: CliSessionMetadata | undefined): CliSessionMetadata | undefined {
+  if (!cli) {
+    return undefined;
+  }
+
+  return {
+    createdBy: cli.createdBy,
+    runId: cli.runId,
+    command: cli.command,
+    startedAt: cli.startedAt,
+    ...(cli.invocationCwd !== undefined ? { invocationCwd: cli.invocationCwd } : {}),
+    ...(cli.label !== undefined ? { label: cli.label } : {})
   };
 }
 
@@ -167,6 +184,7 @@ export function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
     contextUsage: cloneContextUsage(descriptor.contextUsage),
     projectAgent: cloneProjectAgentInfo(descriptor),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
+    cli: cloneCliSessionMetadata(descriptor.cli),
     ...(descriptor.agentCreatorResult !== undefined
       ? {
           agentCreatorResult: {
@@ -359,6 +377,15 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return 'collab metadata must be omitted unless sessionSurface is "collab"';
   }
 
+  let normalizedCli: CliSessionMetadata | undefined;
+  if (value.cli !== undefined) {
+    try {
+      normalizedCli = sanitizeCliSessionMetadata(value.cli);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
   if (value.sessionSystemPrompt !== undefined && typeof value.sessionSystemPrompt !== "string") {
     return "sessionSystemPrompt must be a string when provided";
   }
@@ -459,6 +486,7 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
       modelId: descriptor.model.modelId,
       thinkingLevel: descriptor.model.thinkingLevel
     },
+    ...(value.cli !== undefined ? { cli: normalizedCli } : {}),
     ...(normalizedProjectAgent !== descriptor.projectAgent ? { projectAgent: normalizedProjectAgent } : {})
   };
 }
@@ -477,6 +505,64 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+export function sanitizeCliSessionMetadata(value: unknown): CliSessionMetadata | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new Error("cli must be an object when provided");
+  }
+
+  if (value.createdBy !== "forge-cli") {
+    throw new Error('cli.createdBy must be "forge-cli"');
+  }
+
+  const runId = normalizeRequiredCliString(value.runId, "cli.runId");
+  const command = normalizeRequiredCliString(value.command, "cli.command");
+  if (!isCliSessionCommand(command)) {
+    throw new Error('cli.command must be one of "run", "launch", or "sessions create"');
+  }
+
+  const startedAt = normalizeRequiredCliString(value.startedAt, "cli.startedAt");
+  const invocationCwd = normalizeOptionalCliString(value.invocationCwd, "cli.invocationCwd");
+  const label = normalizeOptionalCliString(value.label, "cli.label");
+
+  return {
+    createdBy: "forge-cli",
+    runId,
+    command,
+    startedAt,
+    ...(invocationCwd !== undefined ? { invocationCwd } : {}),
+    ...(label !== undefined ? { label } : {})
+  };
+}
+
+function isCliSessionCommand(value: string): value is CliSessionMetadata["command"] {
+  return VALID_PERSISTED_CLI_SESSION_COMMANDS.has(value as CliSessionMetadata["command"]);
+}
+
+function normalizeRequiredCliString(value: unknown, fieldName: string): string {
+  if (!isNonEmptyString(value)) {
+    throw new Error(`${fieldName} must be a non-empty string`);
+  }
+
+  return value.trim();
+}
+
+function normalizeOptionalCliString(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string when provided`);
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export function isEnoentError(error: unknown): boolean {
@@ -1352,7 +1438,7 @@ export function parseCompactSlashCommand(text: string): { customInstructions?: s
 
 export function normalizeMessageTargetContext(input: MessageTargetContext): MessageTargetContext {
   return {
-    channel: input.channel === "telegram" ? input.channel : "web",
+    channel: normalizeMessageChannel(input.channel),
     channelId: normalizeOptionalMetadataValue(input.channelId),
     userId: normalizeOptionalMetadataValue(input.userId),
     threadTs: normalizeOptionalMetadataValue(input.threadTs),
@@ -1362,7 +1448,7 @@ export function normalizeMessageTargetContext(input: MessageTargetContext): Mess
 
 export function normalizeMessageSourceContext(input: MessageSourceContext): MessageSourceContext {
   return {
-    channel: input.channel === "telegram" ? input.channel : "web",
+    channel: normalizeMessageChannel(input.channel),
     channelId: normalizeOptionalMetadataValue(input.channelId),
     userId: normalizeOptionalMetadataValue(input.userId),
     messageId: normalizeOptionalMetadataValue(input.messageId),
@@ -1377,6 +1463,14 @@ export function normalizeMessageSourceContext(input: MessageSourceContext): Mess
         : undefined,
     teamId: normalizeOptionalMetadataValue(input.teamId)
   };
+}
+
+function normalizeMessageChannel(channel: MessageSourceContext["channel"]): MessageSourceContext["channel"] {
+  if (channel === "telegram" || channel === "cli") {
+    return channel;
+  }
+
+  return "web";
 }
 
 export function normalizeMemoryTemplateLines(content: string): string[] {
