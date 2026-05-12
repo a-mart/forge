@@ -5,6 +5,8 @@ export interface UnreadNotificationEvent {
   reason?: 'message' | 'choice_request'
   /** The session/manager agent this notification belongs to. Needed for per-manager prefs on worker-originated events. */
   sessionAgentId?: string
+  /** True when the backend determined this session is CLI-originated (created by CLI or latest user input via CLI). Used by the frontend local-fallback mute path. */
+  cliOriginated?: boolean
 }
 
 /** Sent during bootstrap — full authoritative state for all profiles. */

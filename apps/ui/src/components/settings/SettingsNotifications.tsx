@@ -55,6 +55,9 @@ interface SettingsNotificationsProps {
 export function SettingsNotifications({ managers, apiClient }: SettingsNotificationsProps) {
   const [store, setStore] = useState<NotificationStore>(() => readNotificationStore())
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Tracks whether the user has locally mutated CLI mute before the initial GET resolves.
+  // Prevents a stale backend response from overwriting the user's just-clicked toggle.
+  const cliMuteDirtyRef = useRef(false)
 
   // Persist whenever store changes
   useEffect(() => {
@@ -67,7 +70,7 @@ export function SettingsNotifications({ managers, apiClient }: SettingsNotificat
     let cancelled = false
     fetchNotificationSettings(apiClient)
       .then((resp) => {
-        if (cancelled) return
+        if (cancelled || cliMuteDirtyRef.current) return
         setStore((prev) => ({
           ...prev,
           muteCliNotifications: resp.settings.muteCliOriginatedNotifications,
@@ -86,6 +89,7 @@ export function SettingsNotifications({ managers, apiClient }: SettingsNotificat
   }, [])
 
   const handleCliMuteToggle = useCallback((muted: boolean) => {
+    cliMuteDirtyRef.current = true
     setStore((prev) => ({ ...prev, muteCliNotifications: muted }))
     // Fire-and-forget sync to backend (for mobile push suppression)
     if (apiClient) {

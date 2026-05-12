@@ -7,10 +7,21 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsNotifications } from './SettingsNotifications'
 import type { AgentDescriptor } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
 /* ------------------------------------------------------------------ */
+
+const settingsApiMock = vi.hoisted(() => ({
+  fetchNotificationSettings: vi.fn(),
+  updateNotificationSettings: vi.fn(),
+}))
+
+vi.mock('./settings-api', () => ({
+  fetchNotificationSettings: (...args: unknown[]) => settingsApiMock.fetchNotificationSettings(...args),
+  updateNotificationSettings: (...args: unknown[]) => settingsApiMock.updateNotificationSettings(...args),
+}))
 
 const notificationMock = vi.hoisted(() => ({
   readNotificationStore: vi.fn(),
@@ -124,15 +135,26 @@ async function flush(): Promise<void> {
   flushSync(() => {})
 }
 
+function makeMockApiClient(): SettingsApiClient {
+  return {
+    target: { kind: 'builder', label: 'test', description: 'test', wsUrl: 'ws://localhost', apiBaseUrl: 'http://localhost:47187', fetchCredentials: 'same-origin', requiresAdmin: false, availableTabs: [] },
+    endpoint: vi.fn((path: string) => path) as unknown as SettingsApiClient['endpoint'],
+    fetch: vi.fn() as unknown as SettingsApiClient['fetch'],
+    fetchJson: vi.fn() as unknown as SettingsApiClient['fetchJson'],
+    readApiError: vi.fn() as unknown as SettingsApiClient['readApiError'],
+  }
+}
+
 function renderNotifications(
   managers: AgentDescriptor[],
   store = defaultStore(),
+  apiClient?: SettingsApiClient,
 ): void {
   notificationMock.readNotificationStore.mockReturnValue(store)
 
   root = createRoot(container)
   flushSync(() => {
-    root?.render(createElement(SettingsNotifications, { managers }))
+    root?.render(createElement(SettingsNotifications, { managers, apiClient }))
   })
 }
 
@@ -391,6 +413,63 @@ describe('SettingsNotifications', () => {
 
       // The section should render
       expect(container.textContent).toContain('CLI Notifications')
+    })
+
+    it('hydrates CLI mute from backend GET on mount', async () => {
+      // Backend returns muteCliOriginatedNotifications: true, local starts at false
+      let resolveGet!: (v: { settings: { muteCliOriginatedNotifications: boolean } }) => void
+      settingsApiMock.fetchNotificationSettings.mockReturnValue(
+        new Promise((r) => { resolveGet = r }),
+      )
+
+      const store = defaultStore()
+      const apiClient = makeMockApiClient()
+      const managers = [manager('m1', 'profile-1')]
+      renderNotifications(managers, store, apiClient)
+      await flush()
+
+      // Resolve the GET
+      resolveGet({ settings: { muteCliOriginatedNotifications: true } })
+      await flush()
+
+      // The store should have been written with the backend value
+      const lastWriteCall = notificationMock.writeNotificationStore.mock.calls.at(-1)
+      expect(lastWriteCall?.[0]?.muteCliNotifications).toBe(true)
+    })
+
+    it('does not overwrite user CLI mute toggle with stale GET response', async () => {
+      // Simulates the race: user clicks toggle before GET resolves
+      let resolveGet!: (v: { settings: { muteCliOriginatedNotifications: boolean } }) => void
+      settingsApiMock.fetchNotificationSettings.mockReturnValue(
+        new Promise((r) => { resolveGet = r }),
+      )
+      settingsApiMock.updateNotificationSettings.mockResolvedValue({
+        settings: { muteCliOriginatedNotifications: true, updatedAt: '2026-01-01T00:00:00.000Z' },
+      })
+
+      const store = defaultStore() // muteCliNotifications starts as false
+      const apiClient = makeMockApiClient()
+      const managers = [manager('m1', 'profile-1')]
+      renderNotifications(managers, store, apiClient)
+      await flush()
+
+      // User clicks CLI mute toggle BEFORE GET resolves
+      const switches = Array.from(container.querySelectorAll('button[role="switch"]'))
+      const cliSwitch = switches[1]
+      expect(cliSwitch).toBeTruthy()
+      flushSync(() => {
+        fireEvent.click(cliSwitch!)
+      })
+      await flush()
+
+      // Now resolve the stale GET (which says false — the old server value)
+      resolveGet({ settings: { muteCliOriginatedNotifications: false } })
+      await flush()
+
+      // The last store write should still have muteCliNotifications: true
+      // (the user's click), NOT false (the stale GET response)
+      const lastWriteCall = notificationMock.writeNotificationStore.mock.calls.at(-1)
+      expect(lastWriteCall?.[0]?.muteCliNotifications).toBe(true)
     })
   })
 })

@@ -427,6 +427,34 @@ describe('notification-service', () => {
       handleUnreadNotification('mgr-web', state)
       expect(audioPlayCalls.length).toBeGreaterThan(0)
     })
+
+    it('suppresses sounds via cliOriginated flag even without agent.cli', () => {
+      // Simulates a non-CLI-created session whose latest user input came from CLI
+      setupStore({ muteCliNotifications: true })
+      const state = makeState({
+        agents: [
+          { agentId: 'mgr-hybrid', role: 'manager', profileId: 'profile-hybrid', status: 'idle' } as never,
+        ],
+        statuses: { 'mgr-hybrid': { status: 'idle', pendingCount: 0 } },
+      })
+
+      // No agent.cli, but backend tells us it's CLI-originated
+      handleUnreadNotification('mgr-hybrid', state, undefined, undefined, true)
+      expect(audioPlayCalls).toHaveLength(0)
+    })
+
+    it('plays sounds when cliOriginated is false even if muteCliNotifications is true', () => {
+      setupStore({ muteCliNotifications: true })
+      const state = makeState({
+        agents: [
+          { agentId: 'mgr-web2', role: 'manager', profileId: 'profile-web2', status: 'idle' } as never,
+        ],
+        statuses: { 'mgr-web2': { status: 'idle', pendingCount: 0 } },
+      })
+
+      handleUnreadNotification('mgr-web2', state, undefined, undefined, false)
+      expect(audioPlayCalls.length).toBeGreaterThan(0)
+    })
   })
 
   // ── removeCustomSound tests ──

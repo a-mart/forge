@@ -356,7 +356,7 @@ function canPlay(key: string): boolean {
  * we record the agent here and defer the all-done decision until the
  * manager transitions to idle.
  */
-const pendingCompletionCheck = new Map<string, number>() // agentId → timestamp
+const pendingCompletionCheck = new Map<string, { timestamp: number; cliOriginated?: boolean }>() // agentId → pending info
 
 // ── Trigger checks ──
 
@@ -469,6 +469,7 @@ export function handleUnreadNotification(
   state: ManagerWsState,
   reason?: 'message' | 'choice_request',
   sessionAgentId?: string,
+  cliOriginated?: boolean,
 ): void {
   const store = readNotificationStore()
   if (!store.globalEnabled) return
@@ -482,8 +483,11 @@ export function handleUnreadNotification(
   // Check if the session agent is muted — suppress all sounds
   if (isMuted(resolvedAgentId)) return
 
-  // Suppress sounds for CLI-originated sessions when the user opted in
-  if (store.muteCliNotifications && agent?.cli) return
+  // Suppress sounds for CLI-originated sessions when the user opted in.
+  // Prefer the authoritative cliOriginated flag from the backend (covers both
+  // CLI-created sessions AND sessions whose latest user input came from CLI).
+  // Fall back to agent.cli for backward compat with older backends.
+  if (store.muteCliNotifications && (cliOriginated || agent?.cli)) return
 
   // Choice-request events get their own branch — never enter the all-done path.
   if (reason === 'choice_request') {
@@ -501,7 +505,7 @@ export function handleUnreadNotification(
   if (isManagerStreaming(agentId, state)) {
     // Manager is mid-turn — defer the all-done decision until idle transition.
     // Record this agent as having a pending completion candidate.
-    pendingCompletionCheck.set(agentId, Date.now())
+    pendingCompletionCheck.set(agentId, { timestamp: Date.now(), cliOriginated })
 
     // Still play the lower-priority unread sound immediately for awareness.
     if (shouldPlayUnread(prefsKey, agentId, state, store)) {
@@ -532,7 +536,8 @@ export function handleManagerIdleTransition(
   state: ManagerWsState,
 ): void {
   // Only process if there's a pending completion candidate for this agent.
-  if (!pendingCompletionCheck.has(agentId)) return
+  const pending = pendingCompletionCheck.get(agentId)
+  if (!pending) return
   pendingCompletionCheck.delete(agentId)
 
   const store = readNotificationStore()
@@ -543,8 +548,9 @@ export function handleManagerIdleTransition(
 
   const agent = state.agents.find((a) => a.agentId === agentId)
 
-  // Suppress sounds for CLI-originated sessions when the user opted in
-  if (store.muteCliNotifications && agent?.cli) return
+  // Suppress sounds for CLI-originated sessions when the user opted in.
+  // Use the cliOriginated flag captured at notification time, fall back to agent.cli.
+  if (store.muteCliNotifications && (pending.cliOriginated || agent?.cli)) return
 
   const prefsKey = agent?.profileId ?? agentId
 

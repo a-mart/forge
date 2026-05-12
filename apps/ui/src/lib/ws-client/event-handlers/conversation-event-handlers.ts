@@ -99,7 +99,7 @@ export function handleConversationEvent(
     }
 
     case 'unread_notification':
-      handleUnreadNotification(event.agentId, context.state, event.reason, event.sessionAgentId)
+      handleUnreadNotification(event.agentId, context.state, event.reason, event.sessionAgentId, event.cliOriginated)
       return true
 
     case 'unread_counts_snapshot': {

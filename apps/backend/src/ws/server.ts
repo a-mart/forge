@@ -43,7 +43,7 @@ import {
 import { CliAccessService, readCliApiKeyEnv } from "../swarm/cli-access-service.js";
 import {
   NotificationSettingsService,
-  shouldMuteCliOriginatedNotifications,
+  isCliOriginatedSession,
 } from "../swarm/notification-settings-service.js";
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
@@ -293,13 +293,18 @@ export class SwarmWebSocketServer {
       return;
     }
 
-    const suppressUnreadNotification = await this.isUnreadNotificationSuppressed(agentId, sessionAgentId);
+    // Pre-compute CLI-origin status once — used for both suppression and event payload
+    const sessionDescriptor = this.swarmManager.getAgent(sessionAgentId);
+    const cliOriginated = await isCliOriginatedSession(sessionDescriptor);
+
+    const suppressUnreadNotification = this.isUnreadNotificationSuppressed(agentId, cliOriginated);
     if (!suppressUnreadNotification) {
       this.wsHandler.broadcastToSubscribed({
         type: "unread_notification",
         agentId,
         reason,
         sessionAgentId,
+        ...(cliOriginated ? { cliOriginated: true } : {}),
       });
     }
 
@@ -312,17 +317,17 @@ export class SwarmWebSocketServer {
     }
   }
 
-  private async isUnreadNotificationSuppressed(agentId: string, sessionAgentId: string): Promise<boolean> {
+  private isUnreadNotificationSuppressed(agentId: string, cliOriginated: boolean): boolean {
     const descriptor = this.swarmManager.getAgent(agentId);
     if (descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review") {
       return true;
     }
 
-    const sessionDescriptor = this.swarmManager.getAgent(sessionAgentId);
-    return shouldMuteCliOriginatedNotifications({
-      settingsService: this.notificationSettingsService,
-      descriptor: sessionDescriptor,
-    });
+    if (cliOriginated && this.notificationSettingsService.getSettings().muteCliOriginatedNotifications) {
+      return true;
+    }
+
+    return false;
   }
 
   private resolveUnreadContext(sessionAgentId: string): { profileId: string | null } {
