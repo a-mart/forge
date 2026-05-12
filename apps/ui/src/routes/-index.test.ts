@@ -387,7 +387,7 @@ describe('IndexPage create project model selection', () => {
 
     expect(queryByText(container, 'owned worker chatter')).not.toBeNull()
     expect(queryByText(container, /manager-call/)).not.toBeNull()
-    expect(queryByText(container, /owned-call/)).not.toBeNull()
+    expect(queryByText(container, /owned-call/)).toBeNull()
     expect(queryByText(container, 'foreign worker chatter')).toBeNull()
     expect(queryByText(container, /foreign-call/)).toBeNull()
   })
