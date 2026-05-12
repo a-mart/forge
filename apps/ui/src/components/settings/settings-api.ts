@@ -644,3 +644,30 @@ export async function submitPoolAddAccountOAuthPrompt(clientOrWsUrl: SettingsApi
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
+
+/* ------------------------------------------------------------------ */
+/*  Notification Settings                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fetch notification settings from the backend.
+ */
+export async function fetchNotificationSettings(clientOrWsUrl: SettingsApiClient | string): Promise<import('@forge/protocol').NotificationSettingsResponse> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  return client.fetchJson<import('@forge/protocol').NotificationSettingsResponse>('/api/settings/notifications')
+}
+
+/**
+ * Update notification settings on the backend.
+ */
+export async function updateNotificationSettings(
+  clientOrWsUrl: SettingsApiClient | string,
+  update: { muteCliOriginatedNotifications?: boolean },
+): Promise<import('@forge/protocol').NotificationSettingsMutationResponse> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  return client.fetchJson<import('@forge/protocol').NotificationSettingsMutationResponse>('/api/settings/notifications', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(update),
+  })
+}

@@ -168,6 +168,39 @@ describe('notification-service', () => {
       const store = readNotificationStore()
       expect(store.defaults.questionSound).toEqual({ enabled: true, soundId: 'question' })
     })
+
+    it('defaults muteCliNotifications to false when missing from stored data', () => {
+      localStorageMock.setItem(STORAGE_KEY, JSON.stringify({
+        globalEnabled: true,
+        defaults: {
+          unreadSound: { enabled: true, soundId: 'notification' },
+          allDoneSound: { enabled: true, soundId: 'complete' },
+          questionSound: { enabled: true, soundId: 'question' },
+          volume: 0.7,
+        },
+        agents: {},
+        customSounds: [],
+      }))
+      const store = readNotificationStore()
+      expect(store.muteCliNotifications).toBe(false)
+    })
+
+    it('preserves muteCliNotifications when present in stored data', () => {
+      localStorageMock.setItem(STORAGE_KEY, JSON.stringify({
+        globalEnabled: true,
+        defaults: {
+          unreadSound: { enabled: true, soundId: 'notification' },
+          allDoneSound: { enabled: true, soundId: 'complete' },
+          questionSound: { enabled: true, soundId: 'question' },
+          volume: 0.7,
+        },
+        agents: {},
+        customSounds: [],
+        muteCliNotifications: true,
+      }))
+      const store = readNotificationStore()
+      expect(store.muteCliNotifications).toBe(true)
+    })
   })
 
   // ── handleUnreadNotification tests ──
@@ -323,6 +356,76 @@ describe('notification-service', () => {
 
       handleUnreadNotification('mgr-1', state, 'choice_request')
       expect(audioPlayCalls).toHaveLength(0)
+    })
+
+    it('suppresses sounds for CLI-originated sessions when muteCliNotifications is enabled', () => {
+      setupStore({ muteCliNotifications: true })
+      const state = makeState({
+        agents: [
+          {
+            agentId: 'mgr-cli',
+            role: 'manager',
+            profileId: 'profile-cli',
+            status: 'idle',
+            cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+          } as never,
+        ],
+        statuses: { 'mgr-cli': { status: 'idle', pendingCount: 0 } },
+      })
+
+      handleUnreadNotification('mgr-cli', state)
+      expect(audioPlayCalls).toHaveLength(0)
+    })
+
+    it('suppresses question sounds for CLI sessions when muteCliNotifications is enabled', () => {
+      setupStore({ muteCliNotifications: true })
+      const state = makeState({
+        agents: [
+          {
+            agentId: 'mgr-cli',
+            role: 'manager',
+            profileId: 'profile-cli',
+            status: 'idle',
+            cli: { createdBy: 'forge-cli', runId: 'run-2', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+          } as never,
+        ],
+        statuses: { 'mgr-cli': { status: 'idle', pendingCount: 0 } },
+      })
+
+      handleUnreadNotification('mgr-cli', state, 'choice_request')
+      expect(audioPlayCalls).toHaveLength(0)
+    })
+
+    it('still plays sounds for CLI sessions when muteCliNotifications is false', () => {
+      setupStore({ muteCliNotifications: false })
+      const state = makeState({
+        agents: [
+          {
+            agentId: 'mgr-cli',
+            role: 'manager',
+            profileId: 'profile-cli',
+            status: 'idle',
+            cli: { createdBy: 'forge-cli', runId: 'run-3', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+          } as never,
+        ],
+        statuses: { 'mgr-cli': { status: 'idle', pendingCount: 0 } },
+      })
+
+      handleUnreadNotification('mgr-cli', state)
+      expect(audioPlayCalls.length).toBeGreaterThan(0)
+    })
+
+    it('still plays sounds for non-CLI sessions when muteCliNotifications is enabled', () => {
+      setupStore({ muteCliNotifications: true })
+      const state = makeState({
+        agents: [
+          { agentId: 'mgr-web', role: 'manager', profileId: 'profile-web', status: 'idle' } as never,
+        ],
+        statuses: { 'mgr-web': { status: 'idle', pendingCount: 0 } },
+      })
+
+      handleUnreadNotification('mgr-web', state)
+      expect(audioPlayCalls.length).toBeGreaterThan(0)
     })
   })
 

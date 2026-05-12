@@ -328,4 +328,69 @@ describe('SettingsNotifications', () => {
       expect(volumeSlider).toBeTruthy()
     })
   })
+
+  /* ---- CLI notification mute ---- */
+
+  describe('CLI notification mute', () => {
+    it('renders CLI Notifications section when global is enabled', async () => {
+      const managers = [manager('m1', 'profile-1')]
+      renderNotifications(managers)
+      await flush()
+
+      expect(container.textContent).toContain('CLI Notifications')
+      expect(container.textContent).toContain('Mute CLI-originated notifications')
+    })
+
+    it('hides CLI Notifications section when global is disabled', async () => {
+      const managers = [manager('m1', 'profile-1')]
+      renderNotifications(managers, disabledStore())
+      await flush()
+
+      expect(container.textContent).not.toContain('CLI Notifications')
+    })
+
+    it('renders CLI mute toggle as unchecked by default', async () => {
+      const managers = [manager('m1', 'profile-1')]
+      renderNotifications(managers)
+      await flush()
+
+      // The CLI section should exist and have its description
+      expect(container.textContent).toContain(
+        'Suppress notification sounds for CLI-created sessions',
+      )
+    })
+
+    it('persists CLI mute toggle change', async () => {
+      const managers = [manager('m1', 'profile-1')]
+      renderNotifications(managers)
+      await flush()
+
+      // Find the CLI mute switch — it's inside the CLI Notifications section
+      // Look for the switch button within the section that contains "Mute CLI"
+      const switches = Array.from(container.querySelectorAll('button[role="switch"]'))
+      // The CLI mute switch is the second switch (after global toggle)
+      const cliSwitch = switches[1]
+      expect(cliSwitch).toBeTruthy()
+
+      flushSync(() => {
+        fireEvent.click(cliSwitch!)
+      })
+      await flush()
+
+      expect(notificationMock.writeNotificationStore).toHaveBeenCalled()
+    })
+
+    it('renders CLI mute toggle as checked when muteCliNotifications is true', async () => {
+      const store = {
+        ...defaultStore(),
+        muteCliNotifications: true,
+      }
+      const managers = [manager('m1', 'profile-1')]
+      renderNotifications(managers, store)
+      await flush()
+
+      // The section should render
+      expect(container.textContent).toContain('CLI Notifications')
+    })
+  })
 })

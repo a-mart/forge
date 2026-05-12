@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bell, BellOff, Play, RotateCcw, Settings2, Trash2, Upload, Volume2 } from 'lucide-react'
+import { Bell, BellOff, Play, RotateCcw, Settings2, TerminalSquare, Trash2, Upload, Volume2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -27,6 +27,8 @@ import {
   removeCustomSound,
   previewSound,
 } from '@/lib/notification-service'
+import { updateNotificationSettings, fetchNotificationSettings } from './settings-api'
+import type { SettingsApiClient } from './settings-api-client'
 import type { AgentDescriptor } from '@forge/protocol'
 
 // ── Helpers ──
@@ -47,9 +49,10 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 interface SettingsNotificationsProps {
   managers: AgentDescriptor[]
+  apiClient?: SettingsApiClient
 }
 
-export function SettingsNotifications({ managers }: SettingsNotificationsProps) {
+export function SettingsNotifications({ managers, apiClient }: SettingsNotificationsProps) {
   const [store, setStore] = useState<NotificationStore>(() => readNotificationStore())
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -58,11 +61,39 @@ export function SettingsNotifications({ managers }: SettingsNotificationsProps) 
     writeNotificationStore(store)
   }, [store])
 
+  // Hydrate CLI mute toggle from backend on mount
+  useEffect(() => {
+    if (!apiClient) return
+    let cancelled = false
+    fetchNotificationSettings(apiClient)
+      .then((resp) => {
+        if (cancelled) return
+        setStore((prev) => ({
+          ...prev,
+          muteCliNotifications: resp.settings.muteCliOriginatedNotifications,
+        }))
+      })
+      .catch(() => {
+        // Silently ignore — localStorage remains the fallback
+      })
+    return () => { cancelled = true }
+  }, [apiClient])
+
   // ── Global toggle ──
 
   const handleGlobalToggle = useCallback((enabled: boolean) => {
     setStore((prev) => ({ ...prev, globalEnabled: enabled }))
   }, [])
+
+  const handleCliMuteToggle = useCallback((muted: boolean) => {
+    setStore((prev) => ({ ...prev, muteCliNotifications: muted }))
+    // Fire-and-forget sync to backend (for mobile push suppression)
+    if (apiClient) {
+      updateNotificationSettings(apiClient, { muteCliOriginatedNotifications: muted }).catch(() => {
+        // Silently ignore — localStorage is the primary source for browser sounds
+      })
+    }
+  }, [apiClient])
 
   // ── Defaults prefs ──
 
@@ -188,6 +219,27 @@ export function SettingsNotifications({ managers }: SettingsNotificationsProps) 
           </p>
         )}
       </SettingsSection>
+
+      {/* ── CLI Mute ── */}
+      {store.globalEnabled && (
+        <SettingsSection
+          label="CLI Notifications"
+          description="Control notifications from sessions created or messaged via the Forge CLI"
+        >
+          <SettingsWithCTA
+            label="Mute CLI-originated notifications"
+            description="Suppress notification sounds for CLI-created sessions and replies to CLI messages. Unread badges still update."
+          >
+            <div className="flex items-center gap-2">
+              <TerminalSquare className="size-4 text-muted-foreground" />
+              <Switch
+                checked={store.muteCliNotifications ?? false}
+                onCheckedChange={handleCliMuteToggle}
+              />
+            </div>
+          </SettingsWithCTA>
+        </SettingsSection>
+      )}
 
       {/* ── Notification Defaults ── */}
       {store.globalEnabled && (

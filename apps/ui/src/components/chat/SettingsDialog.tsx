@@ -118,7 +118,7 @@ export function SettingsPanel({
       targetLabel={targetLabel}
     >
       {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} target={target} apiClient={apiClient} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
-      {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}
+      {activeTab === 'notifications' && <SettingsNotifications managers={managers} apiClient={apiClient} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} target={target} apiClient={apiClient} />}
       {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />}
       {activeTab === 'integrations' && (

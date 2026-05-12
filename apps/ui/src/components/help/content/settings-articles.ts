@@ -267,13 +267,20 @@ Upload your own notification sounds in MP3, WAV, or OGG format (max 2 MB per fil
 
 To remove a custom sound, click the trash icon next to it. Any manager or the defaults using that sound falls back to the built-in default.
 
+## CLI notifications
+
+The **Mute CLI-originated notifications** toggle suppresses notification sounds for sessions that were created by the Forge CLI, as well as replies to messages sent via the CLI. Unread badges still update normally — only sounds are silenced.
+
+This is useful when you have automated CLI workflows (scripts, CI pipelines, scheduled tasks) that generate activity you don't need audible alerts for.
+
 ## Tips
 
 - The question sound is enabled by default and uses a dedicated audio file. It helps you notice when agents need your input for a decision.
 - Set a distinct "all done" sound in the defaults so you hear when any long task finishes.
 - Use per-manager overrides only when you need to tell managers apart by ear.
 - Cortex settings are separate — configure them if you want sounds for automated reviews.
-- If you prefer not to hear question alerts, disable the question sound in defaults — choice requests will fall back to the regular unread sound instead.`,
+- If you prefer not to hear question alerts, disable the question sound in defaults — choice requests will fall back to the regular unread sound instead.
+- Enable "Mute CLI-originated notifications" if you use the Forge CLI for background automation and don't want sound alerts for that activity.`,
     keywords: [
       'notifications',
       'sound',
@@ -284,6 +291,8 @@ To remove a custom sound, click the trash icon next to it. Any manager or the de
       'custom sound',
       'volume',
       'manager',
+      'cli',
+      'mute',
     ],
     relatedIds: ['settings-general'],
     contextKeys: ['settings.notifications'],

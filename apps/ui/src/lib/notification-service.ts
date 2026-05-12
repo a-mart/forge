@@ -29,6 +29,8 @@ export interface NotificationStore {
   agents: Record<string, AgentNotificationPrefs>
   customSounds: CustomSound[]
   mutedAgents?: string[]
+  /** When true, suppress notification sounds for CLI-created sessions and replies to CLI messages. Unread badges still update. */
+  muteCliNotifications?: boolean
 }
 
 // ── Constants ──
@@ -64,6 +66,7 @@ const DEFAULT_STORE: NotificationStore = {
   agents: {},
   customSounds: [],
   mutedAgents: [],
+  muteCliNotifications: false,
 }
 
 // ── Mute state (runtime cache) ──
@@ -157,6 +160,7 @@ export function readNotificationStore(): NotificationStore {
       agents: parsed.agents && typeof parsed.agents === 'object' ? parsed.agents : {},
       customSounds: Array.isArray(parsed.customSounds) ? parsed.customSounds : [],
       mutedAgents: Array.isArray(parsed.mutedAgents) ? parsed.mutedAgents : [],
+      muteCliNotifications: typeof parsed.muteCliNotifications === 'boolean' ? parsed.muteCliNotifications : false,
     }
     // Migration: persist defaults field if it was missing in stored data
     let needsPersist = !parsed.defaults
@@ -478,6 +482,9 @@ export function handleUnreadNotification(
   // Check if the session agent is muted — suppress all sounds
   if (isMuted(resolvedAgentId)) return
 
+  // Suppress sounds for CLI-originated sessions when the user opted in
+  if (store.muteCliNotifications && agent?.cli) return
+
   // Choice-request events get their own branch — never enter the all-done path.
   if (reason === 'choice_request') {
     if (shouldPlayQuestion(prefsKey, agentId, state, store)) {
@@ -535,6 +542,10 @@ export function handleManagerIdleTransition(
   if (isMuted(agentId)) return
 
   const agent = state.agents.find((a) => a.agentId === agentId)
+
+  // Suppress sounds for CLI-originated sessions when the user opted in
+  if (store.muteCliNotifications && agent?.cli) return
+
   const prefsKey = agent?.profileId ?? agentId
 
   // Now that the manager is idle, evaluate the deferred all-done check.
