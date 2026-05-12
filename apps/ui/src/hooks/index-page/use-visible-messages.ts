@@ -116,7 +116,8 @@ export function deriveVisibleMessages({
             return true
           }
 
-          return (entry.sourceContext?.channel ?? 'web') === 'web'
+          const ch = entry.sourceContext?.channel ?? 'web'
+          return ch === 'web' || ch === 'cli'
         })
 
   return {

@@ -271,4 +271,82 @@ describe('deriveVisibleMessages', () => {
       'agent_message',
     ])
   })
+
+  it('shows CLI-sourced messages in web view alongside web messages', () => {
+    const messages: ConversationEntry[] = [
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'user',
+        text: 'from-web',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'user_input',
+        sourceContext: { channel: 'web' },
+      },
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'user',
+        text: 'from-cli',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        source: 'user_input',
+        sourceContext: { channel: 'cli' },
+      },
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'user',
+        text: 'from-telegram',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        source: 'user_input',
+        sourceContext: { channel: 'telegram' },
+      },
+    ]
+
+    const result = deriveVisibleMessages({
+      messages,
+      activityMessages: [],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'web',
+    })
+
+    // CLI messages should be visible in web view; Telegram should be hidden
+    const visibleTexts = result.visibleMessages
+      .filter((e): e is Extract<ConversationEntry, { type: 'conversation_message' }> => e.type === 'conversation_message')
+      .map((e) => e.text)
+    expect(visibleTexts).toEqual(['from-web', 'from-cli'])
+  })
+
+  it('shows all channels including CLI in all view', () => {
+    const messages: ConversationEntry[] = [
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'user',
+        text: 'from-cli',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'user_input',
+        sourceContext: { channel: 'cli' },
+      },
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'assistant',
+        text: 'reply',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        source: 'speak_to_user',
+      },
+    ]
+
+    const result = deriveVisibleMessages({
+      messages,
+      activityMessages: [],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+    })
+
+    expect(result.visibleMessages).toEqual(result.allMessages)
+  })
 })

@@ -176,6 +176,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
     const forkMessageId = message.id?.trim() || message.timestamp
     const canPin = onPinMessage && message.id?.trim()
     const isProjectAgentMessage = message.source === 'project_agent_input'
+    const isCliMessage = sourceContext?.channel === 'cli'
     const projectAgentSenderName = isProjectAgentMessage
       ? message.projectAgentContext?.fromDisplayName
       : undefined
@@ -186,14 +187,16 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
             'max-w-[85%] rounded-lg rounded-tr-sm px-3 py-2',
             isProjectAgentMessage
               ? 'bg-blue-600 text-white dark:bg-blue-600'
-              : 'bg-primary text-primary-foreground',
+              : isCliMessage
+                ? 'bg-violet-600 text-white dark:bg-violet-600'
+                : 'bg-primary text-primary-foreground',
             message.pinned && 'ring-2 ring-amber-400/60 dark:ring-amber-500/50',
           )}
         >
           {message.pinned ? (
             <div className={cn(
               'mb-1 flex items-center gap-1 text-[10px]',
-              isProjectAgentMessage ? 'text-white/70' : 'text-primary-foreground/70',
+              isProjectAgentMessage || isCliMessage ? 'text-white/70' : 'text-primary-foreground/70',
             )}>
               <Pin className="size-2.5 fill-current" />
               <span>Pinned</span>
@@ -224,7 +227,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               {timestampLabel ? (
                 <p className={cn(
                   'text-right text-[10px] leading-none',
-                  isProjectAgentMessage ? 'text-white/70' : 'text-primary-foreground/70',
+                  isProjectAgentMessage || isCliMessage ? 'text-white/70' : 'text-primary-foreground/70',
                 )}>
                   {timestampLabel}
                 </p>
@@ -237,7 +240,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
                     'inline-flex size-5 items-center justify-center rounded-sm transition-colors',
                     message.pinned
                       ? 'text-amber-300 dark:text-amber-300'
-                      : isProjectAgentMessage
+                      : isProjectAgentMessage || isCliMessage
                         ? 'text-white/50 hover:text-white'
                         : 'text-primary-foreground/50 hover:text-primary-foreground',
                   )}
@@ -253,7 +256,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
                   onClick={() => onForkFromMessage(forkMessageId)}
                   className={cn(
                     'inline-flex size-5 items-center justify-center rounded-sm transition-colors',
-                    isProjectAgentMessage
+                    isProjectAgentMessage || isCliMessage
                       ? 'text-white/50 hover:text-white'
                       : 'text-primary-foreground/50 hover:text-primary-foreground',
                   )}

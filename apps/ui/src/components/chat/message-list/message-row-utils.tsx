@@ -41,6 +41,11 @@ function formatSourceBadge(sourceContext?: MessageSourceContext): string | null 
     return 'Web'
   }
 
+  if (sourceContext.channel === 'cli') {
+    return 'CLI'
+  }
+
+  // Telegram — channel-specific labels
   const isDm = sourceContext.channelType === 'dm'
 
   let label = 'Telegram'
@@ -80,7 +85,9 @@ export function SourceBadge({
           ? 'border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground/90'
           : sourceContext.channel === 'telegram'
             ? 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-            : 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+            : sourceContext.channel === 'cli'
+              ? 'border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+              : 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
       )}
     >
       [{label}]

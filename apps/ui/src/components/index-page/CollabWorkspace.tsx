@@ -53,7 +53,7 @@ function filterEntriesByView(
     }
 
     const channel = entry.sourceContext?.channel
-    return channel === 'web' || channel === undefined
+    return channel === 'web' || channel === 'cli' || channel === undefined
   })
 }
 
