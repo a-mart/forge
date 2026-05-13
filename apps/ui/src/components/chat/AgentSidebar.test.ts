@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { getAllByRole, getByRole, getByText, queryByText } from '@testing-library/dom'
-import { createElement } from 'react'
+import { createElement, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -618,6 +618,80 @@ describe('AgentSidebar', () => {
     // CLI session should be visible again
     expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
     expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
+  })
+
+  it('toggleHideCliSessions correctly persists true under StrictMode (regression: double-invoke must not flip back)', async () => {
+    // Renders under <StrictMode> so React 19 double-invokes state updaters.
+    // The old implementation placed a localStorage side-effect inside a functional
+    // updater (prev => !prev), which React called twice — the second call received
+    // the first's result as prev, flipping true back to false. This test fails with
+    // the old code and passes with the fixed direct-read-then-set approach.
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    // Render under StrictMode to trigger double-invocation of updaters
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(StrictMode, null,
+          createElement(HelpProvider, null,
+            createElement(AgentSidebar, {
+              connected: true,
+              agents: [regularSession, cliSession],
+              profiles: [profile],
+              statuses: {},
+              unreadCounts: {},
+              selectedAgentId: 'regular-session',
+              onAddManager: vi.fn(),
+              onSelectAgent: vi.fn(),
+              onDeleteAgent: vi.fn(),
+              onDeleteManager: vi.fn(),
+              onOpenSettings: vi.fn(),
+              isSettingsActive: false,
+            }),
+          ),
+        ),
+      )
+    })
+
+    const sidebar = getDesktopSidebar()
+
+    // Both sessions should be visible initially
+    expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
+    expect(localStorageMock.getItem('forge-sidebar-hide-cli-sessions')).toBeNull()
+
+    // Right-click the CLI session to open context menu, then click "Hide CLI Sessions"
+    const cliRow = getByText(sidebar, 'CLI Run')
+    const cliContextTrigger = cliRow.closest('[data-state]')?.parentElement ?? cliRow
+    flushSync(() => {
+      cliContextTrigger.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const menuItems = getAllByRole(document.body, 'menuitem')
+    const hideMenuItem = menuItems.find((item) => item.textContent?.includes('Hide CLI Sessions'))
+    expect(hideMenuItem).toBeTruthy()
+
+    flushSync(() => {
+      hideMenuItem!.click()
+    })
+    await flushEffects()
+
+    // The localStorage pref must be 'true' after a single toggle — never 'false'.
+    // With the old updater-side-effect implementation this would be 'false' under StrictMode.
+    expect(localStorageMock.getItem('forge-sidebar-hide-cli-sessions')).toBe('true')
   })
 
   it('hides a previously-selected CLI session once selection moves to a non-CLI session', () => {

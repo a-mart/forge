@@ -57,6 +57,8 @@ export function useSidebarPrefs(): UseSidebarPrefsReturn {
   const [hideCliSessions, setHideCliSessions] = useState(() => readHideCliSessionsPref())
   const [sortPreference, setSortPreference] = useState<SidebarSortPreference>(() => readStoredSortPreference())
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const hideCliSessionsRef = useRef(hideCliSessions)
+  useEffect(() => { hideCliSessionsRef.current = hideCliSessions }, [hideCliSessions])
 
   const toggleProfileCollapsed = useCallback((profileId: string) => {
     setCollapsedProfileIds((prev) => {
@@ -71,11 +73,23 @@ export function useSidebarPrefs(): UseSidebarPrefsReturn {
   }, [])
 
   const toggleHideCliSessions = useCallback(() => {
-    setHideCliSessions((prev) => {
-      const next = !prev
-      storeHideCliSessionsPref(next)
-      return next
-    })
+    // Read the current persisted value directly so the toggle is idempotent
+    // under React 19's StrictMode double-invocation of state updaters.
+    // Placing the side-effect (localStorage write + event dispatch) inside a
+    // functional updater caused React to call the updater twice with
+    // prev → !prev → !!prev, making the second write overwrite the first.
+    //
+    // If localStorage read fails (quota/security), fall back to the current
+    // React state via ref so we don't always compute next=true.
+    let current: boolean
+    try {
+      current = readHideCliSessionsPref()
+    } catch {
+      current = hideCliSessionsRef.current
+    }
+    const next = !current
+    storeHideCliSessionsPref(next)
+    setHideCliSessions(next)
   }, [])
 
   useEffect(() => {
