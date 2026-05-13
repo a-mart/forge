@@ -95,6 +95,47 @@ describe('runCli', () => {
     })
   })
 
+  it('marks stop-on-timeout runs in the final result', async () => {
+    const io = makeIo()
+    const client = mockClient()
+    client.run = async () => ({
+      status: 'timeout',
+      sessionAgentId: 'session-1',
+      profileId: 'profile-1',
+      projectAgentHandle: null,
+      finalMessage: null,
+      blocked: null,
+      timedOut: true,
+      durationMs: 123,
+    })
+    const exit = await runCli(['run', '--profile', 'profile-1', '--message', 'hello', '--timeout', '1s', '--stop-on-timeout', '--json'], {
+      io,
+      createClient: async () => client,
+    })
+    expect(exit).toBe(EXIT_CODES.timeout)
+    expect(JSON.parse(io.stdout.toString())).toMatchObject({
+      status: 'timeout',
+      timedOut: true,
+      stoppedOnTimeout: true,
+    })
+  })
+
+  it('documents choice answer schema, duration examples, and destructive safety in help', async () => {
+    const choicesIo = makeIo()
+    await runCli(['choices', '--help'], { io: choicesIo })
+    expect(choicesIo.stdout.toString()).toContain('[{"questionId":"q1","selectedOptionIds":["yes"]}]')
+    expect(choicesIo.stdout.toString()).toContain('"text"')
+
+    const runIo = makeIo()
+    await runCli(['run', '--help'], { io: runIo })
+    expect(runIo.stdout.toString()).toContain('Timeout examples: 5000, 30s, 5m.')
+    expect(runIo.stdout.toString()).toContain('stoppedOnTimeout')
+
+    const sessionsIo = makeIo()
+    await runCli(['sessions', '--help'], { io: sessionsIo })
+    expect(sessionsIo.stdout.toString()).toContain('Destructive session commands require --yes.')
+  })
+
   it('requires --yes for destructive session commands before creating a client', async () => {
     const io = makeIo()
     let createdClient = false

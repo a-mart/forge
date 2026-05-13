@@ -63,12 +63,12 @@ forge run --profile <profileId> --message "Run the requested automation" --json
 forge launch --profile <profileId> --message @prompt.md
 forge wait <agentId> --timeout 10m --stop-on-timeout
 forge choices list --session <agentId>
-forge choices answer <choiceId> --answers '{"questionId":"answerId"}' --session <agentId>
+forge choices answer <choiceId> --answers '[{"questionId":"q1","selectedOptionIds":["yes"]}]' --session <agentId>
 ```
 
-Use `--json` for stable machine-readable output. Streaming run output uses JSONL where supported.
+Use `--json` for stable machine-readable output. The CLI writes one final JSON object per command when `--json` is set.
 
-Durations accept milliseconds by default or `ms`, `s`, and `m` suffixes.
+Durations accept milliseconds by default or `ms`, `s`, and `m` suffixes. Examples: `5000`, `30s`, `10m`.
 
 ## Run semantics
 
@@ -76,17 +76,25 @@ Durations accept milliseconds by default or `ms`, `s`, and `m` suffixes.
 
 `forge launch` sends the message and returns after dispatch acknowledgement. Use `forge wait <agentId>` later to wait for completion.
 
-`--stop-on-timeout` sends a stop request after a timeout and waits for the acknowledgement. Without it, timeout leaves the session running.
+`--stop-on-timeout` sends a stop request after a timeout and waits for the acknowledgement. When the timeout path requests a stop, the CLI includes `stoppedOnTimeout: true` in the final result. Without it, timeout leaves the session running.
 
 ## Exit codes
 
-The CLI uses stable non-zero exit codes for automation. Important cases include:
+The CLI uses stable non-zero exit codes for automation.
 
-- Pending choice blocked the run
-- Timeout waiting for quiescence
-- Authentication or authorization failure
-- Unsupported server/capability mismatch
-- Invalid input or destructive command missing `--yes`
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 0 | success | Command completed successfully |
+| 10 | blocked | A pending choice blocked the run |
+| 11 | timeout | Timeout waiting for quiescence |
+| 12 | agentFailure | The session ended in an agent failure state |
+| 13 | canceled | The session or command was canceled |
+| 20 | usage | Invalid input, missing required config, or a destructive command missing `--yes` |
+| 21 | auth | The backend rejected the supplied CLI key or bearer token |
+| 22 | connection | Network or transport failure |
+| 23 | unsupported | Server/capability mismatch |
+
+A missing CLI API key is a usage/configuration error (`20`). A configured key that the backend rejects is an auth failure (`21`).
 
 Use `forge doctor --json` to diagnose URL, key, and advertised capability issues.
 

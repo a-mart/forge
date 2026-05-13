@@ -51,19 +51,24 @@ export async function handleWaitCommand(context: CommandContext): Promise<number
 }
 
 export function writeRunResult(context: CommandContext, result: CliRunResult): void {
+  const output = result.status === 'timeout' && context.args.options.stopOnTimeout
+    ? { ...result, stoppedOnTimeout: true }
+    : result
+
   if (context.args.options.json) {
-    writeJson(context.io, result)
+    writeJson(context.io, output)
     return
   }
 
   writeHuman(context.io, context.args.options, formatObject({
-    status: result.status,
-    sessionAgentId: result.sessionAgentId,
-    profileId: result.profileId,
-    finalMessage: result.finalMessage,
-    timedOut: result.timedOut,
-    durationMs: result.durationMs,
-    blocked: result.blocked ? result.blocked.reason : undefined,
+    status: output.status,
+    sessionAgentId: output.sessionAgentId,
+    profileId: output.profileId,
+    finalMessage: output.finalMessage,
+    timedOut: output.timedOut,
+    stoppedOnTimeout: 'stoppedOnTimeout' in output ? output.stoppedOnTimeout : undefined,
+    durationMs: output.durationMs,
+    blocked: output.blocked ? output.blocked.reason : undefined,
   }))
 }
 
