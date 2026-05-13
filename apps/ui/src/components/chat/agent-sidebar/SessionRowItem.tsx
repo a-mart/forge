@@ -223,7 +223,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                     ) : isAgentCreator ? (
                       <Sparkles className="size-3 shrink-0 text-violet-400" aria-label="Agent Creator" />
                     ) : (
-                      <SessionStatusDot running={running} />
+                      <SessionStatusDot running={running} isCli={Boolean(sessionAgent.cli)} />
                     )}
                     <span className="min-w-0 flex-1 truncate">
                       <span className="block truncate text-sm leading-5">

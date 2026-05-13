@@ -2,14 +2,16 @@ import { cn } from '@/lib/utils'
 import { inferModelPreset } from '@/lib/model-preset'
 import type { AgentDescriptor } from '@forge/protocol'
 
-export function SessionStatusDot({ running }: { running: boolean }) {
+export function SessionStatusDot({ running, isCli }: { running: boolean; isCli?: boolean }) {
   return (
     <span
       className={cn(
         'inline-block size-1.5 shrink-0 rounded-full',
-        running ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+        isCli
+          ? running ? 'bg-violet-500' : 'bg-violet-400/50'
+          : running ? 'bg-emerald-500' : 'bg-muted-foreground/40',
       )}
-      aria-label={running ? 'Running' : 'Idle'}
+      aria-label={isCli ? (running ? 'CLI session running' : 'CLI session idle') : (running ? 'Running' : 'Idle')}
     />
   )
 }
