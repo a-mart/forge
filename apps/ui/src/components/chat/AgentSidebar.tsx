@@ -48,7 +48,7 @@ import {
   SessionModelDialog,
 } from './agent-sidebar/dialogs'
 import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsSheet'
-import { injectGlowPulseStyle } from './agent-sidebar'
+import { findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
 import { useCortexReviewBadge, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import type { AgentSidebarProps } from './agent-sidebar/types'
 
@@ -379,33 +379,21 @@ export const AgentSidebar = React.memo(function AgentSidebar({
 
   // Wrap the CLI-session toggle with auto-navigate: when hiding CLI sessions,
   // move selection away from any currently-selected CLI session to the first
-  // visible non-CLI session in the same profile (if one exists).
+  // visible non-CLI session using the same display order the sidebar renders
+  // (project agents → pinned → regular), derived from the search-filtered
+  // displayed rows rather than raw treeRows.
   const handleToggleHideCliSessions = useCallback(() => {
     if (!hideCliSessions && selectedAgentId && !isSettingsActive) {
-      // Resolve the session-level agent (might be selecting a worker)
-      let sessionAgent: typeof agents[number] | undefined
-      const directMatch = agents.find((a) => a.agentId === selectedAgentId)
-      if (directMatch?.role === 'worker') {
-        sessionAgent = agents.find((a) => a.agentId === directMatch.managerId)
-      } else {
-        sessionAgent = directMatch
+      const displayedRows = cortexRow ? [cortexRow, ...regularRows] : regularRows
+      const targetId = findCliHideNavigationTarget(selectedAgentId, agents, displayedRows)
+      if (targetId) {
+        onSelectAgent(targetId)
       }
-
-      if (sessionAgent?.cli) {
-        const profileId = sessionAgent.profileId
-        const sameProfileRow = treeRows.find((r) => r.profile.profileId === profileId)
-        const target = sameProfileRow?.sessions.find(
-          (s) => !s.sessionAgent.cli && !s.sessionAgent.agentCreatorResult,
-        )
-        if (target) {
-          onSelectAgent(target.sessionAgent.agentId)
-        }
-        // If no non-CLI target exists, the selected session stays visible
-        // via the existing isSelectedSessionOrWorker exception in ProfileGroup
-      }
+      // If no target exists, the selected session stays visible via the
+      // existing isSelectedSessionOrWorker exception in ProfileGroup.
     }
     toggleHideCliSessions()
-  }, [hideCliSessions, selectedAgentId, isSettingsActive, agents, treeRows, onSelectAgent, toggleHideCliSessions])
+  }, [hideCliSessions, selectedAgentId, isSettingsActive, agents, regularRows, cortexRow, onSelectAgent, toggleHideCliSessions])
 
   const handleMuteAllSessions = useCallback((sessionAgentIds: string[], mute: boolean) => {
     const current = getMutedAgents()

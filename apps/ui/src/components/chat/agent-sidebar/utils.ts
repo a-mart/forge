@@ -76,6 +76,75 @@ export function filterTreeRows(
   return { filtered, matchCount }
 }
 
+// ── CLI-hide auto-navigate helper ──
+
+/**
+ * When the user toggles "Hide CLI Sessions" ON while viewing a CLI session,
+ * find the best non-CLI session to navigate to.
+ *
+ * The target is chosen from `displayedRows` (which already reflect search
+ * filtering) using the same visual order that ProfileGroup renders:
+ *   1. Project agents (always visible at top)
+ *   2. Pinned sessions (sorted by pin time ascending)
+ *   3. Regular sessions (in existing sort order — most-recently-updated first)
+ *
+ * Same-profile match is preferred; falls back to any displayed profile.
+ * Returns the target session agentId, or null if no viable target exists.
+ */
+export function findCliHideNavigationTarget(
+  selectedAgentId: string,
+  agents: AgentDescriptor[],
+  displayedRows: import('@/lib/agent-hierarchy').ProfileTreeRow[],
+): string | null {
+  // Resolve the session-level agent (selected might be a worker)
+  const directMatch = agents.find((a) => a.agentId === selectedAgentId)
+  if (!directMatch) return null
+  let sessionAgent: AgentDescriptor | undefined
+  if (directMatch.role === 'worker') {
+    sessionAgent = agents.find((a) => a.agentId === directMatch.managerId)
+  } else {
+    sessionAgent = directMatch
+  }
+  if (!sessionAgent?.cli) return null
+
+  const profileId = sessionAgent.profileId
+
+  const firstVisibleNonCli = (row: import('@/lib/agent-hierarchy').ProfileTreeRow): SessionRow | undefined => {
+    const isCandidate = (s: SessionRow) =>
+      !s.sessionAgent.cli && !s.sessionAgent.agentCreatorResult
+
+    // 1) Project agents (always pinned at top)
+    const pa = row.sessions.find((s) => Boolean(s.sessionAgent.projectAgent) && isCandidate(s))
+    if (pa) return pa
+
+    // 2) Pinned sessions (sorted by pin time ascending, matching ProfileGroup)
+    const pinned = row.sessions
+      .filter((s) => !s.sessionAgent.projectAgent && Boolean(s.sessionAgent.pinnedAt) && isCandidate(s))
+      .sort((a, b) => (a.sessionAgent.pinnedAt ?? '').localeCompare(b.sessionAgent.pinnedAt ?? ''))
+    if (pinned.length > 0) return pinned[0]
+
+    // 3) Regular sessions (in existing sort order — most-recently-updated first)
+    return row.sessions.find(
+      (s) => !s.sessionAgent.projectAgent && !s.sessionAgent.pinnedAt && isCandidate(s),
+    )
+  }
+
+  // Prefer same profile
+  const sameProfileRow = displayedRows.find((r) => r.profile.profileId === profileId)
+  let target = sameProfileRow ? firstVisibleNonCli(sameProfileRow) : undefined
+
+  // Fall back to any other displayed profile
+  if (!target) {
+    for (const row of displayedRows) {
+      if (row === sameProfileRow) continue
+      target = firstVisibleNonCli(row)
+      if (target) break
+    }
+  }
+
+  return target?.sessionAgent.agentId ?? null
+}
+
 // Inject subtle glow pulse keyframes once
 export function injectGlowPulseStyle(): void {
   if (typeof document !== 'undefined' && !document.getElementById('sidebar-glow-pulse')) {
