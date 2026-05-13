@@ -408,11 +408,11 @@ Forge uses long polling to receive messages. The **poll timeout** (default 25 se
 
 ## Scope and skill browser
 
-Use the **Configuration scope** dropdown to switch between Global and per-profile skill views. The main area is a master-detail skill browser: a searchable skill list rail on the left, a file tree in the middle, and a file viewer on the right. Select a skill to browse its definition (\`SKILL.md\`), helper scripts, and other files.
+Use the **Configuration scope** dropdown to switch between Global and per-profile skill views. The Skills tab fills the settings content area with a searchable skill list rail on the left, a file tree in the middle, and a file viewer on the right. Each area scrolls independently, so long skill lists and file trees stay usable. Select a skill to browse its definition (\`SKILL.md\`), helper scripts, and other files.
 
 ## Environment variables
 
-When a skill declares required environment variables, they appear below the browser. The pane shows:
+When a skill declares required environment variables, they appear in the right detail pane alongside the selected skill. The pane shows:
 
 - **Variable name** — the env var key (e.g. \`BRAVE_API_KEY\`)
 - **Status** — whether a value is currently saved
@@ -422,7 +422,7 @@ To configure a variable, paste the value into the input field and click **Save**
 
 ## Dedicated skill panels
 
-Skills like Chrome CDP have dedicated configuration UI that appears below the browser when selected. These panels expose settings specific to that skill, like connection targets or scope controls.
+Skills like Chrome CDP have dedicated configuration UI in the right detail pane when selected. These panels expose settings specific to that skill, like connection targets or scope controls.
 
 ## How skills load
 
