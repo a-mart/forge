@@ -570,6 +570,179 @@ describe('AgentSidebar', () => {
     expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
   })
 
+  it('toggles CLI session visibility at runtime when localStorage pref changes', async () => {
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    renderSidebar({
+      agents: [regularSession, cliSession],
+      profiles: [profile],
+    })
+
+    const sidebar = getDesktopSidebar()
+
+    // Both sessions should be visible initially
+    expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
+    expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
+
+    // Simulate the toggle to hide: write to localStorage and dispatch the pref-change event
+    localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
+    flushSync(() => {
+      window.dispatchEvent(new CustomEvent('forge-sidebar-pref-change', { detail: { key: 'forge-sidebar-hide-cli-sessions', value: true } }))
+    })
+    await flushEffects()
+
+    // CLI session should now be hidden
+    expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
+    expect(queryByText(sidebar, 'CLI Run')).toBeNull()
+
+    // Toggle back to show: clear the pref and dispatch the event again
+    localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'false')
+    flushSync(() => {
+      window.dispatchEvent(new CustomEvent('forge-sidebar-pref-change', { detail: { key: 'forge-sidebar-hide-cli-sessions', value: false } }))
+    })
+    await flushEffects()
+
+    // CLI session should be visible again
+    expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
+    expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
+  })
+
+  it('hides a previously-selected CLI session once selection moves to a non-CLI session', () => {
+    // This verifies the complete hide-CLI-sessions UX lifecycle:
+    // 1. CLI session is selected with hide pref ON → stays visible (selected exception)
+    // 2. Selection moves to a non-CLI session → CLI session now properly hidden
+    // In production, step 2 is triggered automatically by handleToggleHideCliSessions.
+    localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
+
+    const onSelectAgent = vi.fn()
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    const sidebarProps = {
+      connected: true,
+      agents: [regularSession, cliSession],
+      profiles: [profile],
+      statuses: {} as Record<string, { status: AgentStatus; pendingCount: number }>,
+      unreadCounts: {},
+      onAddManager: vi.fn(),
+      onSelectAgent,
+      onDeleteAgent: vi.fn(),
+      onDeleteManager: vi.fn(),
+      onOpenSettings: vi.fn(),
+      isSettingsActive: false,
+    }
+
+    // Phase 1: CLI session selected with hide ON — it stays visible (exception for selected)
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(HelpProvider, null, createElement(AgentSidebar, {
+        ...sidebarProps,
+        selectedAgentId: 'cli-session',
+      })))
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
+
+    // Phase 2: Selection moves to regular session (simulates auto-navigate)
+    flushSync(() => {
+      root?.render(createElement(HelpProvider, null, createElement(AgentSidebar, {
+        ...sidebarProps,
+        selectedAgentId: 'regular-session',
+      })))
+    })
+
+    // CLI session should now be hidden
+    expect(queryByText(sidebar, 'CLI Run')).toBeNull()
+    expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
+  })
+
+  it('hides a CLI session when selection moves away from its worker', () => {
+    // Verifies the UX fix also works when a worker of a CLI session is selected:
+    // auto-navigate should move selection to a non-CLI session.
+    localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
+
+    const onSelectAgent = vi.fn()
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const cliWorker = worker('cli-worker', 'cli-session')
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    const sidebarProps = {
+      connected: true,
+      agents: [regularSession, cliSession, cliWorker],
+      profiles: [profile],
+      statuses: {} as Record<string, { status: AgentStatus; pendingCount: number }>,
+      unreadCounts: {},
+      onAddManager: vi.fn(),
+      onSelectAgent,
+      onDeleteAgent: vi.fn(),
+      onDeleteManager: vi.fn(),
+      onOpenSettings: vi.fn(),
+      isSettingsActive: false,
+    }
+
+    // Phase 1: Worker of CLI session is selected — CLI session stays visible
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(HelpProvider, null, createElement(AgentSidebar, {
+        ...sidebarProps,
+        selectedAgentId: 'cli-worker',
+      })))
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
+
+    // Phase 2: Selection moves to regular session (simulates auto-navigate)
+    flushSync(() => {
+      root?.render(createElement(HelpProvider, null, createElement(AgentSidebar, {
+        ...sidebarProps,
+        selectedAgentId: 'regular-session',
+      })))
+    })
+
+    // CLI session should now be hidden
+    expect(queryByText(sidebar, 'CLI Run')).toBeNull()
+    expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
+  })
+
   it('shows the selected Cortex review-run session so it stays directly reachable', () => {
     const createdAt = '2026-01-01T00:00:00.000Z'
     const updatedAt = createdAt

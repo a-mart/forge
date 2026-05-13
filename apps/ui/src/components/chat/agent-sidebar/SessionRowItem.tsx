@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Settings,
   Sparkles,
+  Terminal,
   Trash2,
   Zap,
 } from 'lucide-react'
@@ -68,6 +69,8 @@ const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
   'isMutedSession',
   'onToggleMute',
   'getCreatorAttribution',
+  'hideCliSessions',
+  'onToggleHideCliSessions',
 ]
 
 /**
@@ -115,6 +118,8 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   isMutedSession,
   onToggleMute,
   getCreatorAttribution,
+  hideCliSessions,
+  onToggleHideCliSessions,
 }: SessionRowItemProps) {
   const { sessionAgent, workers, isDefault } = session
   const running = isSessionRunning(sessionAgent)
@@ -295,6 +300,12 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             <ContextMenuItem onClick={() => onToggleMute()}>
               <BellOff className="mr-2 size-3.5" />
               {isMutedSession ? 'Unmute' : 'Mute'}
+            </ContextMenuItem>
+          ) : null}
+          {onToggleHideCliSessions && Boolean(sessionAgent.cli) ? (
+            <ContextMenuItem onClick={() => onToggleHideCliSessions()}>
+              <Terminal className="mr-2 size-3.5" />
+              {hideCliSessions ? 'Show CLI Sessions' : 'Hide CLI Sessions'}
             </ContextMenuItem>
           ) : null}
 

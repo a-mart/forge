@@ -377,6 +377,36 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     toggleMute(agentId)
   }, [])
 
+  // Wrap the CLI-session toggle with auto-navigate: when hiding CLI sessions,
+  // move selection away from any currently-selected CLI session to the first
+  // visible non-CLI session in the same profile (if one exists).
+  const handleToggleHideCliSessions = useCallback(() => {
+    if (!hideCliSessions && selectedAgentId && !isSettingsActive) {
+      // Resolve the session-level agent (might be selecting a worker)
+      let sessionAgent: typeof agents[number] | undefined
+      const directMatch = agents.find((a) => a.agentId === selectedAgentId)
+      if (directMatch?.role === 'worker') {
+        sessionAgent = agents.find((a) => a.agentId === directMatch.managerId)
+      } else {
+        sessionAgent = directMatch
+      }
+
+      if (sessionAgent?.cli) {
+        const profileId = sessionAgent.profileId
+        const sameProfileRow = treeRows.find((r) => r.profile.profileId === profileId)
+        const target = sameProfileRow?.sessions.find(
+          (s) => !s.sessionAgent.cli && !s.sessionAgent.agentCreatorResult,
+        )
+        if (target) {
+          onSelectAgent(target.sessionAgent.agentId)
+        }
+        // If no non-CLI target exists, the selected session stays visible
+        // via the existing isSelectedSessionOrWorker exception in ProfileGroup
+      }
+    }
+    toggleHideCliSessions()
+  }, [hideCliSessions, selectedAgentId, isSettingsActive, agents, treeRows, onSelectAgent, toggleHideCliSessions])
+
   const handleMuteAllSessions = useCallback((sessionAgentIds: string[], mute: boolean) => {
     const current = getMutedAgents()
     for (const id of sessionAgentIds) {
@@ -450,7 +480,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       onMuteAllSessions={handleMuteAllSessions}
       getCreatorAttribution={getCreatorAttribution}
       hideCliSessions={hideCliSessions}
-      onToggleHideCliSessions={toggleHideCliSessions}
+      onToggleHideCliSessions={handleToggleHideCliSessions}
     />
   ), [
     statuses, unreadCounts, selectedAgentId, isSettingsActive, isSearchActive,
@@ -466,7 +496,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onSetSessionProjectAgent, handlePromoteToProjectAgent, handleOpenProjectAgentSettings,
     onPinSession, handleDemoteProjectAgent, onCreateAgentCreator, mutedAgentsState,
     handleToggleMute, handleMuteAllSessions, getCreatorAttribution,
-    hideCliSessions, toggleHideCliSessions,
+    hideCliSessions, handleToggleHideCliSessions,
   ])
 
   const sidebarContent = (

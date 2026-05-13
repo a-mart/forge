@@ -384,6 +384,8 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                   isMutedSession={mutedAgents?.has(sid)}
                   onToggleMute={onToggleMute ? () => onToggleMute(sid) : undefined}
                   getCreatorAttribution={getCreatorAttribution}
+                  hideCliSessions={hideCliSessions}
+                  onToggleHideCliSessions={onToggleHideCliSessions}
                 />
               )
             }
