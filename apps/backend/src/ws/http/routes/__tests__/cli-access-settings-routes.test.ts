@@ -1,5 +1,5 @@
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTempConfig } from "../../../../test-support/index.js";
 import { CliAccessService } from "../../../../swarm/cli-access-service.js";
 import { sendJson } from "../../../http-utils.js";
@@ -13,6 +13,7 @@ interface TestServer {
 const activeServers: TestServer[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(activeServers.splice(0).map((server) => server.close()));
 });
 
@@ -261,6 +262,63 @@ describe("CLI access settings routes — cross-origin protection", () => {
       headers: { Origin: "http://127.0.0.1:9999" },
     });
     expect(response.status).toBe(403);
+  });
+
+  it("allows the fixed Electron dev renderer origins only in desktop dev mode", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "1");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "1");
+    const { server } = await setup();
+
+    for (const origin of ["http://127.0.0.1:47188", "http://localhost:47188"]) {
+      const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+        method: "GET",
+        headers: { Origin: origin },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+    }
+  });
+
+  it("rejects the Electron dev renderer origin outside desktop dev mode", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "1");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "0");
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "http://127.0.0.1:47188" },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("rejects arbitrary localhost ports in Electron desktop dev mode", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "1");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "1");
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "http://localhost:47189" },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("rejects forwarded Electron dev renderer requests", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "1");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "1");
+    const { server } = await setup();
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Origin: "http://127.0.0.1:47188",
+        "X-Forwarded-For": "127.0.0.1",
+      },
+    });
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   // -- Same-origin acceptance --

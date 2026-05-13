@@ -186,6 +186,7 @@ class BackendSupervisor {
         env: {
           ...process.env,
           FORGE_DESKTOP: '1',
+          FORGE_ELECTRON_DEV: app.isPackaged ? '0' : '1',
           FORGE_HOST: process.env.FORGE_HOST || '0.0.0.0',
           FORGE_PORT: process.env.FORGE_PORT || String(resolveDefaultBackendPort()),
           FORGE_RESOURCES_DIR: resourcesDir,
