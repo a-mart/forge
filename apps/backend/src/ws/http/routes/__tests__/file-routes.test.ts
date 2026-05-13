@@ -115,6 +115,27 @@ describe("file routes", () => {
     });
   });
 
+  it("rejects write-file targets below symlinked parent directories outside allowed roots", async () => {
+    const harness = await createFileRouteHarness();
+    const outsideDir = await mkdtemp(join(tmpdir(), "file-routes-write-outside-"));
+    tempRoots.push(outsideDir);
+    const linkPath = join(harness.workspaceDir, "external-dir");
+    const targetPath = join(linkPath, "pwn.txt");
+    const outsideTargetPath = join(outsideDir, "pwn.txt");
+    await symlink(outsideDir, linkPath, "dir");
+
+    const response = await fetch(`${harness.server.baseUrl}/api/write-file`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: targetPath, content: "blocked" }),
+    });
+
+    expect(response.status).toBe(403);
+    const payload = (await response.json()) as { error: string };
+    expect(payload.error).toContain("outside allowed roots");
+    await expect(readFile(outsideTargetPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("validates write-file payloads and versioningSource", async () => {
     const harness = await createFileRouteHarness();
 

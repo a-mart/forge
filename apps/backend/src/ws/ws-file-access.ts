@@ -100,10 +100,6 @@ async function resolvePathWithinRoots(
     return normalizedRequestedPath;
   }
 
-  if (await isPathWithinRoots(normalizedRequestedPath, allowedRoots)) {
-    return normalizedRequestedPath;
-  }
-
   let existingAncestor = normalizedRequestedPath;
   while (true) {
     try {
