@@ -44,7 +44,8 @@ export function createCliAccessSettingsRoutes(options: {
  * read the key response cross-origin. Instead we:
  *
  *  - Allow only loopback socket clients (same-machine settings UI or local
- *    CLI tools). Forwarded client headers are not trusted for this decision.
+ *    CLI tools). Forwarded/proxy headers cause fail-closed rejection because
+ *    a same-host reverse proxy also presents as a loopback socket client.
  *  - Allow requests whose Origin matches the server's own origin derived
  *    from the request Host header (covers localhost, LAN IPs, Tailscale
  *    hostnames, and any custom bind address).
@@ -58,8 +59,17 @@ function applySameOriginGate(
   const origin = request.headers.origin;
 
   // Local-admin only: the CLI key settings surface can expose plaintext keys,
-  // so every request must originate from the same machine. Do not trust
-  // X-Forwarded-For / Forwarded client addresses for this authorization gate.
+  // so every request must originate from the same machine over a direct socket.
+  // A same-host reverse proxy also reaches us from loopback, so fail closed as
+  // soon as proxy/forwarding headers are present instead of trying to interpret
+  // or trust them for authorization.
+  if (hasProxyForwardingHeaders(request)) {
+    sendJson(response, 403, {
+      error: { code: "forbidden_origin", message: "CLI key management requires a direct local connection", status: 403 },
+    });
+    return false;
+  }
+
   if (!isLoopbackAddress(request.socket.remoteAddress)) {
     sendJson(response, 403, {
       error: { code: "forbidden_origin", message: "CLI key management is allowed only from local clients", status: 403 },
@@ -114,6 +124,15 @@ function stripAddressPortAndQuotes(value: string): string {
   return normalized;
 }
 
+function hasProxyForwardingHeaders(request: IncomingMessage): boolean {
+  return (
+    request.headers["x-forwarded-for"] !== undefined ||
+    request.headers["x-forwarded-proto"] !== undefined ||
+    request.headers["x-forwarded-host"] !== undefined ||
+    request.headers.forwarded !== undefined
+  );
+}
+
 function isLoopbackAddress(address: string | undefined): boolean {
   if (!address) return false;
   const normalized = stripAddressPortAndQuotes(address).toLowerCase();
@@ -150,29 +169,11 @@ function isSameOrigin(origin: string, request: IncomingMessage): boolean {
 }
 
 /**
- * Resolve the effective request protocol, honoring proxy headers.
- *
- * Priority: `X-Forwarded-Proto` → `Forwarded: proto=` → socket encryption
- * → `http`. Follows the same convention as the collaboration auth adapter
- * in `collaboration/auth/node-http-adapter.ts`.
+ * Resolve the direct request protocol. Proxy headers are intentionally ignored
+ * for CLI key management; their presence is rejected before same-origin checks.
  */
 function resolveRequestProtocol(request: IncomingMessage): "http" | "https" {
-  // 1. X-Forwarded-Proto (de-facto standard, first value if comma-separated)
-  const xfp = request.headers["x-forwarded-proto"];
-  const xfpValue = (Array.isArray(xfp) ? xfp[0] : xfp)?.split(",")[0]?.trim().toLowerCase();
-  if (xfpValue === "https") return "https";
-  if (xfpValue === "http") return "http";
-
-  // 2. RFC 7239 Forwarded header
-  const forwarded = request.headers.forwarded;
-  const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  const protoMatch = forwardedValue?.match(/proto=(https|http)/i);
-  if (protoMatch?.[1]?.toLowerCase() === "https") return "https";
-  if (protoMatch?.[1]?.toLowerCase() === "http") return "http";
-
-  // 3. Direct socket encryption (native TLS)
   if ((request.socket as { encrypted?: boolean }).encrypted) return "https";
-
   return "http";
 }
 

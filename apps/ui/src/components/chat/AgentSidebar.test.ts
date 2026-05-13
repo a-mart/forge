@@ -478,6 +478,39 @@ describe('AgentSidebar', () => {
 
   })
 
+  it('selects the first visible session from a profile header when CLI sessions are hidden', () => {
+    localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
+    const onSelectAgent = vi.fn()
+
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    renderSidebar({
+      agents: [regularSession, cliSession],
+      profiles: [profile],
+      onSelectAgent,
+    })
+
+    const sidebar = getDesktopSidebar()
+    const profileButton = getByText(sidebar, 'My Project').closest('button') as HTMLButtonElement
+    click(profileButton)
+    expect(onSelectAgent).toHaveBeenCalledTimes(1)
+    expect(onSelectAgent).toHaveBeenLastCalledWith('regular-session')
+  })
+
   it('keeps a selected CLI session visible even when hide-cli-sessions is set', () => {
     localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
 

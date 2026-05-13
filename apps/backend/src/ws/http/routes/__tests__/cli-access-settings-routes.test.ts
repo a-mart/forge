@@ -314,7 +314,7 @@ describe("CLI access settings routes — cross-origin protection", () => {
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
-  it("allows no-Origin loopback socket requests even when X-Forwarded-For claims remote", async () => {
+  it("rejects no-Origin loopback socket requests with X-Forwarded-For", async () => {
     const { server } = await setup();
 
     const result = await rawHttpRequest({
@@ -322,7 +322,7 @@ describe("CLI access settings routes — cross-origin protection", () => {
       method: "GET",
       headers: { "X-Forwarded-For": "100.64.0.10" },
     });
-    expect(result.status).toBe(200);
+    expect(result.status).toBe(403);
   });
 
   it("rejects no-Origin remoteAddress even when X-Forwarded-For claims loopback", async () => {
@@ -336,7 +336,7 @@ describe("CLI access settings routes — cross-origin protection", () => {
     expect(result.status).toBe(403);
   });
 
-  it("allows no-Origin loopback socket requests even when Forwarded for claims remote", async () => {
+  it("rejects no-Origin loopback socket requests with Forwarded", async () => {
     const { server } = await setup();
 
     const result = await rawHttpRequest({
@@ -344,7 +344,18 @@ describe("CLI access settings routes — cross-origin protection", () => {
       method: "GET",
       headers: { Forwarded: "for=100.64.0.11;proto=http" },
     });
-    expect(result.status).toBe(200);
+    expect(result.status).toBe(403);
+  });
+
+  it("rejects no-Origin loopback socket requests with X-Forwarded-Proto", async () => {
+    const { server } = await setup();
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: { "X-Forwarded-Proto": "https" },
+    });
+    expect(result.status).toBe(403);
   });
 
   // -- Non-loopback same-origin (LAN / Tailscale / custom hostname) --
@@ -463,8 +474,8 @@ describe("CLI access settings routes — cross-origin protection", () => {
 /*  TLS terminator / reverse proxy (X-Forwarded-Proto / Forwarded)     */
 /* ------------------------------------------------------------------ */
 
-describe("CLI access settings routes — HTTPS behind proxy", () => {
-  it("accepts same-origin HTTPS via X-Forwarded-Proto", async () => {
+describe("CLI access settings routes — proxied request rejection", () => {
+  it("rejects same-origin HTTPS via X-Forwarded-Proto", async () => {
     const { server } = await setup();
     const port = new URL(server.baseUrl).port;
     const httpsOrigin = `https://forge.example.test:${port}`;
@@ -478,11 +489,11 @@ describe("CLI access settings routes — HTTPS behind proxy", () => {
         "X-Forwarded-Proto": "https",
       },
     });
-    expect(result.status).toBe(200);
-    expect(result.headers["access-control-allow-origin"]).toBe(httpsOrigin);
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
-  it("accepts same-origin HTTPS via Forwarded: proto=https", async () => {
+  it("rejects same-origin HTTPS via Forwarded: proto=https", async () => {
     const { server } = await setup();
     const port = new URL(server.baseUrl).port;
     const httpsOrigin = `https://forge.example.test:${port}`;
@@ -498,8 +509,8 @@ describe("CLI access settings routes — HTTPS behind proxy", () => {
       },
       body: "{}",
     });
-    expect(result.status).toBe(201);
-    expect(result.headers["access-control-allow-origin"]).toBe(httpsOrigin);
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   it("rejects hostile origin even when X-Forwarded-Proto is https", async () => {
@@ -521,7 +532,7 @@ describe("CLI access settings routes — HTTPS behind proxy", () => {
     expect(result.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
-  it("rejects http Origin when proxy reports https", async () => {
+  it("rejects http Origin when X-Forwarded-Proto is present", async () => {
     const { server } = await setup();
     const port = new URL(server.baseUrl).port;
 
@@ -554,7 +565,7 @@ describe("CLI access settings routes — HTTPS behind proxy", () => {
     expect(result.status).toBe(403);
   });
 
-  it("handles comma-separated X-Forwarded-Proto (first value wins)", async () => {
+  it("rejects comma-separated X-Forwarded-Proto", async () => {
     const { server } = await setup();
     const port = new URL(server.baseUrl).port;
     const httpsOrigin = `https://forge.example.test:${port}`;
@@ -568,7 +579,7 @@ describe("CLI access settings routes — HTTPS behind proxy", () => {
         "X-Forwarded-Proto": "https, http",
       },
     });
-    expect(result.status).toBe(200);
+    expect(result.status).toBe(403);
   });
 });
 

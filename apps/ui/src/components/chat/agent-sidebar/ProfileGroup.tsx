@@ -73,6 +73,17 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
   const defaultSession = sessions.find((s) => s.isDefault)
+  const isSelectedSessionOrWorkerForHeader = (s: SessionRow) =>
+    s.sessionAgent.agentId === selectedAgentId ||
+    s.workers.some((w) => w.agentId === selectedAgentId)
+  const isHiddenCliForHeader = (s: SessionRow) =>
+    hideCliSessions &&
+    Boolean(s.sessionAgent.cli) &&
+    !isSelectedSessionOrWorkerForHeader(s)
+  const firstVisibleSession = sessions.find((s) =>
+    !s.sessionAgent.agentCreatorResult &&
+    !isHiddenCliForHeader(s)
+  )
 
   // Profile summary for tooltip
   const representativeAgent = defaultSession?.sessionAgent ?? sessions[0]?.sessionAgent
@@ -126,8 +137,8 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                     ref={dragHandleRef}
                     {...dragHandleListeners}
                     onClick={() => {
-                      // Click profile header → select default session
-                      const targetId = sessions[0]?.sessionAgent.agentId
+                      // Click profile header → select the first session visible in the list.
+                      const targetId = firstVisibleSession?.sessionAgent.agentId
                       if (targetId) onSelect(targetId)
                     }}
                     className={cn(
