@@ -133,13 +133,9 @@ function stripAddressPortAndQuotes(value: string): string {
 function isTrustedElectronDevRendererOrigin(origin: string): boolean {
   return (
     isTruthyEnv(process.env.FORGE_DESKTOP) &&
-    isElectronDevMode() &&
+    process.env.FORGE_ELECTRON_DEV === "1" &&
     ELECTRON_DEV_RENDERER_ORIGINS.has(origin)
   );
-}
-
-function isElectronDevMode(): boolean {
-  return isTruthyEnv(process.env.FORGE_ELECTRON_DEV) || process.env.NODE_ENV === "development";
 }
 
 function isTruthyEnv(value: string | undefined): boolean {

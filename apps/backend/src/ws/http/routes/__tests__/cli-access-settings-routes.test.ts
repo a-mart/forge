@@ -292,6 +292,20 @@ describe("CLI access settings routes — cross-origin protection", () => {
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  it("rejects the Electron dev renderer origin when NODE_ENV=development leaks into packaged desktop", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "1");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "0");
+    vi.stubEnv("NODE_ENV", "development");
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "http://127.0.0.1:47188" },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("rejects arbitrary localhost ports in Electron desktop dev mode", async () => {
     vi.stubEnv("FORGE_DESKTOP", "1");
     vi.stubEnv("FORGE_ELECTRON_DEV", "1");
