@@ -612,6 +612,47 @@ describe('SwarmManager', () => {
     }
   })
 
+  it('immediate manual stop notice clears stale pending notice and invalidated-token allowance', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    seedManagerDescriptorForRuntimeEventTests(manager, config)
+    const controller = (manager as any).runtimeController
+    const token = controller.allocateRuntimeToken('manager')
+
+    ;(manager as any).markPendingManualManagerStopNotice('manager')
+    controller.allowInvalidatedManualStopMessageEnd('manager', token)
+    controller.clearRuntimeToken('manager')
+    ;(manager as any).emitImmediateManualManagerStopNotice('manager')
+
+    await controller.handleRuntimeSessionEvent(token, 'manager', {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: 'Request was aborted.',
+      },
+    })
+
+    const history = manager.getConversationHistory('manager')
+    expect(
+      history.filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text === 'Session stopped.',
+      ),
+    ).toHaveLength(1)
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text.includes('Manager reply failed'),
+      ),
+    ).toBe(false)
+  })
+
   it('expires delayed invalidated-token allowance with the pending manual stop notice', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

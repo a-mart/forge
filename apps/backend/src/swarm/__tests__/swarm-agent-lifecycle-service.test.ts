@@ -147,6 +147,7 @@ function baseLifecycleOptions(
     clearIntentionalStopRuntimeCallbackSuppression: overrides.clearIntentionalStopRuntimeCallbackSuppression ?? vi.fn(),
     allowInvalidatedManualStopMessageEnd: overrides.allowInvalidatedManualStopMessageEnd ?? vi.fn(),
     markPendingManualManagerStopNotice: overrides.markPendingManualManagerStopNotice ?? vi.fn(),
+    emitImmediateManualManagerStopNotice: overrides.emitImmediateManualManagerStopNotice ?? vi.fn(),
     cancelAllPendingChoicesForAgent: overrides.cancelAllPendingChoicesForAgent ?? vi.fn(),
     runRuntimeShutdown:
       overrides.runRuntimeShutdown ??
@@ -862,6 +863,7 @@ describe("SwarmAgentLifecycleService", () => {
     });
     const allowInvalidatedManualStopMessageEnd = vi.fn();
     const markPendingManualManagerStopNotice = vi.fn();
+    const emitImmediateManualManagerStopNotice = vi.fn();
     const runRuntimeShutdown = vi.fn(async (descriptor: AgentDescriptor) => {
       if (descriptor.agentId === worker.agentId) {
         await Promise.resolve();
@@ -888,6 +890,7 @@ describe("SwarmAgentLifecycleService", () => {
         clearRuntimeToken,
         allowInvalidatedManualStopMessageEnd,
         markPendingManualManagerStopNotice,
+        emitImmediateManualManagerStopNotice,
         runRuntimeShutdown,
         detachRuntimeIfMatches
       })
@@ -897,6 +900,7 @@ describe("SwarmAgentLifecycleService", () => {
 
     expect(allowInvalidatedManualStopMessageEnd).toHaveBeenCalledWith(manager.agentId, 401);
     expect(markPendingManualManagerStopNotice).toHaveBeenCalledTimes(2);
+    expect(emitImmediateManualManagerStopNotice).not.toHaveBeenCalled();
     expect(runRuntimeShutdown).toHaveBeenCalledWith(manager, "terminate", { abort: true });
     expect(detachRuntimeIfMatches).toHaveBeenCalledWith(manager.agentId, managerRuntime, 401);
     expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId);
@@ -904,6 +908,91 @@ describe("SwarmAgentLifecycleService", () => {
     expect(clearRuntimeToken.mock.calls.filter(([agentId, token]) => agentId === manager.agentId && token === 401)).toHaveLength(1);
     expect(runtimes.has(manager.agentId)).toBe(false);
     expect(manager.status).toBe("idle");
+  });
+
+  it("stopSession emits an immediate manual stop notice when an idle manager stops active workers", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-idle-stop-workers",
+      role: "manager",
+      managerId: "m-idle-stop-workers",
+      profileId: "m-idle-stop-workers",
+      status: "idle"
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-idle-stop-workers",
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const workerRuntime = makeRuntimeStub({ descriptor: worker, getStatus: () => "streaming" });
+    const runtimes = new Map<string, SwarmAgentRuntime>([[worker.agentId, workerRuntime]]);
+    const markPendingManualManagerStopNotice = vi.fn();
+    const allowInvalidatedManualStopMessageEnd = vi.fn();
+    const emitImmediateManualManagerStopNotice = vi.fn();
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        getWorkersForManager: vi.fn(() => [worker]),
+        markPendingManualManagerStopNotice,
+        allowInvalidatedManualStopMessageEnd,
+        emitImmediateManualManagerStopNotice
+      })
+    );
+
+    await expect(svc.stopSession(manager.agentId)).resolves.toEqual({ terminatedWorkerIds: [worker.agentId] });
+
+    expect(markPendingManualManagerStopNotice).not.toHaveBeenCalled();
+    expect(allowInvalidatedManualStopMessageEnd).not.toHaveBeenCalled();
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledTimes(1);
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledWith(manager.agentId);
+  });
+
+  it("stopAllAgents emits an immediate manual stop notice when an idle manager stops active workers", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-idle-stop-all-workers",
+      role: "manager",
+      managerId: "m-idle-stop-all-workers",
+      profileId: "m-idle-stop-all-workers",
+      status: "idle"
+    });
+    const worker = createWorkerDescriptor("/p", manager.agentId, {
+      agentId: "w-idle-stop-all-workers",
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const workerRuntime = makeRuntimeStub({ descriptor: worker, getStatus: () => "streaming" });
+    const runtimes = new Map<string, SwarmAgentRuntime>([[worker.agentId, workerRuntime]]);
+    const markPendingManualManagerStopNotice = vi.fn();
+    const allowInvalidatedManualStopMessageEnd = vi.fn();
+    const emitImmediateManualManagerStopNotice = vi.fn();
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        markPendingManualManagerStopNotice,
+        allowInvalidatedManualStopMessageEnd,
+        emitImmediateManualManagerStopNotice
+      })
+    );
+
+    await expect(svc.stopAllAgents(manager.agentId, manager.agentId)).resolves.toMatchObject({
+      managerId: manager.agentId,
+      stoppedWorkerIds: [worker.agentId],
+      managerStopped: true
+    });
+
+    expect(markPendingManualManagerStopNotice).not.toHaveBeenCalled();
+    expect(allowInvalidatedManualStopMessageEnd).not.toHaveBeenCalled();
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledTimes(1);
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledWith(manager.agentId);
   });
 
   it("stopAllAgents deactivates an invalidated attached manager binding after slow worker teardown", async () => {
@@ -936,6 +1025,7 @@ describe("SwarmAgentLifecycleService", () => {
     });
     const allowInvalidatedManualStopMessageEnd = vi.fn();
     const markPendingManualManagerStopNotice = vi.fn();
+    const emitImmediateManualManagerStopNotice = vi.fn();
     const runRuntimeShutdown = vi.fn(async (descriptor: AgentDescriptor) => {
       if (descriptor.agentId === worker.agentId) {
         await Promise.resolve();
@@ -961,6 +1051,7 @@ describe("SwarmAgentLifecycleService", () => {
         clearRuntimeToken,
         allowInvalidatedManualStopMessageEnd,
         markPendingManualManagerStopNotice,
+        emitImmediateManualManagerStopNotice,
         runRuntimeShutdown,
         detachRuntimeIfMatches
       })
@@ -974,6 +1065,7 @@ describe("SwarmAgentLifecycleService", () => {
 
     expect(allowInvalidatedManualStopMessageEnd).toHaveBeenCalledWith(manager.agentId, 402);
     expect(markPendingManualManagerStopNotice).toHaveBeenCalledTimes(2);
+    expect(emitImmediateManualManagerStopNotice).not.toHaveBeenCalled();
     expect(runRuntimeShutdown).toHaveBeenCalledWith(manager, "stopInFlight", { abort: true });
     expect(detachRuntimeIfMatches).toHaveBeenCalledWith(manager.agentId, managerRuntime, 402);
     expect(clearRuntimeToken).toHaveBeenCalledWith(manager.agentId);

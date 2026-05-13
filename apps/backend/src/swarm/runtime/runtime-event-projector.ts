@@ -18,10 +18,9 @@ import {
   isLocalRuntimeShutdownErrorMessage
 } from "../message-utils.js";
 import type { VersioningMutation } from "../../versioning/versioning-types.js";
+import { MANUAL_MANAGER_STOP_NOTICE } from "../manual-stop-notice.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "./worker-health-types.js";
 import type { RuntimeRecoveryState } from "./runtime-recovery-state.js";
-
-const MANUAL_MANAGER_STOP_NOTICE = "Session stopped.";
 
 export type RuntimeEventProjectorRecoveryState = Pick<
   RuntimeRecoveryState,

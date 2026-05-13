@@ -144,6 +144,7 @@ import {
   type AgentLifecycleStopSessionOptions,
   type ManagerRuntimeRecycleReason
 } from "./swarm-agent-lifecycle-service.js";
+import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
@@ -1521,6 +1522,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.runtimeController.allowInvalidatedManualStopMessageEnd(agentId, runtimeToken);
       },
       markPendingManualManagerStopNotice: (agentId) => this.markPendingManualManagerStopNotice(agentId),
+      emitImmediateManualManagerStopNotice: (agentId) => this.emitImmediateManualManagerStopNotice(agentId),
       cancelAllPendingChoicesForAgent: (agentId) => {
         this.cancelAllPendingChoicesForAgent(agentId);
       },
@@ -5918,6 +5920,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private clearPendingManualManagerStopNotice(agentId: string): void {
     this.clearPendingManualManagerStopNoticeTimer(agentId);
+  }
+
+  private emitImmediateManualManagerStopNotice(agentId: string): void {
+    this.clearPendingManualManagerStopNotice(agentId);
+    this.runtimeController.clearInvalidatedManualStopMessageEndAllowance(agentId);
+    this.emitConversationMessage({
+      type: "conversation_message",
+      agentId,
+      role: "system",
+      text: MANUAL_MANAGER_STOP_NOTICE,
+      timestamp: this.now(),
+      source: "system"
+    });
   }
 
   private clearPendingManualManagerStopNoticeTimer(agentId: string): void {

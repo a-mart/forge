@@ -186,6 +186,7 @@ export interface SwarmAgentLifecycleServiceOptions {
   clearIntentionalStopRuntimeCallbackSuppression: (agentId: string, runtimeToken?: number) => void;
   allowInvalidatedManualStopMessageEnd: (agentId: string, runtimeToken?: number) => void;
   markPendingManualManagerStopNotice: (agentId: string) => void;
+  emitImmediateManualManagerStopNotice: (agentId: string) => void;
   cancelAllPendingChoicesForAgent: (agentId: string) => void;
   runRuntimeShutdown: (
     descriptor: AgentDescriptor,
@@ -797,6 +798,10 @@ export class SwarmAgentLifecycleService {
       managerStopped = true;
     }
 
+    if (!shouldAllowManualStopMessageEnd && (stoppedWorkerIds.length > 0 || managerRuntime !== undefined)) {
+      this.options.emitImmediateManualManagerStopNotice(target.agentId);
+    }
+
     await this.options.refreshSessionMetaStatsBySessionId(targetManagerId);
     await this.options.saveStore();
     this.options.emitAgentsSnapshot();
@@ -1184,6 +1189,14 @@ export class SwarmAgentLifecycleService {
     }
     await this.shutdownLatestManagerRuntime(descriptor, "terminate", invalidatedManagerRuntime);
     this.clearPendingManagerRuntimeRecycle(agentId);
+
+    if (
+      !options.deleteWorkers &&
+      !shouldAllowManualStopMessageEnd &&
+      (terminatedWorkerIds.length > 0 || runtime !== undefined)
+    ) {
+      this.options.emitImmediateManualManagerStopNotice(agentId);
+    }
 
     descriptor.status = descriptor.status === "error"
       ? "idle"
