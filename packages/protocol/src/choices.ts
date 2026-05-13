@@ -74,7 +74,9 @@ export function validateChoiceAnswers(
       continue
     }
 
-    if (text) return `Text is only allowed for freeform question ${answer.questionId}`
+    if (answer.text !== undefined && !text) {
+      return `Text for question ${answer.questionId} must be non-empty when provided`
+    }
 
     const allowedOptions = new Set(options.map((option) => option.id))
     for (const optionId of selectedIds) {

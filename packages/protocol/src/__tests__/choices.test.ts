@@ -16,9 +16,9 @@ describe('choice answer validation', () => {
     expect(isChoiceAnswer({ questionId: 'q', selectedOptionIds: [], text: 1 })).toBe(false)
   })
 
-  it('accepts exactly one valid answer per question', () => {
+  it('accepts exactly one valid answer per question, including optional option notes', () => {
     const answers: ChoiceAnswer[] = [
-      { questionId: 'single', selectedOptionIds: ['a'] },
+      { questionId: 'single', selectedOptionIds: ['a'], text: 'note' },
       { questionId: 'multi', selectedOptionIds: ['x', 'y'] },
       { questionId: 'free', selectedOptionIds: [], text: 'details' },
     ]
@@ -30,7 +30,7 @@ describe('choice answer validation', () => {
     ['missing answer', [{ questionId: 'single', selectedOptionIds: ['a'] }, { questionId: 'multi', selectedOptionIds: ['x'] }]],
     ['unknown question', [{ questionId: 'single', selectedOptionIds: ['a'] }, { questionId: 'multi', selectedOptionIds: ['x'] }, { questionId: 'free', selectedOptionIds: [], text: 'details' }, { questionId: 'extra', selectedOptionIds: [] }]],
     ['duplicate question', [{ questionId: 'single', selectedOptionIds: ['a'] }, { questionId: 'single', selectedOptionIds: ['b'] }, { questionId: 'multi', selectedOptionIds: ['x'] }, { questionId: 'free', selectedOptionIds: [], text: 'details' }]],
-    ['option text', [{ questionId: 'single', selectedOptionIds: ['a'], text: 'note' }, { questionId: 'multi', selectedOptionIds: ['x'] }, { questionId: 'free', selectedOptionIds: [], text: 'details' }]],
+    ['option empty text', [{ questionId: 'single', selectedOptionIds: ['a'], text: '   ' }, { questionId: 'multi', selectedOptionIds: ['x'] }, { questionId: 'free', selectedOptionIds: [], text: 'details' }]],
     ['unknown option', [{ questionId: 'single', selectedOptionIds: ['bad'] }, { questionId: 'multi', selectedOptionIds: ['x'] }, { questionId: 'free', selectedOptionIds: [], text: 'details' }]],
     ['duplicate selected option', [{ questionId: 'single', selectedOptionIds: ['a'] }, { questionId: 'multi', selectedOptionIds: ['x', 'x'] }, { questionId: 'free', selectedOptionIds: [], text: 'details' }]],
     ['single none', [{ questionId: 'single', selectedOptionIds: [] }, { questionId: 'multi', selectedOptionIds: ['x'] }, { questionId: 'free', selectedOptionIds: [], text: 'details' }]],

@@ -100,9 +100,26 @@ describe('single-select', () => {
     ])
   })
 
-  it('does not render freeform notes for option questions', () => {
+  it('submits optional notes for option questions', () => {
+    const onSubmit = vi.fn()
+    render(questions, onSubmit)
+    const buttons = optionButtons()
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    act(() => buttons[0].click())
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(textarea, '  extra context  ')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => submitButton().click())
+    expect(onSubmit).toHaveBeenCalledWith('agent-1', 'choice-1', [
+      { questionId: 'q1', selectedOptionIds: ['a'], text: 'extra context' },
+    ])
+  })
+
+  it('renders notes for option questions', () => {
     render(questions)
-    expect(container.querySelector('textarea')).toBeNull()
+    expect(container.querySelector('textarea')).not.toBeNull()
   })
 
   it('does not render checkbox icons for single-select', () => {

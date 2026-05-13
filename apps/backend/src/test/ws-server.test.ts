@@ -2642,12 +2642,12 @@ describe('SwarmWebSocketServer', () => {
       requestId: 'answer-worker-choice',
       choiceId: answerChoiceId,
       sessionAgentId: 'manager',
-      answers: [{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'] }],
+      answers: [{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'], text: 'with notes' }],
     }))
     expect(await waitForCliSuccess(events, 'answer-worker-choice')).toMatchObject({
       result: { choiceId: answerChoiceId, sessionAgentId: 'manager', status: 'answered' },
     })
-    await expect(answerPromise).resolves.toEqual([{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'] }])
+    await expect(answerPromise).resolves.toEqual([{ questionId: 'worker-choice-q', selectedOptionIds: ['yes'], text: 'with notes' }])
 
     client.send(JSON.stringify({
       type: 'cli_choice_cancel',

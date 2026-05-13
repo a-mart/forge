@@ -96,7 +96,7 @@ export function ChoiceRequestCard({
       return {
         questionId: question.id,
         selectedOptionIds: isFreeformOnly ? [] : selection.selectedOptionIds,
-        text: isFreeformOnly ? selection.text.trim() || undefined : undefined,
+        text: selection.text.trim() || undefined,
       }
     }),
     [questions, selections],
@@ -186,14 +186,17 @@ export function ChoiceRequestCard({
             </div>
           ) : null}
 
-          {(question.isOther || !question.options?.length) ? (
-            <Textarea
-              placeholder={question.placeholder ?? 'Type your answer...'}
-              value={selections[question.id]?.text ?? ''}
-              onChange={(event) => setText(question.id, event.target.value)}
-              className="min-h-[60px] text-sm"
-            />
-          ) : null}
+          <Textarea
+            placeholder={
+              question.placeholder ??
+              (question.isOther || !question.options?.length
+                ? 'Type your answer...'
+                : 'Add notes (optional)...')
+            }
+            value={selections[question.id]?.text ?? ''}
+            onChange={(event) => setText(question.id, event.target.value)}
+            className="min-h-[60px] text-sm"
+          />
         </div>
       ))}
 
