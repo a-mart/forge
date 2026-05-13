@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { readSidebarModelIconsPref, readSidebarProviderUsagePref, readHideCliSessionsPref, storeHideCliSessionsPref } from '@/lib/sidebar-prefs'
+import { readSidebarModelIconsPref, readSidebarProviderUsagePref, readHideCliSessionsPref, storeHideCliSessionsPref, HIDE_CLI_SESSIONS_KEY } from '@/lib/sidebar-prefs'
 
 const SIDEBAR_PREF_CHANGE_EVENT = 'forge-sidebar-pref-change'
 const COLLAPSED_PROFILES_KEY = 'forge-sidebar-collapsed-profiles'
@@ -79,11 +79,14 @@ export function useSidebarPrefs(): UseSidebarPrefsReturn {
     // functional updater caused React to call the updater twice with
     // prev → !prev → !!prev, making the second write overwrite the first.
     //
-    // If localStorage read fails (quota/security), fall back to the current
-    // React state via ref so we don't always compute next=true.
+    // We read localStorage.getItem directly (not readHideCliSessionsPref)
+    // because that helper swallows errors internally — its try/catch returns
+    // false on failure, so a catch here would never fire. Reading the raw
+    // API lets our catch detect real localStorage failures and fall back to
+    // the current React state via ref.
     let current: boolean
     try {
-      current = readHideCliSessionsPref()
+      current = localStorage.getItem(HIDE_CLI_SESSIONS_KEY) === 'true'
     } catch {
       current = hideCliSessionsRef.current
     }

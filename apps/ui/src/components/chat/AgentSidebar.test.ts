@@ -855,4 +855,111 @@ describe('AgentSidebar', () => {
     const sidebar = getDesktopSidebar()
     expect(getByText(sidebar, 'Review Run · Full Queue')).toBeTruthy()
   })
+
+  it('toggleHideCliSessions falls back to ref state when localStorage.getItem throws', async () => {
+    // Verifies that when localStorage is completely unavailable (e.g. security
+    // policy, quota error), the toggle still flips correctly using in-memory
+    // ref state. We render under StrictMode to also exercise double-invoke.
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    // Start with hideCliSessions = false (default) via normal localStorage
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(StrictMode, null,
+          createElement(HelpProvider, null,
+            createElement(AgentSidebar, {
+              connected: true,
+              agents: [regularSession, cliSession],
+              profiles: [profile],
+              statuses: {},
+              unreadCounts: {},
+              selectedAgentId: 'regular-session',
+              onAddManager: vi.fn(),
+              onSelectAgent: vi.fn(),
+              onDeleteAgent: vi.fn(),
+              onDeleteManager: vi.fn(),
+              onOpenSettings: vi.fn(),
+              isSettingsActive: false,
+            }),
+          ),
+        ),
+      )
+    })
+    await flushEffects()
+
+    // CLI session should be visible initially (hideCliSessions = false)
+    const sidebar = getDesktopSidebar()
+    expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
+
+    // Now make localStorage.getItem throw (simulates security/quota errors)
+    // Keep setItem working so storeHideCliSessionsPref can still write.
+    const throwingGetItem = (_key: string): string | null => { throw new Error('SecurityError') }
+    vi.stubGlobal('localStorage', { ...localStorageMock, getItem: throwingGetItem })
+
+    // Toggle hide → should use ref fallback (false) and compute next = true
+    const cliRow = getByText(sidebar, 'CLI Run')
+    const cliContextTrigger = cliRow.closest('[data-state]')?.parentElement ?? cliRow
+    flushSync(() => {
+      cliContextTrigger.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const menuItems = getAllByRole(document.body, 'menuitem')
+    const hideMenuItem = menuItems.find((item) => item.textContent?.includes('Hide CLI Sessions'))
+    expect(hideMenuItem).toBeTruthy()
+
+    flushSync(() => {
+      hideMenuItem!.click()
+    })
+    await flushEffects()
+
+    // Despite getItem throwing, the toggle should have flipped to true via ref fallback.
+    // storeHideCliSessionsPref calls setItem (which works) and dispatches a pref-change event.
+    // The ref was in sync with the React state (false), so next = !false = true.
+    // Check that localStorage received 'true' (setItem still works):
+    expect(localStorageStore.get('forge-sidebar-hide-cli-sessions')).toBe('true')
+
+    // Restore getItem for the reverse toggle test
+    vi.stubGlobal('localStorage', { ...localStorageMock, getItem: throwingGetItem })
+
+    // Now the ref should have updated to true (via the useEffect sync).
+    // Toggle again → should read ref (true) and compute next = false.
+    // Re-open context menu on the regular session (CLI is now hidden).
+    // Use the profile header context menu instead since CLI row may be gone.
+    const profileHeader = getByText(sidebar, 'My Project').closest('button')
+    expect(profileHeader).toBeTruthy()
+    flushSync(() => {
+      profileHeader!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const menuItems2 = getAllByRole(document.body, 'menuitem')
+    const showMenuItem = menuItems2.find((item) => item.textContent?.includes('Show CLI Sessions'))
+    expect(showMenuItem).toBeTruthy()
+
+    flushSync(() => {
+      showMenuItem!.click()
+    })
+    await flushEffects()
+
+    // Reverse toggle should have flipped back to false
+    expect(localStorageStore.get('forge-sidebar-hide-cli-sessions')).toBe('false')
+
+    // Restore original localStorage for cleanup
+    vi.stubGlobal('localStorage', localStorageMock)
+  })
 })
