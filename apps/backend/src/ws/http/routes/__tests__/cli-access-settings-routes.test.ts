@@ -291,16 +291,60 @@ describe("CLI access settings routes — cross-origin protection", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe(server.baseUrl);
   });
 
-  it("allows requests with no Origin header (non-browser callers)", async () => {
+  it("allows requests with no Origin header from loopback clients", async () => {
     const { server } = await setup();
 
-    // No Origin header — same-origin browser or curl/CLI callers
+    // No Origin header from loopback — local settings UI / local CLI callers.
     const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
     expect(response.status).toBe(201);
+  });
+
+  it("rejects requests with no Origin header from a non-loopback remoteAddress", async () => {
+    const { server } = await setup({ remoteAddress: "100.64.0.10" });
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+    });
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "forbidden_origin" } });
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("allows no-Origin loopback socket requests even when X-Forwarded-For claims remote", async () => {
+    const { server } = await setup();
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: { "X-Forwarded-For": "100.64.0.10" },
+    });
+    expect(result.status).toBe(200);
+  });
+
+  it("rejects no-Origin remoteAddress even when X-Forwarded-For claims loopback", async () => {
+    const { server } = await setup({ remoteAddress: "100.64.0.10" });
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: { "X-Forwarded-For": "127.0.0.1" },
+    });
+    expect(result.status).toBe(403);
+  });
+
+  it("allows no-Origin loopback socket requests even when Forwarded for claims remote", async () => {
+    const { server } = await setup();
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: { Forwarded: "for=100.64.0.11;proto=http" },
+    });
+    expect(result.status).toBe(200);
   });
 
   // -- Non-loopback same-origin (LAN / Tailscale / custom hostname) --
@@ -357,6 +401,58 @@ describe("CLI access settings routes — cross-origin protection", () => {
         Origin: "https://evil.example.com",
       },
       body: "{}",
+    });
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("rejects same-origin LAN Host when socket remoteAddress is non-loopback", async () => {
+    const { server } = await setup({ remoteAddress: "100.64.0.10" });
+
+    const port = new URL(server.baseUrl).port;
+    const lanOrigin = `http://192.168.1.100:${port}`;
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Host: `192.168.1.100:${port}`,
+        Origin: lanOrigin,
+      },
+    });
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("rejects same-origin Tailscale Host when socket remoteAddress is non-loopback", async () => {
+    const { server } = await setup({ remoteAddress: "100.64.0.10" });
+
+    const port = new URL(server.baseUrl).port;
+    const tailscaleOrigin = `http://myhost.tail12345.ts.net:${port}`;
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Host: `myhost.tail12345.ts.net:${port}`,
+        Origin: tailscaleOrigin,
+      },
+    });
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("rejects same-origin Tailscale Host from remoteAddress even when X-Forwarded-For claims loopback", async () => {
+    const { server } = await setup({ remoteAddress: "100.64.0.10" });
+
+    const port = new URL(server.baseUrl).port;
+    const tailscaleOrigin = `http://myhost.tail12345.ts.net:${port}`;
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Host: `myhost.tail12345.ts.net:${port}`,
+        Origin: tailscaleOrigin,
+        "X-Forwarded-For": "127.0.0.1",
+      },
     });
     expect(result.status).toBe(403);
     expect(result.headers["access-control-allow-origin"]).toBeUndefined();
@@ -531,7 +627,7 @@ describe("CLI access settings routes — malformed key IDs", () => {
 /*  Setup helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-async function setup(): Promise<{ service: CliAccessService; server: TestServer }> {
+async function setup(options: { remoteAddress?: string } = {}): Promise<{ service: CliAccessService; server: TestServer }> {
   const configHandle = await createTempConfig({ prefix: "cli-settings-" });
   activeServers.push({ baseUrl: "cleanup-only", close: configHandle.cleanup });
 
@@ -552,6 +648,12 @@ async function setup(): Promise<{ service: CliAccessService; server: TestServer 
   });
 
   const httpServer = createServer((request, response) => {
+    if (options.remoteAddress) {
+      Object.defineProperty(request.socket, "remoteAddress", {
+        configurable: true,
+        value: options.remoteAddress,
+      });
+    }
     void handleRoute(routes, request, response);
   });
 

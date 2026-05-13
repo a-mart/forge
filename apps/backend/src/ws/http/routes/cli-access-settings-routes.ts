@@ -43,8 +43,8 @@ export function createCliAccessSettingsRoutes(options: {
  * builder CORS policy reflects any Origin, which would let a hostile page
  * read the key response cross-origin. Instead we:
  *
- *  - Allow requests with no Origin header (same-origin browser or
- *    non-browser callers like curl — not CSRF-vulnerable).
+ *  - Allow only loopback socket clients (same-machine settings UI or local
+ *    CLI tools). Forwarded client headers are not trusted for this decision.
  *  - Allow requests whose Origin matches the server's own origin derived
  *    from the request Host header (covers localhost, LAN IPs, Tailscale
  *    hostnames, and any custom bind address).
@@ -57,7 +57,17 @@ function applySameOriginGate(
 ): boolean {
   const origin = request.headers.origin;
 
-  // No Origin header → same-origin or non-browser; allow.
+  // Local-admin only: the CLI key settings surface can expose plaintext keys,
+  // so every request must originate from the same machine. Do not trust
+  // X-Forwarded-For / Forwarded client addresses for this authorization gate.
+  if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    sendJson(response, 403, {
+      error: { code: "forbidden_origin", message: "CLI key management is allowed only from local clients", status: 403 },
+    });
+    return false;
+  }
+
+  // No Origin header from loopback → local settings UI / local CLI callers.
   if (typeof origin !== "string" || origin.length === 0) {
     return true;
   }
@@ -83,6 +93,41 @@ function applySameOriginGate(
  * and any custom bind address — the browser's same-origin policy guarantees
  * that a legitimate same-origin request has Origin === scheme+host+port.
  */
+function stripAddressPortAndQuotes(value: string): string {
+  let normalized = value.trim();
+  if (normalized.startsWith('"') && normalized.endsWith('"')) {
+    normalized = normalized.slice(1, -1);
+  }
+  if (normalized.startsWith("[")) {
+    const endBracket = normalized.indexOf("]");
+    if (endBracket > 0) {
+      return normalized.slice(1, endBracket);
+    }
+  }
+  const lastColon = normalized.lastIndexOf(":");
+  if (lastColon > -1 && normalized.indexOf(":") === lastColon) {
+    const maybePort = normalized.slice(lastColon + 1);
+    if (/^\d+$/.test(maybePort)) {
+      return normalized.slice(0, lastColon);
+    }
+  }
+  return normalized;
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  const normalized = stripAddressPortAndQuotes(address).toLowerCase();
+  if (normalized === "localhost" || normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  const ipv4Mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  const ipv4 = ipv4Mapped?.[1] ?? normalized;
+  const octets = ipv4.split(".");
+  if (octets.length !== 4) return false;
+  const first = Number(octets[0]);
+  return Number.isInteger(first) && first === 127;
+}
+
 function isSameOrigin(origin: string, request: IncomingMessage): boolean {
   const host = request.headers.host;
   if (!host) {
