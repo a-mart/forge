@@ -66,7 +66,7 @@ forge choices list --session <agentId>
 forge choices answer <choiceId> --answers '[{"questionId":"q1","selectedOptionIds":["yes"]}]' --session <agentId>
 ```
 
-Use `--json` for stable machine-readable output. The CLI writes one final JSON object per command when `--json` is set.
+Use `--json` for stable machine-readable output. Data commands such as `status`, `doctor`, `run`, `launch`, `wait`, and mutation commands write one final JSON object when `--json` is set; `--help` and `--version` still print plain text.
 
 Durations accept milliseconds by default or `ms`, `s`, and `m` suffixes. Examples: `5000`, `30s`, `10m`.
 
