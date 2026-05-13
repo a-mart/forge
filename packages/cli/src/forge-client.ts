@@ -596,19 +596,31 @@ class CliWsConnection {
 
   private waitForEvent<T extends ServerEvent>(predicate: (event: ServerEvent) => event is T, timeoutMs: number): Promise<T> {
     return new Promise((resolve, reject) => {
+      let unsubscribeEvent: (() => void) | null = null
+      let unsubscribeDisconnect: (() => void) | null = null
+      const cleanup = () => {
+        clearTimeout(timeout)
+        unsubscribeEvent?.()
+        unsubscribeDisconnect?.()
+        unsubscribeEvent = null
+        unsubscribeDisconnect = null
+      }
       const timeout = setTimeout(() => {
-        unsubscribe()
+        cleanup()
         reject(new CliError('Timed out waiting for CLI WebSocket subscription.', {
           exitCode: EXIT_CODES.connection,
           code: 'ws_subscription_timeout',
         }))
       }, timeoutMs)
-      const unsubscribe = this.onEvent((event) => {
+      unsubscribeEvent = this.onEvent((event) => {
         if (predicate(event)) {
-          clearTimeout(timeout)
-          unsubscribe()
+          cleanup()
           resolve(event)
         }
+      })
+      unsubscribeDisconnect = this.onDisconnect((error) => {
+        cleanup()
+        reject(error)
       })
     })
   }

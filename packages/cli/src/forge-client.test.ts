@@ -89,6 +89,24 @@ describe('ForgeClient', () => {
       exitCode: EXIT_CODES.connection,
     })
   })
+
+  it('rejects subscription waits immediately when the CLI WebSocket closes before headless_ready', async () => {
+    const socket = new FakeWebSocket({ closeBeforeHeadlessReady: true })
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: statusFetch,
+      WebSocketImpl: fakeWebSocketImpl(socket),
+    })
+
+    await expect(settleWithin(client.waitForSession('session-1', { timeoutMs: 60_000 }), 100)).resolves.toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({
+        code: 'ws_closed',
+        exitCode: EXIT_CODES.connection,
+      }),
+    })
+  })
 })
 
 async function statusFetch(): Promise<Response> {
@@ -124,11 +142,21 @@ function fakeWebSocketImpl(socket: FakeWebSocket): typeof WebSocket {
   } as unknown as typeof WebSocket
 }
 
+function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<PromiseSettledResult<T> | { status: 'timed_out' }> {
+  return Promise.race([
+    promise.then(
+      (value): PromiseFulfilledResult<T> => ({ status: 'fulfilled', value }),
+      (reason): PromiseRejectedResult => ({ status: 'rejected', reason }),
+    ),
+    new Promise<{ status: 'timed_out' }>((resolve) => setTimeout(() => resolve({ status: 'timed_out' }), timeoutMs)),
+  ])
+}
+
 class FakeWebSocket extends EventEmitter {
   readonly sent: CliWsCommand[] = []
   readyState = WebSocket.OPEN
 
-  constructor(private readonly options: { closeAfterRunAck?: boolean } = {}) {
+  constructor(private readonly options: { closeAfterRunAck?: boolean; closeBeforeHeadlessReady?: boolean } = {}) {
     super()
   }
 
@@ -137,30 +165,34 @@ class FakeWebSocket extends EventEmitter {
     this.sent.push(command)
     callback?.()
     if (command.type === 'subscribe_headless') {
-      this.emitEvent({
-        type: 'headless_ready',
-        requestId: command.requestId,
-        serverTime: 'now',
-        capabilities: (statusPayload().capabilities),
-        subscribed: { agentId: 'session-1', profileId: 'profile-1' },
-        targetAgent: {
-          agentId: 'session-1',
-          managerId: 'session-1',
-          role: 'manager',
-          status: 'idle',
-          displayName: 'Session 1',
-          createdAt: 'now',
-          updatedAt: 'now',
-          cwd: '/tmp',
-          model: { provider: 'openai', modelId: 'gpt-5.3' },
-          sessionFile: '/tmp/session.jsonl',
-          profileId: 'profile-1',
-        },
-        pendingChoices: [],
-        workers: [],
-        activeTools: [],
-        status: { agentId: 'session-1', status: 'idle', pendingCount: 0 },
-      })
+      if (this.options.closeBeforeHeadlessReady) {
+        this.emit('close')
+      } else {
+        this.emitEvent({
+          type: 'headless_ready',
+          requestId: command.requestId,
+          serverTime: 'now',
+          capabilities: (statusPayload().capabilities),
+          subscribed: { agentId: 'session-1', profileId: 'profile-1' },
+          targetAgent: {
+            agentId: 'session-1',
+            managerId: 'session-1',
+            role: 'manager',
+            status: 'idle',
+            displayName: 'Session 1',
+            createdAt: 'now',
+            updatedAt: 'now',
+            cwd: '/tmp',
+            model: { provider: 'openai', modelId: 'gpt-5.3' },
+            sessionFile: '/tmp/session.jsonl',
+            profileId: 'profile-1',
+          },
+          pendingChoices: [],
+          workers: [],
+          activeTools: [],
+          status: { agentId: 'session-1', status: 'idle', pendingCount: 0 },
+        })
+      }
     }
     if (command.type === 'cli_run') {
       this.emitEvent({
