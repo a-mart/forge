@@ -35,7 +35,6 @@ export function createFileRoutes(options: {
   const resolveAllowedPath = async (requestedPath: string, agentId?: string): Promise<string> => {
     return resolveReadFilePath(requestedPath, swarmManager, agentId, {
       includeCwdAllowlistRootsForAgent: false,
-      enforceAllowedRoots: false,
     });
   };
 

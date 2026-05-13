@@ -1,5 +1,4 @@
 import { readFile, stat } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { isPathWithinRoots, normalizeAllowlistRoots, resolveDirectoryPath } from "../swarm/cwd-policy.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
@@ -85,8 +84,6 @@ function resolveLegacyWriteFileAccessContext(swarmManager: SwarmManager): FileAc
       config.paths.rootDir,
       config.paths.dataDir,
       config.paths.uploadsDir,
-      homedir(),
-      tmpdir(),
     ])
   };
 }

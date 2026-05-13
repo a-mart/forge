@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 import { createFileRoutes } from "../../../routes/file-routes.js";
 import { createFileBrowserRoutes } from "../../../routes/file-browser-routes.js";
@@ -54,9 +54,11 @@ describe("file routes", () => {
     await expect(getResponse.text()).resolves.toBe("hello world\n");
   });
 
-  it("returns 404 for unknown agents and allows absolute reads outside the agent cwd", async () => {
+  it("returns 404 for unknown agents and rejects absolute reads outside allowed roots", async () => {
     const harness = await createFileRouteHarness();
-    const outsideFile = join(harness.root, "outside.txt");
+    const outsideDir = await mkdtemp(join(tmpdir(), "file-routes-outside-"));
+    tempRoots.push(outsideDir);
+    const outsideFile = join(outsideDir, "outside.txt");
     await writeFile(outsideFile, "outside workspace\n", "utf8");
 
     const unknownAgentResponse = await fetch(`${harness.server.baseUrl}/api/read-file`, {
@@ -72,11 +74,9 @@ describe("file routes", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path: outsideFile, agentId: "manager-1" }),
     });
-    expect(outsideResponse.status).toBe(200);
-    await expect(outsideResponse.json()).resolves.toEqual({
-      path: outsideFile,
-      content: "outside workspace\n",
-    });
+    expect(outsideResponse.status).toBe(403);
+    const payload = (await outsideResponse.json()) as { error: string };
+    expect(payload.error).toContain("outside allowed roots");
   });
 
   it("serves attachment bytes and rejects invalid attachment references", async () => {
@@ -217,6 +217,26 @@ describe("file routes", () => {
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { entries: Array<{ name: string }> };
     expect(payload.entries.some((entry) => entry.name === "external-link")).toBe(false);
+  });
+
+  it("rejects read-file symlinks that resolve outside allowed roots", async () => {
+    const harness = await createFileRouteHarness();
+    const outsideDir = await mkdtemp(join(tmpdir(), "file-routes-symlink-outside-"));
+    tempRoots.push(outsideDir);
+    const outsideFile = join(outsideDir, "secret.txt");
+    const linkPath = join(harness.workspaceDir, "secret-link.txt");
+    await writeFile(outsideFile, "secret\n", "utf8");
+    await symlink(outsideFile, linkPath, "file");
+
+    const response = await fetch(`${harness.server.baseUrl}/api/read-file`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: linkPath, agentId: "manager-1" }),
+    });
+
+    expect(response.status).toBe(403);
+    const payload = (await response.json()) as { error: string };
+    expect(payload.error).toContain("outside allowed roots");
   });
 });
 
@@ -369,7 +389,7 @@ describe("SwarmWebSocketServer", () => {
     }
   })
 
-  it('allows absolute files through POST /api/read-file', async () => {
+  it('rejects absolute files outside allowed roots through POST /api/read-file', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -386,8 +406,7 @@ describe("SwarmWebSocketServer", () => {
     await server.start()
 
     const outsideFile = join(tmpdir(), `forge-read-file-${process.pid}-${Date.now()}.txt`)
-    const outsideContent = 'outside root\n'
-    await writeFile(outsideFile, outsideContent, 'utf8')
+    await writeFile(outsideFile, 'outside root\n', 'utf8')
 
     try {
       const response = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
@@ -400,11 +419,9 @@ describe("SwarmWebSocketServer", () => {
         }),
       })
 
-      expect(response.status).toBe(200)
-
-      const payload = (await response.json()) as { path: string; content: string }
-      expect(payload.path).toBe(outsideFile)
-      expect(payload.content).toBe(outsideContent)
+      expect(response.status).toBe(403)
+      const payload = (await response.json()) as { error: string }
+      expect(payload.error).toContain('outside allowed roots')
     } finally {
       await rm(outsideFile, { force: true })
       await server.stop()
@@ -459,7 +476,7 @@ describe("SwarmWebSocketServer", () => {
     }
   })
 
-  it('allows data-dir reads with agent context and absolute reads outside the contextual workspace', async () => {
+  it('allows data-dir reads with agent context and rejects absolute reads outside the contextual roots', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -502,11 +519,9 @@ describe("SwarmWebSocketServer", () => {
         }),
       })
 
-      expect(outsideResponse.status).toBe(200)
-      await expect(outsideResponse.json()).resolves.toEqual({
-        path: outsideWorkspaceFile,
-        content: 'root only\n',
-      })
+      expect(outsideResponse.status).toBe(403)
+      const outsidePayload = (await outsideResponse.json()) as { error: string }
+      expect(outsidePayload.error).toContain('outside allowed roots')
 
       const allowedResponse = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
         method: 'POST',
@@ -677,7 +692,7 @@ describe("SwarmWebSocketServer", () => {
     }
   })
 
-  it('writes files through POST /api/write-file inside os.tmpdir()', async () => {
+  it('rejects writes through POST /api/write-file inside os.tmpdir()', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -694,7 +709,6 @@ describe("SwarmWebSocketServer", () => {
     await server.start()
 
     const targetPath = join(tmpdir(), `forge-ws-test-${process.pid}-${Date.now()}.md`)
-    const content = '# Temp Notes\n\nSaved from tmpdir.\n'
 
     try {
       const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
@@ -704,12 +718,52 @@ describe("SwarmWebSocketServer", () => {
         },
         body: JSON.stringify({
           path: targetPath,
-          content,
+          content: '# Temp Notes\n\nBlocked tmpdir write.\n',
         }),
       })
 
-      expect(response.status).toBe(200)
-      expect(await readFile(targetPath, 'utf8')).toBe(content)
+      expect(response.status).toBe(403)
+      const payload = (await response.json()) as { error: string }
+      expect(payload.error).toContain('outside allowed roots')
+    } finally {
+      await rm(targetPath, { force: true })
+      await server.stop()
+    }
+  })
+
+  it('rejects writes through POST /api/write-file inside os.homedir()', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const targetPath = join(homedir(), `.forge-ws-test-${process.pid}-${Date.now()}.md`)
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: targetPath,
+          content: '# Home Notes\n\nBlocked homedir write.\n',
+        }),
+      })
+
+      expect(response.status).toBe(403)
+      const payload = (await response.json()) as { error: string }
+      expect(payload.error).toContain('outside allowed roots')
     } finally {
       await rm(targetPath, { force: true })
       await server.stop()
