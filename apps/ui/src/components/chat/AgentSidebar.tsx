@@ -120,6 +120,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     searchInputRef,
     showModelIcons,
     showProviderUsage,
+    hideCliSessions,
+    toggleHideCliSessions,
   } = useSidebarPrefs()
   const {
     activeDragId,
@@ -447,6 +449,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       onToggleMute={handleToggleMute}
       onMuteAllSessions={handleMuteAllSessions}
       getCreatorAttribution={getCreatorAttribution}
+      hideCliSessions={hideCliSessions}
+      onToggleHideCliSessions={toggleHideCliSessions}
     />
   ), [
     statuses, unreadCounts, selectedAgentId, isSettingsActive, isSearchActive,
@@ -462,6 +466,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onSetSessionProjectAgent, handlePromoteToProjectAgent, handleOpenProjectAgentSettings,
     onPinSession, handleDemoteProjectAgent, onCreateAgentCreator, mutedAgentsState,
     handleToggleMute, handleMuteAllSessions, getCreatorAttribution,
+    hideCliSessions, toggleHideCliSessions,
   ])
 
   const sidebarContent = (

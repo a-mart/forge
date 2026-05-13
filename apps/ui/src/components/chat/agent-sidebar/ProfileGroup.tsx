@@ -9,6 +9,7 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  Terminal,
   Trash2,
 } from 'lucide-react'
 import React from 'react'
@@ -66,6 +67,8 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   onToggleMute,
   onMuteAllSessions,
   getCreatorAttribution,
+  hideCliSessions,
+  onToggleHideCliSessions,
 }: ProfileGroupProps) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -232,6 +235,12 @@ export const ProfileGroup = React.memo(function ProfileGroup({
               </ContextMenuItem>
             )
           })() : null}
+          {onToggleHideCliSessions && sessions.some((s) => Boolean(s.sessionAgent.cli)) ? (
+            <ContextMenuItem onClick={() => onToggleHideCliSessions()}>
+              <Terminal className="mr-2 size-3.5" />
+              {hideCliSessions ? 'Show CLI Sessions' : 'Hide CLI Sessions'}
+            </ContextMenuItem>
+          ) : null}
           {!isCortexProfile(treeRow) ? (
             <>
               <ContextMenuSeparator />
@@ -255,12 +264,24 @@ export const ProfileGroup = React.memo(function ProfileGroup({
             const isCompletedWizard = (s: SessionRow) =>
               Boolean(s.sessionAgent.agentCreatorResult)
 
+            const isSelectedSessionOrWorker = (s: SessionRow) =>
+              s.sessionAgent.agentId === selectedAgentId ||
+              s.workers.some((w) => w.agentId === selectedAgentId)
+
+            // CLI session filter: hide CLI sessions when the pref is enabled,
+            // but always keep the currently selected session visible.
+            const isHiddenCli = (s: SessionRow) =>
+              hideCliSessions &&
+              Boolean(s.sessionAgent.cli) &&
+              !isSelectedSessionOrWorker(s)
+
             // Split sessions into project agents (always visible) and regular sessions (subject to truncation)
             const projectAgentSessions = sessions.filter((s) => Boolean(s.sessionAgent.projectAgent))
             const pinnedSessions = sessions.filter((s) =>
               !s.sessionAgent.projectAgent &&
               Boolean(s.sessionAgent.pinnedAt) &&
-              !isCompletedWizard(s)
+              !isCompletedWizard(s) &&
+              !isHiddenCli(s)
             ).sort((a, b) => {
               const aPinned = a.sessionAgent.pinnedAt ?? ''
               const bPinned = b.sessionAgent.pinnedAt ?? ''
@@ -269,7 +290,8 @@ export const ProfileGroup = React.memo(function ProfileGroup({
             const regularSessions = sessions.filter((s) =>
               !s.sessionAgent.projectAgent &&
               !s.sessionAgent.pinnedAt &&
-              !isCompletedWizard(s)
+              !isCompletedWizard(s) &&
+              !isHiddenCli(s)
             )
 
             const hasMore = regularSessions.length > visibleSessionLimit

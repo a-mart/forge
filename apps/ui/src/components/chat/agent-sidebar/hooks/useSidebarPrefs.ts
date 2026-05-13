@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { readSidebarModelIconsPref, readSidebarProviderUsagePref } from '@/lib/sidebar-prefs'
+import { readSidebarModelIconsPref, readSidebarProviderUsagePref, readHideCliSessionsPref, storeHideCliSessionsPref } from '@/lib/sidebar-prefs'
 
 const SIDEBAR_PREF_CHANGE_EVENT = 'forge-sidebar-pref-change'
 const COLLAPSED_PROFILES_KEY = 'forge-sidebar-collapsed-profiles'
@@ -16,6 +16,8 @@ interface UseSidebarPrefsReturn {
   searchInputRef: React.RefObject<HTMLInputElement | null>
   showModelIcons: boolean
   showProviderUsage: boolean
+  hideCliSessions: boolean
+  toggleHideCliSessions: () => void
   sortPreference: SidebarSortPreference
   setSortPreference: (value: SidebarSortPreference) => void
 }
@@ -52,6 +54,7 @@ export function useSidebarPrefs(): UseSidebarPrefsReturn {
   const [searchQuery, setSearchQuery] = useState(() => readStoredSearchQuery())
   const [showModelIcons, setShowModelIcons] = useState(() => readSidebarModelIconsPref())
   const [showProviderUsage, setShowProviderUsage] = useState(() => readSidebarProviderUsagePref())
+  const [hideCliSessions, setHideCliSessions] = useState(() => readHideCliSessionsPref())
   const [sortPreference, setSortPreference] = useState<SidebarSortPreference>(() => readStoredSortPreference())
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -67,10 +70,19 @@ export function useSidebarPrefs(): UseSidebarPrefsReturn {
     })
   }, [])
 
+  const toggleHideCliSessions = useCallback(() => {
+    setHideCliSessions((prev) => {
+      const next = !prev
+      storeHideCliSessionsPref(next)
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     const update = () => {
       setShowModelIcons(readSidebarModelIconsPref())
       setShowProviderUsage(readSidebarProviderUsagePref())
+      setHideCliSessions(readHideCliSessionsPref())
     }
 
     window.addEventListener(SIDEBAR_PREF_CHANGE_EVENT, update)
@@ -136,6 +148,8 @@ export function useSidebarPrefs(): UseSidebarPrefsReturn {
     searchInputRef,
     showModelIcons,
     showProviderUsage,
+    hideCliSessions,
+    toggleHideCliSessions,
     sortPreference,
     setSortPreference,
   }

@@ -173,6 +173,8 @@ export interface ProfileGroupProps {
   onToggleMute?: (agentId: string) => void
   onMuteAllSessions?: (sessionAgentIds: string[], mute: boolean) => void
   getCreatorAttribution?: (creatorAgentId: string) => string | null
+  hideCliSessions?: boolean
+  onToggleHideCliSessions?: () => void
 }
 
 export interface CortexSectionProps {

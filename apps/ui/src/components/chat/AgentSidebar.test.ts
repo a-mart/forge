@@ -47,9 +47,22 @@ function worker(
 let container: HTMLDivElement
 let root: Root | null = null
 
+// Provide a working localStorage stub for the test environment
+const localStorageStore = new Map<string, string>()
+const localStorageMock = {
+  getItem: (key: string) => localStorageStore.get(key) ?? null,
+  setItem: (key: string, value: string) => localStorageStore.set(key, value),
+  removeItem: (key: string) => localStorageStore.delete(key),
+  clear: () => localStorageStore.clear(),
+  get length() { return localStorageStore.size },
+  key: (index: number) => [...localStorageStore.keys()][index] ?? null,
+}
+
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  localStorageStore.clear()
+  vi.stubGlobal('localStorage', localStorageMock)
   vi.stubGlobal('fetch', vi.fn(async () => ({
     ok: true,
     json: async () => ({ scan: { summary: { needsReview: 0 } } }),
@@ -430,6 +443,98 @@ describe('AgentSidebar', () => {
 
     const sidebar = getDesktopSidebar()
     expect(getByText(sidebar, 'Running')).toBeTruthy()
+  })
+
+  it('hides CLI sessions when the hide-cli-sessions localStorage pref is set', () => {
+    // Set the hide pref before rendering
+    localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
+
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    renderSidebar({
+      agents: [regularSession, cliSession],
+      profiles: [profile],
+    })
+
+    const sidebar = getDesktopSidebar()
+
+    // Regular session should be visible
+    expect(queryByText(sidebar, 'regular-session')).toBeTruthy()
+    // CLI session should be hidden
+    expect(queryByText(sidebar, 'CLI Run')).toBeNull()
+
+  })
+
+  it('keeps a selected CLI session visible even when hide-cli-sessions is set', () => {
+    localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
+
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    renderSidebar({
+      agents: [regularSession, cliSession],
+      profiles: [profile],
+      selectedAgentId: 'cli-session',
+    })
+
+    const sidebar = getDesktopSidebar()
+
+    // Selected CLI session should still be visible
+    expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
+  })
+
+  it('keeps a CLI session visible when one of its workers is selected', () => {
+    localStorageMock.setItem('forge-sidebar-hide-cli-sessions', 'true')
+
+    const regularSession = sessionManager('regular-session', 'mgr-profile')
+    const cliSession: AgentDescriptor = {
+      ...sessionManager('cli-session', 'mgr-profile'),
+      sessionLabel: 'CLI Run',
+      cli: { createdBy: 'forge-cli', runId: 'run-1', command: 'run', startedAt: '2026-01-01T00:00:00.000Z' },
+    }
+    const cliWorker = worker('cli-worker', 'cli-session')
+    const profile: ManagerProfile = {
+      profileId: 'mgr-profile',
+      displayName: 'My Project',
+      defaultSessionAgentId: 'regular-session',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    renderSidebar({
+      agents: [regularSession, cliSession, cliWorker],
+      profiles: [profile],
+      selectedAgentId: 'cli-worker',
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(queryByText(sidebar, 'CLI Run')).toBeTruthy()
   })
 
   it('shows the selected Cortex review-run session so it stays directly reachable', () => {
