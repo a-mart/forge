@@ -1,8 +1,7 @@
-import type {
-  ChoiceAnswer,
-  ChoiceQuestion,
-  ClientCommand,
-  ServerEvent,
+import {
+  validateChoiceAnswers,
+  type ClientCommand,
+  type ServerEvent,
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { getCollaborationSocketAuthContext } from "../../collaboration/auth/collaboration-auth-middleware.js";
@@ -10,30 +9,6 @@ import type { DispatchCollaborationChannelMessageParams } from "../../collaborat
 import { isCollaborationServerRuntimeTarget } from "../../runtime-target.js";
 import { isCollabSession } from "../../swarm/swarm-manager-utils.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
-
-function validateAnswersAgainstQuestions(
-  questions: ChoiceQuestion[],
-  answers: ChoiceAnswer[],
-): string | null {
-  const questionMap = new Map(questions.map((q) => [q.id, q]));
-  const seen = new Set<string>();
-
-  for (const answer of answers) {
-    const question = questionMap.get(answer.questionId);
-    if (!question) return `Unknown questionId: ${answer.questionId}`;
-    if (seen.has(answer.questionId)) return `Duplicate answer for questionId: ${answer.questionId}`;
-    seen.add(answer.questionId);
-
-    if (question.options) {
-      const allowed = new Set(question.options.map((o) => o.id));
-      for (const optionId of answer.selectedOptionIds) {
-        if (!allowed.has(optionId)) return `Unknown optionId ${optionId} for question ${answer.questionId}`;
-      }
-    }
-  }
-
-  return null;
-}
 
 export interface ConversationCommandRouteContext {
   command: ClientCommand;
@@ -97,7 +72,7 @@ export async function handleConversationCommand(context: ConversationCommandRout
     }
 
     if (command.type === "choice_response") {
-      const validationError = validateAnswersAgainstQuestions(pendingChoice.questions, command.answers);
+      const validationError = validateChoiceAnswers(pendingChoice.questions, command.answers);
       if (validationError) {
         logDebug("choice:rejected:invalid_response", { choiceId, agentId, validationError });
         send(socket, {

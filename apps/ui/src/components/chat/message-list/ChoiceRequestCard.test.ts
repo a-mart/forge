@@ -100,6 +100,11 @@ describe('single-select', () => {
     ])
   })
 
+  it('does not render freeform notes for option questions', () => {
+    render(questions)
+    expect(container.querySelector('textarea')).toBeNull()
+  })
+
   it('does not render checkbox icons for single-select', () => {
     render(questions)
     // CheckSquare / Square icons should NOT be present
@@ -213,6 +218,31 @@ describe('multi-select', () => {
     act(() => buttons[1].click()) // Should be ignored — already at max
     expect(buttons[0].getAttribute('aria-pressed')).toBe('true')
     expect(buttons[1].getAttribute('aria-pressed')).toBe('false')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Freeform
+// ---------------------------------------------------------------------------
+
+describe('freeform', () => {
+  it('requires text and submits freeform-only answers', () => {
+    const onSubmit = vi.fn()
+    render([{ id: 'q1', question: 'Explain' }], onSubmit)
+    expect(submitButton().disabled).toBe(true)
+
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(textarea, '  details  ')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    expect(submitButton().disabled).toBe(false)
+    act(() => submitButton().click())
+    expect(onSubmit).toHaveBeenCalledWith('agent-1', 'choice-1', [
+      { questionId: 'q1', selectedOptionIds: [], text: 'details' },
+    ])
   })
 })
 

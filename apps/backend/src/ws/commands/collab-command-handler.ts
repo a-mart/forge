@@ -18,9 +18,8 @@ import type { CollaborationReadinessRequestService } from "../../collaboration/r
 import { CollaborationWorkspaceService } from "../../collaboration/workspace-service.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { attachEffectiveChannelModelSettings } from "../../collaboration/channel-service.js";
+import { validateChoiceAnswers } from "@forge/protocol";
 import type {
-  ChoiceAnswer,
-  ChoiceQuestion,
   CollaborationBootstrapChannel,
   CollaborationBootstrapCurrentUser,
   CollaborationBootstrapEvent,
@@ -46,30 +45,6 @@ import type {
 import type { WebSocket } from "ws";
 import { DEFAULT_SUBSCRIBE_MESSAGE_COUNT } from "../ws-bootstrap.js";
 import type { CollabSubscriptionManager } from "../collab-subscription-manager.js";
-
-function validateAnswersAgainstQuestions(
-  questions: ChoiceQuestion[],
-  answers: ChoiceAnswer[],
-): string | null {
-  const questionMap = new Map(questions.map((q) => [q.id, q]));
-  const seen = new Set<string>();
-
-  for (const answer of answers) {
-    const question = questionMap.get(answer.questionId);
-    if (!question) return `Unknown questionId: ${answer.questionId}`;
-    if (seen.has(answer.questionId)) return `Duplicate answer for questionId: ${answer.questionId}`;
-    seen.add(answer.questionId);
-
-    if (question.options) {
-      const allowed = new Set(question.options.map((option) => option.id));
-      for (const optionId of answer.selectedOptionIds) {
-        if (!allowed.has(optionId)) return `Unknown optionId ${optionId} for question ${answer.questionId}`;
-      }
-    }
-  }
-
-  return null;
-}
 
 interface CollaborationWsServices {
   dbHelpers: CollaborationDbHelpers;
@@ -359,7 +334,7 @@ export class CollabCommandHandler {
       return;
     }
 
-    const validationError = validateAnswersAgainstQuestions(pendingChoice.questions, command.answers);
+    const validationError = validateChoiceAnswers(pendingChoice.questions, command.answers);
     if (validationError) {
       this.sendChoiceError(socket, "CHOICE_INVALID_RESPONSE", `Invalid choice response: ${validationError}`);
       return;

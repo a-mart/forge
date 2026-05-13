@@ -1,6 +1,5 @@
-import { isSystemProfile } from "@forge/protocol";
+import { isChoiceAnswer, isSystemProfile, validateChoiceAnswers } from "@forge/protocol";
 import type {
-  ChoiceAnswer,
   ChoiceQuestion,
   CliChoiceCancelCommand,
   CliChoiceResponseCommand,
@@ -15,7 +14,6 @@ import type {
 } from "@forge/protocol";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { requireNonSystemProfile } from "../swarm/system-profile-guards.js";
-import { isValidChoiceAnswer } from "./commands/command-parse-helpers.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { AgentDescriptor, ConversationAttachment, RequestedDeliveryMode } from "../swarm/types.js";
 import { sendWsEvent } from "./ws-send.js";
@@ -174,7 +172,7 @@ export class CliWsHandler {
 
   private handleChoiceResponse(socket: WebSocket, command: CliChoiceResponseCommand): void {
     const pending = this.requireCliPendingChoice(command.choiceId, command.sessionAgentId);
-    const validationError = validateAnswersAgainstQuestions(pending.questions, command.answers);
+    const validationError = validateChoiceAnswers(pending.questions, command.answers);
     if (validationError) {
       throw new CliCommandError(
         "choice_invalid_response",
@@ -614,7 +612,7 @@ function validateCliCommand(record: Record<string, unknown>, type: CliCommandTyp
       requireString(record, "requestId", errors);
       requireString(record, "choiceId", errors);
       optionalString(record, "sessionAgentId", errors);
-      if (!Array.isArray(record.answers) || !record.answers.every(isValidChoiceAnswer)) {
+      if (!Array.isArray(record.answers) || !record.answers.every(isChoiceAnswer)) {
         errors.push({ field: "answers", message: "Required field must be an array of valid choice answers." });
       }
       break;
@@ -775,30 +773,6 @@ function buildRequestContext(record: Record<string, unknown>): CliRequestContext
     ...(typeof record.type === "string" ? { type: record.type } : {}),
     ...(typeof record.requestId === "string" ? { requestId: record.requestId } : {}),
   };
-}
-
-function validateAnswersAgainstQuestions(
-  questions: ChoiceQuestion[],
-  answers: ChoiceAnswer[],
-): string | null {
-  const questionMap = new Map(questions.map((question) => [question.id, question]));
-  const seen = new Set<string>();
-
-  for (const answer of answers) {
-    const question = questionMap.get(answer.questionId);
-    if (!question) return `Unknown questionId: ${answer.questionId}`;
-    if (seen.has(answer.questionId)) return `Duplicate answer for questionId: ${answer.questionId}`;
-    seen.add(answer.questionId);
-
-    if (question.options) {
-      const allowedOptions = new Set(question.options.map((option) => option.id));
-      for (const optionId of answer.selectedOptionIds) {
-        if (!allowedOptions.has(optionId)) return `Unknown optionId ${optionId} for question ${answer.questionId}`;
-      }
-    }
-  }
-
-  return null;
 }
 
 function buildCliSourceContext(command: CliSendMessageCommand | CliRunCommand): MessageSourceContext {

@@ -2624,6 +2624,21 @@ describe('SwarmWebSocketServer', () => {
 
     client.send(JSON.stringify({
       type: 'cli_choice_response',
+      requestId: 'answer-invalid-choice',
+      choiceId: answerChoiceId,
+      sessionAgentId: 'manager',
+      answers: [{ questionId: 'worker-choice-q', selectedOptionIds: [] }],
+    }))
+    expect(await waitForCliError(events, 'answer-invalid-choice')).toMatchObject({
+      commandType: 'cli_choice_response',
+      code: 'choice_invalid_response',
+      status: 400,
+      fieldErrors: [{ field: 'answers' }],
+    })
+    expect(manager.getPendingChoice(answerChoiceId)).toBeTruthy()
+
+    client.send(JSON.stringify({
+      type: 'cli_choice_response',
       requestId: 'answer-worker-choice',
       choiceId: answerChoiceId,
       sessionAgentId: 'manager',

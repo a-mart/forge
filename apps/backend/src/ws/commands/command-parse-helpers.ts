@@ -1,4 +1,4 @@
-import type { ChoiceAnswer, ClientCommand, ManagerExactModelSelection } from "@forge/protocol";
+import { isChoiceAnswer, type ClientCommand, type ManagerExactModelSelection } from "@forge/protocol";
 
 export type ParsedClientCommand =
   | { ok: true; command: ClientCommand }
@@ -59,12 +59,4 @@ export function parseManagerExactModelSelection(
   };
 }
 
-export function isValidChoiceAnswer(value: unknown): value is ChoiceAnswer {
-  if (!value || typeof value !== "object") return false;
-  const maybe = value as Record<string, unknown>;
-  if (typeof maybe.questionId !== "string" || maybe.questionId.trim().length === 0) return false;
-  if (!Array.isArray(maybe.selectedOptionIds)) return false;
-  if (maybe.selectedOptionIds.some((id: unknown) => typeof id !== "string" || id.trim().length === 0)) return false;
-  if (maybe.text !== undefined && typeof maybe.text !== "string") return false;
-  return true;
-}
+export const isValidChoiceAnswer = isChoiceAnswer;
