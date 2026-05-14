@@ -68,7 +68,6 @@
         "src/router.tsx",
         "src/routeTree.gen.ts",
         "src/**/*.test.ts",
-        "src/**/*.test.tsx",
         "src/**/__tests__/**/*.ts"
       ],
       "project": [
