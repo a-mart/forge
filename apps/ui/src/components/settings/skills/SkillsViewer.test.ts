@@ -161,8 +161,9 @@ describe('SkillsViewer', () => {
     })
   })
 
-  it('opens a URL import preview from route state without installing', async () => {
+  it('opens a URL import preview from route state without installing and requests route cleanup', async () => {
     root = createRoot(container)
+    const onConsumed = vi.fn()
 
     flushSync(() => {
       root?.render(
@@ -173,6 +174,7 @@ describe('SkillsViewer', () => {
             wsUrl: 'ws://127.0.0.1:47287',
             profiles: [],
             initialImportUrl: 'https://share.test/s/token',
+            onInitialImportUrlConsumed: onConsumed,
           }),
         ),
       )
@@ -184,6 +186,7 @@ describe('SkillsViewer', () => {
         { url: 'https://share.test/s/token', target: { scope: 'global' } },
       )
       expect(skillsViewerApiMock.importSkill).not.toHaveBeenCalled()
+      expect(onConsumed).toHaveBeenCalledTimes(1)
     })
   })
 })

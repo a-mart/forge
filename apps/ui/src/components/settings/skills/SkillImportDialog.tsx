@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Loader2, ShieldAlert, UploadCloud } from 'lucide-react'
 import type {
   ManagerProfile,
@@ -62,11 +62,26 @@ export function SkillImportDialog({
   const [reviewAccepted, setReviewAccepted] = useState(false)
   const [replaceAccepted, setReplaceAccepted] = useState(false)
   const [lastAutoPreviewUrl, setLastAutoPreviewUrl] = useState<string | null>(null)
+  const [previewSource, setPreviewSource] = useState<{ url: string; scope: string } | null>(null)
+  const previewRequestIdRef = useRef(0)
 
   const normalizedInitialScope = useMemo(
     () => (profiles.some((profile) => profile.profileId === initialScope) ? initialScope : GLOBAL_SCOPE_VALUE),
     [initialScope, profiles],
   )
+
+  const invalidatePreview = useCallback((options: { clearError?: boolean } = {}) => {
+    previewRequestIdRef.current += 1
+    setPreview(null)
+    setPreviewSource(null)
+    setReviewAccepted(false)
+    setReplaceAccepted(false)
+    setSuccess(null)
+    setIsPreviewing(false)
+    if (options.clearError) {
+      setError(null)
+    }
+  }, [])
 
   useEffect(() => {
     if (!open) {
@@ -75,8 +90,10 @@ export function SkillImportDialog({
       setSuccess(null)
       setReviewAccepted(false)
       setReplaceAccepted(false)
+      setPreviewSource(null)
       setIsPreviewing(false)
       setIsImporting(false)
+      previewRequestIdRef.current += 1
       return
     }
     setTargetScope(normalizedInitialScope)
@@ -94,10 +111,10 @@ export function SkillImportDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialUrl, lastAutoPreviewUrl, normalizedInitialScope, open])
 
-  const target = useMemo(() => targetFromScope(targetScope), [targetScope])
+  const previewMatchesCurrent = Boolean(preview && previewSource?.url === url.trim() && previewSource.scope === targetScope)
   const hasConflict = Boolean(preview?.conflict.exists)
   const blockingConflict = Boolean(preview?.conflict.isBlocking)
-  const canInstall = Boolean(preview) && reviewAccepted && !isImporting && !isPreviewing && (!hasConflict || replaceAccepted) && !blockingConflict
+  const canInstall = previewMatchesCurrent && reviewAccepted && !isImporting && !isPreviewing && (!hasConflict || replaceAccepted) && !blockingConflict
 
   const handlePreview = async (overrideUrl?: string, overrideScope?: string) => {
     const nextUrl = (overrideUrl ?? url).trim()
@@ -105,38 +122,61 @@ export function SkillImportDialog({
       setError('Paste a Forge skill share URL first.')
       return
     }
-    const nextTarget = targetFromScope(overrideScope ?? targetScope)
+    const nextScope = overrideScope ?? targetScope
+    const nextTarget = targetFromScope(nextScope)
+    const requestId = previewRequestIdRef.current + 1
+    previewRequestIdRef.current = requestId
     setError(null)
     setSuccess(null)
     setPreview(null)
+    setPreviewSource(null)
     setReviewAccepted(false)
     setReplaceAccepted(false)
     setIsPreviewing(true)
     try {
-      setPreview(await previewSkillImportFromUrl(clientOrWsUrl, { url: nextUrl, target: nextTarget }))
+      const nextPreview = await previewSkillImportFromUrl(clientOrWsUrl, { url: nextUrl, target: nextTarget })
+      if (requestId !== previewRequestIdRef.current) {
+        return
+      }
+      setPreview(nextPreview)
+      setPreviewSource({ url: nextUrl, scope: nextScope })
     } catch (err) {
+      if (requestId !== previewRequestIdRef.current) {
+        return
+      }
       setError(toErrorMessage(err))
     } finally {
-      setIsPreviewing(false)
+      if (requestId === previewRequestIdRef.current) {
+        setIsPreviewing(false)
+      }
+    }
+  }
+
+  const handleUrlChange = (value: string) => {
+    setUrl(value)
+    if (preview || previewSource || isPreviewing || reviewAccepted || replaceAccepted) {
+      invalidatePreview({ clearError: true })
     }
   }
 
   const handleTargetChange = (value: string) => {
     setTargetScope(value)
-    if (preview && url.trim()) {
+    if (url.trim()) {
       void handlePreview(url, value)
+      return
     }
+    invalidatePreview({ clearError: true })
   }
 
   const handleImport = async () => {
-    if (!preview || !canInstall) return
+    if (!preview || !previewSource || !canInstall) return
     setError(null)
     setSuccess(null)
     setIsImporting(true)
     try {
       const result = await importSkill(clientOrWsUrl, {
-        source: { url: url.trim() },
-        target,
+        source: { url: previewSource.url },
+        target: targetFromScope(previewSource.scope),
         ...(hasConflict ? { conflictStrategy: 'replace', confirmReplace: true } : { conflictStrategy: 'reject' }),
       })
       setSuccess(`${result.bundle.skill.name} imported. New sessions and refreshed runtimes will see the skill.`)
@@ -169,7 +209,7 @@ export function SkillImportDialog({
                   <Input
                     id="skill-import-url"
                     value={url}
-                    onChange={(event) => setUrl(event.target.value)}
+                    onChange={(event) => handleUrlChange(event.target.value)}
                     placeholder="https://share.forge.dev/s/..."
                     className="font-mono text-xs"
                   />
@@ -388,7 +428,7 @@ function Acknowledgement({
 }) {
   return (
     <label className="flex cursor-pointer items-start gap-2 rounded-md border border-border bg-card/20 p-3 text-xs text-muted-foreground">
-      <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
+      <Checkbox aria-label={label} checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
       <span>{label}</span>
     </label>
   )

@@ -154,6 +154,7 @@ function CopyableLink({
   copied: boolean
   onCopy: () => void
 }) {
+  const canOpen = isSafeExternalShareLink(value)
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
@@ -168,7 +169,7 @@ function CopyableLink({
       </div>
       <div className="flex gap-2">
         <Input value={value} readOnly className="h-8 font-mono text-xs" />
-        <Button type="button" size="icon" variant="ghost" onClick={() => window.open(value, '_blank', 'noopener,noreferrer')}>
+        <Button type="button" size="icon" variant="ghost" disabled={!canOpen} onClick={() => openSafeExternalShareLink(value)}>
           <ExternalLink className="size-4" />
           <span className="sr-only">Open link</span>
         </Button>
@@ -193,6 +194,21 @@ function IssueList({ issues }: { issues: SkillBundleIssue[] }) {
       </ul>
     </div>
   )
+}
+
+function openSafeExternalShareLink(value: string): void {
+  if (!isSafeExternalShareLink(value)) return
+  window.open(value, '_blank', 'noopener,noreferrer')
+}
+
+function isSafeExternalShareLink(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol === 'https:') return true
+    return parsed.protocol === 'forge:' && parsed.hostname === 'skill-import'
+  } catch {
+    return false
+  }
 }
 
 function formatExpiry(value: string | undefined): string {

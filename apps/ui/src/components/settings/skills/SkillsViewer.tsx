@@ -67,9 +67,19 @@ interface SkillsViewerProps {
   initialScope?: string
   /** Optional Forge share URL handed in from route/deep-link state. */
   initialImportUrl?: string
+  /** Called after an initial import URL has been consumed so route params can be scrubbed. */
+  onInitialImportUrlConsumed?: () => void
 }
 
-export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialScope, initialImportUrl }: SkillsViewerProps) {
+export function SkillsViewer({
+  wsUrl,
+  apiClient,
+  profiles,
+  changeKey,
+  initialScope,
+  initialImportUrl,
+  onInitialImportUrlConsumed,
+}: SkillsViewerProps) {
   useHelpContext('settings.skills')
   const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
   const isCollab = apiClient?.target.kind === 'collab'
@@ -269,7 +279,8 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
     lastInitialImportUrlRef.current = trimmed
     setImportDialogInitialUrl(trimmed)
     setImportDialogOpen(true)
-  }, [initialImportUrl, isCollab])
+    onInitialImportUrlConsumed?.()
+  }, [initialImportUrl, isCollab, onInitialImportUrlConsumed])
 
   /* Reset on scope change */
   useEffect(() => {

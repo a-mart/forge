@@ -5,7 +5,6 @@
 import type {
   SkillFileContentResponse,
   SkillFilesResponse,
-  SkillImportPreviewBundleRequest,
   SkillImportPreviewResponse,
   SkillImportPreviewUrlRequest,
   SkillImportRequest,
@@ -103,21 +102,6 @@ export async function previewSkillImportFromUrl(
 ): Promise<SkillImportPreviewResponse> {
   const client = resolveClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/skills/import/preview-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-    cache: 'no-store',
-  })
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  return (await response.json()) as SkillImportPreviewResponse
-}
-
-export async function previewSkillImportBundle(
-  clientOrWsUrl: SettingsApiClient | string,
-  request: SkillImportPreviewBundleRequest,
-): Promise<SkillImportPreviewResponse> {
-  const client = resolveClient(clientOrWsUrl)
-  const response = await client.fetch('/api/settings/skills/import/preview-bundle', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),

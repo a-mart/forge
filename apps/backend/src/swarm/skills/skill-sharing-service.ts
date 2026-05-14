@@ -208,7 +208,48 @@ export class SkillSharingService {
       throw new SkillSharingError("invalid_share_response", "Skill share service response was missing required fields.", 502);
     }
 
-    return parsed;
+    return this.validateSkillShareResponse(parsed);
+  }
+
+  private validateSkillShareResponse(response: SkillShareResponse): SkillShareResponse {
+    let shareUrl: string;
+    try {
+      shareUrl = this.assertAllowedShareUrl(response.shareUrl).toString();
+    } catch {
+      throw new SkillSharingError("invalid_share_response", "Skill share service returned an untrusted share URL.", 502);
+    }
+
+    let parsedImportUrl: URL;
+    try {
+      parsedImportUrl = new URL(response.importUrl);
+    } catch {
+      throw new SkillSharingError("invalid_share_response", "Skill share service returned an invalid Forge import URL.", 502);
+    }
+
+    if (parsedImportUrl.protocol !== "forge:" || parsedImportUrl.hostname !== "skill-import") {
+      throw new SkillSharingError("invalid_share_response", "Skill share service returned an unexpected Forge import URL.", 502);
+    }
+
+    const embeddedShareUrl = parsedImportUrl.searchParams.get("url");
+    if (!embeddedShareUrl) {
+      throw new SkillSharingError("invalid_share_response", "Skill share service import URL did not include a share URL.", 502);
+    }
+
+    let normalizedEmbeddedShareUrl: string;
+    try {
+      normalizedEmbeddedShareUrl = this.assertAllowedShareUrl(embeddedShareUrl).toString();
+    } catch {
+      throw new SkillSharingError("invalid_share_response", "Skill share service import URL included an untrusted share URL.", 502);
+    }
+    if (normalizedEmbeddedShareUrl !== shareUrl) {
+      throw new SkillSharingError("invalid_share_response", "Skill share service import URL did not match the share URL.", 502);
+    }
+
+    return {
+      ...response,
+      shareUrl,
+      importUrl: `forge://skill-import?url=${encodeURIComponent(shareUrl)}`
+    };
   }
 
   private async fetchBundleFromShareUrl(url: string): Promise<SkillBundleManifestV1> {

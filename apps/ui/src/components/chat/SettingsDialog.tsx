@@ -53,6 +53,8 @@ interface SettingsPanelProps {
   initialCollabApiBaseUrl?: string
   /** Optional Forge skill-share URL to open in the Skills import dialog. */
   initialSkillImportUrl?: string
+  /** Called after the Skills tab consumes the import URL so the bearer URL can be removed from route state. */
+  onSkillImportUrlConsumed?: () => void
 }
 
 export function SettingsPanel({
@@ -71,6 +73,7 @@ export function SettingsPanel({
   initialTab,
   initialCollabApiBaseUrl,
   initialSkillImportUrl,
+  onSkillImportUrlConsumed,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     if (initialTab) {
@@ -132,7 +135,16 @@ export function SettingsPanel({
           telegramStatus={telegramStatus}
         />
       )}
-      {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} changeKey={specialistChangeKey} initialImportUrl={initialSkillImportUrl} />}
+      {activeTab === 'skills' && (
+        <SettingsSkills
+          wsUrl={wsUrl}
+          apiClient={apiClient}
+          profiles={profiles}
+          changeKey={specialistChangeKey}
+          initialImportUrl={initialSkillImportUrl}
+          onInitialImportUrlConsumed={onSkillImportUrlConsumed}
+        />
+      )}
       {activeTab === 'prompts' && (
         <SettingsPrompts
           wsUrl={wsUrl}

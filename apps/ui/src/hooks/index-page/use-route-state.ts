@@ -92,7 +92,13 @@ export function parseRouteStateFromLocation(
     const skillImportUrl = typeof routeSearch.skillImportUrl === 'string' ? routeSearch.skillImportUrl : undefined
     const settingsTab = typeof routeSearch.settingsTab === 'string' ? routeSearch.settingsTab : skillImportUrl ? 'skills' : undefined
     const collabApiBaseUrl = typeof routeSearch.collabApiBaseUrl === 'string' ? routeSearch.collabApiBaseUrl : undefined
-    return { view: 'settings', surface: parseSurface(surface, defaultSurface), settingsTab, collabApiBaseUrl, skillImportUrl }
+    return {
+      view: 'settings',
+      surface: skillImportUrl ? 'builder' : parseSurface(surface, defaultSurface),
+      settingsTab,
+      collabApiBaseUrl,
+      skillImportUrl,
+    }
   }
 
   if (view === 'stats') {

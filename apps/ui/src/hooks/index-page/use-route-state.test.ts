@@ -89,11 +89,12 @@ describe('useRouteState — settings surface', () => {
     expect(captured.current?.activeSurface).toBe('collab')
   })
 
-  it('routes skill import URLs to the skills settings tab', () => {
+  it('routes skill import URLs to the skills settings tab on the Builder surface', () => {
     const parsed = parseRouteStateFromLocation('/', {
       view: 'settings',
+      surface: 'collab',
       skillImportUrl: 'https://share.forge.dev/s/token',
-    }, 'builder')
+    }, 'collab')
 
     expect(parsed).toEqual({
       view: 'settings',

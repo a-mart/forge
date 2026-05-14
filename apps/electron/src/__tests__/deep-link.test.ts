@@ -8,6 +8,12 @@ describe('skill import deep links', () => {
     expect(result).toBe('https://share.forge.dev/s/token')
   })
 
+  it('allows IPv6 localhost share URLs for development deep links', () => {
+    const result = parseSkillImportDeepLink('forge://skill-import?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8787%2Fs%2Ftoken')
+
+    expect(result).toBe('http://[::1]:8787/s/token')
+  })
+
   it('rejects unsupported actions and unsafe embedded URLs', () => {
     expect(parseSkillImportDeepLink('forge://settings?url=https%3A%2F%2Fshare.forge.dev%2Fs%2Ftoken')).toBeNull()
     expect(parseSkillImportDeepLink('forge://skill-import?url=file%3A%2F%2F%2Ftmp%2Fskill.json')).toBeNull()

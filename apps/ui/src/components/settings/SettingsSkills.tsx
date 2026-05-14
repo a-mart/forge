@@ -12,8 +12,25 @@ interface SettingsSkillsProps {
   profiles: ManagerProfile[]
   changeKey?: number
   initialImportUrl?: string
+  onInitialImportUrlConsumed?: () => void
 }
 
-export function SettingsSkills({ wsUrl, apiClient, profiles, changeKey, initialImportUrl }: SettingsSkillsProps) {
-  return <SkillsViewer wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} changeKey={changeKey} initialImportUrl={initialImportUrl} />
+export function SettingsSkills({
+  wsUrl,
+  apiClient,
+  profiles,
+  changeKey,
+  initialImportUrl,
+  onInitialImportUrlConsumed,
+}: SettingsSkillsProps) {
+  return (
+    <SkillsViewer
+      wsUrl={wsUrl}
+      apiClient={apiClient}
+      profiles={profiles}
+      changeKey={changeKey}
+      initialImportUrl={initialImportUrl}
+      onInitialImportUrlConsumed={onInitialImportUrlConsumed}
+    />
+  )
 }

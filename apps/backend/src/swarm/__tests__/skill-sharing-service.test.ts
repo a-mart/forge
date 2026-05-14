@@ -50,6 +50,46 @@ describe("SkillSharingService", () => {
     ]));
   });
 
+  it("rejects untrusted share worker response URLs", async () => {
+    const mismatchHarness = await createHarness({
+      fetchFn: async (input, init) => {
+        const parsed = JSON.parse(String(init?.body)) as { bundle: SkillBundleManifestV1 };
+        expect(String(input)).toBe("https://share.test/api/v1/skill-shares");
+        return jsonResponse({
+          shareUrl: "https://share.test/s/token",
+          importUrl: "forge://skill-import?url=https%3A%2F%2Fshare.test%2Fs%2Fother-token",
+          expiresAt: "2026-05-20T12:00:00.000Z",
+          contentSha256: parsed.bundle.contentSha256,
+          warnings: []
+        });
+      }
+    });
+    await createGlobalSkill(mismatchHarness.config, "mismatch-share", {
+      "SKILL.md": "---\nname: Mismatch Share\n---\n\n# Mismatch\n"
+    });
+    await expect(mismatchHarness.sharingService.shareSkill(await getGlobalSkillId(mismatchHarness.metadataService, "mismatch-share")))
+      .rejects.toMatchObject({ code: "invalid_share_response", statusCode: 502 });
+
+    const untrustedHarness = await createHarness({
+      fetchFn: async (input, init) => {
+        const parsed = JSON.parse(String(init?.body)) as { bundle: SkillBundleManifestV1 };
+        expect(String(input)).toBe("https://share.test/api/v1/skill-shares");
+        return jsonResponse({
+          shareUrl: "https://evil.test/s/token",
+          importUrl: "forge://skill-import?url=https%3A%2F%2Fevil.test%2Fs%2Ftoken",
+          expiresAt: "2026-05-20T12:00:00.000Z",
+          contentSha256: parsed.bundle.contentSha256,
+          warnings: []
+        });
+      }
+    });
+    await createGlobalSkill(untrustedHarness.config, "untrusted-share", {
+      "SKILL.md": "---\nname: Untrusted Share\n---\n\n# Untrusted\n"
+    });
+    await expect(untrustedHarness.sharingService.shareSkill(await getGlobalSkillId(untrustedHarness.metadataService, "untrusted-share")))
+      .rejects.toMatchObject({ code: "invalid_share_response", statusCode: 502 });
+  });
+
   it("previews only allowlisted share URLs and maps expired links", async () => {
     const harness = await createHarness({
       fetchFn: async (input) => {
