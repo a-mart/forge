@@ -63,12 +63,14 @@ interface LegacyDownloadReservationAliasState {
 const META_ACTIVE_OBJECTS_KEY = "meta:activeObjects";
 const META_ACTIVE_BYTES_KEY = "meta:activeBytes";
 const META_LEGACY_DOWNLOAD_RESERVATIONS_MIGRATED_KEY = "meta:legacyDownloadReservationsMigrated";
+const META_NEXT_LEGACY_DOWNLOAD_ALIAS_CLEANUP_MS_KEY = "meta:nextLegacyDownloadAliasCleanupMs";
 const SHARE_PREFIX = "share:";
 const UPLOAD_WINDOW_PREFIX = "upload:";
 const DOWNLOAD_WINDOW_PREFIX = "download:";
 const DOWNLOAD_RESERVATION_PREFIX = "download-reservation:";
 const LEGACY_DOWNLOAD_RESERVATION_ALIAS_PREFIX = "download-reservation-legacy-alias:";
 const DOWNLOAD_RESERVATION_TTL_MS = 60_000;
+const LEGACY_DOWNLOAD_RESERVATION_ALIAS_GRACE_MS = 5 * 60_000;
 
 export class SkillShareLimiter {
   constructor(private readonly state: DurableObjectStateBinding) {}
@@ -305,6 +307,7 @@ export class SkillShareLimiter {
   }
 
   private async cleanupStaleDownloadReservations(shareId: string, nowMs: number): Promise<void> {
+    await this.cleanupLegacyDownloadReservationAliases(nowMs);
     await this.migrateLegacyDownloadReservationsOnce(nowMs);
     const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: getShareReservationPrefix(shareId) });
     for (const [key, reservation] of reservations.entries()) {
@@ -332,6 +335,12 @@ export class SkillShareLimiter {
       }
       if (reservation.expiresAtMs <= nowMs) {
         await this.rollbackReservation(key, reservation);
+        await this.putLegacyDownloadReservationAlias({
+          legacyReservationId: key.slice(DOWNLOAD_RESERVATION_PREFIX.length),
+          reservationId: createLegacyScopedReservationId(reservation.shareId, key.slice(DOWNLOAD_RESERVATION_PREFIX.length)),
+          shareId: reservation.shareId,
+          cleanupAtMs: nowMs + LEGACY_DOWNLOAD_RESERVATION_ALIAS_GRACE_MS
+        });
       } else {
         await this.rekeyLiveLegacyReservation(key, reservation);
       }
@@ -366,19 +375,64 @@ export class SkillShareLimiter {
 
   private async rekeyLiveLegacyReservation(key: string, reservation: DownloadReservationState): Promise<void> {
     const legacyReservationId = key.slice(DOWNLOAD_RESERVATION_PREFIX.length);
-    const scopedReservationId = `${reservation.shareId}:legacy:${legacyReservationId}`;
+    const scopedReservationId = createLegacyScopedReservationId(reservation.shareId, legacyReservationId);
     const scopedKey = getDownloadReservationKey(scopedReservationId);
     const scopedReservation: DownloadReservationState = {
       ...reservation,
       legacyReservationId
     };
     await this.state.storage.put<DownloadReservationState>(scopedKey, scopedReservation);
-    await this.state.storage.put<LegacyDownloadReservationAliasState>(getLegacyDownloadReservationAliasKey(legacyReservationId), {
+    await this.putLegacyDownloadReservationAlias({
+      legacyReservationId,
       reservationId: scopedReservationId,
       shareId: reservation.shareId,
-      expiresAtMs: reservation.expiresAtMs
+      cleanupAtMs: reservation.expiresAtMs + LEGACY_DOWNLOAD_RESERVATION_ALIAS_GRACE_MS
     });
     await this.state.storage.delete(key);
+  }
+
+  private async putLegacyDownloadReservationAlias(options: {
+    legacyReservationId: string;
+    reservationId: string;
+    shareId: string;
+    cleanupAtMs: number;
+  }): Promise<void> {
+    await this.state.storage.put<LegacyDownloadReservationAliasState>(getLegacyDownloadReservationAliasKey(options.legacyReservationId), {
+      reservationId: options.reservationId,
+      shareId: options.shareId,
+      expiresAtMs: options.cleanupAtMs
+    });
+    await this.scheduleLegacyAliasCleanup(options.cleanupAtMs);
+  }
+
+  private async scheduleLegacyAliasCleanup(cleanupAtMs: number): Promise<void> {
+    const current = await this.state.storage.get<number>(META_NEXT_LEGACY_DOWNLOAD_ALIAS_CLEANUP_MS_KEY);
+    if (typeof current !== "number" || !Number.isFinite(current) || cleanupAtMs < current) {
+      await this.state.storage.put(META_NEXT_LEGACY_DOWNLOAD_ALIAS_CLEANUP_MS_KEY, cleanupAtMs);
+    }
+  }
+
+  private async cleanupLegacyDownloadReservationAliases(nowMs: number): Promise<void> {
+    const nextCleanupMs = await this.state.storage.get<number>(META_NEXT_LEGACY_DOWNLOAD_ALIAS_CLEANUP_MS_KEY);
+    if (typeof nextCleanupMs !== "number" || !Number.isFinite(nextCleanupMs) || nextCleanupMs > nowMs) {
+      return;
+    }
+
+    const aliases = await this.state.storage.list<LegacyDownloadReservationAliasState>({ prefix: LEGACY_DOWNLOAD_RESERVATION_ALIAS_PREFIX });
+    let nextPendingCleanupMs: number | undefined;
+    for (const [key, alias] of aliases.entries()) {
+      if (alias.expiresAtMs <= nowMs) {
+        await this.state.storage.delete(key);
+      } else {
+        nextPendingCleanupMs = Math.min(nextPendingCleanupMs ?? Number.POSITIVE_INFINITY, alias.expiresAtMs);
+      }
+    }
+
+    if (nextPendingCleanupMs === undefined) {
+      await this.state.storage.delete(META_NEXT_LEGACY_DOWNLOAD_ALIAS_CLEANUP_MS_KEY);
+    } else {
+      await this.state.storage.put(META_NEXT_LEGACY_DOWNLOAD_ALIAS_CLEANUP_MS_KEY, nextPendingCleanupMs);
+    }
   }
 
   private async rollbackReservation(key: string, reservation: DownloadReservationState, aliasKey?: string): Promise<void> {
@@ -411,6 +465,7 @@ export class SkillShareLimiter {
   }
 
   private async deleteReservationsForShare(shareId: string, nowMs: number): Promise<void> {
+    await this.cleanupLegacyDownloadReservationAliases(nowMs);
     await this.migrateLegacyDownloadReservationsOnce(nowMs);
     const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: getShareReservationPrefix(shareId) });
     for (const [key, reservation] of reservations.entries()) {
@@ -444,6 +499,10 @@ function isLegacyDownloadReservationKey(key: string): boolean {
 
 function createDownloadReservationId(shareId: string): string {
   return `${shareId}:${crypto.randomUUID()}`;
+}
+
+function createLegacyScopedReservationId(shareId: string, legacyReservationId: string): string {
+  return `${shareId}:legacy:${legacyReservationId}`;
 }
 
 function getShareReservationPrefix(shareId: string): string {

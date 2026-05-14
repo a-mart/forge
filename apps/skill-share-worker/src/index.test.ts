@@ -20,6 +20,7 @@ import type {
 const SECRET = "x".repeat(64);
 const START_MS = Date.parse("2026-05-13T12:00:00.000Z");
 const TEXT_ENCODER = new TextEncoder();
+const LEGACY_ALIAS_GRACE_MS = 5 * 60_000;
 
 class MockR2Object implements R2ObjectBody {
   constructor(
@@ -401,20 +402,63 @@ describe("skill share worker", () => {
     expect(rollbackHarness.limiter.storage.data.has(rollbackLegacy.aliasKey)).toBe(false);
   });
 
-  it("cleans up stale legacy download reservations during migration", async () => {
-    const harness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
+  it("keeps expired legacy aliases for late commit and rollback after migration", async () => {
+    const commitHarness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
+    await commitHarness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-stale-commit") })
+    });
+    const commitShareId = extractShareIdFromObjectKey(Array.from(commitHarness.bucket.objects.keys())[0]);
+    const commitLegacy = seedLegacyPendingDownloadReservationForTest(commitHarness, commitShareId, { expiresAtMs: START_MS - 1 });
+
+    const commitReservation = await reserveDownloadForTest(commitHarness.limiter, commitShareId, START_MS, 1);
+    const expiredCommit = await callLimiterForTest(commitHarness.limiter, "/commit-download", {
+      reservationId: commitLegacy.reservationId,
+      nowMs: START_MS
+    });
+
+    expect(commitReservation).toMatchObject({ ok: true });
+    expect(expiredCommit).toMatchObject({ ok: false, reason: "expired" });
+    expect(commitHarness.limiter.storage.data.has(commitLegacy.key)).toBe(false);
+    expect(commitHarness.limiter.storage.data.has(commitLegacy.aliasKey)).toBe(false);
+
+    const rollbackHarness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
+    await rollbackHarness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-stale-rollback") })
+    });
+    const rollbackShareId = extractShareIdFromObjectKey(Array.from(rollbackHarness.bucket.objects.keys())[0]);
+    const rollbackLegacy = seedLegacyPendingDownloadReservationForTest(rollbackHarness, rollbackShareId, { expiresAtMs: START_MS - 1 });
+
+    await reserveDownloadForTest(rollbackHarness.limiter, rollbackShareId, START_MS, 1);
+    const expiredRollback = await callLimiterForTest(rollbackHarness.limiter, "/rollback-download", {
+      reservationId: rollbackLegacy.reservationId
+    });
+
+    expect(expiredRollback).toMatchObject({ ok: true, rolledBack: false });
+    expect(rollbackHarness.limiter.storage.data.has(rollbackLegacy.key)).toBe(false);
+    expect(rollbackHarness.limiter.storage.data.has(rollbackLegacy.aliasKey)).toBe(false);
+  });
+
+  it("ages out legacy alias tombstones automatically", async () => {
+    const harness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "2" } });
     await harness.fetch("/api/v1/skill-shares", {
       method: "POST",
-      body: JSON.stringify({ bundle: await createValidBundle("legacy-stale") })
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-alias-cleanup") })
     });
     const shareId = extractShareIdFromObjectKey(Array.from(harness.bucket.objects.keys())[0]);
     const legacy = seedLegacyPendingDownloadReservationForTest(harness, shareId, { expiresAtMs: START_MS - 1 });
 
-    const nextReservation = await reserveDownloadForTest(harness.limiter, shareId, START_MS, 1);
+    const firstReservation = await reserveDownloadForTest(harness.limiter, shareId, START_MS, 2);
+    expect(firstReservation).toMatchObject({ ok: true });
+    expect(harness.limiter.storage.data.has(legacy.aliasKey)).toBe(true);
+    harness.limiter.storage.listPrefixes.length = 0;
+
+    const nextReservation = await reserveDownloadForTest(harness.limiter, shareId, START_MS + LEGACY_ALIAS_GRACE_MS + 1, 2);
 
     expect(nextReservation).toMatchObject({ ok: true });
-    expect(harness.limiter.storage.data.has(legacy.key)).toBe(false);
     expect(harness.limiter.storage.data.has(legacy.aliasKey)).toBe(false);
+    expect(harness.limiter.storage.listPrefixes).toContain("download-reservation-legacy-alias:");
   });
 
   it("keeps download reservation cleanup scoped to the current share after legacy migration", async () => {
