@@ -39,6 +39,7 @@ class MockR2Object implements R2ObjectBody {
 
 class MemoryDurableObjectStorage implements DurableObjectStorageBinding {
   readonly data = new Map<string, unknown>();
+  readonly listPrefixes: Array<string | undefined> = [];
 
   async get<T = unknown>(key: string): Promise<T | undefined> {
     return this.data.get(key) as T | undefined;
@@ -53,6 +54,7 @@ class MemoryDurableObjectStorage implements DurableObjectStorageBinding {
   }
 
   async list<T = unknown>(options: { prefix?: string } = {}): Promise<Map<string, T>> {
+    this.listPrefixes.push(options.prefix);
     const result = new Map<string, T>();
     for (const [key, value] of this.data.entries()) {
       if (!options.prefix || key.startsWith(options.prefix)) {
@@ -64,7 +66,7 @@ class MemoryDurableObjectStorage implements DurableObjectStorageBinding {
 }
 
 class MockDurableObjectNamespace implements DurableObjectNamespaceBinding {
-  private readonly storage = new MemoryDurableObjectStorage();
+  readonly storage = new MemoryDurableObjectStorage();
   private readonly limiter = new SkillShareLimiter({ storage: this.storage } satisfies DurableObjectStateBinding);
 
   idFromName(name: string): DurableObjectIdBinding {
@@ -316,6 +318,62 @@ describe("skill share worker", () => {
     });
   });
 
+  it("keeps download reservation cleanup scoped to the current share", async () => {
+    const harness = await createHarness();
+    await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("scoped-one") })
+    });
+    await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("scoped-two") })
+    });
+    const [firstShareId, secondShareId] = Array.from(harness.bucket.objects.keys()).map(extractShareIdFromObjectKey);
+    harness.limiter.storage.listPrefixes.length = 0;
+
+    await reserveDownloadForTest(harness.limiter, firstShareId, START_MS);
+    await reserveDownloadForTest(harness.limiter, secondShareId, START_MS);
+    await reserveDownloadForTest(harness.limiter, firstShareId, START_MS + 61_000);
+    await callLimiterForTest(harness.limiter, "/release-share", { shareId: firstShareId });
+
+    const reservationListPrefixes = harness.limiter.storage.listPrefixes.filter((prefix) => prefix?.startsWith("download-reservation:"));
+    expect(reservationListPrefixes).toEqual([
+      `download-reservation:${firstShareId}:`,
+      `download-reservation:${secondShareId}:`,
+      `download-reservation:${firstShareId}:`,
+      `download-reservation:${firstShareId}:`
+    ]);
+    expect(reservationListPrefixes).not.toContain("download-reservation:");
+    const reservationKeys = Array.from(harness.limiter.storage.data.keys()).filter((key) => key.startsWith("download-reservation:"));
+    expect(reservationKeys.some((key) => key.startsWith(`download-reservation:${firstShareId}:`))).toBe(false);
+    expect(reservationKeys.some((key) => key.startsWith(`download-reservation:${secondShareId}:`))).toBe(true);
+  });
+
+  it("releases quota when R2 metadata expiry rejects a valid token", async () => {
+    const harness = await createHarness({ env: { MAX_ACTIVE_OBJECTS: "1" } });
+    const firstUpload = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("metadata-expired") })
+    });
+    const payload = await firstUpload.json() as { shareUrl: string };
+    const object = Array.from(harness.bucket.objects.values())[0];
+    harness.bucket.objects.set(object.key, new MockR2Object(object.key, await object.text(), {
+      ...object.customMetadata,
+      expiresAt: "2026-05-13T11:59:59.000Z"
+    }));
+
+    const expired = await harness.fetch(`/api/v1/skill-shares/${new URL(payload.shareUrl).pathname.split("/").at(-1)}`, { method: "GET" });
+    expect(expired.status).toBe(410);
+    expect(harness.bucket.objects.size).toBe(0);
+
+    const secondUpload = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("metadata-expiry-replacement") })
+    });
+    expect(secondUpload.status).toBe(201);
+    expect(harness.bucket.putCount).toBe(2);
+  });
+
   it("rate limits anonymous uploads per client IP", async () => {
     const harness = await createHarness({ env: { UPLOAD_RATE_LIMIT_PER_MINUTE: "1" } });
     const first = await harness.fetch("/api/v1/skill-shares", {
@@ -395,13 +453,15 @@ async function createHarness(options: {
   env?: Partial<SkillShareEnv>;
 } = {}): Promise<{
   bucket: MockR2Bucket;
+  limiter: MockDurableObjectNamespace;
   fetch: (path: string, init: RequestInit) => Promise<Response>;
 }> {
   const bucket = new MockR2Bucket();
+  const limiter = new MockDurableObjectNamespace();
   const worker = createSkillShareWorker(createWorkerState({ now: options.now ?? (() => START_MS) }));
   const env: SkillShareEnv = {
     SKILL_SHARES_BUCKET: bucket,
-    SHARE_LIMITER: new MockDurableObjectNamespace(),
+    SHARE_LIMITER: limiter,
     TOKEN_HMAC_SECRET: SECRET,
     PUBLIC_BASE_URL: "https://share.test",
     ...options.env
@@ -409,6 +469,7 @@ async function createHarness(options: {
 
   return {
     bucket,
+    limiter,
     fetch: (path, init) => worker.fetch(new Request(`https://share.test${path}`, {
       ...init,
       headers: {
@@ -420,6 +481,37 @@ async function createHarness(options: {
 }
 
 type Harness = Awaited<ReturnType<typeof createHarness>>;
+
+async function reserveDownloadForTest(
+  limiter: MockDurableObjectNamespace,
+  shareId: string,
+  nowMs: number
+): Promise<Record<string, unknown>> {
+  return callLimiterForTest(limiter, "/reserve-download", {
+    shareId,
+    nowMs,
+    downloadRateLimitPerMinute: 120,
+    maxDownloadsPerShare: 20,
+    maxEgressBytesPerShare: 1024 * 1024 * 1024
+  });
+}
+
+async function callLimiterForTest(
+  limiter: MockDurableObjectNamespace,
+  path: string,
+  body: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const response = await limiter.get(limiter.idFromName("global")).fetch(`https://limiter.local${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return await response.json() as Record<string, unknown>;
+}
+
+function extractShareIdFromObjectKey(key: string): string {
+  return key.replace(/^skill-shares\//, "").replace(/\.json$/, "");
+}
 
 async function expectFailedReadDoesNotBurnDownloadQuota(options: {
   name: string;

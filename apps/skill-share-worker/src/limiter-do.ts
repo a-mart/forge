@@ -141,7 +141,7 @@ export class SkillShareLimiter {
       return { ok: false, reason: "invalid_request" };
     }
 
-    await this.cleanupStaleDownloadReservations(body.nowMs);
+    await this.cleanupStaleDownloadReservations(body.shareId, body.nowMs);
 
     const shareKey = `${SHARE_PREFIX}${body.shareId}`;
     const share = await this.state.storage.get<ShareQuotaState>(shareKey);
@@ -173,11 +173,11 @@ export class SkillShareLimiter {
       return { ok: false, reason: "share_egress_budget_exceeded", retryAfterSeconds };
     }
 
-    const reservationId = crypto.randomUUID();
+    const reservationId = createDownloadReservationId(body.shareId);
     share.pendingDownloads = pendingDownloads + 1;
     share.pendingEgressBytes = pendingEgressBytes + share.bytes;
     await this.state.storage.put(shareKey, share);
-    await this.state.storage.put<DownloadReservationState>(`${DOWNLOAD_RESERVATION_PREFIX}${reservationId}`, {
+    await this.state.storage.put<DownloadReservationState>(getDownloadReservationKey(reservationId), {
       shareId: body.shareId,
       bytes: share.bytes,
       expiresAtMs: Math.min(body.nowMs + DOWNLOAD_RESERVATION_TTL_MS, share.expiresAtMs)
@@ -190,7 +190,7 @@ export class SkillShareLimiter {
       return { ok: false, reason: "invalid_request" };
     }
 
-    const reservationKey = `${DOWNLOAD_RESERVATION_PREFIX}${body.reservationId}`;
+    const reservationKey = getDownloadReservationKey(body.reservationId);
     const reservation = await this.state.storage.get<DownloadReservationState>(reservationKey);
     if (!reservation) {
       return { ok: false, reason: "reservation_missing" };
@@ -216,7 +216,7 @@ export class SkillShareLimiter {
   }
 
   private async rollbackDownload(body: RollbackDownloadRequest): Promise<Record<string, unknown>> {
-    const reservationKey = `${DOWNLOAD_RESERVATION_PREFIX}${body.reservationId}`;
+    const reservationKey = getDownloadReservationKey(body.reservationId);
     const reservation = await this.state.storage.get<DownloadReservationState>(reservationKey);
     if (!reservation) {
       return { ok: true, rolledBack: false };
@@ -287,8 +287,8 @@ export class SkillShareLimiter {
     }
   }
 
-  private async cleanupStaleDownloadReservations(nowMs: number): Promise<void> {
-    const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: DOWNLOAD_RESERVATION_PREFIX });
+  private async cleanupStaleDownloadReservations(shareId: string, nowMs: number): Promise<void> {
+    const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: getShareReservationPrefix(shareId) });
     for (const [key, reservation] of reservations.entries()) {
       if (reservation.expiresAtMs <= nowMs) {
         await this.rollbackReservation(key, reservation);
@@ -307,7 +307,7 @@ export class SkillShareLimiter {
   }
 
   private async deleteReservationsForShare(shareId: string): Promise<void> {
-    const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: DOWNLOAD_RESERVATION_PREFIX });
+    const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: getShareReservationPrefix(shareId) });
     for (const [key, reservation] of reservations.entries()) {
       if (reservation.shareId === shareId) {
         await this.state.storage.delete(key);
@@ -330,6 +330,18 @@ export class SkillShareLimiter {
     const value = await this.state.storage.get<number>(key);
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
   }
+}
+
+function createDownloadReservationId(shareId: string): string {
+  return `${shareId}:${crypto.randomUUID()}`;
+}
+
+function getShareReservationPrefix(shareId: string): string {
+  return `${DOWNLOAD_RESERVATION_PREFIX}${shareId}:`;
+}
+
+function getDownloadReservationKey(reservationId: string): string {
+  return `${DOWNLOAD_RESERVATION_PREFIX}${reservationId}`;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
