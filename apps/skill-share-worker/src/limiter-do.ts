@@ -44,11 +44,19 @@ interface RollbackDownloadRequest {
 
 interface ReleaseShareRequest {
   shareId: string;
+  nowMs?: number;
 }
 
 interface DownloadReservationState {
   shareId: string;
   bytes: number;
+  expiresAtMs: number;
+  legacyReservationId?: string;
+}
+
+interface LegacyDownloadReservationAliasState {
+  reservationId: string;
+  shareId: string;
   expiresAtMs: number;
 }
 
@@ -59,6 +67,7 @@ const SHARE_PREFIX = "share:";
 const UPLOAD_WINDOW_PREFIX = "upload:";
 const DOWNLOAD_WINDOW_PREFIX = "download:";
 const DOWNLOAD_RESERVATION_PREFIX = "download-reservation:";
+const LEGACY_DOWNLOAD_RESERVATION_ALIAS_PREFIX = "download-reservation-legacy-alias:";
 const DOWNLOAD_RESERVATION_TTL_MS = 60_000;
 
 export class SkillShareLimiter {
@@ -191,20 +200,24 @@ export class SkillShareLimiter {
       return { ok: false, reason: "invalid_request" };
     }
 
-    const reservationKey = getDownloadReservationKey(body.reservationId);
-    const reservation = await this.state.storage.get<DownloadReservationState>(reservationKey);
-    if (!reservation) {
+    const resolved = await this.resolveDownloadReservation(body.reservationId);
+    if (!resolved) {
       return { ok: false, reason: "reservation_missing" };
     }
+    if (!resolved.reservation) {
+      await this.deleteLegacyAlias(resolved.aliasKey);
+      return { ok: false, reason: "expired" };
+    }
 
+    const { key: reservationKey, reservation, aliasKey } = resolved;
     const shareKey = `${SHARE_PREFIX}${reservation.shareId}`;
     const share = await this.state.storage.get<ShareQuotaState>(shareKey);
     if (!share) {
-      await this.state.storage.delete(reservationKey);
+      await this.deleteReservation(reservationKey, reservation, aliasKey);
       return { ok: false, reason: "expired" };
     }
     if (share.expiresAtMs <= body.nowMs) {
-      await this.rollbackReservation(reservationKey, reservation);
+      await this.rollbackReservation(reservationKey, reservation, aliasKey);
       return { ok: false, reason: "expired" };
     }
 
@@ -212,18 +225,21 @@ export class SkillShareLimiter {
     share.downloads += 1;
     share.egressBytes += reservation.bytes;
     await this.state.storage.put(shareKey, share);
-    await this.state.storage.delete(reservationKey);
+    await this.deleteReservation(reservationKey, reservation, aliasKey);
     return { ok: true };
   }
 
   private async rollbackDownload(body: RollbackDownloadRequest): Promise<Record<string, unknown>> {
-    const reservationKey = getDownloadReservationKey(body.reservationId);
-    const reservation = await this.state.storage.get<DownloadReservationState>(reservationKey);
-    if (!reservation) {
+    const resolved = await this.resolveDownloadReservation(body.reservationId);
+    if (!resolved) {
+      return { ok: true, rolledBack: false };
+    }
+    if (!resolved.reservation) {
+      await this.deleteLegacyAlias(resolved.aliasKey);
       return { ok: true, rolledBack: false };
     }
 
-    await this.rollbackReservation(reservationKey, reservation);
+    await this.rollbackReservation(resolved.key, resolved.reservation, resolved.aliasKey);
     return { ok: true, rolledBack: true };
   }
 
@@ -235,7 +251,7 @@ export class SkillShareLimiter {
     }
 
     await this.state.storage.delete(shareKey);
-    await this.deleteReservationsForShare(body.shareId);
+    await this.deleteReservationsForShare(body.shareId, isSafeRequestNumber(body.nowMs) ? body.nowMs : Date.now());
     await this.state.storage.put(META_ACTIVE_OBJECTS_KEY, Math.max(0, await this.getNumber(META_ACTIVE_OBJECTS_KEY) - 1));
     await this.state.storage.put(META_ACTIVE_BYTES_KEY, Math.max(0, await this.getNumber(META_ACTIVE_BYTES_KEY) - share.bytes));
     return { ok: true, released: true };
@@ -247,7 +263,7 @@ export class SkillShareLimiter {
     for (const [key, share] of shares.entries()) {
       if (share.expiresAtMs <= nowMs) {
         const shareId = key.slice(SHARE_PREFIX.length);
-        await this.releaseShare({ shareId });
+        await this.releaseShare({ shareId, nowMs });
         released += 1;
       }
     }
@@ -289,7 +305,7 @@ export class SkillShareLimiter {
   }
 
   private async cleanupStaleDownloadReservations(shareId: string, nowMs: number): Promise<void> {
-    await this.migrateLegacyDownloadReservationsOnce();
+    await this.migrateLegacyDownloadReservationsOnce(nowMs);
     const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: getShareReservationPrefix(shareId) });
     for (const [key, reservation] of reservations.entries()) {
       if (reservation.expiresAtMs <= nowMs) {
@@ -298,40 +314,108 @@ export class SkillShareLimiter {
     }
   }
 
-  private async migrateLegacyDownloadReservationsOnce(): Promise<void> {
+  private async migrateLegacyDownloadReservationsOnce(nowMs: number): Promise<void> {
     const alreadyMigrated = await this.state.storage.get<boolean>(META_LEGACY_DOWNLOAD_RESERVATIONS_MIGRATED_KEY);
     if (alreadyMigrated) {
       return;
     }
 
     // Compatibility for the short-lived rollout that keyed reservations globally as
-    // `download-reservation:<uuid>`. This one-time scan rolls those pending records
-    // back and then sets a marker so public download paths keep share-scoped cleanup.
+    // `download-reservation:<uuid>`. This one-time scan rolls back stale legacy
+    // records, but re-keys live records under the share-scoped prefix and leaves an
+    // alias so in-flight old worker commit/rollback calls using the legacy id still
+    // complete without surfacing reservation_missing/503 during deploy.
     const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: DOWNLOAD_RESERVATION_PREFIX });
     for (const [key, reservation] of reservations.entries()) {
-      if (isLegacyDownloadReservationKey(key)) {
+      if (!isLegacyDownloadReservationKey(key)) {
+        continue;
+      }
+      if (reservation.expiresAtMs <= nowMs) {
         await this.rollbackReservation(key, reservation);
+      } else {
+        await this.rekeyLiveLegacyReservation(key, reservation);
       }
     }
     await this.state.storage.put(META_LEGACY_DOWNLOAD_RESERVATIONS_MIGRATED_KEY, true);
   }
 
-  private async rollbackReservation(key: string, reservation: DownloadReservationState): Promise<void> {
+  private async resolveDownloadReservation(reservationId: string): Promise<
+    | { key: string; reservation: DownloadReservationState; aliasKey?: string }
+    | { reservation?: undefined; aliasKey: string }
+    | undefined
+  > {
+    const reservationKey = getDownloadReservationKey(reservationId);
+    const reservation = await this.state.storage.get<DownloadReservationState>(reservationKey);
+    if (reservation) {
+      return { key: reservationKey, reservation };
+    }
+
+    const aliasKey = getLegacyDownloadReservationAliasKey(reservationId);
+    const alias = await this.state.storage.get<LegacyDownloadReservationAliasState>(aliasKey);
+    if (!alias) {
+      return undefined;
+    }
+
+    const scopedKey = getDownloadReservationKey(alias.reservationId);
+    const scopedReservation = await this.state.storage.get<DownloadReservationState>(scopedKey);
+    if (!scopedReservation) {
+      return { aliasKey };
+    }
+    return { key: scopedKey, reservation: scopedReservation, aliasKey };
+  }
+
+  private async rekeyLiveLegacyReservation(key: string, reservation: DownloadReservationState): Promise<void> {
+    const legacyReservationId = key.slice(DOWNLOAD_RESERVATION_PREFIX.length);
+    const scopedReservationId = `${reservation.shareId}:legacy:${legacyReservationId}`;
+    const scopedKey = getDownloadReservationKey(scopedReservationId);
+    const scopedReservation: DownloadReservationState = {
+      ...reservation,
+      legacyReservationId
+    };
+    await this.state.storage.put<DownloadReservationState>(scopedKey, scopedReservation);
+    await this.state.storage.put<LegacyDownloadReservationAliasState>(getLegacyDownloadReservationAliasKey(legacyReservationId), {
+      reservationId: scopedReservationId,
+      shareId: reservation.shareId,
+      expiresAtMs: reservation.expiresAtMs
+    });
+    await this.state.storage.delete(key);
+  }
+
+  private async rollbackReservation(key: string, reservation: DownloadReservationState, aliasKey?: string): Promise<void> {
     const shareKey = `${SHARE_PREFIX}${reservation.shareId}`;
     const share = await this.state.storage.get<ShareQuotaState>(shareKey);
     if (share) {
       this.applyReservationDelta(share, reservation, "rollback");
       await this.state.storage.put(shareKey, share);
     }
-    await this.state.storage.delete(key);
+    await this.deleteReservation(key, reservation, aliasKey);
   }
 
-  private async deleteReservationsForShare(shareId: string): Promise<void> {
-    await this.migrateLegacyDownloadReservationsOnce();
+  private async deleteReservation(
+    key: string,
+    reservation: DownloadReservationState,
+    aliasKey?: string,
+    options: { keepLegacyAliasTombstone?: boolean } = {}
+  ): Promise<void> {
+    await this.state.storage.delete(key);
+    const resolvedAliasKey = aliasKey ?? getOptionalLegacyDownloadReservationAliasKey(reservation.legacyReservationId);
+    if (!options.keepLegacyAliasTombstone) {
+      await this.deleteLegacyAlias(resolvedAliasKey);
+    }
+  }
+
+  private async deleteLegacyAlias(aliasKey: string | undefined): Promise<void> {
+    if (aliasKey) {
+      await this.state.storage.delete(aliasKey);
+    }
+  }
+
+  private async deleteReservationsForShare(shareId: string, nowMs: number): Promise<void> {
+    await this.migrateLegacyDownloadReservationsOnce(nowMs);
     const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: getShareReservationPrefix(shareId) });
     for (const [key, reservation] of reservations.entries()) {
       if (reservation.shareId === shareId) {
-        await this.state.storage.delete(key);
+        await this.deleteReservation(key, reservation, undefined, { keepLegacyAliasTombstone: true });
       }
     }
   }
@@ -368,6 +452,14 @@ function getShareReservationPrefix(shareId: string): string {
 
 function getDownloadReservationKey(reservationId: string): string {
   return `${DOWNLOAD_RESERVATION_PREFIX}${reservationId}`;
+}
+
+function getLegacyDownloadReservationAliasKey(legacyReservationId: string): string {
+  return `${LEGACY_DOWNLOAD_RESERVATION_ALIAS_PREFIX}${legacyReservationId}`;
+}
+
+function getOptionalLegacyDownloadReservationAliasKey(legacyReservationId: string | undefined): string | undefined {
+  return legacyReservationId === undefined ? undefined : getLegacyDownloadReservationAliasKey(legacyReservationId);
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

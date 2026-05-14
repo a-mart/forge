@@ -318,44 +318,103 @@ describe("skill share worker", () => {
     });
   });
 
-  it("migrates legacy download reservations once without leaving false quota", async () => {
-    const harness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
-    const upload = await harness.fetch("/api/v1/skill-shares", {
+  it("rekeys live legacy reservations and supports legacy commit ids", async () => {
+    const harness = await createHarness();
+    await harness.fetch("/api/v1/skill-shares", {
       method: "POST",
-      body: JSON.stringify({ bundle: await createValidBundle("legacy-reserve") })
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-commit") })
     });
-    const payload = await upload.json() as { shareUrl: string };
-    const token = new URL(payload.shareUrl).pathname.split("/").at(-1)!;
     const shareId = extractShareIdFromObjectKey(Array.from(harness.bucket.objects.keys())[0]);
-    const legacyKey = seedLegacyPendingDownloadReservationForTest(harness, shareId);
+    const legacy = seedLegacyPendingDownloadReservationForTest(harness, shareId);
     harness.limiter.storage.listPrefixes.length = 0;
 
-    const success = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
-    const denied = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+    const deniedWhileLegacyReservationIsInFlight = await reserveDownloadForTest(harness.limiter, shareId, START_MS, 1);
+    const commit = await callLimiterForTest(harness.limiter, "/commit-download", {
+      reservationId: legacy.reservationId,
+      nowMs: START_MS
+    });
+    const nextReservation = await reserveDownloadForTest(harness.limiter, shareId, START_MS, 2);
 
-    expect(success.status).toBe(200);
-    expect(denied.status).toBe(429);
-    expect(harness.limiter.storage.data.has(legacyKey)).toBe(false);
+    expect(deniedWhileLegacyReservationIsInFlight).toMatchObject({ ok: false, reason: "share_download_budget_exceeded" });
+    expect(commit).toMatchObject({ ok: true });
+    expect(nextReservation).toMatchObject({ ok: true });
+    expect(harness.limiter.storage.data.has(legacy.key)).toBe(false);
+    expect(harness.limiter.storage.data.has(legacy.aliasKey)).toBe(false);
     expect(harness.limiter.storage.data.get("meta:legacyDownloadReservationsMigrated")).toBe(true);
     expect(harness.limiter.storage.listPrefixes.filter((prefix) => prefix === "download-reservation:")).toHaveLength(1);
   });
 
-  it("migrates legacy download reservations during share release", async () => {
-    const harness = await createHarness();
+  it("supports legacy rollback ids after migration", async () => {
+    const harness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
     await harness.fetch("/api/v1/skill-shares", {
       method: "POST",
-      body: JSON.stringify({ bundle: await createValidBundle("legacy-release") })
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-rollback") })
     });
     const shareId = extractShareIdFromObjectKey(Array.from(harness.bucket.objects.keys())[0]);
-    const legacyKey = seedLegacyPendingDownloadReservationForTest(harness, shareId);
-    harness.limiter.storage.listPrefixes.length = 0;
+    const legacy = seedLegacyPendingDownloadReservationForTest(harness, shareId);
 
-    const release = await callLimiterForTest(harness.limiter, "/release-share", { shareId });
+    const deniedWhileLegacyReservationIsInFlight = await reserveDownloadForTest(harness.limiter, shareId, START_MS, 1);
+    const rollback = await callLimiterForTest(harness.limiter, "/rollback-download", { reservationId: legacy.reservationId });
+    const nextReservation = await reserveDownloadForTest(harness.limiter, shareId, START_MS, 1);
+
+    expect(deniedWhileLegacyReservationIsInFlight).toMatchObject({ ok: false, reason: "share_download_budget_exceeded" });
+    expect(rollback).toMatchObject({ ok: true, rolledBack: true });
+    expect(nextReservation).toMatchObject({ ok: true });
+    expect(harness.limiter.storage.data.has(legacy.key)).toBe(false);
+    expect(harness.limiter.storage.data.has(legacy.aliasKey)).toBe(false);
+  });
+
+  it("keeps legacy commit/rollback from surfacing 503 after share release migration", async () => {
+    const commitHarness = await createHarness();
+    await commitHarness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-release-commit") })
+    });
+    const commitShareId = extractShareIdFromObjectKey(Array.from(commitHarness.bucket.objects.keys())[0]);
+    const commitLegacy = seedLegacyPendingDownloadReservationForTest(commitHarness, commitShareId, { expiresAtMs: Date.now() + 60_000 });
+    const release = await callLimiterForTest(commitHarness.limiter, "/release-share", { shareId: commitShareId });
+    const legacyCommitAfterRelease = await callLimiterForTest(commitHarness.limiter, "/commit-download", {
+      reservationId: commitLegacy.reservationId,
+      nowMs: START_MS
+    });
 
     expect(release).toMatchObject({ ok: true, released: true });
-    expect(harness.limiter.storage.data.has(`share:${shareId}`)).toBe(false);
-    expect(harness.limiter.storage.data.has(legacyKey)).toBe(false);
-    expect(harness.limiter.storage.listPrefixes.filter((prefix) => prefix === "download-reservation:")).toHaveLength(1);
+    expect(legacyCommitAfterRelease).toMatchObject({ ok: false, reason: "expired" });
+    expect(commitHarness.limiter.storage.data.has(`share:${commitShareId}`)).toBe(false);
+    expect(commitHarness.limiter.storage.data.has(commitLegacy.key)).toBe(false);
+    expect(commitHarness.limiter.storage.data.has(commitLegacy.aliasKey)).toBe(false);
+
+    const rollbackHarness = await createHarness();
+    await rollbackHarness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-release-rollback") })
+    });
+    const rollbackShareId = extractShareIdFromObjectKey(Array.from(rollbackHarness.bucket.objects.keys())[0]);
+    const rollbackLegacy = seedLegacyPendingDownloadReservationForTest(rollbackHarness, rollbackShareId, { expiresAtMs: Date.now() + 60_000 });
+    await callLimiterForTest(rollbackHarness.limiter, "/release-share", { shareId: rollbackShareId });
+    const legacyRollbackAfterRelease = await callLimiterForTest(rollbackHarness.limiter, "/rollback-download", {
+      reservationId: rollbackLegacy.reservationId
+    });
+
+    expect(legacyRollbackAfterRelease).toMatchObject({ ok: true, rolledBack: false });
+    expect(rollbackHarness.limiter.storage.data.has(rollbackLegacy.key)).toBe(false);
+    expect(rollbackHarness.limiter.storage.data.has(rollbackLegacy.aliasKey)).toBe(false);
+  });
+
+  it("cleans up stale legacy download reservations during migration", async () => {
+    const harness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
+    await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-stale") })
+    });
+    const shareId = extractShareIdFromObjectKey(Array.from(harness.bucket.objects.keys())[0]);
+    const legacy = seedLegacyPendingDownloadReservationForTest(harness, shareId, { expiresAtMs: START_MS - 1 });
+
+    const nextReservation = await reserveDownloadForTest(harness.limiter, shareId, START_MS, 1);
+
+    expect(nextReservation).toMatchObject({ ok: true });
+    expect(harness.limiter.storage.data.has(legacy.key)).toBe(false);
+    expect(harness.limiter.storage.data.has(legacy.aliasKey)).toBe(false);
   });
 
   it("keeps download reservation cleanup scoped to the current share after legacy migration", async () => {
@@ -538,14 +597,19 @@ interface TestDownloadReservationState {
   expiresAtMs: number;
 }
 
-function seedLegacyPendingDownloadReservationForTest(harness: Harness, shareId: string): string {
+function seedLegacyPendingDownloadReservationForTest(
+  harness: Harness,
+  shareId: string,
+  options: { expiresAtMs?: number } = {}
+): { key: string; reservationId: string; aliasKey: string } {
   const shareKey = `share:${shareId}`;
   const share = harness.limiter.storage.data.get(shareKey) as TestShareQuotaState | undefined;
   if (!share) {
     throw new Error(`Missing share quota state for ${shareId}`);
   }
 
-  const legacyKey = `download-reservation:legacy-${shareId}`;
+  const reservationId = `legacy-${shareId}`;
+  const legacyKey = `download-reservation:${reservationId}`;
   harness.limiter.storage.data.set(shareKey, {
     ...share,
     pendingDownloads: (share.pendingDownloads ?? 0) + 1,
@@ -554,21 +618,26 @@ function seedLegacyPendingDownloadReservationForTest(harness: Harness, shareId: 
   harness.limiter.storage.data.set(legacyKey, {
     shareId,
     bytes: share.bytes,
-    expiresAtMs: START_MS + 60_000
+    expiresAtMs: options.expiresAtMs ?? START_MS + 60_000
   } satisfies TestDownloadReservationState);
-  return legacyKey;
+  return {
+    key: legacyKey,
+    reservationId,
+    aliasKey: `download-reservation-legacy-alias:${reservationId}`
+  };
 }
 
 async function reserveDownloadForTest(
   limiter: MockDurableObjectNamespace,
   shareId: string,
-  nowMs: number
+  nowMs: number,
+  maxDownloadsPerShare = 20
 ): Promise<Record<string, unknown>> {
   return callLimiterForTest(limiter, "/reserve-download", {
     shareId,
     nowMs,
     downloadRateLimitPerMinute: 120,
-    maxDownloadsPerShare: 20,
+    maxDownloadsPerShare,
     maxEgressBytesPerShare: 1024 * 1024 * 1024
   });
 }
