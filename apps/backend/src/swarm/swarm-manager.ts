@@ -5517,7 +5517,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     }
 
-    const profileId = normalizeOptionalAgentId(managerDescriptor?.profileId) ?? normalizeOptionalAgentId(descriptor.profileId);
+    const profileId = managerDescriptor?.role === "manager"
+      ? normalizeOptionalAgentId(managerDescriptor.profileId) ?? managerDescriptor.agentId
+      : normalizeOptionalAgentId(descriptor.profileId);
     if (!profileId) {
       return null;
     }

@@ -1268,6 +1268,44 @@ describe('SwarmManager', () => {
     expect(resources.additionalSkillPaths).not.toContain(getProfilePiSkillsDir(config.paths.dataDir, 'manager'))
   })
 
+  it('uses manager agentId as the profile fallback for legacy manager descriptors without profileId', async () => {
+    const config = await makeTempConfig()
+    const profileSkillFile = join(getProfilePiSkillsDir(config.paths.dataDir, 'manager'), 'legacy-profile-skill', 'SKILL.md')
+    await mkdir(dirname(profileSkillFile), { recursive: true })
+    await writeFile(
+      profileSkillFile,
+      [
+        '---',
+        'name: legacy-profile-skill',
+        'description: Profile skill for legacy manager descriptors.',
+        '---',
+        '',
+        '# Legacy profile skill',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const state = manager as unknown as {
+      descriptors: Map<string, AgentDescriptor>
+      promptService: {
+        buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>
+      }
+    }
+    const descriptor = state.descriptors.get('manager')
+    expect(descriptor).toBeDefined()
+    delete descriptor!.profileId
+
+    const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
+    expect(resources.additionalSkillPaths).toContain(profileSkillFile)
+
+    const claudePrompt = await state.promptService.buildClaudeRuntimeSystemPrompt(descriptor!, 'Base prompt')
+    expect(claudePrompt).toContain('<name>legacy-profile-skill</name>')
+    expect(claudePrompt).toContain(profileSkillFile)
+  })
+
   it('injects GPT-5 model-specific instructions into the default manager prompt', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
