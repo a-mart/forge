@@ -5479,18 +5479,35 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ? descriptor
       : this.descriptors.get(descriptor.managerId);
     const collabInfo = getCollabSessionInfo(managerDescriptor);
-    if (!managerDescriptor || managerDescriptor.role !== "manager" || !collabInfo) {
-      return null;
-    }
 
-    try {
-      const dbHelpers = await createCollaborationDbHelpers(this.config);
-      const channel = dbHelpers.getChannel(collabInfo.channelId);
-      if (!channel) {
-        this.logDebug("collaboration:skills:channel_missing", {
+    if (managerDescriptor?.role === "manager" && collabInfo) {
+      try {
+        const dbHelpers = await createCollaborationDbHelpers(this.config);
+        const channel = dbHelpers.getChannel(collabInfo.channelId);
+        if (!channel) {
+          this.logDebug("collaboration:skills:channel_missing", {
+            agentId: descriptor.agentId,
+            managerId: managerDescriptor.agentId,
+            channelId: collabInfo.channelId,
+          });
+          const closedRoster = await resolveCollaborationSkillRoster({
+            selectionJson: "[]",
+            skillMetadataService: this.skillMetadataService,
+          });
+          return closedRoster.skills;
+        }
+
+        const roster = await resolveCollaborationSkillRoster({
+          selectionJson: channel.activeSkillHandlesJson,
+          skillMetadataService: this.skillMetadataService,
+        });
+        return roster.skills;
+      } catch (error) {
+        this.logDebug("collaboration:skills:resolve_error", {
           agentId: descriptor.agentId,
           managerId: managerDescriptor.agentId,
           channelId: collabInfo.channelId,
+          message: error instanceof Error ? error.message : String(error),
         });
         const closedRoster = await resolveCollaborationSkillRoster({
           selectionJson: "[]",
@@ -5498,25 +5515,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         });
         return closedRoster.skills;
       }
-
-      const roster = await resolveCollaborationSkillRoster({
-        selectionJson: channel.activeSkillHandlesJson,
-        skillMetadataService: this.skillMetadataService,
-      });
-      return roster.skills;
-    } catch (error) {
-      this.logDebug("collaboration:skills:resolve_error", {
-        agentId: descriptor.agentId,
-        managerId: managerDescriptor.agentId,
-        channelId: collabInfo.channelId,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      const closedRoster = await resolveCollaborationSkillRoster({
-        selectionJson: "[]",
-        skillMetadataService: this.skillMetadataService,
-      });
-      return closedRoster.skills;
     }
+
+    const profileId = normalizeOptionalAgentId(managerDescriptor?.profileId) ?? normalizeOptionalAgentId(descriptor.profileId);
+    if (!profileId) {
+      return null;
+    }
+
+    return this.skillMetadataService.getProfileSkillMetadata(profileId);
   }
 
   async resolveProjectAgentSystemPromptOverride(

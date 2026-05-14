@@ -577,10 +577,12 @@ describe("RuntimeFactory", () => {
     ]);
   });
 
-  it("preserves Builder Pi profile skill directory discovery", async () => {
+  it("uses effective Builder Pi profile skill paths without broad profile directory discovery", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
-    await mkdir(join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill"), { recursive: true });
-    await writeFile(join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill", "SKILL.md"), "# profile", "utf8");
+    const profileSkillRoot = join(rootDir, "data", "profiles", "profile-1", "pi", "skills", "profile-skill");
+    const profileSkillPath = join(profileSkillRoot, "SKILL.md");
+    await mkdir(profileSkillRoot, { recursive: true });
+    await writeFile(profileSkillPath, "# profile", "utf8");
     piCodingAgentMockState.modelRegistryFind.mockReturnValue({
       id: "gpt-5.4-mini",
       name: "GPT-5.4 mini",
@@ -597,7 +599,13 @@ describe("RuntimeFactory", () => {
       session: createMockPiSession(),
       extensionsResult: { extensions: [], errors: [] },
     });
-    const factory = createFactory(rootDir);
+    const factory = createFactory(rootDir, {
+      getMemoryRuntimeResources: async () => ({
+        memoryContextFile: { path: join(rootDir, "memory.md"), content: "" },
+        additionalSkillPaths: [profileSkillPath],
+        skillMetadata: [fakeSkillMetadata("profile-skill", profileSkillRoot)],
+      }),
+    });
 
     await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
 
@@ -605,7 +613,8 @@ describe("RuntimeFactory", () => {
       additionalSkillPaths: string[];
       skillsOverride?: unknown;
     };
-    expect(loaderOptions.additionalSkillPaths).toContain(join(rootDir, "data", "profiles", "profile-1", "pi", "skills"));
+    expect(loaderOptions.additionalSkillPaths).toEqual([profileSkillPath]);
+    expect(loaderOptions.additionalSkillPaths).not.toContain(join(rootDir, "data", "profiles", "profile-1", "pi", "skills"));
     expect(loaderOptions.skillsOverride).toBeUndefined();
   });
 

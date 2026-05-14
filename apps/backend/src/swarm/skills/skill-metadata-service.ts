@@ -77,7 +77,15 @@ export class SkillMetadataService {
 
     const profileCandidates = await this.scanProfileSkillPathCandidates(profileId);
     const profileMetadata = await this.loadEffectiveMetadata(profileCandidates, profileId);
-    return profileMetadata.map((metadata) => cloneSkillMetadata(metadata));
+    const shadowedHandles = new Set(profileMetadata.map((metadata) => normalizeSkillName(metadata.directoryName)));
+    const inheritedMetadata = this.skillMetadata
+      .filter((metadata) => !shadowedHandles.has(normalizeSkillName(metadata.directoryName)))
+      .map((metadata) => cloneSkillMetadata({ ...metadata, isInherited: true }));
+
+    return [
+      ...profileMetadata.map((metadata) => cloneSkillMetadata(metadata)),
+      ...inheritedMetadata
+    ];
   }
 
   async resolveSkillById(skillId: string): Promise<SkillMetadata | null> {

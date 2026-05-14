@@ -108,7 +108,7 @@ describe("runtime resource plan", () => {
     expect(workerPlan.profileId).toBe("profile-a");
   });
 
-  it("includes only non-empty Builder Pi profile overlay dirs", async () => {
+  it("includes only non-empty Builder Pi profile overlay dirs without broad skill-dir loading", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-resource-"));
     const config = createConfig(rootDir);
     const agent = descriptor({ profileId: "builder" });
@@ -133,7 +133,8 @@ describe("runtime resource plan", () => {
     });
 
     expect(plan.additionalExtensionPaths).toEqual([pathsPlan.profilePiExtensionsDir]);
-    expect(plan.additionalSkillPaths).toEqual([join(rootDir, "memory-skills"), pathsPlan.profilePiSkillsDir]);
+    expect(plan.additionalSkillPaths).toEqual([join(rootDir, "memory-skills")]);
+    expect(plan.additionalSkillPaths).not.toContain(pathsPlan.profilePiSkillsDir);
     expect(plan.additionalPromptTemplatePaths).toEqual([]);
     expect(plan.additionalThemePaths).toEqual([pathsPlan.profilePiThemesDir]);
   });
