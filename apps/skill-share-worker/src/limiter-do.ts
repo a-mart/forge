@@ -25,7 +25,6 @@ interface ReserveUploadRequest {
 
 interface RecordDownloadRequest {
   shareId: string;
-  bytes: number;
   nowMs: number;
   downloadRateLimitPerMinute: number;
   maxDownloadsPerShare: number;
@@ -113,7 +112,7 @@ export class SkillShareLimiter {
   }
 
   private async recordDownload(body: RecordDownloadRequest): Promise<Record<string, unknown>> {
-    if (!isSafeRequestNumber(body.bytes) || !isSafeRequestNumber(body.nowMs)) {
+    if (!isSafeRequestNumber(body.nowMs)) {
       return { ok: false, reason: "invalid_request" };
     }
 
@@ -124,7 +123,7 @@ export class SkillShareLimiter {
     }
     if (share.expiresAtMs <= body.nowMs) {
       await this.releaseShare({ shareId: body.shareId });
-      return { ok: false, reason: "expired" };
+      return { ok: false, reason: "expired", retryAfterSeconds: 1 };
     }
 
     const downloadWindow = await this.incrementWindowCounter({
@@ -137,15 +136,16 @@ export class SkillShareLimiter {
       return { ok: false, reason: "download_rate_limited", retryAfterSeconds: downloadWindow.retryAfterSeconds };
     }
 
+    const retryAfterSeconds = Math.max(1, Math.ceil((share.expiresAtMs - body.nowMs) / 1000));
     if (share.downloads + 1 > body.maxDownloadsPerShare) {
-      return { ok: false, reason: "share_download_budget_exceeded" };
+      return { ok: false, reason: "share_download_budget_exceeded", retryAfterSeconds };
     }
-    if (share.egressBytes + body.bytes > body.maxEgressBytesPerShare) {
-      return { ok: false, reason: "share_egress_budget_exceeded" };
+    if (share.egressBytes + share.bytes > body.maxEgressBytesPerShare) {
+      return { ok: false, reason: "share_egress_budget_exceeded", retryAfterSeconds };
     }
 
     share.downloads += 1;
-    share.egressBytes += body.bytes;
+    share.egressBytes += share.bytes;
     await this.state.storage.put(shareKey, share);
     return { ok: true };
   }

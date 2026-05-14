@@ -11,7 +11,7 @@ The Worker is designed so a public anonymous upload endpoint cannot create unbou
 - **Validation before storage:** uploads are fully parsed and validated before any R2 write. The Worker checks bundle format, path safety, duplicate/case-insensitive path collisions, file hashes, total sizes, `contentSha256`, `SKILL.md` presence, and derived skill/portability metadata.
 - **Durable anonymous upload enforcement:** a required Durable Object (`SHARE_LIMITER`) enforces per-IP upload limits before `bucket.put()`. The Worker fails closed with 503 if the binding is absent.
 - **Aggregate storage budgets:** the same Durable Object reserves active object count and active storage bytes before R2 writes. Defaults are 1,000 active objects and 5 GiB, with code-level hard caps even if env vars are raised.
-- **Bounded download/egress:** after a token is verified and the object exists, the Durable Object enforces per-share download count and byte-egress budgets. Defaults are 20 downloads or 250 MiB per share.
+- **Bounded download/egress:** after a token is verified but before any R2 read, the Durable Object authorizes and increments per-share download count and byte-egress budgets using stored share byte metadata. Defaults are 20 downloads or 250 MiB per share.
 - **Cloudflare edge rate limits:** configure Cloudflare WAF/rate-limiting rules on `POST /api/v1/skill-shares` as defense in depth. Worker-side Durable Object enforcement remains mandatory and fail-closed.
 - **No open listing:** there is no API route that lists shares or object metadata.
 - **Bearer tokens only:** object keys are random IDs signed with HMAC and are not derived from skill handles.
@@ -88,7 +88,7 @@ Recommended cost alarms:
 
 ## API
 
-- `POST /api/v1/skill-shares`: accepts a bundle JSON object or `{ "bundle": ... }`, validates it, stores it in R2, and returns `shareUrl`, `importUrl`, `expiresAt`, and `contentSha256`.
+- `POST /api/v1/skill-shares`: accepts a bundle JSON object or `{ "bundle": ... }`, validates it, stores it in R2, and returns `shareUrl`, `importUrl`, `expiresAt`, `contentSha256`, and `warnings`. `warnings` is a `SkillBundleIssue[]` projected from warning-bearing bundle metadata, currently including frontmatter warnings.
 - `GET /s/<token>`: landing page by default; returns bundle JSON for `Accept: application/json` or `?download=1`.
 - `GET /api/v1/skill-shares/<token>`: JSON-only download endpoint for local Forge preview/import.
 

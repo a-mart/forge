@@ -81,6 +81,7 @@ class MockDurableObjectNamespace implements DurableObjectNamespaceBinding {
 class MockR2Bucket implements R2BucketBinding {
   readonly objects = new Map<string, MockR2Object>();
   putCount = 0;
+  getCount = 0;
   deleteCount = 0;
 
   async put(key: string, value: string | ArrayBuffer | Uint8Array, options?: R2PutOptions): Promise<void> {
@@ -90,6 +91,7 @@ class MockR2Bucket implements R2BucketBinding {
   }
 
   async get(key: string): Promise<R2ObjectBody | null> {
+    this.getCount += 1;
     return this.objects.get(key) ?? null;
   }
 
@@ -150,6 +152,24 @@ describe("skill share worker", () => {
       format: "forge.skill.bundle.v1",
       skill: { handle: "test-skill", name: "Test Skill" }
     });
+  });
+
+  it("projects bundle warnings into the upload response", async () => {
+    const harness = await createHarness();
+    const upload = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createWarningBundle() })
+    });
+    const payload = await upload.json() as { warnings: Array<{ severity: string; code: string; message: string }> };
+
+    expect(upload.status).toBe(201);
+    expect(payload.warnings).toEqual([
+      {
+        severity: "warning",
+        code: "frontmatter_warning",
+        message: "Unsupported SKILL.md frontmatter key: unsupportedKey"
+      }
+    ]);
   });
 
   it("fails closed when durable limiter binding is absent", async () => {
@@ -250,9 +270,16 @@ describe("skill share worker", () => {
     const token = new URL(payload.shareUrl).pathname.split("/").at(-1)!;
 
     const first = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+    const getCountAfterFirstDownload = harness.bucket.getCount;
     const second = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+    const landing = await harness.fetch(new URL(payload.shareUrl).pathname, { method: "GET" });
+
     expect(first.status).toBe(200);
     expect(second.status).toBe(429);
+    expect(second.headers.get("retry-after")).toBeTruthy();
+    expect(landing.status).toBe(429);
+    expect(landing.headers.get("retry-after")).toBeTruthy();
+    expect(harness.bucket.getCount).toBe(getCountAfterFirstDownload);
   });
 
   it("rate limits anonymous uploads per client IP", async () => {
@@ -399,6 +426,55 @@ async function createValidBundle(handle = "test-skill"): Promise<SkillBundleMani
         knownPiKeys: ["description", "env", "name"],
         unsupportedKeys: [],
         warnings: []
+      }
+    },
+    portability: {
+      osIndicators: [],
+      scripts: [],
+      dependencies: []
+    },
+    files: [file],
+    totals: {
+      fileCount: 1,
+      byteCount: file.size
+    }
+  };
+  bundle.contentSha256 = await computeSkillBundleContentSha256(bundle);
+  return bundle;
+}
+
+async function createWarningBundle(): Promise<SkillBundleManifestV1> {
+  const skillMarkdown = [
+    "---",
+    "name: Warning Skill",
+    "description: Warning-bearing skill.",
+    "unsupportedKey: true",
+    "---",
+    "",
+    "# Warning Skill Body"
+  ].join("\n");
+  const file = await createUtf8File("SKILL.md", skillMarkdown);
+  const bundle: SkillBundleManifestV1 = {
+    format: "forge.skill.bundle.v1",
+    bundleVersion: 1,
+    createdAt: "2026-05-13T11:00:00.000Z",
+    contentSha256: "0".repeat(64),
+    origin: {
+      platform: "darwin",
+      arch: "arm64",
+      osRelease: "test-release",
+      skillSourceKind: "machine-local"
+    },
+    skill: {
+      handle: "warning-skill",
+      name: "Warning Skill",
+      description: "Warning-bearing skill.",
+      env: [],
+      frontmatter: {
+        knownForgeKeys: ["description", "name"],
+        knownPiKeys: ["description", "name"],
+        unsupportedKeys: ["unsupportedKey"],
+        warnings: ["Unsupported SKILL.md frontmatter key: unsupportedKey"]
       }
     },
     portability: {

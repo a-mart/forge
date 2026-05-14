@@ -1,4 +1,4 @@
-import type { SkillBundleManifestV1 } from "@forge/protocol";
+import type { SkillBundleIssue, SkillBundleManifestV1 } from "@forge/protocol";
 import {
   HARD_MAX_REQUEST_BYTES,
   OBJECT_PREFIX,
@@ -158,7 +158,7 @@ async function handleUpload(
     importUrl,
     expiresAt: new Date(expiresAtMs).toISOString(),
     contentSha256: validation.contentSha256 ?? bundle.contentSha256,
-    warnings: []
+    warnings: projectBundleWarnings(bundle)
   }, 201);
 }
 
@@ -171,7 +171,9 @@ async function handleJsonDownload(
 ): Promise<Response> {
   const result = await loadSharedObject(token, bucket, limiter, config, state);
   if (!result.ok) {
-    return jsonResponse({ error: loadFailureMessage(result.status) }, result.status);
+    return result.status === 429
+      ? rateLimitResponse(result.retryAfterSeconds ?? 60, loadFailureMessage(result.status))
+      : jsonResponse({ error: loadFailureMessage(result.status) }, result.status);
   }
 
   return bundleJsonResponse(result.objectText, result.bundle);
@@ -187,7 +189,11 @@ async function handleShareLandingOrDownload(
 ): Promise<Response> {
   const result = await loadSharedObject(token, bucket, limiter, config, state);
   if (!result.ok) {
-    return htmlResponse(renderFailurePage(result.status, loadFailureMessage(result.status)), result.status);
+    return htmlResponse(
+      renderFailurePage(result.status, loadFailureMessage(result.status)),
+      result.status,
+      result.status === 429 ? { "Retry-After": String(result.retryAfterSeconds ?? 60) } : undefined
+    );
   }
 
   const url = new URL(request.url);
@@ -209,7 +215,7 @@ async function loadSharedObject(
   state: WorkerState
 ): Promise<
   | { ok: true; bundle: SkillBundleManifestV1; object: R2ObjectBody; objectText: string }
-  | { ok: false; status: 404 | 410 | 429 | 502 | 503 }
+  | { ok: false; status: 404 | 410 | 429 | 502 | 503; retryAfterSeconds?: number }
 > {
   const verification = await verifyShareToken(token, config.tokenSecret, state.now());
   if (!verification.ok) {
@@ -217,6 +223,20 @@ async function loadSharedObject(
       await safeDeleteAndRelease(bucket, limiter, verification.id);
     }
     return { ok: false, status: verification.status };
+  }
+
+  const quota = await recordDownload(limiter, {
+    shareId: verification.id,
+    nowMs: state.now(),
+    downloadRateLimitPerMinute: config.downloadRateLimitPerMinute,
+    maxDownloadsPerShare: config.maxDownloadsPerShare,
+    maxEgressBytesPerShare: config.maxEgressBytesPerShare
+  });
+  if (!quota.ok) {
+    if (quota.status === 410) {
+      await safeDeleteAndRelease(bucket, limiter, verification.id);
+    }
+    return { ok: false, status: quota.status, retryAfterSeconds: quota.retryAfterSeconds };
   }
 
   const objectKey = `${OBJECT_PREFIX}${verification.id}.json`;
@@ -245,19 +265,6 @@ async function loadSharedObject(
     return { ok: false, status: 502 };
   }
 
-  const objectBytes = new TextEncoder().encode(objectText).byteLength;
-  const quota = await recordDownload(limiter, {
-    shareId: verification.id,
-    bytes: objectBytes,
-    nowMs: state.now(),
-    downloadRateLimitPerMinute: config.downloadRateLimitPerMinute,
-    maxDownloadsPerShare: config.maxDownloadsPerShare,
-    maxEgressBytesPerShare: config.maxEgressBytesPerShare
-  });
-  if (!quota.ok) {
-    return { ok: false, status: quota.status };
-  }
-
   return { ok: true, bundle, object, objectText };
 }
 
@@ -277,13 +284,16 @@ async function reserveUpload(
 async function recordDownload(
   limiter: DurableObjectNamespaceBinding,
   body: Record<string, unknown>
-): Promise<{ ok: true } | { ok: false; status: 429 | 503 }> {
+): Promise<{ ok: true } | { ok: false; status: 410 | 429 | 503; retryAfterSeconds?: number }> {
   const result = await callLimiter(limiter, "/record-download", body);
   if (result.ok) return { ok: true };
-  if (result.reason === "download_rate_limited" || result.reason?.includes("budget")) {
-    return { ok: false, status: 429 };
+  if (result.reason === "expired") {
+    return { ok: false, status: 410, retryAfterSeconds: result.retryAfterSeconds };
   }
-  return { ok: false, status: 503 };
+  if (result.reason === "download_rate_limited" || result.reason?.includes("budget")) {
+    return { ok: false, status: 429, retryAfterSeconds: result.retryAfterSeconds };
+  }
+  return { ok: false, status: 503, retryAfterSeconds: result.retryAfterSeconds };
 }
 
 async function releaseShare(limiter: DurableObjectNamespaceBinding, shareId: string): Promise<void> {
@@ -384,6 +394,16 @@ async function readRequestTextWithLimit(request: Request, maxBytes: number): Pro
   return new TextDecoder().decode(joined);
 }
 
+function projectBundleWarnings(bundle: SkillBundleManifestV1): SkillBundleIssue[] {
+  return bundle.skill.frontmatter.warnings
+    .filter((warning) => warning.trim().length > 0)
+    .map((warning) => ({
+      severity: "warning",
+      code: "frontmatter_warning",
+      message: warning
+    }));
+}
+
 function bundleJsonResponse(objectText: string, bundle: SkillBundleManifestV1): Response {
   return new Response(objectText, {
     status: 200,
@@ -437,13 +457,14 @@ function styleTag(): string {
   return `<style>body{font-family:Inter,system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;min-height:100vh;display:grid;place-items:center}main{max-width:42rem;margin:2rem;padding:2rem;background:#111827;border:1px solid #334155;border-radius:18px}.eyebrow{color:#93c5fd;text-transform:uppercase;letter-spacing:.12em;font-size:.75rem}.warning{background:#1f2937;border:1px solid #475569;border-radius:12px;padding:1rem}.button{display:inline-block;background:#8b5cf6;color:white;text-decoration:none;padding:.8rem 1rem;border-radius:10px;font-weight:700}code{display:block;white-space:pre-wrap;word-break:break-all;background:#020617;padding:.75rem;border-radius:10px}</style>`;
 }
 
-function htmlResponse(html: string, status = 200): Response {
+function htmlResponse(html: string, status = 200, extraHeaders: Record<string, string> | undefined = undefined): Response {
   return new Response(html, {
     status,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store, max-age=0",
-      ...securityHeaders("html")
+      ...securityHeaders("html"),
+      ...(extraHeaders ?? {})
     }
   });
 }
@@ -460,8 +481,8 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-function rateLimitResponse(retryAfterSeconds: number): Response {
-  return new Response(JSON.stringify({ error: "Rate limit exceeded." }), {
+function rateLimitResponse(retryAfterSeconds: number, message = "Rate limit exceeded."): Response {
+  return new Response(JSON.stringify({ error: message }), {
     status: 429,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
