@@ -319,6 +319,59 @@ describe("skill share worker", () => {
     });
   });
 
+  it("rejects expired scoped reservation commits without incrementing quota", async () => {
+    const harness = await createHarness();
+    await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("expired-scoped-commit") })
+    });
+    const shareId = extractShareIdFromObjectKey(Array.from(harness.bucket.objects.keys())[0]);
+    const reservation = await reserveDownloadForTest(harness.limiter, shareId, START_MS);
+    const reservationId = String(reservation.reservationId);
+
+    const expiredCommit = await callLimiterForTest(harness.limiter, "/commit-download", {
+      reservationId,
+      nowMs: START_MS + 61_000
+    });
+    const share = getShareQuotaState(harness, shareId);
+
+    expect(expiredCommit).toMatchObject({ ok: false, reason: "expired" });
+    expect(share.downloads).toBe(0);
+    expect(share.egressBytes).toBe(0);
+    expect(share.pendingDownloads).toBe(0);
+    expect(share.pendingEgressBytes).toBe(0);
+    expect(harness.limiter.storage.data.has(`download-reservation:${reservationId}`)).toBe(false);
+  });
+
+  it("rejects expired legacy reservation commits before migration without incrementing quota", async () => {
+    const harness = await createHarness();
+    await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("expired-legacy-commit") })
+    });
+    const shareId = extractShareIdFromObjectKey(Array.from(harness.bucket.objects.keys())[0]);
+    const legacy = seedLegacyPendingDownloadReservationForTest(harness, shareId, { expiresAtMs: START_MS - 1 });
+
+    const expiredCommit = await callLimiterForTest(harness.limiter, "/commit-download", {
+      reservationId: legacy.reservationId,
+      nowMs: START_MS
+    });
+    const lateRollback = await callLimiterForTest(harness.limiter, "/rollback-download", {
+      reservationId: legacy.reservationId
+    });
+    const share = getShareQuotaState(harness, shareId);
+
+    expect(expiredCommit).toMatchObject({ ok: false, reason: "expired" });
+    expect(lateRollback).toMatchObject({ ok: true, rolledBack: false });
+    expect(share.downloads).toBe(0);
+    expect(share.egressBytes).toBe(0);
+    expect(share.pendingDownloads).toBe(0);
+    expect(share.pendingEgressBytes).toBe(0);
+    expect(harness.limiter.storage.data.has(legacy.key)).toBe(false);
+    expect(harness.limiter.storage.data.has(legacy.aliasKey)).toBe(false);
+    expect(harness.limiter.storage.data.get("meta:legacyDownloadReservationsMigrated")).toBeUndefined();
+  });
+
   it("rekeys live legacy reservations and supports legacy commit ids", async () => {
     const harness = await createHarness();
     await harness.fetch("/api/v1/skill-shares", {
@@ -641,16 +694,21 @@ interface TestDownloadReservationState {
   expiresAtMs: number;
 }
 
+function getShareQuotaState(harness: Harness, shareId: string): TestShareQuotaState {
+  const share = harness.limiter.storage.data.get(`share:${shareId}`) as TestShareQuotaState | undefined;
+  if (!share) {
+    throw new Error(`Missing share quota state for ${shareId}`);
+  }
+  return share;
+}
+
 function seedLegacyPendingDownloadReservationForTest(
   harness: Harness,
   shareId: string,
   options: { expiresAtMs?: number } = {}
 ): { key: string; reservationId: string; aliasKey: string } {
   const shareKey = `share:${shareId}`;
-  const share = harness.limiter.storage.data.get(shareKey) as TestShareQuotaState | undefined;
-  if (!share) {
-    throw new Error(`Missing share quota state for ${shareId}`);
-  }
+  const share = getShareQuotaState(harness, shareId);
 
   const reservationId = `legacy-${shareId}`;
   const legacyKey = `download-reservation:${reservationId}`;

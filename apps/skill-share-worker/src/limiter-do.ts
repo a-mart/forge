@@ -212,6 +212,11 @@ export class SkillShareLimiter {
     }
 
     const { key: reservationKey, reservation, aliasKey } = resolved;
+    if (reservation.expiresAtMs <= body.nowMs) {
+      await this.expireDownloadReservation(reservationKey, reservation, aliasKey, body.nowMs);
+      return { ok: false, reason: "expired" };
+    }
+
     const shareKey = `${SHARE_PREFIX}${reservation.shareId}`;
     const share = await this.state.storage.get<ShareQuotaState>(shareKey);
     if (!share) {
@@ -435,6 +440,24 @@ export class SkillShareLimiter {
     }
   }
 
+  private async expireDownloadReservation(
+    key: string,
+    reservation: DownloadReservationState,
+    aliasKey: string | undefined,
+    nowMs: number
+  ): Promise<void> {
+    await this.rollbackReservation(key, reservation, aliasKey);
+    const legacyReservationId = getLegacyReservationIdForKeyOrReservation(key, reservation);
+    if (legacyReservationId) {
+      await this.putLegacyDownloadReservationAlias({
+        legacyReservationId,
+        reservationId: createLegacyScopedReservationId(reservation.shareId, legacyReservationId),
+        shareId: reservation.shareId,
+        cleanupAtMs: nowMs + LEGACY_DOWNLOAD_RESERVATION_ALIAS_GRACE_MS
+      });
+    }
+  }
+
   private async rollbackReservation(key: string, reservation: DownloadReservationState, aliasKey?: string): Promise<void> {
     const shareKey = `${SHARE_PREFIX}${reservation.shareId}`;
     const share = await this.state.storage.get<ShareQuotaState>(shareKey);
@@ -495,6 +518,16 @@ export class SkillShareLimiter {
 function isLegacyDownloadReservationKey(key: string): boolean {
   const reservationId = key.slice(DOWNLOAD_RESERVATION_PREFIX.length);
   return !reservationId.includes(":");
+}
+
+function getLegacyReservationIdForKeyOrReservation(
+  key: string,
+  reservation: DownloadReservationState
+): string | undefined {
+  if (isLegacyDownloadReservationKey(key)) {
+    return key.slice(DOWNLOAD_RESERVATION_PREFIX.length);
+  }
+  return reservation.legacyReservationId;
 }
 
 function createDownloadReservationId(shareId: string): string {
