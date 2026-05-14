@@ -54,13 +54,7 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 
 Collaboration keeps structured state in SQLite and user-authored specialist bodies on disk. Workspace, category, and channel metadata, membership, read state, category default selected specialist handles, channel selected specialist handles, and collaboration skill-selection state belong in the collaboration database. Specialist markdown files, prompt bodies, reference docs, and skill definitions remain file-backed. `NULL` or all-includes means every optional global skill is included; custom arrays filter both the prompt roster and runtime-loaded skills. `memory` is always-on/core. No channel-local skill authoring exists in V1. Global specialists live in `${FORGE_DATA_DIR}/shared/specialists/`; collaboration channel-local specialists live in `${FORGE_DATA_DIR}/profiles/_collaboration/sessions/<sessionId>/specialists/`. Specialist `TargetSpace` frontmatter controls whether a shared specialist appears in Builder, Collaboration, or both. Collaboration servers seed the union of Builder and `collab-` prefixed Collaboration built-ins, then UI/runtime rosters filter by `TargetSpace`. See [docs/collaboration.md](collaboration.md#collaboration-sqlite-migration-policy) for the migration policy.
 
-### Playwright Dashboard
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` | — | Force enable (`true`) or disable (`false`) the Playwright dashboard. By default, it is disabled on Windows and follows persisted settings elsewhere. |
-
-For compatibility, startup also accepts legacy `MIDDLEMAN_*` environment variables (for example, `MIDDLEMAN_HOST`, `MIDDLEMAN_PORT`, `MIDDLEMAN_DATA_DIR`, `MIDDLEMAN_DEBUG`, `VITE_MIDDLEMAN_WS_URL`, `MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED`, `MIDDLEMAN_RUNTIME_TARGET`). When `FORGE_RUNTIME_TARGET` is unset, legacy `FORGE_COLLABORATION_ENABLED=true` or `MIDDLEMAN_COLLABORATION_ENABLED=true` maps to the `collaboration-server` runtime target.
+For compatibility, startup also accepts legacy `MIDDLEMAN_*` environment variables (for example, `MIDDLEMAN_HOST`, `MIDDLEMAN_PORT`, `MIDDLEMAN_DATA_DIR`, `MIDDLEMAN_DEBUG`, `VITE_MIDDLEMAN_WS_URL`, `MIDDLEMAN_RUNTIME_TARGET`). When `FORGE_RUNTIME_TARGET` is unset, legacy `FORGE_COLLABORATION_ENABLED=true` or `MIDDLEMAN_COLLABORATION_ENABLED=true` maps to the `collaboration-server` runtime target.
 
 ## `.env` File
 
@@ -98,7 +92,6 @@ All persistent state lives in a single data directory:
 │   │   ├── model-overrides.json   # User model visibility/context caps (Settings → Models)
 │   │   ├── cortex-auto-review.json        # Cortex auto-review schedule settings
 │   │   ├── mobile-notification-prefs.json # Mobile push preferences
-│   │   ├── playwright-dashboard.json      # Playwright dashboard settings
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
 │   │   └── integrations/      # Shared integration configs

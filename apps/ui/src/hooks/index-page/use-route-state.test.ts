@@ -162,18 +162,10 @@ describe('useRouteState — settings surface', () => {
     expect(captured.current?.routeState).toEqual({ view: 'settings', surface: 'builder' })
   })
 
-  it('stats and playwright views remain builder-only surface', () => {
+  it('stats view remains builder-only surface', () => {
     const navigate = vi.fn()
 
     renderWith({ pathname: '/', search: { view: 'stats' }, navigate })
-    expect(captured.current?.activeSurface).toBe('builder')
-
-    if (root) {
-      flushSync(() => root?.unmount())
-      root = null
-    }
-
-    renderWith({ pathname: '/', search: { view: 'playwright' }, navigate })
     expect(captured.current?.activeSurface).toBe('builder')
   })
 })
@@ -295,22 +287,7 @@ describe('useRouteState — collab connection param', () => {
     expect(call?.search?.channel).toBe('general')
   })
 
-  it('preserves collab as sticky param through playwright navigation', () => {
-    const navigate = vi.fn()
-    renderWith({
-      pathname: '/',
-      search: { view: 'chat', surface: 'collab', channel: 'ch1', collab: 'conn_xyz' },
-      navigate,
-    })
 
-    flushSync(() => {
-      captured.current?.navigateToRoute({ view: 'playwright' })
-    })
-
-    const call = navigate.mock.calls[0]?.[0]
-    expect(call?.search?.collab).toBe('conn_xyz')
-    expect(call?.search?.channel).toBe('ch1')
-  })
 
   it('treats chat routes with different collab as distinct states', () => {
     const navigate = vi.fn()

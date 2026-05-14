@@ -5,14 +5,12 @@ import { getConfiguredDefaultSurface, type DefaultSurface } from '@/lib/web-runt
 // The WS client will resolve this to the actual primary manager on connect.
 export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
-export type ActiveView = 'chat' | 'settings' | 'playwright' | 'stats'
+export type ActiveView = 'chat' | 'settings' | 'stats'
 export type ActiveSurface = 'builder' | 'collab'
-export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 export type StatsTab = 'overview' | 'tokens'
 export type AppRouteState =
   | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string; collab?: string }
   | { view: 'settings'; surface: ActiveSurface; settingsTab?: string; collabApiBaseUrl?: string }
-  | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
   | { view: 'stats'; statsTab?: StatsTab }
 
 type AppRouteSearch = {
@@ -21,8 +19,6 @@ type AppRouteSearch = {
   surface?: string
   channel?: string
   collab?: string
-  playwrightSession?: string
-  playwrightMode?: string
   statsTab?: string
   settingsTab?: string
   /** Collab backend API base URL hint for sign-in recovery deep-link. */
@@ -99,14 +95,6 @@ export function parseRouteStateFromLocation(
     return { view: 'stats', statsTab }
   }
 
-  if (view === 'playwright') {
-    const playwrightSession = typeof routeSearch.playwrightSession === 'string' ? routeSearch.playwrightSession : undefined
-    const playwrightMode = typeof routeSearch.playwrightMode === 'string' && ['split', 'focus', 'tiles'].includes(routeSearch.playwrightMode)
-      ? (routeSearch.playwrightMode as PlaywrightViewMode)
-      : undefined
-    return { view: 'playwright', playwrightSession, playwrightMode }
-  }
-
   if (view === 'chat' || agentId !== undefined || surface !== undefined) {
     const parsedSurface = parseSurface(surface, defaultSurface)
     return {
@@ -132,7 +120,7 @@ export function parseRouteStateFromLocation(
 }
 
 /**
- * Normalize route state. Builder-only views (stats, playwright)
+ * Normalize route state. Builder-only views (stats)
  * always resolve to builder surface but preserve `channel` so it's sticky
  * when the user returns to collab. Settings preserves its own surface.
  */
@@ -143,10 +131,6 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
 
   if (routeState.view === 'stats') {
     return { view: 'stats', statsTab: routeState.statsTab }
-  }
-
-  if (routeState.view === 'playwright') {
-    return { view: 'playwright', playwrightSession: routeState.playwrightSession, playwrightMode: routeState.playwrightMode }
   }
 
   return {
@@ -184,16 +168,6 @@ export function toRouteSearch(
     return search
   }
 
-  if (routeState.view === 'playwright') {
-    const search: AppRouteSearch = { view: 'playwright' }
-    if (routeState.playwrightSession) search.playwrightSession = routeState.playwrightSession
-    if (routeState.playwrightMode && routeState.playwrightMode !== 'tiles') search.playwrightMode = routeState.playwrightMode
-    if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
-    if (stickyParams?.channel) search.channel = stickyParams.channel
-    if (stickyParams?.collab) search.collab = stickyParams.collab
-    return search
-  }
-
   const search: AppRouteSearch = {}
   const agentId = normalizeAgentId(routeState.agentId)
   if (agentId !== DEFAULT_MANAGER_AGENT_ID) {
@@ -222,10 +196,6 @@ function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
 
   if (left.view === 'stats' && right.view === 'stats') {
     return (left.statsTab ?? 'overview') === (right.statsTab ?? 'overview')
-  }
-
-  if (left.view === 'playwright' && right.view === 'playwright') {
-    return left.playwrightSession === right.playwrightSession && left.playwrightMode === right.playwrightMode
   }
 
   if (left.view === 'chat' && right.view === 'chat') {

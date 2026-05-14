@@ -65,9 +65,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   collaborationModeSwitch,
   selectedAgentId,
   isSettingsActive,
-  isPlaywrightActive = false,
   isStatsActive = false,
-  showPlaywrightNav = false,
   isMobileOpen = false,
   onMobileClose,
   onAddManager,
@@ -76,7 +74,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onDeleteManager,
   onOpenSettings,
   onOpenCortexReview,
-  onOpenPlaywright,
   onOpenStats,
   onCreateSession,
   onStopSession,
@@ -214,11 +211,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onOpenCortexReview?.(agentId)
     onMobileClose?.()
   }, [onOpenCortexReview, onMobileClose])
-
-  const handleOpenPlaywright = useCallback(() => {
-    onOpenPlaywright?.()
-    onMobileClose?.()
-  }, [onOpenPlaywright, onMobileClose])
 
   const handleOpenStats = useCallback(() => {
     onOpenStats?.()
@@ -664,9 +656,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
 
       <SidebarFooter
         isSettingsActive={isSettingsActive}
-        isPlaywrightActive={isPlaywrightActive}
         isStatsActive={isStatsActive}
-        showPlaywrightNav={showPlaywrightNav}
         showProviderUsage={showProviderUsage}
         providerUsage={providerUsage}
         providerUsageLoading={providerUsageLoading}
@@ -675,7 +665,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
         onCloseUsagePanel={handleCloseUsagePanel}
         onRefetchProviderUsage={refetchProviderUsage}
         onOpenSettings={handleOpenSettings}
-        onOpenPlaywright={handleOpenPlaywright}
         onOpenStats={handleOpenStats}
       />
     </aside>

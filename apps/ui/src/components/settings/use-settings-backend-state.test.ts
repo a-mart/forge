@@ -41,8 +41,6 @@ vi.mock('@/lib/ws-client', () => ({
         lastError: null,
         lastSuccess: null,
         telegramStatus: null,
-        playwrightSnapshot: null,
-        playwrightSettings: null,
         unreadCounts: {},
         terminals: [],
         terminalSessionScopeId: null,

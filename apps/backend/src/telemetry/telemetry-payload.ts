@@ -21,7 +21,6 @@ export interface FeatureAdoptionData {
   pinnedMessagesUsed: number
   scheduledTasksCount: number
   telegramConfigured: boolean
-  playwrightEnabled: boolean
   forkedSessionsCount: number
   projectAgentsCount: number
   projectAgentsPersistedCount: number
@@ -46,7 +45,6 @@ export function emptyFeatureAdoption(): FeatureAdoptionData {
     pinnedMessagesUsed: 0,
     scheduledTasksCount: 0,
     telegramConfigured: false,
-    playwrightEnabled: false,
     forkedSessionsCount: 0,
     projectAgentsCount: 0,
     projectAgentsPersistedCount: 0,
@@ -106,7 +104,6 @@ export async function assembleSkeletonPayload(
     pinned_messages_used: 0,
     scheduled_tasks_count: 0,
     telegram_configured: false,
-    playwright_enabled: false,
     forked_sessions_count: 0,
     project_agents_count: 0,
     project_agents_persisted_count: 0,
@@ -176,7 +173,6 @@ export function assembleFullPayload(
     pinned_messages_used: features.pinnedMessagesUsed,
     scheduled_tasks_count: features.scheduledTasksCount,
     telegram_configured: features.telegramConfigured,
-    playwright_enabled: features.playwrightEnabled,
     forked_sessions_count: features.forkedSessionsCount,
     project_agents_count: features.projectAgentsCount,
     project_agents_persisted_count: features.projectAgentsPersistedCount,

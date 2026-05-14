@@ -1,7 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { isSystemProfile, type ServerEvent, type TerminalDescriptor } from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
-import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import {
   SIDEBAR_BOOTSTRAP_METRIC,
   SIDEBAR_SNAPSHOT_BUILD_METRIC,
@@ -26,7 +25,6 @@ export type BootstrapConversationHistory = ReturnType<SwarmManager["getConversat
 export interface SubscriptionBootstrapSendResult {
   agentsSnapshotSent: boolean;
   profilesSnapshotSent: boolean;
-  playwrightDiscoveryBootstrapSent: boolean;
 }
 
 export function normalizeSubscribeMessageCount(messageCount: number | undefined): number | undefined {
@@ -56,7 +54,6 @@ export function sendSubscriptionBootstrap(options: {
   requestedMessageCount?: number;
   swarmManager: SwarmManager;
   integrationRegistry: IntegrationRegistryService | null;
-  playwrightDiscovery: PlaywrightDiscoveryService | null;
   terminalService: TerminalService | null;
   listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
   unreadTracker: UnreadTracker | null;
@@ -66,7 +63,6 @@ export function sendSubscriptionBootstrap(options: {
   resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
   includeAgentsSnapshot?: boolean;
   includeProfilesSnapshot?: boolean;
-  includePlaywrightDiscoveryBootstrap?: boolean;
 }): SubscriptionBootstrapSendResult {
   const {
     socket,
@@ -74,7 +70,6 @@ export function sendSubscriptionBootstrap(options: {
     requestedMessageCount,
     swarmManager,
     integrationRegistry,
-    playwrightDiscovery,
     terminalService,
     listTerminalsForSession,
     unreadTracker,
@@ -84,7 +79,6 @@ export function sendSubscriptionBootstrap(options: {
     resolveManagerContextAgentId,
     includeAgentsSnapshot = true,
     includeProfilesSnapshot = true,
-    includePlaywrightDiscoveryBootstrap = true,
   } = options;
 
   const buildMode = resolveBackendSidebarPerfBuildMode();
@@ -167,36 +161,6 @@ export function sendSubscriptionBootstrap(options: {
     metricFields.profilesSnapshotSendMs = 0;
     metricFields.profilesSnapshotPayloadBytes = 0;
     metricFields.profilesReturned = 0;
-  }
-
-  let playwrightDiscoveryBootstrapSent = false;
-  if (playwrightDiscovery && includePlaywrightDiscoveryBootstrap) {
-    const playwrightDiscoverySnapshotStartedAtMs = performance.now();
-    const playwrightSnapshot = playwrightDiscovery.getSnapshot();
-    metricFields.playwrightDiscoverySnapshotMs = performance.now() - playwrightDiscoverySnapshotStartedAtMs;
-    playwrightDiscoveryBootstrapSent =
-      sendMeasured("playwrightDiscoverySnapshot", {
-        type: "playwright_discovery_snapshot",
-        snapshot: playwrightSnapshot
-      }) !== null;
-
-    const playwrightDiscoverySettingsStartedAtMs = performance.now();
-    const playwrightSettings = playwrightDiscovery.getSettings();
-    metricFields.playwrightDiscoverySettingsMs = performance.now() - playwrightDiscoverySettingsStartedAtMs;
-    sendMeasured("playwrightDiscoverySettings", {
-      type: "playwright_discovery_settings_updated",
-      settings: playwrightSettings
-    });
-  } else if (playwrightDiscovery) {
-    metricFields.playwrightDiscoverySnapshotMs = 0;
-    metricFields.playwrightDiscoverySnapshotSendMs = 0;
-    metricFields.playwrightDiscoverySnapshotPayloadBytes = 0;
-    metricFields.playwrightDiscoverySettingsMs = 0;
-    metricFields.playwrightDiscoverySettingsSendMs = 0;
-    metricFields.playwrightDiscoverySettingsPayloadBytes = 0;
-    metricFields.playwrightDiscoveryPhaseNote = "skipped:already_delivered";
-  } else {
-    metricFields.playwrightDiscoveryPhaseNote = "excluded:no_service";
   }
 
   const historyMessageCount = requestedMessageCount !== undefined
@@ -286,7 +250,6 @@ export function sendSubscriptionBootstrap(options: {
     labels: {
       historySource: historyResult.diagnostics.historySource,
       cacheState: historyResult.diagnostics.cacheState,
-      playwrightDiscoveryEnabled: Boolean(playwrightDiscovery),
       buildMode
     },
     fields: metricFields
@@ -295,7 +258,6 @@ export function sendSubscriptionBootstrap(options: {
   return {
     agentsSnapshotSent,
     profilesSnapshotSent,
-    playwrightDiscoveryBootstrapSent,
   };
 }
 

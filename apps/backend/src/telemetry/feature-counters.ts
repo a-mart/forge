@@ -1,6 +1,5 @@
 import { access, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { readPlaywrightDashboardEnvOverride } from '../config.js'
 import {
   getAgentsStoreFilePath,
   getCortexAutoReviewSettingsPath,
@@ -16,7 +15,6 @@ import {
   getSessionsDir,
   getSharedIntegrationsDir,
   getSharedMobileDevicesPath,
-  getSharedPlaywrightDashboardSettingsPath,
 } from '../swarm/data-paths.js'
 import { PINNED_MESSAGES_FILE_NAME } from '../swarm/message-pins.js'
 import { parseSpecialistFile } from '../swarm/specialists/specialist-registry.js'
@@ -47,7 +45,6 @@ export async function collectFeatureAdoption(
     pinnedMessagesUsed,
     scheduledTasksCount,
     telegramConfigured,
-    playwrightEnabled,
     forkedSessionsCount,
     projectAgentsCount,
     extensionsLoaded,
@@ -64,7 +61,6 @@ export async function collectFeatureAdoption(
     countPinnedSessions(dataDir, profileIds),
     countScheduledTasks(dataDir, profileIds),
     isTelegramConfigured(dataDir, profileIds),
-    isPlaywrightEnabled(dataDir),
     countForkedSessions(dataDir, profileIds),
     countProjectAgents(dataDir),
     countExtensions(dataDir, profileIds),
@@ -86,7 +82,6 @@ export async function collectFeatureAdoption(
     pinnedMessagesUsed,
     scheduledTasksCount,
     telegramConfigured,
-    playwrightEnabled,
     forkedSessionsCount,
     projectAgentsCount,
     projectAgentsPersistedCount: projectAgentsCount,
@@ -271,24 +266,6 @@ async function countProjectAgents(dataDir: string): Promise<number> {
     ).length
   } catch {
     return 0
-  }
-}
-
-async function isPlaywrightEnabled(dataDir: string): Promise<boolean> {
-  try {
-    if (process.platform === 'win32') {
-      return false
-    }
-
-    const envOverride = readPlaywrightDashboardEnvOverride()
-    if (envOverride !== undefined) {
-      return envOverride
-    }
-
-    const parsed = await readJsonFile(getSharedPlaywrightDashboardSettingsPath(dataDir))
-    return isRecord(parsed) && parsed.enabled === true
-  } catch {
-    return false
   }
 }
 

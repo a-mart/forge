@@ -1,7 +1,14 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { MarkdownMessage } from './MarkdownMessage'
+
+function renderMarkdownMessage(props: Parameters<typeof MarkdownMessage>[0]) {
+  return renderToStaticMarkup(
+    createElement(TooltipProvider, null, createElement(MarkdownMessage, props)),
+  )
+}
 
 describe('MarkdownMessage', () => {
   it('renders common markdown formatting for speak_to_user content', () => {
@@ -20,7 +27,7 @@ describe('MarkdownMessage', () => {
       'This is **bold** and *italic*.',
     ].join('\n')
 
-    const html = renderToStaticMarkup(createElement(MarkdownMessage, { content }))
+    const html = renderMarkdownMessage({ content })
 
     expect(html).toContain('href="https://example.com"')
     expect(html).toContain('>pnpm test</code>')
@@ -33,7 +40,7 @@ describe('MarkdownMessage', () => {
   it('keeps raw HTML escaped and sanitizes javascript links', () => {
     const content = ['[xss](javascript:alert(1))', '', '<script>alert("x")</script>'].join('\n')
 
-    const html = renderToStaticMarkup(createElement(MarkdownMessage, { content }))
+    const html = renderMarkdownMessage({ content })
 
     expect(html).not.toContain('href="javascript:alert(1)"')
     expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;')
@@ -42,12 +49,10 @@ describe('MarkdownMessage', () => {
   it('renders artifact links as clickable artifact cards when callback is provided', () => {
     const content = '[artifact:/Users/example/worktrees/swarm/README.md]'
 
-    const html = renderToStaticMarkup(
-      createElement(MarkdownMessage, {
-        content,
-        onArtifactClick: () => {},
-      }),
-    )
+    const html = renderMarkdownMessage({
+      content,
+      onArtifactClick: () => {},
+    })
 
     expect(html).toContain('data-artifact-card="true"')
     expect(html).toContain('README.md')
@@ -57,12 +62,10 @@ describe('MarkdownMessage', () => {
   it('renders local markdown file links as artifact cards using link text as title', () => {
     const content = '[Terminal Support Plan](docs/plans/terminal-support.md)'
 
-    const html = renderToStaticMarkup(
-      createElement(MarkdownMessage, {
-        content,
-        onArtifactClick: () => {},
-      }),
-    )
+    const html = renderMarkdownMessage({
+      content,
+      onArtifactClick: () => {},
+    })
 
     expect(html).toContain('data-artifact-card="true"')
     expect(html).toContain('Terminal Support Plan')
@@ -72,12 +75,10 @@ describe('MarkdownMessage', () => {
   it('routes mermaid fences through the isolated iframe shell when enabled', () => {
     const content = ['```mermaid', 'graph LR', '  A-->B', '```'].join('\n')
 
-    const html = renderToStaticMarkup(
-      createElement(MarkdownMessage, {
-        content,
-        enableMermaid: true,
-      }),
-    )
+    const html = renderMarkdownMessage({
+      content,
+      enableMermaid: true,
+    })
 
     expect(html).toContain('data-mermaid-preview-frame="true"')
     expect(html).toContain('/mermaid-preview/embed')

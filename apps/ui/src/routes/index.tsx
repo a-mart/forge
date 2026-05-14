@@ -42,8 +42,6 @@ type RouteSearch = {
   surface?: string
   channel?: string
   collab?: string
-  playwrightSession?: string
-  playwrightMode?: string
   statsTab?: string
   settingsTab?: string
   collabApiBaseUrl?: string
@@ -366,12 +364,6 @@ function useOptionalNavigate(): NavigateFn {
     if (search?.collab) {
       params.set('collab', search.collab)
     }
-    if (search?.playwrightSession) {
-      params.set('playwrightSession', search.playwrightSession)
-    }
-    if (search?.playwrightMode) {
-      params.set('playwrightMode', search.playwrightMode)
-    }
     if (search?.statsTab) {
       params.set('statsTab', search.statsTab)
     }
@@ -420,8 +412,6 @@ export function parseWindowRouteSearch(search: string): RouteSearch {
     surface: params.get('surface') ?? undefined,
     channel: params.get('channel') ?? undefined,
     collab: params.get('collab') ?? undefined,
-    playwrightSession: params.get('playwrightSession') ?? undefined,
-    playwrightMode: params.get('playwrightMode') ?? undefined,
     statsTab: params.get('statsTab') ?? undefined,
     settingsTab: params.get('settingsTab') ?? undefined,
     collabApiBaseUrl: params.get('collabApiBaseUrl') ?? undefined,

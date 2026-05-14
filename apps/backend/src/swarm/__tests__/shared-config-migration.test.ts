@@ -11,7 +11,6 @@ import {
   getSharedMobileDevicesPath,
   getSharedMobileNotificationPreferencesPath,
   getSharedModelOverridesPath,
-  getSharedPlaywrightDashboardSettingsPath,
   getSharedSecretsFilePath,
   getSharedStateDir,
   getTerminalSettingsPath,
@@ -32,7 +31,6 @@ describe("shared-config-migration", () => {
     await writeText(join(sharedDir, "secrets.json"), '{"OPENAI_API_KEY":"secret"}\n');
     await writeText(join(sharedDir, "model-overrides.json"), '{"version":1,"overrides":{}}\n');
     await writeText(join(sharedDir, "cortex-auto-review.json"), '{"enabled":true}\n');
-    await writeText(join(sharedDir, "playwright-dashboard.json"), '{"enabled":false}\n');
     await writeText(join(sharedDir, "mobile-notification-prefs.json"), '{"version":1}\n');
     await writeText(join(sharedDir, "terminal-settings.json"), '{"defaultShell":"/bin/zsh"}\n');
     await writeText(join(sharedDir, "slash-commands.json"), '{"commands":[]}\n');
@@ -46,7 +44,6 @@ describe("shared-config-migration", () => {
     await expect(readFile(getSharedSecretsFilePath(dataDir), "utf8")).resolves.toContain("OPENAI_API_KEY");
     await expect(readFile(getSharedModelOverridesPath(dataDir), "utf8")).resolves.toContain('"version":1');
     await expect(readFile(getCortexAutoReviewSettingsPath(dataDir), "utf8")).resolves.toContain("enabled");
-    await expect(readFile(getSharedPlaywrightDashboardSettingsPath(dataDir), "utf8")).resolves.toContain("enabled");
     await expect(readFile(getSharedMobileNotificationPreferencesPath(dataDir), "utf8")).resolves.toContain("version");
     await expect(readFile(getTerminalSettingsPath(dataDir), "utf8")).resolves.toContain("/bin/zsh");
     await expect(readFile(getGlobalSlashCommandsPath(dataDir), "utf8")).resolves.toContain("commands");

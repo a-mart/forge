@@ -4,8 +4,6 @@ import type {
   AgentStatus,
   ConversationEntry,
   ManagerProfile,
-  PlaywrightDiscoverySettings,
-  PlaywrightDiscoverySnapshot,
   TelegramStatusEvent,
   TerminalDescriptor,
 } from '@forge/protocol'
@@ -34,8 +32,6 @@ export interface ManagerWsState {
   lastError: string | null
   lastSuccess: string | null
   telegramStatus: TelegramStatusEvent | null
-  playwrightSnapshot: PlaywrightDiscoverySnapshot | null
-  playwrightSettings: PlaywrightDiscoverySettings | null
   unreadCounts: Record<string, number>
   terminals: TerminalDescriptor[]
   terminalSessionScopeId: string | null
@@ -63,8 +59,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     lastError: null,
     lastSuccess: null,
     telegramStatus: null,
-    playwrightSnapshot: null,
-    playwrightSettings: null,
     unreadCounts: {},
     terminals: [],
     terminalSessionScopeId: null,

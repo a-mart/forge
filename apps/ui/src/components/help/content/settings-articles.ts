@@ -30,10 +30,6 @@ Cortex is Forge's self-improvement system. When automatic reviews are enabled, C
 
 Only reviewable transcript drift drives reviews; raw JSONL growth alone and internal/system entries do not.
 
-## Experimental Features
-
-The Playwright Dashboard toggle controls whether Forge discovers and displays Playwright CLI sessions across your repo roots and worktrees. This feature is macOS and Linux only. If the \`FORGE_PLAYWRIGHT_DASHBOARD_ENABLED\` environment variable is set, the toggle is locked to that value and cannot be changed here.
-
 ## Welcome Preferences
 
 Edit the default preferences Forge shares with new manager sessions. These are the onboarding choices you made on first launch (name, technical level, workflow style). Changes here apply to future sessions.
@@ -60,7 +56,6 @@ The Reboot button restarts the Forge daemon and all active agents. Use it after 
       'editor',
       'vscode',
       'cursor',
-      'playwright',
       'cortex',
       'auto-review',
       'reboot',

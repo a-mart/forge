@@ -78,16 +78,6 @@ vi.mock('@/lib/api-endpoint', () => ({
   resolveApiEndpoint: (_ws: string, path: string) => `http://127.0.0.1:47187${path}`,
 }))
 
-const playwrightApiMock = vi.hoisted(() => ({
-  fetchPlaywrightSettings: vi.fn(),
-  updatePlaywrightSettings: vi.fn(),
-}))
-
-vi.mock('@/components/playwright/playwright-api', () => ({
-  fetchPlaywrightSettings: (...args: unknown[]) => playwrightApiMock.fetchPlaywrightSettings(...args),
-  updatePlaywrightSettings: (...args: unknown[]) => playwrightApiMock.updatePlaywrightSettings(...args),
-}))
-
 const cortexApiMock = vi.hoisted(() => ({
   fetchCortexAutoReviewSettings: vi.fn(),
   updateCortexAutoReviewSettings: vi.fn(),
@@ -128,10 +118,6 @@ beforeEach(() => {
     isMutating: false,
     error: null,
     savePreferences: vi.fn(),
-  })
-  playwrightApiMock.fetchPlaywrightSettings.mockResolvedValue({
-    effectiveEnabled: false,
-    source: 'config',
   })
   cortexApiMock.fetchCortexAutoReviewSettings.mockResolvedValue({
     settings: { enabled: true, intervalMinutes: 120 },
@@ -195,30 +181,6 @@ describe('SettingsGeneral', () => {
 
       // The theme select should exist with the current value
       expect(container.textContent).toContain('Appearance')
-    })
-  })
-
-  /* ---- Playwright section ---- */
-
-  describe('experimental features', () => {
-    it('renders Playwright Dashboard toggle', async () => {
-      renderGeneral()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Playwright Dashboard')
-    })
-
-    it('shows env-var override message when source is env', async () => {
-      playwrightApiMock.fetchPlaywrightSettings.mockResolvedValue({
-        effectiveEnabled: true,
-        source: 'env',
-      })
-      renderGeneral()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('FORGE_PLAYWRIGHT_DASHBOARD_ENABLED')
     })
   })
 
@@ -410,12 +372,11 @@ describe('SettingsGeneral — collab target', () => {
     expect(container.textContent).not.toContain('Show model icons')
   })
 
-  it('still renders Playwright and Cortex sections in collab mode', async () => {
+  it('still renders Cortex settings in collab mode', async () => {
     renderCollab()
     await flush()
     await flush()
 
-    expect(container.textContent).toContain('Playwright Dashboard')
     expect(container.textContent).toContain('Automatic Reviews')
   })
 

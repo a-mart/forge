@@ -39,7 +39,7 @@ export const BACKEND_SIDEBAR_PERF_METRICS = {
     name: SIDEBAR_BOOTSTRAP_METRIC,
     kind: "duration",
     thresholdMs: 750,
-    labelKeys: ["historySource", "cacheState", "playwrightDiscoveryEnabled", "buildMode"],
+    labelKeys: ["historySource", "cacheState", "buildMode"],
     surface: "backend",
   },
   sidebarHistoryCacheState: {

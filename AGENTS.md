@@ -87,7 +87,6 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Memory system** | `swarm/memory-merge.ts`, `swarm/memory-paths.ts` | Chat UI | Per-session and per-profile persistent memory with merge lifecycle |
 | **Cortex** | `swarm/operational/` | `components/chat/cortex/` | AI self-improvement, first-launch welcome preferences, and knowledge management |
 | **Cortex auto-review** | `swarm/cortex-auto-review-settings.ts`, `ws/routes/cortex-auto-review-routes.ts` | `components/settings/SettingsGeneral.tsx`, `components/settings/cortex-auto-review-api.ts` | Periodic automated reviews that run only when sessions have changed (deterministic pre-check prevents unnecessary LLM sessions) |
-| **Playwright dashboard** | `playwright/*` | `components/playwright/*` | Live browser preview and automation dashboard |
 | **Agent runtime dispatch** | `swarm/runtime/runtime-factory.ts`, `swarm/runtime/runtime-{binding,callback-gate,prompt-plan,resource-plan,recovery-state,tool-plan}.ts`, `swarm/runtime/{acp,claude,pi}/` | Settings UI (model selectors) | Thin provider-dispatch facade plus shared planning/projector helpers and provider-specific runtime creators. Keep provider construction inside the creator modules, keep the facade stable, and preserve the public import surface while refactoring. |
 | **Cursor ACP runtime** | `swarm/runtime/acp/` | — | Cursor ACP agent runtime with HTTP MCP tool bridge for worker specialists. Requires Cursor CLI installed and `agent login`. Experimental; disable with `FORGE_ACP_ENABLED=false`. Cross-vendor fallback to OpenAI Codex. |
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
@@ -157,7 +156,6 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   │   ├── model-overrides.json           # User model visibility/context caps
 │   │   ├── cortex-auto-review.json        # Cortex auto-review schedule settings
 │   │   ├── mobile-notification-prefs.json # Mobile push preferences
-│   │   ├── playwright-dashboard.json      # Playwright dashboard settings
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
 │   │   └── integrations/                  # Telegram integration configs
@@ -299,7 +297,6 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `FORGE_TERMINAL_SNAPSHOT_INTERVAL_MS` | `30000` | Terminal state snapshot interval |
 | `FORGE_TERMINAL_SCROLLBACK_LINES` | `5000` | Max scrollback lines per terminal |
 | `FORGE_TERMINAL_DEFAULT_SHELL` | auto-detected | Override default shell |
-| `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` | Enable Playwright dashboard (macOS/Linux only) |
 | `FORGE_DESKTOP` | auto-detected | Set to `true` when running in Electron desktop app |
 | `FORGE_RESOURCES_DIR` | auto-detected | Path to bundled resources in Electron app |
 
@@ -373,9 +370,6 @@ Forge supports **macOS**, **Linux**, and **Windows**. When working on cross-plat
 ### Process & Signals
 - Signal handling (e.g., `SIGTERM`, `SIGINT`) should be gated for Windows compatibility.
 - Use `process.platform` checks when platform-specific behavior is required.
-
-### Feature Gating
-- Playwright dashboard is gated by the `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` env var and requires macOS or Linux (Unix sockets).
 
 ### File System
 - Be mindful of case sensitivity differences (macOS is case-insensitive by default, Linux is case-sensitive).

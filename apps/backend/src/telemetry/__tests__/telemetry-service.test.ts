@@ -328,7 +328,6 @@ function createPayload(installId: string, reportId = 'report-1'): TelemetryPaylo
     pinned_messages_used: 0,
     scheduled_tasks_count: 0,
     telegram_configured: false,
-    playwright_enabled: false,
     forked_sessions_count: 0,
     project_agents_count: 0,
     project_agents_persisted_count: 0,

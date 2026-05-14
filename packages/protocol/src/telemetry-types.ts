@@ -46,7 +46,6 @@ export interface TelemetryPayload {
   pinned_messages_used: number
   scheduled_tasks_count: number
   telegram_configured: boolean
-  playwright_enabled: boolean
   forked_sessions_count: number
   project_agents_count: number
   project_agents_persisted_count?: number

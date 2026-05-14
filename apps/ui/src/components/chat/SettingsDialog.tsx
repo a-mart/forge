@@ -17,7 +17,7 @@ import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
 import { SettingsAbout } from '@/components/settings/SettingsAbout'
 import { SettingsCliAccess } from '@/components/settings/SettingsCliAccess'
 import { SettingsCollaboration } from '@/components/settings/SettingsCollaboration'
-import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, TelegramStatusEvent } from '@forge/protocol'
+import type { AgentDescriptor, ManagerProfile, TelegramStatusEvent } from '@forge/protocol'
 
 interface SettingsPanelProps {
   wsUrl: string
@@ -28,8 +28,6 @@ interface SettingsPanelProps {
   specialistChangeKey: number
   modelConfigChangeKey: number
   onBack?: () => void
-  onPlaywrightSnapshotUpdate?: (snapshot: PlaywrightDiscoverySnapshot) => void
-  onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
   /** Optional active session context for session-specific runtime prompt previews. */
   previewSession?: {
     agentId: string
@@ -62,8 +60,6 @@ export function SettingsPanel({
   specialistChangeKey,
   modelConfigChangeKey,
   onBack,
-  onPlaywrightSnapshotUpdate,
-  onPlaywrightSettingsLoaded,
   previewSession,
   target: externalTarget,
   initialTab,
@@ -118,7 +114,7 @@ export function SettingsPanel({
       availableTabs={availableTabs}
       targetLabel={targetLabel}
     >
-      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} target={target} apiClient={apiClient} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
+      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} target={target} apiClient={apiClient} />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} apiClient={apiClient} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} target={target} apiClient={apiClient} />}
       {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />}
