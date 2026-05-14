@@ -49,6 +49,9 @@ export function createSkillRoutes(options: { swarmManager: SkillRouteSwarmManage
         } catch (error) {
           if (!response.headersSent) {
             const mapped = mapSkillRouteError(error);
+            for (const [name, value] of Object.entries(mapped.headers ?? {})) {
+              response.setHeader(name, value);
+            }
             sendJson(response, mapped.statusCode, mapped.body);
           }
         }
@@ -172,18 +175,41 @@ async function handleSkillImportRoute(
     return;
   }
   const target = parseImportTarget(body.target, swarmManager);
-  const conflictStrategy = body.conflictStrategy === "replace" ? "replace" : "reject";
+  const conflictStrategy = parseConflictStrategy(body.conflictStrategy);
   const confirmReplace = body.confirmReplace === true;
   const result = await swarmManager.importSkill({
-    source: {
-      ...(typeof source.url === "string" ? { url: source.url } : {}),
-      ...("bundle" in source ? { bundle: source.bundle } : {})
-    },
+    source: parseImportSource(source),
     target,
-    conflictStrategy,
+    ...(conflictStrategy ? { conflictStrategy } : {}),
     confirmReplace
   });
   sendJson(response, 200, result as unknown as Record<string, unknown>);
+}
+
+function parseImportSource(source: Record<string, unknown>): ImportSkillOptions["source"] {
+  const rawUrl = source.url;
+  const rawBundle = source.bundle;
+  const hasUrl = Object.hasOwn(source, "url") && rawUrl !== undefined;
+  const hasBundle = Object.hasOwn(source, "bundle") && rawBundle !== undefined;
+  if (hasUrl) {
+    if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
+      throw new SkillSharingError("invalid_import_source", "source.url must be a non-empty string.", 400);
+    }
+  }
+  if ((hasUrl ? 1 : 0) + (hasBundle ? 1 : 0) !== 1) {
+    throw new SkillSharingError("invalid_import_source", "Import source must include exactly one url or bundle.", 400);
+  }
+  return hasUrl && typeof rawUrl === "string" ? { url: rawUrl.trim() } : { bundle: rawBundle as SkillBundleManifestV1 };
+}
+
+function parseConflictStrategy(value: unknown): ImportSkillOptions["conflictStrategy"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "reject" || value === "replace") {
+    return value;
+  }
+  throw new SkillSharingError("invalid_conflict_strategy", "conflictStrategy must be reject or replace.", 400);
 }
 
 function parseImportTarget(value: unknown, swarmManager: SkillRouteSwarmManager): SkillImportTarget | undefined {
@@ -266,15 +292,21 @@ function decodeSkillIdRoute(skillId: string, action: SkillRouteAction): { skillI
   }
 }
 
-function mapSkillRouteError(error: unknown): { statusCode: number; body: Record<string, unknown> } {
+function mapSkillRouteError(error: unknown): {
+  statusCode: number;
+  body: Record<string, unknown>;
+  headers?: Record<string, string>;
+} {
   if (error instanceof SkillSharingError) {
     return {
       statusCode: error.statusCode,
       body: {
         error: error.message,
         code: error.code,
-        ...(error.details ? { details: error.details } : {})
-      }
+        ...(error.details ? { details: error.details } : {}),
+        ...(error.retryAfter ? { retryAfter: error.retryAfter } : {})
+      },
+      ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {})
     };
   }
 

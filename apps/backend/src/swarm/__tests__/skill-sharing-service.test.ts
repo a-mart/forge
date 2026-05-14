@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SkillBundleManifestV1 } from "@forge/protocol";
 import { createTempConfig, type TempConfigHandle } from "../../test-support/temp-config.js";
@@ -68,15 +68,39 @@ describe("SkillSharingService", () => {
     });
   });
 
+  it("preserves share worker budget and retry-after errors", async () => {
+    const uploadHarness = await createHarness({
+      fetchFn: async () => jsonResponse({ error: "Budget exhausted." }, { status: 507 })
+    });
+    await createGlobalSkill(uploadHarness.config, "budget-upload", {
+      "SKILL.md": "---\nname: Budget Upload\n---\n\n# Budget\n"
+    });
+    await expect(uploadHarness.sharingService.shareSkill(await getGlobalSkillId(uploadHarness.metadataService, "budget-upload")))
+      .rejects.toMatchObject({ code: "share_budget_exceeded", statusCode: 507 });
+
+    const retryHarness = await createHarness({
+      fetchFn: async () => jsonResponse({ error: "Try later." }, { status: 429, headers: { "Retry-After": "120" } })
+    });
+    await expect(retryHarness.sharingService.previewImportFromUrl({ url: "https://share.test/s/rate-limited" }))
+      .rejects.toMatchObject({ code: "share_rate_limited", statusCode: 429, retryAfter: "120" });
+
+    const downloadBudgetHarness = await createHarness({
+      fetchFn: async () => jsonResponse({ error: "Budget exhausted." }, { status: 507 })
+    });
+    await expect(downloadBudgetHarness.sharingService.previewImportFromUrl({ url: "https://share.test/s/budget" }))
+      .rejects.toMatchObject({ code: "share_budget_exceeded", statusCode: 507 });
+  });
+
   it("previews and imports a bundle without trusting renderer preview data", async () => {
-    const harness = await createHarness();
-    await createGlobalSkill(harness.config, "source-skill", {
+    const sourceHarness = await createHarness();
+    await createGlobalSkill(sourceHarness.config, "source-skill", {
       "SKILL.md": "---\nname: Source Skill\ndescription: Import me\n---\n\n# Source\n",
       "scripts/helper.sh": "#!/usr/bin/env bash\necho imported\n"
     });
-    const bundle = await packageGlobalSkill(harness, "source-skill");
+    const bundle = await packageGlobalSkill(sourceHarness, "source-skill");
 
-    const preview = await harness.sharingService.previewImportBundle({ bundle, target: { scope: "profile", profileId: "profile-a" } });
+    const targetHarness = await createHarness();
+    const preview = await targetHarness.sharingService.previewImportBundle({ bundle, target: { scope: "profile", profileId: "profile-a" } });
     expect(preview).toMatchObject({
       bundle: {
         skill: { handle: "source-skill", name: "Source Skill" },
@@ -88,15 +112,15 @@ describe("SkillSharingService", () => {
     expect(preview.bundle.files[0]).not.toHaveProperty("content");
     expect(preview.warnings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "script_file" })]));
 
-    const result = await harness.sharingService.importSkill({
+    const result = await targetHarness.sharingService.importSkill({
       source: { bundle },
       target: { scope: "profile", profileId: "profile-a" }
     });
 
     expect(result).toMatchObject({ replaced: false, target: { scope: "profile", profileId: "profile-a" } });
-    const importedRoot = join(getProfilePiSkillsDir(harness.config.paths.dataDir, "profile-a"), "source-skill");
+    const importedRoot = join(getProfilePiSkillsDir(targetHarness.config.paths.dataDir, "profile-a"), "source-skill");
     await expect(readFile(join(importedRoot, "SKILL.md"), "utf8")).resolves.toContain("# Source");
-    const profileSkills = await harness.metadataService.getProfileSkillMetadata("profile-a");
+    const profileSkills = await targetHarness.metadataService.getProfileSkillMetadata("profile-a");
     expect(profileSkills.some((skill) => skill.directoryName === "source-skill")).toBe(true);
   });
 
@@ -133,27 +157,119 @@ describe("SkillSharingService", () => {
       .resolves.toContain("# Original");
   });
 
-  it("fetches URL sources again at import time", async () => {
-    let fetchCount = 0;
-    const harness = await createHarness({
-      fetchFn: async () => {
-        fetchCount += 1;
-        const bundle = fetchCount === 1
-          ? await createBundleForSkill(harness.config, harness.metadataService, "url-skill-first")
-          : await createBundleForSkill(harness.config, harness.metadataService, "url-skill-second");
-        return jsonResponse(bundle);
-      }
+  it("surfaces effective repo collisions before filesystem-path shadowing", async () => {
+    const sourceHarness = await createHarness();
+    await createGlobalSkill(sourceHarness.config, "repo-collision", {
+      "SKILL.md": "---\nname: Repo Collision\n---\n\n# Imported\n"
     });
-    await createGlobalSkill(harness.config, "url-skill-first", {
+    const bundle = await packageGlobalSkill(sourceHarness, "repo-collision");
+
+    const targetHarness = await createHarness();
+    await createRepoSkill(targetHarness.config, "repo-collision", {
+      "SKILL.md": "---\nname: Repo Collision\n---\n\n# Repo\n"
+    });
+
+    const preview = await targetHarness.sharingService.previewImportBundle({ bundle });
+    expect(preview.conflict).toMatchObject({
+      exists: true,
+      existingSourceKind: "repo",
+      existingDirectoryName: "repo-collision",
+      conflictType: "effective_skill"
+    });
+
+    await expect(targetHarness.sharingService.importSkill({ source: { bundle } }))
+      .rejects.toMatchObject({ code: "skill_import_conflict", statusCode: 409 });
+
+    await targetHarness.sharingService.importSkill({
+      source: { bundle },
+      conflictStrategy: "replace",
+      confirmReplace: true
+    });
+    await expect(readFile(join(targetHarness.config.paths.dataDir, "skills", "repo-collision", "SKILL.md"), "utf8"))
+      .resolves.toContain("# Imported");
+  });
+
+  it("blocks imports that would shadow required built-in skills", async () => {
+    const sourceHarness = await createHarness();
+    await createGlobalSkill(sourceHarness.config, "brave-search", {
+      "SKILL.md": "---\nname: Brave Search\n---\n\n# Replacement search\n"
+    });
+    const bundle = await packageGlobalSkill(sourceHarness, "brave-search");
+
+    const targetHarness = await createHarness();
+    const preview = await targetHarness.sharingService.previewImportBundle({
+      bundle,
+      target: { scope: "profile", profileId: "profile-a" }
+    });
+    expect(preview.conflict).toMatchObject({
+      exists: true,
+      existingSourceKind: "builtin",
+      existingDirectoryName: "brave-search",
+      conflictType: "effective_skill",
+      isRequiredBuiltin: true,
+      isBlocking: true
+    });
+
+    await expect(targetHarness.sharingService.importSkill({
+      source: { bundle },
+      target: { scope: "profile", profileId: "profile-a" },
+      conflictStrategy: "replace",
+      confirmReplace: true
+    })).rejects.toMatchObject({ code: "skill_import_required_builtin_conflict", statusCode: 409 });
+  });
+
+  it("rejects invalid import conflict strategies", async () => {
+    const harness = await createHarness();
+    await createGlobalSkill(harness.config, "strategy-skill", {
+      "SKILL.md": "---\nname: Strategy Skill\n---\n\n# Strategy\n"
+    });
+    const bundle = await packageGlobalSkill(harness, "strategy-skill");
+
+    await expect(harness.sharingService.importSkill({
+      source: { bundle },
+      conflictStrategy: "overwrite" as never
+    })).rejects.toMatchObject({ code: "invalid_conflict_strategy", statusCode: 400 });
+  });
+
+  it("rejects unknown profile targets at the service boundary", async () => {
+    const sourceHarness = await createHarness();
+    await createGlobalSkill(sourceHarness.config, "unknown-profile-target", {
+      "SKILL.md": "---\nname: Unknown Profile Target\n---\n\n# Target\n"
+    });
+    const bundle = await packageGlobalSkill(sourceHarness, "unknown-profile-target");
+    const targetHarness = await createHarness({ validProfileIds: ["profile-a"] });
+
+    await expect(targetHarness.sharingService.importSkill({
+      source: { bundle },
+      target: { scope: "profile", profileId: "missing-profile" }
+    })).rejects.toMatchObject({ code: "unknown_profile", statusCode: 404 });
+    await expect(lstat(getProfilePiSkillsDir(targetHarness.config.paths.dataDir, "missing-profile"))).rejects.toThrow();
+  });
+
+  it("fetches URL sources again at import time", async () => {
+    const firstSourceHarness = await createHarness();
+    await createGlobalSkill(firstSourceHarness.config, "url-skill-first", {
       "SKILL.md": "---\nname: URL First\n---\n\n# First\n"
     });
-    await createGlobalSkill(harness.config, "url-skill-second", {
+    const firstBundle = await packageGlobalSkill(firstSourceHarness, "url-skill-first");
+
+    const secondSourceHarness = await createHarness();
+    await createGlobalSkill(secondSourceHarness.config, "url-skill-second", {
       "SKILL.md": "---\nname: URL Second\n---\n\n# Second\n"
+    });
+    const secondBundle = await packageGlobalSkill(secondSourceHarness, "url-skill-second");
+
+    let fetchCount = 0;
+    const targetHarness = await createHarness({
+      fetchFn: async () => {
+        fetchCount += 1;
+        return jsonResponse(fetchCount === 1 ? firstBundle : secondBundle);
+      }
     });
 
     const target = { scope: "profile" as const, profileId: "profile-a" };
-    const preview = await harness.sharingService.previewImportFromUrl({ url: "https://share.test/s/token", target });
-    const result = await harness.sharingService.importSkill({ source: { url: "https://share.test/s/token" }, target });
+    const preview = await targetHarness.sharingService.previewImportFromUrl({ url: "https://share.test/s/token", target });
+    const result = await targetHarness.sharingService.importSkill({ source: { url: "https://share.test/s/token" }, target });
 
     expect(preview.bundle.skill.handle).toBe("url-skill-first");
     expect(result.bundle.skill.handle).toBe("url-skill-second");
@@ -167,7 +283,7 @@ interface Harness {
   sharingService: SkillSharingService;
 }
 
-async function createHarness(options: { fetchFn?: typeof fetch } = {}): Promise<Harness> {
+async function createHarness(options: { fetchFn?: typeof fetch; validProfileIds?: string[] } = {}): Promise<Harness> {
   const handle = await createTempConfig({ prefix: "skill-sharing-service-test-", port: 0 });
   tempHandles.push(handle);
   const metadataService = new SkillMetadataService({ config: handle.config });
@@ -176,7 +292,10 @@ async function createHarness(options: { fetchFn?: typeof fetch } = {}): Promise<
     skillMetadataService: metadataService,
     shareBaseUrl: "https://share.test",
     fetchFn: options.fetchFn ?? vi.fn(async () => jsonResponse({ error: "not configured" }, { status: 503 })),
-    now: () => new Date("2026-05-13T12:00:00.000Z")
+    now: () => new Date("2026-05-13T12:00:00.000Z"),
+    validateProfileTarget: options.validProfileIds
+      ? (profileId) => options.validProfileIds?.includes(profileId) ?? false
+      : undefined
   });
   return { config: handle.config, metadataService, sharingService };
 }
@@ -187,6 +306,10 @@ async function createGlobalSkill(config: SwarmConfig, handle: string, files: Rec
 
 async function createProfileSkill(config: SwarmConfig, profileId: string, handle: string, files: Record<string, string | Buffer>): Promise<void> {
   await writeSkillFiles(join(getProfilePiSkillsDir(config.paths.dataDir, profileId), handle), files);
+}
+
+async function createRepoSkill(config: SwarmConfig, handle: string, files: Record<string, string | Buffer>): Promise<void> {
+  await writeSkillFiles(join(config.paths.rootDir, ".swarm", "skills", handle), files);
 }
 
 async function writeSkillFiles(root: string, files: Record<string, string | Buffer>): Promise<void> {

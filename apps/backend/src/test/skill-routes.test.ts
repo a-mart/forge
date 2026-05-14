@@ -222,6 +222,43 @@ describe("skill routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Skill share expired.", code: "share_expired" });
   });
 
+  it("preserves retry-after and budget status from skill share errors", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      previewSkillImportFromUrl: vi.fn(async () => {
+        throw new SkillSharingError("share_rate_limited", "Slow down.", 429, undefined, "120");
+      }),
+      shareSkill: vi.fn(async () => {
+        throw new SkillSharingError("share_budget_exceeded", "Budget exhausted.", 507);
+      }),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const rateLimited = await fetch(`${server.baseUrl}/api/settings/skills/import/preview-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://share.test/s/token" })
+    });
+    expect(rateLimited.status).toBe(429);
+    expect(rateLimited.headers.get("retry-after")).toBe("120");
+    await expect(rateLimited.json()).resolves.toEqual({
+      error: "Slow down.",
+      code: "share_rate_limited",
+      retryAfter: "120"
+    });
+
+    const budgetExceeded = await fetch(`${server.baseUrl}/api/settings/skills/skill-id/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(budgetExceeded.status).toBe(507);
+    await expect(budgetExceeded.json()).resolves.toEqual({
+      error: "Budget exhausted.",
+      code: "share_budget_exceeded"
+    });
+  });
+
   it("imports skills through the explicit import route", async () => {
     const swarmManager = {
       listUserProfiles: vi.fn(() => []),
@@ -250,6 +287,31 @@ describe("skill routes", () => {
       confirmReplace: true
     });
     await expect(response.json()).resolves.toMatchObject({ rootPath: "/data/skills/imported", replaced: false });
+  });
+
+  it("rejects invalid import source and conflict strategy values", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      importSkill: vi.fn(async () => ({})),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const invalidStrategy = await fetch(`${server.baseUrl}/api/settings/skills/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: { url: "https://share.test/s/token" }, conflictStrategy: "overwrite" })
+    });
+    expect(invalidStrategy.status).toBe(400);
+    await expect(invalidStrategy.json()).resolves.toMatchObject({ code: "invalid_conflict_strategy" });
+
+    const ambiguousSource = await fetch(`${server.baseUrl}/api/settings/skills/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: { url: "https://share.test/s/token", bundle: { format: "forge.skill.bundle.v1" } } })
+    });
+    expect(ambiguousSource.status).toBe(400);
+    await expect(ambiguousSource.json()).resolves.toMatchObject({ code: "invalid_import_source" });
+    expect(swarmManager.importSkill).not.toHaveBeenCalled();
   });
 
   it("returns 404 instead of crashing on malformed encoded skill ids", async () => {

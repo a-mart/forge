@@ -166,11 +166,17 @@ export interface SkillImportTarget {
   profileId?: string
 }
 
+export type SkillImportConflictType = 'target_path' | 'effective_skill'
+
 export interface SkillImportConflictState {
   exists: boolean
   existingSourceKind?: SkillSourceKind
   existingSkillId?: string
   existingRootPath?: string
+  existingDirectoryName?: string
+  conflictType?: SkillImportConflictType
+  isRequiredBuiltin?: boolean
+  isBlocking?: boolean
 }
 
 export interface SkillImportPreviewResponse {

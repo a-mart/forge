@@ -20,7 +20,11 @@ import type { SwarmConfig } from "../types.js";
 import { renameWithRetry } from "../retry-rename.js";
 import { assertValidSkillHandle, isPathWithinRoot, normalizeSkillBundleFilePath } from "./skill-bundle-paths.js";
 import { SkillBundleService, SkillBundleValidationError } from "./skill-bundle-service.js";
-import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-service.js";
+import {
+  isRequiredSkillDirectoryName,
+  type SkillMetadata,
+  type SkillMetadataService
+} from "./skill-metadata-service.js";
 
 const DEFAULT_SKILL_SHARE_BASE_URL = "https://share.forge.dev";
 const SKILL_SHARE_BASE_URL_ENV = "FORGE_SKILL_SHARE_BASE_URL";
@@ -41,6 +45,7 @@ export interface SkillSharingServiceOptions {
   disabled?: boolean;
   fetchTimeoutMs?: number;
   redirectLimit?: number;
+  validateProfileTarget?: (profileId: string) => boolean;
 }
 
 export interface PreviewSkillImportUrlOptions {
@@ -73,14 +78,18 @@ interface FetchResult {
 }
 
 export class SkillSharingError extends Error {
+  readonly retryAfter?: string;
+
   constructor(
     readonly code: string,
     message: string,
     readonly statusCode = 400,
-    readonly details?: unknown
+    readonly details?: unknown,
+    retryAfter?: string
   ) {
     super(message);
     this.name = "SkillSharingError";
+    this.retryAfter = normalizeRetryAfterValue(retryAfter);
   }
 }
 
@@ -113,13 +122,14 @@ export class SkillSharingService {
   }
 
   async previewImportFromUrl(options: PreviewSkillImportUrlOptions): Promise<SkillImportPreviewResponse> {
+    const target = normalizeImportTarget(options.target, this.options.validateProfileTarget);
     const bundle = await this.fetchBundleFromShareUrl(options.url);
-    return this.previewImportBundle({ bundle, target: options.target });
+    return this.previewImportBundle({ bundle, target });
   }
 
   async previewImportBundle(options: PreviewSkillImportBundleOptions): Promise<SkillImportPreviewResponse> {
     const bundle = this.bundleService.assertValidBundle(options.bundle);
-    const target = normalizeImportTarget(options.target);
+    const target = normalizeImportTarget(options.target, this.options.validateProfileTarget);
     const warnings = this.buildImportWarnings(bundle);
     return {
       bundle: toPreviewBundle(bundle),
@@ -130,18 +140,23 @@ export class SkillSharingService {
   }
 
   async importSkill(options: ImportSkillOptions): Promise<SkillImportResultResponse> {
-    const sourceCount = (options.source.url ? 1 : 0) + (options.source.bundle ? 1 : 0);
-    if (sourceCount !== 1) {
-      throw new SkillSharingError("invalid_import_source", "Import source must include exactly one url or bundle.", 400);
-    }
-
-    const bundle = options.source.url
-      ? await this.fetchBundleFromShareUrl(options.source.url)
-      : this.bundleService.assertValidBundle(options.source.bundle);
-    const target = normalizeImportTarget(options.target);
+    const source = normalizeImportSource(options.source);
+    const conflictStrategy = normalizeConflictStrategy(options.conflictStrategy);
+    const bundle = source.url
+      ? await this.fetchBundleFromShareUrl(source.url)
+      : this.bundleService.assertValidBundle(source.bundle);
+    const target = normalizeImportTarget(options.target, this.options.validateProfileTarget);
     const preview = await this.previewImportBundle({ bundle, target });
 
-    if (preview.conflict.exists && options.conflictStrategy !== "replace") {
+    if (preview.conflict.isBlocking) {
+      throw new SkillSharingError(
+        "skill_import_required_builtin_conflict",
+        "Import would shadow a required built-in skill.",
+        409,
+        preview.conflict
+      );
+    }
+    if (preview.conflict.exists && conflictStrategy !== "replace") {
       throw new SkillSharingError("skill_import_conflict", "Skill already exists in the selected target.", 409, preview.conflict);
     }
     if (preview.conflict.exists && options.confirmReplace !== true) {
@@ -149,7 +164,7 @@ export class SkillSharingService {
     }
 
     const rootPath = await this.installBundle(bundle, target, {
-      replace: preview.conflict.exists && options.conflictStrategy === "replace"
+      replace: preview.conflict.exists && conflictStrategy === "replace"
     });
     await this.options.skillMetadataService.reloadSkillMetadata();
     const importedSkill = await this.findImportedSkill(bundle, target, rootPath);
@@ -178,7 +193,7 @@ export class SkillSharingService {
     const bodyText = await readResponseTextWithLimit(response, SHARE_UPLOAD_RESPONSE_MAX_BYTES);
 
     if (!response.ok) {
-      throw shareServiceStatusError(response.status, bodyText, "upload");
+      throw shareServiceStatusError(response.status, bodyText, "upload", response.headers);
     }
 
     let parsed: unknown;
@@ -200,7 +215,7 @@ export class SkillSharingService {
     const requestUrl = this.assertAllowedShareUrl(url);
     const response = await this.fetchShareUrlWithRedirects(requestUrl);
     if (response.status < 200 || response.status >= 300) {
-      throw shareServiceStatusError(response.status, response.bodyText, "download");
+      throw shareServiceStatusError(response.status, response.bodyText, "download", response.headers);
     }
 
     let parsed: unknown;
@@ -355,18 +370,52 @@ export class SkillSharingService {
     target: SkillImportTarget
   ): Promise<SkillImportConflictState> {
     const targetRoot = this.resolveTargetRoot(bundle.skill.handle, target);
+    const effectiveSkill = await this.findEffectiveSkillByHandle(bundle.skill.handle, target);
+    if (effectiveSkill) {
+      const isTargetPath = resolve(effectiveSkill.rootPath) === resolve(targetRoot);
+      const isRequiredBuiltin = (effectiveSkill.sourceKind === "builtin" || effectiveSkill.sourceKind === "repo")
+        && isRequiredSkillDirectoryName(effectiveSkill.directoryName);
+      return {
+        exists: true,
+        existingSourceKind: effectiveSkill.sourceKind,
+        existingSkillId: effectiveSkill.skillId,
+        existingRootPath: effectiveSkill.rootPath,
+        existingDirectoryName: effectiveSkill.directoryName,
+        conflictType: isTargetPath ? "target_path" : "effective_skill",
+        ...(isRequiredBuiltin ? { isRequiredBuiltin: true, isBlocking: true } : {})
+      };
+    }
+
     const exists = await pathExists(targetRoot);
     if (!exists) {
       return { exists: false };
     }
 
-    const existing = await this.findImportedSkill(bundle, target, targetRoot);
     return {
       exists: true,
       existingSourceKind: target.scope === "global" ? "machine-local" : "profile",
-      ...(existing ? { existingSkillId: existing.skillId } : {}),
-      existingRootPath: targetRoot
+      existingRootPath: targetRoot,
+      existingDirectoryName: bundle.skill.handle,
+      conflictType: "target_path"
     };
+  }
+
+  private async findEffectiveSkillByHandle(
+    handle: string,
+    target: SkillImportTarget
+  ): Promise<SkillMetadata | undefined> {
+    await this.options.skillMetadataService.reloadSkillMetadata();
+    const normalizedHandle = normalizeSkillHandle(handle);
+    if (target.scope === "profile" && target.profileId) {
+      const profileMatch = (await this.options.skillMetadataService.getProfileSkillMetadata(target.profileId))
+        .find((skill) => normalizeSkillHandle(skill.directoryName) === normalizedHandle);
+      if (profileMatch) {
+        return profileMatch;
+      }
+    }
+
+    return this.options.skillMetadataService.getSkillMetadata()
+      .find((skill) => normalizeSkillHandle(skill.directoryName) === normalizedHandle);
   }
 
   private async installBundle(
@@ -478,7 +527,41 @@ function readBooleanEnv(primaryName: string, legacyName: string): boolean {
   return value === "1" || value?.toLowerCase() === "true";
 }
 
-function normalizeImportTarget(target: SkillImportTarget | undefined): SkillImportTarget {
+function normalizeImportSource(source: ImportSkillOptions["source"] | unknown): { url?: string; bundle?: unknown } {
+  if (!isRecord(source)) {
+    throw new SkillSharingError("invalid_import_source", "Import source must be an object.", 400);
+  }
+
+  const rawUrl = source.url;
+  const rawBundle = source.bundle;
+  const hasUrl = Object.hasOwn(source, "url") && rawUrl !== undefined;
+  const hasBundle = Object.hasOwn(source, "bundle") && rawBundle !== undefined;
+  if (hasUrl) {
+    if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
+      throw new SkillSharingError("invalid_import_source", "source.url must be a non-empty string.", 400);
+    }
+  }
+  if ((hasUrl ? 1 : 0) + (hasBundle ? 1 : 0) !== 1) {
+    throw new SkillSharingError("invalid_import_source", "Import source must include exactly one url or bundle.", 400);
+  }
+
+  return hasUrl && typeof rawUrl === "string" ? { url: rawUrl.trim() } : { bundle: rawBundle };
+}
+
+function normalizeConflictStrategy(strategy: unknown): SkillImportConflictStrategy {
+  if (strategy === undefined) {
+    return "reject";
+  }
+  if (strategy === "reject" || strategy === "replace") {
+    return strategy;
+  }
+  throw new SkillSharingError("invalid_conflict_strategy", "conflictStrategy must be reject or replace.", 400);
+}
+
+function normalizeImportTarget(
+  target: SkillImportTarget | undefined,
+  validateProfileTarget?: (profileId: string) => boolean
+): SkillImportTarget {
   if (!target) {
     return { scope: "global" };
   }
@@ -489,7 +572,11 @@ function normalizeImportTarget(target: SkillImportTarget | undefined): SkillImpo
     if (typeof target.profileId !== "string" || target.profileId.trim().length === 0) {
       throw new SkillSharingError("invalid_import_target", "Profile imports require profileId.", 400);
     }
-    return { scope: "profile", profileId: target.profileId.trim() };
+    const profileId = target.profileId.trim();
+    if (validateProfileTarget && !validateProfileTarget(profileId)) {
+      throw new SkillSharingError("unknown_profile", `Unknown profile: ${profileId}`, 404);
+    }
+    return { scope: "profile", profileId };
   }
   return { scope: "global" };
 }
@@ -544,16 +631,23 @@ async function readResponseTextWithLimit(response: Response, maxBytes: number): 
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function shareServiceStatusError(status: number, bodyText: string, operation: "upload" | "download"): SkillSharingError {
+function shareServiceStatusError(
+  status: number,
+  bodyText: string,
+  operation: "upload" | "download",
+  headers?: Headers
+): SkillSharingError {
   const message = parseErrorMessage(bodyText) ?? `Skill share service ${operation} failed.`;
-  if (status === 400) return new SkillSharingError("share_bad_request", message, 400);
-  if (status === 404) return new SkillSharingError("share_not_found", message, 404);
-  if (status === 410) return new SkillSharingError("share_expired", message, 410);
-  if (status === 413) return new SkillSharingError("share_too_large", message, 413);
-  if (status === 429) return new SkillSharingError("share_rate_limited", message, 429);
-  if (status === 503) return new SkillSharingError("share_unavailable", message, 503);
-  if (status === 504) return new SkillSharingError("share_timeout", message, 504);
-  return new SkillSharingError("share_upstream_error", message, status >= 500 ? 502 : status);
+  const retryAfter = normalizeRetryAfterValue(headers?.get("retry-after") ?? undefined);
+  if (status === 400) return new SkillSharingError("share_bad_request", message, 400, undefined, retryAfter);
+  if (status === 404) return new SkillSharingError("share_not_found", message, 404, undefined, retryAfter);
+  if (status === 410) return new SkillSharingError("share_expired", message, 410, undefined, retryAfter);
+  if (status === 413) return new SkillSharingError("share_too_large", message, 413, undefined, retryAfter);
+  if (status === 429) return new SkillSharingError("share_rate_limited", message, 429, undefined, retryAfter);
+  if (status === 503) return new SkillSharingError("share_unavailable", message, 503, undefined, retryAfter);
+  if (status === 504) return new SkillSharingError("share_timeout", message, 504, undefined, retryAfter);
+  if (status === 507) return new SkillSharingError("share_budget_exceeded", message, 507, undefined, retryAfter);
+  return new SkillSharingError("share_upstream_error", message, status >= 500 ? 502 : status, undefined, retryAfter);
 }
 
 function parseErrorMessage(bodyText: string): string | undefined {
@@ -614,6 +708,24 @@ function dedupeIssues(issues: SkillBundleIssue[]): SkillBundleIssue[] {
 function errorToDetails(error: unknown): unknown {
   if (error instanceof Error) {
     return { name: error.name, message: error.message };
+  }
+  return undefined;
+}
+
+function normalizeSkillHandle(handle: string): string {
+  return handle.trim().toLowerCase();
+}
+
+function normalizeRetryAfterValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.length > 128) {
+    return undefined;
+  }
+  if (/^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (Number.isFinite(Date.parse(trimmed))) {
+    return trimmed;
   }
   return undefined;
 }

@@ -11,7 +11,7 @@ const REPO_SKILLS_RELATIVE_DIR = ".swarm/skills";
 const LOCAL_DATA_DIR_SKILLS_RELATIVE_DIR = "skills";
 const REPO_BUILT_IN_SKILLS_RELATIVE_DIR = "apps/backend/src/swarm/skills/builtins";
 const SKILL_FILE_NAME = "SKILL.md";
-const REQUIRED_SKILL_NAMES = [
+export const REQUIRED_SKILL_NAMES = [
   "memory",
   "brave-search",
   "cron-scheduling",
@@ -278,6 +278,10 @@ export class SkillMetadataService {
 
     return index;
   }
+}
+
+export function isRequiredSkillDirectoryName(directoryName: string): boolean {
+  return REQUIRED_SKILL_NAMES.some((requiredSkillName) => normalizeSkillName(requiredSkillName) === normalizeSkillName(directoryName));
 }
 
 function normalizeSkillName(skillName: string): string {

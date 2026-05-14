@@ -94,6 +94,8 @@ Recommended cost alarms:
 
 All API responses use `Cache-Control: no-store`.
 
+Local Forge treats the configured Worker origin as the trust boundary for share URLs. Preview/import fetches allow only the configured share-service origin and Worker paths (`/s/<token>` or `/api/v1/skill-shares/<token>`), with a small same-origin redirect limit. Direct R2 signed redirects are intentionally not part of this contract: if the Worker implementation ever changes to redirect to object storage, it must proxy through the Worker origin or the backend allowlist must be intentionally redesigned.
+
 ## Validator parity strategy
 
 The Worker intentionally validates bundles before storage so cloud costs cannot be created by malformed input. To prevent backend/Worker validator drift, `apps/backend/src/swarm/__tests__/skill-bundle-validator-parity.test.ts` runs a shared representative corpus through both validators. The corpus covers valid bundles plus known drift/security cases including non-canonical text encoding, spoofed derived metadata, case-insensitive path collisions, Windows-unsafe paths, and sensitive file paths.
