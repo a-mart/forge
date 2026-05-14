@@ -51,6 +51,8 @@ interface SettingsPanelProps {
    * backend's sign-in form.
    */
   initialCollabApiBaseUrl?: string
+  /** Optional Forge skill-share URL to open in the Skills import dialog. */
+  initialSkillImportUrl?: string
 }
 
 export function SettingsPanel({
@@ -68,6 +70,7 @@ export function SettingsPanel({
   target: externalTarget,
   initialTab,
   initialCollabApiBaseUrl,
+  initialSkillImportUrl,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     if (initialTab) {
@@ -129,7 +132,7 @@ export function SettingsPanel({
           telegramStatus={telegramStatus}
         />
       )}
-      {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} changeKey={specialistChangeKey} />}
+      {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} changeKey={specialistChangeKey} initialImportUrl={initialSkillImportUrl} />}
       {activeTab === 'prompts' && (
         <SettingsPrompts
           wsUrl={wsUrl}

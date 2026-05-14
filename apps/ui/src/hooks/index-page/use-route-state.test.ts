@@ -89,6 +89,25 @@ describe('useRouteState — settings surface', () => {
     expect(captured.current?.activeSurface).toBe('collab')
   })
 
+  it('routes skill import URLs to the skills settings tab', () => {
+    const parsed = parseRouteStateFromLocation('/', {
+      view: 'settings',
+      skillImportUrl: 'https://share.forge.dev/s/token',
+    }, 'builder')
+
+    expect(parsed).toEqual({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'skills',
+      skillImportUrl: 'https://share.forge.dev/s/token',
+    })
+    expect(toRouteSearch(parsed, undefined, 'builder')).toEqual({
+      view: 'settings',
+      settingsTab: 'skills',
+      skillImportUrl: 'https://share.forge.dev/s/token',
+    })
+  })
+
   it('preserves channel as sticky param through collab settings navigation', () => {
     const navigate = vi.fn()
     renderWith({

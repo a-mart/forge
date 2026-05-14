@@ -1223,6 +1223,7 @@ export function BuilderSurface({
                 previewSession={previewSession}
                 initialTab={routeState.view === 'settings' ? routeState.settingsTab : undefined}
                 initialCollabApiBaseUrl={routeState.view === 'settings' ? routeState.collabApiBaseUrl : undefined}
+                initialSkillImportUrl={routeState.view === 'settings' ? routeState.skillImportUrl : undefined}
               />
             ) : activeView === 'playwright' ? (
               <PlaywrightDashboardView

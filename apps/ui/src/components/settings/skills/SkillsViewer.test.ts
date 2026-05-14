@@ -10,6 +10,9 @@ import { SkillsViewer } from './SkillsViewer'
 
 const skillsViewerApiMock = vi.hoisted(() => ({
   fetchSkillInventory: vi.fn(),
+  shareSkill: vi.fn(),
+  previewSkillImportFromUrl: vi.fn(),
+  importSkill: vi.fn(),
 }))
 
 const settingsApiMock = vi.hoisted(() => ({
@@ -24,6 +27,12 @@ const settingsApiMock = vi.hoisted(() => ({
 vi.mock('./skills-viewer-api', () => ({
   fetchSkillInventory: (...args: Parameters<typeof skillsViewerApiMock.fetchSkillInventory>) =>
     skillsViewerApiMock.fetchSkillInventory(...args),
+  shareSkill: (...args: Parameters<typeof skillsViewerApiMock.shareSkill>) =>
+    skillsViewerApiMock.shareSkill(...args),
+  previewSkillImportFromUrl: (...args: Parameters<typeof skillsViewerApiMock.previewSkillImportFromUrl>) =>
+    skillsViewerApiMock.previewSkillImportFromUrl(...args),
+  importSkill: (...args: Parameters<typeof skillsViewerApiMock.importSkill>) =>
+    skillsViewerApiMock.importSkill(...args),
 }))
 
 vi.mock('../settings-api', () => ({
@@ -74,6 +83,37 @@ beforeEach(() => {
       isEffective: true,
     },
   ])
+  skillsViewerApiMock.shareSkill.mockResolvedValue({
+    shareUrl: 'https://share.test/s/token',
+    importUrl: 'forge://skill-import?url=https%3A%2F%2Fshare.test%2Fs%2Ftoken',
+    expiresAt: '2026-05-20T00:00:00.000Z',
+    contentSha256: 'a'.repeat(64),
+    warnings: [],
+  })
+  skillsViewerApiMock.previewSkillImportFromUrl.mockResolvedValue({
+    bundle: {
+      format: 'forge.skill.bundle.v1',
+      bundleVersion: 1,
+      createdAt: '2026-05-13T00:00:00.000Z',
+      contentSha256: 'a'.repeat(64),
+      origin: { platform: 'darwin', arch: 'arm64', skillSourceKind: 'machine-local' },
+      skill: { handle: 'shared', name: 'Shared', env: [], frontmatter: { knownForgeKeys: [], knownPiKeys: [], unsupportedKeys: [], warnings: [] } },
+      portability: { scripts: [], dependencies: [], osIndicators: [] },
+      files: [],
+      totals: { fileCount: 0, byteCount: 0 },
+    },
+    target: { scope: 'global' },
+    conflict: { exists: false },
+    warnings: [],
+  })
+  skillsViewerApiMock.importSkill.mockResolvedValue({
+    bundle: { skill: { handle: 'shared', name: 'Shared' }, files: [], totals: { fileCount: 0, byteCount: 0 } },
+    target: { scope: 'global' },
+    rootPath: '/tmp/shared',
+    skillId: 'shared-skill',
+    replaced: false,
+    warnings: [],
+  })
   settingsApiMock.fetchSettingsEnvVariables.mockResolvedValue([])
   settingsApiMock.updateSettingsEnvVariables.mockResolvedValue(undefined)
   settingsApiMock.deleteSettingsEnvVariable.mockResolvedValue(undefined)
@@ -118,6 +158,32 @@ describe('SkillsViewer', () => {
         undefined,
       )
       expect(container.textContent).toContain('memory')
+    })
+  })
+
+  it('opens a URL import preview from route state without installing', async () => {
+    root = createRoot(container)
+
+    flushSync(() => {
+      root?.render(
+        createElement(
+          HelpProvider,
+          null,
+          createElement(SkillsViewer, {
+            wsUrl: 'ws://127.0.0.1:47287',
+            profiles: [],
+            initialImportUrl: 'https://share.test/s/token',
+          }),
+        ),
+      )
+    })
+
+    await waitFor(() => {
+      expect(skillsViewerApiMock.previewSkillImportFromUrl).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47287',
+        { url: 'https://share.test/s/token', target: { scope: 'global' } },
+      )
+      expect(skillsViewerApiMock.importSkill).not.toHaveBeenCalled()
     })
   })
 })

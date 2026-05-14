@@ -15,6 +15,9 @@ const skillsViewerApiMock = vi.hoisted(() => ({
   fetchSkillInventory: vi.fn(),
   fetchSkillFiles: vi.fn(),
   fetchSkillFileContent: vi.fn(),
+  shareSkill: vi.fn(),
+  previewSkillImportFromUrl: vi.fn(),
+  importSkill: vi.fn(),
 }))
 
 const settingsApiMock = vi.hoisted(() => ({
@@ -36,6 +39,9 @@ vi.mock('./skills-viewer-api', () => ({
   fetchSkillInventory: (...args: unknown[]) => skillsViewerApiMock.fetchSkillInventory(...args),
   fetchSkillFiles: (...args: unknown[]) => skillsViewerApiMock.fetchSkillFiles(...args),
   fetchSkillFileContent: (...args: unknown[]) => skillsViewerApiMock.fetchSkillFileContent(...args),
+  shareSkill: (...args: unknown[]) => skillsViewerApiMock.shareSkill(...args),
+  previewSkillImportFromUrl: (...args: unknown[]) => skillsViewerApiMock.previewSkillImportFromUrl(...args),
+  importSkill: (...args: unknown[]) => skillsViewerApiMock.importSkill(...args),
 }))
 
 vi.mock('../settings-api', () => ({

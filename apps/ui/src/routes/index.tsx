@@ -47,6 +47,7 @@ type RouteSearch = {
   statsTab?: string
   settingsTab?: string
   collabApiBaseUrl?: string
+  skillImportUrl?: string
 }
 
 export function IndexPage() {
@@ -381,6 +382,9 @@ function useOptionalNavigate(): NavigateFn {
     if (search?.collabApiBaseUrl) {
       params.set('collabApiBaseUrl', search.collabApiBaseUrl)
     }
+    if (search?.skillImportUrl) {
+      params.set('skillImportUrl', search.skillImportUrl)
+    }
 
     const query = params.toString()
     const nextUrl = query ? `${to}?${query}` : to
@@ -425,5 +429,6 @@ export function parseWindowRouteSearch(search: string): RouteSearch {
     statsTab: params.get('statsTab') ?? undefined,
     settingsTab: params.get('settingsTab') ?? undefined,
     collabApiBaseUrl: params.get('collabApiBaseUrl') ?? undefined,
+    skillImportUrl: params.get('skillImportUrl') ?? undefined,
   }
 }

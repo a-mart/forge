@@ -35,6 +35,10 @@ extraResources:
     to: cli
     filter:
       - '**/*'
+protocols:
+  - name: Forge Skill Import
+    schemes:
+      - forge
 publish:
   - provider: github
     owner: a-mart
