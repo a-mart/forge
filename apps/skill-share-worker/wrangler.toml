@@ -1,0 +1,29 @@
+name = "forge-skill-share-worker"
+main = "src/index.ts"
+compatibility_date = "2026-05-13"
+workers_dev = false
+
+# Public production route is expected to be configured by deployment automation, e.g.
+# routes = [{ pattern = "share.forge.dev", custom_domain = true }]
+
+[[r2_buckets]]
+binding = "SKILL_SHARES_BUCKET"
+bucket_name = "forge-skill-shares"
+
+[vars]
+PUBLIC_BASE_URL = "https://share.forge.dev"
+SHARE_TTL_SECONDS = "604800"
+MAX_REQUEST_BYTES = "36700160"
+MAX_BUNDLE_BYTES = "26214400"
+MAX_FILE_BYTES = "2097152"
+MAX_FILES = "512"
+UPLOAD_RATE_LIMIT_PER_MINUTE = "10"
+DOWNLOAD_RATE_LIMIT_PER_MINUTE = "120"
+
+[triggers]
+crons = ["0 * * * *"]
+
+# Secret required at deploy time:
+#   wrangler secret put TOKEN_HMAC_SECRET
+# R2 lifecycle should also expire/delete objects under `skill-shares/` after 8 days
+# as a backstop to the Worker read-time expiry and scheduled cleanup.
