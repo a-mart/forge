@@ -235,6 +235,106 @@ describe("SkillBundleService", () => {
     ).rejects.toThrow(/Symlinks are not supported/);
   });
 
+  it("rejects broader secret/config entries with coded package errors", async () => {
+    const harness = await createHarness();
+    await createGlobalSkill(harness.config, "config-secret-skill", {
+      "SKILL.md": "---\nname: Config Secret\n---\n\n# Config Secret\n",
+      ".npmrc": "//registry.npmjs.org/:_authToken=secret-value\n"
+    });
+
+    await expect(
+      harness.bundleService.packageSkill(await getGlobalSkillId(harness.metadataService, "config-secret-skill"))
+    ).rejects.toMatchObject({
+      code: "sensitive_file",
+      path: ".npmrc"
+    });
+  });
+
+  it("rejects spoofed receiver-side metadata even when the content hash is recomputed", async () => {
+    const harness = await createHarness();
+    await createGlobalSkill(harness.config, "spoofed-skill", {
+      "SKILL.md": [
+        "---",
+        "name: Honest Skill",
+        "description: Honest description",
+        "env:",
+        "  - name: HONEST_API_KEY",
+        "    required: true",
+        "---",
+        "",
+        "# Honest"
+      ].join("\n"),
+      "scripts/setup.sh": "#!/usr/bin/env bash\ncurl https://example.invalid/file\n"
+    });
+    const bundle = cloneBundle(
+      (await harness.bundleService.packageSkill(await getGlobalSkillId(harness.metadataService, "spoofed-skill"))).bundle
+    );
+
+    bundle.skill.name = "Spoofed Trusted Skill";
+    bundle.skill.env = [{ name: "FAKE_SAFE_ENV", required: false }];
+    bundle.skill.frontmatter.warnings = [];
+    bundle.portability.scripts = [];
+    bundle.portability.osIndicators = [];
+    bundle.contentSha256 = computeSkillBundleContentSha256(bundle);
+
+    const result = validateSkillBundleManifest(bundle);
+    expect(result.valid).toBe(false);
+    expect(result.errors.map((error) => error.code)).toEqual(expect.arrayContaining([
+      "skill_metadata_mismatch",
+      "portability_metadata_mismatch"
+    ]));
+    expect(result.errors.map((error) => error.code)).not.toContain("content_hash_mismatch");
+  });
+
+  it("rejects unknown fields instead of ignoring unsigned metadata", async () => {
+    const harness = await createHarness();
+    await createGlobalSkill(harness.config, "unknown-field-skill", {
+      "SKILL.md": "---\nname: Unknown Field\n---\n\n# Unknown Field\n"
+    });
+    const bundle = cloneBundle(
+      (await harness.bundleService.packageSkill(await getGlobalSkillId(harness.metadataService, "unknown-field-skill"))).bundle
+    ) as SkillBundleManifestV1 & { extraField?: string };
+    bundle.extraField = "not allowed";
+
+    const result = validateSkillBundleManifest(bundle);
+    expect(result.valid).toBe(false);
+    expect(result.errors.map((error) => error.code)).toContain("unknown_field");
+  });
+
+  it("rejects Windows-unsafe skill handles and bundle path segments", async () => {
+    const unsafeHandles = ["CON", "prn.txt", "aux", "LPT1", "COM9.log", "bad:name", "trailing.", "trailing "];
+    for (const handle of unsafeHandles) {
+      const service = new SkillBundleService({
+        skillMetadataService: {
+          resolveSkillById: async () => ({
+            skillId: "unsafe",
+            skillName: handle,
+            directoryName: handle,
+            path: "/unused/SKILL.md",
+            rootPath: "/unused",
+            env: [],
+            sourceKind: "machine-local",
+            isInherited: false,
+            isEffective: true
+          })
+        }
+      });
+      await expect(service.packageSkill("unsafe")).rejects.toMatchObject({ code: "invalid_skill_handle" });
+    }
+
+    const harness = await createHarness();
+    await createGlobalSkill(harness.config, "safe-skill", {
+      "SKILL.md": "---\nname: Safe\n---\n\n# Safe\n"
+    });
+    const validBundle = (await harness.bundleService.packageSkill(await getGlobalSkillId(harness.metadataService, "safe-skill"))).bundle;
+
+    for (const unsafePath of ["scripts/CON", "scripts/prn.txt", "scripts/file:name.js", "scripts/trailing.", "scripts/trailing "]) {
+      expectValidationCode(validBundle, (bundle) => {
+        bundle.files[0]!.path = unsafePath;
+      }, "invalid_file_path");
+    }
+  });
+
   it("validates bundle trust-boundary invariants", async () => {
     const harness = await createHarness({ maxFileBytes: 64 });
     await createGlobalSkill(harness.config, "valid-skill", {

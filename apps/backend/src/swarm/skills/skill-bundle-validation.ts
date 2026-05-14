@@ -1,3 +1,4 @@
+import { TextDecoder } from "node:util";
 import type {
   SkillBundleDependencyManager,
   SkillBundleFileEntry,
@@ -16,9 +17,13 @@ import {
   SKILL_BUNDLE_VERSION
 } from "./skill-bundle-constants.js";
 import { computeSkillBundleContentSha256, sha256Hex } from "./skill-bundle-canonical.js";
+import { SkillBundleError } from "./skill-bundle-errors.js";
+import { analyzeFrontmatter, buildPortabilityMetadata } from "./skill-bundle-portability.js";
+import { parseSkillFrontmatter } from "./skill-frontmatter.js";
 import { assertValidSkillHandle, errorToMessage, normalizeSkillBundleFilePath } from "./skill-bundle-paths.js";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 export interface SkillBundleValidationResult {
   valid: boolean;
@@ -32,11 +37,11 @@ interface ManifestFileValidation {
   rawBytes?: Buffer;
 }
 
-export class SkillBundleValidationError extends Error {
+export class SkillBundleValidationError extends SkillBundleError {
   readonly issues: SkillBundleIssue[];
 
   constructor(issues: SkillBundleIssue[]) {
-    super(issues.map((issue) => issue.message).join("; ") || "Invalid skill bundle.");
+    super("invalid_skill_bundle", issues.map((issue) => issue.message).join("; ") || "Invalid skill bundle.");
     this.name = "SkillBundleValidationError";
     this.issues = issues;
   }
@@ -64,6 +69,13 @@ export function validateSkillBundleManifest(
     };
   }
 
+  rejectUnknownKeys(
+    candidate,
+    ["format", "bundleVersion", "createdAt", "contentSha256", "origin", "skill", "portability", "files", "totals"],
+    errors,
+    "Skill bundle"
+  );
+
   if (candidate.format !== SKILL_BUNDLE_FORMAT) {
     errors.push(issue("error", "invalid_format", "Unsupported skill bundle format."));
   }
@@ -83,6 +95,7 @@ export function validateSkillBundleManifest(
 
   const fileValidation = validateBundleFiles(candidate.files, { maxFileBytes, maxTotalBytes, maxFiles }, errors);
   validateTotals(candidate.totals, fileValidation, errors, maxTotalBytes);
+  validateDerivedMetadata(candidate, fileValidation, errors);
 
   let contentSha256: string | undefined;
   if (errors.length === 0) {
@@ -105,6 +118,8 @@ function validateOrigin(origin: unknown, errors: SkillBundleIssue[]): void {
     errors.push(issue("error", "invalid_origin", "Skill bundle origin must be an object."));
     return;
   }
+
+  rejectUnknownKeys(origin, ["forgeVersion", "platform", "arch", "osRelease", "skillSourceKind", "profileId"], errors, "Skill bundle origin");
 
   if (origin.forgeVersion !== undefined && typeof origin.forgeVersion !== "string") {
     errors.push(issue("error", "invalid_origin_forge_version", "Skill bundle origin forgeVersion must be a string."));
@@ -138,6 +153,8 @@ function validateSkillSummary(skill: unknown, errors: SkillBundleIssue[], warnin
     return;
   }
 
+  rejectUnknownKeys(skill, ["handle", "name", "description", "env", "frontmatter"], errors, "Skill bundle skill summary");
+
   try {
     assertValidSkillHandle(skill.handle);
   } catch (error) {
@@ -168,6 +185,8 @@ function validateSkillEnv(envValue: unknown, errors: SkillBundleIssue[]): void {
       continue;
     }
 
+    rejectUnknownKeys(env, ["name", "description", "required", "helpUrl"], errors, `Skill env declaration ${index + 1}`);
+
     if (typeof env.name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(env.name)) {
       errors.push(issue("error", "invalid_skill_env_name", `Skill env declaration ${index + 1} has an invalid name.`));
     } else if (seenEnv.has(env.name)) {
@@ -194,6 +213,8 @@ function validateFrontmatterSummary(frontmatter: unknown, errors: SkillBundleIss
     return;
   }
 
+  rejectUnknownKeys(frontmatter, ["knownForgeKeys", "knownPiKeys", "unsupportedKeys", "warnings"], errors, "Skill bundle frontmatter summary");
+
   for (const key of ["knownForgeKeys", "knownPiKeys", "unsupportedKeys", "warnings"] as const) {
     if (!Array.isArray(frontmatter[key]) || !frontmatter[key].every((value) => typeof value === "string")) {
       errors.push(issue("error", "invalid_frontmatter", `Skill bundle frontmatter ${key} must be a string array.`));
@@ -214,6 +235,8 @@ function validatePortability(portability: unknown, errors: SkillBundleIssue[]): 
     return;
   }
 
+  rejectUnknownKeys(portability, ["osIndicators", "scripts", "dependencies"], errors, "Skill bundle portability metadata");
+
   validateOsIndicators(portability.osIndicators, errors);
   validateScripts(portability.scripts, errors);
   validateDependencies(portability.dependencies, errors);
@@ -230,6 +253,7 @@ function validateOsIndicators(osIndicators: unknown, errors: SkillBundleIssue[])
       errors.push(issue("error", "invalid_os_indicator", `OS indicator ${index + 1} must be an object.`));
       continue;
     }
+    rejectUnknownKeys(indicator, ["path", "token", "severity"], errors, `OS indicator ${index + 1}`);
     validateOptionalBundlePath(indicator.path, errors, `OS indicator ${index + 1}`);
     if (typeof indicator.token !== "string" || indicator.token.trim().length === 0) {
       errors.push(issue("error", "invalid_os_indicator", `OS indicator ${index + 1} token is required.`));
@@ -251,6 +275,7 @@ function validateScripts(scripts: unknown, errors: SkillBundleIssue[]): void {
       errors.push(issue("error", "invalid_script", `Script ${index + 1} must be an object.`));
       continue;
     }
+    rejectUnknownKeys(script, ["path", "kind", "shebang", "executable", "warnings"], errors, `Script ${index + 1}`);
     validateOptionalBundlePath(script.path, errors, `Script ${index + 1}`);
     if (!isValidScriptKind(script.kind)) {
       errors.push(issue("error", "invalid_script", `Script ${index + 1} kind is invalid.`));
@@ -278,6 +303,7 @@ function validateDependencies(dependencies: unknown, errors: SkillBundleIssue[])
       errors.push(issue("error", "invalid_dependency", `Dependency ${index + 1} must be an object.`));
       continue;
     }
+    rejectUnknownKeys(dependency, ["path", "manager", "summary", "warnings"], errors, `Dependency ${index + 1}`);
     validateOptionalBundlePath(dependency.path, errors, `Dependency ${index + 1}`);
     if (!isValidDependencyManager(dependency.manager)) {
       errors.push(issue("error", "invalid_dependency", `Dependency ${index + 1} manager is invalid.`));
@@ -319,6 +345,8 @@ function validateBundleFiles(
       validatedFiles.push({});
       continue;
     }
+
+    rejectUnknownKeys(value, ["path", "size", "sha256", "encoding", "executable", "content"], errors, `Bundle file ${index + 1}`);
 
     const pathValue = value.path;
     let normalizedPath: string | undefined;
@@ -434,6 +462,8 @@ function validateTotals(
     return;
   }
 
+  rejectUnknownKeys(totals, ["fileCount", "byteCount"], errors, "Skill bundle totals");
+
   const fileCount = files.filter((file) => file.file !== undefined).length;
   const byteCount = files.reduce((sum, file) => sum + (file.rawBytes?.byteLength ?? 0), 0);
 
@@ -445,6 +475,114 @@ function validateTotals(
   }
   if (typeof totals.byteCount === "number" && totals.byteCount > maxTotalBytes) {
     errors.push(issue("error", "bundle_too_large", `Skill bundle totals exceed ${maxTotalBytes} byte limit.`));
+  }
+}
+
+function validateDerivedMetadata(
+  candidate: Record<string, unknown>,
+  files: ManifestFileValidation[],
+  errors: SkillBundleIssue[]
+): void {
+  if (!isRecord(candidate.skill) || !isRecord(candidate.portability)) {
+    return;
+  }
+
+  const usableFiles = files.filter((file): file is Required<ManifestFileValidation> => file.file !== undefined && file.rawBytes !== undefined);
+  if (usableFiles.length !== files.length) {
+    return;
+  }
+
+  const decodedFiles = usableFiles.map((file) => ({
+    file: file.file,
+    rawBytes: file.rawBytes,
+    textContent: decodeUtf8Text(file.rawBytes)
+  }));
+
+  for (const decoded of decodedFiles) {
+    const expectedEncoding = decoded.textContent === undefined ? "base64" : "utf8";
+    if (decoded.file.encoding !== expectedEncoding) {
+      errors.push(issue(
+        "error",
+        "file_encoding_mismatch",
+        `Bundle file ${decoded.file.path} encoding does not match canonical encoding for decoded content.`,
+        decoded.file.path
+      ));
+    }
+  }
+
+  const skillFile = decodedFiles.find((file) => file.file.path === SKILL_BUNDLE_SKILL_FILE_NAME);
+  if (!skillFile) {
+    return;
+  }
+  if (skillFile.textContent === undefined || skillFile.file.encoding !== "utf8") {
+    errors.push(issue("error", "invalid_skill_file", "SKILL.md must be UTF-8 text.", SKILL_BUNDLE_SKILL_FILE_NAME));
+    return;
+  }
+
+  const handle = typeof candidate.skill.handle === "string" ? candidate.skill.handle : "";
+  const parsedFrontmatter = parseSkillFrontmatter(skillFile.textContent);
+  const expectedSkill = {
+    handle,
+    name: (parsedFrontmatter.name ?? handle).trim(),
+    ...(parsedFrontmatter.description ? { description: parsedFrontmatter.description } : {}),
+    env: parsedFrontmatter.env.map((entry) => ({ ...entry })),
+    frontmatter: analyzeFrontmatter(skillFile.textContent)
+  };
+  assertJsonEqual(candidate.skill, expectedSkill, "skill_metadata_mismatch", "Skill bundle skill metadata does not match SKILL.md contents.", errors);
+
+  const expectedPortability = buildPortabilityMetadata(
+    decodedFiles.map((file) => ({
+      entry: file.file,
+      ...(file.textContent !== undefined ? { textContent: file.textContent } : {})
+    })),
+    parsedFrontmatter.env.map((entry) => entry.name)
+  );
+  assertJsonEqual(
+    candidate.portability,
+    expectedPortability,
+    "portability_metadata_mismatch",
+    "Skill bundle portability metadata does not match decoded file contents.",
+    errors
+  );
+}
+
+function assertJsonEqual(
+  actual: unknown,
+  expected: unknown,
+  code: string,
+  message: string,
+  errors: SkillBundleIssue[]
+): void {
+  if (stableJsonStringify(actual) !== stableJsonStringify(expected)) {
+    errors.push(issue("error", code, message));
+  }
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
+  }
+
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort((left, right) => left.localeCompare(right));
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`).join(",")}}`;
+}
+
+function decodeUtf8Text(bytes: Buffer): string | undefined {
+  if (bytes.includes(0)) {
+    return undefined;
+  }
+
+  try {
+    return UTF8_DECODER.decode(bytes);
+  } catch {
+    return undefined;
   }
 }
 
@@ -473,6 +611,20 @@ function validateOptionalBundlePath(value: unknown, errors: SkillBundleIssue[], 
     normalizeSkillBundleFilePath(value);
   } catch (error) {
     errors.push(issue("error", "invalid_portability_path", `${label} path is invalid: ${errorToMessage(error)}`, value));
+  }
+}
+
+function rejectUnknownKeys(
+  record: Record<string, unknown>,
+  allowedKeys: readonly string[],
+  errors: SkillBundleIssue[],
+  label: string
+): void {
+  const allowed = new Set(allowedKeys);
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) {
+      errors.push(issue("error", "unknown_field", `${label} contains unsupported field: ${key}.`));
+    }
   }
 }
 

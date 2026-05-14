@@ -13,11 +13,13 @@ import {
   SKILL_BUNDLE_VERSION
 } from "./skill-bundle-constants.js";
 import { compareBundleFiles, computeSkillBundleContentSha256, sha256Hex } from "./skill-bundle-canonical.js";
+import { SkillBundleError } from "./skill-bundle-errors.js";
 import {
   assertValidSkillHandle,
   compareCodePoint,
+  errorToMessage,
   isPathWithinRoot,
-  isSensitiveSkillFileName,
+  isSensitiveSkillEntryName,
   normalizeSkillBundleFilePath,
   toBundleRelativePath
 } from "./skill-bundle-paths.js";
@@ -38,6 +40,7 @@ export {
   SKILL_BUNDLE_VERSION
 } from "./skill-bundle-constants.js";
 export { computeSkillBundleContentSha256 } from "./skill-bundle-canonical.js";
+export { SkillBundleError } from "./skill-bundle-errors.js";
 export { normalizeSkillBundleFilePath } from "./skill-bundle-paths.js";
 export { SkillBundleValidationError, validateSkillBundleManifest } from "./skill-bundle-validation.js";
 export type { SkillBundleValidationResult } from "./skill-bundle-validation.js";
@@ -107,11 +110,11 @@ export class SkillBundleService {
   async packageSkill(skillId: string): Promise<SkillBundlePackageResult> {
     const skill = await this.deps.skillMetadataService.resolveSkillById(skillId);
     if (!skill) {
-      throw new Error("Unknown skill.");
+      throw new SkillBundleError("unknown_skill", "Unknown skill.");
     }
 
     this.assertShareableSource(skill);
-    assertValidSkillHandle(skill.directoryName);
+    this.assertShareableHandle(skill.directoryName);
     await this.assertDirectorySkillRoot(skill.rootPath);
 
     const notices: SkillBundleIssue[] = [];
@@ -119,10 +122,10 @@ export class SkillBundleService {
     const encodedFiles = await this.encodeSkillFiles(collectedFiles);
     const skillFile = encodedFiles.find((file) => file.entry.path === SKILL_BUNDLE_SKILL_FILE_NAME);
     if (!skillFile) {
-      throw new Error("Skill bundle must include SKILL.md.");
+      throw new SkillBundleError("missing_skill_file", "Skill bundle must include SKILL.md.");
     }
     if (skillFile.textContent === undefined) {
-      throw new Error("SKILL.md must be UTF-8 text.");
+      throw new SkillBundleError("invalid_skill_file", "SKILL.md must be UTF-8 text.", { path: SKILL_BUNDLE_SKILL_FILE_NAME });
     }
 
     const parsedFrontmatter = parseSkillFrontmatter(skillFile.textContent);
@@ -168,17 +171,28 @@ export class SkillBundleService {
 
   private assertShareableSource(skill: SkillMetadata): void {
     if (!SHAREABLE_SKILL_SOURCE_KINDS.has(skill.sourceKind)) {
-      throw new Error("Only user-created global and project skills can be shared in V1.");
+      throw new SkillBundleError(
+        "unshareable_skill_source",
+        "Only user-created global and project skills can be shared in V1."
+      );
+    }
+  }
+
+  private assertShareableHandle(handle: string): void {
+    try {
+      assertValidSkillHandle(handle);
+    } catch (error) {
+      throw new SkillBundleError("invalid_skill_handle", errorToMessage(error), { cause: error });
     }
   }
 
   private async assertDirectorySkillRoot(skillRoot: string): Promise<void> {
     const rootStats = await lstat(skillRoot);
     if (rootStats.isSymbolicLink()) {
-      throw new Error("Skill root must not be a symlink.");
+      throw new SkillBundleError("invalid_skill_root", "Skill root must not be a symlink.");
     }
     if (!rootStats.isDirectory()) {
-      throw new Error("Skill root must be a directory.");
+      throw new SkillBundleError("invalid_skill_root", "Skill root must be a directory.");
     }
   }
 
@@ -237,8 +251,10 @@ export class SkillBundleService {
         const relativePath = toBundleRelativePath(resolvedRoot, absolutePath);
         const pathForNotice = relativePath || entry.name;
 
-        if (isSensitiveSkillFileName(entry.name)) {
-          throw new Error(`Sensitive file is not shareable: ${pathForNotice}`);
+        if (isSensitiveSkillEntryName(entry.name)) {
+          throw new SkillBundleError("sensitive_file", `Sensitive file is not shareable: ${pathForNotice}`, {
+            path: pathForNotice
+          });
         }
 
         if (EXCLUDED_ENTRY_NAMES.has(entry.name)) {
@@ -253,12 +269,16 @@ export class SkillBundleService {
 
         const stats = await lstat(absolutePath);
         if (stats.isSymbolicLink()) {
-          throw new Error(`Symlinks are not supported in skill bundles: ${pathForNotice}`);
+          throw new SkillBundleError("unsupported_symlink", `Symlinks are not supported in skill bundles: ${pathForNotice}`, {
+            path: pathForNotice
+          });
         }
 
         const realEntryPath = await realpath(absolutePath);
         if (!isPathWithinRoot(realEntryPath, realRoot)) {
-          throw new Error(`Path is outside skill root: ${pathForNotice}`);
+          throw new SkillBundleError("invalid_skill_path", `Path is outside skill root: ${pathForNotice}`, {
+            path: pathForNotice
+          });
         }
 
         if (stats.isDirectory()) {
@@ -277,9 +297,19 @@ export class SkillBundleService {
         }
 
         totalBytes = this.assertWithinSizeLimits(pathForNotice, stats.size, totalBytes, collected.length);
+        let normalizedRelativePath: string;
+        try {
+          normalizedRelativePath = normalizeSkillBundleFilePath(relativePath);
+        } catch (error) {
+          throw new SkillBundleError("invalid_skill_path", errorToMessage(error), {
+            path: pathForNotice,
+            cause: error
+          });
+        }
+
         collected.push({
           absolutePath,
-          relativePath: normalizeSkillBundleFilePath(relativePath),
+          relativePath: normalizedRelativePath,
           stats: {
             mode: stats.mode,
             size: stats.size
@@ -295,16 +325,18 @@ export class SkillBundleService {
 
   private assertWithinSizeLimits(pathForNotice: string, fileSize: number, currentTotalBytes: number, currentFileCount: number): number {
     if (fileSize > this.maxFileBytes) {
-      throw new Error(`File too large for skill bundle: ${pathForNotice} (${fileSize} bytes).`);
+      throw new SkillBundleError("oversized_file", `File too large for skill bundle: ${pathForNotice} (${fileSize} bytes).`, {
+        path: pathForNotice
+      });
     }
 
     const totalBytes = currentTotalBytes + fileSize;
     if (totalBytes > this.maxTotalBytes) {
-      throw new Error(`Skill bundle exceeds ${this.maxTotalBytes} byte limit.`);
+      throw new SkillBundleError("oversized_bundle", `Skill bundle exceeds ${this.maxTotalBytes} byte limit.`);
     }
 
     if (currentFileCount + 1 > this.maxFiles) {
-      throw new Error(`Skill bundle exceeds ${this.maxFiles} file limit.`);
+      throw new SkillBundleError("too_many_files", `Skill bundle exceeds ${this.maxFiles} file limit.`);
     }
 
     return totalBytes;

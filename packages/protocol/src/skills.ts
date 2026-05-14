@@ -153,6 +153,12 @@ export interface SkillBundleManifestV1 {
   }
 }
 
+export type SkillBundlePreviewFileEntry = Omit<SkillBundleFileEntry, 'content'>
+
+export type SkillBundlePreviewManifestV1 = Omit<SkillBundleManifestV1, 'files'> & {
+  files: SkillBundlePreviewFileEntry[]
+}
+
 export type SkillImportScope = 'global' | 'profile'
 
 export interface SkillImportTarget {
@@ -168,7 +174,7 @@ export interface SkillImportConflictState {
 }
 
 export interface SkillImportPreviewResponse {
-  bundle: SkillBundleManifestV1
+  bundle: SkillBundlePreviewManifestV1
   target: SkillImportTarget
   conflict: SkillImportConflictState
   warnings: SkillBundleIssue[]

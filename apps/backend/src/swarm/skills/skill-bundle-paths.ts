@@ -1,18 +1,45 @@
 import { extname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 
-const SENSITIVE_FILE_NAMES = new Set([
-  ".env",
-  ".env.local",
-  ".env.development",
-  ".env.production",
-  ".env.test",
+const WINDOWS_RESERVED_DEVICE_NAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+const SENSITIVE_ENTRY_NAMES = new Set([
+  ".aws",
+  ".azure",
+  ".config",
+  ".docker",
+  ".git-credentials",
+  ".gnupg",
+  ".kube",
+  ".netrc",
+  ".npmrc",
+  ".pnpmrc",
+  ".pypirc",
+  ".ssh",
+  ".yarnrc",
+  ".yarnrc.yml",
+  "auth",
+  "auth-secret.key",
+  "auth.db",
   "auth.json",
+  "client-secret.json",
+  "client-secrets.json",
+  "client_secret.json",
   "credential-pool.json",
-  "secrets.json",
-  "id_rsa",
+  "credential.json",
+  "credentials",
+  "credentials.json",
   "id_dsa",
   "id_ecdsa",
-  "id_ed25519"
+  "id_ed25519",
+  "id_rsa",
+  "oauth.json",
+  "private-key.json",
+  "secrets",
+  "secrets.json",
+  "service-account.json",
+  "service_account.json",
+  "token.json",
+  "tokens.json"
 ]);
 
 const SENSITIVE_FILE_EXTENSIONS = new Set([".key", ".pem", ".p12", ".pfx"]);
@@ -31,8 +58,8 @@ export function normalizeSkillBundleFilePath(pathValue: string): string {
   }
 
   const segments = pathValue.split("/");
-  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
-    throw new Error("Skill bundle file path cannot contain traversal or empty segments.");
+  for (const segment of segments) {
+    validateSafePathSegment(segment, "Skill bundle file path segment");
   }
 
   return segments.join("/");
@@ -47,22 +74,51 @@ export function assertValidSkillHandle(handle: unknown): asserts handle is strin
     throw new Error("Skill handle must be a single safe directory name.");
   }
 
-  if (handle === "." || handle === ".." || isAbsolute(handle) || win32.isAbsolute(handle) || /^[A-Za-z]:/.test(handle)) {
+  if (isAbsolute(handle) || win32.isAbsolute(handle) || /^[A-Za-z]:/.test(handle)) {
     throw new Error("Skill handle must not be absolute or traversal-like.");
   }
+
+  validateSafePathSegment(handle, "Skill handle");
 
   if (handle.length > 128) {
     throw new Error("Skill handle is too long.");
   }
 }
 
-export function isSensitiveSkillFileName(name: string): boolean {
+export function isSensitiveSkillEntryName(name: string): boolean {
   const lowerName = name.toLowerCase();
-  if (SENSITIVE_FILE_NAMES.has(lowerName)) {
+  if (lowerName.startsWith(".env") || lowerName.endsWith(".env")) {
+    return true;
+  }
+
+  if (SENSITIVE_ENTRY_NAMES.has(lowerName)) {
     return true;
   }
 
   return SENSITIVE_FILE_EXTENSIONS.has(extname(lowerName));
+}
+
+function validateSafePathSegment(segment: string, label: string): void {
+  if (segment.length === 0 || segment === "." || segment === "..") {
+    throw new Error(`${label} cannot contain traversal or empty segments.`);
+  }
+
+  if (segment.includes(":")) {
+    throw new Error(`${label} cannot contain ':' or NTFS alternate data stream syntax.`);
+  }
+
+  if (/\p{C}/u.test(segment)) {
+    throw new Error(`${label} cannot contain control characters.`);
+  }
+
+  if (segment.endsWith(".") || segment.endsWith(" ")) {
+    throw new Error(`${label} cannot end with a dot or space.`);
+  }
+
+  const deviceName = segment.split(".", 1)[0] ?? segment;
+  if (WINDOWS_RESERVED_DEVICE_NAME_PATTERN.test(deviceName)) {
+    throw new Error(`${label} cannot use a Windows reserved device name.`);
+  }
 }
 
 export function toBundleRelativePath(rootPath: string, absolutePath: string): string {
