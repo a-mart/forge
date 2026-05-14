@@ -273,7 +273,11 @@ export function SkillsViewer({
 
   useEffect(() => {
     const trimmed = initialImportUrl?.trim()
-    if (!trimmed || trimmed === lastInitialImportUrlRef.current || isCollab) {
+    if (!trimmed) {
+      lastInitialImportUrlRef.current = undefined
+      return
+    }
+    if (trimmed === lastInitialImportUrlRef.current || isCollab) {
       return
     }
     lastInitialImportUrlRef.current = trimmed

@@ -93,6 +93,7 @@ describe('useRouteState — settings surface', () => {
     const parsed = parseRouteStateFromLocation('/', {
       view: 'settings',
       surface: 'collab',
+      settingsTab: 'models',
       skillImportUrl: 'https://share.forge.dev/s/token',
     }, 'collab')
 

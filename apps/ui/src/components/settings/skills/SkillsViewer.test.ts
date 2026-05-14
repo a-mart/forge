@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { waitFor } from '@testing-library/dom'
+import { fireEvent, waitFor } from '@testing-library/dom'
 import { createElement, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -165,20 +165,7 @@ describe('SkillsViewer', () => {
     root = createRoot(container)
     const onConsumed = vi.fn()
 
-    flushSync(() => {
-      root?.render(
-        createElement(
-          HelpProvider,
-          null,
-          createElement(SkillsViewer, {
-            wsUrl: 'ws://127.0.0.1:47287',
-            profiles: [],
-            initialImportUrl: 'https://share.test/s/token',
-            onInitialImportUrlConsumed: onConsumed,
-          }),
-        ),
-      )
-    })
+    renderViewer({ initialImportUrl: 'https://share.test/s/token', onConsumed })
 
     await waitFor(() => {
       expect(skillsViewerApiMock.previewSkillImportFromUrl).toHaveBeenCalledWith(
@@ -189,4 +176,43 @@ describe('SkillsViewer', () => {
       expect(onConsumed).toHaveBeenCalledTimes(1)
     })
   })
+
+  it('allows the same route import URL after the route param is cleared and the dialog is closed', async () => {
+    root = createRoot(container)
+    const onConsumed = vi.fn()
+
+    renderViewer({ initialImportUrl: 'https://share.test/s/token', onConsumed })
+    await waitFor(() => expect(skillsViewerApiMock.previewSkillImportFromUrl).toHaveBeenCalledTimes(1))
+
+    renderViewer({ initialImportUrl: undefined, onConsumed })
+    fireEvent.click(buttonByText('Close'))
+
+    renderViewer({ initialImportUrl: 'https://share.test/s/token', onConsumed })
+
+    await waitFor(() => expect(skillsViewerApiMock.previewSkillImportFromUrl).toHaveBeenCalledTimes(2))
+    expect(onConsumed).toHaveBeenCalledTimes(2)
+  })
 })
+
+function renderViewer({ initialImportUrl, onConsumed }: { initialImportUrl?: string; onConsumed?: () => void }) {
+  flushSync(() => {
+    root?.render(
+      createElement(
+        HelpProvider,
+        null,
+        createElement(SkillsViewer, {
+          wsUrl: 'ws://127.0.0.1:47287',
+          profiles: [],
+          initialImportUrl,
+          onInitialImportUrlConsumed: onConsumed,
+        }),
+      ),
+    )
+  })
+}
+
+function buttonByText(text: string): HTMLButtonElement {
+  const button = Array.from(document.querySelectorAll('button')).find((candidate) => candidate.textContent?.includes(text))
+  if (!button) throw new Error(`Button not found: ${text}`)
+  return button as HTMLButtonElement
+}

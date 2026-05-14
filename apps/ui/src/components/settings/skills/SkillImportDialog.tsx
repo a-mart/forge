@@ -90,6 +90,7 @@ export function SkillImportDialog({
       setSuccess(null)
       setReviewAccepted(false)
       setReplaceAccepted(false)
+      setLastAutoPreviewUrl(null)
       setPreviewSource(null)
       setIsPreviewing(false)
       setIsImporting(false)

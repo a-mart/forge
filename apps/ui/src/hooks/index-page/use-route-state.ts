@@ -90,7 +90,7 @@ export function parseRouteStateFromLocation(
 
   if (view === 'settings') {
     const skillImportUrl = typeof routeSearch.skillImportUrl === 'string' ? routeSearch.skillImportUrl : undefined
-    const settingsTab = typeof routeSearch.settingsTab === 'string' ? routeSearch.settingsTab : skillImportUrl ? 'skills' : undefined
+    const settingsTab = skillImportUrl ? 'skills' : typeof routeSearch.settingsTab === 'string' ? routeSearch.settingsTab : undefined
     const collabApiBaseUrl = typeof routeSearch.collabApiBaseUrl === 'string' ? routeSearch.collabApiBaseUrl : undefined
     return {
       view: 'settings',

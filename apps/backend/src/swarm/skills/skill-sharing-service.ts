@@ -743,7 +743,7 @@ function isAllowedProtocol(url: URL, baseUrl: URL): boolean {
 }
 
 function isLocalhost(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
 async function pathExists(path: string): Promise<boolean> {

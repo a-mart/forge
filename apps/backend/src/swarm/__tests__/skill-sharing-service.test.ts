@@ -90,6 +90,56 @@ describe("SkillSharingService", () => {
       .rejects.toMatchObject({ code: "invalid_share_response", statusCode: 502 });
   });
 
+  it("allows IPv6 localhost share URLs from env for share, preview, and import", async () => {
+    const originalBaseUrl = process.env.FORGE_SKILL_SHARE_BASE_URL;
+    process.env.FORGE_SKILL_SHARE_BASE_URL = "http://[::1]:8787";
+    try {
+      let sharedBundle: SkillBundleManifestV1 | undefined;
+      const target = { scope: "profile" as const, profileId: "profile-a" };
+      const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          expect(String(input)).toBe("http://[::1]:8787/api/v1/skill-shares");
+          const parsed = JSON.parse(String(init.body)) as { bundle: SkillBundleManifestV1 };
+          sharedBundle = parsed.bundle;
+          return jsonResponse({
+            shareUrl: "http://[::1]:8787/s/token",
+            importUrl: "forge://skill-import?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8787%2Fs%2Ftoken",
+            expiresAt: "2026-05-20T12:00:00.000Z",
+            contentSha256: parsed.bundle.contentSha256,
+            warnings: []
+          });
+        }
+        expect(String(input)).toBe("http://[::1]:8787/s/token");
+        return jsonResponse(sharedBundle);
+      });
+      const sourceHarness = await createHarness({ shareBaseUrl: null, fetchFn });
+      await createGlobalSkill(sourceHarness.config, "ipv6-localhost", {
+        "SKILL.md": "---\nname: IPv6 Localhost\n---\n\n# IPv6\n"
+      });
+
+      const share = await sourceHarness.sharingService.shareSkill(await getGlobalSkillId(sourceHarness.metadataService, "ipv6-localhost"));
+      expect(share).toMatchObject({
+        shareUrl: "http://[::1]:8787/s/token",
+        importUrl: "forge://skill-import?url=http%3A%2F%2F%5B%3A%3A1%5D%3A8787%2Fs%2Ftoken"
+      });
+
+      const targetHarness = await createHarness({ shareBaseUrl: null, fetchFn });
+      const preview = await targetHarness.sharingService.previewImportFromUrl({ url: share.shareUrl, target });
+      expect(preview.bundle.skill.handle).toBe("ipv6-localhost");
+
+      const result = await targetHarness.sharingService.importSkill({ source: { url: share.shareUrl }, target });
+      expect(result).toMatchObject({ target, replaced: false });
+      await expect(readFile(join(getProfilePiSkillsDir(targetHarness.config.paths.dataDir, "profile-a"), "ipv6-localhost", "SKILL.md"), "utf8"))
+        .resolves.toContain("# IPv6");
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.FORGE_SKILL_SHARE_BASE_URL;
+      } else {
+        process.env.FORGE_SKILL_SHARE_BASE_URL = originalBaseUrl;
+      }
+    }
+  });
+
   it("previews only allowlisted share URLs and maps expired links", async () => {
     const harness = await createHarness({
       fetchFn: async (input) => {
@@ -363,14 +413,14 @@ interface Harness {
   sharingService: SkillSharingService;
 }
 
-async function createHarness(options: { fetchFn?: typeof fetch; validProfileIds?: string[] } = {}): Promise<Harness> {
+async function createHarness(options: { fetchFn?: typeof fetch; validProfileIds?: string[]; shareBaseUrl?: string | null } = {}): Promise<Harness> {
   const handle = await createTempConfig({ prefix: "skill-sharing-service-test-", port: 0 });
   tempHandles.push(handle);
   const metadataService = new SkillMetadataService({ config: handle.config });
   const sharingService = new SkillSharingService({
     config: handle.config,
     skillMetadataService: metadataService,
-    shareBaseUrl: "https://share.test",
+    ...(options.shareBaseUrl === null ? {} : { shareBaseUrl: options.shareBaseUrl ?? "https://share.test" }),
     fetchFn: options.fetchFn ?? vi.fn(async () => jsonResponse({ error: "not configured" }, { status: 503 })),
     now: () => new Date("2026-05-13T12:00:00.000Z"),
     validateProfileTarget: options.validProfileIds
