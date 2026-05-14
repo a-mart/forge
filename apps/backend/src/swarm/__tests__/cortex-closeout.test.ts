@@ -42,10 +42,10 @@ describe("normalizeCortexUserVisiblePaths", () => {
   it("converts absolute Unix data paths to relative profile paths", () => {
     expect(
       normalizeCortexUserVisiblePaths(
-        "FILES: /Users/testuser/.forge-cortex-memory-v2-migrate/profiles/feature-manager/reference/gotchas.md, /Users/testuser/.forge-cortex-memory-v2-migrate/profiles/feature-manager/sessions/playwright-test/meta.json",
+        "FILES: /Users/testuser/.forge-cortex-memory-v2-migrate/profiles/feature-manager/reference/gotchas.md, /Users/testuser/.forge-cortex-memory-v2-migrate/profiles/feature-manager/sessions/browser-test/meta.json",
       ),
     ).toBe(
-      "FILES: profiles/feature-manager/reference/gotchas.md, profiles/feature-manager/sessions/playwright-test/meta.json",
+      "FILES: profiles/feature-manager/reference/gotchas.md, profiles/feature-manager/sessions/browser-test/meta.json",
     )
   })
 

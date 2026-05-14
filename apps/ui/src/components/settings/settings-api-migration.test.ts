@@ -303,42 +303,6 @@ describe('cortex-auto-review-api via client', () => {
 })
 
 /* ================================================================== */
-/*  Playwright settings                                               */
-/* ================================================================== */
-
-describe('playwright-api settings via client', () => {
-  it('fetches playwright settings through collab client', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ settings: { effectiveEnabled: false, source: 'config' } }))
-    const { fetchPlaywrightSettings } = await import('../playwright/playwright-api')
-    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
-
-    await fetchPlaywrightSettings(client)
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/settings/playwright',
-      expect.objectContaining({ credentials: 'include' }),
-    )
-  })
-
-  it('updates playwright settings through collab client', async () => {
-    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
-      ok: true,
-      settings: { effectiveEnabled: true, source: 'config' },
-      snapshot: { sessions: [] },
-    }))
-    const { updatePlaywrightSettings } = await import('../playwright/playwright-api')
-    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
-
-    await updatePlaywrightSettings(client, { enabled: true })
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://collab.example.com/api/settings/playwright',
-      expect.objectContaining({ method: 'PUT', credentials: 'include' }),
-    )
-  })
-})
-
-/* ================================================================== */
 /*  Specialists                                                       */
 /* ================================================================== */
 

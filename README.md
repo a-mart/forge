@@ -201,7 +201,6 @@ Managers and workers have access to built-in skills:
 | Image Generation | Generate images with Google Gemini | `GEMINI_API_KEY` |
 | Browser | Interactive web browsing and extraction | [`agent-browser`](https://github.com/vercel-labs/agent-browser) CLI |
 | Chrome CDP | Inspect and interact with local Chrome tabs via DevTools Protocol | Local Chrome instance |
-| Playwright | Browser automation with real-time dashboard and live preview (macOS/Linux) | `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED=true` |
 | Cron Scheduling | Persistent scheduled tasks with cron expressions | — |
 | Slash Commands | Create and manage prompt auto-expansion commands | — |
 | Memory | Persistent agent memory across sessions | — |
@@ -288,7 +287,6 @@ The `.env.example` file documents all available options with comments. Key categ
 - **UI** — WebSocket URL override (dev only, production auto-resolves)
 - **Skills** — API keys for Brave Search, Gemini image generation
 - **Agent Runtimes** — OpenAI Codex Responses transport defaults to `sse` for reliability when `FORGE_OPENAI_CODEX_TRANSPORT` is unset, blank, or invalid; `websocket-cached` remains an explicit experimental/canary opt-in via `FORGE_OPENAI_CODEX_TRANSPORT=websocket-cached`, with `websocket` and `auto` also supported. Sanitized transport diagnostics stay opt-in via `FORGE_CODEX_TRANSPORT_DEBUG=1` at `GET /api/debug/codex-transport`.
-- **Playwright** — dashboard toggle (macOS/Linux only)
 
 Provider auth for LLM providers (OpenAI, Anthropic, xAI) is configured in the dashboard UI under **Settings → Authentication**, where each row shows the provider label plus an auth-mode badge. OpenAI and Anthropic can use OAuth or API key auth; Claude SDK stays OAuth-only via Claude Code CLI. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
 
@@ -347,7 +345,6 @@ Forge runs on macOS, Linux, and Windows.
 | Core functionality | ✅ | ✅ | ✅ |
 | Dashboard UI | ✅ | ✅ | ✅ |
 | Agent orchestration | ✅ | ✅ | ✅ |
-| Playwright dashboard | ✅ | ✅ | ❌ (Unix sockets required) |
 | Shell scripts (`scripts/*.sh`) | ✅ | ✅ | Requires WSL or Git Bash |
 | Default data directory | `~/.forge` | `~/.forge` | `%LOCALAPPDATA%\forge` |
 

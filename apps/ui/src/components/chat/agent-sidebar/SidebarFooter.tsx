@@ -1,4 +1,4 @@
-import { BarChart3, CircleHelp, MonitorPlay, Settings } from 'lucide-react'
+import { BarChart3, CircleHelp, Settings } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { SidebarUsageRings, SidebarUsagePanel } from '../SidebarUsageWidget'
 import { useHelp } from '@/components/help/help-hooks'
@@ -34,9 +34,7 @@ function HelpButton() {
 
 interface SidebarFooterProps {
   isSettingsActive: boolean
-  isPlaywrightActive: boolean
   isStatsActive: boolean
-  showPlaywrightNav: boolean
   showProviderUsage: boolean
   providerUsage: ProviderUsageStats | null
   providerUsageLoading: boolean
@@ -45,15 +43,12 @@ interface SidebarFooterProps {
   onCloseUsagePanel: () => void
   onRefetchProviderUsage: () => void
   onOpenSettings: () => void
-  onOpenPlaywright?: () => void
   onOpenStats?: () => void
 }
 
 export function SidebarFooter({
   isSettingsActive,
-  isPlaywrightActive,
   isStatsActive,
-  showPlaywrightNav,
   showProviderUsage,
   providerUsage,
   providerUsageLoading,
@@ -62,7 +57,6 @@ export function SidebarFooter({
   onCloseUsagePanel,
   onRefetchProviderUsage,
   onOpenSettings,
-  onOpenPlaywright,
   onOpenStats,
 }: SidebarFooterProps) {
   return (
@@ -82,27 +76,6 @@ export function SidebarFooter({
         ) : null}
         <TooltipProvider delayDuration={200}>
           <div className="flex items-center px-2 py-1.5" style={showProviderUsage ? { paddingLeft: 'calc(38% + 8px)', justifyContent: 'space-evenly' } : { justifyContent: 'center', gap: '4px' }}>
-            {showPlaywrightNav ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={onOpenPlaywright}
-                    className={cn(
-                      'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                      isPlaywrightActive
-                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                        : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-                    )}
-                    aria-label="Playwright"
-                    aria-pressed={isPlaywrightActive}
-                  >
-                    <MonitorPlay aria-hidden="true" className="size-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={6}>Playwright</TooltipContent>
-              </Tooltip>
-            ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <button

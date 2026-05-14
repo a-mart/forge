@@ -56,11 +56,6 @@ import type {
   UnreadCountsSnapshotEvent,
   UnreadNotificationEvent,
 } from './notification-events.js'
-import type {
-  PlaywrightDiscoverySettingsUpdatedEvent,
-  PlaywrightDiscoverySnapshotEvent,
-  PlaywrightDiscoveryUpdatedEvent,
-} from './playwright-events.js'
 import type { ProfileRenamedEvent, ProfilesSnapshotEvent } from './profile-events.js'
 import type {
   ProjectAgentConfigEvent,
@@ -112,7 +107,6 @@ export * from './profile-events.js'
 export * from './directory-events.js'
 export * from './notification-events.js'
 export * from './integration-events.js'
-export * from './playwright-events.js'
 export * from './config-events.js'
 export * from './transport-events.js'
 
@@ -182,9 +176,6 @@ export type ServerEvent =
   | DirectoryValidatedEvent
   | DirectoryPickedEvent
   | TelegramStatusEvent
-  | PlaywrightDiscoverySnapshotEvent
-  | PlaywrightDiscoveryUpdatedEvent
-  | PlaywrightDiscoverySettingsUpdatedEvent
   | PromptChangedEvent
   | CortexPromptSurfaceChangedEvent
   | TerminalCreatedEvent

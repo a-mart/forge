@@ -2154,7 +2154,6 @@ describe('SwarmWebSocketServer', () => {
       'profiles_snapshot',
       'unread_counts_snapshot',
       'terminals_snapshot',
-      'playwright_discovery_snapshot',
       'telegram_status',
     ])
     expect(events.some((event) => forbiddenBootstrapEvents.has(event.type))).toBe(false)

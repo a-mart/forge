@@ -113,8 +113,7 @@ async function loadRegisteredSignals(
   }));
 
   vi.doMock("../config.js", () => ({
-    createConfig: () => BASE_CONFIG,
-    readPlaywrightDashboardEnvOverride: () => undefined
+    createConfig: () => BASE_CONFIG
   }));
 
   vi.doMock("../startup-migration.js", () => ({
@@ -160,26 +159,6 @@ async function loadRegisteredSignals(
 
   vi.doMock("../versioning/embedded-git-versioning-service.js", () => ({
     EmbeddedGitVersioningService: class {
-      async start(): Promise<void> {}
-      async stop(): Promise<void> {}
-    }
-  }));
-
-  vi.doMock("../playwright/playwright-settings-service.js", () => ({
-    PlaywrightSettingsService: class {
-      async load(): Promise<void> {}
-    }
-  }));
-
-  vi.doMock("../playwright/playwright-discovery-service.js", () => ({
-    PlaywrightDiscoveryService: class {
-      async start(): Promise<void> {}
-      async stop(): Promise<void> {}
-    }
-  }));
-
-  vi.doMock("../playwright/playwright-live-preview-service.js", () => ({
-    PlaywrightLivePreviewService: class {
       async start(): Promise<void> {}
       async stop(): Promise<void> {}
     }

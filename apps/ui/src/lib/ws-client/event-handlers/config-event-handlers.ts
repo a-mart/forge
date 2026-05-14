@@ -14,23 +14,6 @@ export function handleConfigEvent(
       context.updateState({ telegramStatus: event })
       return true
 
-    case 'playwright_discovery_snapshot':
-    case 'playwright_discovery_updated':
-      context.updateState({
-        playwrightSnapshot: event.snapshot,
-        playwrightSettings: event.snapshot.settings,
-      })
-      return true
-
-    case 'playwright_discovery_settings_updated':
-      context.updateState({
-        playwrightSettings: event.settings,
-        playwrightSnapshot: context.state.playwrightSnapshot
-          ? { ...context.state.playwrightSnapshot, settings: event.settings }
-          : context.state.playwrightSnapshot,
-      })
-      return true
-
     case 'prompt_changed':
     case 'cortex_prompt_surface_changed':
       context.updateState({ promptChangeKey: context.state.promptChangeKey + 1 })

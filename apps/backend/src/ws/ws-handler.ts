@@ -24,7 +24,6 @@ import type { CollaborationReadinessRequestService } from "../collaboration/read
 import { CollaborationUserService } from "../collaboration/user-service.js";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
-import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
@@ -68,7 +67,6 @@ export class WsHandler {
     swarmManager: SwarmManager;
     integrationRegistry: IntegrationRegistryService | null;
     mobilePushService: MobilePushService;
-    playwrightDiscovery: PlaywrightDiscoveryService | null;
     allowNonManagerSubscriptions: boolean;
     terminalService?: TerminalService | null;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
@@ -87,7 +85,6 @@ export class WsHandler {
     this.subscriptionManager = new WsSubscriptions({
       swarmManager: this.swarmManager,
       integrationRegistry: options.integrationRegistry,
-      playwrightDiscovery: options.playwrightDiscovery,
       allowNonManagerSubscriptions: this.allowNonManagerSubscriptions,
       terminalService,
       listTerminalsForSession: options.listTerminalsForSession,

@@ -43,10 +43,6 @@ import {
   type EditorPreference,
 } from '@/lib/editor-preference'
 import {
-  fetchPlaywrightSettings,
-  updatePlaywrightSettings,
-} from '@/components/playwright/playwright-api'
-import {
   fetchCortexAutoReviewSettings,
   updateCortexAutoReviewSettings,
 } from '@/components/settings/cortex-auto-review-api'
@@ -58,7 +54,6 @@ import {
 } from '@/components/settings/terminal-shell-api'
 import type {
   CortexAutoReviewSettings,
-  PlaywrightDiscoverySettings,
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type { SettingsBackendTarget } from './settings-target'
@@ -66,15 +61,13 @@ import type { SettingsApiClient } from './settings-api-client'
 
 interface SettingsGeneralProps {
   wsUrl: string
-  onPlaywrightSnapshotUpdate?: (snapshot: import('@forge/protocol').PlaywrightDiscoverySnapshot) => void
-  onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
   /** When provided, the component uses target-aware API routing. */
   target?: SettingsBackendTarget
   /** When provided, used for all backend requests instead of raw wsUrl. */
   apiClient?: SettingsApiClient
 }
 
-export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrightSettingsLoaded, target, apiClient }: SettingsGeneralProps) {
+export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralProps) {
   useHelpContext('settings.general')
 
   const isCollab = target?.kind === 'collab'
@@ -97,10 +90,6 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [editorPreference, setEditorPreference] = useState<EditorPreference>(() =>
     readStoredEditorPreference(),
   )
-  const [playwrightSettings, setPlaywrightSettings] = useState<PlaywrightDiscoverySettings | null>(null)
-  const [playwrightError, setPlaywrightError] = useState<string | null>(null)
-  const [playwrightUpdating, setPlaywrightUpdating] = useState(false)
-
   const [cortexSettings, setCortexSettings] = useState<CortexAutoReviewSettings | null>(null)
   const [cortexError, setCortexError] = useState<string | null>(null)
   const [cortexUpdating, setCortexUpdating] = useState(false)
@@ -164,26 +153,6 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
       ?.finally(() => setSleepBlockerUpdating(false))
   }, [bridge])
 
-  const [playwrightLoadFailed, setPlaywrightLoadFailed] = useState(false)
-
-  // Use apiClient or wsUrl for Playwright settings
-  const playwrightSource = apiClient ?? wsUrl
-
-  // Fetch Playwright settings on mount
-  useEffect(() => {
-    setPlaywrightLoadFailed(false)
-    void fetchPlaywrightSettings(playwrightSource)
-      .then((settings) => {
-        setPlaywrightSettings(settings)
-        setPlaywrightLoadFailed(false)
-        onPlaywrightSettingsLoaded?.(settings)
-      })
-      .catch((err) => {
-        setPlaywrightLoadFailed(true)
-        setPlaywrightError(err instanceof Error ? err.message : 'Could not load Playwright settings')
-      })
-  }, [playwrightSource, onPlaywrightSettingsLoaded])
-
   // Fetch terminal shell settings on mount — Builder-only
   useEffect(() => {
     if (isCollab) return // Terminal settings are not available in Collab target
@@ -242,27 +211,6 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         setCortexError(err instanceof Error ? err.message : 'Could not load Cortex settings')
       })
   }, [cortexSource])
-
-  const handlePlaywrightToggle = useCallback(
-    (enabled: boolean) => {
-      if (playwrightUpdating) return
-      setPlaywrightUpdating(true)
-      setPlaywrightError(null)
-
-      void updatePlaywrightSettings(playwrightSource, { enabled })
-        .then(({ settings, snapshot }) => {
-          setPlaywrightSettings(settings)
-          onPlaywrightSnapshotUpdate?.(snapshot)
-        })
-        .catch((err) => {
-          setPlaywrightError(err instanceof Error ? err.message : 'Failed to update setting')
-        })
-        .finally(() => {
-          setPlaywrightUpdating(false)
-        })
-    },
-    [playwrightSource, playwrightUpdating, onPlaywrightSnapshotUpdate],
-  )
 
   const handleCortexToggle = useCallback(
     (enabled: boolean) => {
@@ -419,68 +367,6 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           </SettingsWithCTA>
         </SettingsSection>
       )}
-
-      <SettingsSection
-        label="Experimental Features"
-        description="Enable or disable experimental features"
-      >
-        <SettingsWithCTA
-          label="Playwright Dashboard"
-          description={
-            playwrightSettings?.source === 'env' ? (
-              <>
-                <span>Discover Playwright CLI sessions across repo roots and worktrees.</span>
-                <br />
-                <span className="text-amber-600 dark:text-amber-400">
-                  This feature is {playwrightSettings.effectiveEnabled ? 'forced on' : 'forced off'} by the{' '}
-                  <code className="text-[10px]">FORGE_PLAYWRIGHT_DASHBOARD_ENABLED</code> environment variable.
-                </span>
-              </>
-            ) : (
-              'Discover Playwright CLI sessions across repo roots and worktrees, and correlate them with Forge agents.'
-            )
-          }
-        >
-          <div className="flex flex-col items-end gap-1.5">
-            <Switch
-              checked={playwrightSettings?.effectiveEnabled ?? false}
-              onCheckedChange={handlePlaywrightToggle}
-              disabled={
-                !playwrightSettings ||
-                playwrightSettings.source === 'env' ||
-                playwrightUpdating
-              }
-            />
-            {playwrightError ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-destructive">{playwrightError}</span>
-                {playwrightLoadFailed ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPlaywrightError(null)
-                      setPlaywrightLoadFailed(false)
-                      void fetchPlaywrightSettings(playwrightSource)
-                        .then((s) => {
-                          setPlaywrightSettings(s)
-                          setPlaywrightLoadFailed(false)
-                          onPlaywrightSettingsLoaded?.(s)
-                        })
-                        .catch((err) => {
-                          setPlaywrightLoadFailed(true)
-                          setPlaywrightError(err instanceof Error ? err.message : 'Could not load Playwright settings')
-                        })
-                    }}
-                    className="text-[10px] text-primary underline hover:no-underline"
-                  >
-                    Retry
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </SettingsWithCTA>
-      </SettingsSection>
 
       {/* Sleep Prevention — Electron-only, Builder-only */}
       {isBuilder && inElectron && (

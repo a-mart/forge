@@ -6,7 +6,6 @@ export type HelpCategory =
   | 'models'
   | 'concepts'
   | 'terminals'
-  | 'playwright'
 
 export interface HelpArticle {
   id: string

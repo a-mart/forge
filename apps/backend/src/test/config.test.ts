@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { createConfig, readPlaywrightDashboardEnvOverride, readTelemetryEnvOverride } from '../config.js'
+import { createConfig, readTelemetryEnvOverride } from '../config.js'
 import { resolveRuntimeTargetFromEnv } from '../runtime-target.js'
 import { withPlatform } from './test-helpers.js'
 
@@ -16,7 +16,6 @@ const MANAGED_ENV_KEYS = [
   'FORGE_RESOURCES_DIR',
   'FORGE_DESKTOP',
   'FORGE_RUNTIME_TARGET',
-  'FORGE_PLAYWRIGHT_DASHBOARD_ENABLED',
   'FORGE_TELEMETRY',
   'FORGE_COLLABORATION_ENABLED',
   'FORGE_ADMIN_EMAIL',
@@ -32,7 +31,6 @@ const MANAGED_ENV_KEYS = [
   'MIDDLEMAN_DEBUG',
   'MIDDLEMAN_RESOURCES_DIR',
   'MIDDLEMAN_RUNTIME_TARGET',
-  'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
   'MIDDLEMAN_TELEMETRY',
   'MIDDLEMAN_COLLABORATION_ENABLED',
   'MIDDLEMAN_ADMIN_EMAIL',
@@ -302,38 +300,6 @@ describe('createConfig', () => {
     } finally {
       await rm(fakeHome, { recursive: true, force: true })
       await rm(localAppData, { recursive: true, force: true })
-    }
-  })
-
-  it('parses Playwright Dashboard env override values with FORGE_* precedence', async () => {
-    await withEnv({ FORGE_PLAYWRIGHT_DASHBOARD_ENABLED: 'yes' }, () => {
-      expect(readPlaywrightDashboardEnvOverride()).toBe(true)
-    })
-
-    await withEnv({ MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED: 'off' }, () => {
-      expect(readPlaywrightDashboardEnvOverride()).toBe(false)
-    })
-
-    await withEnv(
-      {
-        FORGE_PLAYWRIGHT_DASHBOARD_ENABLED: 'true',
-        MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED: 'off',
-      },
-      () => {
-        expect(readPlaywrightDashboardEnvOverride()).toBe(true)
-      }
-    )
-
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    try {
-      await withEnv({ FORGE_PLAYWRIGHT_DASHBOARD_ENABLED: 'maybe' }, () => {
-        expect(readPlaywrightDashboardEnvOverride()).toBeUndefined()
-      })
-      expect(warnSpy).toHaveBeenCalledWith(
-        '[config] Ignoring invalid FORGE_PLAYWRIGHT_DASHBOARD_ENABLED value: maybe',
-      )
-    } finally {
-      warnSpy.mockRestore()
     }
   })
 

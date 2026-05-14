@@ -548,7 +548,7 @@ describe('parseWindowRouteSearch', () => {
 
   it('parses all known params including settingsTab, statsTab, collab, and collabApiBaseUrl', () => {
     const result = parseWindowRouteSearch(
-      '?view=settings&agent=mgr&surface=builder&channel=ch1&collab=conn_abc&playwrightSession=ps&playwrightMode=pm&statsTab=st&settingsTab=auth&collabApiBaseUrl=https%3A%2F%2Fb.example.com%2F',
+      '?view=settings&agent=mgr&surface=builder&channel=ch1&collab=conn_abc&statsTab=st&settingsTab=auth&collabApiBaseUrl=https%3A%2F%2Fb.example.com%2F',
     )
     expect(result).toEqual({
       view: 'settings',
@@ -556,8 +556,6 @@ describe('parseWindowRouteSearch', () => {
       surface: 'builder',
       channel: 'ch1',
       collab: 'conn_abc',
-      playwrightSession: 'ps',
-      playwrightMode: 'pm',
       statsTab: 'st',
       settingsTab: 'auth',
       collabApiBaseUrl: 'https://b.example.com/',

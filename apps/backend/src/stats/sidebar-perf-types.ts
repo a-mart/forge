@@ -11,7 +11,6 @@ export const SIDEBAR_PERF_LABEL_KEYS = [
   "eventType",
   "buildMode",
   "trigger",
-  "playwrightDiscoveryEnabled",
   "includeStreamingWorkers",
   "sessionPurpose",
   "success",

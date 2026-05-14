@@ -96,52 +96,6 @@ function createManagerStub() {
   }
 }
 
-function createPlaywrightDiscoveryStub(sequence = 0) {
-  let currentSequence = sequence
-  return {
-    getSnapshot: () => ({
-      updatedAt: '2026-01-01T00:00:00.000Z',
-      lastScanStartedAt: null,
-      lastScanCompletedAt: null,
-      scanDurationMs: null,
-      sequence: currentSequence,
-      serviceStatus: 'disabled',
-      settings: {
-        enabled: false,
-        effectiveEnabled: false,
-        source: 'default',
-        scanRoots: [],
-        pollIntervalMs: 1000,
-        socketProbeTimeoutMs: 1000,
-        staleSessionThresholdMs: 1000,
-      },
-      rootsScanned: [],
-      summary: {
-        totalSessions: 0,
-        activeSessions: 0,
-        inactiveSessions: 0,
-        staleSessions: 0,
-        errorSessions: 0,
-      },
-      sessions: [],
-      warnings: [],
-      lastError: null,
-    }),
-    getSettings: () => ({
-      enabled: false,
-      effectiveEnabled: false,
-      source: 'default',
-      scanRoots: [],
-      pollIntervalMs: 1000,
-      socketProbeTimeoutMs: 1000,
-      staleSessionThresholdMs: 1000,
-    }),
-    setSequence: (next: number) => {
-      currentSequence = next
-    },
-  }
-}
-
 function createSocket(): WebSocket {
   return { readyState: WebSocket.OPEN } as WebSocket
 }
@@ -153,13 +107,11 @@ function getEventTypes(events: ServerEvent[]): string[] {
 describe('WsSubscriptions snapshot delivery tracking', () => {
   it('sends full snapshots on first subscribe and skips them on same-socket resubscribe when versions match', async () => {
     const manager = createManagerStub()
-    const playwrightDiscovery = createPlaywrightDiscoveryStub(7)
     const socket = createSocket()
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
       integrationRegistry: null,
-      playwrightDiscovery: playwrightDiscovery as any,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -176,8 +128,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'ready',
       'agents_snapshot',
       'profiles_snapshot',
-      'playwright_discovery_snapshot',
-      'playwright_discovery_settings_updated',
       'conversation_history',
       'pending_choices_snapshot',
       'terminals_snapshot',
@@ -201,7 +151,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
       integrationRegistry: null,
-      playwrightDiscovery: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -227,13 +176,11 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
 
   it('updates delivered versions after live broadcasts so the next resubscribe still skips snapshots', async () => {
     const manager = createManagerStub()
-    const playwrightDiscovery = createPlaywrightDiscoveryStub(2)
     const socket = createSocket()
     const sentEvents: ServerEvent[] = []
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
       integrationRegistry: null,
-      playwrightDiscovery: playwrightDiscovery as any,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -258,11 +205,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       type: 'profiles_snapshot',
       profiles: manager.listProfiles(),
     })
-    playwrightDiscovery.setSequence(3)
-    subscriptions.broadcastToSubscribed({
-      type: 'playwright_discovery_updated',
-      snapshot: playwrightDiscovery.getSnapshot(),
-    })
 
     sentEvents.length = 0
     await subscriptions.handleSubscribe(socket, 'session-1')
@@ -282,7 +224,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
       integrationRegistry: null,
-      playwrightDiscovery: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -311,7 +252,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
       integrationRegistry: null,
-      playwrightDiscovery: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,
@@ -341,7 +281,6 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     const subscriptions = new WsSubscriptions({
       swarmManager: manager as any,
       integrationRegistry: null,
-      playwrightDiscovery: null,
       allowNonManagerSubscriptions: true,
       terminalService: null,
       unreadTracker: null,

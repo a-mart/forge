@@ -309,10 +309,6 @@ export function getSharedSecretsFilePath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "secrets.json");
 }
 
-export function getSharedPlaywrightDashboardSettingsPath(dataDir: string): string {
-  return join(getSharedConfigDir(dataDir), "playwright-dashboard.json");
-}
-
 export function getCortexAutoReviewSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "cortex-auto-review.json");
 }

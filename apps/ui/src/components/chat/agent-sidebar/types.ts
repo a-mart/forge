@@ -44,9 +44,7 @@ export interface AgentSidebarProps {
   terminalCount?: number
   selectedAgentId: string | null
   isSettingsActive: boolean
-  isPlaywrightActive?: boolean
   isStatsActive?: boolean
-  showPlaywrightNav?: boolean
   isMobileOpen?: boolean
   onMobileClose?: () => void
   onAddManager: () => void
@@ -55,7 +53,6 @@ export interface AgentSidebarProps {
   onDeleteManager: (managerId: string) => void
   onOpenSettings: () => void
   onOpenCortexReview?: (agentId: string) => void
-  onOpenPlaywright?: () => void
   onOpenStats?: () => void
   onCreateSession?: (profileId: string, name?: string) => void
   onStopSession?: (agentId: string) => void

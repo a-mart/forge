@@ -27,14 +27,6 @@ import {
 import type { SwarmConfig } from "./swarm/types.js";
 import { isCollaborationServerRuntimeTarget, resolveRuntimeTargetFromEnv } from "./runtime-target.js";
 
-export function readPlaywrightDashboardEnvOverride(): boolean | undefined {
-  return parseOptionalBooleanEnv(
-    process.env.FORGE_PLAYWRIGHT_DASHBOARD_ENABLED ??
-      process.env.MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED,
-    "FORGE_PLAYWRIGHT_DASHBOARD_ENABLED"
-  );
-}
-
 export function readTelemetryEnvOverride(): boolean | undefined {
   return parseOptionalBooleanEnv(
     process.env.FORGE_TELEMETRY ?? process.env.MIDDLEMAN_TELEMETRY,

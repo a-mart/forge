@@ -124,7 +124,6 @@ function createBroadcastHarness(profiles: ManagerProfile[]): {
   const subscriptions = new WsSubscriptions({
     swarmManager,
     integrationRegistry: null,
-    playwrightDiscovery: null,
     allowNonManagerSubscriptions: true,
     terminalService: null,
     unreadTracker: null,
@@ -183,7 +182,6 @@ describe('Builder visibility filtering', () => {
         [userProfile, cortexProfile, collaborationProfile],
       ) as never,
       integrationRegistry: null,
-      playwrightDiscovery: null,
       terminalService: null,
       unreadTracker: null,
       perf: NOOP_PERF_RECORDER,

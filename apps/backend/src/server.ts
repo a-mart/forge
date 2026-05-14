@@ -1,10 +1,7 @@
 import { formatIntegrationContext } from "./integrations/integration-context.js";
 import { IntegrationRegistryService } from "./integrations/registry.js";
 
-import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-service.js";
-import { PlaywrightLivePreviewService } from "./playwright/playwright-live-preview-service.js";
-import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
-import { readPlaywrightDashboardEnvOverride, createConfig } from "./config.js";
+import { createConfig } from "./config.js";
 import { bootstrapCollaborationAdmin } from "./collaboration/auth/admin-bootstrap.js";
 import { clearCollaborationBetterAuthService, getOrCreateCollaborationBetterAuthService } from "./collaboration/auth/better-auth-service.js";
 import { closeCollaborationAuthDb, getOrCreateCollaborationAuthDb } from "./collaboration/auth/collaboration-db.js";
@@ -166,13 +163,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     dataDir: config.paths.dataDir,
     defaultManagerId: config.managerId,
   });
-  const playwrightSettingsService = new PlaywrightSettingsService({
-    dataDir: config.paths.dataDir,
-  });
-  const playwrightEnvEnabledOverride = readPlaywrightDashboardEnvOverride();
-
-  let playwrightDiscovery: PlaywrightDiscoveryService | null = null;
-  let playwrightLivePreviewService: PlaywrightLivePreviewService | null = null;
   let terminalService: TerminalService | null = null;
   const terminalSettingsService = new TerminalSettingsService({ dataDir: config.paths.dataDir });
   let handleTerminalSessionLifecycle: (event: SessionLifecycleEvent) => void = () => undefined;
@@ -330,38 +320,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       return formatIntegrationContext(integrationContext);
     });
 
-    await playwrightSettingsService.load();
-
-    if (process.platform !== "win32") {
-      try {
-        playwrightDiscovery = new PlaywrightDiscoveryService({
-          swarmManager,
-          settingsService: playwrightSettingsService,
-          envEnabledOverride: playwrightEnvEnabledOverride,
-        });
-        await playwrightDiscovery.start();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(`[playwright] Failed to start discovery service: ${message}`);
-        playwrightDiscovery = null;
-      }
-    } else {
-      logger.info("[playwright] Playwright dashboard disabled on Windows");
-    }
-
-    playwrightLivePreviewService = new PlaywrightLivePreviewService({
-      discoveryService: playwrightDiscovery,
-    });
     const wsServer = new SwarmWebSocketServer({
       swarmManager,
       host: config.host,
       port: config.port,
       allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
       integrationRegistry,
-      playwrightDiscovery,
-      playwrightLivePreviewService,
-      playwrightSettingsService,
-      playwrightEnvEnabledOverride,
       terminalService,
       terminalRuntimeConfig,
       terminalSettingsService,
@@ -379,8 +343,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       swarmManager,
       versioningService,
       integrationRegistry,
-      playwrightDiscovery,
-      playwrightLivePreviewService,
       wsServer,
       queueSchedulerSync,
       handleAgentsSnapshot,
@@ -390,7 +352,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       runtimeLock,
     });
 
-    await playwrightLivePreviewService.start();
     await server.startListening();
 
     activeServer = server;
@@ -412,8 +373,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       await Promise.allSettled([
         queueSchedulerSync(new Set<string>()),
         integrationRegistry.stop(),
-        playwrightDiscovery?.stop(),
-        playwrightLivePreviewService?.stop(),
         terminalService?.shutdown(),
         versioningService.stop(),
       ]);
@@ -433,8 +392,6 @@ class BackendServer implements StartedServer {
   private readonly swarmManager: SwarmManager;
   private readonly versioningService: EmbeddedGitVersioningService;
   private readonly integrationRegistry: IntegrationRegistryService;
-  private playwrightDiscovery: PlaywrightDiscoveryService | null;
-  private readonly playwrightLivePreviewService: PlaywrightLivePreviewService;
   private readonly wsServer: SwarmWebSocketServer;
   private readonly queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
   private readonly handleAgentsSnapshot: (event: unknown) => void;
@@ -451,8 +408,6 @@ class BackendServer implements StartedServer {
     swarmManager: SwarmManager;
     versioningService: EmbeddedGitVersioningService;
     integrationRegistry: IntegrationRegistryService;
-    playwrightDiscovery: PlaywrightDiscoveryService | null;
-    playwrightLivePreviewService: PlaywrightLivePreviewService;
     wsServer: SwarmWebSocketServer;
     queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
     handleAgentsSnapshot: (event: unknown) => void;
@@ -467,8 +422,6 @@ class BackendServer implements StartedServer {
     this.swarmManager = options.swarmManager;
     this.versioningService = options.versioningService;
     this.integrationRegistry = options.integrationRegistry;
-    this.playwrightDiscovery = options.playwrightDiscovery;
-    this.playwrightLivePreviewService = options.playwrightLivePreviewService;
     this.wsServer = options.wsServer;
     this.queueSchedulerSync = options.queueSchedulerSync;
     this.handleAgentsSnapshot = options.handleAgentsSnapshot;
@@ -517,8 +470,6 @@ class BackendServer implements StartedServer {
     await Promise.allSettled([
       this.queueSchedulerSync(new Set<string>()),
       this.integrationRegistry.stop(),
-      this.playwrightDiscovery?.stop(),
-      this.playwrightLivePreviewService.stop(),
       this.terminalService?.shutdown(),
       this.versioningService.stop(),
     ]);

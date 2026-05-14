@@ -140,51 +140,5 @@ New terminals inherit the working directory from the manager session's configura
     ],
     relatedIds: ['terminal-overview', 'terminal-shortcuts'],
     contextKeys: ['terminal.panel'],
-  },
-  {
-    id: 'playwright-overview',
-    title: 'Playwright Dashboard',
-    category: 'playwright',
-    summary:
-      'Live browser session viewer for Playwright tests and automation, with filtering and preview.',
-    content: `The Playwright dashboard shows browser sessions that Forge discovers across your project worktrees. It is designed for monitoring and debugging Playwright-based tests and browser automation run by agents.
-
-## What it shows
-
-The dashboard scans configured root directories for Playwright CLI session files. Each discovered session appears as a card with its name, status, associated worktree, and (when available) a live screenshot preview.
-
-Sessions are color-coded by liveness:
-
-- **Active** — the browser process is currently running.
-- **Inactive** or **Stale** — the session file exists but the browser is no longer connected. These are hidden by default but you can reveal them with the filter controls.
-
-## View modes
-
-- **Grid** — a mosaic of thumbnail tiles. Good for monitoring several sessions at once.
-- **Split** — a session list on the left with a live preview pane on the right. Click a session to see its live view.
-- **Focus** — full-screen live preview of a single session. Enter focus mode by double-clicking a tile or using the expand button.
-
-## Filtering and search
-
-Use the filter bar to narrow results by status, worktree, or search text. The search matches session names, file paths, worktree names, and correlated agent names.
-
-## Availability
-
-The dashboard requires macOS or Linux. It is not available on Windows. Enable it in Settings or with the \`FORGE_PLAYWRIGHT_DASHBOARD_ENABLED\` environment variable. If the env var forces it off, the Settings toggle is disabled.
-
-When no scan roots are configured, the dashboard shows a prompt to add them in Settings.`,
-    keywords: [
-      'playwright',
-      'browser',
-      'dashboard',
-      'live preview',
-      'session',
-      'worktree',
-      'automation',
-      'test',
-      'screenshot',
-    ],
-    relatedIds: ['terminal-overview'],
-    contextKeys: ['playwright.dashboard'],
-  },
+  }
 ]

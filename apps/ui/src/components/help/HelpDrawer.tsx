@@ -103,7 +103,6 @@ const CATEGORIES: { key: HelpCategory; label: string }[] = [
   { key: 'models', label: 'Models' },
   { key: 'concepts', label: 'Concepts' },
   { key: 'terminals', label: 'Terminals' },
-  { key: 'playwright', label: 'Playwright' },
 ]
 
 export function HelpDrawer() {

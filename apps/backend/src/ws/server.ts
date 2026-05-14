@@ -28,10 +28,6 @@ import { getOrCreateCollaborationBetterAuthService } from "../collaboration/auth
 import type { CollaborationReadinessRequestService } from "../collaboration/readiness-service.js";
 import type { CollaborationSettingsService } from "../collaboration/settings-service.js";
 
-import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
-import { PlaywrightLivePreviewProxy } from "../playwright/playwright-live-preview-proxy.js";
-import { PlaywrightLivePreviewService } from "../playwright/playwright-live-preview-service.js";
-import { PlaywrightSettingsService } from "../playwright/playwright-settings-service.js";
 import {
   getControlPidFilePath,
   readControlPidFromFile,
@@ -76,8 +72,6 @@ import { createMermaidPreviewRoutes } from "./http/routes/mermaid-preview-routes
 import { createMobileRoutes } from "./http/routes/mobile-routes.js";
 import { createModelConfigRoutes } from "./http/routes/model-config-routes.js";
 import { createOpenRouterRoutes } from "./http/routes/openrouter-routes.js";
-import { createPlaywrightLiveRoutes } from "./http/routes/playwright-live-routes.js";
-import { createPlaywrightRoutes } from "./http/routes/playwright-routes.js";
 import { createPromptRoutes } from "./http/routes/prompt-routes.js";
 import { createSchedulerRoutes } from "./http/routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/settings-routes.js";
@@ -108,12 +102,7 @@ export class SwarmWebSocketServer {
   private readonly port: number;
   private actualPort: number | null = null;
   private readonly integrationRegistry: IntegrationRegistryService | null;
-  private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
-  private readonly playwrightLivePreviewService: PlaywrightLivePreviewService;
-  private readonly playwrightLivePreviewProxy: PlaywrightLivePreviewProxy;
-  private readonly playwrightSettingsService: PlaywrightSettingsService;
   private readonly cortexAutoReviewSettingsService: CortexAutoReviewSettingsService;
-  private readonly playwrightEnvEnabledOverride: boolean | undefined;
   private readonly terminalService: TerminalService | null;
   private readonly terminalRuntimeConfig: TerminalRuntimeConfig | null;
   private readonly terminalSettingsService: TerminalSettingsService;
@@ -256,21 +245,6 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
   };
 
-  private readonly onPlaywrightDiscoverySnapshot = (event: ServerEvent): void => {
-    if (event.type !== "playwright_discovery_snapshot") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
-  private readonly onPlaywrightDiscoveryUpdated = (event: ServerEvent): void => {
-    if (event.type !== "playwright_discovery_updated") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
-  private readonly onPlaywrightDiscoverySettingsUpdated = (event: ServerEvent): void => {
-    if (event.type !== "playwright_discovery_settings_updated") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
   private readonly onTerminalCreated = (event: TerminalCreatedEvent): void => {
     this.wsHandler.broadcastToSession(event.sessionAgentId, event);
   };
@@ -360,10 +334,6 @@ export class SwarmWebSocketServer {
     port: number;
     allowNonManagerSubscriptions: boolean;
     integrationRegistry?: IntegrationRegistryService;
-    playwrightDiscovery?: PlaywrightDiscoveryService | null;
-    playwrightLivePreviewService?: PlaywrightLivePreviewService;
-    playwrightSettingsService?: PlaywrightSettingsService;
-    playwrightEnvEnabledOverride?: boolean;
     terminalService?: TerminalService | null;
     terminalRuntimeConfig?: TerminalRuntimeConfig | null;
     terminalSettingsService?: TerminalSettingsService;
@@ -380,22 +350,11 @@ export class SwarmWebSocketServer {
     this.host = options.host;
     this.port = options.port;
     this.integrationRegistry = options.integrationRegistry ?? null;
-    this.playwrightDiscovery = options.playwrightDiscovery ?? null;
-    this.playwrightLivePreviewService =
-      options.playwrightLivePreviewService ??
-      new PlaywrightLivePreviewService({ discoveryService: this.playwrightDiscovery });
-    this.playwrightLivePreviewProxy = new PlaywrightLivePreviewProxy({
-      livePreviewService: this.playwrightLivePreviewService,
-    });
-    this.playwrightSettingsService =
-      options.playwrightSettingsService ??
-      new PlaywrightSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
     const cortexEnabled = this.swarmManager.getConfig().cortexEnabled;
     this.cortexAutoReviewSettingsService = new CortexAutoReviewSettingsService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       cortexEnabled,
     });
-    this.playwrightEnvEnabledOverride = options.playwrightEnvEnabledOverride;
     this.cliAccessService = options.cliAccessService ?? new CliAccessService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       envApiKey: readCliApiKeyEnv(),
@@ -451,7 +410,6 @@ export class SwarmWebSocketServer {
       swarmManager: this.swarmManager,
       integrationRegistry: this.integrationRegistry,
       mobilePushService: this.mobilePushService,
-      playwrightDiscovery: this.playwrightDiscovery,
       allowNonManagerSubscriptions: options.allowNonManagerSubscriptions,
       terminalService: this.terminalService,
       listTerminalsForSession: this.terminalService
@@ -548,14 +506,6 @@ export class SwarmWebSocketServer {
       ...createExtensionRoutes({ swarmManager: this.swarmManager }),
       ...createSkillRoutes({ swarmManager: this.swarmManager }),
       ...createChromeCdpRoutes({ swarmManager: this.swarmManager }),
-      ...createPlaywrightRoutes({
-        discoveryService: this.playwrightDiscovery,
-        settingsService: this.playwrightSettingsService,
-        envEnabledOverride: this.playwrightEnvEnabledOverride,
-      }),
-      ...createPlaywrightLiveRoutes({
-        livePreviewService: this.playwrightLivePreviewService,
-      }),
       ...createMermaidPreviewRoutes(),
       ...createIntegrationRoutes({
         swarmManager: this.swarmManager,
@@ -645,9 +595,6 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
-    this.playwrightDiscovery?.on("playwright_discovery_snapshot", this.onPlaywrightDiscoverySnapshot);
-    this.playwrightDiscovery?.on("playwright_discovery_updated", this.onPlaywrightDiscoveryUpdated);
-    this.playwrightDiscovery?.on("playwright_discovery_settings_updated", this.onPlaywrightDiscoverySettingsUpdated);
     this.terminalService?.on("terminal_created", this.onTerminalCreated);
     this.terminalService?.on("terminal_updated", this.onTerminalUpdated);
     this.terminalService?.on("terminal_closed", this.onTerminalClosed);
@@ -704,9 +651,6 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);
-    this.playwrightDiscovery?.off("playwright_discovery_snapshot", this.onPlaywrightDiscoverySnapshot);
-    this.playwrightDiscovery?.off("playwright_discovery_updated", this.onPlaywrightDiscoveryUpdated);
-    this.playwrightDiscovery?.off("playwright_discovery_settings_updated", this.onPlaywrightDiscoverySettingsUpdated);
     this.terminalService?.off("terminal_created", this.onTerminalCreated);
     this.terminalService?.off("terminal_updated", this.onTerminalUpdated);
     this.terminalService?.off("terminal_closed", this.onTerminalClosed);
@@ -729,7 +673,6 @@ export class SwarmWebSocketServer {
       this.mobilePushService.stop(),
       this.unreadTracker.flush(),
       this.terminalWsProxy?.stop() ?? Promise.resolve(),
-      this.playwrightLivePreviewProxy.stop(),
       currentWss ? closeWebSocketServer(currentWss) : Promise.resolve(),
       currentCliWss ? closeWebSocketServer(currentCliWss) : Promise.resolve(),
       currentHttpServer ? closeHttpServer(currentHttpServer) : Promise.resolve(),
@@ -756,13 +699,6 @@ export class SwarmWebSocketServer {
 
     if (this.terminalWsProxy?.canHandleUpgrade(requestUrl.pathname)) {
       const handled = this.terminalWsProxy.handleUpgrade(request, socket, head, requestUrl.pathname);
-      if (handled) {
-        return;
-      }
-    }
-
-    if (this.playwrightLivePreviewProxy.canHandleUpgrade(requestUrl.pathname)) {
-      const handled = this.playwrightLivePreviewProxy.handleUpgrade(request, socket, head, requestUrl.pathname);
       if (handled) {
         return;
       }

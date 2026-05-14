@@ -1,6 +1,5 @@
 import { isSystemProfile, type ServerEvent, type TerminalDescriptor } from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
-import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
@@ -19,7 +18,6 @@ const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 interface DeliveredSnapshotVersions {
   agentsSnapshotVersion?: number;
   profilesSnapshotVersion?: number;
-  playwrightDiscoveryVersion?: number;
 }
 
 export class WsSubscriptions {
@@ -28,7 +26,6 @@ export class WsSubscriptions {
 
   private readonly swarmManager: SwarmManager;
   private readonly integrationRegistry: IntegrationRegistryService | null;
-  private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
   private readonly allowNonManagerSubscriptions: boolean;
   private readonly terminalService: TerminalService | null;
   private readonly listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
@@ -40,7 +37,6 @@ export class WsSubscriptions {
   constructor(options: {
     swarmManager: SwarmManager;
     integrationRegistry: IntegrationRegistryService | null;
-    playwrightDiscovery: PlaywrightDiscoveryService | null;
     allowNonManagerSubscriptions: boolean;
     terminalService: TerminalService | null;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
@@ -51,7 +47,6 @@ export class WsSubscriptions {
   }) {
     this.swarmManager = options.swarmManager;
     this.integrationRegistry = options.integrationRegistry;
-    this.playwrightDiscovery = options.playwrightDiscovery;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
     this.terminalService = options.terminalService;
     this.listTerminalsForSession = options.listTerminalsForSession;
@@ -369,7 +364,6 @@ export class WsSubscriptions {
   ): void {
     const currentAgentsSnapshotVersion = this.swarmManager.getAgentsSnapshotVersion();
     const currentProfilesSnapshotVersion = this.swarmManager.getProfilesSnapshotVersion();
-    const currentPlaywrightDiscoveryVersion = this.playwrightDiscovery?.getSnapshot().sequence;
     const deliveredVersions = this.deliveredSnapshotVersions.get(socket);
 
     const result = sendSubscriptionBootstrap({
@@ -378,7 +372,6 @@ export class WsSubscriptions {
       requestedMessageCount,
       swarmManager: this.swarmManager,
       integrationRegistry: this.integrationRegistry,
-      playwrightDiscovery: this.playwrightDiscovery,
       terminalService: this.terminalService,
       listTerminalsForSession: this.listTerminalsForSession,
       unreadTracker: this.unreadTracker,
@@ -388,9 +381,6 @@ export class WsSubscriptions {
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       includeAgentsSnapshot: deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion,
       includeProfilesSnapshot: deliveredVersions?.profilesSnapshotVersion !== currentProfilesSnapshotVersion,
-      includePlaywrightDiscoveryBootstrap:
-        currentPlaywrightDiscoveryVersion === undefined ||
-        deliveredVersions?.playwrightDiscoveryVersion !== currentPlaywrightDiscoveryVersion,
     });
 
     if (result.agentsSnapshotSent) {
@@ -398,9 +388,6 @@ export class WsSubscriptions {
     }
     if (result.profilesSnapshotSent) {
       this.setDeliveredSnapshotVersion(socket, "profilesSnapshotVersion", currentProfilesSnapshotVersion);
-    }
-    if (result.playwrightDiscoveryBootstrapSent && currentPlaywrightDiscoveryVersion !== undefined) {
-      this.setDeliveredSnapshotVersion(socket, "playwrightDiscoveryVersion", currentPlaywrightDiscoveryVersion);
     }
   }
 
@@ -428,11 +415,6 @@ export class WsSubscriptions {
 
     if (event.type === "profiles_snapshot") {
       this.setDeliveredSnapshotVersion(socket, "profilesSnapshotVersion", this.swarmManager.getProfilesSnapshotVersion());
-      return;
-    }
-
-    if (event.type === "playwright_discovery_snapshot" || event.type === "playwright_discovery_updated") {
-      this.setDeliveredSnapshotVersion(socket, "playwrightDiscoveryVersion", event.snapshot.sequence);
     }
   }
 

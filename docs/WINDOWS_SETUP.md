@@ -70,18 +70,6 @@ Windows path length limits can affect file operations when the repo or data dire
 
 ## Known Limitations
 
-### Playwright Dashboard
-
-The Playwright dashboard and live preview subsystem is **disabled on Windows** because it relies on Unix-domain-socket IPC with the Playwright CLI.
-
-What works:
-- Playwright settings persistence in the UI
-- All other backend and dashboard functionality
-
-What is disabled:
-- Playwright session discovery
-- Playwright live preview / devtools bridge
-
 ### Shell Scripts
 
 The `scripts/*.sh` files are POSIX shell scripts used for developer tooling (test instances, cutover helpers). They are **not required** to run Forge.
@@ -97,7 +85,6 @@ See [scripts/README.md](../scripts/README.md) for details on which scripts are c
 WSL2 is a good option if you want:
 
 - Full POSIX shell compatibility for all scripts
-- Unix socket semantics (enables Playwright dashboard)
 - A Linux-like development experience
 
 Tips for WSL2:
@@ -124,6 +111,5 @@ These are the most relevant environment variables for Windows:
 | `FORGE_DATA_DIR` | `%LOCALAPPDATA%\forge` | Data directory location |
 | `FORGE_HOST` | `127.0.0.1` | Backend bind address |
 | `FORGE_PORT` | `47187` (dev) / `47287` (prod) | Backend port |
-| `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` (Windows) | Force-enable/disable Playwright dashboard |
 
 See [docs/CONFIGURATION.md](CONFIGURATION.md) for the full configuration reference.

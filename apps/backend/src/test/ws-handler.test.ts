@@ -24,7 +24,6 @@ describe('WsHandler send guards', () => {
       } as any,
       integrationRegistry: null,
       mobilePushService: {} as any,
-      playwrightDiscovery: null,
       allowNonManagerSubscriptions: true,
       perf: createPerfStub(),
     })
@@ -74,7 +73,6 @@ describe('WsHandler send guards', () => {
       } as any,
       integrationRegistry: null,
       mobilePushService: {} as any,
-      playwrightDiscovery: null,
       allowNonManagerSubscriptions: true,
       perf: createPerfStub(),
     })

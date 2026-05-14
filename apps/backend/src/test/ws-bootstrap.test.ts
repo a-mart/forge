@@ -77,7 +77,6 @@ describe('sendSubscriptionBootstrap', () => {
       targetAgentId: 'manager-1',
       swarmManager,
       integrationRegistry: null,
-      playwrightDiscovery: null,
       terminalService: null,
       unreadTracker: null,
       perf,
@@ -109,7 +108,6 @@ describe('sendSubscriptionBootstrap', () => {
     expect(result).toEqual({
       agentsSnapshotSent: true,
       profilesSnapshotSent: true,
-      playwrightDiscoveryBootstrapSent: false,
     })
   })
 
@@ -180,7 +178,6 @@ describe('sendSubscriptionBootstrap', () => {
       targetAgentId: 'manager-1',
       swarmManager,
       integrationRegistry: null,
-      playwrightDiscovery: null,
       terminalService: null,
       unreadTracker: null,
       perf,
@@ -237,52 +234,12 @@ describe('sendSubscriptionBootstrap', () => {
       })),
       getPendingChoiceIdsForSession: vi.fn(() => []),
     } as any
-    const playwrightDiscovery = {
-      getSnapshot: vi.fn(() => ({
-        updatedAt: '2026-01-01T00:00:00.000Z',
-        lastScanStartedAt: null,
-        lastScanCompletedAt: null,
-        scanDurationMs: null,
-        sequence: 4,
-        serviceStatus: 'disabled',
-        settings: {
-          enabled: false,
-          effectiveEnabled: false,
-          source: 'default',
-          scanRoots: [],
-          pollIntervalMs: 1000,
-          socketProbeTimeoutMs: 1000,
-          staleSessionThresholdMs: 1000,
-        },
-        rootsScanned: [],
-        summary: {
-          totalSessions: 0,
-          activeSessions: 0,
-          inactiveSessions: 0,
-          staleSessions: 0,
-          errorSessions: 0,
-        },
-        sessions: [],
-        warnings: [],
-        lastError: null,
-      })),
-      getSettings: vi.fn(() => ({
-        enabled: false,
-        effectiveEnabled: false,
-        source: 'default',
-        scanRoots: [],
-        pollIntervalMs: 1000,
-        socketProbeTimeoutMs: 1000,
-        staleSessionThresholdMs: 1000,
-      })),
-    } as any
 
     const result = sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
       swarmManager,
       integrationRegistry: null,
-      playwrightDiscovery,
       terminalService: null,
       unreadTracker: null,
       perf,
@@ -291,7 +248,6 @@ describe('sendSubscriptionBootstrap', () => {
       resolveManagerContextAgentId: () => undefined,
       includeAgentsSnapshot: false,
       includeProfilesSnapshot: false,
-      includePlaywrightDiscoveryBootstrap: false,
     })
 
     const recordDuration = vi.mocked(perf.recordDuration)
@@ -306,14 +262,11 @@ describe('sendSubscriptionBootstrap', () => {
       agentsSnapshotPayloadBytes: 0,
       profilesSnapshotBuildMs: 0,
       profilesSnapshotPayloadBytes: 0,
-      playwrightDiscoverySnapshotPayloadBytes: 0,
-      playwrightDiscoverySettingsPayloadBytes: 0,
     })
     expect(send).toHaveBeenCalledTimes(4)
     expect(result).toEqual({
       agentsSnapshotSent: false,
       profilesSnapshotSent: false,
-      playwrightDiscoveryBootstrapSent: false,
     })
   })
 })

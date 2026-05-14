@@ -17,7 +17,6 @@ import { ChatSidePanels } from '@/components/index-page/ChatSidePanels'
 import { ChatWorkspace } from '@/components/index-page/ChatWorkspace'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { StatsPage } from '@/components/index-page/StatsPage'
-import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
 import { chooseFallbackAgentId, resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
@@ -29,7 +28,6 @@ import {
   type ActiveSurface,
   type ActiveView,
   type AppRouteState,
-  type PlaywrightViewMode,
   type StatsTab,
 } from '@/hooks/index-page/use-route-state'
 import {
@@ -72,7 +70,6 @@ function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): b
 type BuilderNavigationState =
   | { view: 'chat'; agentId: string }
   | { view: 'settings'; surface: ActiveSurface }
-  | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
   | { view: 'stats'; statsTab?: StatsTab }
 
 interface BuilderSurfaceProps {
@@ -1048,10 +1045,6 @@ export function BuilderSurface({
     navigateToRoute({ view: 'settings', surface: 'builder' })
   }
 
-  const handleOpenPlaywright = () => {
-    navigateToRoute({ view: 'playwright' })
-  }
-
   const handleOpenStats = () => {
     navigateToRoute({ view: 'stats' })
   }
@@ -1075,40 +1068,6 @@ export function BuilderSurface({
       navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true)
     })()
   }, [navigateToRoute, skipOnboarding])
-
-  const handlePlaywrightViewStateChange = useCallback(
-    (sessionId: string | null, mode: import('@/hooks/index-page/use-route-state').PlaywrightViewMode) => {
-      navigateToRoute({
-        view: 'playwright',
-        playwrightSession: sessionId ?? undefined,
-        playwrightMode: mode,
-      })
-    },
-    [navigateToRoute],
-  )
-
-  const handlePlaywrightSnapshotUpdate = useCallback(
-    (snapshot: import('@forge/protocol').PlaywrightDiscoverySnapshot) => {
-      setState((prev) => ({
-        ...prev,
-        playwrightSnapshot: snapshot,
-        playwrightSettings: snapshot.settings,
-      }))
-    },
-    [setState],
-  )
-
-  const handlePlaywrightSettingsLoaded = useCallback(
-    (settings: import('@forge/protocol').PlaywrightDiscoverySettings) => {
-      setState((prev) => ({
-        ...prev,
-        playwrightSettings: settings,
-      }))
-    },
-    [setState],
-  )
-
-  const showPlaywrightNav = state.playwrightSettings?.effectiveEnabled === true
 
   const previewSession = useMemo(() => {
     if (!activeAgentId) return null
@@ -1151,9 +1110,7 @@ export function BuilderSurface({
         terminalCount={state.terminals.length}
         selectedAgentId={activeAgentId}
         isSettingsActive={activeView === 'settings'}
-        isPlaywrightActive={activeView === 'playwright'}
         isStatsActive={activeView === 'stats'}
-        showPlaywrightNav={showPlaywrightNav}
         isMobileOpen={isMobileSidebarOpen}
         onMobileClose={() => setIsMobileSidebarOpen(false)}
         onAddManager={handleOpenCreateManagerDialog}
@@ -1162,7 +1119,6 @@ export function BuilderSurface({
         onDeleteManager={handleRequestDeleteManager}
         onOpenSettings={handleOpenSettingsPanel}
         onOpenCortexReview={handleOpenCortexReview}
-        onOpenPlaywright={handleOpenPlaywright}
         onOpenStats={handleOpenStats}
         onCreateSession={handleCreateSession}
         onStopSession={handleStopSession}
@@ -1218,27 +1174,9 @@ export function BuilderSurface({
                     agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
                   })
                 }
-                onPlaywrightSnapshotUpdate={handlePlaywrightSnapshotUpdate}
-                onPlaywrightSettingsLoaded={handlePlaywrightSettingsLoaded}
                 previewSession={previewSession}
                 initialTab={routeState.view === 'settings' ? routeState.settingsTab : undefined}
                 initialCollabApiBaseUrl={routeState.view === 'settings' ? routeState.collabApiBaseUrl : undefined}
-              />
-            ) : activeView === 'playwright' ? (
-              <PlaywrightDashboardView
-                wsUrl={wsUrl}
-                snapshot={state.playwrightSnapshot}
-                onSnapshotUpdate={handlePlaywrightSnapshotUpdate}
-                onOpenSettings={handleOpenSettingsPanel}
-                selectedSessionId={routeState.view === 'playwright' ? routeState.playwrightSession ?? null : null}
-                viewMode={routeState.view === 'playwright' ? routeState.playwrightMode ?? 'tiles' : 'tiles'}
-                onViewStateChange={handlePlaywrightViewStateChange}
-                onBack={() =>
-                  navigateToRoute({
-                    view: 'chat',
-                    agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
-                  })
-                }
               />
             ) : activeView === 'stats' ? (
               <StatsPage
