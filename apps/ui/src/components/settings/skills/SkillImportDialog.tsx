@@ -213,7 +213,7 @@ export function SkillImportDialog({
                     id="skill-import-url"
                     value={url}
                     onChange={(event) => handleUrlChange(event.target.value)}
-                    placeholder="https://share.forge.dev/s/..."
+                    placeholder="https://forgeskills.radops.ai/s/..."
                     className="font-mono text-xs"
                   />
                 </div>

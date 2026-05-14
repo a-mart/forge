@@ -548,7 +548,7 @@ describe('parseWindowRouteSearch', () => {
 
   it('parses all known params including settingsTab, statsTab, collab, collabApiBaseUrl, and skillImportUrl', () => {
     const result = parseWindowRouteSearch(
-      '?view=settings&agent=mgr&surface=builder&channel=ch1&collab=conn_abc&playwrightSession=ps&playwrightMode=pm&statsTab=st&settingsTab=auth&collabApiBaseUrl=https%3A%2F%2Fb.example.com%2F&skillImportUrl=https%3A%2F%2Fshare.forge.dev%2Fs%2Ftoken',
+      '?view=settings&agent=mgr&surface=builder&channel=ch1&collab=conn_abc&playwrightSession=ps&playwrightMode=pm&statsTab=st&settingsTab=auth&collabApiBaseUrl=https%3A%2F%2Fb.example.com%2F&skillImportUrl=https%3A%2F%2Fforgeskills.radops.ai%2Fs%2Ftoken',
     )
     expect(result).toEqual({
       view: 'settings',
@@ -561,7 +561,7 @@ describe('parseWindowRouteSearch', () => {
       statsTab: 'st',
       settingsTab: 'auth',
       collabApiBaseUrl: 'https://b.example.com/',
-      skillImportUrl: 'https://share.forge.dev/s/token',
+      skillImportUrl: 'https://forgeskills.radops.ai/s/token',
     })
   })
 

@@ -94,19 +94,19 @@ describe('useRouteState — settings surface', () => {
       view: 'settings',
       surface: 'collab',
       settingsTab: 'models',
-      skillImportUrl: 'https://share.forge.dev/s/token',
+      skillImportUrl: 'https://forgeskills.radops.ai/s/token',
     }, 'collab')
 
     expect(parsed).toEqual({
       view: 'settings',
       surface: 'builder',
       settingsTab: 'skills',
-      skillImportUrl: 'https://share.forge.dev/s/token',
+      skillImportUrl: 'https://forgeskills.radops.ai/s/token',
     })
     expect(toRouteSearch(parsed, undefined, 'builder')).toEqual({
       view: 'settings',
       settingsTab: 'skills',
-      skillImportUrl: 'https://share.forge.dev/s/token',
+      skillImportUrl: 'https://forgeskills.radops.ai/s/token',
     })
   })
 

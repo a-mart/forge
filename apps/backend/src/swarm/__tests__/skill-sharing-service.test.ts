@@ -50,6 +50,51 @@ describe("SkillSharingService", () => {
     ]));
   });
 
+  it("defaults to the operated Forge skill share service when no override is configured", async () => {
+    const originalBaseUrl = process.env.FORGE_SKILL_SHARE_BASE_URL;
+    const originalLegacyBaseUrl = process.env.MIDDLEMAN_SKILL_SHARE_BASE_URL;
+    delete process.env.FORGE_SKILL_SHARE_BASE_URL;
+    delete process.env.MIDDLEMAN_SKILL_SHARE_BASE_URL;
+    try {
+      const harness = await createHarness({
+        shareBaseUrl: null,
+        fetchFn: async (input, init) => {
+          expect(String(input)).toBe("https://forgeskills.radops.ai/api/v1/skill-shares");
+          expect(init?.method).toBe("POST");
+          const parsed = JSON.parse(String(init?.body)) as { bundle: SkillBundleManifestV1 };
+          return jsonResponse({
+            shareUrl: "https://forgeskills.radops.ai/s/token",
+            importUrl: "forge://skill-import?url=https%3A%2F%2Fforgeskills.radops.ai%2Fs%2Ftoken",
+            expiresAt: "2026-05-20T12:00:00.000Z",
+            contentSha256: parsed.bundle.contentSha256,
+            warnings: []
+          });
+        }
+      });
+      await createGlobalSkill(harness.config, "default-share-host", {
+        "SKILL.md": "---\nname: Default Share Host\n---\n\n# Default\n"
+      });
+
+      const result = await harness.sharingService.shareSkill(await getGlobalSkillId(harness.metadataService, "default-share-host"));
+
+      expect(result).toMatchObject({
+        shareUrl: "https://forgeskills.radops.ai/s/token",
+        importUrl: "forge://skill-import?url=https%3A%2F%2Fforgeskills.radops.ai%2Fs%2Ftoken"
+      });
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.FORGE_SKILL_SHARE_BASE_URL;
+      } else {
+        process.env.FORGE_SKILL_SHARE_BASE_URL = originalBaseUrl;
+      }
+      if (originalLegacyBaseUrl === undefined) {
+        delete process.env.MIDDLEMAN_SKILL_SHARE_BASE_URL;
+      } else {
+        process.env.MIDDLEMAN_SKILL_SHARE_BASE_URL = originalLegacyBaseUrl;
+      }
+    }
+  });
+
   it("rejects untrusted share worker response URLs", async () => {
     const mismatchHarness = await createHarness({
       fetchFn: async (input, init) => {

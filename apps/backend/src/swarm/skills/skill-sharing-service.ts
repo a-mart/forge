@@ -27,7 +27,7 @@ import {
   type SkillMetadataService
 } from "./skill-metadata-service.js";
 
-const DEFAULT_SKILL_SHARE_BASE_URL = "https://share.forge.dev";
+const DEFAULT_SKILL_SHARE_BASE_URL = "https://forgeskills.radops.ai";
 const SKILL_SHARE_BASE_URL_ENV = "FORGE_SKILL_SHARE_BASE_URL";
 const LEGACY_SKILL_SHARE_BASE_URL_ENV = "MIDDLEMAN_SKILL_SHARE_BASE_URL";
 const SKILL_SHARE_DISABLED_ENV = "FORGE_SKILL_SHARE_DISABLED";

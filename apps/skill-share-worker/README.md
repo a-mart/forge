@@ -38,7 +38,7 @@ Secret:
 
 Recommended vars:
 
-- `PUBLIC_BASE_URL`: public origin such as `https://share.forge.dev`.
+- `PUBLIC_BASE_URL`: public origin such as `https://forgeskills.radops.ai`.
 - `SHARE_TTL_SECONDS`: defaults/hard-caps to `604800` (7 days).
 - `MAX_REQUEST_BYTES`: default/hard-cap `36700160` (35 MiB).
 - `MAX_BUNDLE_BYTES`: default/hard-cap `26214400` (25 MiB).
