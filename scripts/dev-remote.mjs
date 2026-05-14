@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const isWindows = process.platform === "win32";
+const pnpmCommand = isWindows ? "pnpm.cmd" : "pnpm";
 const forceKillAfterMs = 5_000;
 const dryRun = process.argv.includes("--dry-run");
 
@@ -83,7 +84,7 @@ function killChild(child, signal = "SIGINT") {
   }
 
   try {
-    if (process.platform !== "win32" && child.pid) {
+    if (!isWindows && child.pid) {
       process.kill(-child.pid, signal);
     } else {
       child.kill(signal);
@@ -101,7 +102,7 @@ function forceKillChild(child) {
   }
 
   try {
-    if (process.platform === "win32") {
+    if (isWindows) {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
     } else {
       process.kill(-child.pid, "SIGKILL");
@@ -140,7 +141,9 @@ for (const processConfig of processes) {
     cwd: repoRoot,
     env: processConfig.env,
     stdio: ["inherit", "pipe", "pipe"],
-    detached: process.platform !== "win32",
+    detached: !isWindows,
+    // Windows package-manager shims are .cmd files; launch them via cmd.exe.
+    shell: isWindows,
     windowsHide: false,
   });
 
@@ -178,7 +181,7 @@ for (const processConfig of processes) {
 
 process.on("SIGINT", () => shutdown(130));
 
-if (process.platform === "win32") {
+if (isWindows) {
   process.on("SIGBREAK", () => shutdown(131));
 } else {
   process.on("SIGTERM", () => shutdown(143));
