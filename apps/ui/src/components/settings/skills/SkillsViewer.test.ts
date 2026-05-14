@@ -112,6 +112,7 @@ beforeEach(() => {
     rootPath: '/tmp/shared',
     skillId: 'shared-skill',
     replaced: false,
+    installedOverride: false,
     warnings: [],
   })
   settingsApiMock.fetchSettingsEnvVariables.mockResolvedValue([])

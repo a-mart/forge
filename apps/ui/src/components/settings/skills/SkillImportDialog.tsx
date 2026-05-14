@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Loader2, ShieldAlert, UploadCloud } from '
 import type {
   ManagerProfile,
   SkillBundleIssue,
+  SkillImportConflictState,
   SkillImportPreviewResponse,
   SkillImportResultResponse,
   SkillImportTarget,
@@ -116,6 +117,7 @@ export function SkillImportDialog({
   const hasConflict = Boolean(preview?.conflict.exists)
   const blockingConflict = Boolean(preview?.conflict.isBlocking)
   const canInstall = previewMatchesCurrent && reviewAccepted && !isImporting && !isPreviewing && (!hasConflict || replaceAccepted) && !blockingConflict
+  const importButtonLabel = getImportButtonLabel(preview?.conflict)
 
   const handlePreview = async (overrideUrl?: string, overrideScope?: string) => {
     const nextUrl = (overrideUrl ?? url).trim()
@@ -268,7 +270,7 @@ export function SkillImportDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
             <Button onClick={() => void handleImport()} disabled={!canInstall}>
               {isImporting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-              {hasConflict ? 'Replace and import' : 'Import skill'}
+              {importButtonLabel}
             </Button>
           </DialogFooter>
         </div>
@@ -349,7 +351,7 @@ function ImportPreview({
         <Acknowledgement
           checked={replaceAccepted}
           onCheckedChange={onReplaceAcceptedChange}
-          label="I understand this replaces the whole existing skill directory. It is not a merge."
+          label={getConflictAcknowledgementLabel(preview)}
         />
       )}
     </div>
@@ -365,10 +367,7 @@ function ConflictPanel({ preview }: { preview: SkillImportPreviewResponse }) {
         <ShieldAlert className="size-4" />
         {conflict.isBlocking ? 'Blocking skill conflict' : 'Existing skill conflict'}
       </div>
-      <p>
-        Existing {conflict.existingSourceKind ?? 'skill'} entry for <code>{conflict.existingDirectoryName ?? preview.bundle.skill.handle}</code>
-        {conflict.conflictType ? ` (${conflict.conflictType.replace('_', ' ')})` : ''}.
-      </p>
+      <p>{getConflictDescription(preview)}</p>
       {conflict.existingRootPath && <p className="mt-1 break-all opacity-90">{conflict.existingRootPath}</p>}
       {conflict.isBlocking && <p className="mt-2 font-medium">This import would shadow a required built-in skill and cannot be installed.</p>}
       {related.length > 0 && (
@@ -386,6 +385,48 @@ function ConflictPanel({ preview }: { preview: SkillImportPreviewResponse }) {
       )}
     </div>
   )
+}
+
+function getImportButtonLabel(conflict: SkillImportConflictState | undefined): string {
+  if (!conflict?.exists) return 'Import skill'
+  if (conflict.conflictType === 'effective_skill') return 'Install override'
+  return 'Replace and import'
+}
+
+function getConflictAcknowledgementLabel(preview: SkillImportPreviewResponse): string {
+  const scopeLabel = getTargetScopeLabel(preview.target)
+  const replacesTarget = preview.conflict.conflictType === 'target_path'
+  const installsOverride = hasEffectiveSkillConflict(preview.conflict)
+  if (replacesTarget && installsOverride) {
+    return `I understand this replaces the whole existing ${scopeLabel} skill directory and shadows an inherited skill. It is not a merge.`
+  }
+  if (replacesTarget) {
+    return `I understand this replaces the whole existing ${scopeLabel} skill directory. It is not a merge.`
+  }
+  return `I understand this installs a ${scopeLabel} override that shadows the inherited skill. The inherited skill directory is not modified.`
+}
+
+function getConflictDescription(preview: SkillImportPreviewResponse): string {
+  const conflict = preview.conflict
+  const sourceKind = conflict.existingSourceKind ?? 'skill'
+  const directoryName = conflict.existingDirectoryName ?? preview.bundle.skill.handle
+  const scopeLabel = getTargetScopeLabel(preview.target)
+  if (conflict.conflictType === 'effective_skill') {
+    return `An existing ${sourceKind} skill named ${directoryName} is already effective for this target. Importing will install a ${scopeLabel} override; the existing skill directory will not be modified.`
+  }
+  if (hasEffectiveSkillConflict(conflict)) {
+    return `A ${scopeLabel} skill directory named ${directoryName} already exists at the install target and will be replaced if confirmed. The imported skill will also shadow an inherited skill.`
+  }
+  return `A ${scopeLabel} skill directory named ${directoryName} already exists at the install target and will be replaced if confirmed.`
+}
+
+function hasEffectiveSkillConflict(conflict: SkillImportConflictState): boolean {
+  if (conflict.conflictType === 'effective_skill') return true
+  return (conflict.relatedConflicts ?? []).some((item) => item.conflictType === 'effective_skill')
+}
+
+function getTargetScopeLabel(target: SkillImportTarget): string {
+  return target.scope === 'profile' ? 'project' : 'global'
 }
 
 function WarningSection({

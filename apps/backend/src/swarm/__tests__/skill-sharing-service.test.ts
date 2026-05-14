@@ -128,7 +128,7 @@ describe("SkillSharingService", () => {
       expect(preview.bundle.skill.handle).toBe("ipv6-localhost");
 
       const result = await targetHarness.sharingService.importSkill({ source: { url: share.shareUrl }, target });
-      expect(result).toMatchObject({ target, replaced: false });
+      expect(result).toMatchObject({ target, replaced: false, installedOverride: false });
       await expect(readFile(join(getProfilePiSkillsDir(targetHarness.config.paths.dataDir, "profile-a"), "ipv6-localhost", "SKILL.md"), "utf8"))
         .resolves.toContain("# IPv6");
     } finally {
@@ -207,7 +207,7 @@ describe("SkillSharingService", () => {
       target: { scope: "profile", profileId: "profile-a" }
     });
 
-    expect(result).toMatchObject({ replaced: false, target: { scope: "profile", profileId: "profile-a" } });
+    expect(result).toMatchObject({ replaced: false, installedOverride: false, target: { scope: "profile", profileId: "profile-a" } });
     const importedRoot = join(getProfilePiSkillsDir(targetHarness.config.paths.dataDir, "profile-a"), "source-skill");
     await expect(readFile(join(importedRoot, "SKILL.md"), "utf8")).resolves.toContain("# Source");
     const profileSkills = await targetHarness.metadataService.getProfileSkillMetadata("profile-a");
@@ -236,12 +236,13 @@ describe("SkillSharingService", () => {
       conflictStrategy: "replace"
     })).rejects.toMatchObject({ code: "skill_import_replace_not_confirmed", statusCode: 409 });
 
-    await harness.sharingService.importSkill({
+    const result = await harness.sharingService.importSkill({
       source: { bundle },
       target: { scope: "profile", profileId: "profile-a" },
       conflictStrategy: "replace",
       confirmReplace: true
     });
+    expect(result).toMatchObject({ replaced: true, installedOverride: false });
 
     await expect(readFile(join(getProfilePiSkillsDir(harness.config.paths.dataDir, "profile-a"), "conflict-skill", "SKILL.md"), "utf8"))
       .resolves.toContain("# Original");
@@ -270,11 +271,12 @@ describe("SkillSharingService", () => {
     await expect(targetHarness.sharingService.importSkill({ source: { bundle } }))
       .rejects.toMatchObject({ code: "skill_import_conflict", statusCode: 409 });
 
-    await targetHarness.sharingService.importSkill({
+    const result = await targetHarness.sharingService.importSkill({
       source: { bundle },
       conflictStrategy: "replace",
       confirmReplace: true
     });
+    expect(result).toMatchObject({ replaced: false, installedOverride: true });
     await expect(readFile(join(targetHarness.config.paths.dataDir, "skills", "repo-collision", "SKILL.md"), "utf8"))
       .resolves.toContain("# Imported");
   });
@@ -310,11 +312,12 @@ describe("SkillSharingService", () => {
       ]
     });
 
-    await targetHarness.sharingService.importSkill({
+    const result = await targetHarness.sharingService.importSkill({
       source: { bundle },
       conflictStrategy: "replace",
       confirmReplace: true
     });
+    expect(result).toMatchObject({ replaced: true, installedOverride: true });
     await expect(readFile(join(staleRoot, "SKILL.md"), "utf8")).resolves.toContain("# Imported");
     await expect(lstat(join(staleRoot, "STALE.txt"))).rejects.toThrow();
   });

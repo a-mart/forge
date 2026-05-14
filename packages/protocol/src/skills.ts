@@ -226,7 +226,10 @@ export interface SkillImportResultResponse {
   target: SkillImportTarget
   rootPath: string
   skillId?: string
+  /** True only when an existing directory at the selected install target was replaced. */
   replaced: boolean
+  /** True when the import installed a target-scope override that shadows an inherited/effective skill. */
+  installedOverride: boolean
   warnings: SkillBundleIssue[]
 }
 

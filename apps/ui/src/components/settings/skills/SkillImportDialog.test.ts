@@ -82,6 +82,71 @@ describe('SkillImportDialog', () => {
     expect(document.body.textContent).toContain('Skill B')
     expect(document.body.textContent).not.toContain('Skill A')
   })
+
+  it('uses replacement copy for target-directory conflicts', async () => {
+    apiMock.previewSkillImportFromUrl.mockResolvedValue(makePreview('Skill A', {
+      exists: true,
+      existingSourceKind: 'machine-local',
+      existingDirectoryName: 'skill-a',
+      existingRootPath: '/tmp/skills/skill-a',
+      conflictType: 'target_path',
+    }))
+    renderDialog()
+    await flush()
+
+    const input = document.querySelector<HTMLInputElement>('#skill-import-url')!
+    fireEvent.change(input, { target: { value: 'https://share.test/s/a' } })
+    fireEvent.click(buttonByText('Preview'))
+
+    await waitFor(() => expect(document.body.textContent).toContain('will be replaced if confirmed'))
+    expect(document.body.textContent).toContain('replaces the whole existing global skill directory')
+    expect(document.body.textContent).not.toContain('inherited skill directory is not modified')
+    expect(buttonByText('Replace and import')).toBeTruthy()
+  })
+
+  it('uses override copy for inherited effective skill conflicts', async () => {
+    apiMock.previewSkillImportFromUrl.mockResolvedValue(makePreview('Inherited Skill', {
+      exists: true,
+      existingSourceKind: 'repo',
+      existingDirectoryName: 'inherited-skill',
+      existingRootPath: '/repo/.pi/skills/inherited-skill',
+      conflictType: 'effective_skill',
+    }))
+    apiMock.importSkill.mockResolvedValue({
+      bundle: { skill: { handle: 'inherited-skill', name: 'Inherited Skill' }, files: [], totals: { fileCount: 0, byteCount: 0 } },
+      target: { scope: 'global' },
+      rootPath: '/tmp/skills/inherited-skill',
+      replaced: false,
+      installedOverride: true,
+      warnings: [],
+    })
+    renderDialog()
+    await flush()
+
+    const input = document.querySelector<HTMLInputElement>('#skill-import-url')!
+    fireEvent.change(input, { target: { value: 'https://share.test/s/inherited' } })
+    fireEvent.click(buttonByText('Preview'))
+
+    await waitFor(() => expect(document.body.textContent).toContain('will install a global override'))
+    expect(document.body.textContent).toContain('inherited skill directory is not modified')
+    expect(document.body.textContent).toContain('installs a global override that shadows the inherited skill')
+    expect(document.body.textContent).not.toContain('replaces the whole existing global skill directory')
+
+    const checkboxes = Array.from(document.querySelectorAll<HTMLElement>('[role="checkbox"]'))
+    expect(checkboxes).toHaveLength(2)
+    flushSync(() => {
+      for (const checkbox of checkboxes) checkbox.click()
+    })
+    await waitFor(() => expect(buttonByText('Install override').disabled).toBe(false))
+    fireEvent.click(buttonByText('Install override'))
+
+    await waitFor(() => expect(apiMock.importSkill).toHaveBeenCalledWith('ws://127.0.0.1:47187', expect.objectContaining({
+      source: { url: 'https://share.test/s/inherited' },
+      target: { scope: 'global' },
+      conflictStrategy: 'replace',
+      confirmReplace: true,
+    })))
+  })
 })
 
 function renderDialog(): void {
@@ -105,7 +170,7 @@ function buttonByText(text: string): HTMLButtonElement {
   return button as HTMLButtonElement
 }
 
-function makePreview(name: string): SkillImportPreviewResponse {
+function makePreview(name: string, conflict: SkillImportPreviewResponse['conflict'] = { exists: false }): SkillImportPreviewResponse {
   return {
     bundle: {
       format: 'forge.skill.bundle.v1',
@@ -124,7 +189,7 @@ function makePreview(name: string): SkillImportPreviewResponse {
       totals: { fileCount: 0, byteCount: 0 },
     },
     target: { scope: 'global' },
-    conflict: { exists: false },
+    conflict,
     warnings: [],
   }
 }

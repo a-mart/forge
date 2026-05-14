@@ -161,11 +161,13 @@ export class SkillSharingService {
       throw new SkillSharingError("skill_import_conflict", "Skill already exists in the selected target.", 409, preview.conflict);
     }
     if (preview.conflict.exists && options.confirmReplace !== true) {
-      throw new SkillSharingError("skill_import_replace_not_confirmed", "Replacing a skill requires explicit confirmation.", 409, preview.conflict);
+      throw new SkillSharingError("skill_import_replace_not_confirmed", "Resolving a skill import conflict requires explicit confirmation.", 409, preview.conflict);
     }
 
+    const replaced = preview.conflict.conflictType === "target_path";
+    const installedOverride = hasEffectiveSkillConflict(preview.conflict);
     const rootPath = await this.installBundle(bundle, target, {
-      replace: preview.conflict.conflictType === "target_path" && conflictStrategy === "replace"
+      replace: replaced && conflictStrategy === "replace"
     });
     await this.options.skillMetadataService.reloadSkillMetadata();
     const importedSkill = await this.findImportedSkill(bundle, target, rootPath);
@@ -175,7 +177,8 @@ export class SkillSharingService {
       target,
       rootPath,
       ...(importedSkill ? { skillId: importedSkill.skillId } : {}),
-      replaced: preview.conflict.exists,
+      replaced,
+      installedOverride,
       warnings: preview.warnings
     };
   }
@@ -564,6 +567,13 @@ export class SkillSharingService {
       : this.options.skillMetadataService.getSkillMetadata();
     return metadata.find((skill) => skill.directoryName === bundle.skill.handle && resolve(skill.rootPath) === normalizedRoot);
   }
+}
+
+function hasEffectiveSkillConflict(conflict: SkillImportConflictState): boolean {
+  if (conflict.conflictType === "effective_skill") {
+    return true;
+  }
+  return (conflict.relatedConflicts ?? []).some((related) => related.conflictType === "effective_skill");
 }
 
 function resolveShareConfig(options: SkillSharingServiceOptions): ResolvedShareConfig {

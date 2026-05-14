@@ -267,6 +267,7 @@ describe("skill routes", () => {
         target: { scope: "global" },
         rootPath: "/data/skills/imported",
         replaced: false,
+        installedOverride: false,
         warnings: [],
         options
       })),

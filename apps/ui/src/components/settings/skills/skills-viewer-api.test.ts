@@ -64,7 +64,7 @@ describe('skills-viewer-api', () => {
     fetchMock
       .mockResolvedValueOnce(mockJsonResponse({ shareUrl: 'https://share.test/s/t', importUrl: 'forge://skill-import?url=x', expiresAt: '2026-05-20T00:00:00.000Z', contentSha256: 'a'.repeat(64), warnings: [] }))
       .mockResolvedValueOnce(mockJsonResponse({ bundle: { skill: { handle: 'shared', name: 'Shared' }, files: [], totals: { fileCount: 0, byteCount: 0 }, portability: { scripts: [], dependencies: [] }, origin: { platform: 'darwin', arch: 'arm64' } }, target: { scope: 'global' }, conflict: { exists: false }, warnings: [] }))
-      .mockResolvedValueOnce(mockJsonResponse({ bundle: { skill: { handle: 'shared', name: 'Shared' }, files: [], totals: { fileCount: 0, byteCount: 0 } }, target: { scope: 'global' }, rootPath: '/tmp/shared', replaced: false, warnings: [] }))
+      .mockResolvedValueOnce(mockJsonResponse({ bundle: { skill: { handle: 'shared', name: 'Shared' }, files: [], totals: { fileCount: 0, byteCount: 0 } }, target: { scope: 'global' }, rootPath: '/tmp/shared', replaced: false, installedOverride: false, warnings: [] }))
 
     await shareSkill('ws://127.0.0.1:47187', 'skill/id')
     await previewSkillImportFromUrl('ws://127.0.0.1:47187', { url: 'https://share.test/s/t', target: { scope: 'global' } })
