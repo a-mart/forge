@@ -109,6 +109,7 @@ import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
+import { reconcileInterruptedToolCallsForBoot } from "./interrupted-tool-reconciliation.js";
 import {
   isRuntimeRecoveryActiveForRuntime,
   RuntimeRecoveryState
@@ -1691,6 +1692,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     // still having status "streaming" to detect interrupted review runs.
     // Reordering these calls will silently break interrupted-run detection.
     await this.cortexService.reconcileInterruptedReviewRunsForBoot();
+    const interruptedStreamingAgentIds = this.collectStreamingAgentIdsForBoot();
+    reconcileInterruptedToolCallsForBoot({
+      descriptors: this.descriptors,
+      interruptedActorAgentIds: interruptedStreamingAgentIds,
+      now: this.now,
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
     this.normalizeStreamingStatusesForBoot();
     await this.cortexService.recoverIncompleteReviewRunDispatchesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
@@ -5037,6 +5045,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       source: "bootstrap",
       profileId: CORTEX_PROFILE_ID
     });
+  }
+
+  private collectStreamingAgentIdsForBoot(): Set<string> {
+    const streamingAgentIds = new Set<string>();
+
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.status === "streaming") {
+        streamingAgentIds.add(descriptor.agentId);
+      }
+    }
+
+    return streamingAgentIds;
   }
 
   private normalizeStreamingStatusesForBoot(): void {
