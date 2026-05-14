@@ -25,9 +25,14 @@ import type {
   SessionMemoryMergeResult,
   SessionMemoryMergeStrategy,
   SessionMeta,
+  SkillBundleManifestV1,
   SkillFileContentResponse,
   SkillFilesResponse,
-  SkillInventoryEntry
+  SkillImportPreviewResponse,
+  SkillImportResultResponse,
+  SkillImportTarget,
+  SkillInventoryEntry,
+  SkillShareResponse
 } from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import {
@@ -126,6 +131,7 @@ import {
   type WorkerWatchdogState
 } from "./swarm-worker-health-service.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
+import type { ImportSkillOptions } from "./skills/skill-sharing-service.js";
 import {
   getManagedModelProviderCredentialAvailability,
   SecretsEnvService
@@ -4256,6 +4262,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async getSkillFileContent(skillId: string, relativePath: string): Promise<SkillFileContentResponse> {
     return this.settingsService.getSkillFileContent(skillId, relativePath);
+  }
+
+  async shareSkill(skillId: string): Promise<SkillShareResponse> {
+    return this.settingsService.shareSkill(skillId);
+  }
+
+  async previewSkillImportFromUrl(url: string, target?: SkillImportTarget): Promise<SkillImportPreviewResponse> {
+    return this.settingsService.previewSkillImportFromUrl(url, target);
+  }
+
+  async previewSkillImportBundle(bundle: SkillBundleManifestV1, target?: SkillImportTarget): Promise<SkillImportPreviewResponse> {
+    return this.settingsService.previewSkillImportBundle(bundle, target);
+  }
+
+  async importSkill(options: ImportSkillOptions): Promise<SkillImportResultResponse> {
+    return this.settingsService.importSkill(options);
   }
 
   async updateSettingsEnv(values: Record<string, string>): Promise<void> {

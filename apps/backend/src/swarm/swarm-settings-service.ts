@@ -6,9 +6,14 @@ import {
   type ManagerExactModelSelection,
   type CredentialPoolStrategy,
   type PooledCredentialInfo,
+  type SkillBundleManifestV1,
   type SkillFileContentResponse,
   type SkillFilesResponse,
-  type SkillInventoryEntry
+  type SkillImportPreviewResponse,
+  type SkillImportResultResponse,
+  type SkillImportTarget,
+  type SkillInventoryEntry,
+  type SkillShareResponse
 } from "@forge/protocol";
 import type { CredentialPoolService } from "./credential-pool.js";
 import {
@@ -33,6 +38,10 @@ import {
 } from "./secrets-env-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
+import {
+  SkillSharingService,
+  type ImportSkillOptions
+} from "./skills/skill-sharing-service.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 import type {
@@ -389,6 +398,38 @@ export class SwarmSettingsService {
     }
 
     return this.options.skillFileService.getFileContent(skill, relativePath);
+  }
+
+  async shareSkill(skillId: string): Promise<SkillShareResponse> {
+    return this.createSkillSharingService().shareSkill(skillId);
+  }
+
+  async previewSkillImportFromUrl(
+    url: string,
+    target?: SkillImportTarget
+  ): Promise<SkillImportPreviewResponse> {
+    return this.createSkillSharingService().previewImportFromUrl({ url, target });
+  }
+
+  async previewSkillImportBundle(
+    bundle: SkillBundleManifestV1,
+    target?: SkillImportTarget
+  ): Promise<SkillImportPreviewResponse> {
+    return this.createSkillSharingService().previewImportBundle({ bundle, target });
+  }
+
+  async importSkill(options: ImportSkillOptions): Promise<SkillImportResultResponse> {
+    const result = await this.createSkillSharingService().importSkill(options);
+    await this.options.skillMetadataService.reloadSkillMetadata();
+    return result;
+  }
+
+  private createSkillSharingService(): SkillSharingService {
+    return new SkillSharingService({
+      config: this.options.config,
+      skillMetadataService: this.options.skillMetadataService,
+      now: this.options.now ? () => new Date(this.options.now!()) : undefined
+    });
   }
 
   async updateSettingsEnv(values: Record<string, string>): Promise<void> {

@@ -180,6 +180,39 @@ export interface SkillImportPreviewResponse {
   warnings: SkillBundleIssue[]
 }
 
+export type SkillImportConflictStrategy = 'reject' | 'replace'
+
+export interface SkillImportSource {
+  url?: string
+  bundle?: SkillBundleManifestV1
+}
+
+export interface SkillImportPreviewUrlRequest {
+  url: string
+  target?: SkillImportTarget
+}
+
+export interface SkillImportPreviewBundleRequest {
+  bundle: SkillBundleManifestV1
+  target?: SkillImportTarget
+}
+
+export interface SkillImportRequest {
+  source: SkillImportSource
+  target?: SkillImportTarget
+  conflictStrategy?: SkillImportConflictStrategy
+  confirmReplace?: boolean
+}
+
+export interface SkillImportResultResponse {
+  bundle: SkillBundlePreviewManifestV1
+  target: SkillImportTarget
+  rootPath: string
+  skillId?: string
+  replaced: boolean
+  warnings: SkillBundleIssue[]
+}
+
 export interface SkillShareResponse {
   shareUrl: string
   importUrl: string
