@@ -15,6 +15,7 @@ import {
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
 import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
+import { warnWsThrottled } from "./ws-log-throttle.js";
 import { WebSocket } from "ws";
 
 export const DEFAULT_SUBSCRIBE_MESSAGE_COUNT = 200;
@@ -279,7 +280,7 @@ function logBootstrapHistoryTrim(targetAgentId: string, originalCount: number, t
     return;
   }
 
-  console.warn("[swarm] ws:trim_bootstrap_history", {
+  warnWsThrottled(`trim_bootstrap_history:${targetAgentId}`, "[swarm] ws:trim_bootstrap_history", {
     agentId: targetAgentId,
     originalCount,
     trimmedCount,

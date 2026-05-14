@@ -1,5 +1,6 @@
 import type { CollaborationServerEvent, ServerEvent } from "@forge/protocol";
 import { WebSocket } from "ws";
+import { warnWsThrottled } from "./ws-log-throttle.js";
 
 export const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
 const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
@@ -37,7 +38,7 @@ export function sendWsEvent(options: {
   }
 
   if (socket.bufferedAmount > MAX_WS_BUFFERED_AMOUNT_BYTES) {
-    console.warn("[swarm] ws:drop_event:backpressure", {
+    warnWsThrottled(`drop_event:backpressure:${event.type}`, "[swarm] ws:drop_event:backpressure", {
       eventType: event.type,
       bufferedAmount: socket.bufferedAmount,
       maxBufferedAmountBytes: MAX_WS_BUFFERED_AMOUNT_BYTES

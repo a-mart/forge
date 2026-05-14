@@ -3,6 +3,7 @@ import { WebSocket } from 'ws'
 import type { ServerEvent } from '@forge/protocol'
 import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import { WsHandler } from '../ws/ws-handler.js'
+import { resetWsLogThrottleForTest } from '../ws/ws-log-throttle.js'
 
 function createPerfStub(): SidebarPerfRecorder {
   return {
@@ -14,6 +15,78 @@ function createPerfStub(): SidebarPerfRecorder {
 }
 
 describe('WsHandler send guards', () => {
+  it('throttles repeated websocket backpressure warnings by event type', () => {
+    resetWsLogThrottleForTest()
+    const handler = new WsHandler({
+      swarmManager: {
+        getConfig: () => ({
+          debug: false,
+          paths: { dataDir: '/tmp' },
+        }),
+      } as any,
+      integrationRegistry: null,
+      mobilePushService: {} as any,
+      playwrightDiscovery: null,
+      allowNonManagerSubscriptions: true,
+      perf: createPerfStub(),
+    })
+
+    const socket = {
+      readyState: WebSocket.OPEN,
+      bufferedAmount: 2 * 1024 * 1024,
+      send: vi.fn(),
+      terminate: vi.fn(),
+      _socket: {
+        write: vi.fn(),
+      },
+    } as any
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      ;(handler as any).send(socket, {
+        type: 'ready',
+        serverTime: '2026-03-19T00:00:00.000Z',
+        subscribedAgentId: 'cortex',
+      } satisfies ServerEvent)
+      ;(handler as any).send(socket, {
+        type: 'ready',
+        serverTime: '2026-03-19T00:00:01.000Z',
+        subscribedAgentId: 'cortex',
+      } satisfies ServerEvent)
+      ;(handler as any).send(socket, {
+        type: 'agents_snapshot',
+        agents: [],
+      } satisfies ServerEvent)
+      ;(handler as any).send(socket, {
+        type: 'agents_snapshot',
+        agents: [],
+      } satisfies ServerEvent)
+
+      expect(socket.send).not.toHaveBeenCalled()
+      expect(warn).toHaveBeenCalledTimes(2)
+      expect(warn).toHaveBeenNthCalledWith(
+        1,
+        '[swarm] ws:drop_event:backpressure',
+        expect.objectContaining({
+          eventType: 'ready',
+          bufferedAmount: 2 * 1024 * 1024,
+        }),
+      )
+      expect(warn).toHaveBeenNthCalledWith(
+        2,
+        '[swarm] ws:drop_event:backpressure',
+        expect.objectContaining({
+          eventType: 'agents_snapshot',
+          bufferedAmount: 2 * 1024 * 1024,
+        }),
+      )
+    } finally {
+      warn.mockRestore()
+      resetWsLogThrottleForTest()
+    }
+  })
+
   it('drops malformed websocket clients before ws send can recurse into itself', () => {
     const handler = new WsHandler({
       swarmManager: {

@@ -56,7 +56,9 @@ afterEach(() => {
 
 describe("index shutdown signal registration", () => {
   it("registers SIGINT, SIGTERM, and SIGUSR1 on POSIX", async () => {
-    const signals = await loadRegisteredSignals("linux", { FORGE_DAEMONIZED: undefined });
+    const startupCalls: string[] = [];
+    const signals = await loadRegisteredSignals("linux", { FORGE_DAEMONIZED: undefined }, startupCalls);
+    expect(startupCalls.slice(0, 2)).toEqual(["stdio-epipe-guard", "dotenv"]);
     expect(signals).toContain("SIGINT");
     expect(signals).toContain("SIGTERM");
     expect(signals).toContain("SIGUSR1");
@@ -84,7 +86,8 @@ describe("index shutdown signal registration", () => {
 
 async function loadRegisteredSignals(
   platform: NodeJS.Platform,
-  envOverrides: Record<string, string | undefined> = {}
+  envOverrides: Record<string, string | undefined> = {},
+  startupCalls?: string[]
 ): Promise<string[]> {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
   Object.defineProperty(process, "platform", { value: platform });
@@ -109,7 +112,15 @@ async function loadRegisteredSignals(
   );
 
   vi.doMock("dotenv", () => ({
-    config: vi.fn()
+    config: vi.fn(() => {
+      startupCalls?.push("dotenv");
+    })
+  }));
+
+  vi.doMock("../stdio-epipe-guard.js", () => ({
+    installBackendStdioEpipeGuard: vi.fn(() => {
+      startupCalls?.push("stdio-epipe-guard");
+    })
   }));
 
   vi.doMock("../config.js", () => ({
