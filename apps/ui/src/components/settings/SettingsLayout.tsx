@@ -41,9 +41,15 @@ interface SettingsLayoutProps {
   availableTabs?: SettingsTab[]
   /** Non-interactive target badge label (e.g. "Builder backend" or "Collab backend"). */
   targetLabel?: string
+  /**
+   * When true the content area becomes a flex column that fills remaining space
+   * without its own scroll. Children are expected to manage their own scrolling.
+   * Used by the Skills tab whose explorer panels each scroll independently.
+   */
+  fillHeight?: boolean
 }
 
-export function SettingsLayout({ activeTab, onTabChange, onBack, children, contentWidthClassName, availableTabs, targetLabel }: SettingsLayoutProps) {
+export function SettingsLayout({ activeTab, onTabChange, onBack, children, contentWidthClassName, availableTabs, targetLabel, fillHeight }: SettingsLayoutProps) {
   const visibleItems = availableTabs
     ? NAV_ITEMS.filter((item) => availableTabs.includes(item.id))
     : NAV_ITEMS
@@ -128,14 +134,23 @@ export function SettingsLayout({ activeTab, onTabChange, onBack, children, conte
         {/* Content area */}
         <div
           className={cn(
-            'min-h-0 flex-1 overflow-y-auto',
-            '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
-            '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-transparent',
-            '[scrollbar-width:thin] [scrollbar-color:transparent_transparent]',
-            'hover:[&::-webkit-scrollbar-thumb]:bg-border hover:[scrollbar-color:var(--color-border)_transparent]',
+            'min-h-0 flex-1',
+            fillHeight
+              ? 'flex flex-col overflow-hidden'
+              : cn(
+                  'overflow-y-auto',
+                  '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
+                  '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-transparent',
+                  '[scrollbar-width:thin] [scrollbar-color:transparent_transparent]',
+                  'hover:[&::-webkit-scrollbar-thumb]:bg-border hover:[scrollbar-color:var(--color-border)_transparent]',
+                ),
           )}
         >
-          <div className={cn('mx-auto px-4 py-4 md:px-6 md:py-5', contentWidthClassName || 'max-w-3xl')}>
+          <div className={cn(
+            fillHeight
+              ? 'flex min-h-0 flex-1 flex-col px-4 py-4 md:px-6 md:py-5'
+              : cn('mx-auto px-4 py-4 md:px-6 md:py-5', contentWidthClassName || 'max-w-3xl'),
+          )}>
             {children}
           </div>
         </div>

@@ -114,6 +114,7 @@ export function SettingsPanel({
       onTabChange={setActiveTab}
       onBack={onBack}
       contentWidthClassName={activeTab === 'skills' ? 'max-w-full' : undefined}
+      fillHeight={activeTab === 'skills'}
       availableTabs={availableTabs}
       targetLabel={targetLabel}
     >

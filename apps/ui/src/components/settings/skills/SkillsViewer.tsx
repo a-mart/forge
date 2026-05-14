@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useHelpContext } from '@/components/help/help-hooks'
+import { cn } from '@/lib/utils'
 import { FolderOpen, Loader2 } from 'lucide-react'
 import {
   Select,
@@ -315,101 +316,144 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
         selectedScope
       : null
 
+  /* ---------- Render helpers ---------- */
+
+  const hasConfig = selectedSkill && (RichConfigPanel || filteredEnvVariables.length > 0)
+
+  /** Shared config section rendered inside the explorer's detail pane (desktop)
+   *  or below the file viewer (mobile). */
+  const configSection = hasConfig ? (
+    <div className="flex flex-col gap-4 border-t border-border/40 p-4">
+      {RichConfigPanel && (
+        <div className="rounded-lg border border-border bg-card/30 p-4">
+          <RichConfigPanel
+            clientOrWsUrl={clientOrWsUrl}
+            onConfigChanged={handleConfigChanged}
+          />
+        </div>
+      )}
+      {filteredEnvVariables.length > 0 && (
+        <SkillEnvVariables
+          variables={filteredEnvVariables}
+          isLoading={envLoading}
+          error={envError}
+          success={envSuccess}
+          draftByName={draftByName}
+          revealByName={revealByName}
+          savingVar={savingVar}
+          deletingVar={deletingVar}
+          onDraftChange={handleDraftChange}
+          onToggleReveal={handleToggleReveal}
+          onSave={(name) => void handleSave(name)}
+          onDelete={(name) => void handleDelete(name)}
+        />
+      )}
+    </div>
+  ) : null
+
   /* ---------- Render ---------- */
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       {/* Collab settings banner */}
       {isCollab && apiClient && (
-        <CollabSettingsBanner apiClient={apiClient} />
+        <div className="shrink-0">
+          <CollabSettingsBanner apiClient={apiClient} />
+        </div>
       )}
 
       {/* Scope selector */}
-      <SettingsSection
-        label="Skills"
-        description={isCollab
-          ? 'Browse, inspect, and configure installed skills. Select a category or channel to manage skill selection.'
-          : 'Browse, inspect, and configure installed skills.'}
-      >
-        <div className="flex flex-col gap-1.5">
-          <Label className="text-xs font-medium text-muted-foreground">
-            Configuration scope
-          </Label>
-          <Select value={selectedScope} onValueChange={setSelectedScope}>
-            <SelectTrigger className="w-full sm:w-72">
-              <SelectValue placeholder="Select scope" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={SCOPE_GLOBAL}>
-                {isCollab ? 'Global Collaboration' : 'Global'}
-              </SelectItem>
-              {/* Builder: show profiles */}
-              {!isCollab && profiles.map((profile) => (
-                <SelectItem
-                  key={profile.profileId}
-                  value={profile.profileId}
-                >
-                  {profile.displayName || profile.profileId}
+      <div className="shrink-0">
+        <SettingsSection
+          label="Skills"
+          description={isCollab
+            ? 'Browse, inspect, and configure installed skills. Select a category or channel to manage skill selection.'
+            : 'Browse, inspect, and configure installed skills.'}
+        >
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">
+              Configuration scope
+            </Label>
+            <Select value={selectedScope} onValueChange={setSelectedScope}>
+              <SelectTrigger className="w-full sm:w-72">
+                <SelectValue placeholder="Select scope" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SCOPE_GLOBAL}>
+                  {isCollab ? 'Global Collaboration' : 'Global'}
                 </SelectItem>
-              ))}
-              {/* Collab: show categories */}
-              {isCollab && collabCategories.length > 0 && (
-                <SelectGroup>
-                  <SelectLabel className="text-xs">Categories</SelectLabel>
-                  {collabCategories.map((cat) => (
-                    <SelectItem
-                      key={`category:${cat.categoryId}`}
-                      value={`${COLLAB_CATEGORY_PREFIX}${cat.categoryId}`}
-                    >
-                      Category: {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              )}
-              {/* Collab: show channels */}
-              {isCollab && collabChannels.length > 0 && (
-                <SelectGroup>
-                  <SelectLabel className="text-xs">Channels</SelectLabel>
-                  {collabChannels.map((ch) => (
-                    <SelectItem
-                      key={`channel:${ch.channelId}`}
-                      value={`${COLLAB_CHANNEL_PREFIX}${ch.channelId}`}
-                    >
-                      #{ch.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              )}
-            </SelectContent>
-          </Select>
-        </div>
-      </SettingsSection>
+                {/* Builder: show profiles */}
+                {!isCollab && profiles.map((profile) => (
+                  <SelectItem
+                    key={profile.profileId}
+                    value={profile.profileId}
+                  >
+                    {profile.displayName || profile.profileId}
+                  </SelectItem>
+                ))}
+                {/* Collab: show categories */}
+                {isCollab && collabCategories.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel className="text-xs">Categories</SelectLabel>
+                    {collabCategories.map((cat) => (
+                      <SelectItem
+                        key={`category:${cat.categoryId}`}
+                        value={`${COLLAB_CATEGORY_PREFIX}${cat.categoryId}`}
+                      >
+                        Category: {cat.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {/* Collab: show channels */}
+                {isCollab && collabChannels.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel className="text-xs">Channels</SelectLabel>
+                    {collabChannels.map((ch) => (
+                      <SelectItem
+                        key={`channel:${ch.channelId}`}
+                        value={`${COLLAB_CHANNEL_PREFIX}${ch.channelId}`}
+                      >
+                        #{ch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+        </SettingsSection>
+      </div>
 
       {/* Collab: Category skill defaults */}
       {isCollabCategory && selectedCategory && (
-        <CategorySkillDefaultsView
-          clientOrWsUrl={clientOrWsUrl}
-          category={selectedCategory}
-          changeKey={changeKey ?? 0}
-          onCategoryUpdated={handleCategoryUpdated}
-        />
+        <div className="shrink-0">
+          <CategorySkillDefaultsView
+            clientOrWsUrl={clientOrWsUrl}
+            category={selectedCategory}
+            changeKey={changeKey ?? 0}
+            onCategoryUpdated={handleCategoryUpdated}
+          />
+        </div>
       )}
       {isCollabCategory && !selectedCategory && !skillsLoading && (
-        <div className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+        <div className="shrink-0 flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
           <p className="text-xs text-destructive">Category not found.</p>
         </div>
       )}
 
       {/* Collab: Channel skill selection */}
       {isCollabChannel && (
-        <ChannelSkillSelection
-          clientOrWsUrl={clientOrWsUrl}
-          channelId={collabChannelId!}
-          channelLabel={selectedChannelLabel}
-          activeSkillSelection={channelSkillSelection}
-          changeKey={changeKey ?? 0}
-          onSelectionSaved={handleChannelSkillSelectionSaved}
-        />
+        <div className="shrink-0">
+          <ChannelSkillSelection
+            clientOrWsUrl={clientOrWsUrl}
+            channelId={collabChannelId!}
+            channelLabel={selectedChannelLabel}
+            activeSkillSelection={channelSkillSelection}
+            changeKey={changeKey ?? 0}
+            onSelectionSaved={handleChannelSkillSelectionSaved}
+          />
+        </div>
       )}
 
       {/* Loading state */}
@@ -442,8 +486,8 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
       {/* Main skill explorer — master-detail layout */}
       {!skillsLoading && skills.length > 0 && (
         <>
-          {/* Desktop: side-by-side layout */}
-          <div className="hidden md:block">
+          {/* Desktop: side-by-side layout — fills remaining height */}
+          <div className="hidden min-h-0 flex-1 md:flex md:flex-col">
             <SkillExplorerDesktop
               clientOrWsUrl={clientOrWsUrl}
               skills={skills}
@@ -455,11 +499,12 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
               onSearchChange={setSearchQuery}
               onSelectSkill={handleSelectSkill}
               onSelectFile={setSelectedFilePath}
+              configSection={configSection}
             />
           </div>
 
-          {/* Mobile: stacked layout */}
-          <div className="md:hidden">
+          {/* Mobile: stacked layout — scrolls vertically */}
+          <div className="min-h-0 flex-1 overflow-y-auto md:hidden">
             <SkillExplorerMobile
               clientOrWsUrl={clientOrWsUrl}
               skills={skills}
@@ -471,41 +516,9 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
               onSearchChange={setSearchQuery}
               onSelectSkill={handleSelectSkill}
               onSelectFile={setSelectedFilePath}
+              configSection={configSection}
             />
           </div>
-
-          {/* Configuration section */}
-          {selectedSkill && (
-            <div className="flex flex-col gap-6">
-              {/* Rich config panel */}
-              {RichConfigPanel && (
-                <div className="rounded-lg border border-border bg-card/30 p-5">
-                  <RichConfigPanel
-                    clientOrWsUrl={clientOrWsUrl}
-                    onConfigChanged={handleConfigChanged}
-                  />
-                </div>
-              )}
-
-              {/* Environment Variables */}
-              {filteredEnvVariables.length > 0 && (
-                <SkillEnvVariables
-                  variables={filteredEnvVariables}
-                  isLoading={envLoading}
-                  error={envError}
-                  success={envSuccess}
-                  draftByName={draftByName}
-                  revealByName={revealByName}
-                  savingVar={savingVar}
-                  deletingVar={deletingVar}
-                  onDraftChange={handleDraftChange}
-                  onToggleReveal={handleToggleReveal}
-                  onSave={(name) => void handleSave(name)}
-                  onDelete={(name) => void handleDelete(name)}
-                />
-              )}
-            </div>
-          )}
         </>
       )}
     </div>
@@ -527,6 +540,7 @@ function SkillExplorerDesktop({
   onSearchChange,
   onSelectSkill,
   onSelectFile,
+  configSection,
 }: {
   clientOrWsUrl: SettingsApiClient | string
   skills: SkillInventoryEntry[]
@@ -538,62 +552,61 @@ function SkillExplorerDesktop({
   onSearchChange: (q: string) => void
   onSelectSkill: (id: string) => void
   onSelectFile: (path: string) => void
+  configSection: React.ReactNode
 }) {
   return (
-    <div
-      className="overflow-hidden rounded-lg border border-border bg-card/30"
-      style={{ height: 'calc(100vh - 280px)' }}
-    >
-      <div className="flex h-full">
-        {/* Left: Skill list */}
-        <div
-          className="shrink-0 border-r border-border/60 bg-card/20"
-          style={{ width: '220px' }}
-        >
-          <SkillListRail
-            skills={skills}
-            isLoading={skillsLoading}
-            searchQuery={searchQuery}
-            onSearchChange={onSearchChange}
-            selectedSkillId={selectedSkillId}
-            onSelectSkill={onSelectSkill}
-          />
-        </div>
+    <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card/30">
+      {/* Left: Skill list */}
+      <div
+        className="shrink-0 border-r border-border/60 bg-card/20"
+        style={{ width: '220px' }}
+      >
+        <SkillListRail
+          skills={skills}
+          isLoading={skillsLoading}
+          searchQuery={searchQuery}
+          onSearchChange={onSearchChange}
+          selectedSkillId={selectedSkillId}
+          onSelectSkill={onSelectSkill}
+        />
+      </div>
 
-        {/* Center: Detail */}
-        {selectedSkill ? (
-          <>
-            {/* Skill header + file tree */}
-            <div
-              className="flex shrink-0 flex-col border-r border-border/60 bg-card/10"
-              style={{ width: '180px' }}
-            >
-              {/* Skill info header */}
-              <div className="shrink-0 border-b border-border/40 px-3 py-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-sm font-medium text-foreground">
-                    {selectedSkill.name}
-                  </span>
-                  <SkillSourceBadge sourceKind={selectedSkill.sourceKind} />
-                </div>
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                  {selectedSkill.rootPath}
-                </p>
+      {/* Center: Detail */}
+      {selectedSkill ? (
+        <>
+          {/* Skill header + file tree */}
+          <div
+            className="flex shrink-0 flex-col border-r border-border/60 bg-card/10"
+            style={{ width: '180px' }}
+          >
+            {/* Skill info header */}
+            <div className="shrink-0 border-b border-border/40 px-3 py-2">
+              <div className="flex items-center gap-1.5">
+                <span className="truncate text-sm font-medium text-foreground">
+                  {selectedSkill.name}
+                </span>
+                <SkillSourceBadge sourceKind={selectedSkill.sourceKind} />
               </div>
-
-              {/* File tree */}
-              <div className="flex-1 overflow-hidden">
-                <SkillFileTree
-                  clientOrWsUrl={clientOrWsUrl}
-                  skillId={selectedSkill.skillId}
-                  selectedFilePath={selectedFilePath}
-                  onSelectFile={onSelectFile}
-                />
-              </div>
+              <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                {selectedSkill.rootPath}
+              </p>
             </div>
 
-            {/* Right: File viewer */}
-            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            {/* File tree */}
+            <div className="flex-1 overflow-hidden">
+              <SkillFileTree
+                clientOrWsUrl={clientOrWsUrl}
+                skillId={selectedSkill.skillId}
+                selectedFilePath={selectedFilePath}
+                onSelectFile={onSelectFile}
+              />
+            </div>
+          </div>
+
+          {/* Right: File viewer + config */}
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            {/* File viewer fills available space */}
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <SkillFileViewer
                 clientOrWsUrl={clientOrWsUrl}
                 skillId={selectedSkill.skillId}
@@ -601,13 +614,29 @@ function SkillExplorerDesktop({
                 rootPath={selectedSkill.rootPath}
               />
             </div>
-          </>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-muted-foreground">
-            <p className="text-sm">Select a skill to browse its files</p>
+
+            {/* Config section (env vars, rich config) pinned at bottom with bounded scroll */}
+            {configSection && (
+              <div
+                className={cn(
+                  'shrink-0 overflow-y-auto',
+                  '[&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent',
+                  '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-transparent',
+                  '[scrollbar-width:thin] [scrollbar-color:transparent_transparent]',
+                  'hover:[&::-webkit-scrollbar-thumb]:bg-border hover:[scrollbar-color:var(--color-border)_transparent]',
+                )}
+                style={{ maxHeight: '25vh' }}
+              >
+                {configSection}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <div className="flex flex-1 items-center justify-center text-muted-foreground">
+          <p className="text-sm">Select a skill to browse its files</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -627,6 +656,7 @@ function SkillExplorerMobile({
   onSearchChange,
   onSelectSkill,
   onSelectFile,
+  configSection,
 }: {
   clientOrWsUrl: SettingsApiClient | string
   skills: SkillInventoryEntry[]
@@ -638,12 +668,13 @@ function SkillExplorerMobile({
   onSearchChange: (q: string) => void
   onSelectSkill: (id: string) => void
   onSelectFile: (path: string) => void
+  configSection: React.ReactNode
 }) {
   return (
     <div className="flex flex-col gap-4">
-      {/* Skill selector (horizontal scroll) */}
+      {/* Skill selector */}
       <div className="overflow-hidden rounded-lg border border-border bg-card/30">
-        <div style={{ maxHeight: '200px' }}>
+        <div className="overflow-hidden" style={{ height: '200px' }}>
           <SkillListRail
             skills={skills}
             isLoading={skillsLoading}
@@ -666,7 +697,7 @@ function SkillExplorerMobile({
           {/* File tree */}
           <div
             className="overflow-hidden rounded-lg border border-border bg-card/30"
-            style={{ maxHeight: '200px' }}
+            style={{ height: '200px' }}
           >
             <SkillFileTree
               clientOrWsUrl={clientOrWsUrl}
@@ -688,6 +719,13 @@ function SkillExplorerMobile({
               rootPath={selectedSkill.rootPath}
             />
           </div>
+
+          {/* Config section */}
+          {configSection && (
+            <div className="rounded-lg border border-border bg-card/30">
+              {configSection}
+            </div>
+          )}
         </>
       )}
     </div>

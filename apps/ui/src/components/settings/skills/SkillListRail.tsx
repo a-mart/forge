@@ -35,7 +35,7 @@ export function SkillListRail({
   }, [skills, searchQuery])
 
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* Search */}
       <div className="shrink-0 border-b border-border/40 p-2">
         <div className="relative">

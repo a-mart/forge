@@ -1,5 +1,5 @@
 import { createElement, isValidElement, memo, useCallback, useMemo, useState, type ReactNode } from 'react'
-import { Check, ChevronRight, Copy, FileCode2, FileText, ZoomIn } from 'lucide-react'
+import { Check, ChevronRight, ClipboardCopy, Copy, FileCode2, FileText, ZoomIn } from 'lucide-react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
@@ -8,6 +8,7 @@ import {
   parseArtifactReference,
   type ArtifactReference,
 } from '@/lib/artifacts'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { MermaidBlock } from './message-list/MermaidBlock'
 import { ContentZoomDialog } from './ContentZoomDialog'
@@ -431,6 +432,18 @@ function ArtifactReferenceCard({
 }) {
   const isMarkdownFile = MARKDOWN_EXTENSION_PATTERN.test(artifact.fileName)
   const CardIcon = isMarkdownFile ? FileText : FileCode2
+  const [pathCopied, setPathCopied] = useState(false)
+
+  const handleCopyPath = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      void navigator.clipboard.writeText(artifact.path).then(() => {
+        setPathCopied(true)
+        setTimeout(() => setPathCopied(false), 1500)
+      })
+    },
+    [artifact.path],
+  )
 
   return (
     <Button
@@ -456,6 +469,33 @@ function ArtifactReferenceCard({
         </span>
         <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">{artifact.path}</span>
       </span>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={handleCopyPath}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleCopyPath(e as unknown as React.MouseEvent)
+              }
+            }}
+            className={cn(
+              'inline-flex size-6 shrink-0 items-center justify-center rounded-md transition-colors',
+              'opacity-0 group-hover/card:opacity-100',
+              pathCopied
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : 'text-muted-foreground/50 hover:text-muted-foreground',
+            )}
+            aria-label={pathCopied ? 'Copied' : 'Copy path'}
+          >
+            {pathCopied ? <Check className="size-3.5" aria-hidden="true" /> : <ClipboardCopy className="size-3.5" aria-hidden="true" />}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top">{pathCopied ? 'Copied!' : 'Copy path'}</TooltipContent>
+      </Tooltip>
 
       <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/50 transition-all group-hover/card:text-primary">
         <ChevronRight className="size-4" aria-hidden="true" />

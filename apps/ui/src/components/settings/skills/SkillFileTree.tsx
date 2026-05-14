@@ -151,7 +151,7 @@ export function SkillFileTree({
   return (
     <div
       className={cn(
-        'overflow-y-auto',
+        'h-full overflow-y-auto',
         '[&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent',
         '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-transparent',
         '[scrollbar-width:thin] [scrollbar-color:transparent_transparent]',

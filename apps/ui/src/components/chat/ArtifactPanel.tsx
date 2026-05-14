@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FrontMatterBlock } from '@/components/ui/FrontMatterBlock'
 import { parseFrontMatter } from '@/lib/parse-front-matter'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { ExternalLink, FileCode2, FileImage, FileText, FolderOpen, Loader2, X } from 'lucide-react'
+import { Check, ClipboardCopy, ExternalLink, FileCode2, FileImage, FileText, FolderOpen, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -13,6 +13,7 @@ import {
   EDITOR_URL_SCHEMES,
   readStoredEditorPreference,
 } from '@/lib/editor-preference'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { isElectron } from '@/lib/electron-bridge'
 import { useSelectionContainment } from '@/hooks/useSelectionContainment'
@@ -50,6 +51,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const editorLabel = EDITOR_LABELS[editorPreference]
 
   const artifactPath = artifact?.path ?? null
+  const [pathCopied, setPathCopied] = useState(false)
 
   useEffect(() => {
     if (!artifactPath) {
@@ -150,6 +152,15 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   }
 
   const displayPath = resolvedPath ?? artifactPath ?? ''
+  const handleCopyPath = useCallback(() => {
+    const pathToCopy = displayPath || artifact?.path
+    if (!pathToCopy) return
+    void navigator.clipboard.writeText(pathToCopy).then(() => {
+      setPathCopied(true)
+      setTimeout(() => setPathCopied(false), 1500)
+    })
+  }, [displayPath, artifact?.path])
+
   const isImage = useMemo(
     () => IMAGE_FILE_PATTERN.test(artifact?.fileName ?? '') || IMAGE_FILE_PATTERN.test(displayPath),
     [artifact?.fileName, displayPath],
@@ -229,6 +240,24 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
                 <h2 className="truncate text-sm font-bold text-foreground">{artifact?.fileName}</h2>
                 <p className="truncate font-mono text-[11px] text-muted-foreground">{displayPath}</p>
               </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleCopyPath}
+                    className={cn(
+                      'inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors',
+                      pathCopied
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-muted-foreground/50 hover:text-muted-foreground',
+                    )}
+                    aria-label={pathCopied ? 'Copied' : 'Copy path'}
+                  >
+                    {pathCopied ? <Check className="size-3.5" aria-hidden="true" /> : <ClipboardCopy className="size-3.5" aria-hidden="true" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{pathCopied ? 'Copied!' : 'Copy path'}</TooltipContent>
+              </Tooltip>
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
