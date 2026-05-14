@@ -4,7 +4,7 @@ compatibility_date = "2026-05-13"
 workers_dev = false
 
 # Public production route is expected to be configured by deployment automation, e.g.
-# routes = [{ pattern = "share.forge.dev", custom_domain = true }]
+# routes = [{ pattern = "forgeskills.radops.ai", custom_domain = true }]
 
 [[r2_buckets]]
 binding = "SKILL_SHARES_BUCKET"
@@ -19,7 +19,7 @@ tag = "v1"
 new_sqlite_classes = ["SkillShareLimiter"]
 
 [vars]
-PUBLIC_BASE_URL = "https://share.forge.dev"
+PUBLIC_BASE_URL = "https://forgeskills.radops.ai"
 SHARE_TTL_SECONDS = "604800"
 MAX_REQUEST_BYTES = "36700160"
 MAX_BUNDLE_BYTES = "26214400"
