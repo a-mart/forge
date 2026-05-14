@@ -189,6 +189,46 @@ describe("SkillSharingService", () => {
       .resolves.toContain("# Imported");
   });
 
+  it("surfaces stale target roots before replacing when an effective repo skill also exists", async () => {
+    const sourceHarness = await createHarness();
+    await createGlobalSkill(sourceHarness.config, "compound-collision", {
+      "SKILL.md": "---\nname: Compound Collision\n---\n\n# Imported\n"
+    });
+    const bundle = await packageGlobalSkill(sourceHarness, "compound-collision");
+
+    const targetHarness = await createHarness();
+    await createRepoSkill(targetHarness.config, "compound-collision", {
+      "SKILL.md": "---\nname: Compound Collision\n---\n\n# Repo\n"
+    });
+    const staleRoot = join(targetHarness.config.paths.dataDir, "skills", "compound-collision");
+    await mkdir(staleRoot, { recursive: true });
+    await writeFile(join(staleRoot, "STALE.txt"), "stale local data\n", "utf8");
+
+    const preview = await targetHarness.sharingService.previewImportBundle({ bundle });
+    expect(preview.conflict).toMatchObject({
+      exists: true,
+      existingSourceKind: "machine-local",
+      existingRootPath: staleRoot,
+      existingDirectoryName: "compound-collision",
+      conflictType: "target_path",
+      relatedConflicts: [
+        expect.objectContaining({
+          sourceKind: "repo",
+          directoryName: "compound-collision",
+          conflictType: "effective_skill"
+        })
+      ]
+    });
+
+    await targetHarness.sharingService.importSkill({
+      source: { bundle },
+      conflictStrategy: "replace",
+      confirmReplace: true
+    });
+    await expect(readFile(join(staleRoot, "SKILL.md"), "utf8")).resolves.toContain("# Imported");
+    await expect(lstat(join(staleRoot, "STALE.txt"))).rejects.toThrow();
+  });
+
   it("blocks imports that would shadow required built-in skills", async () => {
     const sourceHarness = await createHarness();
     await createGlobalSkill(sourceHarness.config, "brave-search", {

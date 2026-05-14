@@ -10,6 +10,7 @@ import type {
   SkillImportConflictState,
   SkillImportConflictStrategy,
   SkillImportPreviewResponse,
+  SkillImportRelatedConflict,
   SkillImportRequest,
   SkillImportResultResponse,
   SkillImportTarget,
@@ -164,7 +165,7 @@ export class SkillSharingService {
     }
 
     const rootPath = await this.installBundle(bundle, target, {
-      replace: preview.conflict.exists && conflictStrategy === "replace"
+      replace: preview.conflict.conflictType === "target_path" && conflictStrategy === "replace"
     });
     await this.options.skillMetadataService.reloadSkillMetadata();
     const importedSkill = await this.findImportedSkill(bundle, target, rootPath);
@@ -370,33 +371,56 @@ export class SkillSharingService {
     target: SkillImportTarget
   ): Promise<SkillImportConflictState> {
     const targetRoot = this.resolveTargetRoot(bundle.skill.handle, target);
-    const effectiveSkill = await this.findEffectiveSkillByHandle(bundle.skill.handle, target);
-    if (effectiveSkill) {
-      const isTargetPath = resolve(effectiveSkill.rootPath) === resolve(targetRoot);
-      const isRequiredBuiltin = (effectiveSkill.sourceKind === "builtin" || effectiveSkill.sourceKind === "repo")
-        && isRequiredSkillDirectoryName(effectiveSkill.directoryName);
+    const [effectiveSkill, targetExists] = await Promise.all([
+      this.findEffectiveSkillByHandle(bundle.skill.handle, target),
+      pathExists(targetRoot)
+    ]);
+
+    const effectiveConflict = effectiveSkill
+      ? this.buildEffectiveConflict(effectiveSkill, targetRoot)
+      : undefined;
+    const effectiveMatchesTarget = effectiveSkill
+      ? resolve(effectiveSkill.rootPath) === resolve(targetRoot)
+      : false;
+
+    if (targetExists && !effectiveMatchesTarget) {
+      return {
+        exists: true,
+        existingSourceKind: target.scope === "global" ? "machine-local" : "profile",
+        existingRootPath: targetRoot,
+        existingDirectoryName: bundle.skill.handle,
+        conflictType: "target_path",
+        ...(effectiveConflict ? { relatedConflicts: [effectiveConflict] } : {}),
+        ...(effectiveConflict?.isBlocking ? { isRequiredBuiltin: effectiveConflict.isRequiredBuiltin, isBlocking: true } : {})
+      };
+    }
+
+    if (effectiveSkill && effectiveConflict) {
       return {
         exists: true,
         existingSourceKind: effectiveSkill.sourceKind,
         existingSkillId: effectiveSkill.skillId,
         existingRootPath: effectiveSkill.rootPath,
         existingDirectoryName: effectiveSkill.directoryName,
-        conflictType: isTargetPath ? "target_path" : "effective_skill",
-        ...(isRequiredBuiltin ? { isRequiredBuiltin: true, isBlocking: true } : {})
+        conflictType: effectiveMatchesTarget ? "target_path" : "effective_skill",
+        ...(effectiveConflict.isRequiredBuiltin ? { isRequiredBuiltin: true, isBlocking: true } : {})
       };
     }
 
-    const exists = await pathExists(targetRoot);
-    if (!exists) {
-      return { exists: false };
-    }
+    return { exists: false };
+  }
 
+  private buildEffectiveConflict(effectiveSkill: SkillMetadata, targetRoot: string): SkillImportRelatedConflict {
+    const isTargetPath = resolve(effectiveSkill.rootPath) === resolve(targetRoot);
+    const isRequiredBuiltin = (effectiveSkill.sourceKind === "builtin" || effectiveSkill.sourceKind === "repo")
+      && isRequiredSkillDirectoryName(effectiveSkill.directoryName);
     return {
-      exists: true,
-      existingSourceKind: target.scope === "global" ? "machine-local" : "profile",
-      existingRootPath: targetRoot,
-      existingDirectoryName: bundle.skill.handle,
-      conflictType: "target_path"
+      sourceKind: effectiveSkill.sourceKind,
+      skillId: effectiveSkill.skillId,
+      rootPath: effectiveSkill.rootPath,
+      directoryName: effectiveSkill.directoryName,
+      conflictType: isTargetPath ? "target_path" : "effective_skill",
+      ...(isRequiredBuiltin ? { isRequiredBuiltin: true, isBlocking: true } : {})
     };
   }
 
