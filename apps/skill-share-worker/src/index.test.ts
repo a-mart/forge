@@ -318,7 +318,47 @@ describe("skill share worker", () => {
     });
   });
 
-  it("keeps download reservation cleanup scoped to the current share", async () => {
+  it("migrates legacy download reservations once without leaving false quota", async () => {
+    const harness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
+    const upload = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-reserve") })
+    });
+    const payload = await upload.json() as { shareUrl: string };
+    const token = new URL(payload.shareUrl).pathname.split("/").at(-1)!;
+    const shareId = extractShareIdFromObjectKey(Array.from(harness.bucket.objects.keys())[0]);
+    const legacyKey = seedLegacyPendingDownloadReservationForTest(harness, shareId);
+    harness.limiter.storage.listPrefixes.length = 0;
+
+    const success = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+    const denied = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+
+    expect(success.status).toBe(200);
+    expect(denied.status).toBe(429);
+    expect(harness.limiter.storage.data.has(legacyKey)).toBe(false);
+    expect(harness.limiter.storage.data.get("meta:legacyDownloadReservationsMigrated")).toBe(true);
+    expect(harness.limiter.storage.listPrefixes.filter((prefix) => prefix === "download-reservation:")).toHaveLength(1);
+  });
+
+  it("migrates legacy download reservations during share release", async () => {
+    const harness = await createHarness();
+    await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("legacy-release") })
+    });
+    const shareId = extractShareIdFromObjectKey(Array.from(harness.bucket.objects.keys())[0]);
+    const legacyKey = seedLegacyPendingDownloadReservationForTest(harness, shareId);
+    harness.limiter.storage.listPrefixes.length = 0;
+
+    const release = await callLimiterForTest(harness.limiter, "/release-share", { shareId });
+
+    expect(release).toMatchObject({ ok: true, released: true });
+    expect(harness.limiter.storage.data.has(`share:${shareId}`)).toBe(false);
+    expect(harness.limiter.storage.data.has(legacyKey)).toBe(false);
+    expect(harness.limiter.storage.listPrefixes.filter((prefix) => prefix === "download-reservation:")).toHaveLength(1);
+  });
+
+  it("keeps download reservation cleanup scoped to the current share after legacy migration", async () => {
     const harness = await createHarness();
     await harness.fetch("/api/v1/skill-shares", {
       method: "POST",
@@ -329,6 +369,7 @@ describe("skill share worker", () => {
       body: JSON.stringify({ bundle: await createValidBundle("scoped-two") })
     });
     const [firstShareId, secondShareId] = Array.from(harness.bucket.objects.keys()).map(extractShareIdFromObjectKey);
+    harness.limiter.storage.data.set("meta:legacyDownloadReservationsMigrated", true);
     harness.limiter.storage.listPrefixes.length = 0;
 
     await reserveDownloadForTest(harness.limiter, firstShareId, START_MS);
@@ -481,6 +522,42 @@ async function createHarness(options: {
 }
 
 type Harness = Awaited<ReturnType<typeof createHarness>>;
+
+interface TestShareQuotaState {
+  bytes: number;
+  expiresAtMs: number;
+  downloads: number;
+  egressBytes: number;
+  pendingDownloads?: number;
+  pendingEgressBytes?: number;
+}
+
+interface TestDownloadReservationState {
+  shareId: string;
+  bytes: number;
+  expiresAtMs: number;
+}
+
+function seedLegacyPendingDownloadReservationForTest(harness: Harness, shareId: string): string {
+  const shareKey = `share:${shareId}`;
+  const share = harness.limiter.storage.data.get(shareKey) as TestShareQuotaState | undefined;
+  if (!share) {
+    throw new Error(`Missing share quota state for ${shareId}`);
+  }
+
+  const legacyKey = `download-reservation:legacy-${shareId}`;
+  harness.limiter.storage.data.set(shareKey, {
+    ...share,
+    pendingDownloads: (share.pendingDownloads ?? 0) + 1,
+    pendingEgressBytes: (share.pendingEgressBytes ?? 0) + share.bytes
+  } satisfies TestShareQuotaState);
+  harness.limiter.storage.data.set(legacyKey, {
+    shareId,
+    bytes: share.bytes,
+    expiresAtMs: START_MS + 60_000
+  } satisfies TestDownloadReservationState);
+  return legacyKey;
+}
 
 async function reserveDownloadForTest(
   limiter: MockDurableObjectNamespace,

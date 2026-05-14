@@ -54,6 +54,7 @@ interface DownloadReservationState {
 
 const META_ACTIVE_OBJECTS_KEY = "meta:activeObjects";
 const META_ACTIVE_BYTES_KEY = "meta:activeBytes";
+const META_LEGACY_DOWNLOAD_RESERVATIONS_MIGRATED_KEY = "meta:legacyDownloadReservationsMigrated";
 const SHARE_PREFIX = "share:";
 const UPLOAD_WINDOW_PREFIX = "upload:";
 const DOWNLOAD_WINDOW_PREFIX = "download:";
@@ -288,12 +289,31 @@ export class SkillShareLimiter {
   }
 
   private async cleanupStaleDownloadReservations(shareId: string, nowMs: number): Promise<void> {
+    await this.migrateLegacyDownloadReservationsOnce();
     const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: getShareReservationPrefix(shareId) });
     for (const [key, reservation] of reservations.entries()) {
       if (reservation.expiresAtMs <= nowMs) {
         await this.rollbackReservation(key, reservation);
       }
     }
+  }
+
+  private async migrateLegacyDownloadReservationsOnce(): Promise<void> {
+    const alreadyMigrated = await this.state.storage.get<boolean>(META_LEGACY_DOWNLOAD_RESERVATIONS_MIGRATED_KEY);
+    if (alreadyMigrated) {
+      return;
+    }
+
+    // Compatibility for the short-lived rollout that keyed reservations globally as
+    // `download-reservation:<uuid>`. This one-time scan rolls those pending records
+    // back and then sets a marker so public download paths keep share-scoped cleanup.
+    const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: DOWNLOAD_RESERVATION_PREFIX });
+    for (const [key, reservation] of reservations.entries()) {
+      if (isLegacyDownloadReservationKey(key)) {
+        await this.rollbackReservation(key, reservation);
+      }
+    }
+    await this.state.storage.put(META_LEGACY_DOWNLOAD_RESERVATIONS_MIGRATED_KEY, true);
   }
 
   private async rollbackReservation(key: string, reservation: DownloadReservationState): Promise<void> {
@@ -307,6 +327,7 @@ export class SkillShareLimiter {
   }
 
   private async deleteReservationsForShare(shareId: string): Promise<void> {
+    await this.migrateLegacyDownloadReservationsOnce();
     const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: getShareReservationPrefix(shareId) });
     for (const [key, reservation] of reservations.entries()) {
       if (reservation.shareId === shareId) {
@@ -330,6 +351,11 @@ export class SkillShareLimiter {
     const value = await this.state.storage.get<number>(key);
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
   }
+}
+
+function isLegacyDownloadReservationKey(key: string): boolean {
+  const reservationId = key.slice(DOWNLOAD_RESERVATION_PREFIX.length);
+  return !reservationId.includes(":");
 }
 
 function createDownloadReservationId(shareId: string): string {
