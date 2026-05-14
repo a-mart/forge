@@ -10,6 +10,8 @@ interface ShareQuotaState {
   expiresAtMs: number;
   downloads: number;
   egressBytes: number;
+  pendingDownloads?: number;
+  pendingEgressBytes?: number;
 }
 
 interface ReserveUploadRequest {
@@ -23,7 +25,7 @@ interface ReserveUploadRequest {
   maxActiveStorageBytes: number;
 }
 
-interface RecordDownloadRequest {
+interface ReserveDownloadRequest {
   shareId: string;
   nowMs: number;
   downloadRateLimitPerMinute: number;
@@ -31,8 +33,23 @@ interface RecordDownloadRequest {
   maxEgressBytesPerShare: number;
 }
 
+interface CommitDownloadRequest {
+  reservationId: string;
+  nowMs: number;
+}
+
+interface RollbackDownloadRequest {
+  reservationId: string;
+}
+
 interface ReleaseShareRequest {
   shareId: string;
+}
+
+interface DownloadReservationState {
+  shareId: string;
+  bytes: number;
+  expiresAtMs: number;
 }
 
 const META_ACTIVE_OBJECTS_KEY = "meta:activeObjects";
@@ -40,6 +57,8 @@ const META_ACTIVE_BYTES_KEY = "meta:activeBytes";
 const SHARE_PREFIX = "share:";
 const UPLOAD_WINDOW_PREFIX = "upload:";
 const DOWNLOAD_WINDOW_PREFIX = "download:";
+const DOWNLOAD_RESERVATION_PREFIX = "download-reservation:";
+const DOWNLOAD_RESERVATION_TTL_MS = 60_000;
 
 export class SkillShareLimiter {
   constructor(private readonly state: DurableObjectStateBinding) {}
@@ -50,8 +69,14 @@ export class SkillShareLimiter {
       if (request.method === "POST" && url.pathname === "/reserve-upload") {
         return jsonResponse(await this.reserveUpload(await request.json() as ReserveUploadRequest));
       }
-      if (request.method === "POST" && url.pathname === "/record-download") {
-        return jsonResponse(await this.recordDownload(await request.json() as RecordDownloadRequest));
+      if (request.method === "POST" && url.pathname === "/reserve-download") {
+        return jsonResponse(await this.reserveDownload(await request.json() as ReserveDownloadRequest));
+      }
+      if (request.method === "POST" && url.pathname === "/commit-download") {
+        return jsonResponse(await this.commitDownload(await request.json() as CommitDownloadRequest));
+      }
+      if (request.method === "POST" && url.pathname === "/rollback-download") {
+        return jsonResponse(await this.rollbackDownload(await request.json() as RollbackDownloadRequest));
       }
       if (request.method === "POST" && url.pathname === "/release-share") {
         return jsonResponse(await this.releaseShare(await request.json() as ReleaseShareRequest));
@@ -111,10 +136,12 @@ export class SkillShareLimiter {
     return { ok: true };
   }
 
-  private async recordDownload(body: RecordDownloadRequest): Promise<Record<string, unknown>> {
+  private async reserveDownload(body: ReserveDownloadRequest): Promise<Record<string, unknown>> {
     if (!isSafeRequestNumber(body.nowMs)) {
       return { ok: false, reason: "invalid_request" };
     }
+
+    await this.cleanupStaleDownloadReservations(body.nowMs);
 
     const shareKey = `${SHARE_PREFIX}${body.shareId}`;
     const share = await this.state.storage.get<ShareQuotaState>(shareKey);
@@ -137,17 +164,66 @@ export class SkillShareLimiter {
     }
 
     const retryAfterSeconds = Math.max(1, Math.ceil((share.expiresAtMs - body.nowMs) / 1000));
-    if (share.downloads + 1 > body.maxDownloadsPerShare) {
+    const pendingDownloads = share.pendingDownloads ?? 0;
+    const pendingEgressBytes = share.pendingEgressBytes ?? 0;
+    if (share.downloads + pendingDownloads + 1 > body.maxDownloadsPerShare) {
       return { ok: false, reason: "share_download_budget_exceeded", retryAfterSeconds };
     }
-    if (share.egressBytes + share.bytes > body.maxEgressBytesPerShare) {
+    if (share.egressBytes + pendingEgressBytes + share.bytes > body.maxEgressBytesPerShare) {
       return { ok: false, reason: "share_egress_budget_exceeded", retryAfterSeconds };
     }
 
-    share.downloads += 1;
-    share.egressBytes += share.bytes;
+    const reservationId = crypto.randomUUID();
+    share.pendingDownloads = pendingDownloads + 1;
+    share.pendingEgressBytes = pendingEgressBytes + share.bytes;
     await this.state.storage.put(shareKey, share);
+    await this.state.storage.put<DownloadReservationState>(`${DOWNLOAD_RESERVATION_PREFIX}${reservationId}`, {
+      shareId: body.shareId,
+      bytes: share.bytes,
+      expiresAtMs: Math.min(body.nowMs + DOWNLOAD_RESERVATION_TTL_MS, share.expiresAtMs)
+    });
+    return { ok: true, reservationId, bytes: share.bytes };
+  }
+
+  private async commitDownload(body: CommitDownloadRequest): Promise<Record<string, unknown>> {
+    if (!isSafeRequestNumber(body.nowMs)) {
+      return { ok: false, reason: "invalid_request" };
+    }
+
+    const reservationKey = `${DOWNLOAD_RESERVATION_PREFIX}${body.reservationId}`;
+    const reservation = await this.state.storage.get<DownloadReservationState>(reservationKey);
+    if (!reservation) {
+      return { ok: false, reason: "reservation_missing" };
+    }
+
+    const shareKey = `${SHARE_PREFIX}${reservation.shareId}`;
+    const share = await this.state.storage.get<ShareQuotaState>(shareKey);
+    if (!share) {
+      await this.state.storage.delete(reservationKey);
+      return { ok: false, reason: "expired" };
+    }
+    if (share.expiresAtMs <= body.nowMs) {
+      await this.rollbackReservation(reservationKey, reservation);
+      return { ok: false, reason: "expired" };
+    }
+
+    this.applyReservationDelta(share, reservation, "rollback");
+    share.downloads += 1;
+    share.egressBytes += reservation.bytes;
+    await this.state.storage.put(shareKey, share);
+    await this.state.storage.delete(reservationKey);
     return { ok: true };
+  }
+
+  private async rollbackDownload(body: RollbackDownloadRequest): Promise<Record<string, unknown>> {
+    const reservationKey = `${DOWNLOAD_RESERVATION_PREFIX}${body.reservationId}`;
+    const reservation = await this.state.storage.get<DownloadReservationState>(reservationKey);
+    if (!reservation) {
+      return { ok: true, rolledBack: false };
+    }
+
+    await this.rollbackReservation(reservationKey, reservation);
+    return { ok: true, rolledBack: true };
   }
 
   private async releaseShare(body: ReleaseShareRequest): Promise<Record<string, unknown>> {
@@ -158,6 +234,7 @@ export class SkillShareLimiter {
     }
 
     await this.state.storage.delete(shareKey);
+    await this.deleteReservationsForShare(body.shareId);
     await this.state.storage.put(META_ACTIVE_OBJECTS_KEY, Math.max(0, await this.getNumber(META_ACTIVE_OBJECTS_KEY) - 1));
     await this.state.storage.put(META_ACTIVE_BYTES_KEY, Math.max(0, await this.getNumber(META_ACTIVE_BYTES_KEY) - share.bytes));
     return { ok: true, released: true };
@@ -207,6 +284,45 @@ export class SkillShareLimiter {
           await this.state.storage.delete(key);
         }
       }
+    }
+  }
+
+  private async cleanupStaleDownloadReservations(nowMs: number): Promise<void> {
+    const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: DOWNLOAD_RESERVATION_PREFIX });
+    for (const [key, reservation] of reservations.entries()) {
+      if (reservation.expiresAtMs <= nowMs) {
+        await this.rollbackReservation(key, reservation);
+      }
+    }
+  }
+
+  private async rollbackReservation(key: string, reservation: DownloadReservationState): Promise<void> {
+    const shareKey = `${SHARE_PREFIX}${reservation.shareId}`;
+    const share = await this.state.storage.get<ShareQuotaState>(shareKey);
+    if (share) {
+      this.applyReservationDelta(share, reservation, "rollback");
+      await this.state.storage.put(shareKey, share);
+    }
+    await this.state.storage.delete(key);
+  }
+
+  private async deleteReservationsForShare(shareId: string): Promise<void> {
+    const reservations = await this.state.storage.list<DownloadReservationState>({ prefix: DOWNLOAD_RESERVATION_PREFIX });
+    for (const [key, reservation] of reservations.entries()) {
+      if (reservation.shareId === shareId) {
+        await this.state.storage.delete(key);
+      }
+    }
+  }
+
+  private applyReservationDelta(
+    share: ShareQuotaState,
+    reservation: DownloadReservationState,
+    direction: "rollback"
+  ): void {
+    if (direction === "rollback") {
+      share.pendingDownloads = Math.max(0, (share.pendingDownloads ?? 0) - 1);
+      share.pendingEgressBytes = Math.max(0, (share.pendingEgressBytes ?? 0) - reservation.bytes);
     }
   }
 

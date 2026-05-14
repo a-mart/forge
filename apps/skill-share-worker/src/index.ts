@@ -225,7 +225,7 @@ async function loadSharedObject(
     return { ok: false, status: verification.status };
   }
 
-  const quota = await recordDownload(limiter, {
+  const quota = await reserveDownload(limiter, {
     shareId: verification.id,
     nowMs: state.now(),
     downloadRateLimitPerMinute: config.downloadRateLimitPerMinute,
@@ -239,19 +239,23 @@ async function loadSharedObject(
     return { ok: false, status: quota.status, retryAfterSeconds: quota.retryAfterSeconds };
   }
 
+  const reservationId = quota.reservationId;
   const objectKey = `${OBJECT_PREFIX}${verification.id}.json`;
   let object: R2ObjectBody | null;
   try {
     object = await bucket.get(objectKey);
   } catch {
+    await rollbackDownload(limiter, reservationId);
     return { ok: false, status: 502 };
   }
   if (!object) {
+    await rollbackDownload(limiter, reservationId);
     return { ok: false, status: 404 };
   }
 
   const metadataExpiresAtMs = Date.parse(object.customMetadata?.expiresAt ?? "");
   if (!Number.isFinite(metadataExpiresAtMs) || metadataExpiresAtMs <= state.now()) {
+    await rollbackDownload(limiter, reservationId);
     await safeDeleteAndRelease(bucket, limiter, verification.id);
     return { ok: false, status: 410 };
   }
@@ -262,7 +266,16 @@ async function loadSharedObject(
     objectText = await object.text();
     bundle = JSON.parse(objectText) as SkillBundleManifestV1;
   } catch {
+    await rollbackDownload(limiter, reservationId);
     return { ok: false, status: 502 };
+  }
+
+  const commit = await commitDownload(limiter, reservationId, state.now());
+  if (!commit.ok) {
+    if (commit.status === 410) {
+      await safeDeleteAndRelease(bucket, limiter, verification.id);
+    }
+    return { ok: false, status: commit.status, retryAfterSeconds: commit.retryAfterSeconds };
   }
 
   return { ok: true, bundle, object, objectText };
@@ -272,6 +285,7 @@ interface LimiterResult {
   ok: boolean;
   reason?: string;
   retryAfterSeconds?: number;
+  reservationId?: string;
 }
 
 async function reserveUpload(
@@ -281,12 +295,14 @@ async function reserveUpload(
   return callLimiter(limiter, "/reserve-upload", body);
 }
 
-async function recordDownload(
+async function reserveDownload(
   limiter: DurableObjectNamespaceBinding,
   body: Record<string, unknown>
-): Promise<{ ok: true } | { ok: false; status: 410 | 429 | 503; retryAfterSeconds?: number }> {
-  const result = await callLimiter(limiter, "/record-download", body);
-  if (result.ok) return { ok: true };
+): Promise<{ ok: true; reservationId: string } | { ok: false; status: 410 | 429 | 503; retryAfterSeconds?: number }> {
+  const result = await callLimiter(limiter, "/reserve-download", body);
+  if (result.ok && typeof result.reservationId === "string") {
+    return { ok: true, reservationId: result.reservationId };
+  }
   if (result.reason === "expired") {
     return { ok: false, status: 410, retryAfterSeconds: result.retryAfterSeconds };
   }
@@ -294,6 +310,21 @@ async function recordDownload(
     return { ok: false, status: 429, retryAfterSeconds: result.retryAfterSeconds };
   }
   return { ok: false, status: 503, retryAfterSeconds: result.retryAfterSeconds };
+}
+
+async function commitDownload(
+  limiter: DurableObjectNamespaceBinding,
+  reservationId: string,
+  nowMs: number
+): Promise<{ ok: true } | { ok: false; status: 410 | 503; retryAfterSeconds?: number }> {
+  const result = await callLimiter(limiter, "/commit-download", { reservationId, nowMs });
+  if (result.ok) return { ok: true };
+  if (result.reason === "expired") return { ok: false, status: 410, retryAfterSeconds: result.retryAfterSeconds };
+  return { ok: false, status: 503, retryAfterSeconds: result.retryAfterSeconds };
+}
+
+async function rollbackDownload(limiter: DurableObjectNamespaceBinding, reservationId: string): Promise<void> {
+  await callLimiter(limiter, "/rollback-download", { reservationId });
 }
 
 async function releaseShare(limiter: DurableObjectNamespaceBinding, shareId: string): Promise<void> {

@@ -83,6 +83,7 @@ class MockR2Bucket implements R2BucketBinding {
   putCount = 0;
   getCount = 0;
   deleteCount = 0;
+  throwOnGet = false;
 
   async put(key: string, value: string | ArrayBuffer | Uint8Array, options?: R2PutOptions): Promise<void> {
     this.putCount += 1;
@@ -92,6 +93,9 @@ class MockR2Bucket implements R2BucketBinding {
 
   async get(key: string): Promise<R2ObjectBody | null> {
     this.getCount += 1;
+    if (this.throwOnGet) {
+      throw new Error("simulated R2 get failure");
+    }
     return this.objects.get(key) ?? null;
   }
 
@@ -282,6 +286,36 @@ describe("skill share worker", () => {
     expect(harness.bucket.getCount).toBe(getCountAfterFirstDownload);
   });
 
+  it("rolls back download reservations when later R2 reads fail", async () => {
+    await expectFailedReadDoesNotBurnDownloadQuota({
+      name: "missing-object",
+      expectedStatus: 404,
+      breakObject: (harness, object) => harness.bucket.objects.delete(object.key),
+      restoreObject: (harness, object, originalText) => harness.bucket.objects.set(
+        object.key,
+        new MockR2Object(object.key, originalText, object.customMetadata)
+      )
+    });
+    await expectFailedReadDoesNotBurnDownloadQuota({
+      name: "r2-get-throws",
+      expectedStatus: 502,
+      breakObject: (harness) => { harness.bucket.throwOnGet = true; },
+      restoreObject: (harness) => { harness.bucket.throwOnGet = false; }
+    });
+    await expectFailedReadDoesNotBurnDownloadQuota({
+      name: "corrupt-json",
+      expectedStatus: 502,
+      breakObject: (harness, object) => harness.bucket.objects.set(
+        object.key,
+        new MockR2Object(object.key, "{not-json", object.customMetadata)
+      ),
+      restoreObject: (harness, object, originalText) => harness.bucket.objects.set(
+        object.key,
+        new MockR2Object(object.key, originalText, object.customMetadata)
+      )
+    });
+  });
+
   it("rate limits anonymous uploads per client IP", async () => {
     const harness = await createHarness({ env: { UPLOAD_RATE_LIMIT_PER_MINUTE: "1" } });
     const first = await harness.fetch("/api/v1/skill-shares", {
@@ -383,6 +417,35 @@ async function createHarness(options: {
       }
     }), env)
   };
+}
+
+type Harness = Awaited<ReturnType<typeof createHarness>>;
+
+async function expectFailedReadDoesNotBurnDownloadQuota(options: {
+  name: string;
+  expectedStatus: number;
+  breakObject: (harness: Harness, object: MockR2Object) => void;
+  restoreObject: (harness: Harness, object: MockR2Object, originalText: string) => void;
+}): Promise<void> {
+  const harness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
+  const upload = await harness.fetch("/api/v1/skill-shares", {
+    method: "POST",
+    body: JSON.stringify({ bundle: await createValidBundle(`rollback-${options.name}`) })
+  });
+  const payload = await upload.json() as { shareUrl: string };
+  const token = new URL(payload.shareUrl).pathname.split("/").at(-1)!;
+  const object = Array.from(harness.bucket.objects.values())[0];
+  const originalText = await object.text();
+
+  options.breakObject(harness, object);
+  const failed = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+  expect({ name: options.name, status: failed.status }).toEqual({ name: options.name, status: options.expectedStatus });
+
+  options.restoreObject(harness, object, originalText);
+  const success = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+  const denied = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+  expect({ name: options.name, status: success.status }).toEqual({ name: options.name, status: 200 });
+  expect({ name: options.name, status: denied.status }).toEqual({ name: options.name, status: 429 });
 }
 
 async function createValidBundle(handle = "test-skill"): Promise<SkillBundleManifestV1> {
