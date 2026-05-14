@@ -335,6 +335,7 @@ function validateBundleFiles(
   }
 
   const seenPaths = new Set<string>();
+  const seenCaseInsensitivePaths = new Map<string, string>();
   const validatedFiles: ManifestFileValidation[] = [];
   let byteCount = 0;
   let hasSkillFile = false;
@@ -353,7 +354,7 @@ function validateBundleFiles(
     if (typeof pathValue !== "string") {
       errors.push(issue("error", "invalid_file_path", `Bundle file ${index + 1} path is required.`));
     } else {
-      normalizedPath = validateBundleFilePath(pathValue, seenPaths, errors);
+      normalizedPath = validateBundleFilePath(pathValue, seenPaths, seenCaseInsensitivePaths, errors);
       if (normalizedPath === SKILL_BUNDLE_SKILL_FILE_NAME) {
         hasSkillFile = true;
       }
@@ -390,7 +391,12 @@ function validateBundleFiles(
   return validatedFiles;
 }
 
-function validateBundleFilePath(pathValue: string, seenPaths: Set<string>, errors: SkillBundleIssue[]): string | undefined {
+function validateBundleFilePath(
+  pathValue: string,
+  seenPaths: Set<string>,
+  seenCaseInsensitivePaths: Map<string, string>,
+  errors: SkillBundleIssue[]
+): string | undefined {
   try {
     const normalizedPath = normalizeSkillBundleFilePath(pathValue);
     if (normalizedPath !== pathValue) {
@@ -399,7 +405,20 @@ function validateBundleFilePath(pathValue: string, seenPaths: Set<string>, error
     if (seenPaths.has(normalizedPath)) {
       errors.push(issue("error", "duplicate_file_path", `Duplicate bundle file path: ${normalizedPath}.`, normalizedPath));
     }
+
+    const caseInsensitivePath = normalizedPath.toLocaleLowerCase("en-US");
+    const existingCaseInsensitivePath = seenCaseInsensitivePaths.get(caseInsensitivePath);
+    if (existingCaseInsensitivePath && existingCaseInsensitivePath !== normalizedPath) {
+      errors.push(issue(
+        "error",
+        "duplicate_file_path_case_insensitive",
+        `Bundle file path ${normalizedPath} collides case-insensitively with ${existingCaseInsensitivePath}.`,
+        normalizedPath
+      ));
+    }
+
     seenPaths.add(normalizedPath);
+    seenCaseInsensitivePaths.set(caseInsensitivePath, normalizedPath);
     return normalizedPath;
   } catch (error) {
     errors.push(issue("error", "invalid_file_path", errorToMessage(error), pathValue));

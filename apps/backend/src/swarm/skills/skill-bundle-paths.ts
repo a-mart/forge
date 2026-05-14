@@ -1,6 +1,7 @@
 import { extname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 
 const WINDOWS_RESERVED_DEVICE_NAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const WINDOWS_FORBIDDEN_FILENAME_CHARACTER_PATTERN = /[?*<>|"]/;
 
 const SENSITIVE_ENTRY_NAMES = new Set([
   ".aws",
@@ -105,6 +106,10 @@ function validateSafePathSegment(segment: string, label: string): void {
 
   if (segment.includes(":")) {
     throw new Error(`${label} cannot contain ':' or NTFS alternate data stream syntax.`);
+  }
+
+  if (WINDOWS_FORBIDDEN_FILENAME_CHARACTER_PATTERN.test(segment)) {
+    throw new Error(`${label} cannot contain Windows-forbidden filename characters.`);
   }
 
   if (/\p{C}/u.test(segment)) {

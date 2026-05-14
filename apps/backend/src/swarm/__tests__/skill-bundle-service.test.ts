@@ -302,7 +302,22 @@ describe("SkillBundleService", () => {
   });
 
   it("rejects Windows-unsafe skill handles and bundle path segments", async () => {
-    const unsafeHandles = ["CON", "prn.txt", "aux", "LPT1", "COM9.log", "bad:name", "trailing.", "trailing "];
+    const unsafeHandles = [
+      "CON",
+      "prn.txt",
+      "aux",
+      "LPT1",
+      "COM9.log",
+      "bad:name",
+      "bad?name",
+      "bad*name",
+      "bad<name",
+      "bad>name",
+      "bad|name",
+      "bad\"name",
+      "trailing.",
+      "trailing "
+    ];
     for (const handle of unsafeHandles) {
       const service = new SkillBundleService({
         skillMetadataService: {
@@ -328,7 +343,19 @@ describe("SkillBundleService", () => {
     });
     const validBundle = (await harness.bundleService.packageSkill(await getGlobalSkillId(harness.metadataService, "safe-skill"))).bundle;
 
-    for (const unsafePath of ["scripts/CON", "scripts/prn.txt", "scripts/file:name.js", "scripts/trailing.", "scripts/trailing "]) {
+    for (const unsafePath of [
+      "scripts/CON",
+      "scripts/prn.txt",
+      "scripts/file:name.js",
+      "scripts/file?name.js",
+      "scripts/file*name.js",
+      "scripts/file<name.js",
+      "scripts/file>name.js",
+      "scripts/file|name.js",
+      "scripts/file\"name.js",
+      "scripts/trailing.",
+      "scripts/trailing "
+    ]) {
       expectValidationCode(validBundle, (bundle) => {
         bundle.files[0]!.path = unsafePath;
       }, "invalid_file_path");
@@ -351,6 +378,16 @@ describe("SkillBundleService", () => {
       bundle.totals.fileCount += 1;
       bundle.totals.byteCount += bundle.files[0]!.size;
     }, "duplicate_file_path");
+
+    expectValidationCode(validBundle, (bundle) => {
+      const sourceFile = bundle.files[0]!;
+      bundle.files.push(
+        { ...sourceFile, path: "docs/Readme.txt" },
+        { ...sourceFile, path: "docs/README.txt" }
+      );
+      bundle.totals.fileCount += 2;
+      bundle.totals.byteCount += sourceFile.size * 2;
+    }, "duplicate_file_path_case_insensitive");
 
     expectValidationCode(validBundle, (bundle) => {
       bundle.files[0]!.path = "/tmp/evil.txt";
