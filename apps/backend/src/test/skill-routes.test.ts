@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { join } from "node:path";
 import { SkillFileService } from "../swarm/skill-file-service.js";
 import { SkillMetadataService } from "../swarm/skill-metadata-service.js";
+import { SkillBundleError } from "../swarm/skills/skill-bundle-service.js";
 import { SkillSharingError } from "../swarm/skills/skill-sharing-service.js";
 import type { SwarmConfig } from "../swarm/types.js";
 import { createSkillRoutes } from "../ws/http/routes/skill-routes.js";
@@ -155,6 +156,29 @@ describe("skill routes", () => {
       shareUrl: "https://share.test/s/token",
       importUrl: "forge://skill-import?url=https%3A%2F%2Fshare.test%2Fs%2Ftoken",
       warnings: []
+    });
+  });
+
+  it("maps disappeared skill roots during share to a safe 404", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      shareSkill: vi.fn(async () => {
+        throw new SkillBundleError("missing_skill_root", "Skill no longer exists. Refresh the skill list and try again.", {
+          path: "/private/data/skills/vanished"
+        });
+      }),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const response = await fetch(`${server.baseUrl}/api/settings/skills/${encodeURIComponent("vanished")}/share`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Skill no longer exists. Refresh the skill list and try again.",
+      code: "missing_skill_root"
     });
   });
 

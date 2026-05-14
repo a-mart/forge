@@ -327,7 +327,7 @@ function mapSkillRouteError(error: unknown): {
       body: {
         error: error.message,
         code: error.code,
-        ...(error.path ? { path: error.path } : {})
+        ...(error.path && error.code !== "missing_skill_root" ? { path: error.path } : {})
       }
     };
   }
@@ -340,7 +340,7 @@ function mapSkillRouteError(error: unknown): {
 }
 
 function resolveSkillBundleErrorStatusCode(error: SkillBundleError): number {
-  if (error.code === "unknown_skill") return 404;
+  if (error.code === "unknown_skill" || error.code === "missing_skill_root") return 404;
   if (error.code === "unshareable_skill_source" || error.code === "sensitive_file") return 403;
   if (error.code === "oversized_file" || error.code === "oversized_bundle" || error.code === "too_many_files") return 413;
   return 400;

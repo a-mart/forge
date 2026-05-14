@@ -4,6 +4,7 @@ export type SkillBundleErrorCode =
   | "invalid_skill_handle"
   | "invalid_skill_path"
   | "invalid_skill_root"
+  | "missing_skill_root"
   | "unsupported_symlink"
   | "sensitive_file"
   | "oversized_file"

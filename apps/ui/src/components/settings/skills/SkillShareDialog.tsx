@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Copy, ExternalLink, Loader2, Share2 } from 'lucide-react'
 import type { SkillBundleIssue, SkillInventoryEntry, SkillShareResponse } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
@@ -29,9 +29,13 @@ export function SkillShareDialog({ open, onOpenChange, clientOrWsUrl, skill }: S
   const [share, setShare] = useState<SkillShareResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<'web' | 'direct' | null>(null)
+  const shareRequestIdRef = useRef(0)
+  const openRef = useRef(open)
 
   useEffect(() => {
+    openRef.current = open
     if (!open) {
+      shareRequestIdRef.current += 1
       setShare(null)
       setError(null)
       setCopied(null)
@@ -45,22 +49,37 @@ export function SkillShareDialog({ open, onOpenChange, clientOrWsUrl, skill }: S
 
   const handleCreateShare = async () => {
     if (!skill || !shareable) return
+    const requestId = shareRequestIdRef.current + 1
+    shareRequestIdRef.current = requestId
     setError(null)
     setIsSharing(true)
     try {
-      setShare(await shareSkill(clientOrWsUrl, skill.skillId))
+      const nextShare = await shareSkill(clientOrWsUrl, skill.skillId)
+      if (requestId !== shareRequestIdRef.current || !openRef.current) return
+      setShare(nextShare)
     } catch (err) {
+      if (requestId !== shareRequestIdRef.current || !openRef.current) return
       setError(toErrorMessage(err))
     } finally {
-      setIsSharing(false)
+      if (requestId === shareRequestIdRef.current && openRef.current) {
+        setIsSharing(false)
+      }
     }
   }
 
   const handleCopy = async (kind: 'web' | 'direct', value: string) => {
+    setError(null)
+    const writeText = navigator.clipboard?.writeText
+    if (typeof writeText !== 'function') {
+      setCopied(null)
+      setError('Clipboard access is unavailable. Select and copy the link manually.')
+      return
+    }
     try {
-      await navigator.clipboard?.writeText(value)
+      await writeText.call(navigator.clipboard, value)
       setCopied(kind)
     } catch {
+      setCopied(null)
       setError('Could not copy the link. Select and copy it manually.')
     }
   }

@@ -187,7 +187,15 @@ export class SkillBundleService {
   }
 
   private async assertDirectorySkillRoot(skillRoot: string): Promise<void> {
-    const rootStats = await lstat(skillRoot);
+    let rootStats: Awaited<ReturnType<typeof lstat>>;
+    try {
+      rootStats = await lstat(skillRoot);
+    } catch (error) {
+      if (isNoEntryError(error)) {
+        throw missingSkillRootError(error);
+      }
+      throw error;
+    }
     if (rootStats.isSymbolicLink()) {
       throw new SkillBundleError("invalid_skill_root", "Skill root must not be a symlink.");
     }
@@ -238,7 +246,15 @@ export class SkillBundleService {
 
   private async collectSkillFiles(skillRoot: string, notices: SkillBundleIssue[]): Promise<CollectedSkillFile[]> {
     const resolvedRoot = resolve(skillRoot);
-    const realRoot = await realpath(resolvedRoot);
+    let realRoot: string;
+    try {
+      realRoot = await realpath(resolvedRoot);
+    } catch (error) {
+      if (isNoEntryError(error)) {
+        throw missingSkillRootError(error);
+      }
+      throw error;
+    }
     const collected: CollectedSkillFile[] = [];
     let totalBytes = 0;
 
@@ -318,7 +334,14 @@ export class SkillBundleService {
       }
     };
 
-    await visitDirectory(resolvedRoot);
+    try {
+      await visitDirectory(resolvedRoot);
+    } catch (error) {
+      if (isNoEntryError(error)) {
+        throw missingSkillRootError(error);
+      }
+      throw error;
+    }
     collected.sort((left, right) => compareCodePoint(left.relativePath, right.relativePath));
     return collected;
   }
@@ -346,7 +369,15 @@ export class SkillBundleService {
     const encoded: EncodedSkillFile[] = [];
 
     for (const file of files) {
-      const rawBytes = await readFile(file.absolutePath);
+      let rawBytes: Buffer;
+      try {
+        rawBytes = await readFile(file.absolutePath);
+      } catch (error) {
+        if (isNoEntryError(error)) {
+          throw missingSkillRootError(error);
+        }
+        throw error;
+      }
       const textContent = decodeUtf8Text(rawBytes);
       const isExecutable = (file.stats.mode & 0o111) !== 0;
       const entry: SkillBundleFileEntry = {
@@ -363,6 +394,14 @@ export class SkillBundleService {
 
     return encoded;
   }
+}
+
+function missingSkillRootError(cause: unknown): SkillBundleError {
+  return new SkillBundleError("missing_skill_root", "Skill no longer exists. Refresh the skill list and try again.", { cause });
+}
+
+function isNoEntryError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function decodeUtf8Text(bytes: Buffer): string | undefined {

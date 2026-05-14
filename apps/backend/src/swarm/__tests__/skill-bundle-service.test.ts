@@ -1,4 +1,4 @@
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SkillBundleManifestV1 } from "@forge/protocol";
@@ -183,6 +183,21 @@ describe("SkillBundleService", () => {
     expect(bundle.skill).toMatchObject({
       handle: "project-skill",
       name: "Project Skill"
+    });
+  });
+
+  it("returns a safe not-found error when a skill root disappears after inventory load", async () => {
+    const harness = await createHarness();
+    await createGlobalSkill(harness.config, "vanishing-skill", {
+      "SKILL.md": "---\nname: Vanishing\n---\n\n# Vanishing\n"
+    });
+    const skillId = await getGlobalSkillId(harness.metadataService, "vanishing-skill");
+    const skillRoot = join(harness.config.paths.dataDir, "skills", "vanishing-skill");
+    await rm(skillRoot, { recursive: true, force: true });
+
+    await expect(harness.bundleService.packageSkill(skillId)).rejects.toMatchObject({
+      code: "missing_skill_root",
+      message: "Skill no longer exists. Refresh the skill list and try again."
     });
   });
 
