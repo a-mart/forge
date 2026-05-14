@@ -61,6 +61,9 @@ export function normalizeSkillBundleFilePath(pathValue: string): string {
   const segments = pathValue.split("/");
   for (const segment of segments) {
     validateSafePathSegment(segment, "Skill bundle file path segment");
+    if (isSensitiveSkillEntryName(segment)) {
+      throw new Error(`Sensitive file path is not shareable: ${pathValue}.`);
+    }
   }
 
   return segments.join("/");

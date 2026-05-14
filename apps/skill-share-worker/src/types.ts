@@ -35,8 +35,31 @@ export interface R2BucketBinding {
   list(options?: R2ListOptions): Promise<R2ListResult>;
 }
 
+export interface DurableObjectIdBinding {}
+
+export interface DurableObjectStubBinding {
+  fetch(input: Request | string, init?: RequestInit): Promise<Response>;
+}
+
+export interface DurableObjectNamespaceBinding {
+  idFromName(name: string): DurableObjectIdBinding;
+  get(id: DurableObjectIdBinding): DurableObjectStubBinding;
+}
+
+export interface DurableObjectStorageBinding {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  put<T>(key: string, value: T): Promise<void>;
+  delete(key: string): Promise<boolean>;
+  list<T = unknown>(options?: { prefix?: string }): Promise<Map<string, T>>;
+}
+
+export interface DurableObjectStateBinding {
+  storage: DurableObjectStorageBinding;
+}
+
 export interface SkillShareEnv {
   SKILL_SHARES_BUCKET: R2BucketBinding;
+  SHARE_LIMITER: DurableObjectNamespaceBinding;
   TOKEN_HMAC_SECRET: string;
   PUBLIC_BASE_URL?: string;
   SHARE_TTL_SECONDS?: string;
@@ -46,6 +69,10 @@ export interface SkillShareEnv {
   MAX_FILES?: string;
   UPLOAD_RATE_LIMIT_PER_MINUTE?: string;
   DOWNLOAD_RATE_LIMIT_PER_MINUTE?: string;
+  MAX_ACTIVE_OBJECTS?: string;
+  MAX_ACTIVE_STORAGE_BYTES?: string;
+  MAX_DOWNLOADS_PER_SHARE?: string;
+  MAX_EGRESS_BYTES_PER_SHARE?: string;
 }
 
 export interface ExecutionContextLike {

@@ -5,14 +5,14 @@ import {
   loadWorkerConfig,
   type WorkerConfig
 } from "./config.js";
-import { getClientIp, InMemoryRateLimiter } from "./rate-limit.js";
+import { getClientIp } from "./rate-limit.js";
 import { createShareToken, verifyShareToken } from "./token.js";
-import type { ExecutionContextLike, R2BucketBinding, R2ObjectBody, ScheduledControllerLike, SkillShareEnv } from "./types.js";
+import type { DurableObjectNamespaceBinding, ExecutionContextLike, R2BucketBinding, R2ObjectBody, ScheduledControllerLike, SkillShareEnv } from "./types.js";
 import { validateSkillBundleForStorage } from "./bundle-validation.js";
 
+export { SkillShareLimiter } from "./limiter-do.js";
+
 interface WorkerState {
-  uploadRateLimiter: InMemoryRateLimiter;
-  downloadRateLimiter: InMemoryRateLimiter;
   now: () => number;
 }
 
@@ -20,8 +20,6 @@ const DEFAULT_STATE: WorkerState = createWorkerState();
 
 export function createWorkerState(options: { now?: () => number } = {}): WorkerState {
   return {
-    uploadRateLimiter: new InMemoryRateLimiter(),
-    downloadRateLimiter: new InMemoryRateLimiter(),
     now: options.now ?? (() => Date.now())
   };
 }
@@ -30,7 +28,7 @@ export function createSkillShareWorker(state: WorkerState = DEFAULT_STATE) {
   return {
     fetch: (request: Request, env: SkillShareEnv, _ctx?: ExecutionContextLike) => handleRequest(request, env, state),
     scheduled: (_controller: ScheduledControllerLike, env: SkillShareEnv, ctx?: ExecutionContextLike) => {
-      const cleanup = cleanupExpiredObjects(env.SKILL_SHARES_BUCKET, state.now());
+      const cleanup = cleanupExpiredObjects(env.SKILL_SHARES_BUCKET, env.SHARE_LIMITER, state.now());
       ctx?.waitUntil(cleanup);
       return cleanup;
     }
@@ -42,7 +40,7 @@ export default createSkillShareWorker();
 async function handleRequest(request: Request, env: SkillShareEnv, state: WorkerState): Promise<Response> {
   const url = new URL(request.url);
   if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders() });
+    return new Response(null, { status: 204, headers: { ...securityHeaders("api"), ...corsHeaders() } });
   }
 
   let config: WorkerConfig;
@@ -53,17 +51,20 @@ async function handleRequest(request: Request, env: SkillShareEnv, state: Worker
   }
 
   if (request.method === "POST" && url.pathname === "/api/v1/skill-shares") {
-    return handleUpload(request, env.SKILL_SHARES_BUCKET, config, state);
+    if (!env.SHARE_LIMITER) return jsonResponse({ error: "Skill share limiter binding is required." }, 503);
+    return handleUpload(request, env.SKILL_SHARES_BUCKET, env.SHARE_LIMITER, config, state);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/v1/skill-shares/")) {
     const token = decodePathToken(url.pathname.slice("/api/v1/skill-shares/".length));
-    return token ? handleJsonDownload(request, token, env.SKILL_SHARES_BUCKET, config, state) : jsonResponse({ error: "Not found." }, 404);
+    if (!env.SHARE_LIMITER) return jsonResponse({ error: "Skill share limiter binding is required." }, 503);
+    return token ? handleJsonDownload(token, env.SKILL_SHARES_BUCKET, env.SHARE_LIMITER, config, state) : jsonResponse({ error: "Not found." }, 404);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/s/")) {
     const token = decodePathToken(url.pathname.slice("/s/".length));
-    return token ? handleShareLandingOrDownload(request, token, env.SKILL_SHARES_BUCKET, config, state) : jsonResponse({ error: "Not found." }, 404);
+    if (!env.SHARE_LIMITER) return htmlResponse(renderServiceUnavailablePage(), 503);
+    return token ? handleShareLandingOrDownload(request, token, env.SKILL_SHARES_BUCKET, env.SHARE_LIMITER, config, state) : jsonResponse({ error: "Not found." }, 404);
   }
 
   return jsonResponse({ error: "Not found." }, 404);
@@ -72,14 +73,10 @@ async function handleRequest(request: Request, env: SkillShareEnv, state: Worker
 async function handleUpload(
   request: Request,
   bucket: R2BucketBinding,
+  limiter: DurableObjectNamespaceBinding,
   config: WorkerConfig,
   state: WorkerState
 ): Promise<Response> {
-  const rateLimit = state.uploadRateLimiter.check(getClientIp(request), config.uploadRateLimitPerMinute, state.now());
-  if (!rateLimit.allowed) {
-    return rateLimitResponse(rateLimit.retryAfterSeconds ?? 60);
-  }
-
   const contentLength = request.headers.get("content-length");
   if (contentLength && Number.parseInt(contentLength, 10) > config.maxRequestBytes) {
     return jsonResponse({ error: "Request body too large." }, 413);
@@ -112,48 +109,69 @@ async function handleUpload(
 
   const bundle = candidateBundle as SkillBundleManifestV1;
   const objectJson = JSON.stringify(bundle);
-  if (new TextEncoder().encode(objectJson).byteLength > config.maxRequestBytes) {
+  const objectBytes = new TextEncoder().encode(objectJson).byteLength;
+  if (objectBytes > config.maxRequestBytes) {
     return jsonResponse({ error: "Stored bundle object would exceed request cap." }, 413);
   }
 
   const shareId = crypto.randomUUID();
   const nowMs = state.now();
   const expiresAtMs = nowMs + config.shareTtlSeconds * 1000;
+  const reservation = await reserveUpload(limiter, {
+    ip: getClientIp(request),
+    shareId,
+    bytes: objectBytes,
+    expiresAtMs,
+    nowMs,
+    uploadRateLimitPerMinute: config.uploadRateLimitPerMinute,
+    maxActiveObjects: config.maxActiveObjects,
+    maxActiveStorageBytes: config.maxActiveStorageBytes
+  });
+  if (!reservation.ok) {
+    return limiterFailureResponse(reservation, "upload");
+  }
   const token = await createShareToken({ shareId, expiresAtMs, secret: config.tokenSecret });
   const shareUrl = `${resolvePublicBaseUrl(config, request)}/s/${encodeURIComponent(token)}`;
   const importUrl = `forge://skill-import?url=${encodeURIComponent(shareUrl)}`;
-  await bucket.put(`${OBJECT_PREFIX}${shareId}.json`, objectJson, {
-    httpMetadata: {
-      contentType: "application/json",
-      cacheControl: "no-store"
-    },
-    customMetadata: {
-      createdAt: new Date(nowMs).toISOString(),
-      expiresAt: new Date(expiresAtMs).toISOString(),
-      contentSha256: validation.contentSha256 ?? bundle.contentSha256,
-      skillHandle: validation.skillHandle ?? bundle.skill.handle,
-      originPlatform: validation.originPlatform ?? bundle.origin.platform
-    }
-  });
+  try {
+    await bucket.put(`${OBJECT_PREFIX}${shareId}.json`, objectJson, {
+      httpMetadata: {
+        contentType: "application/json",
+        cacheControl: "no-store"
+      },
+      customMetadata: {
+        createdAt: new Date(nowMs).toISOString(),
+        expiresAt: new Date(expiresAtMs).toISOString(),
+        contentSha256: validation.contentSha256 ?? bundle.contentSha256,
+        skillHandle: validation.skillHandle ?? bundle.skill.handle,
+        originPlatform: validation.originPlatform ?? bundle.origin.platform,
+        bytes: String(objectBytes)
+      }
+    });
+  } catch {
+    await releaseShare(limiter, shareId);
+    return jsonResponse({ error: "Unable to store skill share." }, 502);
+  }
 
   return jsonResponse({
     shareUrl,
     importUrl,
     expiresAt: new Date(expiresAtMs).toISOString(),
-    contentSha256: validation.contentSha256 ?? bundle.contentSha256
+    contentSha256: validation.contentSha256 ?? bundle.contentSha256,
+    warnings: []
   }, 201);
 }
 
 async function handleJsonDownload(
-  request: Request,
   token: string,
   bucket: R2BucketBinding,
+  limiter: DurableObjectNamespaceBinding,
   config: WorkerConfig,
   state: WorkerState
 ): Promise<Response> {
-  const result = await loadSharedObject(token, bucket, config, state, getClientIp(request));
+  const result = await loadSharedObject(token, bucket, limiter, config, state);
   if (!result.ok) {
-    return jsonResponse({ error: result.status === 410 ? "Share link expired." : "Not found." }, result.status);
+    return jsonResponse({ error: loadFailureMessage(result.status) }, result.status);
   }
 
   return bundleJsonResponse(result.objectText, result.bundle);
@@ -163,14 +181,13 @@ async function handleShareLandingOrDownload(
   request: Request,
   token: string,
   bucket: R2BucketBinding,
+  limiter: DurableObjectNamespaceBinding,
   config: WorkerConfig,
   state: WorkerState
 ): Promise<Response> {
-  const result = await loadSharedObject(token, bucket, config, state, getClientIp(request));
+  const result = await loadSharedObject(token, bucket, limiter, config, state);
   if (!result.ok) {
-    return result.status === 410
-      ? htmlResponse(renderExpiredPage(), 410)
-      : htmlResponse(renderNotFoundPage(), 404);
+    return htmlResponse(renderFailurePage(result.status, loadFailureMessage(result.status)), result.status);
   }
 
   const url = new URL(request.url);
@@ -187,44 +204,135 @@ async function handleShareLandingOrDownload(
 async function loadSharedObject(
   token: string,
   bucket: R2BucketBinding,
+  limiter: DurableObjectNamespaceBinding,
   config: WorkerConfig,
-  state: WorkerState,
-  rateLimitKey: string
+  state: WorkerState
 ): Promise<
   | { ok: true; bundle: SkillBundleManifestV1; object: R2ObjectBody; objectText: string }
-  | { ok: false; status: 404 | 410 }
+  | { ok: false; status: 404 | 410 | 429 | 502 | 503 }
 > {
-  const rateLimit = state.downloadRateLimiter.check(rateLimitKey, config.downloadRateLimitPerMinute, state.now());
-  if (!rateLimit.allowed) {
-    return { ok: false, status: 404 };
-  }
-
   const verification = await verifyShareToken(token, config.tokenSecret, state.now());
   if (!verification.ok) {
     if (verification.status === 410 && verification.id) {
-      await bucket.delete(`${OBJECT_PREFIX}${verification.id}.json`);
+      await safeDeleteAndRelease(bucket, limiter, verification.id);
     }
     return { ok: false, status: verification.status };
   }
 
   const objectKey = `${OBJECT_PREFIX}${verification.id}.json`;
-  const object = await bucket.get(objectKey);
+  let object: R2ObjectBody | null;
+  try {
+    object = await bucket.get(objectKey);
+  } catch {
+    return { ok: false, status: 502 };
+  }
   if (!object) {
     return { ok: false, status: 404 };
   }
 
   const metadataExpiresAtMs = Date.parse(object.customMetadata?.expiresAt ?? "");
   if (!Number.isFinite(metadataExpiresAtMs) || metadataExpiresAtMs <= state.now()) {
-    await bucket.delete(objectKey);
+    await safeDeleteAndRelease(bucket, limiter, verification.id);
     return { ok: false, status: 410 };
   }
 
-  const objectText = await object.text();
-  const bundle = JSON.parse(objectText) as SkillBundleManifestV1;
+  let objectText: string;
+  let bundle: SkillBundleManifestV1;
+  try {
+    objectText = await object.text();
+    bundle = JSON.parse(objectText) as SkillBundleManifestV1;
+  } catch {
+    return { ok: false, status: 502 };
+  }
+
+  const objectBytes = new TextEncoder().encode(objectText).byteLength;
+  const quota = await recordDownload(limiter, {
+    shareId: verification.id,
+    bytes: objectBytes,
+    nowMs: state.now(),
+    downloadRateLimitPerMinute: config.downloadRateLimitPerMinute,
+    maxDownloadsPerShare: config.maxDownloadsPerShare,
+    maxEgressBytesPerShare: config.maxEgressBytesPerShare
+  });
+  if (!quota.ok) {
+    return { ok: false, status: quota.status };
+  }
+
   return { ok: true, bundle, object, objectText };
 }
 
-export async function cleanupExpiredObjects(bucket: R2BucketBinding, nowMs: number): Promise<number> {
+interface LimiterResult {
+  ok: boolean;
+  reason?: string;
+  retryAfterSeconds?: number;
+}
+
+async function reserveUpload(
+  limiter: DurableObjectNamespaceBinding,
+  body: Record<string, unknown>
+): Promise<LimiterResult> {
+  return callLimiter(limiter, "/reserve-upload", body);
+}
+
+async function recordDownload(
+  limiter: DurableObjectNamespaceBinding,
+  body: Record<string, unknown>
+): Promise<{ ok: true } | { ok: false; status: 429 | 503 }> {
+  const result = await callLimiter(limiter, "/record-download", body);
+  if (result.ok) return { ok: true };
+  if (result.reason === "download_rate_limited" || result.reason?.includes("budget")) {
+    return { ok: false, status: 429 };
+  }
+  return { ok: false, status: 503 };
+}
+
+async function releaseShare(limiter: DurableObjectNamespaceBinding, shareId: string): Promise<void> {
+  await callLimiter(limiter, "/release-share", { shareId });
+}
+
+async function safeDeleteAndRelease(bucket: R2BucketBinding, limiter: DurableObjectNamespaceBinding, shareId: string): Promise<void> {
+  await Promise.allSettled([
+    bucket.delete(`${OBJECT_PREFIX}${shareId}.json`),
+    releaseShare(limiter, shareId)
+  ]);
+}
+
+async function callLimiter(
+  limiter: DurableObjectNamespaceBinding,
+  path: string,
+  body: Record<string, unknown>
+): Promise<LimiterResult> {
+  try {
+    const stub = limiter.get(limiter.idFromName("global"));
+    const response = await stub.fetch(`https://limiter.local${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      return { ok: false, reason: "limiter_unavailable" };
+    }
+    return await response.json() as LimiterResult;
+  } catch {
+    return { ok: false, reason: "limiter_unavailable" };
+  }
+}
+
+function limiterFailureResponse(result: LimiterResult, operation: "upload"): Response {
+  if (result.reason === "upload_rate_limited") {
+    return rateLimitResponse(result.retryAfterSeconds ?? 60);
+  }
+  if (result.reason?.includes("budget")) {
+    return jsonResponse({ error: "Skill share service budget exceeded." }, 507);
+  }
+  return jsonResponse({ error: `Skill share ${operation} limiter unavailable.` }, 503);
+}
+
+export async function cleanupExpiredObjects(
+  bucket: R2BucketBinding,
+  limiter: DurableObjectNamespaceBinding | undefined,
+  nowMs: number
+): Promise<number> {
   let deleted = 0;
   let cursor: string | undefined;
   do {
@@ -233,6 +341,12 @@ export async function cleanupExpiredObjects(bucket: R2BucketBinding, nowMs: numb
       const expiresAt = Date.parse(object.customMetadata?.expiresAt ?? "");
       if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) {
         await bucket.delete(object.key);
+        const shareId = object.key.startsWith(OBJECT_PREFIX) && object.key.endsWith(".json")
+          ? object.key.slice(OBJECT_PREFIX.length, -".json".length)
+          : undefined;
+        if (shareId && limiter) {
+          await releaseShare(limiter, shareId);
+        }
         deleted += 1;
       }
     }
@@ -275,8 +389,9 @@ function bundleJsonResponse(objectText: string, bundle: SkillBundleManifestV1): 
     status: 200,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": "no-store, max-age=0",
       "Content-Disposition": `attachment; filename="${safeAttachmentName(bundle.skill.handle)}.forge-skill.json"`,
+      ...securityHeaders("api"),
       ...corsHeaders()
     }
   });
@@ -301,12 +416,21 @@ function renderLandingPage(options: { bundle: SkillBundleManifestV1; shareUrl: s
 </html>`;
 }
 
-function renderExpiredPage(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Forge skill share expired</title>${styleTag()}</head><body><main><h1>Share link expired</h1><p>This temporary Forge skill share is no longer available.</p></main></body></html>`;
+function renderFailurePage(status: number, message: string): string {
+  const title = status === 410 ? "Share link expired" : status === 429 ? "Share temporarily unavailable" : "Share unavailable";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${styleTag()}</head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main></body></html>`;
 }
 
-function renderNotFoundPage(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Forge skill share not found</title>${styleTag()}</head><body><main><h1>Share not found</h1><p>This Forge skill share link is invalid or unavailable.</p></main></body></html>`;
+function renderServiceUnavailablePage(): string {
+  return renderFailurePage(503, "Skill share service is not configured.");
+}
+
+function loadFailureMessage(status: number): string {
+  if (status === 410) return "Share link expired.";
+  if (status === 429) return "Share download quota exceeded or rate limited.";
+  if (status === 502) return "Unable to read skill share.";
+  if (status === 503) return "Skill share quota service unavailable.";
+  return "Not found.";
 }
 
 function styleTag(): string {
@@ -318,7 +442,8 @@ function htmlResponse(html: string, status = 200): Response {
     status,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store"
+      "Cache-Control": "no-store, max-age=0",
+      ...securityHeaders("html")
     }
   });
 }
@@ -328,7 +453,8 @@ function jsonResponse(body: unknown, status: number): Response {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": "no-store, max-age=0",
+      ...securityHeaders("api"),
       ...corsHeaders()
     }
   });
@@ -339,11 +465,23 @@ function rateLimitResponse(retryAfterSeconds: number): Response {
     status: 429,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": "no-store, max-age=0",
       "Retry-After": String(retryAfterSeconds),
+      ...securityHeaders("api"),
       ...corsHeaders()
     }
   });
+}
+
+function securityHeaders(surface: "api" | "html"): Record<string, string> {
+  return {
+    "Content-Security-Policy": surface === "html"
+      ? "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'; img-src 'none'; script-src 'none'"
+      : "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY"
+  };
 }
 
 function corsHeaders(): Record<string, string> {

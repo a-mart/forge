@@ -10,6 +10,14 @@ workers_dev = false
 binding = "SKILL_SHARES_BUCKET"
 bucket_name = "forge-skill-shares"
 
+[[durable_objects.bindings]]
+name = "SHARE_LIMITER"
+class_name = "SkillShareLimiter"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["SkillShareLimiter"]
+
 [vars]
 PUBLIC_BASE_URL = "https://share.forge.dev"
 SHARE_TTL_SECONDS = "604800"
@@ -19,6 +27,10 @@ MAX_FILE_BYTES = "2097152"
 MAX_FILES = "512"
 UPLOAD_RATE_LIMIT_PER_MINUTE = "10"
 DOWNLOAD_RATE_LIMIT_PER_MINUTE = "120"
+MAX_ACTIVE_OBJECTS = "1000"
+MAX_ACTIVE_STORAGE_BYTES = "5368709120"
+MAX_DOWNLOADS_PER_SHARE = "20"
+MAX_EGRESS_BYTES_PER_SHARE = "262144000"
 
 [triggers]
 crons = ["0 * * * *"]

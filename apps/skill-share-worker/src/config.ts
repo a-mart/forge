@@ -11,6 +11,14 @@ export const HARD_MAX_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MIN_TTL_SECONDS = 60;
 export const DEFAULT_UPLOAD_RATE_LIMIT_PER_MINUTE = 10;
 export const DEFAULT_DOWNLOAD_RATE_LIMIT_PER_MINUTE = 120;
+export const DEFAULT_MAX_ACTIVE_OBJECTS = 1000;
+export const HARD_MAX_ACTIVE_OBJECTS = 10_000;
+export const DEFAULT_MAX_ACTIVE_STORAGE_BYTES = 5 * 1024 * MIB;
+export const HARD_MAX_ACTIVE_STORAGE_BYTES = 50 * 1024 * MIB;
+export const DEFAULT_MAX_DOWNLOADS_PER_SHARE = 20;
+export const HARD_MAX_DOWNLOADS_PER_SHARE = 100;
+export const DEFAULT_MAX_EGRESS_BYTES_PER_SHARE = 250 * MIB;
+export const HARD_MAX_EGRESS_BYTES_PER_SHARE = 1024 * MIB;
 
 export interface WorkerConfig {
   publicBaseUrl?: string;
@@ -22,6 +30,10 @@ export interface WorkerConfig {
   maxFiles: number;
   uploadRateLimitPerMinute: number;
   downloadRateLimitPerMinute: number;
+  maxActiveObjects: number;
+  maxActiveStorageBytes: number;
+  maxDownloadsPerShare: number;
+  maxEgressBytesPerShare: number;
 }
 
 export function loadWorkerConfig(env: SkillShareEnv): WorkerConfig {
@@ -59,6 +71,22 @@ export function loadWorkerConfig(env: SkillShareEnv): WorkerConfig {
     downloadRateLimitPerMinute: readBoundedInteger(env.DOWNLOAD_RATE_LIMIT_PER_MINUTE, DEFAULT_DOWNLOAD_RATE_LIMIT_PER_MINUTE, {
       min: 1,
       max: 1200
+    }),
+    maxActiveObjects: readBoundedInteger(env.MAX_ACTIVE_OBJECTS, DEFAULT_MAX_ACTIVE_OBJECTS, {
+      min: 1,
+      max: HARD_MAX_ACTIVE_OBJECTS
+    }),
+    maxActiveStorageBytes: readBoundedInteger(env.MAX_ACTIVE_STORAGE_BYTES, DEFAULT_MAX_ACTIVE_STORAGE_BYTES, {
+      min: HARD_MAX_BUNDLE_BYTES,
+      max: HARD_MAX_ACTIVE_STORAGE_BYTES
+    }),
+    maxDownloadsPerShare: readBoundedInteger(env.MAX_DOWNLOADS_PER_SHARE, DEFAULT_MAX_DOWNLOADS_PER_SHARE, {
+      min: 1,
+      max: HARD_MAX_DOWNLOADS_PER_SHARE
+    }),
+    maxEgressBytesPerShare: readBoundedInteger(env.MAX_EGRESS_BYTES_PER_SHARE, DEFAULT_MAX_EGRESS_BYTES_PER_SHARE, {
+      min: HARD_MAX_BUNDLE_BYTES,
+      max: HARD_MAX_EGRESS_BYTES_PER_SHARE
     })
   };
 }

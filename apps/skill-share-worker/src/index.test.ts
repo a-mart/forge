@@ -2,7 +2,20 @@ import { describe, expect, it } from "vitest";
 import type { SkillBundleManifestV1 } from "@forge/protocol";
 import { computeSkillBundleContentSha256 } from "./bundle-validation.js";
 import { createSkillShareWorker, createWorkerState, cleanupExpiredObjects } from "./index.js";
-import type { R2BucketBinding, R2ListOptions, R2ListResult, R2ObjectBody, R2PutOptions, SkillShareEnv } from "./types.js";
+import { SkillShareLimiter } from "./limiter-do.js";
+import type {
+  DurableObjectIdBinding,
+  DurableObjectNamespaceBinding,
+  DurableObjectStateBinding,
+  DurableObjectStorageBinding,
+  DurableObjectStubBinding,
+  R2BucketBinding,
+  R2ListOptions,
+  R2ListResult,
+  R2ObjectBody,
+  R2PutOptions,
+  SkillShareEnv
+} from "./types.js";
 
 const SECRET = "x".repeat(64);
 const START_MS = Date.parse("2026-05-13T12:00:00.000Z");
@@ -21,6 +34,47 @@ class MockR2Object implements R2ObjectBody {
 
   async arrayBuffer(): Promise<ArrayBuffer> {
     return toArrayBuffer(TEXT_ENCODER.encode(this.value));
+  }
+}
+
+class MemoryDurableObjectStorage implements DurableObjectStorageBinding {
+  readonly data = new Map<string, unknown>();
+
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    return this.data.get(key) as T | undefined;
+  }
+
+  async put<T>(key: string, value: T): Promise<void> {
+    this.data.set(key, value);
+  }
+
+  async delete(key: string): Promise<boolean> {
+    return this.data.delete(key);
+  }
+
+  async list<T = unknown>(options: { prefix?: string } = {}): Promise<Map<string, T>> {
+    const result = new Map<string, T>();
+    for (const [key, value] of this.data.entries()) {
+      if (!options.prefix || key.startsWith(options.prefix)) {
+        result.set(key, value as T);
+      }
+    }
+    return result;
+  }
+}
+
+class MockDurableObjectNamespace implements DurableObjectNamespaceBinding {
+  private readonly storage = new MemoryDurableObjectStorage();
+  private readonly limiter = new SkillShareLimiter({ storage: this.storage } satisfies DurableObjectStateBinding);
+
+  idFromName(name: string): DurableObjectIdBinding {
+    return { name } as DurableObjectIdBinding;
+  }
+
+  get(_id: DurableObjectIdBinding): DurableObjectStubBinding {
+    return {
+      fetch: (input, init) => this.limiter.fetch(input instanceof Request ? input : new Request(input, init))
+    };
   }
 }
 
@@ -62,11 +116,12 @@ describe("skill share worker", () => {
     expect(upload.status).toBe(201);
     expect(harness.bucket.putCount).toBe(1);
 
-    const payload = await upload.json() as { shareUrl: string; importUrl: string; expiresAt: string; contentSha256: string };
+    const payload = await upload.json() as { shareUrl: string; importUrl: string; expiresAt: string; contentSha256: string; warnings: unknown[] };
     expect(payload.shareUrl).toMatch(/^https:\/\/share\.test\/s\//);
     expect(payload.importUrl).toBe(`forge://skill-import?url=${encodeURIComponent(payload.shareUrl)}`);
     expect(payload.expiresAt).toBe("2026-05-20T12:00:00.000Z");
     expect(payload.contentSha256).toBe(bundle.contentSha256);
+    expect(payload.warnings).toEqual([]);
 
     const stored = Array.from(harness.bucket.objects.values())[0];
     expect(stored.customMetadata).toMatchObject({
@@ -79,7 +134,7 @@ describe("skill share worker", () => {
     const landing = await harness.fetch(new URL(payload.shareUrl).pathname, { method: "GET" });
     const landingHtml = await landing.text();
     expect(landing.status).toBe(200);
-    expect(landing.headers.get("cache-control")).toBe("no-store");
+    expect(landing.headers.get("cache-control")).toBe("no-store, max-age=0");
     expect(landingHtml).toContain("Open in Forge");
     expect(landingHtml).toContain("forge://skill-import");
     expect(landingHtml).not.toContain("# Test Skill Body");
@@ -89,12 +144,29 @@ describe("skill share worker", () => {
       headers: { accept: "application/json" }
     });
     expect(jsonDownload.status).toBe(200);
-    expect(jsonDownload.headers.get("cache-control")).toBe("no-store");
+    expect(jsonDownload.headers.get("cache-control")).toBe("no-store, max-age=0");
     expect(jsonDownload.headers.get("content-disposition")).toBe("attachment; filename=\"test-skill.forge-skill.json\"");
     expect(await jsonDownload.json()).toMatchObject({
       format: "forge.skill.bundle.v1",
       skill: { handle: "test-skill", name: "Test Skill" }
     });
+  });
+
+  it("fails closed when durable limiter binding is absent", async () => {
+    const bucket = new MockR2Bucket();
+    const worker = createSkillShareWorker(createWorkerState({ now: () => START_MS }));
+    const env = {
+      SKILL_SHARES_BUCKET: bucket,
+      TOKEN_HMAC_SECRET: SECRET,
+      PUBLIC_BASE_URL: "https://share.test"
+    } as unknown as SkillShareEnv;
+
+    const response = await worker.fetch(new Request("https://share.test/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("fail-closed") })
+    }), env);
+    expect(response.status).toBe(503);
+    expect(bucket.putCount).toBe(0);
   });
 
   it("rejects oversized and invalid uploads before R2 writes", async () => {
@@ -141,13 +213,46 @@ describe("skill share worker", () => {
     const payload = await upload.json() as { shareUrl: string };
     const token = new URL(payload.shareUrl).pathname.split("/").at(-1)!;
 
-    const tampered = await harness.fetch(`/api/v1/skill-shares/${token.slice(0, -1)}x`, { method: "GET" });
+    const tamperedToken = `${token}.tampered`;
+    expect(tamperedToken).not.toBe(token);
+    const tampered = await harness.fetch(`/api/v1/skill-shares/${tamperedToken}`, { method: "GET" });
     expect(tampered.status).toBe(404);
 
     now = START_MS + 61_000;
     const expired = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
     expect(expired.status).toBe(410);
     expect(harness.bucket.objects.size).toBe(0);
+  });
+
+  it("enforces aggregate storage budgets before R2 writes", async () => {
+    const harness = await createHarness({ env: { MAX_ACTIVE_OBJECTS: "1" } });
+    const first = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("budget-one") })
+    });
+    const second = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("budget-two") })
+    });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(507);
+    expect(harness.bucket.putCount).toBe(1);
+  });
+
+  it("bounds per-share download egress after token verification", async () => {
+    const harness = await createHarness({ env: { MAX_DOWNLOADS_PER_SHARE: "1" } });
+    const upload = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("download-quota") })
+    });
+    const payload = await upload.json() as { shareUrl: string };
+    const token = new URL(payload.shareUrl).pathname.split("/").at(-1)!;
+
+    const first = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+    const second = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
   });
 
   it("rate limits anonymous uploads per client IP", async () => {
@@ -167,6 +272,41 @@ describe("skill share worker", () => {
     expect(harness.bucket.putCount).toBe(1);
   });
 
+  it("sets no-store, CORS, and browser hardening headers", async () => {
+    const harness = await createHarness();
+    const upload = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("headers-skill") })
+    });
+    const payload = await upload.json() as { shareUrl: string };
+    const landing = await harness.fetch(new URL(payload.shareUrl).pathname, { method: "GET" });
+    expect(landing.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(landing.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(landing.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(landing.headers.get("x-frame-options")).toBe("DENY");
+
+    const token = new URL(payload.shareUrl).pathname.split("/").at(-1)!;
+    const json = await harness.fetch(`/api/v1/skill-shares/${token}`, { method: "GET" });
+    expect(json.headers.get("cache-control")).toBe("no-store, max-age=0");
+    expect(json.headers.get("access-control-allow-origin")).toBe("*");
+    expect(json.headers.get("content-security-policy")).toContain("default-src 'none'");
+  });
+
+  it("handles corrupt stored R2 JSON with a controlled response", async () => {
+    const harness = await createHarness();
+    const upload = await harness.fetch("/api/v1/skill-shares", {
+      method: "POST",
+      body: JSON.stringify({ bundle: await createValidBundle("corrupt-skill") })
+    });
+    const payload = await upload.json() as { shareUrl: string };
+    const object = Array.from(harness.bucket.objects.values())[0];
+    harness.bucket.objects.set(object.key, new MockR2Object(object.key, "{not-json", object.customMetadata));
+
+    const response = await harness.fetch(`/api/v1/skill-shares/${new URL(payload.shareUrl).pathname.split("/").at(-1)}`, { method: "GET" });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "Unable to read skill share." });
+  });
+
   it("does not expose a listing endpoint", async () => {
     const harness = await createHarness();
     const response = await harness.fetch("/api/v1/skill-shares", { method: "GET" });
@@ -182,7 +322,7 @@ describe("skill share worker", () => {
       customMetadata: { expiresAt: "2026-05-13T12:30:00.000Z" }
     });
 
-    const deleted = await cleanupExpiredObjects(bucket, START_MS);
+    const deleted = await cleanupExpiredObjects(bucket, new MockDurableObjectNamespace(), START_MS);
     expect(deleted).toBe(1);
     expect(bucket.objects.has("skill-shares/expired.json")).toBe(false);
     expect(bucket.objects.has("skill-shares/live.json")).toBe(true);
@@ -200,6 +340,7 @@ async function createHarness(options: {
   const worker = createSkillShareWorker(createWorkerState({ now: options.now ?? (() => START_MS) }));
   const env: SkillShareEnv = {
     SKILL_SHARES_BUCKET: bucket,
+    SHARE_LIMITER: new MockDurableObjectNamespace(),
     TOKEN_HMAC_SECRET: SECRET,
     PUBLIC_BASE_URL: "https://share.test",
     ...options.env

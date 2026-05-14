@@ -409,7 +409,12 @@ async function validateFiles(files: unknown, limits: BundleValidationLimits, err
     if (typeof value.sha256 === "string" && SHA256_PATTERN.test(value.sha256) && await sha256Hex(rawBytes) !== value.sha256) {
       errors.push(`Bundle file ${pathValue ?? index + 1} sha256 does not match decoded content.`);
     }
-    if (normalizedPath) decodedFiles.push({ file: value as unknown as SkillBundleFileEntry, rawBytes, ...decodeTextContent(rawBytes) });
+    const textResult = decodeTextContent(rawBytes);
+    const expectedEncoding = textResult.textContent === undefined ? "base64" : "utf8";
+    if (value.encoding !== expectedEncoding) {
+      errors.push(`Bundle file ${pathValue ?? index + 1} encoding does not match canonical encoding for decoded content.`);
+    }
+    if (normalizedPath) decodedFiles.push({ file: value as unknown as SkillBundleFileEntry, rawBytes, ...textResult });
   }
 
   if (!hasSkillFile) errors.push("Skill bundle must include SKILL.md.");
