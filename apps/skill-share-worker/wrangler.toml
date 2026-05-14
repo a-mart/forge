@@ -16,7 +16,7 @@ class_name = "SkillShareLimiter"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["SkillShareLimiter"]
+new_sqlite_classes = ["SkillShareLimiter"]
 
 [vars]
 PUBLIC_BASE_URL = "https://share.forge.dev"
