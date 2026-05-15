@@ -1,34 +1,58 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
+  SkillBundleManifestV1,
   SkillFileContentResponse,
   SkillFilesResponse,
+  SkillImportPreviewResponse,
+  SkillImportResultResponse,
+  SkillImportTarget,
   SkillInventoryResponse,
+  SkillShareResponse,
 } from "@forge/protocol";
-import type { SwarmManager } from "../../../swarm/swarm-manager.js";
-import { applyCorsHeaders, sendJson } from "../../http-utils.js";
+import { SkillBundleError, SkillBundleValidationError } from "../../../swarm/skills/skill-bundle-service.js";
+import { SkillSharingError, type ImportSkillOptions } from "../../../swarm/skills/skill-sharing-service.js";
+import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const SETTINGS_SKILLS_ENDPOINT_PATH = "/api/settings/skills";
-const SKILL_ROUTE_METHODS = "GET, OPTIONS";
+const SKILL_ROUTE_METHODS = "GET, POST, OPTIONS";
+const DEFAULT_JSON_BODY_LIMIT_BYTES = 64 * 1024;
+const SKILL_BUNDLE_JSON_BODY_LIMIT_BYTES = 35 * 1024 * 1024;
 
-type SkillRouteAction = "inventory" | "files" | "content";
+type SkillRouteAction = "files" | "content";
+type SkillImportRouteAction = "preview-url" | "preview-bundle" | "import";
 
-export function createSkillRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
+interface SkillRouteSwarmManager {
+  listUserProfiles(): Array<{ profileId: string }>;
+  listSkillMetadata(profileId?: string): Promise<SkillInventoryResponse["skills"]>;
+  listSkillFiles(skillId: string, relativePath?: string): Promise<SkillFilesResponse>;
+  getSkillFileContent(skillId: string, relativePath: string): Promise<SkillFileContentResponse>;
+  shareSkill(skillId: string): Promise<SkillShareResponse>;
+  previewSkillImportFromUrl(url: string, target?: SkillImportTarget): Promise<SkillImportPreviewResponse>;
+  previewSkillImportBundle(bundle: SkillBundleManifestV1, target?: SkillImportTarget): Promise<SkillImportPreviewResponse>;
+  importSkill(options: ImportSkillOptions): Promise<SkillImportResultResponse>;
+}
+
+export function createSkillRoutes(options: { swarmManager: SkillRouteSwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
 
   return [
     {
       methods: SKILL_ROUTE_METHODS,
-      matches: (pathname) => pathname === SETTINGS_SKILLS_ENDPOINT_PATH || parseSkillRoutePath(pathname) !== null,
+      matches: (pathname) => pathname === SETTINGS_SKILLS_ENDPOINT_PATH
+        || parseSkillRoutePath(pathname) !== null
+        || parseSkillShareRoutePath(pathname) !== null
+        || parseSkillImportRoutePath(pathname) !== null,
       handle: async (request, response, requestUrl) => {
         try {
           await handleSkillHttpRequest(swarmManager, request, response, requestUrl);
         } catch (error) {
           if (!response.headersSent) {
-            const message = error instanceof Error ? error.message : "Internal server error";
-            sendJson(response, resolveSkillRouteStatusCode(message), {
-              error: message
-            });
+            const mapped = mapSkillRouteError(error);
+            for (const [name, value] of Object.entries(mapped.headers ?? {})) {
+              response.setHeader(name, value);
+            }
+            sendJson(response, mapped.statusCode, mapped.body);
           }
         }
       }
@@ -37,7 +61,7 @@ export function createSkillRoutes(options: { swarmManager: SwarmManager }): Http
 }
 
 async function handleSkillHttpRequest(
-  swarmManager: SwarmManager,
+  swarmManager: SkillRouteSwarmManager,
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL
@@ -54,7 +78,7 @@ async function handleSkillHttpRequest(
 
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_SKILLS_ENDPOINT_PATH) {
     const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;
-    if (profileId && !swarmManager.listUserProfiles().some((profile) => profile.profileId === profileId)) {
+    if (profileId && !profileExists(swarmManager, profileId)) {
       sendJson(response, 404, { error: `Unknown profile: ${profileId}` });
       return;
     }
@@ -63,6 +87,21 @@ async function handleSkillHttpRequest(
     const payload: SkillInventoryResponse = { skills };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
+  }
+
+  if (request.method === "POST") {
+    const shareRoute = parseSkillShareRoutePath(requestUrl.pathname);
+    if (shareRoute) {
+      const result = await swarmManager.shareSkill(shareRoute.skillId);
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
+      return;
+    }
+
+    const importRoute = parseSkillImportRoutePath(requestUrl.pathname);
+    if (importRoute) {
+      await handleSkillImportRoute(swarmManager, request, response, importRoute.action);
+      return;
+    }
   }
 
   if (request.method === "GET") {
@@ -91,6 +130,117 @@ async function handleSkillHttpRequest(
   sendJson(response, 405, { error: "Method Not Allowed" });
 }
 
+async function handleSkillImportRoute(
+  swarmManager: SkillRouteSwarmManager,
+  request: IncomingMessage,
+  response: ServerResponse,
+  action: SkillImportRouteAction
+): Promise<void> {
+  const body = await readJsonBody(
+    request,
+    action === "preview-bundle" || action === "import" ? SKILL_BUNDLE_JSON_BODY_LIMIT_BYTES : DEFAULT_JSON_BODY_LIMIT_BYTES
+  );
+
+  if (!isRecord(body)) {
+    sendJson(response, 400, { error: "Request body must be a JSON object." });
+    return;
+  }
+
+  if (action === "preview-url") {
+    const url = body.url;
+    if (typeof url !== "string" || url.trim().length === 0) {
+      sendJson(response, 400, { error: "url must be a non-empty string." });
+      return;
+    }
+    const target = parseImportTarget(body.target, swarmManager);
+    const result = await swarmManager.previewSkillImportFromUrl(url, target);
+    sendJson(response, 200, result as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (action === "preview-bundle") {
+    if (!("bundle" in body)) {
+      sendJson(response, 400, { error: "bundle is required." });
+      return;
+    }
+    const target = parseImportTarget(body.target, swarmManager);
+    const result = await swarmManager.previewSkillImportBundle(body.bundle as SkillBundleManifestV1, target);
+    sendJson(response, 200, result as unknown as Record<string, unknown>);
+    return;
+  }
+
+  const source = isRecord(body.source) ? body.source : undefined;
+  if (!source) {
+    sendJson(response, 400, { error: "source is required." });
+    return;
+  }
+  const target = parseImportTarget(body.target, swarmManager);
+  const conflictStrategy = parseConflictStrategy(body.conflictStrategy);
+  const confirmReplace = body.confirmReplace === true;
+  const result = await swarmManager.importSkill({
+    source: parseImportSource(source),
+    target,
+    ...(conflictStrategy ? { conflictStrategy } : {}),
+    confirmReplace
+  });
+  sendJson(response, 200, result as unknown as Record<string, unknown>);
+}
+
+function parseImportSource(source: Record<string, unknown>): ImportSkillOptions["source"] {
+  const rawUrl = source.url;
+  const rawBundle = source.bundle;
+  const hasUrl = Object.hasOwn(source, "url") && rawUrl !== undefined;
+  const hasBundle = Object.hasOwn(source, "bundle") && rawBundle !== undefined;
+  if (hasUrl) {
+    if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
+      throw new SkillSharingError("invalid_import_source", "source.url must be a non-empty string.", 400);
+    }
+  }
+  if ((hasUrl ? 1 : 0) + (hasBundle ? 1 : 0) !== 1) {
+    throw new SkillSharingError("invalid_import_source", "Import source must include exactly one url or bundle.", 400);
+  }
+  return hasUrl && typeof rawUrl === "string" ? { url: rawUrl.trim() } : { bundle: rawBundle as SkillBundleManifestV1 };
+}
+
+function parseConflictStrategy(value: unknown): ImportSkillOptions["conflictStrategy"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "reject" || value === "replace") {
+    return value;
+  }
+  throw new SkillSharingError("invalid_conflict_strategy", "conflictStrategy must be reject or replace.", 400);
+}
+
+function parseImportTarget(value: unknown, swarmManager: SkillRouteSwarmManager): SkillImportTarget | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new SkillSharingError("invalid_import_target", "target must be an object.", 400);
+  }
+
+  if (value.scope === "global") {
+    return { scope: "global" };
+  }
+  if (value.scope === "profile") {
+    if (typeof value.profileId !== "string" || value.profileId.trim().length === 0) {
+      throw new SkillSharingError("invalid_import_target", "Profile imports require profileId.", 400);
+    }
+    const profileId = value.profileId.trim();
+    if (!profileExists(swarmManager, profileId)) {
+      throw new SkillSharingError("unknown_profile", `Unknown profile: ${profileId}`, 404);
+    }
+    return { scope: "profile", profileId };
+  }
+
+  throw new SkillSharingError("invalid_import_target", "target.scope must be global or profile.", 400);
+}
+
+function profileExists(swarmManager: SkillRouteSwarmManager, profileId: string): boolean {
+  return swarmManager.listUserProfiles().some((profile) => profile.profileId === profileId);
+}
+
 function parseSkillRoutePath(pathname: string): { skillId: string; action: SkillRouteAction } | null {
   const match = pathname.match(/^\/api\/settings\/skills\/([^/]+)\/(files|content)$/);
   if (!match) {
@@ -103,14 +253,97 @@ function parseSkillRoutePath(pathname: string): { skillId: string; action: Skill
     return null;
   }
 
+  return decodeSkillIdRoute(encodedSkillId, action);
+}
+
+function parseSkillShareRoutePath(pathname: string): { skillId: string } | null {
+  const match = pathname.match(/^\/api\/settings\/skills\/([^/]+)\/share$/);
+  if (!match || !match[1]) {
+    return null;
+  }
+
+  try {
+    return { skillId: decodeURIComponent(match[1]) };
+  } catch {
+    return null;
+  }
+}
+
+function parseSkillImportRoutePath(pathname: string): { action: SkillImportRouteAction } | null {
+  if (pathname === `${SETTINGS_SKILLS_ENDPOINT_PATH}/import`) {
+    return { action: "import" };
+  }
+
+  const match = pathname.match(/^\/api\/settings\/skills\/import\/(preview-url|preview-bundle)$/);
+  if (!match) {
+    return null;
+  }
+  return { action: match[1] as SkillImportRouteAction };
+}
+
+function decodeSkillIdRoute(skillId: string, action: SkillRouteAction): { skillId: string; action: SkillRouteAction } | null {
   try {
     return {
-      skillId: decodeURIComponent(encodedSkillId),
+      skillId: decodeURIComponent(skillId),
       action
     };
   } catch {
     return null;
   }
+}
+
+function mapSkillRouteError(error: unknown): {
+  statusCode: number;
+  body: Record<string, unknown>;
+  headers?: Record<string, string>;
+} {
+  if (error instanceof SkillSharingError) {
+    return {
+      statusCode: error.statusCode,
+      body: {
+        error: error.message,
+        code: error.code,
+        ...(error.details ? { details: error.details } : {}),
+        ...(error.retryAfter ? { retryAfter: error.retryAfter } : {})
+      },
+      ...(error.retryAfter ? { headers: { "Retry-After": error.retryAfter } } : {})
+    };
+  }
+
+  if (error instanceof SkillBundleValidationError) {
+    return {
+      statusCode: 400,
+      body: {
+        error: error.message || "Invalid skill bundle.",
+        code: error.code,
+        details: error.issues
+      }
+    };
+  }
+
+  if (error instanceof SkillBundleError) {
+    return {
+      statusCode: resolveSkillBundleErrorStatusCode(error),
+      body: {
+        error: error.message,
+        code: error.code,
+        ...(error.path && error.code !== "missing_skill_root" ? { path: error.path } : {})
+      }
+    };
+  }
+
+  const message = error instanceof Error ? error.message : "Internal server error";
+  return {
+    statusCode: resolveSkillRouteStatusCode(message),
+    body: { error: message }
+  };
+}
+
+function resolveSkillBundleErrorStatusCode(error: SkillBundleError): number {
+  if (error.code === "unknown_skill" || error.code === "missing_skill_root") return 404;
+  if (error.code === "unshareable_skill_source" || error.code === "sensitive_file") return 403;
+  if (error.code === "oversized_file" || error.code === "oversized_bundle" || error.code === "too_many_files") return 413;
+  return 400;
 }
 
 function resolveSkillRouteStatusCode(message: string): number {
@@ -141,4 +374,8 @@ function resolveSkillRouteStatusCode(message: string): number {
   }
 
   return 500;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

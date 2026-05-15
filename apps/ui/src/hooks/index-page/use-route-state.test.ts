@@ -89,6 +89,27 @@ describe('useRouteState — settings surface', () => {
     expect(captured.current?.activeSurface).toBe('collab')
   })
 
+  it('routes skill import URLs to the skills settings tab on the Builder surface', () => {
+    const parsed = parseRouteStateFromLocation('/', {
+      view: 'settings',
+      surface: 'collab',
+      settingsTab: 'models',
+      skillImportUrl: 'https://forgeskills.radops.ai/s/token',
+    }, 'collab')
+
+    expect(parsed).toEqual({
+      view: 'settings',
+      surface: 'builder',
+      settingsTab: 'skills',
+      skillImportUrl: 'https://forgeskills.radops.ai/s/token',
+    })
+    expect(toRouteSearch(parsed, undefined, 'builder')).toEqual({
+      view: 'settings',
+      settingsTab: 'skills',
+      skillImportUrl: 'https://forgeskills.radops.ai/s/token',
+    })
+  })
+
   it('preserves channel as sticky param through collab settings navigation', () => {
     const navigate = vi.fn()
     renderWith({

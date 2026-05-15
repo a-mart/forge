@@ -850,7 +850,7 @@ describe('SwarmManager', () => {
     expect(createSkill).toContain('**Project skills** are scoped to one Forge project.')
   })
 
-  it('lists only profile-scoped skill metadata when a profile is selected', async () => {
+  it('lists the effective profile skill roster with inherited global skills', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await manager.boot()
@@ -877,7 +877,7 @@ describe('SwarmManager', () => {
     const profileSkills = await manager.listSkillMetadata(profileId)
     const customSkill = profileSkills.find((skill) => skill.directoryName === 'custom-profile-skill')
 
-    expect(profileSkills).toHaveLength(1)
+    expect(profileSkills.length).toBeGreaterThan(1)
     expect(customSkill).toMatchObject({
       name: 'custom-profile-skill',
       directoryName: 'custom-profile-skill',
@@ -890,7 +890,13 @@ describe('SwarmManager', () => {
       isEffective: true,
     })
     expect(typeof customSkill?.skillId).toBe('string')
-    expect(profileSkills.some((skill) => skill.directoryName === 'memory')).toBe(false)
+    expect(profileSkills).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        directoryName: 'memory',
+        isInherited: true,
+        isEffective: true,
+      }),
+    ]))
 
     const globalSkills = await manager.listSkillMetadata()
     expect(globalSkills.some((skill) => skill.directoryName === 'custom-profile-skill')).toBe(false)
@@ -1233,6 +1239,71 @@ describe('SwarmManager', () => {
     const resources = await manager.getMemoryRuntimeResourcesForTest()
     expect(resources.additionalSkillPaths).toContain(localBraveSkillFile)
     expect(resources.additionalSkillPaths).not.toContain(repoBraveSkillFile)
+  })
+
+  it('uses profile skill overrides in runtime resources for Builder sessions', async () => {
+    const config = await makeTempConfig()
+    const localBraveSkillFile = join(config.paths.dataDir, 'skills', 'brave-search', 'SKILL.md')
+    const profileBraveSkillFile = join(getProfilePiSkillsDir(config.paths.dataDir, 'manager'), 'brave-search', 'SKILL.md')
+
+    await mkdir(dirname(localBraveSkillFile), { recursive: true })
+    await mkdir(dirname(profileBraveSkillFile), { recursive: true })
+    await writeFile(
+      localBraveSkillFile,
+      ['---', 'name: brave-search', 'description: Machine-local brave-search workflow.', '---', '', '# Local brave-search override'].join('\n'),
+      'utf8',
+    )
+    await writeFile(
+      profileBraveSkillFile,
+      ['---', 'name: brave-search', 'description: Profile brave-search workflow.', '---', '', '# Profile brave-search override'].join('\n'),
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const resources = await manager.getMemoryRuntimeResourcesForTest()
+    expect(resources.additionalSkillPaths).toContain(profileBraveSkillFile)
+    expect(resources.additionalSkillPaths).not.toContain(localBraveSkillFile)
+    expect(resources.additionalSkillPaths).not.toContain(getProfilePiSkillsDir(config.paths.dataDir, 'manager'))
+  })
+
+  it('uses manager agentId as the profile fallback for legacy manager descriptors without profileId', async () => {
+    const config = await makeTempConfig()
+    const profileSkillFile = join(getProfilePiSkillsDir(config.paths.dataDir, 'manager'), 'legacy-profile-skill', 'SKILL.md')
+    await mkdir(dirname(profileSkillFile), { recursive: true })
+    await writeFile(
+      profileSkillFile,
+      [
+        '---',
+        'name: legacy-profile-skill',
+        'description: Profile skill for legacy manager descriptors.',
+        '---',
+        '',
+        '# Legacy profile skill',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const state = manager as unknown as {
+      descriptors: Map<string, AgentDescriptor>
+      promptService: {
+        buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>
+      }
+    }
+    const descriptor = state.descriptors.get('manager')
+    expect(descriptor).toBeDefined()
+    delete descriptor!.profileId
+
+    const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
+    expect(resources.additionalSkillPaths).toContain(profileSkillFile)
+
+    const claudePrompt = await state.promptService.buildClaudeRuntimeSystemPrompt(descriptor!, 'Base prompt')
+    expect(claudePrompt).toContain('<name>legacy-profile-skill</name>')
+    expect(claudePrompt).toContain(profileSkillFile)
   })
 
   it('injects GPT-5 model-specific instructions into the default manager prompt', async () => {

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel } from './auto-updater.js'
 import { installCli, verifyCliInstall, writeInstallHint, type CliInstallResult } from './cli-install.js'
+import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink } from './deep-link.js'
 import { fixPath } from './fix-path.js'
 import { SleepBlockerService, type SleepBlockerSettingsPatch, type SleepBlockerStatus } from './sleep-blocker.js'
 import { loadWindowState, trackWindowState } from './window-state.js'
@@ -26,6 +27,7 @@ const PACKAGED_RENDERER_DIRNAME = 'ui'
 const PACKAGED_RESOURCES_DIRNAME = 'forge-resources'
 const APP_PROTOCOL_SCHEME = 'app'
 const APP_PROTOCOL_HOST = 'forge'
+const EXTERNAL_PROTOCOL_SCHEME = 'forge'
 
 type BackendReadyMessage = {
   type: 'ready'
@@ -43,6 +45,7 @@ let mainWindow: BrowserWindow | null = null
 let backendBootstrap: BackendBootstrap | null = null
 let appIsQuitting = false
 let appProtocolRegistered = false
+let pendingSkillImportUrl: string | null = findSkillImportUrlInArgs(process.argv)
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -415,16 +418,22 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) {
+  app.on('second-instance', (_event, argv) => {
+    const skillImportUrl = findSkillImportUrlInArgs(argv)
+    if (skillImportUrl) {
+      openSkillImportUrl(skillImportUrl)
       return
     }
 
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore()
-    }
+    focusMainWindow()
+  })
 
-    mainWindow.focus()
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    const skillImportUrl = parseSkillImportDeepLink(url)
+    if (skillImportUrl) {
+      openSkillImportUrl(skillImportUrl)
+    }
   })
 
   ipcMain.on(BACKEND_READY_CHANNEL, (event) => {
@@ -502,6 +511,7 @@ if (!hasSingleInstanceLock) {
     nativeTheme.themeSource = 'dark'
     fixPath()
     createApplicationMenu()
+    registerExternalDeepLinkProtocol()
     if (app.isPackaged) {
       registerAppProtocol()
     }
@@ -617,6 +627,10 @@ function createMainWindow(): BrowserWindow {
   })
 
   window.webContents.setWindowOpenHandler(({ url }) => {
+    if (handlePotentialSkillImportDeepLink(url)) {
+      return { action: 'deny' }
+    }
+
     shell.openExternal(url).catch((error) => {
       console.error('Failed to open external URL', url, error)
     })
@@ -624,6 +638,11 @@ function createMainWindow(): BrowserWindow {
   })
 
   window.webContents.on('will-navigate', (event, url) => {
+    if (handlePotentialSkillImportDeepLink(url)) {
+      event.preventDefault()
+      return
+    }
+
     const appOrigins = ['http://127.0.0.1', 'http://localhost']
 
     const isAppOrigin = appOrigins.some((origin) => url.startsWith(origin)) || url.startsWith(`${APP_PROTOCOL_SCHEME}://`)
@@ -661,6 +680,48 @@ function sendTerminalShortcut(action: 'toggle' | 'new' | 'next' | 'prev'): void 
   }
 
   mainWindow.webContents.send(TERMINAL_SHORTCUT_CHANNEL, { action })
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+
+  mainWindow.focus()
+}
+
+function openSkillImportUrl(skillImportUrl: string): void {
+  pendingSkillImportUrl = skillImportUrl
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+
+  focusMainWindow()
+  pendingSkillImportUrl = null
+  void mainWindow.loadURL(resolveRendererUrl(skillImportUrl))
+}
+
+function handlePotentialSkillImportDeepLink(url: string): boolean {
+  const skillImportUrl = parseSkillImportDeepLink(url)
+  if (!skillImportUrl) {
+    return false
+  }
+
+  openSkillImportUrl(skillImportUrl)
+  return true
+}
+
+function registerExternalDeepLinkProtocol(): void {
+  if (app.isPackaged) {
+    app.setAsDefaultProtocolClient(EXTERNAL_PROTOCOL_SCHEME)
+    return
+  }
+
+  app.setAsDefaultProtocolClient(EXTERNAL_PROTOCOL_SCHEME, process.execPath, [process.argv[1] ?? ''])
 }
 
 function createApplicationMenu(): void {
@@ -803,12 +864,14 @@ function createApplicationMenu(): void {
 }
 
 async function loadRenderer(window: BrowserWindow): Promise<void> {
-  if (!app.isPackaged) {
-    await window.loadURL(ELECTRON_DEV_SERVER_URL)
-    return
-  }
+  const skillImportUrl = pendingSkillImportUrl
+  pendingSkillImportUrl = null
+  await window.loadURL(resolveRendererUrl(skillImportUrl ?? undefined))
+}
 
-  await window.loadURL(resolvePackagedRendererUrl())
+function resolveRendererUrl(skillImportUrl?: string): string {
+  const baseUrl = app.isPackaged ? resolvePackagedRendererUrl() : ELECTRON_DEV_SERVER_URL
+  return skillImportUrl ? buildSkillImportRouteUrl(baseUrl, skillImportUrl) : baseUrl
 }
 
 function buildBackendBootstrap(port: number): BackendBootstrap {

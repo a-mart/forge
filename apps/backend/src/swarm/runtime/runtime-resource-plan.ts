@@ -97,10 +97,7 @@ export function planPiResourceLoaderOptions(options: PlanPiResourceLoaderOptions
     mergeRuntimeContextFiles,
   } = options;
 
-  const additionalSkillPaths = [
-    ...memoryResources.additionalSkillPaths,
-    ...(!isCollaborationRuntime && dirHasFiles(pathsPlan.profilePiSkillsDir) ? [pathsPlan.profilePiSkillsDir] : []),
-  ];
+  const additionalSkillPaths = [...memoryResources.additionalSkillPaths];
   const skillsOverride = isCollaborationRuntime
     ? buildCollaborationSkillsOverride(memoryResources.skillMetadata)
     : undefined;

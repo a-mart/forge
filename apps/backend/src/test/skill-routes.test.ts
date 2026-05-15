@@ -4,9 +4,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { join } from "node:path";
 import { SkillFileService } from "../swarm/skill-file-service.js";
 import { SkillMetadataService } from "../swarm/skill-metadata-service.js";
+import { SkillBundleError } from "../swarm/skills/skill-bundle-service.js";
+import { SkillSharingError } from "../swarm/skills/skill-sharing-service.js";
 import type { SwarmConfig } from "../swarm/types.js";
-import { createSkillRoutes } from "../ws/routes/skill-routes.js";
-import { createTempConfig } from "../test-support/index.js";
+import { createSkillRoutes } from "../ws/http/routes/skill-routes.js";
+import { createTempConfig } from "../test-support/temp-config.js";
 
 interface TestServer {
   readonly baseUrl: string;
@@ -126,6 +128,215 @@ describe("skill routes", () => {
     expect(response.status).toBe(404);
     expect(swarmManager.listSkillMetadata).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({ error: "Unknown profile: missing-profile" });
+  });
+
+  it("shares a skill through an explicit action route", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      shareSkill: vi.fn(async (skillId: string) => ({
+        shareUrl: "https://share.test/s/token",
+        importUrl: "forge://skill-import?url=https%3A%2F%2Fshare.test%2Fs%2Ftoken",
+        expiresAt: "2026-05-20T12:00:00.000Z",
+        contentSha256: "a".repeat(64),
+        warnings: [],
+        skillId
+      })),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const response = await fetch(`${server.baseUrl}/api/settings/skills/${encodeURIComponent("skill/share/id")}/share`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(swarmManager.shareSkill).toHaveBeenCalledWith("skill/share/id");
+    await expect(response.json()).resolves.toMatchObject({
+      shareUrl: "https://share.test/s/token",
+      importUrl: "forge://skill-import?url=https%3A%2F%2Fshare.test%2Fs%2Ftoken",
+      warnings: []
+    });
+  });
+
+  it("maps disappeared skill roots during share to a safe 404", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      shareSkill: vi.fn(async () => {
+        throw new SkillBundleError("missing_skill_root", "Skill no longer exists. Refresh the skill list and try again.", {
+          path: "/private/data/skills/vanished"
+        });
+      }),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const response = await fetch(`${server.baseUrl}/api/settings/skills/${encodeURIComponent("vanished")}/share`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Skill no longer exists. Refresh the skill list and try again.",
+      code: "missing_skill_root"
+    });
+  });
+
+  it("previews import URLs with profile validation and no writes", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => [{ profileId: "profile-a", displayName: "Profile A" }]),
+      previewSkillImportFromUrl: vi.fn(async (url: string, target: unknown) => ({
+        bundle: { skill: { handle: "shared-skill", name: "Shared Skill" }, files: [], totals: { fileCount: 0, byteCount: 0 } },
+        target,
+        conflict: { exists: false },
+        warnings: [],
+        url
+      })),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const response = await fetch(`${server.baseUrl}/api/settings/skills/import/preview-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://share.test/s/token", target: { scope: "profile", profileId: "profile-a" } })
+    });
+
+    expect(response.status).toBe(200);
+    expect(swarmManager.previewSkillImportFromUrl).toHaveBeenCalledWith("https://share.test/s/token", {
+      scope: "profile",
+      profileId: "profile-a"
+    });
+    await expect(response.json()).resolves.toMatchObject({ conflict: { exists: false }, warnings: [] });
+  });
+
+  it("returns 404 for import requests targeting an unknown profile", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => [{ profileId: "profile-a", displayName: "Profile A" }]),
+      previewSkillImportFromUrl: vi.fn(async () => ({})),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const response = await fetch(`${server.baseUrl}/api/settings/skills/import/preview-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://share.test/s/token", target: { scope: "profile", profileId: "missing" } })
+    });
+
+    expect(response.status).toBe(404);
+    expect(swarmManager.previewSkillImportFromUrl).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ code: "unknown_profile" });
+  });
+
+  it("maps skill share service errors to route status codes", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      previewSkillImportFromUrl: vi.fn(async () => {
+        throw new SkillSharingError("share_expired", "Skill share expired.", 410);
+      }),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const response = await fetch(`${server.baseUrl}/api/settings/skills/import/preview-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://share.test/s/token" })
+    });
+
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toEqual({ error: "Skill share expired.", code: "share_expired" });
+  });
+
+  it("preserves retry-after and budget status from skill share errors", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      previewSkillImportFromUrl: vi.fn(async () => {
+        throw new SkillSharingError("share_rate_limited", "Slow down.", 429, undefined, "120");
+      }),
+      shareSkill: vi.fn(async () => {
+        throw new SkillSharingError("share_budget_exceeded", "Budget exhausted.", 507);
+      }),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const rateLimited = await fetch(`${server.baseUrl}/api/settings/skills/import/preview-url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://share.test/s/token" })
+    });
+    expect(rateLimited.status).toBe(429);
+    expect(rateLimited.headers.get("retry-after")).toBe("120");
+    await expect(rateLimited.json()).resolves.toEqual({
+      error: "Slow down.",
+      code: "share_rate_limited",
+      retryAfter: "120"
+    });
+
+    const budgetExceeded = await fetch(`${server.baseUrl}/api/settings/skills/skill-id/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    expect(budgetExceeded.status).toBe(507);
+    await expect(budgetExceeded.json()).resolves.toEqual({
+      error: "Budget exhausted.",
+      code: "share_budget_exceeded"
+    });
+  });
+
+  it("imports skills through the explicit import route", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      importSkill: vi.fn(async (options: unknown) => ({
+        bundle: { skill: { handle: "imported", name: "Imported" }, files: [], totals: { fileCount: 0, byteCount: 0 } },
+        target: { scope: "global" },
+        rootPath: "/data/skills/imported",
+        replaced: false,
+        installedOverride: false,
+        warnings: [],
+        options
+      })),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const response = await fetch(`${server.baseUrl}/api/settings/skills/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: { url: "https://share.test/s/token" }, conflictStrategy: "replace", confirmReplace: true })
+    });
+
+    expect(response.status).toBe(200);
+    expect(swarmManager.importSkill).toHaveBeenCalledWith({
+      source: { url: "https://share.test/s/token" },
+      target: undefined,
+      conflictStrategy: "replace",
+      confirmReplace: true
+    });
+    await expect(response.json()).resolves.toMatchObject({ rootPath: "/data/skills/imported", replaced: false });
+  });
+
+  it("rejects invalid import source and conflict strategy values", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => []),
+      importSkill: vi.fn(async () => ({})),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const invalidStrategy = await fetch(`${server.baseUrl}/api/settings/skills/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: { url: "https://share.test/s/token" }, conflictStrategy: "overwrite" })
+    });
+    expect(invalidStrategy.status).toBe(400);
+    await expect(invalidStrategy.json()).resolves.toMatchObject({ code: "invalid_conflict_strategy" });
+
+    const ambiguousSource = await fetch(`${server.baseUrl}/api/settings/skills/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: { url: "https://share.test/s/token", bundle: { format: "forge.skill.bundle.v1" } } })
+    });
+    expect(ambiguousSource.status).toBe(400);
+    await expect(ambiguousSource.json()).resolves.toMatchObject({ code: "invalid_import_source" });
+    expect(swarmManager.importSkill).not.toHaveBeenCalled();
   });
 
   it("returns 404 instead of crashing on malformed encoded skill ids", async () => {

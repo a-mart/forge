@@ -1177,6 +1177,12 @@ export function BuilderSurface({
                 previewSession={previewSession}
                 initialTab={routeState.view === 'settings' ? routeState.settingsTab : undefined}
                 initialCollabApiBaseUrl={routeState.view === 'settings' ? routeState.collabApiBaseUrl : undefined}
+                initialSkillImportUrl={routeState.view === 'settings' ? routeState.skillImportUrl : undefined}
+                onSkillImportUrlConsumed={() => {
+                  if (routeState.view === 'settings' && routeState.skillImportUrl) {
+                    navigateToOuterRoute({ ...routeState, skillImportUrl: undefined }, true)
+                  }
+                }}
               />
             ) : activeView === 'stats' ? (
               <StatsPage

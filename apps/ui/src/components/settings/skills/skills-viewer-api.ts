@@ -5,8 +5,13 @@
 import type {
   SkillFileContentResponse,
   SkillFilesResponse,
+  SkillImportPreviewResponse,
+  SkillImportPreviewUrlRequest,
+  SkillImportRequest,
+  SkillImportResultResponse,
   SkillInventoryEntry,
   SkillInventoryResponse,
+  SkillShareResponse,
 } from '@forge/protocol'
 import type { SettingsApiClient } from '../settings-api-client'
 import { createBuilderSettingsApiClient } from '../settings-api-client'
@@ -70,4 +75,53 @@ export async function fetchSkillFileContent(
   const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await client.readApiError(response))
   return (await response.json()) as SkillFileContentResponse
+}
+
+/* ------------------------------------------------------------------ */
+/*  Skill sharing                                                     */
+/* ------------------------------------------------------------------ */
+
+export async function shareSkill(
+  clientOrWsUrl: SettingsApiClient | string,
+  skillId: string,
+): Promise<SkillShareResponse> {
+  const client = resolveClient(clientOrWsUrl)
+  const response = await client.fetch(`/api/settings/skills/${encodeURIComponent(skillId)}/share`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+    cache: 'no-store',
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  return (await response.json()) as SkillShareResponse
+}
+
+export async function previewSkillImportFromUrl(
+  clientOrWsUrl: SettingsApiClient | string,
+  request: SkillImportPreviewUrlRequest,
+): Promise<SkillImportPreviewResponse> {
+  const client = resolveClient(clientOrWsUrl)
+  const response = await client.fetch('/api/settings/skills/import/preview-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    cache: 'no-store',
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  return (await response.json()) as SkillImportPreviewResponse
+}
+
+export async function importSkill(
+  clientOrWsUrl: SettingsApiClient | string,
+  request: SkillImportRequest,
+): Promise<SkillImportResultResponse> {
+  const client = resolveClient(clientOrWsUrl)
+  const response = await client.fetch('/api/settings/skills/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    cache: 'no-store',
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  return (await response.json()) as SkillImportResultResponse
 }

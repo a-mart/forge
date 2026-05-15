@@ -25,9 +25,14 @@ import type {
   SessionMemoryMergeResult,
   SessionMemoryMergeStrategy,
   SessionMeta,
+  SkillBundleManifestV1,
   SkillFileContentResponse,
   SkillFilesResponse,
-  SkillInventoryEntry
+  SkillImportPreviewResponse,
+  SkillImportResultResponse,
+  SkillImportTarget,
+  SkillInventoryEntry,
+  SkillShareResponse
 } from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import {
@@ -127,6 +132,7 @@ import {
   type WorkerWatchdogState
 } from "./swarm-worker-health-service.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
+import type { ImportSkillOptions } from "./skills/skill-sharing-service.js";
 import {
   getManagedModelProviderCredentialAvailability,
   SecretsEnvService
@@ -4266,6 +4272,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.settingsService.getSkillFileContent(skillId, relativePath);
   }
 
+  async shareSkill(skillId: string): Promise<SkillShareResponse> {
+    return this.settingsService.shareSkill(skillId);
+  }
+
+  async previewSkillImportFromUrl(url: string, target?: SkillImportTarget): Promise<SkillImportPreviewResponse> {
+    return this.settingsService.previewSkillImportFromUrl(url, target);
+  }
+
+  async previewSkillImportBundle(bundle: SkillBundleManifestV1, target?: SkillImportTarget): Promise<SkillImportPreviewResponse> {
+    return this.settingsService.previewSkillImportBundle(bundle, target);
+  }
+
+  async importSkill(options: ImportSkillOptions): Promise<SkillImportResultResponse> {
+    return this.settingsService.importSkill(options);
+  }
+
   async updateSettingsEnv(values: Record<string, string>): Promise<void> {
     await this.settingsService.updateSettingsEnv(values);
   }
@@ -5477,18 +5499,35 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ? descriptor
       : this.descriptors.get(descriptor.managerId);
     const collabInfo = getCollabSessionInfo(managerDescriptor);
-    if (!managerDescriptor || managerDescriptor.role !== "manager" || !collabInfo) {
-      return null;
-    }
 
-    try {
-      const dbHelpers = await createCollaborationDbHelpers(this.config);
-      const channel = dbHelpers.getChannel(collabInfo.channelId);
-      if (!channel) {
-        this.logDebug("collaboration:skills:channel_missing", {
+    if (managerDescriptor?.role === "manager" && collabInfo) {
+      try {
+        const dbHelpers = await createCollaborationDbHelpers(this.config);
+        const channel = dbHelpers.getChannel(collabInfo.channelId);
+        if (!channel) {
+          this.logDebug("collaboration:skills:channel_missing", {
+            agentId: descriptor.agentId,
+            managerId: managerDescriptor.agentId,
+            channelId: collabInfo.channelId,
+          });
+          const closedRoster = await resolveCollaborationSkillRoster({
+            selectionJson: "[]",
+            skillMetadataService: this.skillMetadataService,
+          });
+          return closedRoster.skills;
+        }
+
+        const roster = await resolveCollaborationSkillRoster({
+          selectionJson: channel.activeSkillHandlesJson,
+          skillMetadataService: this.skillMetadataService,
+        });
+        return roster.skills;
+      } catch (error) {
+        this.logDebug("collaboration:skills:resolve_error", {
           agentId: descriptor.agentId,
           managerId: managerDescriptor.agentId,
           channelId: collabInfo.channelId,
+          message: error instanceof Error ? error.message : String(error),
         });
         const closedRoster = await resolveCollaborationSkillRoster({
           selectionJson: "[]",
@@ -5496,25 +5535,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         });
         return closedRoster.skills;
       }
-
-      const roster = await resolveCollaborationSkillRoster({
-        selectionJson: channel.activeSkillHandlesJson,
-        skillMetadataService: this.skillMetadataService,
-      });
-      return roster.skills;
-    } catch (error) {
-      this.logDebug("collaboration:skills:resolve_error", {
-        agentId: descriptor.agentId,
-        managerId: managerDescriptor.agentId,
-        channelId: collabInfo.channelId,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      const closedRoster = await resolveCollaborationSkillRoster({
-        selectionJson: "[]",
-        skillMetadataService: this.skillMetadataService,
-      });
-      return closedRoster.skills;
     }
+
+    const profileId = managerDescriptor?.role === "manager"
+      ? normalizeOptionalAgentId(managerDescriptor.profileId) ?? managerDescriptor.agentId
+      : normalizeOptionalAgentId(descriptor.profileId);
+    if (!profileId) {
+      return null;
+    }
+
+    return this.skillMetadataService.getProfileSkillMetadata(profileId);
   }
 
   async resolveProjectAgentSystemPromptOverride(

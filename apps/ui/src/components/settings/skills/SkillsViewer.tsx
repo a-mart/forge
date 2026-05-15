@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useHelpContext } from '@/components/help/help-hooks'
 import { cn } from '@/lib/utils'
-import { FolderOpen, Loader2 } from 'lucide-react'
+import { Download, FolderOpen, Loader2, Share2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { SettingsSection } from '../settings-row'
 import { SkillSourceBadge } from './SkillSourceBadge'
@@ -18,8 +19,10 @@ import { SkillListRail } from './SkillListRail'
 import { SkillFileTree } from './SkillFileTree'
 import { SkillFileViewer } from './SkillFileViewer'
 import { fetchSkillInventory } from './skills-viewer-api'
+import { SkillImportDialog, SKILL_IMPORT_GLOBAL_SCOPE_VALUE } from './SkillImportDialog'
+import { SkillShareDialog } from './SkillShareDialog'
 import type { SkillInventoryEntry } from './skills-viewer-types'
-import type { ManagerProfile, CollaborationCategory, CollaborationChannel } from '@forge/protocol'
+import type { ManagerProfile, CollaborationCategory, CollaborationChannel, SkillImportResultResponse } from '@forge/protocol'
 import type { SettingsEnvVariable } from '../settings-types'
 import {
   fetchSettingsEnvVariables,
@@ -63,9 +66,21 @@ interface SkillsViewerProps {
   changeKey?: number
   /** Optional initial scope value (e.g. 'channel:ch-1') for testing */
   initialScope?: string
+  /** Optional Forge share URL handed in from route/deep-link state. */
+  initialImportUrl?: string
+  /** Called after an initial import URL has been consumed so route params can be scrubbed. */
+  onInitialImportUrlConsumed?: () => void
 }
 
-export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialScope }: SkillsViewerProps) {
+export function SkillsViewer({
+  wsUrl,
+  apiClient,
+  profiles,
+  changeKey,
+  initialScope,
+  initialImportUrl,
+  onInitialImportUrlConsumed,
+}: SkillsViewerProps) {
   useHelpContext('settings.skills')
   const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
   const isCollab = apiClient?.target.kind === 'collab'
@@ -148,6 +163,12 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
+  /* ---------- Share/import dialogs ---------- */
+  const [shareDialogOpen, setShareDialogOpen] = useState(false)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [importDialogInitialUrl, setImportDialogInitialUrl] = useState<string | undefined>(undefined)
+  const lastInitialImportUrlRef = useRef<string | undefined>(undefined)
+
   /* ---------- File viewer ---------- */
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
 
@@ -166,6 +187,11 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
     () => skills.find((s) => s.skillId === selectedSkillId) ?? null,
     [skills, selectedSkillId],
   )
+
+  const selectedSkillShareable = Boolean(
+    selectedSkill && (selectedSkill.sourceKind === 'machine-local' || selectedSkill.sourceKind === 'profile'),
+  )
+  const canUseLocalSkillSharing = !isCollab && !isCollabCategory && !isCollabChannel
 
   const filteredEnvVariables = useMemo(() => {
     if (!selectedSkill) return []
@@ -213,6 +239,18 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
     }
   }, [clientOrWsUrl])
 
+  const handleImportedSkill = useCallback(async (result: SkillImportResultResponse) => {
+    const nextScope = result.target.scope === 'profile' && result.target.profileId
+      ? result.target.profileId
+      : SCOPE_GLOBAL
+    setSelectedScope(nextScope)
+    await loadSkills(nextScope)
+    if (result.skillId) {
+      setSelectedSkillId(result.skillId)
+      setSelectedFilePath('SKILL.md')
+    }
+  }, [loadSkills])
+
   const loadVariables = useCallback(async () => {
     setEnvLoading(true)
     setEnvError(null)
@@ -233,6 +271,21 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
   useEffect(() => {
     void loadVariables()
   }, [loadVariables])
+
+  useEffect(() => {
+    const trimmed = initialImportUrl?.trim()
+    if (!trimmed) {
+      lastInitialImportUrlRef.current = undefined
+      return
+    }
+    if (trimmed === lastInitialImportUrlRef.current || isCollab) {
+      return
+    }
+    lastInitialImportUrlRef.current = trimmed
+    setImportDialogInitialUrl(trimmed)
+    setImportDialogOpen(true)
+    onInitialImportUrlConsumed?.()
+  }, [initialImportUrl, isCollab, onInitialImportUrlConsumed])
 
   /* Reset on scope change */
   useEffect(() => {
@@ -355,6 +408,22 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <SkillShareDialog
+        open={shareDialogOpen}
+        onOpenChange={setShareDialogOpen}
+        clientOrWsUrl={clientOrWsUrl}
+        skill={selectedSkill}
+      />
+      <SkillImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        clientOrWsUrl={clientOrWsUrl}
+        profiles={profiles}
+        initialUrl={importDialogInitialUrl}
+        initialScope={selectedScope === SCOPE_GLOBAL ? SKILL_IMPORT_GLOBAL_SCOPE_VALUE : selectedScope}
+        onImported={handleImportedSkill}
+      />
+
       {/* Collab settings banner */}
       {isCollab && apiClient && (
         <div className="shrink-0">
@@ -370,6 +439,7 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
             ? 'Browse, inspect, and configure installed skills. Select a category or channel to manage skill selection.'
             : 'Browse, inspect, and configure installed skills.'}
         >
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="flex flex-col gap-1.5">
             <Label className="text-xs font-medium text-muted-foreground">
               Configuration scope
@@ -421,6 +491,34 @@ export function SkillsViewer({ wsUrl, apiClient, profiles, changeKey, initialSco
                 )}
               </SelectContent>
             </Select>
+          </div>
+
+            {canUseLocalSkillSharing && (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!selectedSkill || !selectedSkillShareable}
+                  title={!selectedSkillShareable ? 'Only user-created global and project skills can be shared.' : undefined}
+                  onClick={() => setShareDialogOpen(true)}
+                >
+                  <Share2 className="mr-1.5 size-3.5" />
+                  Share selected skill
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    setImportDialogInitialUrl(undefined)
+                    setImportDialogOpen(true)
+                  }}
+                >
+                  <Download className="mr-1.5 size-3.5" />
+                  Import from URL
+                </Button>
+              </div>
+            )}
           </div>
         </SettingsSection>
       </div>

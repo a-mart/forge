@@ -6,9 +6,14 @@ import {
   type ManagerExactModelSelection,
   type CredentialPoolStrategy,
   type PooledCredentialInfo,
+  type SkillBundleManifestV1,
   type SkillFileContentResponse,
   type SkillFilesResponse,
-  type SkillInventoryEntry
+  type SkillImportPreviewResponse,
+  type SkillImportResultResponse,
+  type SkillImportTarget,
+  type SkillInventoryEntry,
+  type SkillShareResponse
 } from "@forge/protocol";
 import type { CredentialPoolService } from "./credential-pool.js";
 import {
@@ -33,6 +38,11 @@ import {
 } from "./secrets-env-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
+import {
+  SkillSharingError,
+  SkillSharingService,
+  type ImportSkillOptions
+} from "./skills/skill-sharing-service.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 import type {
@@ -389,6 +399,66 @@ export class SwarmSettingsService {
     }
 
     return this.options.skillFileService.getFileContent(skill, relativePath);
+  }
+
+  async shareSkill(skillId: string): Promise<SkillShareResponse> {
+    return this.createSkillSharingService().shareSkill(skillId);
+  }
+
+  async previewSkillImportFromUrl(
+    url: string,
+    target?: SkillImportTarget
+  ): Promise<SkillImportPreviewResponse> {
+    return this.createSkillSharingService().previewImportFromUrl({
+      url,
+      target: this.validateSkillImportTarget(target)
+    });
+  }
+
+  async previewSkillImportBundle(
+    bundle: SkillBundleManifestV1,
+    target?: SkillImportTarget
+  ): Promise<SkillImportPreviewResponse> {
+    return this.createSkillSharingService().previewImportBundle({
+      bundle,
+      target: this.validateSkillImportTarget(target)
+    });
+  }
+
+  async importSkill(options: ImportSkillOptions): Promise<SkillImportResultResponse> {
+    return this.createSkillSharingService().importSkill({
+      ...options,
+      target: this.validateSkillImportTarget(options.target)
+    });
+  }
+
+  private validateSkillImportTarget(target: SkillImportTarget | undefined): SkillImportTarget | undefined {
+    if (!target) {
+      return undefined;
+    }
+    if (target.scope === "global") {
+      return { scope: "global" };
+    }
+    if (target.scope === "profile") {
+      const profileId = typeof target.profileId === "string" ? target.profileId.trim() : "";
+      if (!profileId) {
+        throw new SkillSharingError("invalid_import_target", "Profile imports require profileId.", 400);
+      }
+      if (!this.options.profiles.has(profileId)) {
+        throw new SkillSharingError("unknown_profile", `Unknown profile: ${profileId}`, 404);
+      }
+      return { scope: "profile", profileId };
+    }
+    throw new SkillSharingError("invalid_import_target", "Import target scope must be global or profile.", 400);
+  }
+
+  private createSkillSharingService(): SkillSharingService {
+    return new SkillSharingService({
+      config: this.options.config,
+      skillMetadataService: this.options.skillMetadataService,
+      now: this.options.now ? () => new Date(this.options.now!()) : undefined,
+      validateProfileTarget: (profileId) => this.options.profiles.has(profileId)
+    });
   }
 
   async updateSettingsEnv(values: Record<string, string>): Promise<void> {
