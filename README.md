@@ -209,6 +209,8 @@ Skill API keys can be configured in the dashboard under Settings → Environment
 
 Forge also supports custom skills. Place them in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) using the standard `SKILL.md` frontmatter format and they'll be available to all agents. For reusable custom skills, use the built-in `create-skill` helper to scaffold, place, and validate global skills or project skills. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
 
+Forge can also share user-created global/project skills through the separate skill-share worker at `apps/skill-share-worker/`. Sharing generates a temporary bearer link from the service, and importing from a share link or `forge://skill-import` deep link always opens a preview/review step first. Built-in and repository skills are not shareable in v1. See [`apps/skill-share-worker/README.md`](apps/skill-share-worker/README.md) for the service contract and guardrails.
+
 ### Extensions
 
 Forge has two extension systems:
@@ -286,6 +288,7 @@ The `.env.example` file documents all available options with comments. Key categ
 - **Core** — host, port, data directory, debug mode
 - **UI** — WebSocket URL override (dev only, production auto-resolves)
 - **Skills** — API keys for Brave Search, Gemini image generation
+- **Skill sharing** — anonymous worker origin and disable flag
 - **Agent Runtimes** — OpenAI Codex Responses transport defaults to `sse` for reliability when `FORGE_OPENAI_CODEX_TRANSPORT` is unset, blank, or invalid; `websocket-cached` remains an explicit experimental/canary opt-in via `FORGE_OPENAI_CODEX_TRANSPORT=websocket-cached`, with `websocket` and `auto` also supported. Sanitized transport diagnostics stay opt-in via `FORGE_CODEX_TRANSPORT_DEBUG=1` at `GET /api/debug/codex-transport`.
 
 Provider auth for LLM providers (OpenAI, Anthropic, xAI) is configured in the dashboard UI under **Settings → Authentication**, where each row shows the provider label plus an auth-mode badge. OpenAI and Anthropic can use OAuth or API key auth; Claude SDK stays OAuth-only via Claude Code CLI. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.

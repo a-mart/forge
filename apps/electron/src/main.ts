@@ -5,7 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel } from './auto-updater.js'
 import { installCli, verifyCliInstall, writeInstallHint, type CliInstallResult } from './cli-install.js'
-import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink } from './deep-link.js'
+import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink, shouldRegisterExternalDeepLinkProtocol } from './deep-link.js'
 import { fixPath } from './fix-path.js'
 import { SleepBlockerService, type SleepBlockerSettingsPatch, type SleepBlockerStatus } from './sleep-blocker.js'
 import { loadWindowState, trackWindowState } from './window-state.js'
@@ -716,6 +716,10 @@ function handlePotentialSkillImportDeepLink(url: string): boolean {
 }
 
 function registerExternalDeepLinkProtocol(): void {
+  if (!shouldRegisterExternalDeepLinkProtocol({ isPackaged: app.isPackaged, env: process.env })) {
+    return
+  }
+
   if (app.isPackaged) {
     app.setAsDefaultProtocolClient(EXTERNAL_PROTOCOL_SCHEME)
     return

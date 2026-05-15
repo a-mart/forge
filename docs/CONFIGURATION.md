@@ -31,6 +31,15 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 
 Skill API keys can also be configured in the dashboard under **Settings → Environment Variables**. `.env` values remain supported as fallback.
 
+### Skill Sharing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FORGE_SKILL_SHARE_BASE_URL` | `https://forgeskills.radops.ai` | Skill share service origin used to generate share links and resolve import URLs. |
+| `FORGE_SKILL_SHARE_DISABLED` | `false` | Disable the anonymous skill-share service. |
+
+Legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` and `MIDDLEMAN_SKILL_SHARE_DISABLED` aliases are still accepted. See [`apps/skill-share-worker/README.md`](../apps/skill-share-worker/README.md) for the worker-side quotas and Cloudflare guardrails.
+
 ### Agent Runtimes
 
 | Variable | Default | Description |

@@ -51,6 +51,17 @@ export function buildSkillImportRouteUrl(rendererBaseUrl: string, skillImportUrl
   return target.toString()
 }
 
+export function shouldRegisterExternalDeepLinkProtocol(options: {
+  isPackaged: boolean
+  env?: NodeJS.ProcessEnv
+}): boolean {
+  if (options.isPackaged) {
+    return true
+  }
+
+  return options.env?.FORGE_REGISTER_DEV_PROTOCOL === '1'
+}
+
 function isAllowedShareProtocol(url: URL): boolean {
   if (url.protocol === 'https:') {
     return true

@@ -398,8 +398,8 @@ Forge uses long polling to receive messages. The **poll timeout** (default 25 se
     id: 'settings-skills',
     title: 'Skills Management',
     category: 'settings',
-    summary: 'Configure API keys and settings for installed agent skills.',
-    content: `Skills give agents extra capabilities like web search, image generation, and browser automation. The Skills page lets you browse installed skills, inspect their files, and configure API keys and settings.
+    summary: 'Configure skills, share user-created bundles, and import skills from links.',
+    content: `Skills give agents extra capabilities like web search, image generation, and browser automation. The Skills page lets you browse installed skills, inspect their files, configure API keys and settings, and share or import user-created skills from links.
 
 ## Scope and skill browser
 
@@ -423,6 +423,14 @@ Skills like Chrome CDP have dedicated configuration UI in the right detail pane 
 
 Skills are discovered at agent startup from builtin and user directories. You don't need to restart Forge after saving an API key — the key is available to the next agent session that needs it.
 
+## Skill sharing
+
+Use the Share button on a user-created global or project skill to generate a temporary bearer link from the skill share service. Built-in and repository skills are not shareable in v1.
+
+Use **Import from URL** to paste a Forge skill-share link or a \`forge://skill-import\` deep link. Forge always opens a preview first so you can review files, warnings, and conflicts before anything is installed.
+
+Conflicts default to reject. If the target directory already exists or the import would install an override, you must explicitly confirm the replacement before install.
+
 ## Collaboration skill selection
 
 In Collaboration mode, the Skills page adds category and channel scopes to the scope dropdown. This lets you control which skills are loaded for each collaboration context:
@@ -442,6 +450,12 @@ Skill selection supports two modes: **All skills** (loads every available skill)
       'image generation',
       'configuration',
       'secrets',
+      'share',
+      'import',
+      'url',
+      'deep link',
+      'preview',
+      'conflict',
       'collaboration',
       'channel',
       'category',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink } from '../deep-link.js'
+import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink, shouldRegisterExternalDeepLinkProtocol } from '../deep-link.js'
 
 describe('skill import deep links', () => {
   it('extracts an HTTPS share URL from forge://skill-import links', () => {
@@ -31,5 +31,11 @@ describe('skill import deep links', () => {
     const result = buildSkillImportRouteUrl('app://forge/index.html', 'https://forgeskills.radops.ai/s/token')
 
     expect(result).toBe('app://forge/index.html?view=settings&settingsTab=skills&skillImportUrl=https%3A%2F%2Fforgeskills.radops.ai%2Fs%2Ftoken')
+  })
+
+  it('does not register the production forge:// scheme from dev Electron unless explicitly requested', () => {
+    expect(shouldRegisterExternalDeepLinkProtocol({ isPackaged: true })).toBe(true)
+    expect(shouldRegisterExternalDeepLinkProtocol({ isPackaged: false, env: {} })).toBe(false)
+    expect(shouldRegisterExternalDeepLinkProtocol({ isPackaged: false, env: { FORGE_REGISTER_DEV_PROTOCOL: '1' } })).toBe(true)
   })
 })

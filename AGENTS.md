@@ -98,6 +98,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Idle worker watchdog** | `swarm/swarm-manager.ts` (WorkerWatchdogState, finalizeWorkerIdleTurn) | — | Dual-path detection (onAgentEnd + status-idle) of workers that complete their turn without reporting back to the parent manager. Auto-sends the worker's last output to the manager and emits a batched ⚠️ system notification in chat. Complementary to the stall detector (which handles workers stuck mid-tool-execution). |
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points. Choice requests trigger a dedicated notification sound (configurable per-manager, default ON) that takes priority over regular notification sounds. |
 | **Forge extensions** | `swarm/forge-extension-*.ts`, `runtime/*`, provider creators, `swarm-manager.ts`, `versioning/embedded-git-versioning-service.ts` | Settings Extensions UI | Forge-native hook system for session lifecycle, runtime errors, versioning commits, and cross-runtime tool interception. Auto-discovered from `~/.forge/extensions/`, `~/.forge/profiles/<id>/extensions/`, and `<cwd>/.forge/extensions/`. See [`docs/FORGE_EXTENSIONS.md`](docs/FORGE_EXTENSIONS.md) |
+| **Skill sharing** | `swarm/skills/skill-sharing-service.ts` | `apps/skill-share-worker/` | Temporary anonymous skill transfer service for user-created global/project skills. Share links and imports use the configured worker origin (default `https://forgeskills.radops.ai`); see [`apps/skill-share-worker/README.md`](apps/skill-share-worker/README.md) for quotas, TTL, and Cloudflare guardrails. |
 | **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | Settings Extensions UI | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
 | **Integrated terminals** | `terminal/` | `components/terminal/` | Per-session PTY terminals with persistence and state restoration |
 | **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, silent worker/runtime fallback recovery, per-profile overrides, and specialist-specific research guidance such as the Brave-backed `web-researcher` |
@@ -299,8 +300,10 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `FORGE_TERMINAL_DEFAULT_SHELL` | auto-detected | Override default shell |
 | `FORGE_DESKTOP` | auto-detected | Set to `true` when running in Electron desktop app |
 | `FORGE_RESOURCES_DIR` | auto-detected | Path to bundled resources in Electron app |
+| `FORGE_SKILL_SHARE_BASE_URL` | `https://forgeskills.radops.ai` | Skill share worker origin used for share links and preview/import. |
+| `FORGE_SKILL_SHARE_DISABLED` | `false` | Disable skill sharing and import from share URLs. |
 
-For compatibility, legacy `MIDDLEMAN_*` names are still accepted during startup.
+For compatibility, legacy `MIDDLEMAN_*` names are still accepted during startup, and legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` / `MIDDLEMAN_SKILL_SHARE_DISABLED` aliases are still accepted.
 
 See `.env.example` for the full reference.
 
