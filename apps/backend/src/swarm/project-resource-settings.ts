@@ -77,6 +77,7 @@ export class ProjectResourceSettingsStore {
   ): Promise<ProjectResourceSettingsData> {
     const settings = await this.load();
     const normalizedKey = normalizeProjectResourceKey(key);
+    delete settings.dismissedExecutablePrompts[normalizedKey];
     if (action === "reset") {
       delete settings.executableTrust[normalizedKey];
     } else {

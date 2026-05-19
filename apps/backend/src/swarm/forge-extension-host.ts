@@ -5,6 +5,8 @@ import type {
   ForgeSettingsExtensionsPayload
 } from "@forge/protocol";
 import { getGlobalForgeExtensionsDir, getProfilesDir } from "./data-paths.js";
+import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import { discoverForgeExtensions, listForgeProfileIdsOnDisk } from "./forge-extension-discovery.js";
 import { loadForgeExtensionModules } from "./forge-extension-loader.js";
 import type { RuntimeErrorEvent } from "./runtime-types.js";
@@ -54,11 +56,16 @@ export class ForgeExtensionHost {
   private readonly activeRuntimeBindingsByToken = new Map<string, ForgePreparedRuntimeBindings>();
   private readonly runtimeSnapshotsByToken = new Map<string, ForgeRuntimeExtensionSnapshot>();
   private readonly recentErrors: ForgeDiagnosticErrorRecord[] = [];
+  private readonly projectWorkspaceResolver: ProjectWorkspaceResolver;
 
   constructor(options: ForgeExtensionHostOptions) {
     this.dataDir = options.dataDir;
     this.now = options.now ?? (() => new Date().toISOString());
     this.version = options.version ?? process.env.FORGE_APP_VERSION ?? "dev";
+    this.projectWorkspaceResolver = new ProjectWorkspaceResolver({
+      dataDir: this.dataDir,
+      settingsStore: new ProjectResourceSettingsStore(this.dataDir)
+    });
   }
 
   async buildSettingsSnapshot(options: { cwdValues: string[] }): Promise<ForgeSettingsExtensionsPayload> {
@@ -119,15 +126,21 @@ export class ForgeExtensionHost {
       runtime: { type: options.runtimeType } as const
     };
 
+    const projectLocalExtensionsDir = await this.resolveTrustedProjectForgeExtensionsDir({
+      profileId: runtimeContext.session.profileId,
+      sessionAgentId: runtimeContext.session.sessionAgentId,
+      cwd: runtimeContext.session.cwd
+    });
     const discovered = await discoverForgeExtensions({
       dataDir: this.dataDir,
       scopes: [
         "global",
         ...(runtimeContext.session.profileId ? (["profile"] as const) : []),
-        ...(runtimeContext.session.cwd ? (["project-local"] as const) : [])
+        ...(projectLocalExtensionsDir ? (["project-local"] as const) : [])
       ],
       profileId: runtimeContext.session.profileId,
-      cwd: runtimeContext.session.cwd
+      cwd: runtimeContext.session.cwd,
+      projectLocalExtensionsDir
     });
 
     if (discovered.length === 0) {
@@ -649,13 +662,21 @@ export class ForgeExtensionHost {
       }
 
       if (options.scopes.includes("project-local") && options.cwd) {
-        discovered.push(
-          ...(await discoverForgeExtensions({
-            dataDir: this.dataDir,
-            scopes: ["project-local"],
-            cwd: options.cwd
-          }))
-        );
+        const projectLocalExtensionsDir = await this.resolveTrustedProjectForgeExtensionsDir({
+          profileId: options.profileId,
+          sessionAgentId: options.profileId,
+          cwd: options.cwd
+        });
+        if (projectLocalExtensionsDir) {
+          discovered.push(
+            ...(await discoverForgeExtensions({
+              dataDir: this.dataDir,
+              scopes: ["project-local"],
+              cwd: options.cwd,
+              projectLocalExtensionsDir
+            }))
+          );
+        }
       }
 
       return dedupeAndSortDiscoveredExtensions(discovered);
@@ -687,16 +708,45 @@ export class ForgeExtensionHost {
     }
 
     for (const cwd of normalizeCwdValues(cwdValues)) {
+      const projectLocalExtensionsDir = await this.resolveTrustedProjectForgeExtensionsDir({ cwd });
+      if (!projectLocalExtensionsDir) {
+        continue;
+      }
       discovered.push(
         ...(await discoverForgeExtensions({
           dataDir: this.dataDir,
           scopes: ["project-local"],
-          cwd
+          cwd,
+          projectLocalExtensionsDir
         }))
       );
     }
 
     return dedupeAndSortDiscoveredExtensions(discovered);
+  }
+
+  private async resolveTrustedProjectForgeExtensionsDir(options: {
+    profileId?: string;
+    sessionAgentId?: string;
+    cwd?: string;
+  }): Promise<string | undefined> {
+    if (!options.cwd) {
+      return undefined;
+    }
+    try {
+      const resolution = await this.projectWorkspaceResolver.resolve({
+        profileId: options.profileId ?? "settings",
+        sessionAgentId: options.sessionAgentId ?? options.profileId ?? "settings",
+        cwd: options.cwd
+      });
+      return resolution.trust.state === "trusted" ? resolution.repoRootResources.forgeExtensionsDir : undefined;
+    } catch (error) {
+      this.recordDiagnosticError({
+        phase: "discover",
+        message: normalizeErrorMessage(error)
+      });
+      return undefined;
+    }
   }
 
   private logDiagnostic(level: "debug" | "info" | "warn" | "error", message: string, data?: Record<string, unknown>): void {

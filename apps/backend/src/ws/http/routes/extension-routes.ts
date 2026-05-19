@@ -2,6 +2,8 @@ import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { DiscoveredExtensionMetadata, SettingsExtensionsResponse } from "@forge/protocol";
 import { getProfilePiExtensionsDir, getProfilesDir } from "../../../swarm/data-paths.js";
+import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "../../../swarm/project-workspace-resolver.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
@@ -89,15 +91,22 @@ async function discoverPiExtensionsOnDisk(options: {
     });
   }
 
-  const cwdValues = new Set(
-    options.swarmManager
-      .listAgents()
-      .map((descriptor) => descriptor.cwd.trim())
-      .filter((cwd) => cwd.length > 0)
-  );
-
-  for (const cwd of Array.from(cwdValues).sort((left, right) => left.localeCompare(right))) {
-    await collectPiExtensionsFromDirectory(join(cwd, ".pi", "extensions"), "project-local", discovered, { cwd });
+  const resolver = new ProjectWorkspaceResolver({
+    dataDir: options.dataDir,
+    settingsStore: new ProjectResourceSettingsStore(options.dataDir)
+  });
+  for (const descriptor of options.swarmManager
+    .listAgents()
+    .filter((entry) => entry.role === "manager" && !entry.collab)
+    .sort((left, right) => left.agentId.localeCompare(right.agentId))) {
+    const resolution = await resolver.resolve({
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      sessionAgentId: descriptor.agentId,
+      cwd: descriptor.cwd
+    });
+    if (resolution.trust.state === "trusted" && resolution.repoRootResources.piExtensionsDir) {
+      await collectPiExtensionsFromDirectory(resolution.repoRootResources.piExtensionsDir, "project-local", discovered, { cwd: descriptor.cwd });
+    }
   }
 
   return dedupeAndSortDiscoveredPiExtensions(discovered);

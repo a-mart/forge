@@ -85,6 +85,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
               return;
             }
             await settingsStore.setTrust(resolution.trust.key, body.action);
+            await swarmManager.applyProjectResourceTrustChange(resolution.trust.key);
             const snapshot = await buildSnapshot({ resolver, settingsStore, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);

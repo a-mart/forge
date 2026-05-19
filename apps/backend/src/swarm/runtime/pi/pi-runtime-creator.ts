@@ -26,6 +26,12 @@ import type {
   SwarmAgentRuntime
 } from "../../runtime-contracts.js";
 import { installOpenAICodexWebSocketDiagnostics } from "../../runtime-utils.js";
+import {
+  buildProjectSafePiProjectSettingsStorage,
+  filterUntrustedProjectPiExtensions,
+  pathExistsSync,
+  resolveProjectExecutableTrustPlan
+} from "../../project-executable-trust.js";
 import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
 import type { SwarmToolHost } from "../../swarm-tool-host.js";
@@ -108,6 +114,11 @@ export class PiRuntimeCreator {
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
     const pathsPlan = planRuntimeResourcePaths({ config: this.deps.config, descriptor });
     const runtimeAgentDir = pathsPlan.runtimeAgentDir;
+    const projectExecutableTrustPlan = await resolveProjectExecutableTrustPlan({
+      config: this.deps.config,
+      descriptor,
+      sessionDescriptor
+    });
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const promptPlan = planPiRuntimePrompt({
       descriptor,
@@ -133,6 +144,8 @@ export class PiRuntimeCreator {
       profilePiSkillsDir: pathsPlan.profilePiSkillsDir,
       profilePiPromptsDir: pathsPlan.profilePiPromptsDir,
       profilePiThemesDir: pathsPlan.profilePiThemesDir,
+      projectForgeDir: projectExecutableTrustPlan.effectiveForgeDirRealpath,
+      projectExecutablesTrusted: projectExecutableTrustPlan.trusted,
       managerSystemPromptSource: descriptor.role === "manager" ? "archetype:manager" : undefined
     });
 
@@ -142,6 +155,18 @@ export class PiRuntimeCreator {
 
     const piModelsJsonPath = this.deps.getPiModelsJsonPath();
     const modelRegistry = createPiModelRegistry(authStorage, piModelsJsonPath);
+    const model = this.resolveModel(modelRegistry, descriptor.model);
+    if (isOpenAICodexModel(model)) {
+      installOpenAICodexWebSocketDiagnostics();
+    }
+    const settingsManager = this.createRuntimeSettingsManager(
+      descriptor,
+      runtimeAgentDir,
+      model,
+      projectExecutableTrustPlan.repoPiSettingsPath,
+      projectExecutableTrustPlan.trusted
+    );
+
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const extensionFactories = planPiExtensionFactories({
       descriptor,
@@ -160,15 +185,28 @@ export class PiRuntimeCreator {
       promptPlan,
       swarmContextFiles,
       extensionFactories,
+      trustedProjectPiExtensionPaths: [
+        projectExecutableTrustPlan.repoPiExtensionsDir,
+      ].filter(pathExistsSync),
+      extensionsOverride: (result) => filterUntrustedProjectPiExtensions({
+        result,
+        descriptor,
+        config: this.deps.config,
+        trustPlan: projectExecutableTrustPlan
+      }),
       isCollaborationRuntime: isCollabSession(sessionDescriptor),
       mergeRuntimeContextFiles: this.deps.mergeRuntimeContextFiles
     });
     const resourceLoader =
       descriptor.role === "manager"
         ? new DefaultResourceLoader({
-            ...resourcePlan
+            ...resourcePlan,
+            settingsManager
           })
-        : new DefaultResourceLoader(omitSystemPrompt(resourcePlan));
+        : new DefaultResourceLoader({
+            ...omitSystemPrompt(resourcePlan),
+            settingsManager
+          });
 
     try {
       await resourceLoader.reload();
@@ -178,12 +216,6 @@ export class PiRuntimeCreator {
         message: error instanceof Error ? error.message : String(error)
       });
     }
-
-    const model = this.resolveModel(modelRegistry, descriptor.model);
-    if (isOpenAICodexModel(model)) {
-      installOpenAICodexWebSocketDiagnostics();
-    }
-    const settingsManager = this.createRuntimeSettingsManager(descriptor, runtimeAgentDir, model);
 
     const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
       context: `runtime:create:pi:${descriptor.agentId}`,
@@ -222,7 +254,12 @@ export class PiRuntimeCreator {
     const extensionSnapshot = buildRuntimeExtensionSnapshot({
       descriptor,
       loadedAt: this.deps.now(),
-      extensionsResult,
+      extensionsResult: filterUntrustedProjectPiExtensions({
+        result: extensionsResult,
+        descriptor,
+        config: this.deps.config,
+        trustPlan: projectExecutableTrustPlan
+      }),
       config: this.deps.config
     });
     try {
@@ -324,21 +361,25 @@ export class PiRuntimeCreator {
   private createRuntimeSettingsManager(
     descriptor: AgentDescriptor,
     runtimeAgentDir: string,
-    model: Model<any>
-  ): SettingsManager | undefined {
+    model: Model<any>,
+    trustedProjectSettingsPath: string | undefined,
+    projectExecutablesTrusted: boolean
+  ): SettingsManager {
+    const settingsManager = SettingsManager.fromStorage(buildProjectSafePiProjectSettingsStorage({
+      agentDir: runtimeAgentDir,
+      projectSettingsPath: trustedProjectSettingsPath,
+      projectExecutablesTrusted
+    }));
     const transport = resolveOpenAICodexTransport(model);
-    if (!transport) {
-      return undefined;
+    if (transport) {
+      settingsManager.applyOverrides({ transport });
+      this.deps.logDebug("runtime:pi:openai_codex_transport", {
+        agentId: descriptor.agentId,
+        transport,
+        model: model.id,
+        provider: model.provider
+      });
     }
-
-    const settingsManager = SettingsManager.create(descriptor.cwd, runtimeAgentDir);
-    settingsManager.applyOverrides({ transport });
-    this.deps.logDebug("runtime:pi:openai_codex_transport", {
-      agentId: descriptor.agentId,
-      transport,
-      model: model.id,
-      provider: model.provider
-    });
     return settingsManager;
   }
 
