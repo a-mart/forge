@@ -45,7 +45,7 @@ async function flushPromises(): Promise<void> {
 }
 
 describe('SettingsProjectResources', () => {
-  it('renders degraded workspace warnings prominently', async () => {
+  it('renders degraded repository warnings prominently', async () => {
     projectResourcesApiMock.fetchProjectResourcesSnapshot.mockResolvedValue({
       generatedAt: '2026-05-19T00:00:00.000Z',
       profileId: 'profile-a',
@@ -76,7 +76,7 @@ describe('SettingsProjectResources', () => {
     })
     await flushPromises()
 
-    expect(getByText(container, 'Workspace unavailable')).toBeTruthy()
+    expect(getByText(container, 'Repository unavailable')).toBeTruthy()
     expect(getByText(container, 'Session working directory is unavailable: path does not exist')).toBeTruthy()
   })
 })

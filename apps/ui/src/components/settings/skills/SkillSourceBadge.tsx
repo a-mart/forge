@@ -6,7 +6,7 @@ const SOURCE_LABELS: Record<string, string> = {
   repo: 'Repo',
   'machine-local': 'Local',
   profile: 'Profile',
-  workspace: 'Project',
+  workspace: 'Repository',
 }
 
 const SOURCE_CLASSES: Record<string, string> = {

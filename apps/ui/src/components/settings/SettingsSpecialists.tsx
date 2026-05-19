@@ -53,6 +53,7 @@ export function SettingsSpecialists({
   wsUrl,
   apiClient,
   profiles,
+  previewSession,
   specialistChangeKey,
   modelConfigChangeKey,
   initialChannelId,
@@ -114,7 +115,7 @@ export function SettingsSpecialists({
     handleToggleEnabled,
     selectedGlobalHandles,
     missingSelectedHandles,
-  } = useSpecialistsData(clientOrWsUrl, selectedScope, isGlobal, specialistChangeKey, channelId)
+  } = useSpecialistsData(clientOrWsUrl, selectedScope, isGlobal, specialistChangeKey, channelId, previewSession)
 
   const {
     editStates,
@@ -153,7 +154,7 @@ export function SettingsSpecialists({
     rosterError,
     handleViewRoster,
     resetRoster,
-  } = useRosterPrompt(clientOrWsUrl, selectedScope, isGlobal, channelId)
+  } = useRosterPrompt(clientOrWsUrl, selectedScope, isGlobal, channelId, previewSession)
 
   const {
     showNewForm,

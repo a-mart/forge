@@ -125,7 +125,10 @@ export class SkillMetadataService {
     ];
   }
 
-  async resolveSkillById(skillId: string): Promise<SkillMetadata | null> {
+  async resolveSkillById(
+    skillId: string,
+    context?: { profileId?: string; forgeDir?: string }
+  ): Promise<SkillMetadata | null> {
     const decoded = decodeSkillId(skillId);
     if (!decoded) {
       return null;
@@ -141,16 +144,13 @@ export class SkillMetadataService {
     }
 
     if (decoded.sourceKind === "workspace") {
-      const candidate: SkillPathCandidate = {
-        directoryName: basename(decoded.skillRootPath),
-        path: join(decoded.skillRootPath, SKILL_FILE_NAME),
-        rootPath: decoded.skillRootPath,
-        sourceKind: "workspace"
-      };
-      if (!existsSync(candidate.path)) {
+      if (!context?.forgeDir) {
         return null;
       }
-      return this.loadSkillMetadataFromCandidate(candidate, undefined);
+      const metadata = context.profileId
+        ? await this.getProfileSkillMetadataForWorkspace(context.profileId, context.forgeDir)
+        : await this.loadEffectiveMetadata(await this.scanWorkspaceSkillPathCandidates(context.forgeDir), undefined);
+      return metadata.find((entry) => entry.skillId === skillId) ?? null;
     }
 
     await this.ensureSkillMetadataLoaded();

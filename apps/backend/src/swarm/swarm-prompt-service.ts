@@ -392,14 +392,14 @@ export class SwarmPromptService {
   }
 
   private async appendRepositoryReferenceInventory(systemPrompt: string, descriptor: AgentDescriptor): Promise<string> {
-    if (isCollabSession(descriptor)) {
+    const managerDescriptor = descriptor.role === "manager"
+      ? descriptor
+      : this.options.descriptors.get(descriptor.managerId);
+    if (isCollabSession(descriptor) || (managerDescriptor && isCollabSession(managerDescriptor))) {
       return systemPrompt;
     }
 
     try {
-      const managerDescriptor = descriptor.role === "manager"
-        ? descriptor
-        : this.options.descriptors.get(descriptor.managerId);
       const profileId = managerDescriptor?.profileId ?? descriptor.profileId ?? descriptor.managerId ?? descriptor.agentId;
       const sessionAgentId = managerDescriptor?.agentId ?? (descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId);
       const cwd = managerDescriptor?.cwd ?? descriptor.cwd;
@@ -407,7 +407,7 @@ export class SwarmPromptService {
         dataDir: this.options.config.paths.dataDir,
         settingsStore: new ProjectResourceSettingsStore(this.options.config.paths.dataDir),
       });
-      const resolution = await resolver.resolve({
+      const resolution = await resolver.resolvePassive({
         profileId,
         sessionAgentId,
         cwd,

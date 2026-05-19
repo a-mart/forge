@@ -1001,6 +1001,13 @@ export class SwarmAgentLifecycleService {
           ? await this.options.resolveSpecialistRosterForManager(manager, "collaboration")
           : [];
         await this.syncWorkerSpecialistMetadata(profileId, roster, options.sessionAgentId);
+      } else if (this.options.resolveSpecialistRosterForManager) {
+        const sessions = this.options.getSessionsForProfile(profileId);
+        await Promise.all(sessions.map(async (manager) => {
+          const targetSpace = isCollabSession(manager) ? "collaboration" : "builder";
+          const roster = await this.options.resolveSpecialistRosterForManager!(manager, targetSpace);
+          await this.syncWorkerSpecialistMetadata(profileId, roster, manager.agentId);
+        }));
       } else {
         const [builderRoster, collaborationRoster] = await Promise.all([
           this.options.resolveSpecialistRosterForProfile(profileId, "builder"),

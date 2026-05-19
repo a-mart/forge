@@ -4259,20 +4259,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.settingsService.listSettingsEnv();
   }
 
-  async listSkillMetadata(profileId?: string): Promise<SkillInventoryEntry[]> {
-    return this.settingsService.listSkillMetadata(profileId);
+  async listSkillMetadata(profileId?: string, sessionAgentId?: string): Promise<SkillInventoryEntry[]> {
+    return this.settingsService.listSkillMetadata(profileId, sessionAgentId);
   }
 
   getCollaborationGlobalSkillHandles(): Iterable<string> {
     return this.skillMetadataService.getSkillMetadata().map((skill) => skill.directoryName);
   }
 
-  async listSkillFiles(skillId: string, relativePath = ""): Promise<SkillFilesResponse> {
-    return this.settingsService.listSkillFiles(skillId, relativePath);
+  async listSkillFiles(
+    skillId: string,
+    relativePath = "",
+    context?: { profileId?: string; sessionAgentId?: string }
+  ): Promise<SkillFilesResponse> {
+    return this.settingsService.listSkillFiles(skillId, relativePath, context);
   }
 
-  async getSkillFileContent(skillId: string, relativePath: string): Promise<SkillFileContentResponse> {
-    return this.settingsService.getSkillFileContent(skillId, relativePath);
+  async getSkillFileContent(
+    skillId: string,
+    relativePath: string,
+    context?: { profileId?: string; sessionAgentId?: string }
+  ): Promise<SkillFileContentResponse> {
+    return this.settingsService.getSkillFileContent(skillId, relativePath, context);
   }
 
   async shareSkill(skillId: string): Promise<SkillShareResponse> {
@@ -5518,7 +5526,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return await new ProjectWorkspaceResolver({
         dataDir: this.config.paths.dataDir,
         settingsStore: new ProjectResourceSettingsStore(this.config.paths.dataDir),
-      }).resolve({
+      }).resolvePassive({
         profileId,
         sessionAgentId: manager.agentId,
         cwd: manager.cwd,

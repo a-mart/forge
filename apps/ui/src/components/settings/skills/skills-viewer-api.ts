@@ -26,14 +26,26 @@ function resolveClient(clientOrWsUrl: SettingsApiClient | string): SettingsApiCl
 /*  Skill inventory                                                   */
 /* ------------------------------------------------------------------ */
 
+export interface SkillWorkspaceRequestContext {
+  profileId?: string
+  sessionAgentId?: string
+}
+
+function appendSkillContext(path: string, context?: SkillWorkspaceRequestContext): string {
+  const params = new URLSearchParams()
+  if (context?.profileId) params.set('profileId', context.profileId)
+  if (context?.sessionAgentId) params.set('sessionAgentId', context.sessionAgentId)
+  const query = params.toString()
+  return query ? `${path}${path.includes('?') ? '&' : '?'}${query}` : path
+}
+
 export async function fetchSkillInventory(
   clientOrWsUrl: SettingsApiClient | string,
   profileId?: string,
+  sessionAgentId?: string,
 ): Promise<SkillInventoryEntry[]> {
   const client = resolveClient(clientOrWsUrl)
-  const path = profileId
-    ? `/api/settings/skills?profileId=${encodeURIComponent(profileId)}`
-    : '/api/settings/skills'
+  const path = appendSkillContext('/api/settings/skills', { profileId, sessionAgentId })
   const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<SkillInventoryResponse>
@@ -49,12 +61,14 @@ export async function fetchSkillFiles(
   clientOrWsUrl: SettingsApiClient | string,
   skillId: string,
   relativePath = '',
+  context?: SkillWorkspaceRequestContext,
 ): Promise<SkillFilesResponse> {
   const client = resolveClient(clientOrWsUrl)
   const basePath = `/api/settings/skills/${encodeURIComponent(skillId)}/files`
-  const path = relativePath
-    ? `${basePath}?path=${encodeURIComponent(relativePath)}`
-    : basePath
+  const path = appendSkillContext(
+    relativePath ? `${basePath}?path=${encodeURIComponent(relativePath)}` : basePath,
+    context,
+  )
   const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await client.readApiError(response))
   return (await response.json()) as SkillFilesResponse
@@ -68,10 +82,11 @@ export async function fetchSkillFileContent(
   clientOrWsUrl: SettingsApiClient | string,
   skillId: string,
   relativePath: string,
+  context?: SkillWorkspaceRequestContext,
 ): Promise<SkillFileContentResponse> {
   const client = resolveClient(clientOrWsUrl)
   const basePath = `/api/settings/skills/${encodeURIComponent(skillId)}/content`
-  const path = `${basePath}?path=${encodeURIComponent(relativePath)}`
+  const path = appendSkillContext(`${basePath}?path=${encodeURIComponent(relativePath)}`, context)
   const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await client.readApiError(response))
   return (await response.json()) as SkillFileContentResponse

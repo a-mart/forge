@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ServerEvent } from "@forge/protocol";
 import { applyCorsHeaders, sendJson } from "../ws/http-utils.js";
 
@@ -20,6 +24,7 @@ const specialistRegistryState = vi.hoisted(() => ({
   deleteSharedSpecialist: vi.fn(async () => undefined),
   resolveRoster: vi.fn(async () => []),
   resolveSharedRoster: vi.fn(async () => []),
+  resolveWorkspaceRoster: vi.fn(async () => []),
   generateRosterBlock: vi.fn(() => ""),
   getWorkerTemplate: vi.fn(async () => "# Worker template\n"),
   getSpecialistsEnabled: vi.fn(async () => true),
@@ -34,6 +39,7 @@ vi.mock("../swarm/specialists/specialist-registry.js", () => ({
   deleteSharedSpecialist: (...args: unknown[]) => specialistRegistryState.deleteSharedSpecialist(...args),
   resolveRoster: (...args: unknown[]) => specialistRegistryState.resolveRoster(...args),
   resolveSharedRoster: (...args: unknown[]) => specialistRegistryState.resolveSharedRoster(...args),
+  resolveWorkspaceRoster: (...args: unknown[]) => specialistRegistryState.resolveWorkspaceRoster(...args),
   generateRosterBlock: (...args: unknown[]) => specialistRegistryState.generateRosterBlock(...args),
   getWorkerTemplate: (...args: unknown[]) => specialistRegistryState.getWorkerTemplate(...args),
   getSpecialistsEnabled: (...args: unknown[]) => specialistRegistryState.getSpecialistsEnabled(...args),
@@ -51,6 +57,7 @@ interface TestServer {
 }
 
 const activeServers: TestServer[] = [];
+const tempDirs: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -64,7 +71,12 @@ afterEach(async () => {
   specialistRegistryState.generateRosterBlock.mockReturnValue("");
   specialistRegistryState.resolveRoster.mockResolvedValue([]);
   specialistRegistryState.resolveSharedRoster.mockResolvedValue([]);
+  specialistRegistryState.resolveWorkspaceRoster.mockImplementation(
+    async (profileId: string, dataDir: string, _workspaceDir: string | undefined, targetSpace: string) =>
+      specialistRegistryState.resolveRoster(profileId, dataDir, targetSpace)
+  );
   await Promise.all(activeServers.splice(0).map((server) => server.close()));
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe("specialist routes", () => {
@@ -194,6 +206,51 @@ describe("specialist routes", () => {
     const promptResponse = await fetch(`${server.baseUrl}/api/settings/specialists/roster-prompt?profileId=alpha`);
     expect(promptResponse.status).toBe(200);
     await expect(promptResponse.json()).resolves.toEqual({ markdown: "## Specialists\n- backend\n" });
+  });
+
+  it("uses session workspace context for profile-scoped specialists and roster prompt", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "specialist-route-workspace-"));
+    tempDirs.push(workspace);
+    execFileSync("git", ["init"], { cwd: workspace, stdio: "ignore" });
+    await mkdir(join(workspace, ".forge", "specialists"), { recursive: true });
+    const workspaceRealpath = await realpath(workspace);
+    specialistRegistryState.resolveWorkspaceRoster.mockResolvedValue([
+      {
+        specialistId: "repo-specialist",
+        handle: "repo",
+        displayName: "Repo",
+        enabled: true,
+        sourcePath: join(workspace, ".forge", "specialists", "repo.md"),
+      },
+    ]);
+    specialistRegistryState.generateRosterBlock.mockReturnValueOnce("## Specialists\n- repo\n");
+
+    const server = await createSpecialistRouteTestServer({
+      profiles: [{ profileId: "alpha", displayName: "Alpha" }],
+      agents: [{ agentId: "session-a", role: "manager", profileId: "alpha", cwd: workspace }],
+    });
+
+    const listResponse = await fetch(`${server.baseUrl}/api/settings/specialists?profileId=alpha&sessionAgentId=session-a`);
+    expect(listResponse.status).toBe(200);
+    expect(specialistRegistryState.resolveWorkspaceRoster).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      "/tmp/data",
+      join(workspaceRealpath, ".forge", "specialists"),
+      "builder",
+    );
+    await expect(listResponse.json()).resolves.toMatchObject({ specialists: [{ specialistId: "repo-specialist" }] });
+
+    const promptResponse = await fetch(`${server.baseUrl}/api/settings/specialists/roster-prompt?profileId=alpha&sessionAgentId=session-a`);
+    expect(promptResponse.status).toBe(200);
+    expect(specialistRegistryState.resolveWorkspaceRoster).toHaveBeenNthCalledWith(
+      2,
+      "alpha",
+      "/tmp/data",
+      join(workspaceRealpath, ".forge", "specialists"),
+      "builder",
+    );
+    await expect(promptResponse.json()).resolves.toEqual({ markdown: "## Specialists\n- repo\n" });
   });
 
   it("lists profile-scoped specialists and roster prompt using explicit collaboration targetSpace", async () => {
@@ -552,7 +609,7 @@ async function createSpecialistRouteTestServer(options?: {
   profiles?: Array<{ profileId: string; displayName: string; profileType?: "user" | "system" }>;
   notifySpecialistRosterChanged?: (profileId: string, options?: { sessionAgentId?: string }) => Promise<void>;
   broadcastEvent?: (event: ServerEvent) => void;
-  agents?: Array<{ agentId: string; role: string; profileId?: string; sessionSurface?: string }>;
+  agents?: Array<{ agentId: string; role: string; profileId?: string; sessionSurface?: string; cwd?: string }>;
 }): Promise<TestServer> {
   const profiles = options?.profiles ?? [];
   const swarmManager = {

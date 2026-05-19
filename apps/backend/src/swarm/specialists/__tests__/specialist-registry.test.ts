@@ -100,6 +100,16 @@ describe("specialist-registry", () => {
       conflictWarning: "Repository specialist overrides inherited global specialist.",
     });
     expect(byId.get("repo-only")).toMatchObject({ displayName: "Repo Only", sourceKind: "workspace" });
+
+    await writeFile(join(workspaceDir, "repo-only.md"), makeSpecialistMarkdown({
+      displayName: "Repo Only Edited",
+      whenToUse: "repo only edited",
+    }));
+    const refreshedRoster = await resolveWorkspaceRoster("profile-a", dataDir, workspaceDir);
+    expect(refreshedRoster.find((entry) => entry.specialistId === "repo-only")).toMatchObject({
+      displayName: "Repo Only Edited",
+      whenToUse: "repo only edited",
+    });
   });
 
   it("resolves and copies canonical builtin specialists through the agents module path", async () => {

@@ -26,5 +26,4 @@ export interface ResolvedSpecialistDefinition {
   availabilityMessage?: string
   shadowsGlobal: boolean
   conflictWarning?: string
-  forgePrecedence?: 'override'
 }

@@ -157,6 +157,7 @@ describe('SkillsViewer', () => {
       expect(skillsViewerApiMock.fetchSkillInventory).toHaveBeenCalledWith(
         'ws://127.0.0.1:47287',
         undefined,
+        undefined,
       )
       expect(container.textContent).toContain('memory')
     })

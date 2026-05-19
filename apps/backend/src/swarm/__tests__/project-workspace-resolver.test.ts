@@ -45,6 +45,24 @@ describe("ProjectWorkspaceResolver", () => {
     ]);
   });
 
+  it("resolves passive repository resources without executable signature work", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    const nested = join(root, "packages", "app");
+    await mkdir(nested, { recursive: true });
+    await mkdir(join(root, ".forge", "extensions"), { recursive: true });
+    await writeFile(join(root, ".forge", "extensions", "extension.ts"), "throw new Error('do not read');");
+
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const result = await resolver.resolvePassive({ profileId: "profile-a", sessionAgentId: "session-a", cwd: nested });
+    const rootRealpath = await realpath(root);
+
+    expect(result.effectiveForgeDirRealpath).toBe(join(rootRealpath, ".forge"));
+    expect(result.repoRootResources.referenceDir).toBe(join(rootRealpath, ".forge", "reference"));
+    expect("signature" in result).toBe(false);
+    expect("legacyExecutableSurfaces" in result).toBe(false);
+  });
+
   it("uses the nearest nested Git root", async () => {
     const outer = await makeTempDir("forge-outer-");
     execFileSync("git", ["init"], { cwd: outer, stdio: "ignore" });

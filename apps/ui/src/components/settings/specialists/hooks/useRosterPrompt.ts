@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { SettingsApiClient } from '../../settings-api-client'
+import type { SettingsSessionContext } from '../../session-context'
 import { fetchRosterPrompt, fetchChannelRosterPrompt } from '../../specialists-api'
 
 /**
@@ -13,6 +14,7 @@ export function useRosterPrompt(
   selectedScope: string,
   isGlobal: boolean,
   channelId?: string,
+  previewSession?: SettingsSessionContext | null,
 ) {
   const rosterRequestIdRef = useRef(0)
   const [rosterOpen, setRosterOpen] = useState(false)
@@ -29,9 +31,10 @@ export function useRosterPrompt(
     setRosterError(null)
 
     try {
+      const sessionAgentId = previewSession?.profileId === selectedScope ? previewSession.agentId : undefined
       const markdown = channelId
         ? await fetchChannelRosterPrompt(clientOrWsUrl, channelId)
-        : await fetchRosterPrompt(clientOrWsUrl, selectedScope)
+        : await fetchRosterPrompt(clientOrWsUrl, selectedScope, sessionAgentId)
       if (requestId === rosterRequestIdRef.current) {
         setRosterMarkdown(markdown)
       }
@@ -45,7 +48,7 @@ export function useRosterPrompt(
         setRosterLoading(false)
       }
     }
-  }, [clientOrWsUrl, selectedScope, isGlobal, channelId])
+  }, [clientOrWsUrl, selectedScope, isGlobal, channelId, previewSession])
 
   /** Reset roster state (used on scope change). */
   const resetRoster = useCallback(() => {

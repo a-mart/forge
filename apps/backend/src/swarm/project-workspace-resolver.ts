@@ -30,7 +30,7 @@ export type LegacyExecutableSurface = {
   coveredByTrustKey?: string;
 };
 
-export interface ProjectWorkspaceResolution {
+export interface ProjectPassiveWorkspaceResolution {
   profileId: string;
   sessionAgentId: string;
   cwdRealpath: string;
@@ -52,6 +52,21 @@ export interface ProjectWorkspaceResolution {
     piRoleExtensionDirs?: string[];
     piSettingsPath?: string;
   };
+}
+
+export interface ProjectWorkspaceResolution extends ProjectPassiveWorkspaceResolution {
+  profileId: string;
+  sessionAgentId: string;
+  cwdRealpath: string;
+  detectedGitRoot?: string;
+  workspaceKey: string;
+  warning?: string;
+  defaultForgeDir?: string;
+  effectiveForgeDir?: string;
+  effectiveForgeDirRealpath?: string;
+  source: ProjectWorkspaceSource;
+  override?: { path: string; valid: boolean; error?: string };
+  trust: ProjectExecutableTrustSnapshot;
   legacyExecutableSurfaces: LegacyExecutableSurface[];
   signature: string;
 }
@@ -74,7 +89,7 @@ export class ProjectWorkspaceResolver {
     this.settingsStore = options.settingsStore ?? new ProjectResourceSettingsStore(options.dataDir);
   }
 
-  async resolve(options: ResolveProjectWorkspaceOptions): Promise<ProjectWorkspaceResolution> {
+  async resolvePassive(options: ResolveProjectWorkspaceOptions): Promise<ProjectPassiveWorkspaceResolution> {
     const cwdRealpathResult = await tryResolveExistingRealpath(options.cwd);
     if (!cwdRealpathResult.ok) {
       return buildMissingCwdResolution(options, cwdRealpathResult.path, cwdRealpathResult.error);
@@ -104,14 +119,6 @@ export class ProjectWorkspaceResolver {
           piSettingsPath: getProjectForgePiSettingsPath(effectiveForgeDirRealpath)
         }
       : {};
-    const legacyExecutableSurfaces = buildLegacyExecutableSurfaces(cwdRealpath);
-    const signature = await buildResolutionSignature({
-      cwdRealpath,
-      detectedGitRoot: detectedGitRootRealpath,
-      effectiveForgeDirRealpath,
-      repoRootResources,
-      legacyExecutableSurfaces
-    });
 
     return {
       profileId: options.profileId,
@@ -126,6 +133,33 @@ export class ProjectWorkspaceResolver {
       ...(override ? { override } : {}),
       trust,
       repoRootResources,
+    };
+  }
+
+  async resolve(options: ResolveProjectWorkspaceOptions): Promise<ProjectWorkspaceResolution> {
+    const passive = await this.resolvePassive(options);
+    const cwdRealpath = passive.cwdRealpath;
+    if (passive.warning && passive.source === "none") {
+      const signature = createHash("sha256")
+        .update(JSON.stringify({ cwdRealpath: normalizeComparablePath(cwdRealpath), missing: true, warning: passive.warning }))
+        .digest("hex");
+      return { ...passive, legacyExecutableSurfaces: [], signature };
+    }
+
+    const detectedGitRootRealpath = passive.detectedGitRoot;
+    const effectiveForgeDirRealpath = passive.effectiveForgeDirRealpath;
+    const repoRootResources = passive.repoRootResources;
+    const legacyExecutableSurfaces = buildLegacyExecutableSurfaces(cwdRealpath);
+    const signature = await buildResolutionSignature({
+      cwdRealpath,
+      detectedGitRoot: detectedGitRootRealpath,
+      effectiveForgeDirRealpath,
+      repoRootResources,
+      legacyExecutableSurfaces
+    });
+
+    return {
+      ...passive,
       legacyExecutableSurfaces,
       signature
     };

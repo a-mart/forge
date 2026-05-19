@@ -92,6 +92,8 @@ function buildLegacyModelRoutingGuidance(): string {
  */
 export const LEGACY_MODEL_ROUTING_GUIDANCE = buildLegacyModelRoutingGuidance();
 
+type InternalResolvedSpecialistDefinition = ResolvedSpecialistDefinition & { forgePrecedence?: "override" };
+
 const rosterCache = new Map<string, ResolvedSpecialistDefinition[]>();
 const sharedRosterHandleCache = new Map<string, string[]>();
 
@@ -201,17 +203,6 @@ export async function resolveWorkspaceRoster(
   }
 
   const normalizedProfileId = sanitizePathSegment(profileId);
-  const cacheKey = getRosterCacheKey({
-    dataDir,
-    profileId: normalizedProfileId,
-    targetSpace,
-    workspaceSpecialistsDir,
-  });
-  const cached = rosterCache.get(cacheKey);
-  if (cached) {
-    return cloneRosterEntries(cached);
-  }
-
   const sharedDir = getSharedSpecialistsDir(dataDir);
   const profileDir = getProfileSpecialistsDir(dataDir, normalizedProfileId);
   const [sharedByHandle, workspaceByHandle, profileByHandle] = await Promise.all([
@@ -248,7 +239,6 @@ export async function resolveWorkspaceRoster(
     }
   }
 
-  rosterCache.set(cacheKey, cloneRosterEntries(resolved));
   return cloneRosterEntries(resolved);
 }
 
@@ -312,7 +302,7 @@ async function resolveDirectorySpecialists(
   directoryPath: string,
   scope: "shared" | "profile" | "channel" | "workspace",
   targetSpace?: SpecialistTargetSpace,
-): Promise<Map<string, ResolvedSpecialistDefinition>> {
+): Promise<Map<string, InternalResolvedSpecialistDefinition>> {
   const files = (await listMarkdownFiles(directoryPath)).filter(
     (file) => !REMOVED_BUILTIN_SPECIALIST_FILES.has(file.name)
   );
@@ -356,7 +346,7 @@ async function resolveDirectorySpecialists(
     }),
   );
 
-  const byHandle = new Map<string, ResolvedSpecialistDefinition>();
+  const byHandle = new Map<string, InternalResolvedSpecialistDefinition>();
   for (const entry of parsedEntries) {
     if (!entry) {
       continue;
@@ -369,7 +359,7 @@ async function resolveDirectorySpecialists(
 }
 
 function cloneRosterEntries(roster: ResolvedSpecialistDefinition[]): ResolvedSpecialistDefinition[] {
-  return roster.map((entry) => ({ ...entry }));
+  return roster.map(({ forgePrecedence: _forgePrecedence, ...entry }: InternalResolvedSpecialistDefinition) => ({ ...entry }));
 }
 
 function getSharedRosterHandleCacheKey(dataDir: string, targetSpace: SpecialistTargetSpace): string {
@@ -1074,7 +1064,7 @@ function toResolvedSpecialistDefinition(options: {
   sourceKind: "builtin" | "global" | "profile" | "channel" | "workspace";
   sourcePath: string;
   shadowsGlobal: boolean;
-}): ResolvedSpecialistDefinition {
+}): InternalResolvedSpecialistDefinition {
   const provider = options.frontmatter.provider ?? inferProviderFromModelId(options.frontmatter.modelId) ?? "unknown";
   const fallbackProvider = options.frontmatter.fallbackProvider
     ?? (options.frontmatter.fallbackModelId

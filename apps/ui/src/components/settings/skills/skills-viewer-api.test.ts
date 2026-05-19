@@ -27,10 +27,10 @@ describe('skills-viewer-api', () => {
     vi.stubGlobal('fetch', fetchMock)
     fetchMock.mockResolvedValue(mockJsonResponse({ skills: [] }))
 
-    await fetchSkillInventory('ws://127.0.0.1:47187', 'profile-a')
+    await fetchSkillInventory('ws://127.0.0.1:47187', 'profile-a', 'session-a')
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:47187/api/settings/skills?profileId=profile-a',
+      'http://127.0.0.1:47187/api/settings/skills?profileId=profile-a&sessionAgentId=session-a',
       expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
     )
   })
@@ -39,10 +39,10 @@ describe('skills-viewer-api', () => {
     vi.stubGlobal('fetch', fetchMock)
     fetchMock.mockResolvedValue(mockJsonResponse({ skillId: 'skill-1', rootPath: '/tmp/skill', path: '', entries: [] }))
 
-    await fetchSkillFiles('ws://127.0.0.1:47187', 'skill-1', 'docs')
+    await fetchSkillFiles('ws://127.0.0.1:47187', 'skill-1', 'docs', { profileId: 'profile-a', sessionAgentId: 'session-a' })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:47187/api/settings/skills/skill-1/files?path=docs',
+      'http://127.0.0.1:47187/api/settings/skills/skill-1/files?path=docs&profileId=profile-a&sessionAgentId=session-a',
       expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
     )
   })
@@ -51,10 +51,10 @@ describe('skills-viewer-api', () => {
     vi.stubGlobal('fetch', fetchMock)
     fetchMock.mockResolvedValue(mockJsonResponse({ path: 'SKILL.md', absolutePath: '/tmp/skill/SKILL.md', content: '# Skill', binary: false, size: 7, lines: 1 }))
 
-    await fetchSkillFileContent('ws://127.0.0.1:47187', 'skill-1', 'SKILL.md')
+    await fetchSkillFileContent('ws://127.0.0.1:47187', 'skill-1', 'SKILL.md', { profileId: 'profile-a', sessionAgentId: 'session-a' })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:47187/api/settings/skills/skill-1/content?path=SKILL.md',
+      'http://127.0.0.1:47187/api/settings/skills/skill-1/content?path=SKILL.md&profileId=profile-a&sessionAgentId=session-a',
       expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
     )
   })

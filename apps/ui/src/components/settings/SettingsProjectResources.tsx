@@ -86,8 +86,8 @@ export function SettingsProjectResources({ managers, previewSession, apiClient }
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div>
-            <CardTitle className="flex items-center gap-2">Workspace {snapshot && <TrustBadge state={snapshot.trust.state} />}</CardTitle>
-            <CardDescription>{snapshot?.cwdRealpath ?? 'Loading workspace context...'}</CardDescription>
+            <CardTitle className="flex items-center gap-2">Repository {snapshot && <TrustBadge state={snapshot.trust.state} />}</CardTitle>
+            <CardDescription>{snapshot?.cwdRealpath ?? 'Loading repository context...'}</CardDescription>
           </div>
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
         </CardHeader>
@@ -96,7 +96,7 @@ export function SettingsProjectResources({ managers, previewSession, apiClient }
             {snapshot.warning && (
               <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-amber-700 dark:text-amber-300">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <div><div className="font-medium">Workspace unavailable</div><div className="text-xs">{snapshot.warning}</div></div>
+                <div><div className="font-medium">Repository unavailable</div><div className="text-xs">{snapshot.warning}</div></div>
               </div>
             )}
             <KeyValue label="Detected Git root" value={snapshot.detectedGitRoot ?? 'None'} />
@@ -114,7 +114,7 @@ export function SettingsProjectResources({ managers, previewSession, apiClient }
                 <Button variant="outline" onClick={() => void saveOverride(overridePath.trim())} disabled={loading || !overridePath.trim()}>Save</Button>
                 <Button variant="ghost" onClick={() => void saveOverride(null)} disabled={loading}>Clear</Button>
               </div>
-              <p className="text-xs text-muted-foreground">Overrides are scoped to this profile and workspace. The selected directory must be named <code>.forge</code>.</p>
+              <p className="text-xs text-muted-foreground">Overrides are scoped to this profile and repository. The selected directory must be named <code>.forge</code>.</p>
             </div>
           </CardContent>
         )}

@@ -18,11 +18,12 @@ import { SkillSourceBadge } from './SkillSourceBadge'
 import { SkillListRail } from './SkillListRail'
 import { SkillFileTree } from './SkillFileTree'
 import { SkillFileViewer } from './SkillFileViewer'
-import { fetchSkillInventory } from './skills-viewer-api'
+import { fetchSkillInventory, type SkillWorkspaceRequestContext } from './skills-viewer-api'
 import { SkillImportDialog, SKILL_IMPORT_GLOBAL_SCOPE_VALUE } from './SkillImportDialog'
 import { SkillShareDialog } from './SkillShareDialog'
 import type { SkillInventoryEntry } from './skills-viewer-types'
 import type { ManagerProfile, CollaborationCategory, CollaborationChannel, SkillImportResultResponse } from '@forge/protocol'
+import type { SettingsSessionContext } from '../session-context'
 import type { SettingsEnvVariable } from '../settings-types'
 import {
   fetchSettingsEnvVariables,
@@ -63,6 +64,7 @@ interface SkillsViewerProps {
   wsUrl: string
   apiClient?: SettingsApiClient
   profiles: ManagerProfile[]
+  previewSession?: SettingsSessionContext | null
   changeKey?: number
   /** Optional initial scope value (e.g. 'channel:ch-1') for testing */
   initialScope?: string
@@ -76,6 +78,7 @@ export function SkillsViewer({
   wsUrl,
   apiClient,
   profiles,
+  previewSession,
   changeKey,
   initialScope,
   initialImportUrl,
@@ -192,6 +195,11 @@ export function SkillsViewer({
     selectedSkill && (selectedSkill.sourceKind === 'machine-local' || selectedSkill.sourceKind === 'profile'),
   )
   const canUseLocalSkillSharing = !isCollab && !isCollabCategory && !isCollabChannel
+  const skillRequestContext = useMemo<SkillWorkspaceRequestContext | undefined>(() => {
+    const profileId = skillLoadScope !== SCOPE_GLOBAL ? skillLoadScope : undefined
+    const sessionAgentId = profileId && previewSession?.profileId === profileId ? previewSession.agentId : undefined
+    return profileId || sessionAgentId ? { profileId, sessionAgentId } : undefined
+  }, [previewSession, skillLoadScope])
 
   const filteredEnvVariables = useMemo(() => {
     if (!selectedSkill) return []
@@ -210,7 +218,8 @@ export function SkillsViewer({
     setSkillsLoading(true)
     try {
       const profileId = scope !== SCOPE_GLOBAL ? scope : undefined
-      const result = await fetchSkillInventory(clientOrWsUrl, profileId)
+      const sessionAgentId = profileId && previewSession?.profileId === profileId ? previewSession.agentId : undefined
+      const result = await fetchSkillInventory(clientOrWsUrl, profileId, sessionAgentId)
       if (requestId !== loadSkillsRequestIdRef.current) {
         return
       }
@@ -237,7 +246,7 @@ export function SkillsViewer({
         setSkillsLoading(false)
       }
     }
-  }, [clientOrWsUrl])
+  }, [clientOrWsUrl, previewSession])
 
   const handleImportedSkill = useCallback(async (result: SkillImportResultResponse) => {
     const nextScope = result.target.scope === 'profile' && result.target.profileId
@@ -598,6 +607,7 @@ export function SkillsViewer({
               onSelectSkill={handleSelectSkill}
               onSelectFile={setSelectedFilePath}
               configSection={configSection}
+              requestContext={skillRequestContext}
             />
           </div>
 
@@ -615,6 +625,7 @@ export function SkillsViewer({
               onSelectSkill={handleSelectSkill}
               onSelectFile={setSelectedFilePath}
               configSection={configSection}
+              requestContext={skillRequestContext}
             />
           </div>
         </>
@@ -639,6 +650,7 @@ function SkillExplorerDesktop({
   onSelectSkill,
   onSelectFile,
   configSection,
+  requestContext,
 }: {
   clientOrWsUrl: SettingsApiClient | string
   skills: SkillInventoryEntry[]
@@ -651,6 +663,7 @@ function SkillExplorerDesktop({
   onSelectSkill: (id: string) => void
   onSelectFile: (path: string) => void
   configSection: React.ReactNode
+  requestContext?: SkillWorkspaceRequestContext
 }) {
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card/30">
@@ -697,6 +710,7 @@ function SkillExplorerDesktop({
                 skillId={selectedSkill.skillId}
                 selectedFilePath={selectedFilePath}
                 onSelectFile={onSelectFile}
+                requestContext={requestContext}
               />
             </div>
           </div>
@@ -710,6 +724,7 @@ function SkillExplorerDesktop({
                 skillId={selectedSkill.skillId}
                 filePath={selectedFilePath}
                 rootPath={selectedSkill.rootPath}
+                requestContext={requestContext}
               />
             </div>
 
@@ -755,6 +770,7 @@ function SkillExplorerMobile({
   onSelectSkill,
   onSelectFile,
   configSection,
+  requestContext,
 }: {
   clientOrWsUrl: SettingsApiClient | string
   skills: SkillInventoryEntry[]
@@ -767,6 +783,7 @@ function SkillExplorerMobile({
   onSelectSkill: (id: string) => void
   onSelectFile: (path: string) => void
   configSection: React.ReactNode
+  requestContext?: SkillWorkspaceRequestContext
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -802,6 +819,7 @@ function SkillExplorerMobile({
               skillId={selectedSkill.skillId}
               selectedFilePath={selectedFilePath}
               onSelectFile={onSelectFile}
+              requestContext={requestContext}
             />
           </div>
 
@@ -815,6 +833,7 @@ function SkillExplorerMobile({
               skillId={selectedSkill.skillId}
               filePath={selectedFilePath}
               rootPath={selectedSkill.rootPath}
+              requestContext={requestContext}
             />
           </div>
 

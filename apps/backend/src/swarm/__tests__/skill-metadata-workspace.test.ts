@@ -27,7 +27,41 @@ async function writeSkill(root: string, handle: string, frontmatter: string[] = 
   );
 }
 
+function encodeSkillId(payload: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
 describe("SkillMetadataService workspace skills", () => {
+  it("rejects direct workspace skill ID resolution without active workspace context", async () => {
+    const root = await mkdtemp(join(tmpdir(), "skill-metadata-workspace-"));
+    const config = createConfig(root);
+    const arbitrarySkillRoot = join(root, "arbitrary", "not-active", "skills", "dangerous");
+    await writeSkill(join(arbitrarySkillRoot, ".."), "dangerous");
+
+    const service = new SkillMetadataService({ config });
+    const craftedSkillId = encodeSkillId({ sourceKind: "workspace", skillRootPath: arbitrarySkillRoot });
+
+    await expect(service.resolveSkillById(craftedSkillId)).resolves.toBeNull();
+  });
+
+  it("resolves workspace skill IDs only when the matching forge directory context is provided", async () => {
+    const root = await mkdtemp(join(tmpdir(), "skill-metadata-workspace-"));
+    const config = createConfig(root);
+    const forgeDir = join(root, "repo", ".forge");
+    const workspaceSkillsDir = join(forgeDir, "skills");
+    await writeSkill(workspaceSkillsDir, "repo-only");
+
+    const service = new SkillMetadataService({ config });
+    const [workspaceSkill] = await service.getProfileSkillMetadataForWorkspace("profile-a", forgeDir);
+    expect(workspaceSkill.sourceKind).toBe("workspace");
+    await expect(service.resolveSkillById(workspaceSkill.skillId)).resolves.toBeNull();
+    await expect(service.resolveSkillById(workspaceSkill.skillId, { profileId: "profile-a", forgeDir })).resolves.toMatchObject({
+      directoryName: "repo-only",
+      sourceKind: "workspace",
+    });
+    await expect(service.resolveSkillById(workspaceSkill.skillId, { profileId: "profile-a", forgeDir: join(root, "other", ".forge") })).resolves.toBeNull();
+  });
+
   it("adds repository .forge skills and only overrides inherited skills with explicit precedence", async () => {
     const root = await mkdtemp(join(tmpdir(), "skill-metadata-workspace-"));
     const config = createConfig(root);
