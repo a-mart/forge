@@ -20,7 +20,7 @@ export async function resolveLocalPiPackageExtensionPathsFromSettings(settingsPa
     const packageEntry = await statOrUndefined(packageRoot);
     if (packageEntry?.isFile()) {
       if (isSupportedExtensionFile(packageRoot)) {
-        paths.push(...applyExtensionPatterns([packageRoot], filters, packageRoot));
+        paths.push(packageRoot);
       }
       continue;
     }
@@ -74,15 +74,16 @@ async function collectExtensionFiles(pathValue: string): Promise<string[]> {
   if (entry.isFile()) return isSupportedExtensionFile(pathValue) ? [pathValue] : [];
   if (!entry.isDirectory()) return [];
 
+  const selfEntries = await collectDirectorySelfExtensionEntries(pathValue);
+  if (selfEntries) return uniqueSortedPaths(selfEntries);
+
   const entries = await readDirEntries(pathValue);
   const paths: string[] = [];
   for (const child of entries) {
     const childPath = join(pathValue, child.name);
     if (child.isDirectory()) {
-      const indexTs = join(childPath, "index.ts");
-      const indexJs = join(childPath, "index.js");
-      if (await isFile(indexTs)) paths.push(indexTs);
-      else if (await isFile(indexJs)) paths.push(indexJs);
+      const childEntries = await collectDirectorySelfExtensionEntries(childPath);
+      if (childEntries) paths.push(...childEntries);
       continue;
     }
     if (child.isFile() && isSupportedExtensionFile(child.name)) {
@@ -90,6 +91,27 @@ async function collectExtensionFiles(pathValue: string): Promise<string[]> {
     }
   }
   return uniqueSortedPaths(paths);
+}
+
+async function collectDirectorySelfExtensionEntries(dirPath: string): Promise<string[] | undefined> {
+  const manifest = await readJsonObject(join(dirPath, "package.json"));
+  const piManifest = isRecord(manifest?.pi) ? manifest.pi : undefined;
+  const manifestExtensions = Array.isArray(piManifest?.extensions)
+    ? piManifest.extensions.filter((value): value is string => typeof value === "string")
+    : [];
+  if (manifestExtensions.length > 0) {
+    const paths: string[] = [];
+    for (const entry of manifestExtensions.filter((value) => !isOverridePattern(value))) {
+      paths.push(...(await collectFilesFromManifestEntry(dirPath, entry)));
+    }
+    if (paths.length > 0) return uniqueSortedPaths(paths);
+  }
+
+  const indexTs = join(dirPath, "index.ts");
+  if (await isFile(indexTs)) return [indexTs];
+  const indexJs = join(dirPath, "index.js");
+  if (await isFile(indexJs)) return [indexJs];
+  return undefined;
 }
 
 async function collectPathEntries(root: string): Promise<string[]> {

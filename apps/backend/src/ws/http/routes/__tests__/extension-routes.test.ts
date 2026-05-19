@@ -57,15 +57,20 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     await writeFile(join(projectExtensionsDir, 'project-pack', 'index.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(
       projectSettingsPath,
-      JSON.stringify({ packages: ['./pkg-ext', './manifest-dir-pkg', './manifest-glob-pkg', './single-file-package.ts', { source: './filtered-pkg', extensions: ['*.ts', '!legacy.ts'] }] }),
+      JSON.stringify({ packages: ['./pkg-ext', './manifest-dir-pkg', './manifest-glob-pkg', { source: './single-file-package.ts', extensions: ['!single-file-package.ts'] }, { source: './filtered-pkg', extensions: ['*.ts', '!legacy.ts'] }] }),
       'utf8',
     )
     await writeFile(join(projectPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['pkg-extension.ts'] } }), 'utf8')
     await writeFile(join(projectPackageDir, 'pkg-extension.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(join(projectManifestDirPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['extensions'] } }), 'utf8')
+    await mkdir(join(projectManifestDirPackageDir, 'extensions', 'nestedpkg', 'lib'), { recursive: true })
     await writeFile(join(projectManifestDirPackageDir, 'extensions', 'manifest-dir.ts'), 'export default () => {}\n', 'utf8')
-    await writeFile(join(projectManifestGlobPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['extensions/*.ts'] } }), 'utf8')
-    await writeFile(join(projectManifestGlobPackageDir, 'extensions', 'manifest-glob.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(join(projectManifestDirPackageDir, 'extensions', 'nestedpkg', 'package.json'), JSON.stringify({ pi: { extensions: ['lib/ext.ts'] } }), 'utf8')
+    await writeFile(join(projectManifestDirPackageDir, 'extensions', 'nestedpkg', 'lib', 'ext.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(join(projectManifestGlobPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['extensions/*'] } }), 'utf8')
+    await mkdir(join(projectManifestGlobPackageDir, 'extensions', 'globpkg', 'lib'), { recursive: true })
+    await writeFile(join(projectManifestGlobPackageDir, 'extensions', 'globpkg', 'package.json'), JSON.stringify({ pi: { extensions: ['lib/glob-ext.ts'] } }), 'utf8')
+    await writeFile(join(projectManifestGlobPackageDir, 'extensions', 'globpkg', 'lib', 'glob-ext.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(projectFilePackagePath, 'export default () => {}\n', 'utf8')
     await writeFile(join(projectFilteredPackageDir, 'extensions', 'included.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(join(projectFilteredPackageDir, 'extensions', 'legacy.ts'), 'export default () => {}\n', 'utf8')
@@ -208,8 +213,14 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
             cwd: config.paths.rootDir,
           }),
           expect.objectContaining({
-            displayName: 'manifest-glob.ts',
-            path: await realpath(join(projectManifestGlobPackageDir, 'extensions', 'manifest-glob.ts')),
+            displayName: 'ext.ts',
+            path: await realpath(join(projectManifestDirPackageDir, 'extensions', 'nestedpkg', 'lib', 'ext.ts')),
+            source: 'project-local',
+            cwd: config.paths.rootDir,
+          }),
+          expect.objectContaining({
+            displayName: 'glob-ext.ts',
+            path: await realpath(join(projectManifestGlobPackageDir, 'extensions', 'globpkg', 'lib', 'glob-ext.ts')),
             source: 'project-local',
             cwd: config.paths.rootDir,
           }),
