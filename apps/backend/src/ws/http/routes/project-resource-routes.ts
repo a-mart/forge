@@ -57,7 +57,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             const context = resolveContextFromBody(swarmManager, body);
             const before = await resolver.resolve(context);
             const forgeDir = body.forgeDir === null ? null : resolve(body.forgeDir);
-            if (before.warning && forgeDir !== null) {
+            if (before.warning) {
               sendCorsJson(request, response, 400, { error: before.warning });
               return;
             }

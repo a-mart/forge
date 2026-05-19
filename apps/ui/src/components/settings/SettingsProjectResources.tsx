@@ -93,6 +93,12 @@ export function SettingsProjectResources({ managers, previewSession, apiClient }
         </CardHeader>
         {snapshot && (
           <CardContent className="space-y-3 text-sm">
+            {snapshot.warning && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div><div className="font-medium">Workspace unavailable</div><div className="text-xs">{snapshot.warning}</div></div>
+              </div>
+            )}
             <KeyValue label="Detected Git root" value={snapshot.detectedGitRoot ?? 'None'} />
             <KeyValue label="Effective .forge" value={snapshot.effectiveForgeDirRealpath ?? 'None'} />
             <KeyValue label="Source" value={snapshot.source} />

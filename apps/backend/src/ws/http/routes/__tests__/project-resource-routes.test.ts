@@ -96,6 +96,21 @@ describe("project resource routes", () => {
     expect(payload.resources.skills.count).toBe(0);
   });
 
+  it("rejects clear override mutation when session cwd is missing", async () => {
+    const harness = await createHarness({ missingCwd: true });
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/override`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a", forgeDir: null })
+    });
+
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error: string; success?: boolean };
+    expect(payload.error).toContain("Session working directory is unavailable");
+    expect(payload.success).toBeUndefined();
+  });
+
   it("applies CORS headers on early trust errors", async () => {
     const harness = await createHarness({ missingForge: true });
 
