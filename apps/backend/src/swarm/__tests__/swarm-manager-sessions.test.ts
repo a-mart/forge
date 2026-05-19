@@ -429,6 +429,41 @@ describe('SwarmManager', () => {
     expect(manager.listAgents().find((agent) => agent.agentId === worker.agentId)?.status).toBe('terminated')
     expect(managerRuntime!.terminateCalls).toEqual([expect.objectContaining({ abort: true })])
     expect((manager as unknown as { runtimes: Map<string, unknown> }).runtimes.has(session.agentId)).toBe(false)
+    expect(manager.listAgents().find((agent) => agent.agentId === session.agentId)?.status).not.toBe('terminated')
+
+    await manager.handleUserMessage('still usable after trust change', { targetAgentId: session.agentId })
+    expect(manager.runtimeCreationCountByAgentId.get(session.agentId)).toBeGreaterThan(1)
+  })
+
+  it('invalidates in-flight manager runtime creation on project executable trust change', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await mkdir(join(config.defaultCwd, '.forge'), { recursive: true })
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
+    const existing = manager.runtimeByAgentId.get(session.agentId)
+    if (existing) {
+      await existing.terminate({ abort: true })
+      ;(manager as unknown as { runtimes: Map<string, unknown> }).runtimes.delete(session.agentId)
+    }
+
+    let releaseCreation!: () => void
+    const creationGate = new Promise<void>((resolve) => { releaseCreation = resolve })
+    manager.onCreateRuntime = async ({ creationCount }) => {
+      if (creationCount === 2) await creationGate
+    }
+    const inFlight = manager.handleUserMessage('start delayed runtime', { targetAgentId: session.agentId })
+    await vi.waitFor(() => {
+      expect((manager as unknown as { runtimeCreationPromisesByAgentId: Map<string, unknown> }).runtimeCreationPromisesByAgentId.has(session.agentId)).toBe(true)
+    })
+
+    await manager.applyProjectResourceTrustChange(await realpath(join(config.defaultCwd, '.forge')))
+    releaseCreation()
+
+    await expect(inFlight).rejects.toThrow(/Runtime token is stale/)
+    expect((manager as unknown as { runtimes: Map<string, unknown> }).runtimes.has(session.agentId)).toBe(false)
+    expect(manager.listAgents().find((agent) => agent.agentId === session.agentId)?.status).not.toBe('terminated')
   })
 
   it('creates secondary managers and deletes them with owned worker cascade', async () => {

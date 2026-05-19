@@ -324,6 +324,14 @@ async function fingerprintPiSettingsExecutableSurface(settingsPath: string): Pro
 
 async function fingerprintPiPackageExtensions(packageRoot: string): Promise<string[]> {
   const entries: string[] = [];
+  const packageEntry = await statOrUndefined(packageRoot);
+  if (packageEntry?.isFile()) {
+    await fingerprintPath(packageRoot, entries);
+    return entries;
+  }
+  if (packageEntry && !packageEntry.isDirectory()) {
+    return entries;
+  }
   const manifest = await readJsonObject(join(packageRoot, "package.json"));
   const piManifest = isRecord(manifest?.pi) ? manifest.pi : undefined;
   const manifestExtensions = getStringArray(piManifest?.extensions);
@@ -387,12 +395,21 @@ function getStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
+async function statOrUndefined(pathValue: string) {
+  try {
+    return await stat(pathValue);
+  } catch (error) {
+    if (isEnoentError(error) || isEnotdirError(error)) return undefined;
+    throw error;
+  }
+}
+
 async function readJsonObject(pathValue: string): Promise<Record<string, unknown> | undefined> {
   try {
     const parsed = JSON.parse(await readFile(pathValue, "utf-8"));
     return isRecord(parsed) ? parsed : undefined;
   } catch (error) {
-    if (isEnoentError(error) || error instanceof SyntaxError) {
+    if (isEnoentError(error) || isEnotdirError(error) || error instanceof SyntaxError) {
       return undefined;
     }
     throw error;
@@ -473,4 +490,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
   return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function isEnotdirError(error: unknown): error is NodeJS.ErrnoException {
+  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOTDIR";
 }

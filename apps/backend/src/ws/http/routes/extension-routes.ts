@@ -187,7 +187,23 @@ async function collectPiPackageExtensionsFromSettings(
   for (const entry of packages) {
     const packageSource = typeof entry === "string" ? entry : isRecord(entry) && typeof entry.source === "string" ? entry.source : undefined;
     if (!packageSource || !isLocalPackageSource(packageSource)) continue;
+    const configuredExtensions = isRecord(entry) && Array.isArray(entry.extensions)
+      ? entry.extensions.filter((value): value is string => typeof value === "string")
+      : undefined;
+    if (configuredExtensions?.length === 0) continue;
     const packageRoot = resolvePackageSourcePath(packageSource, settingsDir);
+    const packageEntry = await statOrUndefined(packageRoot);
+    if (packageEntry?.isFile()) {
+      await collectPiExtensionPath(packageRoot, source, target, metadata);
+      continue;
+    }
+    if (packageEntry && !packageEntry.isDirectory()) continue;
+    if (configuredExtensions) {
+      for (const extensionPath of configuredExtensions) {
+        await collectPiExtensionPath(resolve(packageRoot, extensionPath), source, target, metadata);
+      }
+      continue;
+    }
     const manifest = await readJsonObject(join(packageRoot, "package.json"));
     const piManifest = isRecord(manifest?.pi) ? manifest.pi : undefined;
     const manifestExtensions = Array.isArray(piManifest?.extensions)
@@ -228,7 +244,7 @@ async function readJsonObject(pathValue: string): Promise<Record<string, unknown
     const parsed = JSON.parse(await readFile(pathValue, "utf-8"));
     return isRecord(parsed) ? parsed : undefined;
   } catch (error) {
-    if (isEnoentError(error) || error instanceof SyntaxError) return undefined;
+    if (isMissingPathError(error) || error instanceof SyntaxError) return undefined;
     throw error;
   }
 }
@@ -336,6 +352,15 @@ function isSupportedExtensionFile(fileName: string): boolean {
   return normalized.endsWith(".ts") || normalized.endsWith(".js");
 }
 
+async function statOrUndefined(pathValue: string) {
+  try {
+    return await stat(pathValue);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw error;
+  }
+}
+
 async function isFile(pathValue: string): Promise<boolean> {
   try {
     const entry = await stat(pathValue);
@@ -350,6 +375,15 @@ async function isFile(pathValue: string): Promise<boolean> {
 
 function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
   return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function isMissingPathError(error: unknown): error is NodeJS.ErrnoException {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    ((error as { code?: unknown }).code === "ENOENT" || (error as { code?: unknown }).code === "ENOTDIR")
+  );
 }
 
 function toComparablePath(pathValue: string): string {

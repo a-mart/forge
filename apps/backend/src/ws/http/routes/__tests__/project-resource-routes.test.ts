@@ -163,7 +163,8 @@ async function createHarness(options: { missingCwd?: boolean; missingForge?: boo
   const swarmManager = {
     getConfig: () => ({ paths: { dataDir } }),
     getAgent: (agentId: string) => (agentId === descriptor.agentId ? descriptor : undefined),
-    listAgents: () => [descriptor]
+    listAgents: () => [descriptor],
+    applyProjectResourceTrustChange: async () => undefined
   } as unknown as SwarmManager;
   const routes = createProjectResourceRoutes({ swarmManager });
   const server = createServer(async (request, response) => {

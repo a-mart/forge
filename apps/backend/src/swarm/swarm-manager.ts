@@ -2199,7 +2199,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const managerResults = await Promise.allSettled(
       affectedSessions.map((session) => this.forceEvictManagerRuntimeForProjectTrustChange(session))
     );
-    this.logProjectTrustPropagationFailures(workerResults, managerResults);
+    this.logProjectTrustPropagationFailures(affectedWorkers, workerResults, affectedSessions, managerResults);
     await this.saveStore();
     this.emitAgentsSnapshot();
   }
@@ -2207,27 +2207,75 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async forceEvictManagerRuntimeForProjectTrustChange(
     descriptor: AgentDescriptor & { role: "manager" }
   ): Promise<void> {
+    // Trust flips are a security boundary: invalidate any current or in-flight manager runtime
+    // immediately, without projecting a terminal session state. A fresh runtime will be created
+    // on the next user message with the new trust policy.
     this.runtimeRecoveryState.clearPendingManagerRuntimeRecycle(descriptor.agentId);
+    const inFlightCreation = this.runtimeCreationPromisesByAgentId.get(descriptor.agentId);
+    if (inFlightCreation) {
+      this.runtimeCreationPromisesByAgentId.delete(descriptor.agentId);
+      this.runtimeController.clearRuntimeToken(descriptor.agentId);
+      void inFlightCreation.catch(() => undefined);
+    }
+
     const runtime = this.runtimes.get(descriptor.agentId);
-    if (!runtime) return;
-    const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", {
-      abort: true,
-      shutdownTimeoutMs: 2_000,
-      drainTimeoutMs: 250
-    });
-    this.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
+    const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId);
+    if (!runtime) {
+      this.runtimeController.clearRuntimeToken(descriptor.agentId);
+      if (descriptor.status === "streaming") {
+        descriptor.status = "idle";
+        descriptor.streamingStartedAt = undefined;
+        descriptor.updatedAt = this.now();
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+        this.emitStatus(descriptor.agentId, "idle", 0, descriptor.contextUsage);
+      }
+      return;
+    }
+
+    this.runtimeController.suppressIntentionalStopRuntimeCallbacks(descriptor.agentId, runtimeToken);
+    this.detachRuntime(descriptor.agentId, runtimeToken);
+    if (descriptor.status === "streaming") {
+      descriptor.status = "idle";
+      descriptor.streamingStartedAt = undefined;
+      descriptor.updatedAt = this.now();
+      this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+      this.emitStatus(descriptor.agentId, "idle", 0, descriptor.contextUsage);
+      this.emitConversationMessage({
+        type: "conversation_message",
+        agentId: descriptor.agentId,
+        role: "system",
+        text: "Repository executable trust changed. Manager runtime was restarted to apply the new trust policy.",
+        timestamp: this.now(),
+        source: "system",
+        sourceContext: { channel: "web" }
+      });
+    }
+
+    try {
+      await runtime.terminate({ abort: true, shutdownTimeoutMs: 2_000, drainTimeoutMs: 250 });
+    } finally {
+      this.runtimeController.clearIntentionalStopRuntimeCallbackSuppression(descriptor.agentId, runtimeToken);
+    }
   }
 
   private logProjectTrustPropagationFailures(
+    workers: AgentDescriptor[],
     workerResults: Array<PromiseSettledResult<unknown>>,
+    managers: Array<AgentDescriptor & { role: "manager" }>,
     managerResults: Array<PromiseSettledResult<unknown>>
   ): void {
-    const workerFailures = workerResults.filter((result) => result.status === "rejected");
-    const managerFailures = managerResults.filter((result) => result.status === "rejected");
+    const workerFailures = collectPropagationFailures(workers, workerResults);
+    const managerFailures = collectPropagationFailures(managers, managerResults);
     if (workerFailures.length === 0 && managerFailures.length === 0) return;
     this.logDebug("project_resources:trust_change:propagation_errors", {
-      workerFailures: workerFailures.map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason)),
-      managerFailures: managerFailures.map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason))
+      workerFailures: workerFailures.map((entry) => ({
+        agentId: entry.agentId,
+        message: entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+      })),
+      managerFailures: managerFailures.map((entry) => ({
+        agentId: entry.agentId,
+        message: entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+      }))
     });
   }
 
@@ -6587,6 +6635,19 @@ function selectedOpenAICodexTransport(): CodexTransportDebugAgentDiagnostics["se
 
 function hashDebugAgentId(agentId: string): string {
   return createHash("sha256").update(agentId).digest("hex").slice(0, 16);
+}
+
+function collectPropagationFailures(
+  descriptors: Array<{ agentId: string }>,
+  results: Array<PromiseSettledResult<unknown>>
+): Array<{ agentId: string | undefined; reason: unknown }> {
+  const failures: Array<{ agentId: string | undefined; reason: unknown }> = [];
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      failures.push({ agentId: descriptors[index]?.agentId, reason: result.reason });
+    }
+  });
+  return failures;
 }
 
 function hasExistingExecutableSurface(resolution: { repoRootResources: { forgeExtensionsDir?: string; piExtensionsDir?: string; piSettingsPath?: string }; legacyExecutableSurfaces: Array<{ path: string }> }): boolean {

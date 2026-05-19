@@ -207,6 +207,8 @@ export class P0HttpRouteFakeSwarmManager extends EventEmitter {
     return this.runtimeExtensionSnapshots.map((snapshot) => ({ ...(snapshot as Record<string, unknown>) }))
   }
 
+  async applyProjectResourceTrustChange(): Promise<void> {}
+
   async buildForgeExtensionSettingsSnapshot(): Promise<Record<string, unknown>> {
     return JSON.parse(JSON.stringify(this.forgeSettingsSnapshot)) as Record<string, unknown>
   }
