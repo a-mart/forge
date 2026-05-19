@@ -371,7 +371,8 @@ export class SwarmSettingsService {
         rootPath: entry.rootPath,
         skillFilePath: entry.path,
         isInherited: entry.isInherited,
-        isEffective: entry.isEffective
+        isEffective: entry.isEffective,
+        ...(entry.conflictWarning ? { conflictWarning: entry.conflictWarning } : {})
       }))
       .sort((left, right) => {
         const byName = left.name.localeCompare(right.name);

@@ -144,6 +144,8 @@ import { SkillMetadataService, type SkillMetadata } from "./skill-metadata-servi
 import { resolveCollaborationSkillRoster } from "./skills/collaboration-skill-resolver.js";
 import { SwarmChoiceService } from "./swarm-choice-service.js";
 import { SwarmCortexService } from "./swarm-cortex-service.js";
+import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import { SwarmPromptService } from "./swarm-prompt-service.js";
 import { SwarmSettingsService } from "./swarm-settings-service.js";
 import {
@@ -193,6 +195,7 @@ import {
   normalizeSpecialistHandle as specialistNormalizeSpecialistHandle,
   resolveCollaborationChannelRoster as specialistResolveCollaborationChannelRoster,
   resolveRoster as specialistResolveRoster,
+  resolveWorkspaceRoster as specialistResolveWorkspaceRoster,
 } from "./specialists/specialist-registry.js";
 import {
   isNonRunningAgentStatus,
@@ -5441,8 +5444,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async resolveSpecialistRosterForProfile(
     profileId: string,
-    targetSpace: SpecialistTargetSpace = "builder"
+    targetSpace: SpecialistTargetSpace = "builder",
+    workspaceSpecialistsDir?: string,
   ): Promise<ResolvedSpecialistDefinitionLike[]> {
+    if (workspaceSpecialistsDir && targetSpace !== "collaboration") {
+      return specialistResolveWorkspaceRoster(
+        profileId,
+        this.config.paths.dataDir,
+        workspaceSpecialistsDir,
+        targetSpace,
+      ) as Promise<ResolvedSpecialistDefinitionLike[]>;
+    }
+
     const specialistRegistry = await this.loadSpecialistRegistryModule();
     return specialistRegistry.resolveRoster(profileId, targetSpace);
   }
@@ -5452,7 +5465,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     targetSpace: SpecialistTargetSpace = "builder"
   ): Promise<ResolvedSpecialistDefinitionLike[]> {
     if (targetSpace !== "collaboration" || !isCollabSession(manager)) {
-      return this.resolveSpecialistRosterForProfile(manager.profileId ?? manager.agentId, targetSpace);
+      const workspace = await this.resolveProjectWorkspaceForManager(manager);
+      return this.resolveSpecialistRosterForProfile(
+        manager.profileId ?? manager.agentId,
+        targetSpace,
+        workspace?.repoRootResources.specialistsDir,
+      );
     }
 
     const channelId = manager.collab?.channelId;
@@ -5491,6 +5509,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         sessionAgentId: manager.agentId,
         selectedGlobalHandles: [],
       }) as Promise<ResolvedSpecialistDefinitionLike[]>;
+    }
+  }
+
+  private async resolveProjectWorkspaceForManager(manager: AgentDescriptor) {
+    const profileId = manager.profileId ?? manager.agentId;
+    try {
+      return await new ProjectWorkspaceResolver({
+        dataDir: this.config.paths.dataDir,
+        settingsStore: new ProjectResourceSettingsStore(this.config.paths.dataDir),
+      }).resolve({
+        profileId,
+        sessionAgentId: manager.agentId,
+        cwd: manager.cwd,
+      });
+    } catch (error) {
+      this.logDebug("project_resources:resolve:error", {
+        agentId: manager.agentId,
+        profileId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
     }
   }
 
@@ -5544,7 +5583,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return null;
     }
 
-    return this.skillMetadataService.getProfileSkillMetadata(profileId);
+    const workspace = managerDescriptor?.role === "manager"
+      ? await this.resolveProjectWorkspaceForManager(managerDescriptor)
+      : undefined;
+    return this.skillMetadataService.getProfileSkillMetadataForWorkspace(
+      profileId,
+      workspace?.effectiveForgeDirRealpath,
+    );
   }
 
   async resolveProjectAgentSystemPromptOverride(

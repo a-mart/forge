@@ -13,6 +13,7 @@ import {
   resolveCollaborationChannelRoster,
   resolveRoster,
   resolveSharedRoster,
+  resolveWorkspaceRoster,
   saveChannelSpecialist,
   saveProfileSpecialist,
   saveSharedSpecialist,
@@ -21,6 +22,26 @@ import {
 import { getBuiltinSpecialistsDir } from "../../agents/specialists/specialist-paths.js";
 import { modelCatalogService } from "../../model-catalog-service.js";
 import { writeModelOverrides } from "../../model-overrides.js";
+
+function makeSpecialistMarkdown(options: {
+  displayName: string;
+  whenToUse: string;
+  extraFrontmatter?: string[];
+}): string {
+  return [
+    "---",
+    `displayName: ${options.displayName}`,
+    "color: '#2563eb'",
+    "enabled: true",
+    `whenToUse: ${options.whenToUse}`,
+    "modelId: gpt-5.3-codex",
+    "provider: openai",
+    "TargetSpace: [builder]",
+    ...(options.extraFrontmatter ?? []),
+    "---",
+    "Specialist prompt body.",
+  ].join("\n");
+}
 
 describe("specialist-registry", () => {
   let originalForgeDataDir: string | undefined;
@@ -46,6 +67,39 @@ describe("specialist-registry", () => {
     }
 
     invalidateSpecialistCache();
+  });
+
+  it("resolves workspace specialists without overriding global entries unless explicitly requested", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const workspaceDir = join(root, ".forge", "specialists");
+    await mkdir(join(dataDir, "shared", "specialists"), { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+
+    const globalSpecialist = makeSpecialistMarkdown({ displayName: "Global Backend", whenToUse: "global backend" });
+    const workspaceSpecialist = makeSpecialistMarkdown({ displayName: "Workspace Backend", whenToUse: "workspace backend" });
+    const workspaceOverride = makeSpecialistMarkdown({
+      displayName: "Workspace Reviewer",
+      whenToUse: "workspace review",
+      extraFrontmatter: ["forgePrecedence: override"],
+    });
+    await writeFile(join(dataDir, "shared", "specialists", "backend.md"), globalSpecialist);
+    await writeFile(join(dataDir, "shared", "specialists", "reviewer.md"), makeSpecialistMarkdown({ displayName: "Global Reviewer", whenToUse: "global review" }));
+    await writeFile(join(workspaceDir, "backend.md"), workspaceSpecialist);
+    await writeFile(join(workspaceDir, "reviewer.md"), workspaceOverride);
+    await writeFile(join(workspaceDir, "repo-only.md"), makeSpecialistMarkdown({ displayName: "Repo Only", whenToUse: "repo only" }));
+
+    const roster = await resolveWorkspaceRoster("profile-a", dataDir, workspaceDir);
+    const byId = new Map(roster.map((entry) => [entry.specialistId, entry]));
+
+    expect(byId.get("backend")).toMatchObject({ displayName: "Global Backend", sourceKind: "global" });
+    expect(byId.get("reviewer")).toMatchObject({
+      displayName: "Workspace Reviewer",
+      sourceKind: "workspace",
+      shadowsGlobal: true,
+      conflictWarning: "Repository specialist overrides inherited global specialist.",
+    });
+    expect(byId.get("repo-only")).toMatchObject({ displayName: "Repo Only", sourceKind: "workspace" });
   });
 
   it("resolves and copies canonical builtin specialists through the agents module path", async () => {

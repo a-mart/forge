@@ -24,6 +24,9 @@ import {
   listProjectAgents,
 } from "./project-agents.js";
 import { readProjectAgentRecord, type ProjectAgentOnDiskRecord } from "./project-agent-storage.js";
+import { listRepositoryReferenceDocs } from "./project-reference-docs.js";
+import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import {
   listProjectAgentReferenceDocs,
   readProjectAgentReferenceDoc,
@@ -324,6 +327,8 @@ export class SwarmPromptService {
 
     if (isCollabSession(descriptor)) {
       prompt = await this.appendCollabContextOverlays(descriptor, prompt);
+    } else {
+      prompt = await this.appendRepositoryReferenceInventory(prompt, descriptor);
     }
 
     return prompt;
@@ -344,7 +349,7 @@ export class SwarmPromptService {
         const specialist = roster.find((entry) => entry.specialistId === specialistId);
         const specialistPrompt = specialist?.promptBody?.trim();
         if (specialistPrompt) {
-          return specialistPrompt;
+          return this.appendRepositoryReferenceInventory(specialistPrompt, descriptor);
         }
       } catch (error) {
         this.options.logDebug("specialist:resolve:error", {
@@ -365,13 +370,16 @@ export class SwarmPromptService {
           profileId,
         );
         if (archetypePrompt) {
-          return archetypePrompt.content;
+          return this.appendRepositoryReferenceInventory(archetypePrompt.content, descriptor);
         }
       }
     }
 
     try {
-      return await this.options.promptRegistry.resolve("archetype", "worker", profileId);
+      return this.appendRepositoryReferenceInventory(
+        await this.options.promptRegistry.resolve("archetype", "worker", profileId),
+        descriptor
+      );
     } catch (error) {
       this.options.logDebug("prompt:resolve:fallback", {
         category: "archetype",
@@ -379,7 +387,53 @@ export class SwarmPromptService {
         profileId,
         message: error instanceof Error ? error.message : String(error),
       });
-      return DEFAULT_WORKER_SYSTEM_PROMPT;
+      return this.appendRepositoryReferenceInventory(DEFAULT_WORKER_SYSTEM_PROMPT, descriptor);
+    }
+  }
+
+  private async appendRepositoryReferenceInventory(systemPrompt: string, descriptor: AgentDescriptor): Promise<string> {
+    if (isCollabSession(descriptor)) {
+      return systemPrompt;
+    }
+
+    try {
+      const managerDescriptor = descriptor.role === "manager"
+        ? descriptor
+        : this.options.descriptors.get(descriptor.managerId);
+      const profileId = managerDescriptor?.profileId ?? descriptor.profileId ?? descriptor.managerId ?? descriptor.agentId;
+      const sessionAgentId = managerDescriptor?.agentId ?? (descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId);
+      const cwd = managerDescriptor?.cwd ?? descriptor.cwd;
+      const resolver = new ProjectWorkspaceResolver({
+        dataDir: this.options.config.paths.dataDir,
+        settingsStore: new ProjectResourceSettingsStore(this.options.config.paths.dataDir),
+      });
+      const resolution = await resolver.resolve({
+        profileId,
+        sessionAgentId,
+        cwd,
+      });
+      if (!resolution.effectiveForgeDirRealpath) {
+        return systemPrompt;
+      }
+      const inventory = await listRepositoryReferenceDocs(resolution.effectiveForgeDirRealpath, { maxFiles: 100 });
+      if (inventory.files.length === 0) {
+        return systemPrompt;
+      }
+      const lines = [
+        "",
+        "# Repository Reference Documents",
+        `Repository reference docs are available under ${inventory.rootDir}. Read relevant files on demand; their contents are not injected by default.`,
+        "",
+        ...inventory.files.map((file) => `- ${file}`),
+        ...(inventory.truncated ? ["- … inventory truncated"] : [])
+      ];
+      return `${systemPrompt.trimEnd()}\n${lines.join("\n")}`;
+    } catch (error) {
+      this.options.logDebug("repository_reference:inventory:error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return systemPrompt;
     }
   }
 

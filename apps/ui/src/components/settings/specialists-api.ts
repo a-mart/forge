@@ -90,13 +90,15 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
     (specialist.sourceKind === 'builtin' ||
       specialist.sourceKind === 'global' ||
       specialist.sourceKind === 'profile' ||
-      specialist.sourceKind === 'channel') &&
+      specialist.sourceKind === 'channel' ||
+      specialist.sourceKind === 'workspace') &&
     typeof specialist.available === 'boolean' &&
     (specialist.availabilityCode === 'ok' ||
       specialist.availabilityCode === 'invalid_model' ||
       specialist.availabilityCode === 'missing_auth') &&
     (specialist.availabilityMessage === undefined || typeof specialist.availabilityMessage === 'string') &&
-    typeof specialist.shadowsGlobal === 'boolean'
+    typeof specialist.shadowsGlobal === 'boolean' &&
+    (specialist.conflictWarning === undefined || typeof specialist.conflictWarning === 'string')
   )
 }
 

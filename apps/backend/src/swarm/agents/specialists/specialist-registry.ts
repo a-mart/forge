@@ -110,6 +110,7 @@ export interface SpecialistFrontmatter {
   pinned: boolean;
   webSearch: boolean;
   targetSpace: SpecialistTargetSpace[];
+  forgePrecedence?: "override";
 }
 
 export interface SaveSpecialistRequest {
@@ -189,6 +190,68 @@ export async function resolveRoster(
   return cloneRosterEntries(resolved);
 }
 
+export async function resolveWorkspaceRoster(
+  profileId: string,
+  dataDir: string,
+  workspaceSpecialistsDir: string | undefined,
+  targetSpace: SpecialistTargetSpace = "builder",
+): Promise<ResolvedSpecialistDefinition[]> {
+  if (!workspaceSpecialistsDir || targetSpace === "collaboration") {
+    return resolveRoster(profileId, dataDir, targetSpace);
+  }
+
+  const normalizedProfileId = sanitizePathSegment(profileId);
+  const cacheKey = getRosterCacheKey({
+    dataDir,
+    profileId: normalizedProfileId,
+    targetSpace,
+    workspaceSpecialistsDir,
+  });
+  const cached = rosterCache.get(cacheKey);
+  if (cached) {
+    return cloneRosterEntries(cached);
+  }
+
+  const sharedDir = getSharedSpecialistsDir(dataDir);
+  const profileDir = getProfileSpecialistsDir(dataDir, normalizedProfileId);
+  const [sharedByHandle, workspaceByHandle, profileByHandle] = await Promise.all([
+    resolveDirectorySpecialists(sharedDir, "shared", targetSpace),
+    resolveDirectorySpecialists(workspaceSpecialistsDir, "workspace", targetSpace),
+    resolveDirectorySpecialists(profileDir, "profile", targetSpace),
+  ]);
+
+  const allHandles = [...new Set([...sharedByHandle.keys(), ...workspaceByHandle.keys(), ...profileByHandle.keys()])].sort();
+  const resolved: ResolvedSpecialistDefinition[] = [];
+  for (const handle of allHandles) {
+    const profileEntry = profileByHandle.get(handle);
+    if (profileEntry) {
+      resolved.push({ ...profileEntry, shadowsGlobal: sharedByHandle.has(handle) });
+      continue;
+    }
+
+    const workspaceEntry = workspaceByHandle.get(handle);
+    const sharedEntry = sharedByHandle.get(handle);
+    if (workspaceEntry && !sharedEntry) {
+      resolved.push(workspaceEntry);
+      continue;
+    }
+    if (workspaceEntry && sharedEntry && workspaceEntry.forgePrecedence === "override" && !sharedEntry.builtin) {
+      resolved.push({
+        ...workspaceEntry,
+        shadowsGlobal: true,
+        conflictWarning: "Repository specialist overrides inherited global specialist."
+      });
+      continue;
+    }
+    if (sharedEntry) {
+      resolved.push(sharedEntry);
+    }
+  }
+
+  rosterCache.set(cacheKey, cloneRosterEntries(resolved));
+  return cloneRosterEntries(resolved);
+}
+
 export interface CollaborationChannelRosterOptions {
   sessionAgentId: string;
   selectedGlobalHandles: readonly string[];
@@ -247,7 +310,7 @@ export async function resolveCollaborationChannelRoster(
 
 async function resolveDirectorySpecialists(
   directoryPath: string,
-  scope: "shared" | "profile" | "channel",
+  scope: "shared" | "profile" | "channel" | "workspace",
   targetSpace?: SpecialistTargetSpace,
 ): Promise<Map<string, ResolvedSpecialistDefinition>> {
   const files = (await listMarkdownFiles(directoryPath)).filter(
@@ -281,9 +344,11 @@ async function resolveDirectorySpecialists(
               ? "profile"
               : scope === "channel"
                 ? "channel"
-                : parsed.frontmatter.builtin
-                  ? "builtin"
-                  : "global",
+                : scope === "workspace"
+                  ? "workspace"
+                  : parsed.frontmatter.builtin
+                    ? "builtin"
+                    : "global",
           sourcePath: filePath,
           shadowsGlobal: false,
         }),
@@ -324,12 +389,14 @@ function getRosterCacheKey(options: {
   targetSpace: SpecialistTargetSpace;
   sessionAgentId?: string;
   selectedGlobalHandles?: readonly string[];
+  workspaceSpecialistsDir?: string;
 }): string {
   return [
     options.dataDir,
     options.profileId,
     options.targetSpace,
     options.sessionAgentId ?? "",
+    options.workspaceSpecialistsDir ?? "",
     ...(options.selectedGlobalHandles ?? []),
   ].join(CACHE_KEY_SEPARATOR);
 }
@@ -730,6 +797,7 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   const builtin = parseOptionalBoolean(frontmatterValues.builtin);
   const pinned = parseOptionalBoolean(frontmatterValues.pinned);
   const webSearch = parseOptionalBoolean(frontmatterValues.webSearch);
+  const forgePrecedence = parseOptionalString(frontmatterValues.forgePrecedence) === "override" ? "override" : undefined;
   const targetSpace = parseTargetSpace(
     frontmatterValues[SPECIALIST_TARGET_SPACE_FRONTMATTER_KEY] ??
       frontmatterValues[LEGACY_SPECIALIST_TARGET_SPACE_FRONTMATTER_KEY],
@@ -789,6 +857,7 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
       pinned: pinned ?? false,
       webSearch: webSearch ?? false,
       targetSpace,
+      forgePrecedence,
     },
     body,
   };
@@ -1002,7 +1071,7 @@ function toResolvedSpecialistDefinition(options: {
   specialistId: string;
   frontmatter: SpecialistFrontmatter;
   body: string;
-  sourceKind: "builtin" | "global" | "profile" | "channel";
+  sourceKind: "builtin" | "global" | "profile" | "channel" | "workspace";
   sourcePath: string;
   shadowsGlobal: boolean;
 }): ResolvedSpecialistDefinition {
@@ -1053,6 +1122,7 @@ function toResolvedSpecialistDefinition(options: {
     availabilityCode,
     availabilityMessage,
     shadowsGlobal: options.shadowsGlobal,
+    ...(options.frontmatter.forgePrecedence ? { forgePrecedence: options.frontmatter.forgePrecedence } : {}),
   };
 }
 
