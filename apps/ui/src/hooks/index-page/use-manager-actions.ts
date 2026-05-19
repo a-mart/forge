@@ -13,6 +13,7 @@ import type { ManagerWsState } from '@/lib/ws-state'
 import type {
   AgentDescriptor,
   ManagerExactModelSelection,
+  ManagerReasoningLevel,
 } from '@forge/protocol'
 import type { AppRouteState } from './use-route-state'
 
@@ -43,6 +44,7 @@ export function useManagerActions({
   newManagerName: string
   newManagerCwd: string
   newManagerModelSelection: ManagerExactModelSelection | undefined
+  newManagerReasoningLevel: ManagerReasoningLevel | undefined
   createManagerError: string | null
   browseError: string | null
   isCreatingManager: boolean
@@ -51,6 +53,7 @@ export function useManagerActions({
   handleNewManagerNameChange: (value: string) => void
   handleNewManagerCwdChange: (value: string) => void
   handleNewManagerModelSelectionChange: (value: ManagerExactModelSelection) => void
+  handleNewManagerReasoningLevelChange: (value: ManagerReasoningLevel) => void
   handleOpenCreateManagerDialog: () => void
   handleCreateManagerDialogOpenChange: (open: boolean) => void
   handleBrowseDirectory: () => Promise<void>
@@ -72,6 +75,7 @@ export function useManagerActions({
   const [newManagerName, setNewManagerName] = useState('')
   const [newManagerCwd, setNewManagerCwd] = useState('')
   const [newManagerModelSelection, setNewManagerModelSelection] = useState<ManagerExactModelSelection | undefined>(undefined)
+  const [newManagerReasoningLevel, setNewManagerReasoningLevel] = useState<ManagerReasoningLevel | undefined>(undefined)
   const [createManagerError, setCreateManagerError] = useState<string | null>(null)
   const [isCreatingManager, setIsCreatingManager] = useState(false)
   const [isValidatingDirectory, setIsValidatingDirectory] = useState(false)
@@ -102,6 +106,11 @@ export function useManagerActions({
 
   const handleNewManagerModelSelectionChange = useCallback((value: ManagerExactModelSelection) => {
     setNewManagerModelSelection(value)
+    setCreateManagerError(null)
+  }, [])
+
+  const handleNewManagerReasoningLevelChange = useCallback((value: ManagerReasoningLevel) => {
+    setNewManagerReasoningLevel(value)
     setCreateManagerError(null)
   }, [])
 
@@ -185,6 +194,7 @@ export function useManagerActions({
     setNewManagerName('')
     setNewManagerCwd(defaultCwd)
     setNewManagerModelSelection(undefined)
+    setNewManagerReasoningLevel(undefined)
     setBrowseError(null)
     setCreateManagerError(null)
     setIsCreateManagerDialogOpen(true)
@@ -265,6 +275,7 @@ export function useManagerActions({
         name,
         cwd: validation.path || cwd,
         modelSelection: newManagerModelSelection,
+        reasoningLevel: newManagerReasoningLevel,
       })
 
       navigateToRoute({ view: 'chat', agentId: manager.agentId, surface: 'builder' })
@@ -274,6 +285,7 @@ export function useManagerActions({
       setNewManagerName('')
       setNewManagerCwd('')
       setNewManagerModelSelection(undefined)
+      setNewManagerReasoningLevel(undefined)
       setBrowseError(null)
       setCreateManagerError(null)
     } catch (error) {
@@ -287,6 +299,7 @@ export function useManagerActions({
     navigateToRoute,
     newManagerCwd,
     newManagerModelSelection,
+    newManagerReasoningLevel,
     newManagerName,
   ])
 
@@ -351,6 +364,7 @@ export function useManagerActions({
     newManagerName,
     newManagerCwd,
     newManagerModelSelection,
+    newManagerReasoningLevel,
     createManagerError,
     browseError,
     isCreatingManager,
@@ -359,6 +373,7 @@ export function useManagerActions({
     handleNewManagerNameChange,
     handleNewManagerCwdChange,
     handleNewManagerModelSelectionChange,
+    handleNewManagerReasoningLevelChange,
     handleOpenCreateManagerDialog,
     handleCreateManagerDialogOpenChange,
     handleBrowseDirectory,

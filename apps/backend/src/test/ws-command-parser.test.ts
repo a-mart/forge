@@ -264,6 +264,55 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses and validates create_manager reasoningLevel', () => {
+    expect(parseJsonCommand({
+      type: 'create_manager',
+      name: 'Manager A',
+      cwd: '/tmp/project',
+      model: 'pi-5.4',
+      reasoningLevel: 'low',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'create_manager',
+        name: 'Manager A',
+        cwd: '/tmp/project',
+        model: 'pi-5.4',
+        reasoningLevel: 'low',
+        requestId: undefined,
+      },
+    })
+
+    expect(parseJsonCommand({
+      type: 'create_manager',
+      name: 'Manager A',
+      cwd: '/tmp/project',
+      modelSelection: { provider: 'claude-sdk', modelId: 'claude-opus-4-7' },
+      reasoningLevel: 'medium',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'create_manager',
+        name: 'Manager A',
+        cwd: '/tmp/project',
+        modelSelection: { provider: 'claude-sdk', modelId: 'claude-opus-4-7' },
+        reasoningLevel: 'medium',
+        requestId: undefined,
+      },
+    })
+
+    expect(parseJsonCommand({
+      type: 'create_manager',
+      name: 'Manager A',
+      cwd: '/tmp/project',
+      model: 'pi-5.4',
+      reasoningLevel: 'ultra',
+    })).toEqual({
+      ok: false,
+      error: 'create_manager.reasoningLevel must be one of none|low|medium|high|xhigh',
+    })
+  })
+
   it('rejects manager model commands that send both legacy and exact selections', () => {
     expect(parseJsonCommand({
       type: 'create_manager',

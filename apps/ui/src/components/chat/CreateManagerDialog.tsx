@@ -19,13 +19,26 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { fetchModelOverrides, type ModelOverridesResponse } from '@/components/settings/models-api'
-import type { ManagerExactModelSelection } from '@forge/protocol'
+import {
+  MANAGER_REASONING_LEVELS,
+  type ManagerExactModelSelection,
+  type ManagerReasoningLevel,
+} from '@forge/protocol'
 import {
   buildManagerModelRows,
   decodeManagerModelValue,
   encodeManagerModelValue,
   groupManagerModelRows,
+  type ManagerModelSelectRow,
 } from '@/lib/manager-model-selection'
+
+const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
+  none: 'None',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Max',
+}
 
 interface CreateManagerDialogProps {
   open: boolean
@@ -36,12 +49,14 @@ interface CreateManagerDialogProps {
   newManagerName: string
   newManagerCwd: string
   newManagerModelSelection: ManagerExactModelSelection | undefined
+  newManagerReasoningLevel: ManagerReasoningLevel | undefined
   createManagerError: string | null
   browseError: string | null
   onOpenChange: (open: boolean) => void
   onNameChange: (value: string) => void
   onCwdChange: (value: string) => void
   onModelSelectionChange: (value: ManagerExactModelSelection) => void
+  onReasoningLevelChange: (value: ManagerReasoningLevel) => void
   onBrowseDirectory: () => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }
@@ -55,12 +70,14 @@ export function CreateManagerDialog({
   newManagerName,
   newManagerCwd,
   newManagerModelSelection,
+  newManagerReasoningLevel,
   createManagerError,
   browseError,
   onOpenChange,
   onNameChange,
   onCwdChange,
   onModelSelectionChange,
+  onReasoningLevelChange,
   onBrowseDirectory,
   onSubmit,
 }: CreateManagerDialogProps) {
@@ -109,14 +126,36 @@ export function CreateManagerDialog({
 
     const first = availableRows[0]
     onModelSelectionChange({ provider: first.provider, modelId: first.modelId })
-  }, [availableRows, selectedValue, onModelSelectionChange, open, availabilityLoading])
+    onReasoningLevelChange(first.defaultReasoningLevel)
+  }, [availableRows, selectedValue, onModelSelectionChange, onReasoningLevelChange, open, availabilityLoading])
 
   const handleModelChange = useCallback((value: string) => {
     const decoded = decodeManagerModelValue(value)
     if (decoded) {
       onModelSelectionChange(decoded)
+      // When switching models, set reasoning to the new model's default
+      const row = availableRows.find((r) => r.key === value)
+      if (row) {
+        onReasoningLevelChange(row.defaultReasoningLevel)
+      }
     }
-  }, [onModelSelectionChange])
+  }, [availableRows, onModelSelectionChange, onReasoningLevelChange])
+
+  // Get reasoning levels for selected model
+  const selectedRow: ManagerModelSelectRow | undefined = selectedValue
+    ? availableRows.find((r) => r.key === selectedValue)
+    : undefined
+  const availableReasoningLevels = useMemo(
+    () => selectedRow?.supportedReasoningLevels ?? [...MANAGER_REASONING_LEVELS],
+    [selectedRow?.supportedReasoningLevels],
+  )
+
+  // Reset reasoning level if not supported by newly selected model
+  useEffect(() => {
+    if (newManagerReasoningLevel && !availableReasoningLevels.includes(newManagerReasoningLevel)) {
+      onReasoningLevelChange(selectedRow?.defaultReasoningLevel ?? 'high')
+    }
+  }, [availableReasoningLevels, newManagerReasoningLevel, onReasoningLevelChange, selectedRow?.defaultReasoningLevel])
 
   const availabilityLoaded = !!overridesData && !availabilityLoading
   const noModelsAvailable = availabilityLoaded && availableRows.length === 0
@@ -214,6 +253,31 @@ export function CreateManagerDialog({
                 No manager models are currently available. Re-enable one in Settings &gt; Models.
               </p>
             ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="manager-reasoning" className="text-xs font-medium text-muted-foreground">
+              Reasoning Level
+            </Label>
+            <Select
+              value={newManagerReasoningLevel ?? ''}
+              onValueChange={(value) => onReasoningLevelChange(value as ManagerReasoningLevel)}
+              disabled={isModelSelectorDisabled}
+            >
+              <SelectTrigger id="manager-reasoning" className="w-full">
+                <SelectValue placeholder="Select reasoning level" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableReasoningLevels.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {REASONING_LEVEL_LABELS[level]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Higher reasoning uses more tokens but improves complex task performance.
+            </p>
           </div>
 
           {createManagerError ? (

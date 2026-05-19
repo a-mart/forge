@@ -821,6 +821,65 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('honors create_manager reasoningLevel for exact model selections when supported', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createManager('manager', {
+      name: 'SDK Medium Reasoning Manager',
+      cwd: config.defaultCwd,
+      modelSelection: {
+        provider: 'claude-sdk',
+        modelId: 'claude-opus-4-7',
+      },
+      reasoningLevel: 'medium',
+    })
+
+    expect(created.model).toEqual({
+      provider: 'claude-sdk',
+      modelId: 'claude-opus-4-7',
+      thinkingLevel: 'medium',
+    })
+  })
+
+  it('honors create_manager reasoningLevel for model presets when supported', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createManager('manager', {
+      name: 'Low Reasoning Codex Manager',
+      cwd: config.defaultCwd,
+      model: 'pi-codex',
+      reasoningLevel: 'low',
+    })
+
+    expect(created.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'low',
+    })
+  })
+
+  it('honors create_manager reasoningLevel for default model creation when supported', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createManager('manager', {
+      name: 'Default Low Reasoning Manager',
+      cwd: config.defaultCwd,
+      reasoningLevel: 'low',
+    })
+
+    expect(created.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'low',
+    })
+  })
+
   it('defaults create_manager to pi-codex mapping when model is omitted', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

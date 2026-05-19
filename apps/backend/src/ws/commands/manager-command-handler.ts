@@ -52,7 +52,8 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
         name: command.name,
         cwd: command.cwd,
         ...(command.model !== undefined ? { model: command.model } : {}),
-        ...(command.modelSelection ? { modelSelection: command.modelSelection } : {})
+        ...(command.modelSelection ? { modelSelection: command.modelSelection } : {}),
+        ...(command.reasoningLevel !== undefined ? { reasoningLevel: command.reasoningLevel } : {}),
       });
 
       broadcastToSubscribed({

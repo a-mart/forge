@@ -141,11 +141,15 @@ export function buildStopAllAgentsCommand(managerId: string, requestId: string):
 }
 
 export function buildCreateManagerCommand(
-  input: { name: string; cwd: string; model?: ManagerModelPreset; modelSelection?: ManagerExactModelSelection },
+  input: { name: string; cwd: string; model?: ManagerModelPreset; modelSelection?: ManagerExactModelSelection; reasoningLevel?: ManagerReasoningLevel },
   requestId: string,
 ): ClientCommand {
   const name = requireTrimmedValue(input.name, 'Manager name is required.')
   const cwd = requireTrimmedValue(input.cwd, 'Manager working directory is required.')
+
+  if (input.reasoningLevel && !MANAGER_REASONING_LEVELS.includes(input.reasoningLevel)) {
+    throw new Error('Invalid reasoning level.')
+  }
 
   if (input.modelSelection) {
     if (!input.modelSelection.provider.trim() || !input.modelSelection.modelId.trim()) {
@@ -156,6 +160,7 @@ export function buildCreateManagerCommand(
       name,
       cwd,
       modelSelection: input.modelSelection,
+      reasoningLevel: input.reasoningLevel,
       requestId,
     }
   }
@@ -169,6 +174,7 @@ export function buildCreateManagerCommand(
     name,
     cwd,
     model: input.model,
+    reasoningLevel: input.reasoningLevel,
     requestId,
   }
 }

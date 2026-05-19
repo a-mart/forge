@@ -52,7 +52,7 @@ export type ClientCommand =
   | ApiProxyCommand
   | { type: 'kill_agent'; agentId: string }
   | { type: 'stop_all_agents'; managerId: string; requestId?: string }
-  | ({ type: 'create_manager'; name: string; cwd: string; requestId?: string } & ManagerModelSelectionInput)
+  | ({ type: 'create_manager'; name: string; cwd: string; reasoningLevel?: ManagerReasoningLevel; requestId?: string } & ManagerModelSelectionInput)
   | { type: 'delete_manager'; managerId: string; requestId?: string }
   | ({
       type: 'update_profile_default_model'

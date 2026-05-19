@@ -373,6 +373,7 @@ export class ManagerWsClient {
     cwd: string
     model?: ManagerModelPreset
     modelSelection?: ManagerExactModelSelection
+    reasoningLevel?: ManagerReasoningLevel
   }): Promise<AgentDescriptor> {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('create_manager', (requestId) =>

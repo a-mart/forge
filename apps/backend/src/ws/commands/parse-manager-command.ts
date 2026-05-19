@@ -47,6 +47,7 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     const cwd = (maybe as { cwd?: unknown }).cwd;
     const model = (maybe as { model?: unknown }).model;
     const modelSelection = (maybe as { modelSelection?: unknown }).modelSelection;
+    const reasoningLevel = (maybe as { reasoningLevel?: unknown }).reasoningLevel;
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof name !== "string" || name.trim().length === 0) {
@@ -67,6 +68,9 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     if (typeof parsedModelSelection === "string") {
       return fail(parsedModelSelection);
     }
+    if (reasoningLevel !== undefined && !isSwarmReasoningLevel(reasoningLevel)) {
+      return fail(`create_manager.reasoningLevel must be one of ${describeSwarmReasoningLevels()}`);
+    }
     if (requestId !== undefined && typeof requestId !== "string") {
       return fail("create_manager.requestId must be a string when provided");
     }
@@ -77,6 +81,7 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
       cwd,
       ...(model !== undefined ? { model } : {}),
       ...(parsedModelSelection ? { modelSelection: parsedModelSelection } : {}),
+      reasoningLevel,
       requestId
     });
   }

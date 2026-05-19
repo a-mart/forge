@@ -2629,7 +2629,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createManager(
     callerAgentId: string,
-    input: { name: string; cwd: string; model?: SwarmModelPreset; modelSelection?: ManagerExactModelSelection }
+    input: { name: string; cwd: string; model?: SwarmModelPreset; modelSelection?: ManagerExactModelSelection; reasoningLevel?: SwarmReasoningLevel }
   ): Promise<AgentDescriptor> {
     const createdManager = await this.lifecycleService.createManager(callerAgentId, input);
     await this.forgeExtensionHost.dispatchSessionLifecycle({

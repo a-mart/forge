@@ -824,7 +824,7 @@ export class SwarmAgentLifecycleService {
 
   async createManager(
     callerAgentId: string,
-    input: { name: string; cwd: string; model?: SwarmModelPreset; modelSelection?: ManagerExactModelSelection }
+    input: { name: string; cwd: string; model?: SwarmModelPreset; modelSelection?: ManagerExactModelSelection; reasoningLevel?: SwarmReasoningLevel }
   ): Promise<AgentDescriptor> {
     const callerDescriptor = this.options.descriptors.get(callerAgentId);
     if (!callerDescriptor || callerDescriptor.role !== "manager") {
@@ -851,6 +851,7 @@ export class SwarmAgentLifecycleService {
     }
 
     const requestedModelPreset = parseSwarmModelPreset(input.model, "create_manager.model");
+    const requestedReasoningLevel = parseSwarmReasoningLevel(input.reasoningLevel, "create_manager.reasoningLevel");
     const managerId = this.options.generateUniqueManagerId(requestedName);
     const createdAt = this.options.now();
     const cwd = await this.options.resolveAndValidateCwd(input.cwd);
@@ -861,8 +862,13 @@ export class SwarmAgentLifecycleService {
         ? resolveExactManagerModelSelection(input.modelSelection, {
             surface: "create",
             providerAvailability: await this.options.getManagedModelProviderAvailability(),
+            reasoningLevel: requestedReasoningLevel,
           })
         : this.options.resolveDefaultModelDescriptor();
+
+    if (!input.modelSelection && requestedReasoningLevel) {
+      initialModel.thinkingLevel = requestedReasoningLevel;
+    }
 
     const descriptor: AgentDescriptor = {
       agentId: managerId,
