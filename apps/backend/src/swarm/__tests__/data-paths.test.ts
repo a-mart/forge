@@ -19,6 +19,13 @@ import {
   getProfileMergeAuditLogPath,
   getProfilePiDir,
   getProjectLocalForgeExtensionsDir,
+  getProjectForgeExtensionsDir,
+  getProjectForgePiExtensionsDir,
+  getProjectForgePiSettingsPath,
+  getProjectForgeReferenceDir,
+  getProjectForgeSkillsDir,
+  getProjectForgeSpecialistsDir,
+  getProjectResourceSettingsPath,
   getProjectAgentConfigPath,
   getProjectAgentDir,
   getProjectAgentPromptPath,
@@ -87,9 +94,14 @@ describe("data-paths", () => {
 
     expect(getGlobalForgeExtensionsDir(DATA_DIR)).toBe(join(DATA_DIR, "extensions"));
     expect(getProfileForgeExtensionsDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "extensions"));
-    expect(getProjectLocalForgeExtensionsDir(join(DATA_DIR, "repo"))).toBe(
-      join(DATA_DIR, "repo", ".forge", "extensions")
-    );
+    const projectForgeDir = join(DATA_DIR, "repo", ".forge");
+    expect(getProjectLocalForgeExtensionsDir(join(DATA_DIR, "repo"))).toBe(join(projectForgeDir, "extensions"));
+    expect(getProjectForgeSkillsDir(projectForgeDir)).toBe(join(projectForgeDir, "skills"));
+    expect(getProjectForgeSpecialistsDir(projectForgeDir)).toBe(join(projectForgeDir, "specialists"));
+    expect(getProjectForgeReferenceDir(projectForgeDir)).toBe(join(projectForgeDir, "reference"));
+    expect(getProjectForgeExtensionsDir(projectForgeDir)).toBe(join(projectForgeDir, "extensions"));
+    expect(getProjectForgePiExtensionsDir(projectForgeDir)).toBe(join(projectForgeDir, "pi", "extensions"));
+    expect(getProjectForgePiSettingsPath(projectForgeDir)).toBe(join(projectForgeDir, "pi", "settings.json"));
 
     expect(getProfileMemoryPath(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "memory.md"));
     expect(getProfileMergeAuditLogPath(DATA_DIR, PROFILE_ID)).toBe(
@@ -155,6 +167,7 @@ describe("data-paths", () => {
       join(DATA_DIR, "profiles", PROFILE_ID, "schedules", "schedules.json")
     );
 
+    expect(getProjectResourceSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "project-resources.json"));
     expect(getSharedIntegrationsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "integrations"));
     expect(getSharedKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge"));
     expect(getProfileKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "profiles"));
