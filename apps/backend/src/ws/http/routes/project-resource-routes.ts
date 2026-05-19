@@ -149,9 +149,47 @@ async function buildSnapshot(options: {
     trust: resolution.trust,
     signature: resolution.signature,
     ...(dismissedPrompt ? { dismissedPrompt } : {}),
+    scaffold: await buildScaffoldState(resolution),
     resources: await buildResourceInventory(resolution),
     executableSurfaces: await buildExecutableSurfaces(resolution)
   };
+}
+
+async function buildScaffoldState(resolution: ProjectWorkspaceResolution): Promise<ProjectResourcesSnapshotResponse["scaffold"]> {
+  const targetDir = getSeedForgeDir(resolution);
+  if (!targetDir) {
+    return { canSeed: false, missing: [] };
+  }
+
+  const requiredEntries = [
+    { label: ".forge/README.md", path: join(targetDir, "README.md"), kind: "file" as const },
+    { label: ".forge/skills/", path: join(targetDir, "skills"), kind: "directory" as const },
+    { label: ".forge/specialists/", path: join(targetDir, "specialists"), kind: "directory" as const },
+    { label: ".forge/reference/", path: join(targetDir, "reference"), kind: "directory" as const },
+    { label: ".forge/extensions/", path: join(targetDir, "extensions"), kind: "directory" as const },
+    { label: ".forge/pi/extensions/", path: join(targetDir, "pi", "extensions"), kind: "directory" as const },
+    { label: ".forge/pi/settings.json", path: join(targetDir, "pi", "settings.json"), kind: "file" as const }
+  ];
+  const missing: string[] = [];
+  for (const entry of requiredEntries) {
+    if (!(await scaffoldEntryExists(entry.path, entry.kind))) {
+      missing.push(entry.label);
+    }
+  }
+  return { targetDir, canSeed: true, missing };
+}
+
+async function scaffoldEntryExists(pathValue: string, kind: "directory" | "file"): Promise<boolean> {
+  const entry = await stat(pathValue).catch((error: unknown) => {
+    if (isEnoentError(error)) {
+      return null;
+    }
+    throw error;
+  });
+  if (!entry) {
+    return false;
+  }
+  return kind === "directory" ? entry.isDirectory() : entry.isFile();
 }
 
 async function buildResourceInventory(resolution: ProjectWorkspaceResolution): Promise<ProjectResourcesSnapshotResponse["resources"]> {
@@ -367,22 +405,28 @@ async function seedProjectForgeScaffold(resolution: ProjectWorkspaceResolution):
 }
 
 function selectSeedForgeDir(resolution: ProjectWorkspaceResolution): string {
-  if (resolution.source === "override") {
-    if (!resolution.effectiveForgeDirRealpath) {
-      throw new Error("Configured .forge override directory does not exist. Clear the override or create it manually.");
-    }
+  const forgeDir = getSeedForgeDir(resolution);
+  if (forgeDir) {
+    return forgeDir;
+  }
+  if (resolution.override && !resolution.override.valid) {
+    throw new Error(resolution.override.error ?? "Configured .forge override directory is invalid.");
+  }
+  throw new Error("Cannot create project resources because no Git repository root was detected.");
+}
+
+function getSeedForgeDir(resolution: ProjectWorkspaceResolution): string | undefined {
+  if (resolution.override?.valid) {
     return resolution.effectiveForgeDirRealpath;
   }
-
   if (!resolution.detectedGitRoot || !resolution.defaultForgeDir) {
-    throw new Error("Cannot create project resources because no Git repository root was detected.");
+    return undefined;
   }
-
-  return resolution.defaultForgeDir;
+  return resolution.effectiveForgeDirRealpath ?? resolution.defaultForgeDir;
 }
 
 async function ensureDirectory(pathValue: string): Promise<void> {
-  const existing = await lstat(pathValue).catch((error: unknown) => {
+  const existing = await stat(pathValue).catch((error: unknown) => {
     if (isEnoentError(error)) {
       return null;
     }

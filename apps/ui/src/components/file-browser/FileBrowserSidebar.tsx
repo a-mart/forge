@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FolderOpen, FolderPlus, GitBranch, Loader2, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -56,7 +56,16 @@ export function FileBrowserSidebar({
   const fileCountRefetchRef = useLatestRef(fileCount.refetch)
   const projectResourcesRefetchRef = useLatestRef(projectResources.refetch)
 
-  const handleRefresh = useCallback(() => {
+  useEffect(() => {
+    setSeedStatus('idle')
+    setSeedError(null)
+  }, [agentId, projectResourceProfileId, projectResourceSessionAgentId])
+
+  const handleRefresh = useCallback((options: { resetSeedStatus?: boolean } = {}) => {
+    if (options.resetSeedStatus !== false) {
+      setSeedStatus('idle')
+      setSeedError(null)
+    }
     invalidateFileBrowserCaches()
     rootListRefetchRef.current()
     fileCountRefetchRef.current()
@@ -76,11 +85,8 @@ export function FileBrowserSidebar({
   const branch = rootList.data?.branch ?? null
   const isRefreshing = rootList.isLoading
   const canSeedProjectForge = useMemo(() => {
-    const snapshot = projectResources.data
-    if (!snapshot?.detectedGitRoot || !snapshot.defaultForgeDir) return false
-    if (snapshot.effectiveForgeDirRealpath) return false
-    if (snapshot.override?.valid) return false
-    return true
+    const scaffold = projectResources.data?.scaffold
+    return !!scaffold?.canSeed && scaffold.missing.length > 0
   }, [projectResources.data])
 
   const handleSeedProjectForge = useCallback(() => {
@@ -93,7 +99,7 @@ export function FileBrowserSidebar({
     })
       .then(() => {
         setSeedStatus('success')
-        handleRefresh()
+        handleRefresh({ resetSeedStatus: false })
       })
       .catch((error: unknown) => {
         setSeedStatus('idle')
@@ -178,7 +184,7 @@ export function FileBrowserSidebar({
                 variant="ghost"
                 size="icon"
                 className="size-7 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
-                onClick={handleRefresh}
+                onClick={() => handleRefresh()}
                 disabled={isRefreshing}
                 aria-label="Refresh"
               >

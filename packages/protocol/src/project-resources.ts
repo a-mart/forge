@@ -28,6 +28,12 @@ export interface ProjectResourceExecutableSurface {
   coveredByTrustKey?: string
 }
 
+export interface ProjectResourceScaffoldState {
+  targetDir?: string
+  canSeed: boolean
+  missing: string[]
+}
+
 export interface ProjectResourcesSnapshotResponse {
   generatedAt: string
   profileId: string
@@ -43,6 +49,7 @@ export interface ProjectResourcesSnapshotResponse {
   trust: { state: ProjectResourceTrustState; key?: string }
   signature: string
   dismissedPrompt?: { signature: string; dismissedAt: string }
+  scaffold: ProjectResourceScaffoldState
   resources: {
     skills: ProjectResourceInventorySection
     specialists: ProjectResourceInventorySection

@@ -91,6 +91,52 @@ describe("project resource routes", () => {
     expect(JSON.parse(await readFile(join(harness.workspaceDir, ".forge", "pi", "settings.json"), "utf-8"))).toEqual({ packages: ["npm:test"] });
     const payload = (await response.json()) as ProjectResourceMutationResponse;
     expect(payload.snapshot.resources.piExtensions.exists).toBe(true);
+    expect(payload.snapshot.scaffold.missing).toEqual([]);
+  });
+
+  it("seeds a valid override .forge directory", async () => {
+    const harness = await createHarness({ missingForge: true });
+    const override = join(await makeTempDir("forge-route-override-"), ".forge");
+    await mkdir(override, { recursive: true });
+
+    const overrideResponse = await fetch(`${harness.baseUrl}/api/settings/project-resources/override`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a", forgeDir: override })
+    });
+    expect(overrideResponse.status).toBe(200);
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/seed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a" })
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourceMutationResponse;
+    expect(payload.snapshot.source).toBe("override");
+    expect(payload.snapshot.scaffold.targetDir).toBe(await realpath(override));
+    expect(payload.snapshot.scaffold.missing).toEqual([]);
+    expect(JSON.parse(await readFile(join(override, "pi", "settings.json"), "utf-8"))).toEqual({ packages: [] });
+  });
+
+  it("seeds through a symlinked repo-root .forge directory", async () => {
+    const harness = await createHarness({ missingForge: true });
+    const target = join(await makeTempDir("forge-route-symlink-target-"), ".forge");
+    await mkdir(target, { recursive: true });
+    await symlink(target, join(harness.workspaceDir, ".forge"), "dir");
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/seed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a" })
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourceMutationResponse;
+    expect(payload.snapshot.effectiveForgeDirRealpath).toBe(await realpath(target));
+    expect(payload.snapshot.scaffold.missing).toEqual([]);
+    expect(await readFile(join(target, "README.md"), "utf-8")).toContain("agent-facing resources");
   });
 
   it("rejects scaffold creation when no Git root is detected", async () => {
