@@ -307,6 +307,31 @@ describe("ProjectWorkspaceResolver", () => {
     expect(dismissed?.signature).not.toBe(after.signature);
   });
 
+  it("only fingerprints package extensions included by object glob filters", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    await mkdir(join(root, ".forge", "pi", "filtered", "extensions"), { recursive: true });
+    const includedPath = join(root, ".forge", "pi", "filtered", "extensions", "included.ts");
+    const legacyPath = join(root, ".forge", "pi", "filtered", "extensions", "legacy.ts");
+    await writeFile(
+      join(root, ".forge", "pi", "settings.json"),
+      JSON.stringify({ packages: [{ source: "./filtered", extensions: ["extensions/*.ts", "!extensions/legacy.ts"] }] }),
+      "utf-8"
+    );
+    await writeFile(includedPath, "export default function () { return 1; }\n", "utf-8");
+    await writeFile(legacyPath, "export default function () { return 1; }\n", "utf-8");
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const before = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    await writeFile(legacyPath, "export default function () { return 2; }\n", "utf-8");
+    const afterExcludedEdit = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+    await writeFile(includedPath, "export default function () { return 2; }\n", "utf-8");
+    const afterIncludedEdit = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    expect(afterExcludedEdit.signature).toBe(before.signature);
+    expect(afterIncludedEdit.signature).not.toBe(before.signature);
+  });
+
   it("changes signature for in-place edits to package extension files referenced by .pi/settings.json", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });

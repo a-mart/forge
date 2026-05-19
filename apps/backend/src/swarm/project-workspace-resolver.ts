@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, normalize, resolve } from "node:path";
+import { basename, join, normalize, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   getProjectForgeExtensionsDir,
@@ -12,6 +11,7 @@ import {
   getProjectForgeSkillsDir,
   getProjectForgeSpecialistsDir
 } from "./data-paths.js";
+import { resolveLocalPiPackageExtensionPathsFromSettings } from "./project-pi-package-extensions.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 
 const execFileAsync = promisify(execFile);
@@ -310,111 +310,12 @@ async function fingerprintPath(pathValue: string, target: string[]): Promise<voi
 async function fingerprintPiSettingsExecutableSurface(settingsPath: string): Promise<string[]> {
   const entries: string[] = [];
   await fingerprintPath(settingsPath, entries);
-  const settings = await readJsonObject(settingsPath);
-  if (!settings) {
-    return entries;
-  }
-
-  const settingsDir = dirname(settingsPath);
-  for (const packageRoot of collectLocalPackageRoots(settings.packages, settingsDir)) {
-    entries.push(...(await fingerprintPiPackageExtensions(packageRoot)));
+  for (const extensionPath of await resolveLocalPiPackageExtensionPathsFromSettings(settingsPath)) {
+    await fingerprintPath(extensionPath, entries);
   }
   return entries;
 }
 
-async function fingerprintPiPackageExtensions(packageRoot: string): Promise<string[]> {
-  const entries: string[] = [];
-  const packageEntry = await statOrUndefined(packageRoot);
-  if (packageEntry?.isFile()) {
-    await fingerprintPath(packageRoot, entries);
-    return entries;
-  }
-  if (packageEntry && !packageEntry.isDirectory()) {
-    return entries;
-  }
-  const manifest = await readJsonObject(join(packageRoot, "package.json"));
-  const piManifest = isRecord(manifest?.pi) ? manifest.pi : undefined;
-  const manifestExtensions = getStringArray(piManifest?.extensions);
-
-  if (manifestExtensions.length > 0) {
-    for (const extensionPath of manifestExtensions) {
-      await fingerprintPath(resolve(packageRoot, extensionPath), entries);
-    }
-    return entries;
-  }
-
-  await fingerprintPath(join(packageRoot, "extensions"), entries);
-  return entries;
-}
-
-function collectLocalPackageRoots(packages: unknown, settingsDir: string): string[] {
-  if (!Array.isArray(packages)) {
-    return [];
-  }
-
-  const roots: string[] = [];
-  for (const entry of packages) {
-    const source = typeof entry === "string" ? entry : isRecord(entry) && typeof entry.source === "string" ? entry.source : undefined;
-    if (!source || !isLocalPackageSource(source)) {
-      continue;
-    }
-    roots.push(resolvePackageSourcePath(source, settingsDir));
-  }
-  return roots;
-}
-
-function resolvePackageSourcePath(source: string, settingsDir: string): string {
-  const trimmed = source.trim();
-  if (trimmed === "~") {
-    return resolve(getHomeDirectory());
-  }
-  if (trimmed.startsWith("~/")) {
-    return resolve(getHomeDirectory(), trimmed.slice(2));
-  }
-  if (trimmed.startsWith("~")) {
-    return resolve(getHomeDirectory(), trimmed.slice(1));
-  }
-  return resolve(settingsDir, trimmed);
-}
-
-function getHomeDirectory(): string {
-  return homedir() || process.env.HOME || process.env.USERPROFILE || "";
-}
-
-function isLocalPackageSource(source: string): boolean {
-  const trimmed = source.trim();
-  return (
-    trimmed.startsWith(".") ||
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("~") ||
-    (!trimmed.startsWith("npm:") && !trimmed.startsWith("git+") && !/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed))
-  );
-}
-
-function getStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-}
-
-async function statOrUndefined(pathValue: string) {
-  try {
-    return await stat(pathValue);
-  } catch (error) {
-    if (isEnoentError(error) || isEnotdirError(error)) return undefined;
-    throw error;
-  }
-}
-
-async function readJsonObject(pathValue: string): Promise<Record<string, unknown> | undefined> {
-  try {
-    const parsed = JSON.parse(await readFile(pathValue, "utf-8"));
-    return isRecord(parsed) ? parsed : undefined;
-  } catch (error) {
-    if (isEnoentError(error) || isEnotdirError(error) || error instanceof SyntaxError) {
-      return undefined;
-    }
-    throw error;
-  }
-}
 
 async function findGitRoot(cwd: string): Promise<string | undefined> {
   try {
@@ -484,14 +385,8 @@ function normalizeComparablePath(pathValue: string): string {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 
 function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
   return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
 }
 
-function isEnotdirError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOTDIR";
-}

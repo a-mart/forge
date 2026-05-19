@@ -53,13 +53,14 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     await writeFile(join(projectExtensionsDir, 'project-pack', 'index.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(
       projectSettingsPath,
-      JSON.stringify({ packages: ['./pkg-ext', './single-file-package.ts', { source: './filtered-pkg', extensions: [] }] }),
+      JSON.stringify({ packages: ['./pkg-ext', './single-file-package.ts', { source: './filtered-pkg', extensions: ['extensions/*.ts', '!extensions/legacy.ts'] }] }),
       'utf8',
     )
     await writeFile(join(projectPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['pkg-extension.ts'] } }), 'utf8')
     await writeFile(join(projectPackageDir, 'pkg-extension.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(projectFilePackagePath, 'export default () => {}\n', 'utf8')
-    await writeFile(join(projectFilteredPackageDir, 'extensions', 'hidden.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(join(projectFilteredPackageDir, 'extensions', 'included.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(join(projectFilteredPackageDir, 'extensions', 'legacy.ts'), 'export default () => {}\n', 'utf8')
     await new ProjectResourceSettingsStore(config.paths.dataDir).setTrust(await realpath(join(config.paths.rootDir, '.forge')), 'trust')
     await writeFile(
       join(forgeGlobalExtensionsDir, 'protect-env.ts'),
@@ -198,14 +199,20 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
             source: 'project-local',
             cwd: config.paths.rootDir,
           }),
+          expect.objectContaining({
+            displayName: 'included.ts',
+            path: await realpath(join(projectFilteredPackageDir, 'extensions', 'included.ts')),
+            source: 'project-local',
+            cwd: config.paths.rootDir,
+          }),
         ]),
       )
 
       expect(discovered).not.toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            displayName: 'hidden.ts',
-            path: await realpath(join(projectFilteredPackageDir, 'extensions', 'hidden.ts')),
+            displayName: 'legacy.ts',
+            path: await realpath(join(projectFilteredPackageDir, 'extensions', 'legacy.ts')),
           }),
         ]),
       )

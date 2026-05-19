@@ -435,6 +435,24 @@ describe('SwarmManager', () => {
     expect(manager.runtimeCreationCountByAgentId.get(session.agentId)).toBeGreaterThan(1)
   })
 
+  it('does not let a hanging manager terminate block trust-change propagation indefinitely', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await mkdir(join(config.defaultCwd, '.forge'), { recursive: true })
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
+    const managerRuntime = manager.runtimeByAgentId.get(session.agentId)!
+    managerRuntime.terminate = vi.fn(async () => new Promise<void>(() => undefined)) as typeof managerRuntime.terminate
+
+    const start = Date.now()
+    await expect(manager.applyProjectResourceTrustChange(await realpath(join(config.defaultCwd, '.forge')))).resolves.toBeUndefined()
+
+    expect(Date.now() - start).toBeLessThan(4_000)
+    expect((manager as unknown as { runtimes: Map<string, unknown> }).runtimes.has(session.agentId)).toBe(false)
+    expect(manager.listAgents().find((agent) => agent.agentId === session.agentId)?.status).not.toBe('terminated')
+  }, 10_000)
+
   it('invalidates in-flight manager runtime creation on project executable trust change', async () => {
     const config = await makeTempConfig()
     execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })

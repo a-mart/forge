@@ -2252,7 +2252,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     try {
-      await runtime.terminate({ abort: true, shutdownTimeoutMs: 2_000, drainTimeoutMs: 250 });
+      await withBoundedTrustRuntimeTermination(
+        runtime.terminate({ abort: true, shutdownTimeoutMs: 2_000, drainTimeoutMs: 250 }),
+        2_250
+      );
     } finally {
       this.runtimeController.clearIntentionalStopRuntimeCallbackSuppression(descriptor.agentId, runtimeToken);
     }
@@ -6635,6 +6638,21 @@ function selectedOpenAICodexTransport(): CodexTransportDebugAgentDiagnostics["se
 
 function hashDebugAgentId(agentId: string): string {
   return createHash("sha256").update(agentId).digest("hex").slice(0, 16);
+}
+
+async function withBoundedTrustRuntimeTermination(operation: Promise<void>, timeoutMs: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    void operation.catch(() => undefined);
+  }
 }
 
 function collectPropagationFailures(

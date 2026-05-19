@@ -1,8 +1,9 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { DiscoveredExtensionMetadata, SettingsExtensionsResponse } from "@forge/protocol";
 import { getProfilePiExtensionsDir, getProfilesDir } from "../../../swarm/data-paths.js";
 import { buildProjectExecutableTrustPlan } from "../../../swarm/project-executable-trust.js";
+import { resolveLocalPiPackageExtensionPathsFromSettings } from "../../../swarm/project-pi-package-extensions.js";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "../../../swarm/project-workspace-resolver.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
@@ -181,98 +182,15 @@ async function collectPiPackageExtensionsFromSettings(
   target: DiscoveredExtensionMetadata[],
   metadata?: { profileId?: string; cwd?: string }
 ): Promise<void> {
-  const settings = await readJsonObject(settingsPath);
-  const settingsDir = dirname(settingsPath);
-  const packages = Array.isArray(settings?.packages) ? settings.packages : [];
-  for (const entry of packages) {
-    const packageSource = typeof entry === "string" ? entry : isRecord(entry) && typeof entry.source === "string" ? entry.source : undefined;
-    if (!packageSource || !isLocalPackageSource(packageSource)) continue;
-    const configuredExtensions = isRecord(entry) && Array.isArray(entry.extensions)
-      ? entry.extensions.filter((value): value is string => typeof value === "string")
-      : undefined;
-    if (configuredExtensions?.length === 0) continue;
-    const packageRoot = resolvePackageSourcePath(packageSource, settingsDir);
-    const packageEntry = await statOrUndefined(packageRoot);
-    if (packageEntry?.isFile()) {
-      await collectPiExtensionPath(packageRoot, source, target, metadata);
-      continue;
-    }
-    if (packageEntry && !packageEntry.isDirectory()) continue;
-    if (configuredExtensions) {
-      for (const extensionPath of configuredExtensions) {
-        await collectPiExtensionPath(resolve(packageRoot, extensionPath), source, target, metadata);
-      }
-      continue;
-    }
-    const manifest = await readJsonObject(join(packageRoot, "package.json"));
-    const piManifest = isRecord(manifest?.pi) ? manifest.pi : undefined;
-    const manifestExtensions = Array.isArray(piManifest?.extensions)
-      ? piManifest.extensions.filter((value): value is string => typeof value === "string")
-      : [];
-    if (manifestExtensions.length > 0) {
-      for (const extensionPath of manifestExtensions) {
-        await collectPiExtensionPath(resolve(packageRoot, extensionPath), source, target, metadata);
-      }
-    } else {
-      await collectPiExtensionsFromDirectory(join(packageRoot, "extensions"), source, target, metadata);
-    }
-  }
-}
-
-async function collectPiExtensionPath(
-  pathValue: string,
-  source: DiscoveredExtensionMetadata["source"],
-  target: DiscoveredExtensionMetadata[],
-  metadata?: { profileId?: string; cwd?: string }
-): Promise<void> {
-  if (await isFile(pathValue)) {
-    if (!isSupportedExtensionFile(pathValue)) return;
+  for (const extensionPath of await resolveLocalPiPackageExtensionPathsFromSettings(settingsPath)) {
     target.push({
-      displayName: normalizeExtensionDisplayName(pathValue),
-      path: pathValue,
+      displayName: normalizeExtensionDisplayName(extensionPath),
+      path: extensionPath,
       source,
       profileId: metadata?.profileId,
       cwd: metadata?.cwd
     });
-    return;
   }
-  await collectPiExtensionsFromDirectory(pathValue, source, target, metadata);
-}
-
-async function readJsonObject(pathValue: string): Promise<Record<string, unknown> | undefined> {
-  try {
-    const parsed = JSON.parse(await readFile(pathValue, "utf-8"));
-    return isRecord(parsed) ? parsed : undefined;
-  } catch (error) {
-    if (isMissingPathError(error) || error instanceof SyntaxError) return undefined;
-    throw error;
-  }
-}
-
-function resolvePackageSourcePath(source: string, settingsDir: string): string {
-  const trimmed = source.trim();
-  if (trimmed === "~") return resolve(getHomeDirectory());
-  if (trimmed.startsWith("~/")) return resolve(getHomeDirectory(), trimmed.slice(2));
-  if (trimmed.startsWith("~")) return resolve(getHomeDirectory(), trimmed.slice(1));
-  return resolve(settingsDir, trimmed);
-}
-
-function getHomeDirectory(): string {
-  return process.env.HOME || process.env.USERPROFILE || "";
-}
-
-function isLocalPackageSource(source: string): boolean {
-  const trimmed = source.trim();
-  return (
-    trimmed.startsWith(".") ||
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("~") ||
-    (!trimmed.startsWith("npm:") && !trimmed.startsWith("git+") && !/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed))
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 async function readDirEntries(dirPath: string) {
@@ -352,15 +270,6 @@ function isSupportedExtensionFile(fileName: string): boolean {
   return normalized.endsWith(".ts") || normalized.endsWith(".js");
 }
 
-async function statOrUndefined(pathValue: string) {
-  try {
-    return await stat(pathValue);
-  } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    throw error;
-  }
-}
-
 async function isFile(pathValue: string): Promise<boolean> {
   try {
     const entry = await stat(pathValue);
@@ -377,14 +286,6 @@ function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
   return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
 }
 
-function isMissingPathError(error: unknown): error is NodeJS.ErrnoException {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "code" in error &&
-    ((error as { code?: unknown }).code === "ENOENT" || (error as { code?: unknown }).code === "ENOTDIR")
-  );
-}
 
 function toComparablePath(pathValue: string): string {
   const resolved = resolve(pathValue);
