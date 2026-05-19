@@ -4,12 +4,15 @@ import type {
   FileCountResult,
   FileListResult,
   FileSearchResult,
+  ProjectResourceMutationResponse,
+  ProjectResourcesSnapshotResponse,
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 export type {
   FileContentResult,
   FileListResult,
+  ProjectResourcesSnapshotResponse,
 }
 
 /* ------------------------------------------------------------------ */
@@ -22,8 +25,16 @@ async function fetchFileBrowserApi<T>(
   params: Record<string, string>,
 ): Promise<T> {
   const searchParams = new URLSearchParams(params)
-  const url = resolveApiEndpoint(wsUrl, `${path}?${searchParams.toString()}`)
-  const response = await fetch(url)
+  return fetchJson<T>(wsUrl, `${path}?${searchParams.toString()}`)
+}
+
+async function fetchJson<T>(
+  wsUrl: string,
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const url = resolveApiEndpoint(wsUrl, path)
+  const response = await fetch(url, init)
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }))
@@ -197,6 +208,39 @@ export function useFileSearch(
   })
 }
 
+export function useProjectResourcesSnapshot(
+  wsUrl: string,
+  params: { profileId: string | null; sessionAgentId: string | null },
+) {
+  const queryKey = `project-resources:${params.profileId ?? ''}:${params.sessionAgentId ?? ''}`
+  const fetchFn = useCallback(
+    () => {
+      const search = new URLSearchParams({
+        profileId: params.profileId!,
+        sessionAgentId: params.sessionAgentId!,
+      })
+      return fetchJson<ProjectResourcesSnapshotResponse>(wsUrl, `/api/settings/project-resources?${search.toString()}`)
+    },
+    [wsUrl, params.profileId, params.sessionAgentId],
+  )
+
+  return useSimpleQuery<ProjectResourcesSnapshotResponse>(queryKey, fetchFn, {
+    enabled: !!params.profileId && !!params.sessionAgentId,
+    staleTime: 30_000,
+  })
+}
+
+export function seedProjectResources(
+  wsUrl: string,
+  params: { profileId: string; sessionAgentId: string },
+): Promise<ProjectResourceMutationResponse> {
+  return fetchJson<ProjectResourceMutationResponse>(wsUrl, '/api/settings/project-resources/seed', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+}
+
 export function useFileContent(
   wsUrl: string,
   agentId: string | null,
@@ -221,7 +265,7 @@ export function useFileContent(
 /** Invalidate all file browser caches (call on manual refresh) */
 export function invalidateFileBrowserCaches() {
   for (const key of queryCache.keys()) {
-    if (key.startsWith('files:')) {
+    if (key.startsWith('files:') || key.startsWith('project-resources:')) {
       queryCache.delete(key)
     }
   }

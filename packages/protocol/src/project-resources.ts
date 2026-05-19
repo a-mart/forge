@@ -66,6 +66,11 @@ export interface ProjectResourceTrustRequest {
   action: 'trust' | 'block' | 'reset'
 }
 
+export interface ProjectResourceSeedRequest {
+  profileId: string
+  sessionAgentId: string
+}
+
 export interface ProjectResourceMutationResponse {
   success: true
   snapshot: ProjectResourcesSnapshotResponse

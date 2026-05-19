@@ -1,11 +1,12 @@
-import { lstat, readdir, stat } from "node:fs/promises";
-import { extname, join, relative, resolve } from "node:path";
+import { lstat, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { basename, extname, join, relative, resolve } from "node:path";
 import type {
   ProjectResourceExecutableSurface,
   ProjectResourceInventorySection,
   ProjectResourceMutationResponse,
   ProjectResourceOverrideRequest,
   ProjectResourcesSnapshotResponse,
+  ProjectResourceSeedRequest,
   ProjectResourceTrustRequest
 } from "@forge/protocol";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
@@ -18,7 +19,8 @@ import type { HttpRoute } from "../shared/http-route.js";
 const PROJECT_RESOURCES_ENDPOINT_PATH = "/api/settings/project-resources";
 const PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH = "/api/settings/project-resources/override";
 const PROJECT_RESOURCES_TRUST_ENDPOINT_PATH = "/api/settings/project-resources/trust";
-const PROJECT_RESOURCES_METHODS = "GET, PUT, OPTIONS";
+const PROJECT_RESOURCES_SEED_ENDPOINT_PATH = "/api/settings/project-resources/seed";
+const PROJECT_RESOURCES_METHODS = "GET, PUT, POST, OPTIONS";
 const MAX_INVENTORY_ITEMS = 50;
 const MAX_INVENTORY_ENTRIES = 1000;
 
@@ -34,7 +36,8 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
       matches: (pathname) =>
         pathname === PROJECT_RESOURCES_ENDPOINT_PATH ||
         pathname === PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH ||
-        pathname === PROJECT_RESOURCES_TRUST_ENDPOINT_PATH,
+        pathname === PROJECT_RESOURCES_TRUST_ENDPOINT_PATH ||
+        pathname === PROJECT_RESOURCES_SEED_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
         try {
           if (request.method === "OPTIONS") {
@@ -88,6 +91,22 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             }
             await settingsStore.setTrust(resolution.trust.key, body.action);
             await swarmManager.applyProjectResourceTrustChange(resolution.trust.key);
+            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const payload: ProjectResourceMutationResponse = { success: true, snapshot };
+            applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
+            sendJson(response, 200, payload as unknown as Record<string, unknown>);
+            return;
+          }
+
+          if (pathname === PROJECT_RESOURCES_SEED_ENDPOINT_PATH && request.method === "POST") {
+            const body = parseSeedRequest(await readJsonBody(request));
+            const context = resolveContextFromBody(swarmManager, body);
+            const before = await resolver.resolve(context);
+            if (before.warning) {
+              sendCorsJson(request, response, 400, { error: before.warning });
+              return;
+            }
+            await seedProjectForgeScaffold(before);
             const snapshot = await buildSnapshot({ resolver, settingsStore, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
@@ -325,6 +344,83 @@ function parseTrustRequest(body: unknown): ProjectResourceTrustRequest {
   return { profileId: body.profileId, sessionAgentId: body.sessionAgentId, action: body.action };
 }
 
+function parseSeedRequest(body: unknown): ProjectResourceSeedRequest {
+  if (!isRecord(body) || typeof body.profileId !== "string" || typeof body.sessionAgentId !== "string") {
+    throw new Error("profileId and sessionAgentId are required.");
+  }
+  return { profileId: body.profileId, sessionAgentId: body.sessionAgentId };
+}
+
+async function seedProjectForgeScaffold(resolution: ProjectWorkspaceResolution): Promise<void> {
+  const forgeDir = selectSeedForgeDir(resolution);
+  await ensureDirectory(forgeDir);
+  await Promise.all([
+    ensureDirectory(join(forgeDir, "skills")),
+    ensureDirectory(join(forgeDir, "specialists")),
+    ensureDirectory(join(forgeDir, "reference")),
+    ensureDirectory(join(forgeDir, "extensions")),
+    ensureDirectory(join(forgeDir, "pi")),
+    ensureDirectory(join(forgeDir, "pi", "extensions"))
+  ]);
+  await writeFileIfMissing(join(forgeDir, "README.md"), PROJECT_FORGE_README);
+  await writeFileIfMissing(join(forgeDir, "pi", "settings.json"), `${JSON.stringify({ packages: [] }, null, 2)}\n`);
+}
+
+function selectSeedForgeDir(resolution: ProjectWorkspaceResolution): string {
+  if (resolution.source === "override") {
+    if (!resolution.effectiveForgeDirRealpath) {
+      throw new Error("Configured .forge override directory does not exist. Clear the override or create it manually.");
+    }
+    return resolution.effectiveForgeDirRealpath;
+  }
+
+  if (!resolution.detectedGitRoot || !resolution.defaultForgeDir) {
+    throw new Error("Cannot create project resources because no Git repository root was detected.");
+  }
+
+  return resolution.defaultForgeDir;
+}
+
+async function ensureDirectory(pathValue: string): Promise<void> {
+  const existing = await lstat(pathValue).catch((error: unknown) => {
+    if (isEnoentError(error)) {
+      return null;
+    }
+    throw error;
+  });
+  if (!existing) {
+    await mkdir(pathValue, { recursive: true });
+    return;
+  }
+  if (!existing.isDirectory()) {
+    throw new Error(`${basename(pathValue)} exists but is not a directory.`);
+  }
+}
+
+async function writeFileIfMissing(pathValue: string, content: string): Promise<void> {
+  try {
+    await writeFile(pathValue, content, { encoding: "utf-8", flag: "wx" });
+  } catch (error) {
+    if (isEexistError(error)) {
+      return;
+    }
+    throw error;
+  }
+}
+
+const PROJECT_FORGE_README = `# Forge project resources
+
+This directory contains shared, agent-facing resources for this repository.
+
+- \`skills/\`: project skills that agents can use as workflow instructions.
+- \`specialists/\`: project-specific specialist definitions.
+- \`reference/\`: passive markdown context and repository notes.
+- \`extensions/\`: Forge extensions. These are executable and require trust.
+- \`pi/extensions/\` and \`pi/settings.json\`: Pi extensions and package config. These are executable and require trust.
+
+Keep secrets, credentials, build outputs, and runtime state out of this directory. Passive resources are readable as context; executable resources are loaded only after the repo-root \`.forge\` directory is trusted in Forge.
+`;
+
 function sendCorsJson(
   request: Parameters<typeof applyCorsHeaders>[0],
   response: Parameters<typeof sendJson>[0],
@@ -350,6 +446,14 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
+  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function isEexistError(error: unknown): error is NodeJS.ErrnoException {
+  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "EEXIST";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

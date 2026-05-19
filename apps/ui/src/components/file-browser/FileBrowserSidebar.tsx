@@ -1,5 +1,5 @@
-import { useCallback, useRef } from 'react'
-import { FolderOpen, GitBranch, RefreshCw, X } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { FolderOpen, FolderPlus, GitBranch, Loader2, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,8 @@ import type { FileTreeHandle } from './FileTree'
 import {
   useDirectoryListing,
   useFileCount,
+  useProjectResourcesSnapshot,
+  seedProjectResources,
   invalidateFileBrowserCaches,
 } from './use-file-browser-queries'
 
@@ -23,6 +25,8 @@ interface FileBrowserSidebarProps {
   onClose: () => void
   onSelectFile: (path: string) => void
   selectedFile: string | null
+  projectResourceProfileId?: string | null
+  projectResourceSessionAgentId?: string | null
 }
 
 export function FileBrowserSidebar({
@@ -32,23 +36,33 @@ export function FileBrowserSidebar({
   onClose,
   onSelectFile,
   selectedFile,
+  projectResourceProfileId,
+  projectResourceSessionAgentId,
 }: FileBrowserSidebarProps) {
   const fileTreeRef = useRef<FileTreeHandle>(null)
+  const [seedStatus, setSeedStatus] = useState<'idle' | 'saving' | 'success'>('idle')
+  const [seedError, setSeedError] = useState<string | null>(null)
 
   const gatedAgentId = isOpen ? agentId : null
 
   const rootList = useDirectoryListing(wsUrl, gatedAgentId, '')
   const fileCount = useFileCount(wsUrl, gatedAgentId)
+  const projectResources = useProjectResourcesSnapshot(wsUrl, {
+    profileId: isOpen ? (projectResourceProfileId ?? null) : null,
+    sessionAgentId: isOpen ? (projectResourceSessionAgentId ?? null) : null,
+  })
 
   const rootListRefetchRef = useLatestRef(rootList.refetch)
   const fileCountRefetchRef = useLatestRef(fileCount.refetch)
+  const projectResourcesRefetchRef = useLatestRef(projectResources.refetch)
 
   const handleRefresh = useCallback(() => {
     invalidateFileBrowserCaches()
     rootListRefetchRef.current()
     fileCountRefetchRef.current()
+    projectResourcesRefetchRef.current()
     fileTreeRef.current?.refresh()
-  }, [rootListRefetchRef, fileCountRefetchRef])
+  }, [rootListRefetchRef, fileCountRefetchRef, projectResourcesRefetchRef])
 
   const { width: sidebarWidth, isDragging: isSidebarDragging, handleRef: sidebarHandleRef } = useResizablePanel({
     storageKey: 'forge-file-sidebar-width',
@@ -61,6 +75,31 @@ export function FileBrowserSidebar({
   const repoName = rootList.data?.repoName ?? null
   const branch = rootList.data?.branch ?? null
   const isRefreshing = rootList.isLoading
+  const canSeedProjectForge = useMemo(() => {
+    const snapshot = projectResources.data
+    if (!snapshot?.detectedGitRoot || !snapshot.defaultForgeDir) return false
+    if (snapshot.effectiveForgeDirRealpath) return false
+    if (snapshot.override?.valid) return false
+    return true
+  }, [projectResources.data])
+
+  const handleSeedProjectForge = useCallback(() => {
+    if (!projectResourceProfileId || !projectResourceSessionAgentId || seedStatus === 'saving') return
+    setSeedStatus('saving')
+    setSeedError(null)
+    void seedProjectResources(wsUrl, {
+      profileId: projectResourceProfileId,
+      sessionAgentId: projectResourceSessionAgentId,
+    })
+      .then(() => {
+        setSeedStatus('success')
+        handleRefresh()
+      })
+      .catch((error: unknown) => {
+        setSeedStatus('idle')
+        setSeedError(error instanceof Error ? error.message : 'Could not create .forge resources')
+      })
+  }, [handleRefresh, projectResourceProfileId, projectResourceSessionAgentId, seedStatus, wsUrl])
 
   return (
     <>
@@ -113,6 +152,26 @@ export function FileBrowserSidebar({
         </div>
 
         <TooltipProvider delayDuration={200}>
+          {canSeedProjectForge ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                  onClick={handleSeedProjectForge}
+                  disabled={seedStatus === 'saving'}
+                  aria-label="Create .forge project resources"
+                >
+                  {seedStatus === 'saving' ? <Loader2 className="size-3 animate-spin" /> : <FolderPlus className="size-3.5" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>
+                Create .forge project resources
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -142,6 +201,15 @@ export function FileBrowserSidebar({
           <X className="size-3.5" />
         </Button>
       </div>
+
+      {seedError || seedStatus === 'success' ? (
+        <div className={cn(
+          'border-b border-border/80 px-3 py-2 text-[11px]',
+          seedError ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400',
+        )}>
+          {seedError ?? 'Created .forge project resources.'}
+        </div>
+      ) : null}
 
       {/* Tree content */}
       <div className="flex min-h-0 flex-1 flex-col">

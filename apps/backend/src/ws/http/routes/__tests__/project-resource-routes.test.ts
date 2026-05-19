@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -50,6 +50,61 @@ describe("project resource routes", () => {
     expect(payload.executableSurfaces.some((surface) => surface.kind === "repo-forge-extensions" && surface.exists)).toBe(
       true
     );
+  });
+
+  it("seeds a missing repo-root .forge scaffold without arbitrary client paths", async () => {
+    const harness = await createHarness({ missingForge: true });
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/seed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a", forgeDir: "/ignored" })
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourceMutationResponse;
+    const forgeDir = join(harness.workspaceDir, ".forge");
+    expect(payload.snapshot.effectiveForgeDirRealpath).toBe(await realpath(forgeDir));
+    expect(payload.snapshot.resources.skills.exists).toBe(true);
+    expect(payload.snapshot.resources.specialists.exists).toBe(true);
+    expect(payload.snapshot.resources.reference.exists).toBe(true);
+    expect(payload.snapshot.resources.forgeExtensions.exists).toBe(true);
+    expect(payload.snapshot.resources.piExtensions.exists).toBe(true);
+    expect(JSON.parse(await readFile(join(forgeDir, "pi", "settings.json"), "utf-8"))).toEqual({ packages: [] });
+    expect(await readFile(join(forgeDir, "README.md"), "utf-8")).toContain("agent-facing resources");
+  });
+
+  it("adds missing scaffold entries without overwriting existing README or settings", async () => {
+    const harness = await createHarness();
+    await mkdir(join(harness.workspaceDir, ".forge", "pi"), { recursive: true });
+    await writeFile(join(harness.workspaceDir, ".forge", "README.md"), "custom readme\n", "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "pi", "settings.json"), JSON.stringify({ packages: ["npm:test"] }), "utf-8");
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/seed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a" })
+    });
+
+    expect(response.status).toBe(200);
+    expect(await readFile(join(harness.workspaceDir, ".forge", "README.md"), "utf-8")).toBe("custom readme\n");
+    expect(JSON.parse(await readFile(join(harness.workspaceDir, ".forge", "pi", "settings.json"), "utf-8"))).toEqual({ packages: ["npm:test"] });
+    const payload = (await response.json()) as ProjectResourceMutationResponse;
+    expect(payload.snapshot.resources.piExtensions.exists).toBe(true);
+  });
+
+  it("rejects scaffold creation when no Git root is detected", async () => {
+    const harness = await createHarness({ nonGitWorkspace: true, missingForge: true });
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/seed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a" })
+    });
+
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error: string };
+    expect(payload.error).toContain("no Git repository root");
   });
 
   it("derives trust mutation path server-side from the session context", async () => {
@@ -217,11 +272,13 @@ describe("project resource routes", () => {
   });
 });
 
-async function createHarness(options: { missingCwd?: boolean; missingForge?: boolean } = {}): Promise<{ baseUrl: string; workspaceDir: string; dataDir: string }> {
+async function createHarness(options: { missingCwd?: boolean; missingForge?: boolean; nonGitWorkspace?: boolean } = {}): Promise<{ baseUrl: string; workspaceDir: string; dataDir: string }> {
   const dataDir = await makeTempDir("forge-route-data-");
   const workspaceDir = options.missingCwd ? join(await makeTempDir("forge-route-missing-parent-"), "deleted") : await makeTempDir("forge-route-workspace-");
   if (!options.missingCwd) {
-    execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
+    if (!options.nonGitWorkspace) {
+      execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
+    }
     if (!options.missingForge) {
       await mkdir(join(workspaceDir, ".forge"), { recursive: true });
     }

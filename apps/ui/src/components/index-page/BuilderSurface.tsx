@@ -1414,6 +1414,8 @@ export function BuilderSurface({
                 onClose: handleToggleFileBrowser,
                 onSelectFile: handleFileBrowserSelectFile,
                 selectedFile: selectedFileBrowserFile,
+                projectResourceProfileId: activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null,
+                projectResourceSessionAgentId: activeManagerAgent?.agentId ?? null,
               }}
             />
           ) : null}
