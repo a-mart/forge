@@ -80,6 +80,21 @@ describe("project resource routes", () => {
     await writeFile(join(harness.workspaceDir, ".forge", "README.md"), "custom readme\n", "utf-8");
     await writeFile(join(harness.workspaceDir, ".forge", "pi", "settings.json"), JSON.stringify({ packages: ["npm:test"] }), "utf-8");
 
+    const beforeResponse = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
+    expect(beforeResponse.status).toBe(200);
+    const beforePayload = (await beforeResponse.json()) as ProjectResourcesSnapshotResponse;
+    expect(beforePayload.scaffold.canSeed).toBe(true);
+    expect(beforePayload.scaffold.targetDir).toBe(await realpath(join(harness.workspaceDir, ".forge")));
+    expect(beforePayload.scaffold.missing).toEqual(expect.arrayContaining([
+      ".forge/skills/",
+      ".forge/specialists/",
+      ".forge/reference/",
+      ".forge/extensions/",
+      ".forge/pi/extensions/"
+    ]));
+    expect(beforePayload.scaffold.missing).not.toContain(".forge/README.md");
+    expect(beforePayload.scaffold.missing).not.toContain(".forge/pi/settings.json");
+
     const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/seed`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -105,6 +120,22 @@ describe("project resource routes", () => {
       body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a", forgeDir: override })
     });
     expect(overrideResponse.status).toBe(200);
+
+    const beforeResponse = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
+    expect(beforeResponse.status).toBe(200);
+    const beforePayload = (await beforeResponse.json()) as ProjectResourcesSnapshotResponse;
+    expect(beforePayload.source).toBe("override");
+    expect(beforePayload.scaffold.canSeed).toBe(true);
+    expect(beforePayload.scaffold.targetDir).toBe(await realpath(override));
+    expect(beforePayload.scaffold.missing).toEqual(expect.arrayContaining([
+      ".forge/README.md",
+      ".forge/skills/",
+      ".forge/specialists/",
+      ".forge/reference/",
+      ".forge/extensions/",
+      ".forge/pi/extensions/",
+      ".forge/pi/settings.json"
+    ]));
 
     const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/seed`, {
       method: "POST",
