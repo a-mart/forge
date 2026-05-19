@@ -368,14 +368,14 @@ describe("ProjectWorkspaceResolver", () => {
     expect(afterIncludedEdit.signature).not.toBe(before.signature);
   });
 
-  it("fingerprints local file package sources even when object filters exclude the basename", async () => {
+  it("fingerprints local file package sources even when object filters are empty", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
     await mkdir(join(root, ".forge", "pi"), { recursive: true });
     const extensionPath = join(root, ".forge", "pi", "single.ts");
     await writeFile(
       join(root, ".forge", "pi", "settings.json"),
-      JSON.stringify({ packages: [{ source: "./single.ts", extensions: ["!single.ts"] }] }),
+      JSON.stringify({ packages: [{ source: "./single.ts", extensions: [] }] }),
       "utf-8"
     );
     await writeFile(extensionPath, "export default function () { return 1; }\n", "utf-8");

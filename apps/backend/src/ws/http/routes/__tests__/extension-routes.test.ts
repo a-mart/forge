@@ -57,7 +57,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     await writeFile(join(projectExtensionsDir, 'project-pack', 'index.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(
       projectSettingsPath,
-      JSON.stringify({ packages: ['./pkg-ext', './manifest-dir-pkg', './manifest-glob-pkg', { source: './single-file-package.ts', extensions: ['!single-file-package.ts'] }, { source: './filtered-pkg', extensions: ['*.ts', '!legacy.ts'] }] }),
+      JSON.stringify({ packages: ['./pkg-ext', './manifest-dir-pkg', './manifest-glob-pkg', { source: './single-file-package.ts', extensions: [] }, { source: './filtered-pkg', extensions: ['*.ts', '!legacy.ts'] }] }),
       'utf8',
     )
     await writeFile(join(projectPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['pkg-extension.ts'] } }), 'utf8')

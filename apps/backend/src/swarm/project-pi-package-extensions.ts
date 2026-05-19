@@ -14,7 +14,6 @@ export async function resolveLocalPiPackageExtensionPathsFromSettings(settingsPa
     const filters = isRecord(entry) && Array.isArray(entry.extensions)
       ? entry.extensions.filter((value): value is string => typeof value === "string")
       : undefined;
-    if (filters?.length === 0) continue;
 
     const packageRoot = resolvePackageSourcePath(packageSource, settingsDir);
     const packageEntry = await statOrUndefined(packageRoot);
@@ -24,6 +23,7 @@ export async function resolveLocalPiPackageExtensionPathsFromSettings(settingsPa
       }
       continue;
     }
+    if (filters?.length === 0) continue;
     if (packageEntry && !packageEntry.isDirectory()) continue;
 
     const candidates = await collectPackageExtensionCandidates(packageRoot);
