@@ -419,11 +419,16 @@ describe('SwarmManager', () => {
     const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
     const trustKey = await realpath(join(config.defaultCwd, '.forge'))
     await new ProjectResourceSettingsStore(config.paths.dataDir).setTrust(trustKey, 'trust')
+    const managerRuntime = manager.runtimeByAgentId.get(session.agentId)
+    expect(managerRuntime).toBeTruthy()
+    managerRuntime!.busy = true
     const worker = await manager.spawnAgent(session.agentId, { agentId: 'Trust Worker' })
 
     await manager.applyProjectResourceTrustChange(trustKey)
 
     expect(manager.listAgents().find((agent) => agent.agentId === worker.agentId)?.status).toBe('terminated')
+    expect(managerRuntime!.terminateCalls).toEqual([expect.objectContaining({ abort: true })])
+    expect((manager as unknown as { runtimes: Map<string, unknown> }).runtimes.has(session.agentId)).toBe(false)
   })
 
   it('creates secondary managers and deletes them with owned worker cascade', async () => {

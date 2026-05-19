@@ -1,4 +1,4 @@
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { DiscoveredExtensionMetadata, SettingsExtensionsResponse } from "@forge/protocol";
 import { getProfilePiExtensionsDir, getProfilesDir } from "../../../swarm/data-paths.js";
@@ -109,6 +109,9 @@ async function discoverPiExtensionsOnDisk(options: {
     for (const extensionsDir of trustPlan.trustedPiExtensionDirs) {
       await collectPiExtensionsFromDirectory(extensionsDir, "project-local", discovered, { cwd: descriptor.cwd });
     }
+    for (const settingsPath of trustPlan.trustedPiSettingsPaths) {
+      await collectPiPackageExtensionsFromSettings(settingsPath, "project-local", discovered, { cwd: descriptor.cwd });
+    }
   }
 
   return dedupeAndSortDiscoveredPiExtensions(discovered);
@@ -170,6 +173,90 @@ async function collectPiExtensionsFromDirectory(
       });
     }
   }
+}
+
+async function collectPiPackageExtensionsFromSettings(
+  settingsPath: string,
+  source: DiscoveredExtensionMetadata["source"],
+  target: DiscoveredExtensionMetadata[],
+  metadata?: { profileId?: string; cwd?: string }
+): Promise<void> {
+  const settings = await readJsonObject(settingsPath);
+  const settingsDir = dirname(settingsPath);
+  const packages = Array.isArray(settings?.packages) ? settings.packages : [];
+  for (const entry of packages) {
+    const packageSource = typeof entry === "string" ? entry : isRecord(entry) && typeof entry.source === "string" ? entry.source : undefined;
+    if (!packageSource || !isLocalPackageSource(packageSource)) continue;
+    const packageRoot = resolvePackageSourcePath(packageSource, settingsDir);
+    const manifest = await readJsonObject(join(packageRoot, "package.json"));
+    const piManifest = isRecord(manifest?.pi) ? manifest.pi : undefined;
+    const manifestExtensions = Array.isArray(piManifest?.extensions)
+      ? piManifest.extensions.filter((value): value is string => typeof value === "string")
+      : [];
+    if (manifestExtensions.length > 0) {
+      for (const extensionPath of manifestExtensions) {
+        await collectPiExtensionPath(resolve(packageRoot, extensionPath), source, target, metadata);
+      }
+    } else {
+      await collectPiExtensionsFromDirectory(join(packageRoot, "extensions"), source, target, metadata);
+    }
+  }
+}
+
+async function collectPiExtensionPath(
+  pathValue: string,
+  source: DiscoveredExtensionMetadata["source"],
+  target: DiscoveredExtensionMetadata[],
+  metadata?: { profileId?: string; cwd?: string }
+): Promise<void> {
+  if (await isFile(pathValue)) {
+    if (!isSupportedExtensionFile(pathValue)) return;
+    target.push({
+      displayName: normalizeExtensionDisplayName(pathValue),
+      path: pathValue,
+      source,
+      profileId: metadata?.profileId,
+      cwd: metadata?.cwd
+    });
+    return;
+  }
+  await collectPiExtensionsFromDirectory(pathValue, source, target, metadata);
+}
+
+async function readJsonObject(pathValue: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(pathValue, "utf-8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch (error) {
+    if (isEnoentError(error) || error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
+function resolvePackageSourcePath(source: string, settingsDir: string): string {
+  const trimmed = source.trim();
+  if (trimmed === "~") return resolve(getHomeDirectory());
+  if (trimmed.startsWith("~/")) return resolve(getHomeDirectory(), trimmed.slice(2));
+  if (trimmed.startsWith("~")) return resolve(getHomeDirectory(), trimmed.slice(1));
+  return resolve(settingsDir, trimmed);
+}
+
+function getHomeDirectory(): string {
+  return process.env.HOME || process.env.USERPROFILE || "";
+}
+
+function isLocalPackageSource(source: string): boolean {
+  const trimmed = source.trim();
+  return (
+    trimmed.startsWith(".") ||
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("~") ||
+    (!trimmed.startsWith("npm:") && !trimmed.startsWith("git+") && !/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed))
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 async function readDirEntries(dirPath: string) {

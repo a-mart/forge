@@ -2193,14 +2193,42 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       (descriptor) => descriptor.role === "worker" && affectedSessionIds.has(descriptor.managerId)
     );
 
-    await Promise.all(
+    const workerResults = await Promise.allSettled(
       affectedWorkers.map((worker) => this.terminateDescriptor(worker, { abort: true, emitStatus: true }))
     );
-    await Promise.all(
-      affectedSessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "project_resource_trust_change"))
+    const managerResults = await Promise.allSettled(
+      affectedSessions.map((session) => this.forceEvictManagerRuntimeForProjectTrustChange(session))
     );
+    this.logProjectTrustPropagationFailures(workerResults, managerResults);
     await this.saveStore();
     this.emitAgentsSnapshot();
+  }
+
+  private async forceEvictManagerRuntimeForProjectTrustChange(
+    descriptor: AgentDescriptor & { role: "manager" }
+  ): Promise<void> {
+    this.runtimeRecoveryState.clearPendingManagerRuntimeRecycle(descriptor.agentId);
+    const runtime = this.runtimes.get(descriptor.agentId);
+    if (!runtime) return;
+    const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", {
+      abort: true,
+      shutdownTimeoutMs: 2_000,
+      drainTimeoutMs: 250
+    });
+    this.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
+  }
+
+  private logProjectTrustPropagationFailures(
+    workerResults: Array<PromiseSettledResult<unknown>>,
+    managerResults: Array<PromiseSettledResult<unknown>>
+  ): void {
+    const workerFailures = workerResults.filter((result) => result.status === "rejected");
+    const managerFailures = managerResults.filter((result) => result.status === "rejected");
+    if (workerFailures.length === 0 && managerFailures.length === 0) return;
+    this.logDebug("project_resources:trust_change:propagation_errors", {
+      workerFailures: workerFailures.map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason)),
+      managerFailures: managerFailures.map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason))
+    });
   }
 
   resolveChoiceRequest(choiceId: string, answers: ChoiceAnswer[]): void {
