@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { DefaultResourceLoader, SettingsManager } from "@mariozechner/pi-coding-agent";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -96,7 +97,41 @@ describe("project executable trust helpers", () => {
       return current;
     });
 
-    expect(JSON.parse(projectSettings ?? "{}")).toMatchObject({ packages: [join(root, ".forge", "pi", "local-package")] });
+    expect(JSON.parse(projectSettings ?? "{}")).toMatchObject({
+      packages: [join(root, ".forge", "pi", "local-package")],
+      extensions: ["!*"]
+    });
+  });
+
+  it("disables legacy cwd .pi/extensions auto-discovery even when trusted repo settings omit extensions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-runtime-"));
+    tempDirs.push(root);
+    const settingsPath = join(root, ".forge", "pi", "settings.json");
+    await mkdir(join(root, ".forge", "pi", "pkg", "extensions"), { recursive: true });
+    await mkdir(join(root, ".pi", "extensions"), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify({ packages: ["./pkg"] }), "utf8");
+    await writeFile(join(root, ".forge", "pi", "pkg", "extensions", "trusted.ts"), "export default () => {}\n", "utf8");
+    await writeFile(join(root, ".pi", "extensions", "legacy.ts"), "export default () => {}\n", "utf8");
+    const storage = buildProjectSafePiProjectSettingsStorage({
+      agentDir: join(root, "agent"),
+      projectSettingsPaths: [settingsPath],
+      projectExecutablesTrusted: true
+    });
+    const loader = new DefaultResourceLoader({
+      cwd: root,
+      agentDir: join(root, "agent"),
+      settingsManager: SettingsManager.fromStorage(storage),
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true
+    });
+
+    await loader.reload();
+    const loadedPaths = loader.getExtensions().extensions.map((extension) => extension.path);
+
+    expect(loadedPaths).toContain(join(root, ".forge", "pi", "pkg", "extensions", "trusted.ts"));
+    expect(loadedPaths).not.toContain(join(root, ".pi", "extensions", "legacy.ts"));
   });
 });
 

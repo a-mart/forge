@@ -20,6 +20,7 @@ const PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH = "/api/settings/project-resource
 const PROJECT_RESOURCES_TRUST_ENDPOINT_PATH = "/api/settings/project-resources/trust";
 const PROJECT_RESOURCES_METHODS = "GET, PUT, OPTIONS";
 const MAX_INVENTORY_ITEMS = 50;
+const MAX_INVENTORY_ENTRIES = 1000;
 
 export function createProjectResourceRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
@@ -198,7 +199,7 @@ async function listDirectoryEntries(
   }
 
   const items: ProjectResourceInventorySection["items"] = [];
-  const state = { truncated: false };
+  const state = { truncated: false, entriesScanned: 0 };
   await collectEntries(dirPath, dirPath, options, items, state);
   items.sort((left, right) => left.path.localeCompare(right.path));
   return { path: dirPath, exists: true, count: items.length, items, ...(state.truncated ? { truncated: true } : {}) };
@@ -209,9 +210,9 @@ async function collectEntries(
   currentPath: string,
   options: { extension?: string | string[]; directoryWithFile?: string; recursive?: boolean; skipSymlinks?: boolean },
   items: ProjectResourceInventorySection["items"],
-  state: { truncated: boolean }
+  state: { truncated: boolean; entriesScanned: number }
 ): Promise<void> {
-  if (items.length >= MAX_INVENTORY_ITEMS) {
+  if (items.length >= MAX_INVENTORY_ITEMS || state.entriesScanned >= MAX_INVENTORY_ENTRIES) {
     state.truncated = true;
     return;
   }
@@ -223,7 +224,12 @@ async function collectEntries(
   }
   const extensions = Array.isArray(options.extension) ? options.extension : options.extension ? [options.extension] : [];
   for (const entry of entries) {
-    if (items.length >= MAX_INVENTORY_ITEMS) {
+    if (items.length >= MAX_INVENTORY_ITEMS || state.entriesScanned >= MAX_INVENTORY_ENTRIES) {
+      state.truncated = true;
+      return;
+    }
+    state.entriesScanned += 1;
+    if (state.entriesScanned >= MAX_INVENTORY_ENTRIES) {
       state.truncated = true;
       return;
     }

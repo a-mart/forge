@@ -139,6 +139,41 @@ describe("project resource routes", () => {
     expect(payload.resources.reference.items).toEqual([]);
   });
 
+  it("marks Settings inventory truncated when non-matching entries hit the traversal cap", async () => {
+    const harness = await createHarness();
+    await mkdir(join(harness.workspaceDir, ".forge", "reference"), { recursive: true });
+    await Promise.all(
+      Array.from({ length: 1005 }, (_, index) =>
+        writeFile(join(harness.workspaceDir, ".forge", "reference", `ignored-${String(index).padStart(4, "0")}.txt`), "ignored", "utf-8")
+      )
+    );
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourcesSnapshotResponse;
+    expect(payload.resources.reference.items).toEqual([]);
+    expect(payload.resources.reference.count).toBe(0);
+    expect(payload.resources.reference.truncated).toBe(true);
+  });
+
+  it("marks Settings inventory truncated when symlink-heavy entries hit the traversal cap", async () => {
+    const harness = await createHarness();
+    await mkdir(join(harness.workspaceDir, ".forge", "reference"), { recursive: true });
+    const target = join(harness.workspaceDir, ".forge", "reference", "target.md");
+    await writeFile(target, "# Target\n", "utf-8");
+    await Promise.all(
+      Array.from({ length: 1005 }, (_, index) =>
+        symlink(target, join(harness.workspaceDir, ".forge", "reference", `link-${String(index).padStart(4, "0")}.md`))
+      )
+    );
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourcesSnapshotResponse;
+    expect(payload.resources.reference.items.map((item) => item.path)).not.toContain("link-0000.md");
+    expect(payload.resources.reference.truncated).toBe(true);
+  });
+
   it("caps Settings inventory traversal", async () => {
     const harness = await createHarness();
     await mkdir(join(harness.workspaceDir, ".forge", "reference"), { recursive: true });

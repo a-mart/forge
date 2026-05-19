@@ -235,17 +235,18 @@ async function buildResolutionSignature(options: {
       : null
   }));
 
+  const activeLegacySurfaces = options.legacyExecutableSurfaces.filter((surface) => surface.activeToday);
   const executableRoots = [
     options.repoRootResources.forgeExtensionsDir,
     options.repoRootResources.piExtensionsDir,
-    ...options.legacyExecutableSurfaces
+    ...activeLegacySurfaces
       .filter((surface) => surface.kind !== "exact-cwd-pi-settings")
       .map((surface) => surface.path)
   ].filter((pathValue): pathValue is string => typeof pathValue === "string");
 
   const executableSettingsPaths = [
     options.repoRootResources.piSettingsPath,
-    ...options.legacyExecutableSurfaces
+    ...activeLegacySurfaces
       .filter((surface) => surface.kind === "exact-cwd-pi-settings")
       .map((surface) => surface.path)
   ].filter((pathValue): pathValue is string => typeof pathValue === "string");

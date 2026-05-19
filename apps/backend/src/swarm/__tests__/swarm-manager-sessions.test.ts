@@ -462,6 +462,28 @@ describe('SwarmManager', () => {
     expect(manager.listAgents().find((agent) => agent.agentId === session.agentId)?.status).not.toBe('terminated')
   })
 
+  it('does not prompt for inactive exact-cwd executable surfaces alone', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await mkdir(join(config.defaultCwd, '.forge'), { recursive: true })
+    const nested = join(config.defaultCwd, 'nested')
+    await mkdir(join(nested, '.pi', 'extensions'), { recursive: true })
+    await writeFile(join(nested, '.pi', 'extensions', 'legacy.ts'), 'export default () => {}\n', 'utf8')
+    const manager = new TestSwarmManager({ ...config, defaultCwd: nested })
+    await bootWithDefaultManager(manager, { ...config, defaultCwd: nested })
+    const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
+    const choiceService = (manager as unknown as {
+      choiceService: { requestUserChoice: (agentId: string, questions: unknown[]) => Promise<Array<{ questionId: string; selectedOptionIds: string[] }>> }
+    }).choiceService
+    const choiceSpy = vi.spyOn(choiceService, 'requestUserChoice')
+
+    await (manager as unknown as {
+      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
+    }).maybePromptForProjectExecutableTrust(session as AgentDescriptor & { role: 'manager' })
+
+    expect(choiceSpy).not.toHaveBeenCalled()
+  })
+
   it('ignores stale project executable trust prompt answers after Settings trust changes', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

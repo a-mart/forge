@@ -6697,12 +6697,12 @@ function collectPropagationFailures(
   return failures;
 }
 
-function hasExistingExecutableSurface(resolution: { repoRootResources: { forgeExtensionsDir?: string; piExtensionsDir?: string; piSettingsPath?: string }; legacyExecutableSurfaces: Array<{ path: string }> }): boolean {
+function hasExistingExecutableSurface(resolution: { repoRootResources: { forgeExtensionsDir?: string; piExtensionsDir?: string; piSettingsPath?: string }; legacyExecutableSurfaces: Array<{ path: string; activeToday?: boolean }> }): boolean {
   return [
     resolution.repoRootResources.forgeExtensionsDir,
     resolution.repoRootResources.piExtensionsDir,
     resolution.repoRootResources.piSettingsPath,
-    ...resolution.legacyExecutableSurfaces.map((surface) => surface.path)
+    ...resolution.legacyExecutableSurfaces.filter((surface) => surface.activeToday).map((surface) => surface.path)
   ].some((pathValue) => Boolean(pathValue && existsSync(pathValue)));
 }
 

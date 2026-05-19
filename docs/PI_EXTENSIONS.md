@@ -57,7 +57,7 @@ Pi automatically discovers extensions and skills from well-known directories. Fo
 
 All global directories (`~/.forge/agent/extensions/`, `~/.forge/agent/manager/extensions/`, etc.) are **auto-created on startup**, so you can start dropping files in immediately. Project-local directories are not auto-created.
 
-Project-local executable Pi resources under `.forge/pi/` are loaded only after the repository `.forge` directory is trusted. See [Project Resources](PROJECT_RESOURCES.md) for the repo-root layout, trust prompt, block/manage-later behavior, and override rule.
+Project-local executable Pi resources under `.forge/pi/` are loaded only after the repository `.forge` directory is trusted. Forge injects a project-scope disable-all extension baseline before trusted repo settings so legacy `<cwd>/.pi/extensions` is not auto-loaded unless an explicitly trusted repo setting adds executable paths. See [Project Resources](PROJECT_RESOURCES.md) for the repo-root layout, trust prompt, block/manage-later behavior, and override rule.
 
 ### Profile Overlay Directories
 

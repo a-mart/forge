@@ -125,7 +125,7 @@ export function pathExistsSync(pathValue: string | undefined): pathValue is stri
 }
 
 function mergeProjectSettings(paths: string[]): string {
-  const merged: Record<string, unknown> = {};
+  const merged: Record<string, unknown> = { extensions: ["!*"] };
   for (const settingsPath of paths) {
     const raw = readOptionalFileSync(settingsPath);
     if (!raw) continue;
@@ -134,7 +134,10 @@ function mergeProjectSettings(paths: string[]): string {
       for (const [key, value] of Object.entries(parsed)) {
         if (Array.isArray(value)) {
           const current = Array.isArray(merged[key]) ? (merged[key] as unknown[]) : [];
-          merged[key] = [...current, ...absolutizeLocalEntries(value, dirname(settingsPath))];
+          const entries = absolutizeLocalEntries(value, dirname(settingsPath));
+          merged[key] = key === "extensions"
+            ? [...current, ...entries, ...forceIncludeExtensionEntries(entries)]
+            : [...current, ...entries];
         } else if (merged[key] === undefined) {
           merged[key] = value;
         }
@@ -144,6 +147,12 @@ function mergeProjectSettings(paths: string[]): string {
     }
   }
   return JSON.stringify(merged);
+}
+
+function forceIncludeExtensionEntries(entries: unknown[]): string[] {
+  return entries
+    .filter((entry): entry is string => typeof entry === "string" && !isOverridePattern(entry))
+    .map((entry) => `+${entry}`);
 }
 
 function absolutizeLocalEntries(entries: unknown[], baseDir: string): unknown[] {
@@ -159,6 +168,10 @@ function absolutizeLocalEntries(entries: unknown[], baseDir: string): unknown[] 
     }
     return entry;
   });
+}
+
+function isOverridePattern(entry: string): boolean {
+  return entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-");
 }
 
 function isLocalSource(source: string): boolean {

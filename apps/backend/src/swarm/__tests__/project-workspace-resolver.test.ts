@@ -255,7 +255,7 @@ describe("ProjectWorkspaceResolver", () => {
     expect(after.signature).not.toBe(before.signature);
   });
 
-  it("changes signature for in-place edits to exact-cwd .forge/extensions files", async () => {
+  it("does not change signature for inactive exact-cwd .forge/extensions files", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
     const nested = join(root, "nested");
@@ -269,10 +269,10 @@ describe("ProjectWorkspaceResolver", () => {
     await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
     const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: nested });
 
-    expect(after.signature).not.toBe(before.signature);
+    expect(after.signature).toBe(before.signature);
   });
 
-  it("changes signature for in-place edits to exact-cwd .pi/extensions files", async () => {
+  it("does not change signature for inactive exact-cwd .pi/extensions files", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
     await mkdir(join(root, ".forge"), { recursive: true });
@@ -285,7 +285,26 @@ describe("ProjectWorkspaceResolver", () => {
     await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
     const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
 
-    expect(after.signature).not.toBe(before.signature);
+    expect(after.signature).toBe(before.signature);
+  });
+
+  it("does not invalidate manage-later signatures for inactive exact-cwd executable changes", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    const nested = join(root, "nested");
+    const dataDir = await makeTempDir("forge-data-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    await mkdir(join(root, ".forge"), { recursive: true });
+    await mkdir(join(nested, ".pi", "extensions"), { recursive: true });
+    const extensionPath = join(nested, ".pi", "extensions", "marker.js");
+    await writeFile(extensionPath, "export default function () { return 1; }\n", "utf-8");
+    const resolver = new ProjectWorkspaceResolver({ dataDir });
+    const before = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: nested });
+
+    await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
+    const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: nested });
+
+    expect(after.legacyExecutableSurfaces.find((surface) => surface.kind === "exact-cwd-pi-extension")?.activeToday).toBe(false);
+    expect(after.signature).toBe(before.signature);
   });
 
   it("invalidates a dismissed executable prompt when executable signature changes", async () => {
@@ -391,15 +410,14 @@ describe("ProjectWorkspaceResolver", () => {
     expect(after.signature).not.toBe(before.signature);
   });
 
-  it("changes signature for in-place edits to package extension files referenced by .pi/settings.json", async () => {
+  it("changes signature for in-place edits to package extension files referenced by repo-root .forge/pi/settings.json", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
-    await mkdir(join(root, ".forge"), { recursive: true });
-    await mkdir(join(root, ".pi", "local-package"), { recursive: true });
-    const extensionPath = join(root, ".pi", "local-package", "package-extension.js");
-    await writeFile(join(root, ".pi", "settings.json"), JSON.stringify({ packages: ["./local-package"] }), "utf-8");
+    await mkdir(join(root, ".forge", "pi", "local-package"), { recursive: true });
+    const extensionPath = join(root, ".forge", "pi", "local-package", "package-extension.js");
+    await writeFile(join(root, ".forge", "pi", "settings.json"), JSON.stringify({ packages: ["./local-package"] }), "utf-8");
     await writeFile(
-      join(root, ".pi", "local-package", "package.json"),
+      join(root, ".forge", "pi", "local-package", "package.json"),
       JSON.stringify({ pi: { extensions: ["package-extension.js"] } }),
       "utf-8"
     );
