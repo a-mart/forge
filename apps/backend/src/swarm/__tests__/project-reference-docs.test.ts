@@ -22,4 +22,33 @@ describe("project reference docs", () => {
     expect(inventory.files).toEqual(["a.md", "b.md"]);
     expect(inventory.truncated).toBe(true);
   });
+
+  it("keeps large reference inventories bounded to maxFiles plus overflow detection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-reference-docs-"));
+    const forgeDir = join(root, ".forge");
+    const referenceDir = join(forgeDir, "reference");
+    await mkdir(join(referenceDir, "nested"), { recursive: true });
+
+    for (let index = 0; index < 50; index += 1) {
+      await writeFile(join(referenceDir, `doc-${String(index).padStart(3, "0")}.md`), `doc ${index}`);
+      await writeFile(join(referenceDir, "nested", `nested-${String(index).padStart(3, "0")}.md`), `nested ${index}`);
+    }
+
+    const inventory = await listRepositoryReferenceDocs(forgeDir, { maxFiles: 10 });
+
+    expect(inventory.files).toHaveLength(10);
+    expect(inventory.truncated).toBe(true);
+    expect(inventory.files).toEqual([
+      "doc-000.md",
+      "doc-001.md",
+      "doc-002.md",
+      "doc-003.md",
+      "doc-004.md",
+      "doc-005.md",
+      "doc-006.md",
+      "doc-007.md",
+      "doc-008.md",
+      "doc-009.md",
+    ]);
+  });
 });
