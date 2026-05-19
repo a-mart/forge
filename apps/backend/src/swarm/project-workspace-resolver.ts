@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { basename, join, normalize, resolve } from "node:path";
+import { basename, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import {
   getProjectForgeExtensionsDir,
@@ -149,7 +149,7 @@ export class ProjectWorkspaceResolver {
     const detectedGitRootRealpath = passive.detectedGitRoot;
     const effectiveForgeDirRealpath = passive.effectiveForgeDirRealpath;
     const repoRootResources = passive.repoRootResources;
-    const legacyExecutableSurfaces = buildLegacyExecutableSurfaces(cwdRealpath, passive.trust.state === "trusted");
+    const legacyExecutableSurfaces = buildLegacyExecutableSurfaces(cwdRealpath, effectiveForgeDirRealpath, passive.trust.state === "trusted");
     const signature = await buildResolutionSignature({
       cwdRealpath,
       detectedGitRoot: detectedGitRootRealpath,
@@ -202,27 +202,21 @@ async function validateOverride(pathValue: string): Promise<{ path: string; vali
   }
 }
 
-function buildLegacyExecutableSurfaces(cwdRealpath: string, activeToday: boolean): LegacyExecutableSurface[] {
-  return [
-    {
-      kind: "exact-cwd-forge-extension",
-      path: join(cwdRealpath, ".forge", "extensions"),
-      activeToday,
-      compatibilityPolicy: "preserve-with-warning"
-    },
-    {
-      kind: "exact-cwd-pi-extension",
-      path: join(cwdRealpath, ".pi", "extensions"),
-      activeToday,
-      compatibilityPolicy: "preserve-with-warning"
-    },
-    {
-      kind: "exact-cwd-pi-settings",
-      path: join(cwdRealpath, ".pi", "settings.json"),
-      activeToday,
-      compatibilityPolicy: "preserve-with-warning"
-    }
+function buildLegacyExecutableSurfaces(
+  cwdRealpath: string,
+  effectiveForgeDirRealpath: string | undefined,
+  trusted: boolean
+): LegacyExecutableSurface[] {
+  const legacyPaths = [
+    { kind: "exact-cwd-forge-extension" as const, path: join(cwdRealpath, ".forge", "extensions") },
+    { kind: "exact-cwd-pi-extension" as const, path: join(cwdRealpath, ".pi", "extensions") },
+    { kind: "exact-cwd-pi-settings" as const, path: join(cwdRealpath, ".pi", "settings.json") }
   ];
+  return legacyPaths.map((surface) => ({
+    ...surface,
+    activeToday: trusted && !!effectiveForgeDirRealpath && isPathInside(surface.path, effectiveForgeDirRealpath),
+    compatibilityPolicy: "preserve-with-warning" as const
+  }));
 }
 
 async function buildResolutionSignature(options: {
@@ -385,6 +379,11 @@ function normalizeComparablePath(pathValue: string): string {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+function isPathInside(pathValue: string, rootPath: string): boolean {
+  const normalizedPath = resolve(pathValue);
+  const normalizedRoot = resolve(rootPath);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}${sep}`);
+}
 
 function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
   return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";

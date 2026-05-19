@@ -10,6 +10,7 @@ export interface ProjectResourceInventorySection {
   exists: boolean
   count: number
   items: ProjectResourcePathInventoryItem[]
+  truncated?: boolean
 }
 
 export interface ProjectResourceExecutableSurface {

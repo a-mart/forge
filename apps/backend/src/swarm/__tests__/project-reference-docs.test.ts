@@ -5,6 +5,22 @@ import { describe, expect, it } from "vitest";
 import { listRepositoryReferenceDocs } from "../project-reference-docs.js";
 
 describe("project reference docs", () => {
+  it("skips a symlinked reference root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-reference-docs-"));
+    const forgeDir = join(root, ".forge");
+    const referenceTarget = join(root, "external-reference");
+    await mkdir(forgeDir, { recursive: true });
+    await mkdir(referenceTarget, { recursive: true });
+    await writeFile(join(referenceTarget, "external.md"), "external");
+    await symlink(referenceTarget, join(forgeDir, "reference"), "dir");
+
+    const inventory = await listRepositoryReferenceDocs(forgeDir);
+
+    expect(inventory.rootDir).toBe(join(forgeDir, "reference"));
+    expect(inventory.files).toEqual([]);
+    expect(inventory.truncated).toBe(false);
+  });
+
   it("lists markdown files deterministically without following symlinks and applies caps", async () => {
     const root = await mkdtemp(join(tmpdir(), "project-reference-docs-"));
     const forgeDir = join(root, ".forge");

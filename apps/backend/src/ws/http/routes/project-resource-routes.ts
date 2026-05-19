@@ -1,4 +1,4 @@
-import { readdir, stat } from "node:fs/promises";
+import { lstat, readdir, stat } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 import type {
   ProjectResourceExecutableSurface,
@@ -69,6 +69,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
               }
             }
             await settingsStore.setOverride(before.workspaceKey, forgeDir);
+            await swarmManager.applyProjectResourceWorkspaceChange(before.workspaceKey);
             const snapshot = await buildSnapshot({ resolver, settingsStore, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
@@ -188,22 +189,32 @@ async function listDirectoryEntries(
   dirPath: string | undefined,
   options: { extension?: string | string[]; directoryWithFile?: string; recursive?: boolean; skipSymlinks?: boolean } = {}
 ): Promise<ProjectResourceInventorySection> {
-  if (!dirPath || !(await pathExists(dirPath))) {
+  if (!dirPath) {
+    return { path: dirPath, exists: false, count: 0, items: [] };
+  }
+  const rootStats = await lstat(dirPath).catch(() => null);
+  if (!rootStats?.isDirectory() || rootStats.isSymbolicLink()) {
     return { path: dirPath, exists: false, count: 0, items: [] };
   }
 
   const items: ProjectResourceInventorySection["items"] = [];
-  await collectEntries(dirPath, dirPath, options, items);
+  const state = { truncated: false };
+  await collectEntries(dirPath, dirPath, options, items, state);
   items.sort((left, right) => left.path.localeCompare(right.path));
-  return { path: dirPath, exists: true, count: items.length, items: items.slice(0, MAX_INVENTORY_ITEMS) };
+  return { path: dirPath, exists: true, count: items.length, items, ...(state.truncated ? { truncated: true } : {}) };
 }
 
 async function collectEntries(
   rootPath: string,
   currentPath: string,
   options: { extension?: string | string[]; directoryWithFile?: string; recursive?: boolean; skipSymlinks?: boolean },
-  items: ProjectResourceInventorySection["items"]
+  items: ProjectResourceInventorySection["items"],
+  state: { truncated: boolean }
 ): Promise<void> {
+  if (items.length >= MAX_INVENTORY_ITEMS) {
+    state.truncated = true;
+    return;
+  }
   let entries;
   try {
     entries = await readdir(currentPath, { withFileTypes: true });
@@ -212,6 +223,10 @@ async function collectEntries(
   }
   const extensions = Array.isArray(options.extension) ? options.extension : options.extension ? [options.extension] : [];
   for (const entry of entries) {
+    if (items.length >= MAX_INVENTORY_ITEMS) {
+      state.truncated = true;
+      return;
+    }
     const entryPath = join(currentPath, entry.name);
     if (entry.isSymbolicLink() && options.skipSymlinks) {
       continue;
@@ -221,7 +236,7 @@ async function collectEntries(
         items.push({ path: relativeOrSelf(rootPath, entryPath), kind: "directory" });
       }
       if (options.recursive) {
-        await collectEntries(rootPath, entryPath, options, items);
+        await collectEntries(rootPath, entryPath, options, items, state);
       }
       continue;
     }

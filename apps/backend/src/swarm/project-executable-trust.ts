@@ -43,18 +43,19 @@ export function buildProjectExecutableTrustPlan(options: {
   cwd: string;
 }): ProjectExecutableTrustPlan {
   const trusted = options.resolution.trust.state === "trusted";
+  const trustRoot = options.resolution.effectiveForgeDirRealpath;
   return {
     resolution: options.resolution,
     trusted,
-    effectiveForgeDirRealpath: options.resolution.effectiveForgeDirRealpath,
+    effectiveForgeDirRealpath: trustRoot,
     trustedForgeExtensionDirs: trusted
-      ? uniqueRealPaths([options.resolution.repoRootResources.forgeExtensionsDir, join(options.cwd, ".forge", "extensions")])
+      ? uniqueRealPaths(filterInsideTrustRoot([options.resolution.repoRootResources.forgeExtensionsDir, join(options.cwd, ".forge", "extensions")], trustRoot))
       : [],
     trustedPiExtensionDirs: trusted
-      ? uniqueRealPaths([options.resolution.repoRootResources.piExtensionsDir, join(options.cwd, ".pi", "extensions")])
+      ? uniqueRealPaths(filterInsideTrustRoot([options.resolution.repoRootResources.piExtensionsDir, join(options.cwd, ".pi", "extensions")], trustRoot))
       : [],
     trustedPiSettingsPaths: trusted
-      ? uniqueRealPaths([options.resolution.repoRootResources.piSettingsPath, join(options.cwd, ".pi", "settings.json")])
+      ? uniqueRealPaths(filterInsideTrustRoot([options.resolution.repoRootResources.piSettingsPath, join(options.cwd, ".pi", "settings.json")], trustRoot))
       : []
   };
 }
@@ -163,6 +164,11 @@ function absolutizeLocalEntries(entries: unknown[], baseDir: string): unknown[] 
 function isLocalSource(source: string): boolean {
   const trimmed = source.trim();
   return trimmed.startsWith(".") || trimmed.startsWith("/") || trimmed.startsWith("~");
+}
+
+function filterInsideTrustRoot(paths: Array<string | undefined>, trustRoot: string | undefined): string[] {
+  if (!trustRoot) return [];
+  return paths.filter((pathValue): pathValue is string => typeof pathValue === "string" && isPathInside(pathValue, trustRoot));
 }
 
 function uniqueRealPaths(paths: Array<string | undefined>): string[] {

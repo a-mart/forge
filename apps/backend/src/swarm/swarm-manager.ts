@@ -2160,6 +2160,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         }
       ]);
       const selected = answers[0]?.selectedOptionIds[0];
+      const currentResolution = await new ProjectWorkspaceResolver({
+        dataDir: this.config.paths.dataDir,
+        settingsStore
+      }).resolve({
+        profileId: descriptor.profileId ?? descriptor.agentId,
+        sessionAgentId: descriptor.agentId,
+        cwd: descriptor.cwd
+      });
+      const currentDismissed = currentResolution.trust.key
+        ? await settingsStore.getDismissedExecutablePrompt(currentResolution.trust.key)
+        : undefined;
+      const promptStillCurrent =
+        this.pendingProjectExecutableTrustPromptsByKey.has(resolution.trust.key) &&
+        currentResolution.trust.key === resolution.trust.key &&
+        currentResolution.trust.state === "untrusted" &&
+        currentResolution.signature === resolution.signature &&
+        currentDismissed?.signature !== currentResolution.signature;
+      if (!promptStillCurrent) return;
       if (selected === "trust" || selected === "block") {
         await settingsStore.setTrust(resolution.trust.key, selected);
         await this.applyProjectResourceTrustChange(resolution.trust.key);
@@ -2172,6 +2190,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async applyProjectResourceTrustChange(trustKey: string): Promise<void> {
+    this.pendingProjectExecutableTrustPromptsByKey.delete(trustKey);
+    await this.applyProjectResourceRuntimeBoundaryChange(async (resolution) => resolution.trust.key === trustKey);
+  }
+
+  async applyProjectResourceWorkspaceChange(workspaceKey: string): Promise<void> {
+    await this.applyProjectResourceRuntimeBoundaryChange(async (resolution) => resolution.workspaceKey === workspaceKey);
+  }
+
+  private async applyProjectResourceRuntimeBoundaryChange(
+    matches: (resolution: Awaited<ReturnType<ProjectWorkspaceResolver["resolve"]>>) => boolean | Promise<boolean>
+  ): Promise<void> {
     const affectedSessions: Array<AgentDescriptor & { role: "manager" }> = [];
     for (const descriptor of this.descriptors.values()) {
       if (descriptor.role !== "manager" || descriptor.collab) continue;
@@ -2183,7 +2212,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         sessionAgentId: descriptor.agentId,
         cwd: descriptor.cwd
       });
-      if (resolution.trust.key === trustKey) {
+      if (await matches(resolution)) {
         affectedSessions.push(descriptor as AgentDescriptor & { role: "manager" });
       }
     }

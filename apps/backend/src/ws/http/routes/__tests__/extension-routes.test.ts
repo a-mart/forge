@@ -176,6 +176,14 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       expect(payload.json.snapshots).toHaveLength(1)
 
       const discovered = payload.json.discovered as Array<Record<string, unknown>>
+      expect(discovered).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            displayName: 'project-pack',
+            path: await realpath(join(projectExtensionsDir, 'project-pack', 'index.ts')),
+          }),
+        ]),
+      )
       expect(discovered).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -193,12 +201,6 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
             path: join(profileExtensionsDir, 'profile-ext.ts'),
             source: 'profile',
             profileId: 'manager',
-          }),
-          expect.objectContaining({
-            displayName: 'project-pack',
-            path: await realpath(join(projectExtensionsDir, 'project-pack', 'index.ts')),
-            source: 'project-local',
-            cwd: config.paths.rootDir,
           }),
           expect.objectContaining({
             displayName: 'pkg-extension.ts',

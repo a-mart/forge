@@ -21,6 +21,10 @@ export async function listRepositoryReferenceDocs(
   const rootDir = getProjectForgeReferenceDir(forgeDir);
   const maxFiles = Math.max(0, options.maxFiles ?? 100);
   const maxEntries = Math.max(0, options.maxEntries ?? 1000);
+  const rootStats = await lstat(rootDir).catch(() => null);
+  if (!rootStats || !rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+    return { rootDir, files: [], truncated: false };
+  }
   const state: ReferenceDocTraversalState = { files: [], entriesScanned: 0, truncated: false };
   await collectMarkdownFiles(rootDir, rootDir, state, { maxFiles, maxEntries });
   state.files.sort((left, right) => left.localeCompare(right));
@@ -33,7 +37,7 @@ async function collectMarkdownFiles(
   state: ReferenceDocTraversalState,
   limits: { maxFiles: number; maxEntries: number }
 ): Promise<void> {
-  if (state.files.length > limits.maxFiles || state.entriesScanned >= limits.maxEntries) {
+  if (state.files.length >= limits.maxFiles || state.entriesScanned >= limits.maxEntries) {
     state.truncated = true;
     return;
   }
@@ -54,7 +58,7 @@ async function collectMarkdownFiles(
       }
       state.entriesScanned += 1;
       entries.push(entry);
-      if (state.files.length > limits.maxFiles) {
+      if (state.files.length >= limits.maxFiles) {
         state.truncated = true;
         break;
       }
@@ -64,7 +68,7 @@ async function collectMarkdownFiles(
   }
 
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (state.files.length > limits.maxFiles || state.entriesScanned > limits.maxEntries) {
+    if (state.files.length >= limits.maxFiles || state.entriesScanned >= limits.maxEntries) {
       state.truncated = true;
       return;
     }

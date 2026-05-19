@@ -12,6 +12,7 @@ import { readSessionMeta } from '../session-manifest.js'
 import { modelCatalogService } from '../model-catalog-service.js'
 import { loadModelChangeContinuityState } from '../runtime/model-change-continuity.js'
 import { ProjectResourceSettingsStore } from '../project-resource-settings.js'
+import { ProjectWorkspaceResolver } from '../project-workspace-resolver.js'
 import type { AgentContextUsage, AgentDescriptor, SwarmConfig } from '../types.js'
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from '../runtime-contracts.js'
 import { makeTempConfig as buildTempConfig } from '../../test-support/index.js'
@@ -433,6 +434,58 @@ describe('SwarmManager', () => {
 
     await manager.handleUserMessage('still usable after trust change', { targetAgentId: session.agentId })
     expect(manager.runtimeCreationCountByAgentId.get(session.agentId)).toBeGreaterThan(1)
+  })
+
+  it('evicts affected runtimes when the project .forge override changes', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await mkdir(join(config.defaultCwd, '.forge', 'extensions'), { recursive: true })
+    const overrideForgeDir = join(config.defaultCwd, 'override-parent', '.forge')
+    await mkdir(join(overrideForgeDir, 'extensions'), { recursive: true })
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
+    const before = await new ProjectWorkspaceResolver({
+      dataDir: config.paths.dataDir,
+      settingsStore: new ProjectResourceSettingsStore(config.paths.dataDir),
+    }).resolve({ profileId: session.profileId ?? session.agentId, sessionAgentId: session.agentId, cwd: session.cwd })
+    const managerRuntime = manager.runtimeByAgentId.get(session.agentId)
+    expect(managerRuntime).toBeTruthy()
+    const worker = await manager.spawnAgent(session.agentId, { agentId: 'Override Worker' })
+
+    await new ProjectResourceSettingsStore(config.paths.dataDir).setOverride(before.workspaceKey, overrideForgeDir)
+    await manager.applyProjectResourceWorkspaceChange(before.workspaceKey)
+
+    expect(manager.listAgents().find((agent) => agent.agentId === worker.agentId)?.status).toBe('terminated')
+    expect(managerRuntime!.terminateCalls).toEqual([expect.objectContaining({ abort: true })])
+    expect((manager as unknown as { runtimes: Map<string, unknown> }).runtimes.has(session.agentId)).toBe(false)
+    expect(manager.listAgents().find((agent) => agent.agentId === session.agentId)?.status).not.toBe('terminated')
+  })
+
+  it('ignores stale project executable trust prompt answers after Settings trust changes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await mkdir(join(config.defaultCwd, '.forge', 'extensions'), { recursive: true })
+    await writeFile(join(config.defaultCwd, '.forge', 'extensions', 'repo.ts'), 'export default () => {}\n', 'utf8')
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
+    const settingsStore = new ProjectResourceSettingsStore(config.paths.dataDir)
+    const trustKey = await realpath(join(config.defaultCwd, '.forge'))
+    const choiceService = (manager as unknown as {
+      choiceService: { requestUserChoice: (agentId: string, questions: unknown[]) => Promise<Array<{ questionId: string; selectedOptionIds: string[] }>> }
+    }).choiceService
+    vi.spyOn(choiceService, 'requestUserChoice').mockImplementation(async () => {
+      await settingsStore.setTrust(trustKey, 'block')
+      await manager.applyProjectResourceTrustChange(trustKey)
+      return [{ questionId: 'repo_executable_trust', selectedOptionIds: ['trust'] }]
+    })
+
+    await (manager as unknown as {
+      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
+    }).maybePromptForProjectExecutableTrust(session as AgentDescriptor & { role: 'manager' })
+
+    expect((await settingsStore.getTrust(trustKey))?.state).toBe('blocked')
   })
 
   it('does not let a hanging manager terminate block trust-change propagation indefinitely', async () => {

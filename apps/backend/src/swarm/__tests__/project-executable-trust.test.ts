@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildProjectSafePiProjectSettingsStorage, filterUntrustedProjectPiExtensions } from "../project-executable-trust.js";
+import { buildProjectExecutableTrustPlan, buildProjectSafePiProjectSettingsStorage, filterUntrustedProjectPiExtensions } from "../project-executable-trust.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 
 const tempDirs: string[] = [];
@@ -40,6 +40,27 @@ describe("project executable trust helpers", () => {
     expect(result.extensions.map((extension) => extension.path)).toEqual([
       join(config.paths.agentDir, "npm", "global-package", "extension.js")
     ]);
+  });
+
+  it("does not trust nested exact-cwd legacy executables from repo-root trust", () => {
+    const root = "/repo";
+    const cwd = join(root, "nested");
+    const plan = buildProjectExecutableTrustPlan({
+      cwd,
+      resolution: {
+        trust: { state: "trusted", key: join(root, ".forge") },
+        effectiveForgeDirRealpath: join(root, ".forge"),
+        repoRootResources: {
+          forgeExtensionsDir: join(root, ".forge", "extensions"),
+          piExtensionsDir: join(root, ".forge", "pi", "extensions"),
+          piSettingsPath: join(root, ".forge", "pi", "settings.json")
+        }
+      } as never
+    });
+
+    expect(plan.trustedForgeExtensionDirs).not.toContain(join(cwd, ".forge", "extensions"));
+    expect(plan.trustedPiExtensionDirs).not.toContain(join(cwd, ".pi", "extensions"));
+    expect(plan.trustedPiSettingsPaths).not.toContain(join(cwd, ".pi", "settings.json"));
   });
 
   it("uses an empty project Pi settings surface when repo executables are untrusted", () => {

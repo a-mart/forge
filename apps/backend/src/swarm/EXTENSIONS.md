@@ -71,4 +71,4 @@ Pi also reads package settings from:
 - `~/.forge/agent/manager/settings.json` — managers (global packages)
 - `<repo>/.forge/pi/settings.json` — project-local packages (trust-gated)
 
-These files do not need to exist — Pi handles missing files gracefully (returns empty settings). Legacy exact-CWD `.pi` resources remain compatibility-only and are gated by repository executable trust.
+These files do not need to exist — Pi handles missing files gracefully (returns empty settings). Legacy exact-CWD `.pi` resources remain compatibility-only and are active only when inside or identical to the selected trusted `.forge` directory.

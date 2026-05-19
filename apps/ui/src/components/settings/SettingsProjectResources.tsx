@@ -133,7 +133,7 @@ export function SettingsProjectResources({ managers, previewSession, apiClient }
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle>Executable trust</CardTitle><CardDescription>Prepared for the later runtime activation wave. Trust is path-only for the selected repo-root .forge directory; legacy exact-CWD surfaces are not covered yet.</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Executable trust</CardTitle><CardDescription>Trust is path-only for the selected .forge directory. Changing trust or the override restarts affected runtimes so executable resources cannot stay loaded under stale policy.</CardDescription></CardHeader>
             <CardContent className="space-y-3">
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={() => void mutateTrust('trust')} disabled={loading || !snapshot.trust.key}>Trust repo path</Button>
@@ -145,7 +145,7 @@ export function SettingsProjectResources({ managers, previewSession, apiClient }
                   <div key={`${surface.kind}:${surface.path}`} className="rounded-md border p-2">
                     <div className="flex items-center justify-between gap-2"><span className="font-medium">{formatSurfaceKind(surface.kind)}</span><Badge variant={surface.exists ? 'default' : 'secondary'}>{surface.exists ? 'found' : 'missing'}</Badge></div>
                     <div className="mt-1 break-all text-xs text-muted-foreground">{surface.path}</div>
-                    {surface.compatibilityPolicy && <div className="mt-1 text-xs text-amber-600">Compatibility surface, not covered by repo-root trust yet.</div>}
+                    {surface.compatibilityPolicy && <div className="mt-1 text-xs text-amber-600">Compatibility surface. It is active only when it is inside the selected trusted .forge directory; use repo-root .forge paths for new resources.</div>}
                   </div>
                 ))}
               </div>
@@ -184,7 +184,8 @@ function InventoryTile({ title, section, executable }: { title: string; section:
       <div className="flex items-center justify-between gap-2"><div className="font-medium">{title}</div>{executable && <Badge variant="outline">executable</Badge>}</div>
       <div className="mt-1 text-2xl font-semibold">{section.count}</div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{section.path ?? 'No path'}</div>
-      {section.items.length > 0 && <div className="mt-2 text-xs text-muted-foreground">{section.items.slice(0, 3).map((item) => item.path).join(', ')}{section.count > 3 ? '…' : ''}</div>}
+      {section.items.length > 0 && <div className="mt-2 text-xs text-muted-foreground">{section.items.slice(0, 3).map((item) => item.path).join(', ')}{section.count > 3 || section.truncated ? '…' : ''}</div>}
+      {section.truncated && <div className="mt-1 text-xs text-muted-foreground">Showing first {section.items.length} items.</div>}
     </div>
   )
 }

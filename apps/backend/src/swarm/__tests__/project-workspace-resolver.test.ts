@@ -172,6 +172,7 @@ describe("ProjectWorkspaceResolver", () => {
 
     expect(result.trust.state).toBe("trusted");
     expect(result.legacyExecutableSurfaces.every((surface) => surface.coveredByTrustKey === undefined)).toBe(true);
+    expect(result.legacyExecutableSurfaces.every((surface) => surface.activeToday === false)).toBe(true);
   });
 
   it("does not cover root exact-cwd .pi surfaces with repo-root .forge trust", async () => {
@@ -189,6 +190,8 @@ describe("ProjectWorkspaceResolver", () => {
 
     expect(result.trust.state).toBe("trusted");
     expect(result.legacyExecutableSurfaces.every((surface) => surface.coveredByTrustKey === undefined)).toBe(true);
+    expect(result.legacyExecutableSurfaces.find((surface) => surface.kind === "exact-cwd-pi-extension")?.activeToday).toBe(false);
+    expect(result.legacyExecutableSurfaces.find((surface) => surface.kind === "exact-cwd-pi-settings")?.activeToday).toBe(false);
   });
 
   it("accepts a .forge override symlink to a directory", async () => {

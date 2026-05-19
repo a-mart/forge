@@ -63,7 +63,7 @@ Supported entrypoints:
 - `my-ext/index.ts`
 - `my-ext/index.js`
 
-Legacy exact-CWD `<cwd>/.forge/extensions/` surfaces are compatibility-only and are also gated by repository executable trust. New projects should use the repo-root `.forge/extensions/` location.
+Legacy exact-CWD `<cwd>/.forge/extensions/` surfaces are compatibility-only. Repo-root `.forge` trust does not cover a separate nested exact-CWD path; the legacy path is active only if it is inside or identical to the selected trusted `.forge` directory. New projects should use the repo-root `.forge/extensions/` location.
 
 ## Module contract
 

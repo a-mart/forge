@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -124,6 +124,38 @@ describe("project resource routes", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("http://example.test");
   });
 
+  it("skips a symlinked repository reference root in Settings inventory", async () => {
+    const harness = await createHarness();
+    const target = join(await makeTempDir("forge-reference-target-"), "reference");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "leaked.md"), "# Leaked\n", "utf-8");
+    await rm(join(harness.workspaceDir, ".forge", "reference"), { recursive: true, force: true });
+    await symlink(target, join(harness.workspaceDir, ".forge", "reference"), "dir");
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourcesSnapshotResponse;
+    expect(payload.resources.reference.exists).toBe(false);
+    expect(payload.resources.reference.items).toEqual([]);
+  });
+
+  it("caps Settings inventory traversal", async () => {
+    const harness = await createHarness();
+    await mkdir(join(harness.workspaceDir, ".forge", "reference"), { recursive: true });
+    await Promise.all(
+      Array.from({ length: 60 }, (_, index) =>
+        writeFile(join(harness.workspaceDir, ".forge", "reference", `${String(index).padStart(2, "0")}.md`), "# Note\n", "utf-8")
+      )
+    );
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourcesSnapshotResponse;
+    expect(payload.resources.reference.items).toHaveLength(50);
+    expect(payload.resources.reference.count).toBe(50);
+    expect(payload.resources.reference.truncated).toBe(true);
+  });
+
   it("validates override directory name and stores realpath-normalized override", async () => {
     const harness = await createHarness();
     const override = join(await makeTempDir("forge-override-parent-"), ".forge");
@@ -164,7 +196,8 @@ async function createHarness(options: { missingCwd?: boolean; missingForge?: boo
     getConfig: () => ({ paths: { dataDir } }),
     getAgent: (agentId: string) => (agentId === descriptor.agentId ? descriptor : undefined),
     listAgents: () => [descriptor],
-    applyProjectResourceTrustChange: async () => undefined
+    applyProjectResourceTrustChange: async () => undefined,
+    applyProjectResourceWorkspaceChange: async () => undefined
   } as unknown as SwarmManager;
   const routes = createProjectResourceRoutes({ swarmManager });
   const server = createServer(async (request, response) => {
