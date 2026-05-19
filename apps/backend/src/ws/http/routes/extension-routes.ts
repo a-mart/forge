@@ -2,6 +2,10 @@ import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { DiscoveredExtensionMetadata, SettingsExtensionsResponse } from "@forge/protocol";
 import { getProfilePiExtensionsDir, getProfilesDir } from "../../../swarm/data-paths.js";
+import { buildProjectExecutableTrustPlan } from "../../../swarm/project-executable-trust.js";
+import { resolveLocalPiPackageExtensionPathsFromSettings } from "../../../swarm/project-pi-package-extensions.js";
+import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "../../../swarm/project-workspace-resolver.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
@@ -59,7 +63,7 @@ export function createExtensionRoutes(options: { swarmManager: SwarmManager }): 
             globalWorker: join(config.paths.agentDir, "extensions"),
             globalManager: join(config.paths.managerAgentDir, "extensions"),
             profileTemplate: join(getProfilesDir(config.paths.dataDir), "<profileId>", "pi", "extensions"),
-            projectLocalRelative: ".pi/extensions"
+            projectLocalRelative: ".forge/pi/extensions"
           },
           forge: await swarmManager.buildForgeExtensionSettingsSnapshot({ cwdValues })
         };
@@ -89,15 +93,26 @@ async function discoverPiExtensionsOnDisk(options: {
     });
   }
 
-  const cwdValues = new Set(
-    options.swarmManager
-      .listAgents()
-      .map((descriptor) => descriptor.cwd.trim())
-      .filter((cwd) => cwd.length > 0)
-  );
-
-  for (const cwd of Array.from(cwdValues).sort((left, right) => left.localeCompare(right))) {
-    await collectPiExtensionsFromDirectory(join(cwd, ".pi", "extensions"), "project-local", discovered, { cwd });
+  const resolver = new ProjectWorkspaceResolver({
+    dataDir: options.dataDir,
+    settingsStore: new ProjectResourceSettingsStore(options.dataDir)
+  });
+  for (const descriptor of options.swarmManager
+    .listAgents()
+    .filter((entry) => entry.role === "manager" && !entry.collab)
+    .sort((left, right) => left.agentId.localeCompare(right.agentId))) {
+    const resolution = await resolver.resolve({
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      sessionAgentId: descriptor.agentId,
+      cwd: descriptor.cwd
+    });
+    const trustPlan = buildProjectExecutableTrustPlan({ resolution, cwd: descriptor.cwd });
+    for (const extensionsDir of trustPlan.trustedPiExtensionDirs) {
+      await collectPiExtensionsFromDirectory(extensionsDir, "project-local", discovered, { cwd: descriptor.cwd });
+    }
+    for (const settingsPath of trustPlan.trustedPiSettingsPaths) {
+      await collectPiPackageExtensionsFromSettings(settingsPath, "project-local", discovered, { cwd: descriptor.cwd });
+    }
   }
 
   return dedupeAndSortDiscoveredPiExtensions(discovered);
@@ -158,6 +173,23 @@ async function collectPiExtensionsFromDirectory(
         cwd: metadata?.cwd
       });
     }
+  }
+}
+
+async function collectPiPackageExtensionsFromSettings(
+  settingsPath: string,
+  source: DiscoveredExtensionMetadata["source"],
+  target: DiscoveredExtensionMetadata[],
+  metadata?: { profileId?: string; cwd?: string }
+): Promise<void> {
+  for (const extensionPath of await resolveLocalPiPackageExtensionPathsFromSettings(settingsPath)) {
+    target.push({
+      displayName: normalizeExtensionDisplayName(extensionPath),
+      path: extensionPath,
+      source,
+      profileId: metadata?.profileId,
+      cwd: metadata?.cwd
+    });
   }
 }
 
@@ -253,6 +285,7 @@ async function isFile(pathValue: string): Promise<boolean> {
 function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
   return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
 }
+
 
 function toComparablePath(pathValue: string): string {
   const resolved = resolve(pathValue);

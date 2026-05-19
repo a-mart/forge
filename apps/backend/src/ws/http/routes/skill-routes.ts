@@ -24,9 +24,9 @@ type SkillImportRouteAction = "preview-url" | "preview-bundle" | "import";
 
 interface SkillRouteSwarmManager {
   listUserProfiles(): Array<{ profileId: string }>;
-  listSkillMetadata(profileId?: string): Promise<SkillInventoryResponse["skills"]>;
-  listSkillFiles(skillId: string, relativePath?: string): Promise<SkillFilesResponse>;
-  getSkillFileContent(skillId: string, relativePath: string): Promise<SkillFileContentResponse>;
+  listSkillMetadata(profileId?: string, sessionAgentId?: string): Promise<SkillInventoryResponse["skills"]>;
+  listSkillFiles(skillId: string, relativePath?: string, context?: { profileId?: string; sessionAgentId?: string }): Promise<SkillFilesResponse>;
+  getSkillFileContent(skillId: string, relativePath: string, context?: { profileId?: string; sessionAgentId?: string }): Promise<SkillFileContentResponse>;
   shareSkill(skillId: string): Promise<SkillShareResponse>;
   previewSkillImportFromUrl(url: string, target?: SkillImportTarget): Promise<SkillImportPreviewResponse>;
   previewSkillImportBundle(bundle: SkillBundleManifestV1, target?: SkillImportTarget): Promise<SkillImportPreviewResponse>;
@@ -78,12 +78,13 @@ async function handleSkillHttpRequest(
 
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_SKILLS_ENDPOINT_PATH) {
     const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;
+    const sessionAgentId = requestUrl.searchParams.get("sessionAgentId")?.trim() || undefined;
     if (profileId && !profileExists(swarmManager, profileId)) {
       sendJson(response, 404, { error: `Unknown profile: ${profileId}` });
       return;
     }
 
-    const skills = await swarmManager.listSkillMetadata(profileId);
+    const skills = await swarmManager.listSkillMetadata(profileId, sessionAgentId);
     const payload: SkillInventoryResponse = { skills };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
@@ -108,7 +109,8 @@ async function handleSkillHttpRequest(
     const parsedRoute = parseSkillRoutePath(requestUrl.pathname);
     if (parsedRoute?.action === "files") {
       const relativePath = requestUrl.searchParams.get("path") ?? "";
-      const result: SkillFilesResponse = await swarmManager.listSkillFiles(parsedRoute.skillId, relativePath);
+      const context = getSkillRouteContext(requestUrl);
+      const result: SkillFilesResponse = await swarmManager.listSkillFiles(parsedRoute.skillId, relativePath, context);
       sendJson(response, 200, result as unknown as Record<string, unknown>);
       return;
     }
@@ -120,7 +122,8 @@ async function handleSkillHttpRequest(
         return;
       }
 
-      const result: SkillFileContentResponse = await swarmManager.getSkillFileContent(parsedRoute.skillId, relativePath);
+      const context = getSkillRouteContext(requestUrl);
+      const result: SkillFileContentResponse = await swarmManager.getSkillFileContent(parsedRoute.skillId, relativePath, context);
       sendJson(response, 200, result as unknown as Record<string, unknown>);
       return;
     }
@@ -128,6 +131,12 @@ async function handleSkillHttpRequest(
 
   response.setHeader("Allow", SKILL_ROUTE_METHODS);
   sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+function getSkillRouteContext(requestUrl: URL): { profileId?: string; sessionAgentId?: string } | undefined {
+  const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;
+  const sessionAgentId = requestUrl.searchParams.get("sessionAgentId")?.trim() || undefined;
+  return profileId || sessionAgentId ? { profileId, sessionAgentId } : undefined;
 }
 
 async function handleSkillImportRoute(

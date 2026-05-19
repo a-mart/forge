@@ -60,15 +60,15 @@ Pi auto-discovers extensions and skills from:
 
 - `~/.forge/agent/extensions/` — all workers
 - `~/.forge/agent/manager/extensions/` — all managers
-- `<cwd>/.pi/extensions/` — project-local (agents with that CWD)
+- `<repo>/.forge/pi/extensions/` — project-local (trust-gated)
 - `~/.forge/agent/skills/` — all workers
 - `~/.forge/agent/manager/skills/` — all managers
-- `<cwd>/.pi/skills/` — project-local
+- `<repo>/.forge/skills/` — project-local project skills
 
 Pi also reads package settings from:
 
 - `~/.forge/agent/settings.json` — workers (global packages)
 - `~/.forge/agent/manager/settings.json` — managers (global packages)
-- `<cwd>/.pi/settings.json` — project-local packages
+- `<repo>/.forge/pi/settings.json` — project-local packages (trust-gated)
 
-These files do not need to exist — Pi handles missing files gracefully (returns empty settings).
+These files do not need to exist — Pi handles missing files gracefully (returns empty settings). Legacy exact-CWD `.pi` resources remain compatibility-only and are active only when inside or identical to the selected trusted `.forge` directory.

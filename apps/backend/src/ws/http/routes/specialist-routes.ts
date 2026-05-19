@@ -11,6 +11,7 @@ import {
   deleteSharedSpecialist,
   resolveRoster,
   resolveSharedRoster,
+  resolveWorkspaceRoster,
   generateRosterBlock,
   getWorkerTemplate,
   getSpecialistsEnabled,
@@ -27,6 +28,8 @@ import {
   SYSTEM_PROFILE_MUTATION_ERROR,
   requireNonSystemProfile,
 } from "../../../swarm/system-profile-guards.js";
+import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "../../../swarm/project-workspace-resolver.js";
 import {
   applyCorsHeaders,
   readJsonBody,
@@ -228,6 +231,7 @@ async function handleSpecialistRequest(
 
   const dataDir = swarmManager.getConfig().paths.dataDir;
   const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;
+  const sessionAgentId = requestUrl.searchParams.get("sessionAgentId")?.trim() || undefined;
   let targetSpace: SpecialistTargetSpace;
   try {
     targetSpace = parseTargetSpaceQuery(requestUrl);
@@ -329,7 +333,8 @@ async function handleSpecialistRequest(
   // GET /api/settings/specialists/roster-prompt?profileId=X
   if (request.method === "GET" && relativePath === ROSTER_PROMPT_SUFFIX) {
     try {
-      const roster = await resolveRoster(profileId, dataDir, targetSpace);
+      const workspaceSpecialistsDir = await resolveWorkspaceSpecialistsDir(swarmManager, profileId, sessionAgentId, targetSpace);
+      const roster = await resolveWorkspaceRoster(profileId, dataDir, workspaceSpecialistsDir, targetSpace);
       const markdown = generateRosterBlock(roster);
       sendJson(response, 200, { markdown });
     } catch (error) {
@@ -342,7 +347,8 @@ async function handleSpecialistRequest(
   // GET /api/settings/specialists?profileId=X
   if (request.method === "GET" && relativePath === "") {
     try {
-      const specialists = await resolveRoster(profileId, dataDir, targetSpace);
+      const workspaceSpecialistsDir = await resolveWorkspaceSpecialistsDir(swarmManager, profileId, sessionAgentId, targetSpace);
+      const specialists = await resolveWorkspaceRoster(profileId, dataDir, workspaceSpecialistsDir, targetSpace);
       // Strip sourcePath — it's a server filesystem detail the UI doesn't need.
       const sanitized = specialists.map(({ sourcePath: _, ...rest }) => rest);
       sendJson(response, 200, { specialists: sanitized });
@@ -409,6 +415,30 @@ async function handleSpecialistRequest(
 
   response.setHeader("Allow", METHODS);
   sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+async function resolveWorkspaceSpecialistsDir(
+  swarmManager: SwarmManager,
+  profileId: string,
+  sessionAgentId: string | undefined,
+  targetSpace: SpecialistTargetSpace,
+): Promise<string | undefined> {
+  if (!sessionAgentId || targetSpace === "collaboration") {
+    return undefined;
+  }
+  const session = swarmManager.listAgents().find((agent) => agent.agentId === sessionAgentId);
+  if (!session || session.role !== "manager" || session.profileId !== profileId) {
+    return undefined;
+  }
+  const resolution = await new ProjectWorkspaceResolver({
+    dataDir: swarmManager.getConfig().paths.dataDir,
+    settingsStore: new ProjectResourceSettingsStore(swarmManager.getConfig().paths.dataDir),
+  }).resolvePassive({
+    profileId,
+    sessionAgentId: session.agentId,
+    cwd: session.cwd,
+  });
+  return resolution.repoRootResources.specialistsDir;
 }
 
 async function notifySpecialistRosterMutation(options: {

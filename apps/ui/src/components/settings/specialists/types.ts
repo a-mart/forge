@@ -1,3 +1,4 @@
+import type { SettingsSessionContext } from '../session-context'
 import type {
   ManagerReasoningLevel,
   ModelPresetInfo,
@@ -77,6 +78,7 @@ export interface SettingsSpecialistsProps {
   wsUrl: string
   apiClient?: import('../settings-api-client').SettingsApiClient
   profiles: import('@forge/protocol').ManagerProfile[]
+  previewSession?: SettingsSessionContext | null
   specialistChangeKey: number
   modelConfigChangeKey: number
   /** Optional: open directly to a specific channel scope. */

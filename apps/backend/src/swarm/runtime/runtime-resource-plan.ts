@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import type { ExtensionFactory, ResourceDiagnostic, Skill } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory, LoadExtensionsResult, ResourceDiagnostic, Skill } from "@mariozechner/pi-coding-agent";
 import {
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,
@@ -37,6 +37,7 @@ export interface PiResourceLoaderOptionsPlan {
     agentsFiles: Array<{ path: string; content: string }>;
   };
   extensionFactories: ExtensionFactory[];
+  extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
   skillsOverride?: (current: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
     skills: Skill[];
     diagnostics: ResourceDiagnostic[];
@@ -52,6 +53,8 @@ export interface PlanPiResourceLoaderOptionsOptions {
   promptPlan: PiRuntimePromptPlan;
   swarmContextFiles: Array<{ path: string; content: string }>;
   extensionFactories: ExtensionFactory[];
+  trustedProjectPiExtensionPaths?: string[];
+  extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
   isCollaborationRuntime: boolean;
   mergeRuntimeContextFiles: (
     baseAgentsFiles: Array<{ path: string; content: string }>,
@@ -93,6 +96,8 @@ export function planPiResourceLoaderOptions(options: PlanPiResourceLoaderOptions
     promptPlan,
     swarmContextFiles,
     extensionFactories,
+    trustedProjectPiExtensionPaths = [],
+    extensionsOverride,
     isCollaborationRuntime,
     mergeRuntimeContextFiles,
   } = options;
@@ -105,7 +110,10 @@ export function planPiResourceLoaderOptions(options: PlanPiResourceLoaderOptions
   return {
     cwd: descriptor.cwd,
     agentDir: pathsPlan.runtimeAgentDir,
-    additionalExtensionPaths: dirHasFiles(pathsPlan.profilePiExtensionsDir) ? [pathsPlan.profilePiExtensionsDir] : [],
+    additionalExtensionPaths: [
+      ...(dirHasFiles(pathsPlan.profilePiExtensionsDir) ? [pathsPlan.profilePiExtensionsDir] : []),
+      ...trustedProjectPiExtensionPaths.filter(dirHasFiles),
+    ],
     additionalSkillPaths,
     additionalPromptTemplatePaths: dirHasFiles(pathsPlan.profilePiPromptsDir) ? [pathsPlan.profilePiPromptsDir] : [],
     additionalThemePaths: dirHasFiles(pathsPlan.profilePiThemesDir) ? [pathsPlan.profilePiThemesDir] : [],
@@ -119,6 +127,7 @@ export function planPiResourceLoaderOptions(options: PlanPiResourceLoaderOptions
       ],
     }),
     extensionFactories,
+    ...(extensionsOverride ? { extensionsOverride } : {}),
     ...(skillsOverride ? { skillsOverride } : {}),
     ...(promptPlan.systemPrompt !== undefined ? { systemPrompt: promptPlan.systemPrompt } : {}),
     appendSystemPromptOverride: promptPlan.appendSystemPromptOverride,

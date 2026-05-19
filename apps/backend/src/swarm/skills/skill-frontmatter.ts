@@ -12,6 +12,7 @@ export function parseSkillFrontmatter(markdown: string): {
   name?: string;
   description?: string;
   env: ParsedSkillEnvDeclaration[];
+  forgePrecedence?: "override";
 } {
   const match = SKILL_FRONTMATTER_BLOCK_PATTERN.exec(markdown);
   if (!match) {
@@ -21,6 +22,7 @@ export function parseSkillFrontmatter(markdown: string): {
   const lines = match[1].split(/\r?\n/);
   let skillName: string | undefined;
   let skillDescription: string | undefined;
+  let forgePrecedence: "override" | undefined;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -46,13 +48,22 @@ export function parseSkillFrontmatter(markdown: string): {
       if (candidate) {
         skillDescription = candidate;
       }
+      continue;
+    }
+
+    if (parsed.key === "forgePrecedence") {
+      const candidate = parseYamlStringValue(parsed.value);
+      if (candidate === "override") {
+        forgePrecedence = "override";
+      }
     }
   }
 
   return {
     name: skillName,
     description: skillDescription,
-    env: parseSkillEnvDeclarations(lines)
+    env: parseSkillEnvDeclarations(lines),
+    ...(forgePrecedence ? { forgePrecedence } : {})
   };
 }
 

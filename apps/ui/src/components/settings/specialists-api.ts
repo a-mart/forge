@@ -47,10 +47,12 @@ function buildSpecialistPath(
   profileId?: string,
   pathSuffix = '',
   targetSpace?: SpecialistTargetSpace,
+  sessionAgentId?: string,
 ): string {
   const params = new URLSearchParams()
   if (profileId) params.set('profileId', profileId)
   if (targetSpace) params.set('targetSpace', targetSpace)
+  if (sessionAgentId) params.set('sessionAgentId', sessionAgentId)
   const query = params.size > 0 ? `?${params}` : ''
   return `/api/settings/specialists${pathSuffix}${query}`
 }
@@ -90,22 +92,25 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
     (specialist.sourceKind === 'builtin' ||
       specialist.sourceKind === 'global' ||
       specialist.sourceKind === 'profile' ||
-      specialist.sourceKind === 'channel') &&
+      specialist.sourceKind === 'channel' ||
+      specialist.sourceKind === 'workspace') &&
     typeof specialist.available === 'boolean' &&
     (specialist.availabilityCode === 'ok' ||
       specialist.availabilityCode === 'invalid_model' ||
       specialist.availabilityCode === 'missing_auth') &&
     (specialist.availabilityMessage === undefined || typeof specialist.availabilityMessage === 'string') &&
-    typeof specialist.shadowsGlobal === 'boolean'
+    typeof specialist.shadowsGlobal === 'boolean' &&
+    (specialist.conflictWarning === undefined || typeof specialist.conflictWarning === 'string')
   )
 }
 
 export async function fetchSpecialists(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
+  sessionAgentId?: string,
 ): Promise<ResolvedSpecialistDefinition[]> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(profileId, '', inferTargetSpace(client))
+  const path = buildSpecialistPath(profileId, '', inferTargetSpace(client), sessionAgentId)
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { specialists?: unknown }
@@ -142,9 +147,10 @@ export async function deleteSpecialist(
 export async function fetchRosterPrompt(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
+  sessionAgentId?: string,
 ): Promise<string> {
   const client = resolveClient(clientOrWsUrl)
-  const path = buildSpecialistPath(profileId, '/roster-prompt', inferTargetSpace(client))
+  const path = buildSpecialistPath(profileId, '/roster-prompt', inferTargetSpace(client), sessionAgentId)
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { markdown?: unknown }

@@ -47,7 +47,7 @@ describe("skill routes", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(swarmManager.listSkillMetadata).toHaveBeenCalledWith(undefined);
+    expect(swarmManager.listSkillMetadata).toHaveBeenCalledWith(undefined, undefined);
     await expect(response.json()).resolves.toEqual({
       skills: [
         {
@@ -95,7 +95,7 @@ describe("skill routes", () => {
 
     expect(response.status).toBe(200);
     expect(swarmManager.listUserProfiles).toHaveBeenCalledTimes(1);
-    expect(swarmManager.listSkillMetadata).toHaveBeenCalledWith("profile-a");
+    expect(swarmManager.listSkillMetadata).toHaveBeenCalledWith("profile-a", undefined);
     await expect(response.json()).resolves.toEqual({
       skills: [
         {
@@ -113,6 +113,35 @@ describe("skill routes", () => {
           isEffective: true,
         },
       ],
+    });
+  });
+
+  it("passes session context through for workspace-aware skill inventory", async () => {
+    const swarmManager = {
+      listUserProfiles: vi.fn(() => [{ profileId: "profile-a", displayName: "Profile A" }]),
+      listSkillMetadata: vi.fn(async () => [
+        {
+          skillId: "repo-skill-1",
+          name: "repo-skill",
+          directoryName: "repo-skill",
+          envCount: 0,
+          hasRichConfig: false,
+          sourceKind: "workspace",
+          rootPath: "/repo/.forge/skills/repo-skill",
+          skillFilePath: "/repo/.forge/skills/repo-skill/SKILL.md",
+          isInherited: true,
+          isEffective: true,
+        },
+      ]),
+    };
+
+    const server = await createSkillRouteTestServer(swarmManager as never);
+    const response = await fetch(`${server.baseUrl}/api/settings/skills?profileId=profile-a&sessionAgentId=session-a`);
+
+    expect(response.status).toBe(200);
+    expect(swarmManager.listSkillMetadata).toHaveBeenCalledWith("profile-a", "session-a");
+    await expect(response.json()).resolves.toMatchObject({
+      skills: [{ sourceKind: "workspace", directoryName: "repo-skill" }],
     });
   });
 
@@ -426,6 +455,48 @@ describe("skill routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "Path traversal is not allowed." });
   });
 
+  it("rejects crafted workspace skill IDs for file listing", async () => {
+    const config = await makeTempConfig();
+    const arbitrarySkillRoot = join(config.paths.dataDir, "arbitrary", "skills", "dangerous");
+    await mkdir(arbitrarySkillRoot, { recursive: true });
+    await writeFile(join(arbitrarySkillRoot, "SKILL.md"), ["---", "name: Dangerous", "---", "# Dangerous"].join("\n"), "utf8");
+    const craftedSkillId = Buffer.from(JSON.stringify({
+      sourceKind: "workspace",
+      skillRootPath: arbitrarySkillRoot,
+    }), "utf8").toString("base64url");
+
+    const swarmManager = await createServiceBackedSkillManager(config);
+    const server = await createSkillRouteTestServer(swarmManager as never);
+
+    const response = await fetch(
+      `${server.baseUrl}/api/settings/skills/${encodeURIComponent(craftedSkillId)}/files`
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Unknown skill." });
+  });
+
+  it("rejects crafted workspace skill IDs for file content", async () => {
+    const config = await makeTempConfig();
+    const arbitrarySkillRoot = join(config.paths.dataDir, "arbitrary", "skills", "dangerous");
+    await mkdir(arbitrarySkillRoot, { recursive: true });
+    await writeFile(join(arbitrarySkillRoot, "SKILL.md"), ["---", "name: Dangerous", "---", "# Dangerous"].join("\n"), "utf8");
+    const craftedSkillId = Buffer.from(JSON.stringify({
+      sourceKind: "workspace",
+      skillRootPath: arbitrarySkillRoot,
+    }), "utf8").toString("base64url");
+
+    const swarmManager = await createServiceBackedSkillManager(config);
+    const server = await createSkillRouteTestServer(swarmManager as never);
+
+    const response = await fetch(
+      `${server.baseUrl}/api/settings/skills/${encodeURIComponent(craftedSkillId)}/content?path=SKILL.md`
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Unknown skill." });
+  });
+
   it("reads skill file content with rooted absolute path metadata", async () => {
     const config = await makeTempConfig();
     const skillDir = join(config.paths.dataDir, "skills", "custom-skill");
@@ -465,7 +536,7 @@ async function createServiceBackedSkillManager(config: SwarmConfig): Promise<{
     description?: string;
     envCount: number;
     hasRichConfig: boolean;
-    sourceKind: "builtin" | "repo" | "machine-local" | "profile";
+    sourceKind: "builtin" | "repo" | "machine-local" | "profile" | "workspace";
     profileId?: string;
     rootPath: string;
     skillFilePath: string;

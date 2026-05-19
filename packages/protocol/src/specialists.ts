@@ -1,4 +1,4 @@
-export type SpecialistSourceKind = 'builtin' | 'global' | 'profile' | 'channel'
+export type SpecialistSourceKind = 'builtin' | 'global' | 'profile' | 'channel' | 'workspace'
 export type SpecialistTargetSpace = 'builder' | 'collaboration'
 export type SpecialistAvailabilityCode = 'ok' | 'invalid_model' | 'missing_auth'
 
@@ -25,4 +25,5 @@ export interface ResolvedSpecialistDefinition {
   availabilityCode: SpecialistAvailabilityCode
   availabilityMessage?: string
   shadowsGlobal: boolean
+  conflictWarning?: string
 }

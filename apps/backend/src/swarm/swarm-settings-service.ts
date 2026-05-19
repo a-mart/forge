@@ -25,6 +25,8 @@ import {
   type DirectoryValidationResult
 } from "./cwd-policy.js";
 import { pickDirectory as pickNativeDirectory } from "./directory-picker.js";
+import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import { resolveModelDescriptorFromPreset } from "./model-presets.js";
 import {
   appendModelChangeContinuityRequest,
@@ -351,11 +353,12 @@ export class SwarmSettingsService {
     return this.options.secretsEnvService.listSettingsEnv();
   }
 
-  async listSkillMetadata(profileId?: string): Promise<SkillInventoryEntry[]> {
+  async listSkillMetadata(profileId?: string, sessionAgentId?: string): Promise<SkillInventoryEntry[]> {
     await this.options.skillMetadataService.reloadSkillMetadata();
 
+    const workspaceContext = await this.resolveWorkspaceSkillContext(profileId, sessionAgentId);
     const metadata = typeof profileId === "string"
-      ? await this.options.skillMetadataService.getProfileSkillMetadata(profileId)
+      ? await this.options.skillMetadataService.getProfileSkillMetadataForWorkspace(profileId, workspaceContext.forgeDir)
       : this.options.skillMetadataService.getSkillMetadata();
 
     return metadata
@@ -371,7 +374,8 @@ export class SwarmSettingsService {
         rootPath: entry.rootPath,
         skillFilePath: entry.path,
         isInherited: entry.isInherited,
-        isEffective: entry.isEffective
+        isEffective: entry.isEffective,
+        ...(entry.conflictWarning ? { conflictWarning: entry.conflictWarning } : {})
       }))
       .sort((left, right) => {
         const byName = left.name.localeCompare(right.name);
@@ -383,8 +387,16 @@ export class SwarmSettingsService {
       });
   }
 
-  async listSkillFiles(skillId: string, relativePath = ""): Promise<SkillFilesResponse> {
-    const skill = await this.options.skillMetadataService.resolveSkillById(skillId);
+  async listSkillFiles(
+    skillId: string,
+    relativePath = "",
+    context?: { profileId?: string; sessionAgentId?: string }
+  ): Promise<SkillFilesResponse> {
+    const workspaceContext = await this.resolveWorkspaceSkillContext(context?.profileId, context?.sessionAgentId);
+    const skill = await this.options.skillMetadataService.resolveSkillById(skillId, {
+      profileId: context?.profileId,
+      forgeDir: workspaceContext.forgeDir,
+    });
     if (!skill) {
       throw new Error("Unknown skill.");
     }
@@ -392,13 +404,43 @@ export class SwarmSettingsService {
     return this.options.skillFileService.listDirectory(skill, relativePath);
   }
 
-  async getSkillFileContent(skillId: string, relativePath: string): Promise<SkillFileContentResponse> {
-    const skill = await this.options.skillMetadataService.resolveSkillById(skillId);
+  async getSkillFileContent(
+    skillId: string,
+    relativePath: string,
+    context?: { profileId?: string; sessionAgentId?: string }
+  ): Promise<SkillFileContentResponse> {
+    const workspaceContext = await this.resolveWorkspaceSkillContext(context?.profileId, context?.sessionAgentId);
+    const skill = await this.options.skillMetadataService.resolveSkillById(skillId, {
+      profileId: context?.profileId,
+      forgeDir: workspaceContext.forgeDir,
+    });
     if (!skill) {
       throw new Error("Unknown skill.");
     }
 
     return this.options.skillFileService.getFileContent(skill, relativePath);
+  }
+
+  private async resolveWorkspaceSkillContext(
+    profileId?: string,
+    sessionAgentId?: string
+  ): Promise<{ forgeDir?: string }> {
+    if (!profileId || !sessionAgentId) {
+      return {};
+    }
+    const session = this.options.getSessionById(sessionAgentId);
+    if (!session || session.profileId !== profileId) {
+      return {};
+    }
+    const resolution = await new ProjectWorkspaceResolver({
+      dataDir: this.options.config.paths.dataDir,
+      settingsStore: new ProjectResourceSettingsStore(this.options.config.paths.dataDir),
+    }).resolvePassive({
+      profileId,
+      sessionAgentId: session.agentId,
+      cwd: session.cwd,
+    });
+    return { forgeDir: resolution.effectiveForgeDirRealpath };
   }
 
   async shareSkill(skillId: string): Promise<SkillShareResponse> {

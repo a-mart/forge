@@ -39,6 +39,7 @@ const piCodingAgentMockState = vi.hoisted(() => ({
   defaultResourceLoaderCtor: vi.fn(),
   defaultResourceLoaderReload: vi.fn(async () => undefined),
   settingsManagerCreate: vi.fn(),
+  settingsManagerFromStorage: vi.fn(),
   settingsManagerApplyOverrides: vi.fn(),
 }));
 
@@ -88,6 +89,12 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   SettingsManager: {
     create: (...args: unknown[]) => {
       piCodingAgentMockState.settingsManagerCreate(...args)
+      return {
+        applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
+      }
+    },
+    fromStorage: (...args: unknown[]) => {
+      piCodingAgentMockState.settingsManagerFromStorage(...args)
       return {
         applyOverrides: (...overrideArgs: unknown[]) => piCodingAgentMockState.settingsManagerApplyOverrides(...overrideArgs),
       }
@@ -486,6 +493,7 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.defaultResourceLoaderReload.mockReset();
     piCodingAgentMockState.defaultResourceLoaderReload.mockResolvedValue(undefined);
     piCodingAgentMockState.settingsManagerCreate.mockReset();
+    piCodingAgentMockState.settingsManagerFromStorage.mockReset();
     piCodingAgentMockState.settingsManagerApplyOverrides.mockReset();
     delete process.env.FORGE_OPENAI_CODEX_TRANSPORT;
     claudeRuntimeMockState.constructorArgs = [];
@@ -866,9 +874,8 @@ describe("RuntimeFactory", () => {
       const factory = createFactory(rootDir);
       await factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt");
 
-      expect(piCodingAgentMockState.settingsManagerCreate).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining("agent"),
+      expect(piCodingAgentMockState.settingsManagerFromStorage).toHaveBeenCalledWith(
+        expect.objectContaining({ withLock: expect.any(Function) }),
       );
       expect(piCodingAgentMockState.settingsManagerApplyOverrides).toHaveBeenCalledWith({
         transport,
@@ -881,7 +888,7 @@ describe("RuntimeFactory", () => {
     },
   );
 
-  it("keeps non-Codex Pi runtimes on their existing settings path", async () => {
+  it("keeps non-Codex Pi runtimes from applying Codex transport overrides", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
     await seedProjectionFile(rootDir);
@@ -912,10 +919,12 @@ describe("RuntimeFactory", () => {
       "system prompt",
     );
 
-    expect(piCodingAgentMockState.settingsManagerCreate).not.toHaveBeenCalled();
+    expect(piCodingAgentMockState.settingsManagerFromStorage).toHaveBeenCalledWith(
+      expect.objectContaining({ withLock: expect.any(Function) }),
+    );
     expect(piCodingAgentMockState.settingsManagerApplyOverrides).not.toHaveBeenCalled();
     expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledWith(
-      expect.not.objectContaining({ settingsManager: expect.any(Object) }),
+      expect.objectContaining({ settingsManager: expect.any(Object) }),
     );
   });
 

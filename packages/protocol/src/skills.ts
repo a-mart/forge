@@ -1,4 +1,4 @@
-export type SkillSourceKind = 'builtin' | 'repo' | 'machine-local' | 'profile'
+export type SkillSourceKind = 'builtin' | 'repo' | 'machine-local' | 'profile' | 'workspace'
 
 export interface SkillInventoryEntry {
   skillId: string
@@ -13,6 +13,7 @@ export interface SkillInventoryEntry {
   skillFilePath: string
   isInherited: boolean
   isEffective: boolean
+  conflictWarning?: string
 }
 
 export interface SkillInventoryResponse {

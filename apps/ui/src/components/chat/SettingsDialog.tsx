@@ -12,6 +12,7 @@ import { SettingsModels } from '@/components/settings/SettingsModels'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
 import { SettingsSpecialists } from '@/components/settings/SettingsSpecialists'
+import { SettingsProjectResources } from '@/components/settings/SettingsProjectResources'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
 import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
 import { SettingsAbout } from '@/components/settings/SettingsAbout'
@@ -137,6 +138,7 @@ export function SettingsPanel({
           wsUrl={wsUrl}
           apiClient={apiClient}
           profiles={profiles}
+          previewSession={previewSession}
           changeKey={specialistChangeKey}
           initialImportUrl={initialSkillImportUrl}
           onInitialImportUrlConsumed={onSkillImportUrlConsumed}
@@ -156,9 +158,13 @@ export function SettingsPanel({
           wsUrl={wsUrl}
           apiClient={apiClient}
           profiles={profiles}
+          previewSession={previewSession}
           specialistChangeKey={specialistChangeKey}
           modelConfigChangeKey={modelConfigChangeKey}
         />
+      )}
+      {activeTab === 'project-resources' && (
+        <SettingsProjectResources managers={managers} previewSession={previewSession} apiClient={apiClient} />
       )}
       {activeTab === 'slash-commands' && (
         <SettingsSlashCommands

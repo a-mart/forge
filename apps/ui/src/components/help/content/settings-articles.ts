@@ -668,7 +668,7 @@ Forge looks for extensions in four directories, checked in order:
 - **Global Worker** — applies to all worker agents (\`~/.forge/agent/extensions/\`)
 - **Global Manager** — applies to all manager agents (\`~/.forge/agent/manager/extensions/\`)
 - **Profile** — applies to agents in a specific profile (\`~/.forge/profiles/<profileId>/pi/extensions/\`)
-- **Project** — applies to agents working in a specific repo (\`.pi/extensions/\` in the project root)
+- **Project** — applies to agents working in a specific repo (\`.forge/pi/extensions/\` for direct Pi extensions, with packages configured in \`.forge/pi/settings.json\`)
 
 Each discovered extension shows its source badge, file path, and a copy button for the path.
 

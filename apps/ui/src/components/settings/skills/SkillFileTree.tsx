@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight, Loader2, AlertTriangle, FolderOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from '@/components/file-browser/FileIcon'
-import { fetchSkillFiles } from './skills-viewer-api'
+import { fetchSkillFiles, type SkillWorkspaceRequestContext } from './skills-viewer-api'
 import type { SettingsApiClient } from '../settings-api-client'
 import type { SkillFileEntry } from './skills-viewer-types'
 
@@ -22,6 +22,7 @@ interface SkillFileTreeProps {
   skillId: string
   selectedFilePath: string | null
   onSelectFile: (path: string) => void
+  requestContext?: SkillWorkspaceRequestContext
 }
 
 /* ------------------------------------------------------------------ */
@@ -33,6 +34,7 @@ export function SkillFileTree({
   skillId,
   selectedFilePath,
   onSelectFile,
+  requestContext,
 }: SkillFileTreeProps) {
   const [rootEntries, setRootEntries] = useState<TreeNode[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -56,7 +58,7 @@ export function SkillFileTree({
     setExpandedDirs({})
     setLoadingDirs(new Set())
 
-    fetchSkillFiles(clientOrWsUrl, skillId)
+    fetchSkillFiles(clientOrWsUrl, skillId, '', requestContext)
       .then((result) => {
         if (cancelled) return
         const nodes = entriesToNodes(result.entries)
@@ -71,7 +73,7 @@ export function SkillFileTree({
       })
 
     return () => { cancelled = true }
-  }, [clientOrWsUrl, skillId])
+  }, [clientOrWsUrl, skillId, requestContext])
 
   const handleToggleDirectory = useCallback(
     async (dirPath: string) => {
@@ -89,7 +91,7 @@ export function SkillFileTree({
       const requestedSkillId = skillId
       setLoadingDirs((prev) => new Set(prev).add(dirPath))
       try {
-        const result = await fetchSkillFiles(clientOrWsUrl, requestedSkillId, dirPath)
+        const result = await fetchSkillFiles(clientOrWsUrl, requestedSkillId, dirPath, requestContext)
         if (currentSkillIdRef.current !== requestedSkillId) {
           return
         }
@@ -108,7 +110,7 @@ export function SkillFileTree({
         })
       }
     },
-    [clientOrWsUrl, skillId, expandedDirs],
+    [clientOrWsUrl, skillId, expandedDirs, requestContext],
   )
 
   const handleClick = useCallback(

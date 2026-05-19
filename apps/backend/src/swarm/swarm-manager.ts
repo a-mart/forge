@@ -144,6 +144,8 @@ import { SkillMetadataService, type SkillMetadata } from "./skill-metadata-servi
 import { resolveCollaborationSkillRoster } from "./skills/collaboration-skill-resolver.js";
 import { SwarmChoiceService } from "./swarm-choice-service.js";
 import { SwarmCortexService } from "./swarm-cortex-service.js";
+import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import { SwarmPromptService } from "./swarm-prompt-service.js";
 import { SwarmSettingsService } from "./swarm-settings-service.js";
 import {
@@ -193,6 +195,7 @@ import {
   normalizeSpecialistHandle as specialistNormalizeSpecialistHandle,
   resolveCollaborationChannelRoster as specialistResolveCollaborationChannelRoster,
   resolveRoster as specialistResolveRoster,
+  resolveWorkspaceRoster as specialistResolveWorkspaceRoster,
 } from "./specialists/specialist-registry.js";
 import {
   isNonRunningAgentStatus,
@@ -1084,6 +1087,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeRecoveryState = new RuntimeRecoveryState();
   private readonly modelChangeStartupRecoveryCoordinator: ModelChangeStartupRecoveryCoordinator;
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
+  private readonly pendingProjectExecutableTrustPromptsByKey = new Set<string>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
@@ -1735,6 +1739,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
+    this.scheduleProjectExecutableTrustPromptsForAllManagers();
     this.cortexService.scheduleReviewRunQueueCheck(0);
 
     this.workerHealthService.ensureStarted();
@@ -2103,6 +2108,207 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]> {
     return this.choiceService.requestUserChoice(agentId, questions);
+  }
+
+  private scheduleProjectExecutableTrustPromptsForAllManagers(): void {
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role === "manager") {
+        this.scheduleProjectExecutableTrustPrompt(descriptor as AgentDescriptor & { role: "manager" });
+      }
+    }
+  }
+
+  private scheduleProjectExecutableTrustPrompt(descriptor: AgentDescriptor & { role: "manager" }): void {
+    if (descriptor.collab) return;
+    void this.maybePromptForProjectExecutableTrust(descriptor).catch((error) => {
+      this.logDebug("project_resources:trust_prompt:error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }
+
+  private async maybePromptForProjectExecutableTrust(descriptor: AgentDescriptor & { role: "manager" }): Promise<void> {
+    const settingsStore = new ProjectResourceSettingsStore(this.config.paths.dataDir);
+    const resolution = await new ProjectWorkspaceResolver({
+      dataDir: this.config.paths.dataDir,
+      settingsStore
+    }).resolve({
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      sessionAgentId: descriptor.agentId,
+      cwd: descriptor.cwd
+    });
+    if (!resolution.trust.key || resolution.trust.state !== "untrusted") return;
+    if (!hasExistingExecutableSurface(resolution)) return;
+
+    const dismissed = await settingsStore.getDismissedExecutablePrompt(resolution.trust.key);
+    if (dismissed?.signature === resolution.signature) return;
+    if (this.pendingProjectExecutableTrustPromptsByKey.has(resolution.trust.key)) return;
+
+    this.pendingProjectExecutableTrustPromptsByKey.add(resolution.trust.key);
+    try {
+      const answers = await this.choiceService.requestUserChoice(descriptor.agentId, [
+        {
+          id: "repo_executable_trust",
+          header: "Repository executable resources",
+          question: `This repository has executable Forge/Pi resources under ${resolution.effectiveForgeDirRealpath}. Trust them for this repository?`,
+          options: [
+            { id: "trust", label: "Trust", description: "Enable repository .forge extensions and Pi package extensions." },
+            { id: "block", label: "Block", description: "Keep executable repository resources disabled. Skills and reference docs stay available." },
+            { id: "manage_later", label: "Manage later", description: "Keep disabled for now and ask again if executable resources change." }
+          ]
+        }
+      ]);
+      const selected = answers[0]?.selectedOptionIds[0];
+      const currentResolution = await new ProjectWorkspaceResolver({
+        dataDir: this.config.paths.dataDir,
+        settingsStore
+      }).resolve({
+        profileId: descriptor.profileId ?? descriptor.agentId,
+        sessionAgentId: descriptor.agentId,
+        cwd: descriptor.cwd
+      });
+      const currentDismissed = currentResolution.trust.key
+        ? await settingsStore.getDismissedExecutablePrompt(currentResolution.trust.key)
+        : undefined;
+      const promptStillCurrent =
+        this.pendingProjectExecutableTrustPromptsByKey.has(resolution.trust.key) &&
+        currentResolution.trust.key === resolution.trust.key &&
+        currentResolution.trust.state === "untrusted" &&
+        currentResolution.signature === resolution.signature &&
+        currentDismissed?.signature !== currentResolution.signature;
+      if (!promptStillCurrent) return;
+      if (selected === "trust" || selected === "block") {
+        await settingsStore.setTrust(resolution.trust.key, selected);
+        await this.applyProjectResourceTrustChange(resolution.trust.key);
+      } else if (selected === "manage_later") {
+        await settingsStore.dismissExecutablePrompt(resolution.trust.key, resolution.signature);
+      }
+    } finally {
+      this.pendingProjectExecutableTrustPromptsByKey.delete(resolution.trust.key);
+    }
+  }
+
+  async applyProjectResourceTrustChange(trustKey: string): Promise<void> {
+    this.pendingProjectExecutableTrustPromptsByKey.delete(trustKey);
+    await this.applyProjectResourceRuntimeBoundaryChange(async (resolution) => resolution.trust.key === trustKey);
+  }
+
+  async applyProjectResourceWorkspaceChange(workspaceKey: string): Promise<void> {
+    await this.applyProjectResourceRuntimeBoundaryChange(async (resolution) => resolution.workspaceKey === workspaceKey);
+  }
+
+  private async applyProjectResourceRuntimeBoundaryChange(
+    matches: (resolution: Awaited<ReturnType<ProjectWorkspaceResolver["resolve"]>>) => boolean | Promise<boolean>
+  ): Promise<void> {
+    const affectedSessions: Array<AgentDescriptor & { role: "manager" }> = [];
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role !== "manager" || descriptor.collab) continue;
+      const resolution = await new ProjectWorkspaceResolver({
+        dataDir: this.config.paths.dataDir,
+        settingsStore: new ProjectResourceSettingsStore(this.config.paths.dataDir)
+      }).resolve({
+        profileId: descriptor.profileId ?? descriptor.agentId,
+        sessionAgentId: descriptor.agentId,
+        cwd: descriptor.cwd
+      });
+      if (await matches(resolution)) {
+        affectedSessions.push(descriptor as AgentDescriptor & { role: "manager" });
+      }
+    }
+
+    const affectedSessionIds = new Set(affectedSessions.map((session) => session.agentId));
+    const affectedWorkers = Array.from(this.descriptors.values()).filter(
+      (descriptor) => descriptor.role === "worker" && affectedSessionIds.has(descriptor.managerId)
+    );
+
+    const workerResults = await Promise.allSettled(
+      affectedWorkers.map((worker) => this.terminateDescriptor(worker, { abort: true, emitStatus: true }))
+    );
+    const managerResults = await Promise.allSettled(
+      affectedSessions.map((session) => this.forceEvictManagerRuntimeForProjectTrustChange(session))
+    );
+    this.logProjectTrustPropagationFailures(affectedWorkers, workerResults, affectedSessions, managerResults);
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+  }
+
+  private async forceEvictManagerRuntimeForProjectTrustChange(
+    descriptor: AgentDescriptor & { role: "manager" }
+  ): Promise<void> {
+    // Trust flips are a security boundary: invalidate any current or in-flight manager runtime
+    // immediately, without projecting a terminal session state. A fresh runtime will be created
+    // on the next user message with the new trust policy.
+    this.runtimeRecoveryState.clearPendingManagerRuntimeRecycle(descriptor.agentId);
+    const inFlightCreation = this.runtimeCreationPromisesByAgentId.get(descriptor.agentId);
+    if (inFlightCreation) {
+      this.runtimeCreationPromisesByAgentId.delete(descriptor.agentId);
+      this.runtimeController.clearRuntimeToken(descriptor.agentId);
+      void inFlightCreation.catch(() => undefined);
+    }
+
+    const runtime = this.runtimes.get(descriptor.agentId);
+    const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId);
+    if (!runtime) {
+      this.runtimeController.clearRuntimeToken(descriptor.agentId);
+      if (descriptor.status === "streaming") {
+        descriptor.status = "idle";
+        descriptor.streamingStartedAt = undefined;
+        descriptor.updatedAt = this.now();
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+        this.emitStatus(descriptor.agentId, "idle", 0, descriptor.contextUsage);
+      }
+      return;
+    }
+
+    this.runtimeController.suppressIntentionalStopRuntimeCallbacks(descriptor.agentId, runtimeToken);
+    this.detachRuntime(descriptor.agentId, runtimeToken);
+    if (descriptor.status === "streaming") {
+      descriptor.status = "idle";
+      descriptor.streamingStartedAt = undefined;
+      descriptor.updatedAt = this.now();
+      this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+      this.emitStatus(descriptor.agentId, "idle", 0, descriptor.contextUsage);
+      this.emitConversationMessage({
+        type: "conversation_message",
+        agentId: descriptor.agentId,
+        role: "system",
+        text: "Repository executable trust changed. Manager runtime was restarted to apply the new trust policy.",
+        timestamp: this.now(),
+        source: "system",
+        sourceContext: { channel: "web" }
+      });
+    }
+
+    try {
+      await withBoundedTrustRuntimeTermination(
+        runtime.terminate({ abort: true, shutdownTimeoutMs: 2_000, drainTimeoutMs: 250 }),
+        2_250
+      );
+    } finally {
+      this.runtimeController.clearIntentionalStopRuntimeCallbackSuppression(descriptor.agentId, runtimeToken);
+    }
+  }
+
+  private logProjectTrustPropagationFailures(
+    workers: AgentDescriptor[],
+    workerResults: Array<PromiseSettledResult<unknown>>,
+    managers: Array<AgentDescriptor & { role: "manager" }>,
+    managerResults: Array<PromiseSettledResult<unknown>>
+  ): void {
+    const workerFailures = collectPropagationFailures(workers, workerResults);
+    const managerFailures = collectPropagationFailures(managers, managerResults);
+    if (workerFailures.length === 0 && managerFailures.length === 0) return;
+    this.logDebug("project_resources:trust_change:propagation_errors", {
+      workerFailures: workerFailures.map((entry) => ({
+        agentId: entry.agentId,
+        message: entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+      })),
+      managerFailures: managerFailures.map((entry) => ({
+        agentId: entry.agentId,
+        message: entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+      }))
+    });
   }
 
   resolveChoiceRequest(choiceId: string, answers: ChoiceAnswer[]): void {
@@ -3935,6 +4141,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sourceContext
     );
 
+    if (target.role === "manager") {
+      this.scheduleProjectExecutableTrustPrompt(target as AgentDescriptor & { role: "manager" });
+    }
+
     await this.dispatchRuntimeUserMessageInternal(
       target,
       trimmed,
@@ -4241,7 +4451,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async buildForgeExtensionSettingsSnapshot(options: { cwdValues: string[] }) {
-    return this.forgeExtensionHost.buildSettingsSnapshot(options);
+    return this.forgeExtensionHost.buildSettingsSnapshot({
+      ...options,
+      sessions: this.listAgents().filter((descriptor) => descriptor.role === "manager")
+    });
   }
 
   async dispatchForgeVersioningCommit(event: ForgeVersioningCommitEvent): Promise<void> {
@@ -4256,20 +4469,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.settingsService.listSettingsEnv();
   }
 
-  async listSkillMetadata(profileId?: string): Promise<SkillInventoryEntry[]> {
-    return this.settingsService.listSkillMetadata(profileId);
+  async listSkillMetadata(profileId?: string, sessionAgentId?: string): Promise<SkillInventoryEntry[]> {
+    return this.settingsService.listSkillMetadata(profileId, sessionAgentId);
   }
 
   getCollaborationGlobalSkillHandles(): Iterable<string> {
     return this.skillMetadataService.getSkillMetadata().map((skill) => skill.directoryName);
   }
 
-  async listSkillFiles(skillId: string, relativePath = ""): Promise<SkillFilesResponse> {
-    return this.settingsService.listSkillFiles(skillId, relativePath);
+  async listSkillFiles(
+    skillId: string,
+    relativePath = "",
+    context?: { profileId?: string; sessionAgentId?: string }
+  ): Promise<SkillFilesResponse> {
+    return this.settingsService.listSkillFiles(skillId, relativePath, context);
   }
 
-  async getSkillFileContent(skillId: string, relativePath: string): Promise<SkillFileContentResponse> {
-    return this.settingsService.getSkillFileContent(skillId, relativePath);
+  async getSkillFileContent(
+    skillId: string,
+    relativePath: string,
+    context?: { profileId?: string; sessionAgentId?: string }
+  ): Promise<SkillFileContentResponse> {
+    return this.settingsService.getSkillFileContent(skillId, relativePath, context);
   }
 
   async shareSkill(skillId: string): Promise<SkillShareResponse> {
@@ -5441,8 +5662,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async resolveSpecialistRosterForProfile(
     profileId: string,
-    targetSpace: SpecialistTargetSpace = "builder"
+    targetSpace: SpecialistTargetSpace = "builder",
+    workspaceSpecialistsDir?: string,
   ): Promise<ResolvedSpecialistDefinitionLike[]> {
+    if (workspaceSpecialistsDir && targetSpace !== "collaboration") {
+      return specialistResolveWorkspaceRoster(
+        profileId,
+        this.config.paths.dataDir,
+        workspaceSpecialistsDir,
+        targetSpace,
+      ) as Promise<ResolvedSpecialistDefinitionLike[]>;
+    }
+
     const specialistRegistry = await this.loadSpecialistRegistryModule();
     return specialistRegistry.resolveRoster(profileId, targetSpace);
   }
@@ -5452,7 +5683,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     targetSpace: SpecialistTargetSpace = "builder"
   ): Promise<ResolvedSpecialistDefinitionLike[]> {
     if (targetSpace !== "collaboration" || !isCollabSession(manager)) {
-      return this.resolveSpecialistRosterForProfile(manager.profileId ?? manager.agentId, targetSpace);
+      const workspace = await this.resolveProjectWorkspaceForManager(manager);
+      return this.resolveSpecialistRosterForProfile(
+        manager.profileId ?? manager.agentId,
+        targetSpace,
+        workspace?.repoRootResources.specialistsDir,
+      );
     }
 
     const channelId = manager.collab?.channelId;
@@ -5491,6 +5727,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         sessionAgentId: manager.agentId,
         selectedGlobalHandles: [],
       }) as Promise<ResolvedSpecialistDefinitionLike[]>;
+    }
+  }
+
+  private async resolveProjectWorkspaceForManager(manager: AgentDescriptor) {
+    const profileId = manager.profileId ?? manager.agentId;
+    try {
+      return await new ProjectWorkspaceResolver({
+        dataDir: this.config.paths.dataDir,
+        settingsStore: new ProjectResourceSettingsStore(this.config.paths.dataDir),
+      }).resolvePassive({
+        profileId,
+        sessionAgentId: manager.agentId,
+        cwd: manager.cwd,
+      });
+    } catch (error) {
+      this.logDebug("project_resources:resolve:error", {
+        agentId: manager.agentId,
+        profileId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
     }
   }
 
@@ -5544,7 +5801,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return null;
     }
 
-    return this.skillMetadataService.getProfileSkillMetadata(profileId);
+    const workspace = managerDescriptor?.role === "manager"
+      ? await this.resolveProjectWorkspaceForManager(managerDescriptor)
+      : undefined;
+    return this.skillMetadataService.getProfileSkillMetadataForWorkspace(
+      profileId,
+      workspace?.effectiveForgeDirRealpath,
+    );
   }
 
   async resolveProjectAgentSystemPromptOverride(
@@ -6404,6 +6667,43 @@ function selectedOpenAICodexTransport(): CodexTransportDebugAgentDiagnostics["se
 
 function hashDebugAgentId(agentId: string): string {
   return createHash("sha256").update(agentId).digest("hex").slice(0, 16);
+}
+
+async function withBoundedTrustRuntimeTermination(operation: Promise<void>, timeoutMs: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    void operation.catch(() => undefined);
+  }
+}
+
+function collectPropagationFailures(
+  descriptors: Array<{ agentId: string }>,
+  results: Array<PromiseSettledResult<unknown>>
+): Array<{ agentId: string | undefined; reason: unknown }> {
+  const failures: Array<{ agentId: string | undefined; reason: unknown }> = [];
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      failures.push({ agentId: descriptors[index]?.agentId, reason: result.reason });
+    }
+  });
+  return failures;
+}
+
+function hasExistingExecutableSurface(resolution: { repoRootResources: { forgeExtensionsDir?: string; piExtensionsDir?: string; piSettingsPath?: string }; legacyExecutableSurfaces: Array<{ path: string; activeToday?: boolean }> }): boolean {
+  return [
+    resolution.repoRootResources.forgeExtensionsDir,
+    resolution.repoRootResources.piExtensionsDir,
+    resolution.repoRootResources.piSettingsPath,
+    ...resolution.legacyExecutableSurfaces.filter((surface) => surface.activeToday).map((surface) => surface.path)
+  ].some((pathValue) => Boolean(pathValue && existsSync(pathValue)));
 }
 
 function isSessionRenameHistoryEntry(value: unknown): value is SessionRenameHistoryEntry {

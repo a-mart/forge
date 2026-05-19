@@ -46,12 +46,13 @@ Forge discovers extensions from these directories:
 |---|---|
 | Global | `${FORGE_DATA_DIR}/extensions/` |
 | Profile | `${FORGE_DATA_DIR}/profiles/<profileId>/extensions/` |
-| Project-local | `<cwd>/.forge/extensions/` |
+| Project-local | `<repo>/.forge/extensions/` |
 
 Notes:
 - Forge auto-creates the global and profile directories.
 - Forge does **not** auto-create project-local directories.
-- Project-local resolution uses the session or agent **exact cwd**. Forge does **not** walk ancestor directories.
+- Project-local resolution uses the nearest Git root for the session working directory. If no Git root is found, project-local `.forge` resources are not ancestor-walked.
+- Project-local executable extensions are loaded only after the resolved repository `.forge` directory is trusted. See [Project Resources](PROJECT_RESOURCES.md) for trust, block, manage-later, and override behavior.
 - Resolution order is **global → profile → project-local**.
 - Within each scope, execution order is normalized path sort.
 - All matching extensions run. There is **no name-based shadowing**.
@@ -61,6 +62,8 @@ Supported entrypoints:
 - `my-ext.js`
 - `my-ext/index.ts`
 - `my-ext/index.js`
+
+Legacy exact-CWD `<cwd>/.forge/extensions/` surfaces are compatibility-only. Repo-root `.forge` trust does not cover a separate nested exact-CWD path; the legacy path is active only if it is inside or identical to the selected trusted `.forge` directory. New projects should use the repo-root `.forge/extensions/` location.
 
 ## Module contract
 

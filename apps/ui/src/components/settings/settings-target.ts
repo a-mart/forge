@@ -23,6 +23,7 @@ export type SettingsTab =
   | 'skills'
   | 'prompts'
   | 'specialists'
+  | 'project-resources'
   | 'slash-commands'
   | 'extensions'
   | 'cli-access'
@@ -53,6 +54,7 @@ const BUILDER_TABS: SettingsTab[] = [
   'skills',
   'prompts',
   'specialists',
+  'project-resources',
   'slash-commands',
   'extensions',
   'cli-access',

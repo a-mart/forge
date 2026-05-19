@@ -48,14 +48,16 @@ Pi automatically discovers extensions and skills from well-known directories. Fo
 | `~/.forge/agent/manager/extensions/` | Global | All managers |
 | `~/.forge/agent/skills/` | Global | All workers |
 | `~/.forge/agent/manager/skills/` | Global | All managers |
-| `<cwd>/.pi/extensions/` | Project-local | Agents with that CWD |
-| `<cwd>/.pi/skills/` | Project-local | Agents with that CWD |
+| `<repo>/.forge/pi/extensions/` | Project-local, trust-gated | Agents in that repository workspace |
+| `<repo>/.forge/skills/` | Project-local | Agents in that repository workspace |
 | `~/.forge/profiles/<id>/pi/extensions/` | Profile | Agents in that profile |
 | `~/.forge/profiles/<id>/pi/skills/` | Profile | Agents in that profile |
 | `~/.forge/profiles/<id>/pi/prompts/` | Profile | Agents in that profile |
 | `~/.forge/profiles/<id>/pi/themes/` | Profile | Agents in that profile |
 
-All global directories (`~/.forge/agent/extensions/`, `~/.forge/agent/manager/extensions/`, etc.) are **auto-created on startup**, so you can start dropping files in immediately.
+All global directories (`~/.forge/agent/extensions/`, `~/.forge/agent/manager/extensions/`, etc.) are **auto-created on startup**, so you can start dropping files in immediately. Project-local directories are not auto-created.
+
+Project-local executable Pi resources under `.forge/pi/` are loaded only after the repository `.forge` directory is trusted. Forge injects a project-scope disable-all extension baseline before trusted repo settings so legacy `<cwd>/.pi/extensions` is not auto-loaded unless an explicitly trusted repo setting adds executable paths. See [Project Resources](PROJECT_RESOURCES.md) for the repo-root layout, trust prompt, block/manage-later behavior, and override rule.
 
 ### Profile Overlay Directories
 
@@ -78,7 +80,7 @@ Profile overlay directories are auto-created when a profile is created. Use them
 - Directory with index: `extensions/my-ext/index.ts`
 - Directory with package.json: `extensions/my-ext/package.json` (with `pi.extensions` manifest)
 
-Discovery is shallow — top-level files and one-level subdirectories only.
+Discovery is shallow — top-level files and one-level subdirectories only. Package manifest entries can point at files, directories, or glob matches; directory entries support package manifests and `index.ts` / `index.js` entrypoints.
 
 ## Writing an Extension
 
@@ -197,7 +199,7 @@ Create or edit `settings.json` at the appropriate scope:
 
 - **Workers (global):** `~/.forge/agent/settings.json`
 - **Managers (global):** `~/.forge/agent/manager/settings.json`
-- **Project-local:** `<cwd>/.pi/settings.json`
+- **Project-local:** `<repo>/.forge/pi/settings.json` (trust-gated)
 
 Example `settings.json`:
 
@@ -275,7 +277,7 @@ If the same package appears in both global and project settings, the **project v
 
 ## Skills via Pi Discovery
 
-Pi discovers skills from `agentDir/skills/` and `<cwd>/.pi/skills/` directories, as well as from packages. These are separate from Forge's built-in skill system (`~/.forge/skills/`).
+Pi discovers skills from `agentDir/skills/` and project resources can provide Forge project skills under `<repo>/.forge/skills/`, as well as skills from packages. These are separate from Forge's global skill system (`~/.forge/skills/`).
 
 Both Pi-discovered skills and Forge skills end up in the agent's context. Pi deduplicates skills by path, so the same skill at different absolute paths could appear twice. Avoid placing identical skills in both `~/.forge/skills/` and `~/.forge/agent/skills/`.
 

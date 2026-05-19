@@ -652,7 +652,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isValidSkillSourceKind(value: unknown): value is SkillSourceKind {
-  return value === "builtin" || value === "repo" || value === "machine-local" || value === "profile";
+  return value === "builtin" || value === "repo" || value === "machine-local" || value === "profile" || value === "workspace";
 }
 
 function isValidScriptKind(value: unknown): value is SkillBundleScriptKind {

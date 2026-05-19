@@ -51,6 +51,30 @@ export function getProjectLocalForgeExtensionsDir(cwd: string): string {
   return join(cwd, ".forge", "extensions");
 }
 
+export function getProjectForgeSkillsDir(forgeDir: string): string {
+  return join(forgeDir, "skills");
+}
+
+export function getProjectForgeSpecialistsDir(forgeDir: string): string {
+  return join(forgeDir, "specialists");
+}
+
+export function getProjectForgeReferenceDir(forgeDir: string): string {
+  return join(forgeDir, "reference");
+}
+
+export function getProjectForgeExtensionsDir(forgeDir: string): string {
+  return join(forgeDir, "extensions");
+}
+
+export function getProjectForgePiExtensionsDir(forgeDir: string): string {
+  return join(forgeDir, "pi", "extensions");
+}
+
+export function getProjectForgePiSettingsPath(forgeDir: string): string {
+  return join(forgeDir, "pi", "settings.json");
+}
+
 export function getProfilePiDir(dataDir: string, profileId: string): string {
   return join(getProfileDir(dataDir, profileId), "pi");
 }
@@ -307,6 +331,10 @@ export function getCollaborationAuthSecretPath(dataDir: string): string {
 
 export function getSharedSecretsFilePath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "secrets.json");
+}
+
+export function getProjectResourceSettingsPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "project-resources.json");
 }
 
 export function getCortexAutoReviewSettingsPath(dataDir: string): string {

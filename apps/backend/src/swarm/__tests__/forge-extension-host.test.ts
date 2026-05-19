@@ -1,10 +1,15 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
+import { ProjectResourceSettingsStore } from "../project-resource-settings.js";
+import { createWorkspaceKey } from "../project-workspace-resolver.js";
 import type { AgentDescriptor } from "../types.js";
 
+const execFileAsync = promisify(execFile);
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -12,6 +17,78 @@ afterEach(async () => {
 });
 
 describe("ForgeExtensionHost", () => {
+  it("does not load untrusted repo-root Forge extensions", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-repo-"));
+    tempDirs.push(rootDir);
+    await execFileAsync("git", ["init"], { cwd: rootDir });
+    const dataDir = join(rootDir, "data");
+    const repoExtensionDir = join(rootDir, ".forge", "extensions");
+    await mkdir(repoExtensionDir, { recursive: true });
+    await writeFile(join(repoExtensionDir, "repo.ts"), `export default (forge) => forge.on("tool:before", () => undefined)`, "utf8");
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createManagerDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 1
+    });
+
+    expect(bindings).toBeNull();
+  });
+
+  it("loads trusted repo-root Forge extensions", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-repo-"));
+    tempDirs.push(rootDir);
+    await execFileAsync("git", ["init"], { cwd: rootDir });
+    const dataDir = join(rootDir, "data");
+    const repoForgeDir = join(rootDir, ".forge");
+    const repoExtensionDir = join(repoForgeDir, "extensions");
+    await mkdir(repoExtensionDir, { recursive: true });
+    await writeFile(join(repoExtensionDir, "repo.ts"), `export default (forge) => forge.on("tool:before", () => undefined)`, "utf8");
+    await mkdir(join(dataDir, "shared", "config"), { recursive: true });
+    await writeFile(
+      join(dataDir, "shared", "config", "project-resources.json"),
+      JSON.stringify({ version: 1, overrides: {}, executableTrust: { [await realpath(repoForgeDir)]: { state: "trusted", updatedAt: "now", label: "forge" } }, dismissedExecutablePrompts: {} }),
+      "utf8"
+    );
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createManagerDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 1
+    });
+
+    expect(bindings?.snapshot.extensions).toEqual([
+      expect.objectContaining({ path: await realpath(join(repoExtensionDir, "repo.ts")), scope: "project-local" })
+    ]);
+  });
+
+  it("settings discovery resolves per-profile .forge overrides", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-override-"));
+    tempDirs.push(rootDir);
+    await execFileAsync("git", ["init"], { cwd: rootDir });
+    const dataDir = join(rootDir, "data");
+    const overrideForgeDir = join(rootDir, "custom", ".forge");
+    const overrideExtensionsDir = join(overrideForgeDir, "extensions");
+    await mkdir(overrideExtensionsDir, { recursive: true });
+    await writeFile(join(overrideExtensionsDir, "override.ts"), `export default (forge) => forge.on("tool:before", () => undefined)`, "utf8");
+
+    const store = new ProjectResourceSettingsStore(dataDir);
+    await store.setOverride(createWorkspaceKey("profile-1", await realpath(rootDir)), overrideForgeDir);
+    await store.setTrust(await realpath(overrideForgeDir), "trust");
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const snapshot = await host.buildSettingsSnapshot({
+      cwdValues: [],
+      sessions: [createManagerDescriptor(rootDir)]
+    });
+
+    expect(snapshot.discovered).toEqual([
+      expect.objectContaining({ path: await realpath(join(overrideExtensionsDir, "override.ts")), scope: "project-local" })
+    ]);
+  });
+
   it("builds runtime binding snapshots with metadata and registered hooks", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
     tempDirs.push(rootDir);

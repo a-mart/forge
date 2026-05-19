@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ResolvedSpecialistDefinition } from '@forge/protocol'
+import type { SettingsSessionContext } from '../../session-context'
 import type { SettingsApiClient } from '../../settings-api-client'
 import {
   fetchSpecialists,
@@ -21,6 +22,7 @@ export function useSpecialistsData(
   isGlobal: boolean,
   specialistChangeKey: number,
   channelId?: string,
+  previewSession?: SettingsSessionContext | null,
 ) {
   const [specialists, setSpecialists] = useState<ResolvedSpecialistDefinition[]>([])
   const [loading, setLoading] = useState(false)
@@ -67,7 +69,8 @@ export function useSpecialistsData(
       } else if (isGlobal) {
         data = await fetchSharedSpecialists(clientOrWsUrl)
       } else {
-        data = await fetchSpecialists(clientOrWsUrl, selectedScope)
+        const sessionAgentId = previewSession?.profileId === selectedScope ? previewSession.agentId : undefined
+        data = await fetchSpecialists(clientOrWsUrl, selectedScope, sessionAgentId)
       }
 
       if (requestId === loadRequestIdRef.current) {
@@ -85,7 +88,7 @@ export function useSpecialistsData(
         setLoading(false)
       }
     }
-  }, [clientOrWsUrl, selectedScope, isGlobal, channelId])
+  }, [clientOrWsUrl, selectedScope, isGlobal, channelId, previewSession])
 
   useEffect(() => {
     void loadSpecialists()

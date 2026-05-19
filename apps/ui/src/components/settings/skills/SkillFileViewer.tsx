@@ -32,7 +32,7 @@ import {
   EDITOR_LABELS,
 } from '@/lib/editor-preference'
 import { toEditorHref } from '@/lib/artifacts'
-import { fetchSkillFileContent } from './skills-viewer-api'
+import { fetchSkillFileContent, type SkillWorkspaceRequestContext } from './skills-viewer-api'
 import type { SettingsApiClient } from '../settings-api-client'
 import type { SkillFileContentResponse } from './skills-viewer-types'
 import '@/styles/syntax-highlight.css'
@@ -70,6 +70,7 @@ interface SkillFileViewerProps {
   filePath: string | null
   /** Root path of the skill for constructing absolute paths */
   rootPath: string
+  requestContext?: SkillWorkspaceRequestContext
   onNavigateToDirectory?: (dirPath: string) => void
 }
 
@@ -82,6 +83,7 @@ export function SkillFileViewer({
   skillId,
   filePath,
   rootPath,
+  requestContext,
   onNavigateToDirectory,
 }: SkillFileViewerProps) {
   const [content, setContent] = useState<SkillFileContentResponse | null>(null)
@@ -104,7 +106,7 @@ export function SkillFileViewer({
     setIsLoading(true)
     setError(null)
 
-    fetchSkillFileContent(clientOrWsUrl, skillId, filePath)
+    fetchSkillFileContent(clientOrWsUrl, skillId, filePath, requestContext)
       .then((result) => {
         if (!cancelled) setContent(result)
       })
@@ -116,7 +118,7 @@ export function SkillFileViewer({
       })
 
     return () => { cancelled = true }
-  }, [clientOrWsUrl, skillId, filePath])
+  }, [clientOrWsUrl, skillId, filePath, requestContext])
 
   const isMarkdown = useMemo(
     () => (filePath ? isMarkdownFile(filePath) : false),

@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SkillSourceKind } from "@forge/protocol";
-import { getProfilePiSkillsDir } from "../data-paths.js";
+import { getProfilePiSkillsDir, getProjectForgeSkillsDir } from "../data-paths.js";
 import { parseSkillFrontmatter, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import type { SwarmConfig } from "../types.js";
 
@@ -39,6 +39,8 @@ export interface SkillMetadata {
   profileId?: string;
   isInherited: boolean;
   isEffective: boolean;
+  forgePrecedence?: "override";
+  conflictWarning?: string;
 }
 
 interface SkillMetadataServiceDependencies {
@@ -73,22 +75,60 @@ export class SkillMetadataService {
   }
 
   async getProfileSkillMetadata(profileId: string): Promise<SkillMetadata[]> {
+    return this.getProfileSkillMetadataForWorkspace(profileId);
+  }
+
+  async getProfileSkillMetadataForWorkspace(profileId: string, forgeDir?: string): Promise<SkillMetadata[]> {
     await this.ensureSkillMetadataLoaded();
 
     const profileCandidates = await this.scanProfileSkillPathCandidates(profileId);
     const profileMetadata = await this.loadEffectiveMetadata(profileCandidates, profileId);
+    const workspaceCandidates = forgeDir ? await this.scanWorkspaceSkillPathCandidates(forgeDir) : [];
+    const workspaceMetadata = await this.loadEffectiveMetadata(workspaceCandidates, profileId);
     const shadowedHandles = new Set(profileMetadata.map((metadata) => normalizeSkillName(metadata.directoryName)));
+    const inheritedByHandle = new Map(
+      this.skillMetadata.map((metadata) => [normalizeSkillName(metadata.directoryName), metadata])
+    );
+
+    const effectiveWorkspaceMetadata: SkillMetadata[] = [];
+    for (const metadata of workspaceMetadata) {
+      const handle = normalizeSkillName(metadata.directoryName);
+      if (shadowedHandles.has(handle)) {
+        continue;
+      }
+      const inherited = inheritedByHandle.get(handle);
+      if (!inherited) {
+        effectiveWorkspaceMetadata.push(metadata);
+        shadowedHandles.add(handle);
+        continue;
+      }
+      if (inherited.sourceKind === "builtin" || isRequiredSkillDirectoryName(inherited.directoryName)) {
+        continue;
+      }
+      if (metadata.forgePrecedence === "override") {
+        effectiveWorkspaceMetadata.push({
+          ...metadata,
+          conflictWarning: `Repository skill overrides inherited ${inherited.sourceKind} skill.`
+        });
+        shadowedHandles.add(handle);
+      }
+    }
+
     const inheritedMetadata = this.skillMetadata
       .filter((metadata) => !shadowedHandles.has(normalizeSkillName(metadata.directoryName)))
       .map((metadata) => cloneSkillMetadata({ ...metadata, isInherited: true }));
 
     return [
       ...profileMetadata.map((metadata) => cloneSkillMetadata(metadata)),
+      ...effectiveWorkspaceMetadata.map((metadata) => cloneSkillMetadata(metadata)),
       ...inheritedMetadata
     ];
   }
 
-  async resolveSkillById(skillId: string): Promise<SkillMetadata | null> {
+  async resolveSkillById(
+    skillId: string,
+    context?: { profileId?: string; forgeDir?: string }
+  ): Promise<SkillMetadata | null> {
     const decoded = decodeSkillId(skillId);
     if (!decoded) {
       return null;
@@ -101,6 +141,16 @@ export class SkillMetadataService {
 
       const profileMetadata = await this.getProfileSkillMetadata(decoded.profileId);
       return profileMetadata.find((metadata) => metadata.skillId === skillId) ?? null;
+    }
+
+    if (decoded.sourceKind === "workspace") {
+      if (!context?.forgeDir) {
+        return null;
+      }
+      const metadata = context.profileId
+        ? await this.getProfileSkillMetadataForWorkspace(context.profileId, context.forgeDir)
+        : await this.loadEffectiveMetadata(await this.scanWorkspaceSkillPathCandidates(context.forgeDir), undefined);
+      return metadata.find((entry) => entry.skillId === skillId) ?? null;
     }
 
     await this.ensureSkillMetadataLoaded();
@@ -139,6 +189,10 @@ export class SkillMetadataService {
   private async scanProfileSkillPathCandidates(profileId: string): Promise<SkillPathCandidate[]> {
     const profileSkillsDir = getProfilePiSkillsDir(this.deps.config.paths.dataDir, profileId);
     return this.scanSkillFilesInDirectory(profileSkillsDir, "profile", profileId);
+  }
+
+  private async scanWorkspaceSkillPathCandidates(forgeDir: string): Promise<SkillPathCandidate[]> {
+    return this.scanSkillFilesInDirectory(getProjectForgeSkillsDir(forgeDir), "workspace");
   }
 
   private async scanSkillFilesInDirectory(
@@ -266,6 +320,7 @@ export class SkillMetadataService {
       rootPath: candidate.rootPath,
       env: parsed.env.map((declaration) => ({ ...declaration })),
       sourceKind: candidate.sourceKind,
+      ...(parsed.forgePrecedence ? { forgePrecedence: parsed.forgePrecedence } : {}),
       ...(candidate.profileId ? { profileId: candidate.profileId } : {}),
       isInherited: typeof profileId === "string" && candidate.sourceKind !== "profile",
       isEffective: true
@@ -308,7 +363,9 @@ function cloneSkillMetadata(metadata: SkillMetadata): SkillMetadata {
     sourceKind: metadata.sourceKind,
     ...(metadata.profileId ? { profileId: metadata.profileId } : {}),
     isInherited: metadata.isInherited,
-    isEffective: metadata.isEffective
+    isEffective: metadata.isEffective,
+    ...(metadata.forgePrecedence ? { forgePrecedence: metadata.forgePrecedence } : {}),
+    ...(metadata.conflictWarning ? { conflictWarning: metadata.conflictWarning } : {})
   };
 }
 
@@ -337,7 +394,8 @@ function decodeSkillId(skillId: string): DecodedSkillId | null {
       parsed.sourceKind !== "builtin" &&
       parsed.sourceKind !== "repo" &&
       parsed.sourceKind !== "machine-local" &&
-      parsed.sourceKind !== "profile"
+      parsed.sourceKind !== "profile" &&
+      parsed.sourceKind !== "workspace"
     ) {
       return null;
     }
