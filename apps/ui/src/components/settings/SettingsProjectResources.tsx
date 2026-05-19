@@ -1,0 +1,173 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { AgentDescriptor, ProjectResourcesSnapshotResponse } from '@forge/protocol'
+import { AlertTriangle, CheckCircle2, RefreshCw, ShieldAlert } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
+import type { SettingsApiClient } from './settings-api-client'
+import { fetchProjectResourcesSnapshot, updateProjectResourcesOverride, updateProjectResourcesTrust } from './project-resources-api'
+
+interface SettingsProjectResourcesProps {
+  managers: AgentDescriptor[]
+  previewSession?: { agentId: string; profileId: string } | null
+  apiClient: SettingsApiClient
+}
+
+export function SettingsProjectResources({ managers, previewSession, apiClient }: SettingsProjectResourcesProps) {
+  const context = useMemo(() => {
+    if (previewSession) return { profileId: previewSession.profileId, sessionAgentId: previewSession.agentId }
+    const manager = managers.find((entry) => entry.role === 'manager')
+    return manager ? { profileId: manager.profileId ?? manager.agentId, sessionAgentId: manager.agentId } : null
+  }, [managers, previewSession])
+  const [snapshot, setSnapshot] = useState<ProjectResourcesSnapshotResponse | null>(null)
+  const [overridePath, setOverridePath] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    if (!context) return
+    setLoading(true)
+    setError(null)
+    try {
+      const next = await fetchProjectResourcesSnapshot(apiClient, context)
+      setSnapshot(next)
+      setOverridePath(next.override?.path ?? next.effectiveForgeDir ?? '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load repository resources')
+    } finally {
+      setLoading(false)
+    }
+  }, [apiClient, context])
+
+  useEffect(() => { void load() }, [load])
+
+  const mutateTrust = async (action: 'trust' | 'block' | 'reset') => {
+    if (!context) return
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await updateProjectResourcesTrust(apiClient, { ...context, action })
+      setSnapshot(result.snapshot)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update trust')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveOverride = async (forgeDir: string | null) => {
+    if (!context) return
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await updateProjectResourcesOverride(apiClient, { ...context, forgeDir })
+      setSnapshot(result.snapshot)
+      setOverridePath(result.snapshot.override?.path ?? result.snapshot.effectiveForgeDir ?? '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update override')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!context) {
+    return <Card><CardHeader><CardTitle>Repository resources</CardTitle><CardDescription>No manager session is available.</CardDescription></CardHeader></Card>
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">Repository resources</h2>
+        <p className="text-sm text-muted-foreground">Discover repo-root <code>.forge</code> resources for this session. Executable resources remain inactive until trusted.</p>
+      </div>
+      {error && <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2">Workspace {snapshot && <TrustBadge state={snapshot.trust.state} />}</CardTitle>
+            <CardDescription>{snapshot?.cwdRealpath ?? 'Loading workspace context...'}</CardDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
+        </CardHeader>
+        {snapshot && (
+          <CardContent className="space-y-3 text-sm">
+            <KeyValue label="Detected Git root" value={snapshot.detectedGitRoot ?? 'None'} />
+            <KeyValue label="Effective .forge" value={snapshot.effectiveForgeDirRealpath ?? 'None'} />
+            <KeyValue label="Source" value={snapshot.source} />
+            <KeyValue label="Signature" value={snapshot.signature.slice(0, 12)} />
+            {snapshot.override && !snapshot.override.valid && (
+              <div className="flex items-center gap-2 text-amber-600"><AlertTriangle className="h-4 w-4" />Override invalid: {snapshot.override.error}</div>
+            )}
+            <Separator />
+            <div className="space-y-2">
+              <div className="font-medium">Override .forge directory</div>
+              <div className="flex gap-2">
+                <Input value={overridePath} onChange={(event) => setOverridePath(event.target.value)} placeholder="/path/to/.forge" />
+                <Button variant="outline" onClick={() => void saveOverride(overridePath.trim())} disabled={loading || !overridePath.trim()}>Save</Button>
+                <Button variant="ghost" onClick={() => void saveOverride(null)} disabled={loading}>Clear</Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Overrides are scoped to this profile and workspace. The selected directory must be named <code>.forge</code>.</p>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+      {snapshot && (
+        <>
+          <Card>
+            <CardHeader><CardTitle>Inventory</CardTitle><CardDescription>Passive resources are visible even when executables are blocked.</CardDescription></CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <InventoryTile title="Repository skills" section={snapshot.resources.skills} />
+              <InventoryTile title="Specialists" section={snapshot.resources.specialists} />
+              <InventoryTile title="Reference docs" section={snapshot.resources.reference} />
+              <InventoryTile title="Forge extensions" section={snapshot.resources.forgeExtensions} executable />
+              <InventoryTile title="Pi extensions" section={snapshot.resources.piExtensions} executable />
+              <InventoryTile title="Pi settings" section={snapshot.resources.piSettings} executable />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle>Executable trust</CardTitle><CardDescription>Trust is path-only and applies to the selected repo-root .forge directory. Legacy exact-CWD surfaces are not covered yet.</CardDescription></CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => void mutateTrust('trust')} disabled={loading || !snapshot.trust.key}>Trust</Button>
+                <Button size="sm" variant="outline" onClick={() => void mutateTrust('block')} disabled={loading || !snapshot.trust.key}>Block</Button>
+                <Button size="sm" variant="ghost" onClick={() => void mutateTrust('reset')} disabled={loading || !snapshot.trust.key}>Reset</Button>
+              </div>
+              <div className="space-y-2 text-sm">
+                {snapshot.executableSurfaces.map((surface) => (
+                  <div key={`${surface.kind}:${surface.path}`} className="rounded-md border p-2">
+                    <div className="flex items-center justify-between gap-2"><span className="font-medium">{surface.kind}</span><Badge variant={surface.exists ? 'default' : 'secondary'}>{surface.exists ? 'found' : 'missing'}</Badge></div>
+                    <div className="mt-1 break-all text-xs text-muted-foreground">{surface.path}</div>
+                    {surface.compatibilityPolicy && <div className="mt-1 text-xs text-amber-600">Compatibility surface, not covered by repo-root trust yet.</div>}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  )
+}
+
+function TrustBadge({ state }: { state: ProjectResourcesSnapshotResponse['trust']['state'] }) {
+  if (state === 'trusted') return <Badge className="gap-1"><CheckCircle2 className="h-3 w-3" />Trusted</Badge>
+  if (state === 'blocked') return <Badge variant="destructive" className="gap-1"><ShieldAlert className="h-3 w-3" />Blocked</Badge>
+  return <Badge variant="secondary">{state === 'not_applicable' ? 'No .forge' : 'Untrusted'}</Badge>
+}
+
+function KeyValue({ label, value }: { label: string; value: string }) {
+  return <div><span className="text-muted-foreground">{label}: </span><span className="break-all font-mono text-xs">{value}</span></div>
+}
+
+function InventoryTile({ title, section, executable }: { title: string; section: ProjectResourcesSnapshotResponse['resources']['skills']; executable?: boolean }) {
+  return (
+    <div className="rounded-md border p-3">
+      <div className="flex items-center justify-between gap-2"><div className="font-medium">{title}</div>{executable && <Badge variant="outline">executable</Badge>}</div>
+      <div className="mt-1 text-2xl font-semibold">{section.count}</div>
+      <div className="mt-1 truncate text-xs text-muted-foreground">{section.path ?? 'No path'}</div>
+      {section.items.length > 0 && <div className="mt-2 text-xs text-muted-foreground">{section.items.slice(0, 3).map((item) => item.path).join(', ')}{section.count > 3 ? '…' : ''}</div>}
+    </div>
+  )
+}
