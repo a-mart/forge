@@ -262,7 +262,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
         globalWorker: join(config.paths.agentDir, 'extensions'),
         globalManager: join(config.paths.managerAgentDir, 'extensions'),
         profileTemplate: join(config.paths.dataDir, 'profiles', '<profileId>', 'pi', 'extensions'),
-        projectLocalRelative: '.pi/extensions',
+        projectLocalRelative: '.forge/pi/extensions',
       })
 
       expect(payload.json.forge).toMatchObject({

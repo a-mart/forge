@@ -103,6 +103,24 @@ describe("project executable trust helpers", () => {
     });
   });
 
+  it("preserves trusted repo exact-file extension entries while disabling legacy cwd auto-discovery", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-runtime-exact-"));
+    tempDirs.push(root);
+    const settingsPath = join(root, ".forge", "pi", "settings.json");
+    await mkdir(join(root, ".forge", "pi", "extensions"), { recursive: true });
+    await mkdir(join(root, ".pi", "extensions"), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify({ extensions: ["./extensions/exact.ts"] }), "utf8");
+    await writeFile(join(root, ".forge", "pi", "extensions", "exact.ts"), "export default () => {}\n", "utf8");
+    await writeFile(join(root, ".forge", "pi", "extensions", "ignored.ts"), "export default () => {}\n", "utf8");
+    await writeFile(join(root, ".pi", "extensions", "legacy.ts"), "export default () => {}\n", "utf8");
+
+    const loadedPaths = await loadTrustedProjectExtensionPaths(root, settingsPath);
+
+    expect(loadedPaths).toContain(join(root, ".forge", "pi", "extensions", "exact.ts"));
+    expect(loadedPaths).not.toContain(join(root, ".forge", "pi", "extensions", "ignored.ts"));
+    expect(loadedPaths).not.toContain(join(root, ".pi", "extensions", "legacy.ts"));
+  });
+
   it("preserves trusted repo directory extension entries while disabling legacy cwd auto-discovery", async () => {
     const root = await mkdtemp(join(tmpdir(), "forge-pi-runtime-dir-"));
     tempDirs.push(root);

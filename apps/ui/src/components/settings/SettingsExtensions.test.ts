@@ -77,7 +77,7 @@ describe('SettingsExtensions', () => {
         globalWorker: '/tmp/pi/worker',
         globalManager: '/tmp/pi/manager',
         profileTemplate: '/tmp/data/profiles/<profileId>/pi/extensions',
-        projectLocalRelative: '.pi/extensions',
+        projectLocalRelative: '.forge/pi/extensions',
       },
       forge: {
         discovered: [],
@@ -110,7 +110,7 @@ describe('SettingsExtensions', () => {
     expect(getByText(container, 'No Forge extensions found on disk')).toBeTruthy()
     expect(getByText(container, 'No Pi extensions found on disk')).toBeTruthy()
     expect(getAllByText(container, '.forge/extensions').length).toBeGreaterThan(0)
-    expect(getAllByText(container, '.pi/extensions').length).toBeGreaterThan(0)
+    expect(getAllByText(container, '.forge/pi/extensions').length).toBeGreaterThan(0)
     expect(getByText(container, 'No active Forge runtime bindings yet.')).toBeTruthy()
     expect(getByText(container, 'No recent Forge extension errors.')).toBeTruthy()
   })
@@ -149,7 +149,7 @@ describe('SettingsExtensions', () => {
         globalWorker: '/tmp/pi/worker',
         globalManager: '/tmp/pi/manager',
         profileTemplate: '/tmp/data/profiles/<profileId>/pi/extensions',
-        projectLocalRelative: '.pi/extensions',
+        projectLocalRelative: '.forge/pi/extensions',
       },
       forge: {
         discovered: [

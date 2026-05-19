@@ -63,7 +63,7 @@ export function createExtensionRoutes(options: { swarmManager: SwarmManager }): 
             globalWorker: join(config.paths.agentDir, "extensions"),
             globalManager: join(config.paths.managerAgentDir, "extensions"),
             profileTemplate: join(getProfilesDir(config.paths.dataDir), "<profileId>", "pi", "extensions"),
-            projectLocalRelative: ".pi/extensions"
+            projectLocalRelative: ".forge/pi/extensions"
           },
           forge: await swarmManager.buildForgeExtensionSettingsSnapshot({ cwdValues })
         };
