@@ -149,7 +149,7 @@ export class ProjectWorkspaceResolver {
     const detectedGitRootRealpath = passive.detectedGitRoot;
     const effectiveForgeDirRealpath = passive.effectiveForgeDirRealpath;
     const repoRootResources = passive.repoRootResources;
-    const legacyExecutableSurfaces = buildLegacyExecutableSurfaces(cwdRealpath);
+    const legacyExecutableSurfaces = buildLegacyExecutableSurfaces(cwdRealpath, passive.trust.state === "trusted");
     const signature = await buildResolutionSignature({
       cwdRealpath,
       detectedGitRoot: detectedGitRootRealpath,
@@ -202,24 +202,24 @@ async function validateOverride(pathValue: string): Promise<{ path: string; vali
   }
 }
 
-function buildLegacyExecutableSurfaces(cwdRealpath: string): LegacyExecutableSurface[] {
+function buildLegacyExecutableSurfaces(cwdRealpath: string, activeToday: boolean): LegacyExecutableSurface[] {
   return [
     {
       kind: "exact-cwd-forge-extension",
       path: join(cwdRealpath, ".forge", "extensions"),
-      activeToday: true,
+      activeToday,
       compatibilityPolicy: "preserve-with-warning"
     },
     {
       kind: "exact-cwd-pi-extension",
       path: join(cwdRealpath, ".pi", "extensions"),
-      activeToday: true,
+      activeToday,
       compatibilityPolicy: "preserve-with-warning"
     },
     {
       kind: "exact-cwd-pi-settings",
       path: join(cwdRealpath, ".pi", "settings.json"),
-      activeToday: true,
+      activeToday,
       compatibilityPolicy: "preserve-with-warning"
     }
   ];

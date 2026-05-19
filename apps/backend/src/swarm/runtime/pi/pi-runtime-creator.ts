@@ -163,7 +163,7 @@ export class PiRuntimeCreator {
       descriptor,
       runtimeAgentDir,
       model,
-      projectExecutableTrustPlan.repoPiSettingsPath,
+      projectExecutableTrustPlan.trustedPiSettingsPaths,
       projectExecutableTrustPlan.trusted
     );
 
@@ -185,9 +185,7 @@ export class PiRuntimeCreator {
       promptPlan,
       swarmContextFiles,
       extensionFactories,
-      trustedProjectPiExtensionPaths: [
-        projectExecutableTrustPlan.repoPiExtensionsDir,
-      ].filter(pathExistsSync),
+      trustedProjectPiExtensionPaths: projectExecutableTrustPlan.trustedPiExtensionDirs.filter(pathExistsSync),
       extensionsOverride: (result) => filterUntrustedProjectPiExtensions({
         result,
         descriptor,
@@ -362,12 +360,12 @@ export class PiRuntimeCreator {
     descriptor: AgentDescriptor,
     runtimeAgentDir: string,
     model: Model<any>,
-    trustedProjectSettingsPath: string | undefined,
+    trustedProjectSettingsPaths: string[],
     projectExecutablesTrusted: boolean
   ): SettingsManager {
     const settingsManager = SettingsManager.fromStorage(buildProjectSafePiProjectSettingsStorage({
       agentDir: runtimeAgentDir,
-      projectSettingsPath: trustedProjectSettingsPath,
+      projectSettingsPaths: trustedProjectSettingsPaths.filter(pathExistsSync),
       projectExecutablesTrusted
     }));
     const transport = resolveOpenAICodexTransport(model);
@@ -549,7 +547,7 @@ function classifyRuntimeExtensionSource(options: {
       return "profile";
     }
 
-    if (isPathInside(candidate, projectLocalExtensionsDir)) {
+    if (isPathInside(candidate, projectLocalExtensionsDir) || isRepoForgePiExtensionPath(candidate)) {
       return "project-local";
     }
   }
@@ -568,6 +566,10 @@ function classifyRuntimeExtensionSource(options: {
   }
 
   return "unknown";
+}
+
+function isRepoForgePiExtensionPath(pathValue: string): boolean {
+  return resolve(pathValue).split(/[\\/]+/).join("/").includes("/.forge/pi/extensions/");
 }
 
 function isProfileOverlayExtensionPath(pathValue: string, profilesDir: string): boolean {

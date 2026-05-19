@@ -2,6 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { DiscoveredExtensionMetadata, SettingsExtensionsResponse } from "@forge/protocol";
 import { getProfilePiExtensionsDir, getProfilesDir } from "../../../swarm/data-paths.js";
+import { buildProjectExecutableTrustPlan } from "../../../swarm/project-executable-trust.js";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "../../../swarm/project-workspace-resolver.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
@@ -104,8 +105,9 @@ async function discoverPiExtensionsOnDisk(options: {
       sessionAgentId: descriptor.agentId,
       cwd: descriptor.cwd
     });
-    if (resolution.trust.state === "trusted" && resolution.repoRootResources.piExtensionsDir) {
-      await collectPiExtensionsFromDirectory(resolution.repoRootResources.piExtensionsDir, "project-local", discovered, { cwd: descriptor.cwd });
+    const trustPlan = buildProjectExecutableTrustPlan({ resolution, cwd: descriptor.cwd });
+    for (const extensionsDir of trustPlan.trustedPiExtensionDirs) {
+      await collectPiExtensionsFromDirectory(extensionsDir, "project-local", discovered, { cwd: descriptor.cwd });
     }
   }
 

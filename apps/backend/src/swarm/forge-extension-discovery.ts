@@ -13,7 +13,7 @@ interface DiscoverForgeExtensionsOptions {
   scopes: ForgeScope[];
   profileId?: string;
   cwd?: string;
-  projectLocalExtensionsDir?: string;
+  projectLocalExtensionsDirs?: string[];
 }
 
 const SCOPE_SORT_ORDER: Record<ForgeScope, number> = {
@@ -55,12 +55,15 @@ export async function discoverForgeExtensions(
       continue;
     }
 
-    await collectForgeExtensionsFromDirectory({
-      extensionsDir: options.projectLocalExtensionsDir ?? getProjectLocalForgeExtensionsDir(options.cwd),
-      scope,
-      cwd: options.cwd,
-      target: discovered
-    });
+    const projectLocalDirs = options.projectLocalExtensionsDirs ?? [getProjectLocalForgeExtensionsDir(options.cwd)];
+    for (const extensionsDir of projectLocalDirs) {
+      await collectForgeExtensionsFromDirectory({
+        extensionsDir,
+        scope,
+        cwd: options.cwd,
+        target: discovered
+      });
+    }
   }
 
   return dedupeAndSortDiscoveredForgeExtensions(discovered);

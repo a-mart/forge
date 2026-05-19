@@ -285,6 +285,28 @@ describe("ProjectWorkspaceResolver", () => {
     expect(after.signature).not.toBe(before.signature);
   });
 
+  it("invalidates a dismissed executable prompt when executable signature changes", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    const dataDir = await makeTempDir("forge-data-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    await mkdir(join(root, ".forge", "extensions"), { recursive: true });
+    const extensionPath = join(root, ".forge", "extensions", "marker.js");
+    await writeFile(extensionPath, "export default function () { return 1; }\n", "utf-8");
+    const store = new ProjectResourceSettingsStore(dataDir);
+    const resolver = new ProjectWorkspaceResolver({ dataDir, settingsStore: store });
+    const before = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+    expect(before.trust.key).toBeTruthy();
+    await store.dismissExecutablePrompt(before.trust.key!, before.signature);
+
+    await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
+    const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+    const dismissed = await store.getDismissedExecutablePrompt(before.trust.key!);
+
+    expect(after.signature).not.toBe(before.signature);
+    expect(dismissed?.signature).toBe(before.signature);
+    expect(dismissed?.signature).not.toBe(after.signature);
+  });
+
   it("changes signature for in-place edits to package extension files referenced by .pi/settings.json", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });

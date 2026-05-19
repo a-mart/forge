@@ -65,7 +65,7 @@ describe("project executable trust helpers", () => {
     await writeFile(settingsPath, JSON.stringify({ packages: ["./local-package"] }), "utf8");
     const storage = buildProjectSafePiProjectSettingsStorage({
       agentDir: join(root, "agent"),
-      projectSettingsPath: settingsPath,
+      projectSettingsPaths: [settingsPath],
       projectExecutablesTrusted: true
     });
 
@@ -75,7 +75,7 @@ describe("project executable trust helpers", () => {
       return current;
     });
 
-    expect(JSON.parse(projectSettings ?? "{}")).toMatchObject({ packages: ["./local-package"] });
+    expect(JSON.parse(projectSettings ?? "{}")).toMatchObject({ packages: [join(root, ".forge", "pi", "local-package")] });
   });
 });
 

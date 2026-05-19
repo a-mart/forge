@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import type { LoadExtensionsResult } from "@mariozechner/pi-coding-agent";
 
@@ -13,9 +13,9 @@ export interface ProjectExecutableTrustPlan {
   resolution?: ProjectWorkspaceResolution;
   trusted: boolean;
   effectiveForgeDirRealpath?: string;
-  repoForgeExtensionsDir?: string;
-  repoPiExtensionsDir?: string;
-  repoPiSettingsPath?: string;
+  trustedForgeExtensionDirs: string[];
+  trustedPiExtensionDirs: string[];
+  trustedPiSettingsPaths: string[];
 }
 
 export async function resolveProjectExecutableTrustPlan(options: {
@@ -28,21 +28,34 @@ export async function resolveProjectExecutableTrustPlan(options: {
   const sessionAgentId = session?.agentId ?? options.descriptor.managerId;
   const cwd = session?.cwd ?? options.descriptor.cwd;
   if (!profileId || !sessionAgentId || !cwd) {
-    return { trusted: false };
+    return { trusted: false, trustedForgeExtensionDirs: [], trustedPiExtensionDirs: [], trustedPiSettingsPaths: [] };
   }
 
   const resolution = await new ProjectWorkspaceResolver({
     dataDir: options.config.paths.dataDir,
     settingsStore: new ProjectResourceSettingsStore(options.config.paths.dataDir)
   }).resolve({ profileId, sessionAgentId, cwd });
-  const trusted = resolution.trust.state === "trusted";
+  return buildProjectExecutableTrustPlan({ resolution, cwd });
+}
+
+export function buildProjectExecutableTrustPlan(options: {
+  resolution: ProjectWorkspaceResolution;
+  cwd: string;
+}): ProjectExecutableTrustPlan {
+  const trusted = options.resolution.trust.state === "trusted";
   return {
-    resolution,
+    resolution: options.resolution,
     trusted,
-    effectiveForgeDirRealpath: resolution.effectiveForgeDirRealpath,
-    repoForgeExtensionsDir: trusted ? resolution.repoRootResources.forgeExtensionsDir : undefined,
-    repoPiExtensionsDir: trusted ? resolution.repoRootResources.piExtensionsDir : undefined,
-    repoPiSettingsPath: trusted ? resolution.repoRootResources.piSettingsPath : undefined
+    effectiveForgeDirRealpath: options.resolution.effectiveForgeDirRealpath,
+    trustedForgeExtensionDirs: trusted
+      ? uniqueRealPaths([options.resolution.repoRootResources.forgeExtensionsDir, join(options.cwd, ".forge", "extensions")])
+      : [],
+    trustedPiExtensionDirs: trusted
+      ? uniqueRealPaths([options.resolution.repoRootResources.piExtensionsDir, join(options.cwd, ".pi", "extensions")])
+      : [],
+    trustedPiSettingsPaths: trusted
+      ? uniqueRealPaths([options.resolution.repoRootResources.piSettingsPath, join(options.cwd, ".pi", "settings.json")])
+      : []
   };
 }
 
@@ -55,10 +68,12 @@ export function filterUntrustedProjectPiExtensions(options: {
   const blockedRoots = options.trustPlan.trusted
     ? []
     : [
-        join(options.descriptor.cwd, ".pi", "extensions"),
-        join(options.descriptor.cwd, ".pi", "local-package"),
+        join(options.descriptor.cwd, ".pi"),
         options.trustPlan.resolution?.repoRootResources.piExtensionsDir,
         options.trustPlan.resolution?.repoRootResources.forgeExtensionsDir,
+        options.trustPlan.resolution?.repoRootResources.piSettingsPath
+          ? dirname(options.trustPlan.resolution.repoRootResources.piSettingsPath)
+          : undefined,
       ].filter(isString);
 
   return {
@@ -76,25 +91,23 @@ export function filterUntrustedProjectPiExtensions(options: {
 
 export function buildProjectSafePiProjectSettingsStorage(options: {
   agentDir: string;
-  projectSettingsPath?: string;
+  projectSettingsPaths?: string[];
   projectExecutablesTrusted: boolean;
 }): SettingsStorage {
   const globalSettingsPath = join(options.agentDir, "settings.json");
-  const projectSettingsPath = options.projectExecutablesTrusted && options.projectSettingsPath
-    ? options.projectSettingsPath
-    : undefined;
+  const projectSettingsPaths = options.projectExecutablesTrusted ? (options.projectSettingsPaths ?? []) : [];
   return {
     withLock(scope, fn) {
       const current = scope === "global"
         ? readOptionalFileSync(globalSettingsPath)
-        : projectSettingsPath
-          ? readOptionalFileSync(projectSettingsPath)
+        : projectSettingsPaths.length > 0
+          ? mergeProjectSettings(projectSettingsPaths)
           : JSON.stringify({ packages: [], extensions: ["!*"], skills: [], prompts: [], themes: [] });
       const next = fn(current);
       if (scope === "global") {
         writeOptionalFileSync(globalSettingsPath, next);
-      } else if (projectSettingsPath) {
-        writeOptionalFileSync(projectSettingsPath, next);
+      } else if (projectSettingsPaths[0]) {
+        writeOptionalFileSync(projectSettingsPaths[0], next);
       }
     }
   };
@@ -107,6 +120,70 @@ export function pathExistsSync(pathValue: string | undefined): pathValue is stri
     return entry.isDirectory() || entry.isFile();
   } catch {
     return false;
+  }
+}
+
+function mergeProjectSettings(paths: string[]): string {
+  const merged: Record<string, unknown> = {};
+  for (const settingsPath of paths) {
+    const raw = readOptionalFileSync(settingsPath);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      for (const [key, value] of Object.entries(parsed)) {
+        if (Array.isArray(value)) {
+          const current = Array.isArray(merged[key]) ? (merged[key] as unknown[]) : [];
+          merged[key] = [...current, ...absolutizeLocalEntries(value, dirname(settingsPath))];
+        } else if (merged[key] === undefined) {
+          merged[key] = value;
+        }
+      }
+    } catch {
+      // Let Pi ignore malformed project settings as an empty project surface.
+    }
+  }
+  return JSON.stringify(merged);
+}
+
+function absolutizeLocalEntries(entries: unknown[], baseDir: string): unknown[] {
+  return entries.map((entry) => {
+    if (typeof entry === "string") {
+      return isLocalSource(entry) ? resolve(baseDir, entry) : entry;
+    }
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const record = entry as Record<string, unknown>;
+      return typeof record.source === "string" && isLocalSource(record.source)
+        ? { ...record, source: resolve(baseDir, record.source) }
+        : entry;
+    }
+    return entry;
+  });
+}
+
+function isLocalSource(source: string): boolean {
+  const trimmed = source.trim();
+  return trimmed.startsWith(".") || trimmed.startsWith("/") || trimmed.startsWith("~");
+}
+
+function uniqueRealPaths(paths: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const pathValue of paths) {
+    if (!pathValue) continue;
+    const normalized = normalizeExistingPath(pathValue);
+    const key = process.platform === "win32" ? normalized.toLowerCase() : normalized;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function normalizeExistingPath(pathValue: string): string {
+  try {
+    return realpathSync(pathValue);
+  } catch {
+    return resolve(pathValue);
   }
 }
 

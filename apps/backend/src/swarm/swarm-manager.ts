@@ -2188,9 +2188,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     }
 
-    await Promise.all(
-      affectedSessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "project_agent_directory_change"))
+    const affectedSessionIds = new Set(affectedSessions.map((session) => session.agentId));
+    const affectedWorkers = Array.from(this.descriptors.values()).filter(
+      (descriptor) => descriptor.role === "worker" && affectedSessionIds.has(descriptor.managerId)
     );
+
+    await Promise.all(
+      affectedWorkers.map((worker) => this.terminateDescriptor(worker, { abort: true, emitStatus: true }))
+    );
+    await Promise.all(
+      affectedSessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "project_resource_trust_change"))
+    );
+    await this.saveStore();
     this.emitAgentsSnapshot();
   }
 
@@ -4334,7 +4343,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async buildForgeExtensionSettingsSnapshot(options: { cwdValues: string[] }) {
-    return this.forgeExtensionHost.buildSettingsSnapshot(options);
+    return this.forgeExtensionHost.buildSettingsSnapshot({
+      ...options,
+      sessions: this.listAgents().filter((descriptor) => descriptor.role === "manager")
+    });
   }
 
   async dispatchForgeVersioningCommit(event: ForgeVersioningCommitEvent): Promise<void> {

@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, realpath, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -10,6 +11,7 @@ import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import { readSessionMeta } from '../session-manifest.js'
 import { modelCatalogService } from '../model-catalog-service.js'
 import { loadModelChangeContinuityState } from '../runtime/model-change-continuity.js'
+import { ProjectResourceSettingsStore } from '../project-resource-settings.js'
 import type { AgentContextUsage, AgentDescriptor, SwarmConfig } from '../types.js'
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from '../runtime-contracts.js'
 import { makeTempConfig as buildTempConfig } from '../../test-support/index.js'
@@ -405,6 +407,23 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     await expect(manager.deleteManager('manager', 'cortex')).rejects.toThrow('Cortex manager cannot be deleted')
+  })
+
+  it('terminates affected workers when project executable trust changes', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await mkdir(join(config.defaultCwd, '.forge', 'extensions'), { recursive: true })
+    await writeFile(join(config.defaultCwd, '.forge', 'extensions', 'repo.ts'), 'export default () => {}\n', 'utf8')
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
+    const trustKey = await realpath(join(config.defaultCwd, '.forge'))
+    await new ProjectResourceSettingsStore(config.paths.dataDir).setTrust(trustKey, 'trust')
+    const worker = await manager.spawnAgent(session.agentId, { agentId: 'Trust Worker' })
+
+    await manager.applyProjectResourceTrustChange(trustKey)
+
+    expect(manager.listAgents().find((agent) => agent.agentId === worker.agentId)?.status).toBe('terminated')
   })
 
   it('creates secondary managers and deletes them with owned worker cascade', async () => {

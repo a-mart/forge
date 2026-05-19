@@ -5,6 +5,7 @@ import type {
   ForgeSettingsExtensionsPayload
 } from "@forge/protocol";
 import { getGlobalForgeExtensionsDir, getProfilesDir } from "./data-paths.js";
+import { buildProjectExecutableTrustPlan } from "./project-executable-trust.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import { discoverForgeExtensions, listForgeProfileIdsOnDisk } from "./forge-extension-discovery.js";
@@ -68,8 +69,8 @@ export class ForgeExtensionHost {
     });
   }
 
-  async buildSettingsSnapshot(options: { cwdValues: string[] }): Promise<ForgeSettingsExtensionsPayload> {
-    const discovered = await this.discoverForSettings(options.cwdValues);
+  async buildSettingsSnapshot(options: { cwdValues: string[]; sessions?: AgentDescriptor[]; config?: { paths: { dataDir: string } } }): Promise<ForgeSettingsExtensionsPayload> {
+    const discovered = await this.discoverForSettings(options);
     const loadResults = await loadForgeExtensionModules(discovered);
     const loadedByKey = new Map(loadResults.loaded.map((entry) => [getDiscoveredKey(entry.discovered), entry]));
     const loadErrorByKey = new Map(loadResults.errors.map((entry) => [getDiscoveredKey(entry.discovered), entry.error]));
@@ -126,7 +127,7 @@ export class ForgeExtensionHost {
       runtime: { type: options.runtimeType } as const
     };
 
-    const projectLocalExtensionsDir = await this.resolveTrustedProjectForgeExtensionsDir({
+    const projectLocalExtensionsDirs = await this.resolveTrustedProjectForgeExtensionDirs({
       profileId: runtimeContext.session.profileId,
       sessionAgentId: runtimeContext.session.sessionAgentId,
       cwd: runtimeContext.session.cwd
@@ -136,11 +137,11 @@ export class ForgeExtensionHost {
       scopes: [
         "global",
         ...(runtimeContext.session.profileId ? (["profile"] as const) : []),
-        ...(projectLocalExtensionsDir ? (["project-local"] as const) : [])
+        ...(projectLocalExtensionsDirs.length > 0 ? (["project-local"] as const) : [])
       ],
       profileId: runtimeContext.session.profileId,
       cwd: runtimeContext.session.cwd,
-      projectLocalExtensionsDir
+      projectLocalExtensionsDirs
     });
 
     if (discovered.length === 0) {
@@ -662,18 +663,18 @@ export class ForgeExtensionHost {
       }
 
       if (options.scopes.includes("project-local") && options.cwd) {
-        const projectLocalExtensionsDir = await this.resolveTrustedProjectForgeExtensionsDir({
+        const projectLocalExtensionsDirs = await this.resolveTrustedProjectForgeExtensionDirs({
           profileId: options.profileId,
           sessionAgentId: options.profileId,
           cwd: options.cwd
         });
-        if (projectLocalExtensionsDir) {
+        if (projectLocalExtensionsDirs.length > 0) {
           discovered.push(
             ...(await discoverForgeExtensions({
               dataDir: this.dataDir,
               scopes: ["project-local"],
               cwd: options.cwd,
-              projectLocalExtensionsDir
+              projectLocalExtensionsDirs
             }))
           );
         }
@@ -690,7 +691,7 @@ export class ForgeExtensionHost {
     }
   }
 
-  private async discoverForSettings(cwdValues: string[]): Promise<Awaited<ReturnType<typeof discoverForgeExtensions>>> {
+  private async discoverForSettings(options: { cwdValues: string[]; sessions?: AgentDescriptor[] }): Promise<Awaited<ReturnType<typeof discoverForgeExtensions>>> {
     const discovered = await discoverForgeExtensions({
       dataDir: this.dataDir,
       scopes: ["global"]
@@ -707,31 +708,50 @@ export class ForgeExtensionHost {
       );
     }
 
-    for (const cwd of normalizeCwdValues(cwdValues)) {
-      const projectLocalExtensionsDir = await this.resolveTrustedProjectForgeExtensionsDir({ cwd });
-      if (!projectLocalExtensionsDir) {
-        continue;
+    const sessionValues = options.sessions?.filter((descriptor) => descriptor.role === "manager") ?? [];
+    if (sessionValues.length > 0) {
+      for (const session of sessionValues) {
+        const projectLocalExtensionsDirs = await this.resolveTrustedProjectForgeExtensionDirs({
+          profileId: session.profileId ?? session.agentId,
+          sessionAgentId: session.agentId,
+          cwd: session.cwd
+        });
+        if (projectLocalExtensionsDirs.length === 0) continue;
+        discovered.push(
+          ...(await discoverForgeExtensions({
+            dataDir: this.dataDir,
+            scopes: ["project-local"],
+            profileId: session.profileId ?? session.agentId,
+            cwd: session.cwd,
+            projectLocalExtensionsDirs
+          }))
+        );
       }
-      discovered.push(
-        ...(await discoverForgeExtensions({
-          dataDir: this.dataDir,
-          scopes: ["project-local"],
-          cwd,
-          projectLocalExtensionsDir
-        }))
-      );
+    } else {
+      for (const cwd of normalizeCwdValues(options.cwdValues)) {
+        const projectLocalExtensionsDirs = await this.resolveTrustedProjectForgeExtensionDirs({ cwd });
+        if (projectLocalExtensionsDirs.length === 0) continue;
+        discovered.push(
+          ...(await discoverForgeExtensions({
+            dataDir: this.dataDir,
+            scopes: ["project-local"],
+            cwd,
+            projectLocalExtensionsDirs
+          }))
+        );
+      }
     }
 
     return dedupeAndSortDiscoveredExtensions(discovered);
   }
 
-  private async resolveTrustedProjectForgeExtensionsDir(options: {
+  private async resolveTrustedProjectForgeExtensionDirs(options: {
     profileId?: string;
     sessionAgentId?: string;
     cwd?: string;
-  }): Promise<string | undefined> {
+  }): Promise<string[]> {
     if (!options.cwd) {
-      return undefined;
+      return [];
     }
     try {
       const resolution = await this.projectWorkspaceResolver.resolve({
@@ -739,13 +759,13 @@ export class ForgeExtensionHost {
         sessionAgentId: options.sessionAgentId ?? options.profileId ?? "settings",
         cwd: options.cwd
       });
-      return resolution.trust.state === "trusted" ? resolution.repoRootResources.forgeExtensionsDir : undefined;
+      return buildProjectExecutableTrustPlan({ resolution, cwd: options.cwd }).trustedForgeExtensionDirs;
     } catch (error) {
       this.recordDiagnosticError({
         phase: "discover",
         message: normalizeErrorMessage(error)
       });
-      return undefined;
+      return [];
     }
   }
 
