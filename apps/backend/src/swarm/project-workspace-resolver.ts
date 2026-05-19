@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -317,15 +318,19 @@ function collectLocalPackageRoots(packages: unknown, settingsDir: string): strin
 function resolvePackageSourcePath(source: string, settingsDir: string): string {
   const trimmed = source.trim();
   if (trimmed === "~") {
-    return resolve(process.env.HOME ?? "");
+    return resolve(getHomeDirectory());
   }
   if (trimmed.startsWith("~/")) {
-    return resolve(process.env.HOME ?? "", trimmed.slice(2));
+    return resolve(getHomeDirectory(), trimmed.slice(2));
   }
   if (trimmed.startsWith("~")) {
-    return resolve(process.env.HOME ?? "", trimmed.slice(1));
+    return resolve(getHomeDirectory(), trimmed.slice(1));
   }
   return resolve(settingsDir, trimmed);
+}
+
+function getHomeDirectory(): string {
+  return homedir() || process.env.HOME || process.env.USERPROFILE || "";
 }
 
 function isLocalPackageSource(source: string): boolean {

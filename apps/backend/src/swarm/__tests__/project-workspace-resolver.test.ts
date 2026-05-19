@@ -219,6 +219,54 @@ describe("ProjectWorkspaceResolver", () => {
     expect(after.signature).not.toBe(before.signature);
   });
 
+  it("changes signature for in-place edits to repo-root .forge/pi/extensions files", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    await mkdir(join(root, ".forge", "pi", "extensions"), { recursive: true });
+    const extensionPath = join(root, ".forge", "pi", "extensions", "marker.js");
+    await writeFile(extensionPath, "export default function () { return 1; }\n", "utf-8");
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const before = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
+    const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    expect(after.signature).not.toBe(before.signature);
+  });
+
+  it("changes signature for in-place edits to exact-cwd .forge/extensions files", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    const nested = join(root, "nested");
+    await mkdir(join(root, ".forge"), { recursive: true });
+    await mkdir(join(nested, ".forge", "extensions"), { recursive: true });
+    const extensionPath = join(nested, ".forge", "extensions", "marker.js");
+    await writeFile(extensionPath, "export default function () { return 1; }\n", "utf-8");
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const before = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: nested });
+
+    await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
+    const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: nested });
+
+    expect(after.signature).not.toBe(before.signature);
+  });
+
+  it("changes signature for in-place edits to exact-cwd .pi/extensions files", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    await mkdir(join(root, ".forge"), { recursive: true });
+    await mkdir(join(root, ".pi", "extensions"), { recursive: true });
+    const extensionPath = join(root, ".pi", "extensions", "marker.js");
+    await writeFile(extensionPath, "export default function () { return 1; }\n", "utf-8");
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const before = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
+    const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    expect(after.signature).not.toBe(before.signature);
+  });
+
   it("changes signature for in-place edits to package extension files referenced by .pi/settings.json", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
