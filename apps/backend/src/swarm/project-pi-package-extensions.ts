@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 export async function resolveLocalPiPackageExtensionPathsFromSettings(settingsPath: string): Promise<string[]> {
   const settings = await readJsonObject(settingsPath);
@@ -19,15 +19,15 @@ export async function resolveLocalPiPackageExtensionPathsFromSettings(settingsPa
     const packageRoot = resolvePackageSourcePath(packageSource, settingsDir);
     const packageEntry = await statOrUndefined(packageRoot);
     if (packageEntry?.isFile()) {
-      if (isSupportedExtensionFile(packageRoot) && matchesExtensionFilters(packageRoot, packageRoot, filters)) {
-        paths.push(packageRoot);
+      if (isSupportedExtensionFile(packageRoot)) {
+        paths.push(...applyExtensionPatterns([packageRoot], filters, packageRoot));
       }
       continue;
     }
     if (packageEntry && !packageEntry.isDirectory()) continue;
 
     const candidates = await collectPackageExtensionCandidates(packageRoot);
-    paths.push(...candidates.filter((candidate) => matchesExtensionFilters(candidate, packageRoot, filters)));
+    paths.push(...applyExtensionPatterns(candidates, filters, packageRoot));
   }
 
   return uniqueSortedPaths(paths);
@@ -41,14 +41,31 @@ async function collectPackageExtensionCandidates(packageRoot: string): Promise<s
     : [];
 
   if (manifestExtensions.length > 0) {
-    return uniqueSortedPaths(
-      manifestExtensions
-        .map((extensionPath) => resolve(packageRoot, extensionPath))
-        .filter(isSupportedExtensionFile)
-    );
+    const sourceEntries = manifestExtensions.filter((entry) => !isOverridePattern(entry));
+    const overridePatterns = manifestExtensions.filter(isOverridePattern);
+    const allFiles: string[] = [];
+    for (const entry of sourceEntries) {
+      allFiles.push(...(await collectFilesFromManifestEntry(packageRoot, entry)));
+    }
+    const uniqueFiles = uniqueSortedPaths(allFiles);
+    return overridePatterns.length > 0 ? applyExtensionPatterns(uniqueFiles, overridePatterns, packageRoot) : uniqueFiles;
   }
 
   return collectExtensionFiles(join(packageRoot, "extensions"));
+}
+
+async function collectFilesFromManifestEntry(packageRoot: string, entry: string): Promise<string[]> {
+  if (!hasGlobPattern(entry)) {
+    return collectExtensionFiles(resolve(packageRoot, entry));
+  }
+
+  const paths = await collectPathEntries(packageRoot);
+  const matches = paths.filter((pathValue) => matchesAnyPattern(pathValue, [entry], packageRoot));
+  const collected: string[] = [];
+  for (const match of matches) {
+    collected.push(...(await collectExtensionFiles(match)));
+  }
+  return uniqueSortedPaths(collected);
 }
 
 async function collectExtensionFiles(pathValue: string): Promise<string[]> {
@@ -75,24 +92,79 @@ async function collectExtensionFiles(pathValue: string): Promise<string[]> {
   return uniqueSortedPaths(paths);
 }
 
-function matchesExtensionFilters(candidate: string, packageRoot: string, filters: string[] | undefined): boolean {
-  if (!filters) return true;
-  const includePatterns = filters.filter((pattern) => !pattern.startsWith("!"));
-  const excludePatterns = filters
-    .filter((pattern) => pattern.startsWith("!"))
-    .map((pattern) => pattern.slice(1));
-  const included = includePatterns.length === 0 || includePatterns.some((pattern) => matchesPattern(candidate, packageRoot, pattern));
-  if (!included) return false;
-  return !excludePatterns.some((pattern) => matchesPattern(candidate, packageRoot, pattern));
+async function collectPathEntries(root: string): Promise<string[]> {
+  const rootEntry = await statOrUndefined(root);
+  if (!rootEntry?.isDirectory()) return rootEntry ? [root] : [];
+  const entries = await readDirEntries(root);
+  const paths: string[] = [];
+  for (const entry of entries) {
+    const entryPath = join(root, entry.name);
+    paths.push(entryPath);
+    if (entry.isDirectory()) {
+      paths.push(...(await collectPathEntries(entryPath)));
+    }
+  }
+  return uniqueSortedPaths(paths);
 }
 
-function matchesPattern(candidate: string, packageRoot: string, pattern: string): boolean {
-  const normalizedPattern = toPosix(pattern.trim());
-  if (!normalizedPattern) return false;
-  const rel = toPosix(relative(packageRoot, candidate));
-  const abs = toPosix(resolve(packageRoot, pattern));
-  const normalizedCandidate = toPosix(resolve(candidate));
-  return globToRegExp(normalizedPattern).test(rel) || globToRegExp(abs).test(normalizedCandidate);
+function applyExtensionPatterns(paths: string[], patterns: string[] | undefined, baseDir: string): string[] {
+  if (!patterns) return uniqueSortedPaths(paths);
+  const includes: string[] = [];
+  const excludes: string[] = [];
+  const forceIncludes: string[] = [];
+  const forceExcludes: string[] = [];
+  for (const pattern of patterns) {
+    if (pattern.startsWith("+")) forceIncludes.push(pattern.slice(1));
+    else if (pattern.startsWith("-")) forceExcludes.push(pattern.slice(1));
+    else if (pattern.startsWith("!")) excludes.push(pattern.slice(1));
+    else includes.push(pattern);
+  }
+
+  let result = includes.length === 0 ? [...paths] : paths.filter((pathValue) => matchesAnyPattern(pathValue, includes, baseDir));
+  if (excludes.length > 0) result = result.filter((pathValue) => !matchesAnyPattern(pathValue, excludes, baseDir));
+  for (const pathValue of paths) {
+    if (!result.includes(pathValue) && matchesAnyExactPattern(pathValue, forceIncludes, baseDir)) result.push(pathValue);
+  }
+  if (forceExcludes.length > 0) result = result.filter((pathValue) => !matchesAnyExactPattern(pathValue, forceExcludes, baseDir));
+  return uniqueSortedPaths(result);
+}
+
+function matchesAnyPattern(candidate: string, patterns: string[], baseDir: string): boolean {
+  const rel = toPosix(relative(baseDir, candidate));
+  const name = basename(candidate);
+  const absolute = toPosix(resolve(candidate));
+  return patterns.some((pattern) => {
+    const normalizedPattern = normalizePattern(pattern);
+    return (
+      globToRegExp(normalizedPattern).test(rel) ||
+      globToRegExp(normalizedPattern).test(name) ||
+      globToRegExp(normalizedPattern).test(absolute)
+    );
+  });
+}
+
+function matchesAnyExactPattern(candidate: string, patterns: string[], baseDir: string): boolean {
+  if (patterns.length === 0) return false;
+  const rel = toPosix(relative(baseDir, candidate));
+  const absolute = toPosix(resolve(candidate));
+  return patterns.some((pattern) => {
+    const normalized = normalizePattern(pattern);
+    return normalized === rel || normalized === absolute;
+  });
+}
+
+function normalizePattern(pattern: string): string {
+  const trimmed = pattern.trim();
+  const withoutLeadingDot = trimmed.startsWith("./") || trimmed.startsWith(".\\") ? trimmed.slice(2) : trimmed;
+  return toPosix(withoutLeadingDot);
+}
+
+function isOverridePattern(pattern: string): boolean {
+  return pattern.startsWith("!") || pattern.startsWith("+") || pattern.startsWith("-");
+}
+
+function hasGlobPattern(pattern: string): boolean {
+  return /[*?\[\]{}]/.test(pattern);
 }
 
 function globToRegExp(pattern: string): RegExp {

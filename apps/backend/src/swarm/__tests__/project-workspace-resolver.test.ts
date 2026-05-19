@@ -307,7 +307,41 @@ describe("ProjectWorkspaceResolver", () => {
     expect(dismissed?.signature).not.toBe(after.signature);
   });
 
-  it("only fingerprints package extensions included by object glob filters", async () => {
+  it("fingerprints package manifest directory extension entries", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    await mkdir(join(root, ".forge", "pi", "manifest-dir", "extensions"), { recursive: true });
+    const extensionPath = join(root, ".forge", "pi", "manifest-dir", "extensions", "included.ts");
+    await writeFile(join(root, ".forge", "pi", "settings.json"), JSON.stringify({ packages: ["./manifest-dir"] }), "utf-8");
+    await writeFile(join(root, ".forge", "pi", "manifest-dir", "package.json"), JSON.stringify({ pi: { extensions: ["extensions"] } }), "utf-8");
+    await writeFile(extensionPath, "export default function () { return 1; }\n", "utf-8");
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const before = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
+    const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    expect(after.signature).not.toBe(before.signature);
+  });
+
+  it("fingerprints package manifest glob extension entries", async () => {
+    const root = await makeTempDir("forge-workspace-");
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    await mkdir(join(root, ".forge", "pi", "manifest-glob", "extensions"), { recursive: true });
+    const extensionPath = join(root, ".forge", "pi", "manifest-glob", "extensions", "included.ts");
+    await writeFile(join(root, ".forge", "pi", "settings.json"), JSON.stringify({ packages: ["./manifest-glob"] }), "utf-8");
+    await writeFile(join(root, ".forge", "pi", "manifest-glob", "package.json"), JSON.stringify({ pi: { extensions: ["extensions/*.ts"] } }), "utf-8");
+    await writeFile(extensionPath, "export default function () { return 1; }\n", "utf-8");
+    const resolver = new ProjectWorkspaceResolver({ dataDir: await makeTempDir("forge-data-") });
+    const before = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    await writeFile(extensionPath, "export default function () { return 2; }\n", "utf-8");
+    const after = await resolver.resolve({ profileId: "profile-a", sessionAgentId: "session-a", cwd: root });
+
+    expect(after.signature).not.toBe(before.signature);
+  });
+
+  it("only fingerprints package extensions included by object basename filters", async () => {
     const root = await makeTempDir("forge-workspace-");
     execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
     await mkdir(join(root, ".forge", "pi", "filtered", "extensions"), { recursive: true });
@@ -315,7 +349,7 @@ describe("ProjectWorkspaceResolver", () => {
     const legacyPath = join(root, ".forge", "pi", "filtered", "extensions", "legacy.ts");
     await writeFile(
       join(root, ".forge", "pi", "settings.json"),
-      JSON.stringify({ packages: [{ source: "./filtered", extensions: ["extensions/*.ts", "!extensions/legacy.ts"] }] }),
+      JSON.stringify({ packages: [{ source: "./filtered", extensions: ["*.ts", "!legacy.ts"] }] }),
       "utf-8"
     );
     await writeFile(includedPath, "export default function () { return 1; }\n", "utf-8");

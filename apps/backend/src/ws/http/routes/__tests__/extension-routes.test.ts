@@ -30,6 +30,8 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     const profileExtensionsDir = getProfilePiExtensionsDir(config.paths.dataDir, 'manager')
     const projectExtensionsDir = join(config.paths.rootDir, '.pi', 'extensions')
     const projectPackageDir = join(config.paths.rootDir, '.forge', 'pi', 'pkg-ext')
+    const projectManifestDirPackageDir = join(config.paths.rootDir, '.forge', 'pi', 'manifest-dir-pkg')
+    const projectManifestGlobPackageDir = join(config.paths.rootDir, '.forge', 'pi', 'manifest-glob-pkg')
     const projectFilteredPackageDir = join(config.paths.rootDir, '.forge', 'pi', 'filtered-pkg')
     const projectSettingsPath = join(config.paths.rootDir, '.forge', 'pi', 'settings.json')
     const projectFilePackagePath = join(config.paths.rootDir, '.forge', 'pi', 'single-file-package.ts')
@@ -42,6 +44,8 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     await mkdir(profileExtensionsDir, { recursive: true })
     await mkdir(join(projectExtensionsDir, 'project-pack'), { recursive: true })
     await mkdir(projectPackageDir, { recursive: true })
+    await mkdir(join(projectManifestDirPackageDir, 'extensions'), { recursive: true })
+    await mkdir(join(projectManifestGlobPackageDir, 'extensions'), { recursive: true })
     await mkdir(join(projectFilteredPackageDir, 'extensions'), { recursive: true })
     await mkdir(forgeGlobalExtensionsDir, { recursive: true })
     await mkdir(forgeProfileExtensionsDir, { recursive: true })
@@ -53,11 +57,15 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     await writeFile(join(projectExtensionsDir, 'project-pack', 'index.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(
       projectSettingsPath,
-      JSON.stringify({ packages: ['./pkg-ext', './single-file-package.ts', { source: './filtered-pkg', extensions: ['extensions/*.ts', '!extensions/legacy.ts'] }] }),
+      JSON.stringify({ packages: ['./pkg-ext', './manifest-dir-pkg', './manifest-glob-pkg', './single-file-package.ts', { source: './filtered-pkg', extensions: ['*.ts', '!legacy.ts'] }] }),
       'utf8',
     )
     await writeFile(join(projectPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['pkg-extension.ts'] } }), 'utf8')
     await writeFile(join(projectPackageDir, 'pkg-extension.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(join(projectManifestDirPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['extensions'] } }), 'utf8')
+    await writeFile(join(projectManifestDirPackageDir, 'extensions', 'manifest-dir.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(join(projectManifestGlobPackageDir, 'package.json'), JSON.stringify({ pi: { extensions: ['extensions/*.ts'] } }), 'utf8')
+    await writeFile(join(projectManifestGlobPackageDir, 'extensions', 'manifest-glob.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(projectFilePackagePath, 'export default () => {}\n', 'utf8')
     await writeFile(join(projectFilteredPackageDir, 'extensions', 'included.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(join(projectFilteredPackageDir, 'extensions', 'legacy.ts'), 'export default () => {}\n', 'utf8')
@@ -190,6 +198,18 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
           expect.objectContaining({
             displayName: 'pkg-extension.ts',
             path: await realpath(join(projectPackageDir, 'pkg-extension.ts')),
+            source: 'project-local',
+            cwd: config.paths.rootDir,
+          }),
+          expect.objectContaining({
+            displayName: 'manifest-dir.ts',
+            path: await realpath(join(projectManifestDirPackageDir, 'extensions', 'manifest-dir.ts')),
+            source: 'project-local',
+            cwd: config.paths.rootDir,
+          }),
+          expect.objectContaining({
+            displayName: 'manifest-glob.ts',
+            path: await realpath(join(projectManifestGlobPackageDir, 'extensions', 'manifest-glob.ts')),
             source: 'project-local',
             cwd: config.paths.rootDir,
           }),
