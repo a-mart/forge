@@ -207,7 +207,7 @@ Managers and workers have access to built-in skills:
 
 Skill API keys can be configured in the dashboard under Settings → Environment Variables, or via `.env` / shell environment.
 
-Forge also supports custom skills. Place them in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) using the standard `SKILL.md` frontmatter format and they'll be available to all agents. For reusable custom skills, use the built-in `create-skill` helper to scaffold, place, and validate global skills or project skills. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
+Forge also supports custom skills. Place global skills in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) or project skills in a repository-root `.forge/skills/` directory using the standard `SKILL.md` frontmatter format. For reusable custom skills, use the built-in `create-skill` helper to scaffold, place, and validate global skills or project skills. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills) and [docs/PROJECT_RESOURCES.md](docs/PROJECT_RESOURCES.md).
 
 Forge can also share user-created global/project skills through the separate skill-share worker at `apps/skill-share-worker/`. Sharing generates a temporary bearer link from the service, and importing from a share link or `forge://skill-import` deep link always opens a preview/review step first. Built-in and repository skills are not shareable in v1. See [`apps/skill-share-worker/README.md`](apps/skill-share-worker/README.md) for the service contract and guardrails.
 
@@ -226,7 +226,7 @@ Beyond skills, Forge also exposes the full Pi extension and package system. Pi e
 - **Context injection** — Modify system prompts or message history before each LLM call
 - **Custom model providers** — Connect to enterprise proxies, self-hosted models, or novel APIs
 
-Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all workers — no build step, no restart required. Extensions load per-session via [jiti](https://github.com/nicolo-ribaudo/jiti) with full TypeScript support.
+Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all workers — no build step, no restart required. Repository-local executable extensions can also live under `.forge/extensions/` or `.forge/pi/`, but they are gated by an explicit trust prompt. Extensions load per-session via [jiti](https://github.com/nicolo-ribaudo/jiti) with full TypeScript support.
 
 There's also a growing ecosystem of community Pi packages available from npm and git. Install them by adding a `settings.json` to your agent config directory. See the [Pi Extensions guide](docs/PI_EXTENSIONS.md) for the full reference.
 

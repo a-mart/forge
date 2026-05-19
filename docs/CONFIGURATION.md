@@ -188,6 +188,12 @@ On a default macOS/Linux install this becomes:
 ~/.forge/skills/<skillName>/SKILL.md
 ```
 
+### Project Resources
+
+Repositories can provide project-scoped resources from a repo-root `.forge/` directory: project skills, specialists, reference docs, Forge extensions, and Pi extensions/packages. Passive resources are available as text context; executable resources are gated by an explicit trust/block prompt.
+
+See [PROJECT_RESOURCES.md](PROJECT_RESOURCES.md) for the layout, override rules, and security model.
+
 ### Forge Extensions
 
 Forge exposes a Forge-native hook system for session lifecycle, runtime errors, versioning commits, and tool interception.
@@ -198,31 +204,31 @@ Forge exposes a Forge-native hook system for session lifecycle, runtime errors, 
 |------|-------|
 | `${FORGE_DATA_DIR}/extensions/` | Global |
 | `${FORGE_DATA_DIR}/profiles/<id>/extensions/` | Profile |
-| `<cwd>/.forge/extensions/` | Project-local |
+| `<repo>/.forge/extensions/` | Project-local, trust-gated |
 
-Global and profile Forge extension directories are auto-created. Project-local directories are not.
+Global and profile Forge extension directories are auto-created. Project-local directories are not. Project-local executable extensions are loaded only after the repository `.forge` directory is trusted.
 
-See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) for the full guide.
+See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) and [PROJECT_RESOURCES.md](PROJECT_RESOURCES.md) for the full guides.
 
 ### Pi Extensions & Packages
 
 Forge also exposes Pi's extension and package system for deeper customization — custom tools, event interception, context modification, and more.
 
-**Extension auto-discovery directories** (created automatically on startup):
+**Extension auto-discovery directories**:
 
 | Path | Scope |
 |------|-------|
 | `${FORGE_DATA_DIR}/agent/extensions/` | All workers |
 | `${FORGE_DATA_DIR}/agent/manager/extensions/` | All managers |
-| `<cwd>/.pi/extensions/` | Project-local (agents with that CWD) |
+| `<repo>/.forge/pi/extensions/` | Project-local, trust-gated |
 
-**Skill auto-discovery directories** (created automatically on startup):
+**Skill directories**:
 
 | Path | Scope |
 |------|-------|
 | `${FORGE_DATA_DIR}/agent/skills/` | All workers |
 | `${FORGE_DATA_DIR}/agent/manager/skills/` | All managers |
-| `<cwd>/.pi/skills/` | Project-local (agents with that CWD) |
+| `<repo>/.forge/skills/` | Project-local project skills |
 
 **Package configuration** via optional `settings.json` files:
 
@@ -230,9 +236,9 @@ Forge also exposes Pi's extension and package system for deeper customization �
 |------|-------|
 | `${FORGE_DATA_DIR}/agent/settings.json` | Worker packages |
 | `${FORGE_DATA_DIR}/agent/manager/settings.json` | Manager packages |
-| `<cwd>/.pi/settings.json` | Project-local packages |
+| `<repo>/.forge/pi/settings.json` | Project-local packages, trust-gated |
 
-Packages can be installed from npm (`npm:@scope/name`), git (`git:github.com/user/repo`), or local paths. These files do not need to exist — create them only when you want to install packages.
+Packages can be installed from npm (`npm:@scope/name`), git (`git:github.com/user/repo`), or local paths. These files do not need to exist — create them only when you want to install packages. Trusted repo-root `.forge/pi/settings.json` replaces the old exact-CWD `.pi/settings.json` location for new projects; legacy exact-CWD surfaces remain compatibility-only and are still gated by project executable trust.
 
 Drop a `.ts` or `.js` file into the appropriate extensions directory and it's loaded for all sessions of that role. TypeScript works without a build step via [jiti](https://github.com/nicolo-ribaudo/jiti). Extensions load per-session, so new extensions are picked up without restarting the backend.
 

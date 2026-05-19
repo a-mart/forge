@@ -2153,9 +2153,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           header: "Repository executable resources",
           question: `This repository has executable Forge/Pi resources under ${resolution.effectiveForgeDirRealpath}. Trust them for this repository?`,
           options: [
-            { id: "trust", label: "Trust", description: "Enable repo .forge extensions and Pi package extensions." },
-            { id: "block", label: "Block", description: "Keep executable repo resources disabled. Skills/reference stay available." },
-            { id: "manage_later", label: "Manage later", description: "Keep disabled for now and ask again if executables change." }
+            { id: "trust", label: "Trust", description: "Enable repository .forge extensions and Pi package extensions." },
+            { id: "block", label: "Block", description: "Keep executable repository resources disabled. Skills and reference docs stay available." },
+            { id: "manage_later", label: "Manage later", description: "Keep disabled for now and ask again if executable resources change." }
           ]
         }
       ]);
