@@ -127,17 +127,17 @@ export function SettingsProjectResources({ managers, previewSession, apiClient }
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle>Executable trust</CardTitle><CardDescription>Trust is path-only and applies to the selected repo-root .forge directory. Legacy exact-CWD surfaces are not covered yet.</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Executable trust</CardTitle><CardDescription>Prepared for the later runtime activation wave. Trust is path-only for the selected repo-root .forge directory; legacy exact-CWD surfaces are not covered yet.</CardDescription></CardHeader>
             <CardContent className="space-y-3">
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => void mutateTrust('trust')} disabled={loading || !snapshot.trust.key}>Trust</Button>
-                <Button size="sm" variant="outline" onClick={() => void mutateTrust('block')} disabled={loading || !snapshot.trust.key}>Block</Button>
+                <Button size="sm" onClick={() => void mutateTrust('trust')} disabled={loading || !snapshot.trust.key}>Trust repo path</Button>
+                <Button size="sm" variant="outline" onClick={() => void mutateTrust('block')} disabled={loading || !snapshot.trust.key}>Block repo path</Button>
                 <Button size="sm" variant="ghost" onClick={() => void mutateTrust('reset')} disabled={loading || !snapshot.trust.key}>Reset</Button>
               </div>
               <div className="space-y-2 text-sm">
                 {snapshot.executableSurfaces.map((surface) => (
                   <div key={`${surface.kind}:${surface.path}`} className="rounded-md border p-2">
-                    <div className="flex items-center justify-between gap-2"><span className="font-medium">{surface.kind}</span><Badge variant={surface.exists ? 'default' : 'secondary'}>{surface.exists ? 'found' : 'missing'}</Badge></div>
+                    <div className="flex items-center justify-between gap-2"><span className="font-medium">{formatSurfaceKind(surface.kind)}</span><Badge variant={surface.exists ? 'default' : 'secondary'}>{surface.exists ? 'found' : 'missing'}</Badge></div>
                     <div className="mt-1 break-all text-xs text-muted-foreground">{surface.path}</div>
                     {surface.compatibilityPolicy && <div className="mt-1 text-xs text-amber-600">Compatibility surface, not covered by repo-root trust yet.</div>}
                   </div>
@@ -159,6 +159,17 @@ function TrustBadge({ state }: { state: ProjectResourcesSnapshotResponse['trust'
 
 function KeyValue({ label, value }: { label: string; value: string }) {
   return <div><span className="text-muted-foreground">{label}: </span><span className="break-all font-mono text-xs">{value}</span></div>
+}
+
+function formatSurfaceKind(kind: ProjectResourcesSnapshotResponse['executableSurfaces'][number]['kind']) {
+  switch (kind) {
+    case 'repo-forge-extensions': return 'Repository Forge extensions'
+    case 'repo-pi-extensions': return 'Repository Pi extensions'
+    case 'repo-pi-settings': return 'Repository Pi settings packages'
+    case 'exact-cwd-forge-extension': return 'Legacy exact-CWD Forge extensions'
+    case 'exact-cwd-pi-extension': return 'Legacy exact-CWD Pi extensions'
+    case 'exact-cwd-pi-settings': return 'Legacy exact-CWD Pi settings packages'
+  }
 }
 
 function InventoryTile({ title, section, executable }: { title: string; section: ProjectResourcesSnapshotResponse['resources']['skills']; executable?: boolean }) {

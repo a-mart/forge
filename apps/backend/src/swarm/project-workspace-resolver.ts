@@ -36,6 +36,7 @@ export interface ProjectWorkspaceResolution {
   cwdRealpath: string;
   detectedGitRoot?: string;
   workspaceKey: string;
+  warning?: string;
   defaultForgeDir?: string;
   effectiveForgeDir?: string;
   effectiveForgeDirRealpath?: string;
@@ -74,7 +75,12 @@ export class ProjectWorkspaceResolver {
   }
 
   async resolve(options: ResolveProjectWorkspaceOptions): Promise<ProjectWorkspaceResolution> {
-    const cwdRealpath = await resolveExistingRealpath(options.cwd);
+    const cwdRealpathResult = await tryResolveExistingRealpath(options.cwd);
+    if (!cwdRealpathResult.ok) {
+      return buildMissingCwdResolution(options, cwdRealpathResult.path, cwdRealpathResult.error);
+    }
+
+    const cwdRealpath = cwdRealpathResult.path;
     const detectedGitRoot = await findGitRoot(cwdRealpath);
     const detectedGitRootRealpath = detectedGitRoot ? await resolveExistingRealpath(detectedGitRoot) : undefined;
     const workspaceBasis = detectedGitRootRealpath ?? cwdRealpath;
@@ -372,8 +378,43 @@ async function findGitRoot(cwd: string): Promise<string | undefined> {
   }
 }
 
+async function buildMissingCwdResolution(
+  options: ResolveProjectWorkspaceOptions,
+  cwdPath: string,
+  error: string
+): Promise<ProjectWorkspaceResolution> {
+  const workspaceKey = createWorkspaceKey(options.profileId, cwdPath);
+  const signature = createHash("sha256")
+    .update(JSON.stringify({ cwdRealpath: normalizeComparablePath(cwdPath), missing: true, error }))
+    .digest("hex");
+
+  return {
+    profileId: options.profileId,
+    sessionAgentId: options.sessionAgentId,
+    cwdRealpath: cwdPath,
+    workspaceKey,
+    warning: `Session working directory is unavailable: ${error}`,
+    source: "none",
+    trust: { state: "not_applicable" },
+    repoRootResources: {},
+    legacyExecutableSurfaces: [],
+    signature
+  };
+}
+
 async function resolveExistingRealpath(pathValue: string): Promise<string> {
   return realpath(resolve(pathValue));
+}
+
+async function tryResolveExistingRealpath(pathValue: string): Promise<{ ok: true; path: string } | { ok: false; path: string; error: string }> {
+  try {
+    return { ok: true, path: await resolveExistingRealpath(pathValue) };
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return { ok: false, path: resolve(pathValue), error: "path does not exist" };
+    }
+    return { ok: false, path: resolve(pathValue), error: error instanceof Error ? error.message : "unknown error" };
+  }
 }
 
 async function tryRealpath(pathValue: string): Promise<string | undefined> {

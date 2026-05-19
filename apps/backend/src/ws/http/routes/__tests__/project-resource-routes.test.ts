@@ -69,6 +69,46 @@ describe("project resource routes", () => {
     });
   });
 
+  it("degrades malformed project resource settings to defaults", async () => {
+    const harness = await createHarness();
+    await mkdir(join(harness.workspaceDir, ".forge"), { recursive: true });
+    await mkdir(join(harness.dataDir, "shared", "config"), { recursive: true });
+    await writeFile(join(harness.dataDir, "shared", "config", "project-resources.json"), "{not-json", "utf-8");
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourcesSnapshotResponse;
+    expect(payload.trust.state).toBe("untrusted");
+  });
+
+  it("degrades missing session cwd to an empty no-workspace snapshot", async () => {
+    const harness = await createHarness({ missingCwd: true });
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourcesSnapshotResponse;
+    expect(payload.source).toBe("none");
+    expect(payload.trust.state).toBe("not_applicable");
+    expect(payload.warning).toContain("Session working directory is unavailable");
+    expect(payload.executableSurfaces).toEqual([]);
+    expect(payload.resources.skills.count).toBe(0);
+  });
+
+  it("applies CORS headers on early trust errors", async () => {
+    const harness = await createHarness({ missingForge: true });
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/trust`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", origin: "http://example.test" },
+      body: JSON.stringify({ profileId: "profile-a", sessionAgentId: "session-a", action: "trust" })
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://example.test");
+  });
+
   it("validates override directory name and stores realpath-normalized override", async () => {
     const harness = await createHarness();
     const override = join(await makeTempDir("forge-override-parent-"), ".forge");
@@ -95,10 +135,15 @@ describe("project resource routes", () => {
   });
 });
 
-async function createHarness(): Promise<{ baseUrl: string; workspaceDir: string }> {
+async function createHarness(options: { missingCwd?: boolean; missingForge?: boolean } = {}): Promise<{ baseUrl: string; workspaceDir: string; dataDir: string }> {
   const dataDir = await makeTempDir("forge-route-data-");
-  const workspaceDir = await makeTempDir("forge-route-workspace-");
-  execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
+  const workspaceDir = options.missingCwd ? join(await makeTempDir("forge-route-missing-parent-"), "deleted") : await makeTempDir("forge-route-workspace-");
+  if (!options.missingCwd) {
+    execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
+    if (!options.missingForge) {
+      await mkdir(join(workspaceDir, ".forge"), { recursive: true });
+    }
+  }
   const descriptor = createDescriptor(workspaceDir);
   const swarmManager = {
     getConfig: () => ({ paths: { dataDir } }),
@@ -122,7 +167,7 @@ async function createHarness(): Promise<{ baseUrl: string; workspaceDir: string 
     throw new Error("Unable to bind test server");
   }
   servers.push({ close: () => new Promise((resolveClose) => server.close(() => resolveClose())) });
-  return { baseUrl: `http://127.0.0.1:${address.port}`, workspaceDir };
+  return { baseUrl: `http://127.0.0.1:${address.port}`, workspaceDir, dataDir };
 }
 
 function createDescriptor(cwd: string): AgentDescriptor {

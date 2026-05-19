@@ -33,7 +33,7 @@ export interface ProjectResourcesSnapshotResponse {
   sessionAgentId: string
   cwdRealpath: string
   detectedGitRoot?: string
-  workspaceKey: string
+  warning?: string
   defaultForgeDir?: string
   effectiveForgeDir?: string
   effectiveForgeDirRealpath?: string

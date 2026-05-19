@@ -37,7 +37,7 @@ export class ProjectResourceSettingsStore {
     try {
       return normalizeSettings(JSON.parse(await readFile(this.path, "utf-8")));
     } catch (error) {
-      if (isEnoentError(error)) {
+      if (isEnoentError(error) || error instanceof SyntaxError) {
         return createDefaultSettings();
       }
       throw error;

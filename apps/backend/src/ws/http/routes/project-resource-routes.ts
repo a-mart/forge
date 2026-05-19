@@ -18,8 +18,7 @@ import type { HttpRoute } from "../shared/http-route.js";
 const PROJECT_RESOURCES_ENDPOINT_PATH = "/api/settings/project-resources";
 const PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH = "/api/settings/project-resources/override";
 const PROJECT_RESOURCES_TRUST_ENDPOINT_PATH = "/api/settings/project-resources/trust";
-const PROJECT_RESOURCES_REFRESH_ENDPOINT_PATH = "/api/settings/project-resources/refresh";
-const PROJECT_RESOURCES_METHODS = "GET, PUT, POST, OPTIONS";
+const PROJECT_RESOURCES_METHODS = "GET, PUT, OPTIONS";
 const MAX_INVENTORY_ITEMS = 50;
 
 export function createProjectResourceRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
@@ -34,8 +33,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
       matches: (pathname) =>
         pathname === PROJECT_RESOURCES_ENDPOINT_PATH ||
         pathname === PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH ||
-        pathname === PROJECT_RESOURCES_TRUST_ENDPOINT_PATH ||
-        pathname === PROJECT_RESOURCES_REFRESH_ENDPOINT_PATH,
+        pathname === PROJECT_RESOURCES_TRUST_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
         try {
           if (request.method === "OPTIONS") {
@@ -54,24 +52,19 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             return;
           }
 
-          if (pathname === PROJECT_RESOURCES_REFRESH_ENDPOINT_PATH && request.method === "POST") {
-            const body = await readJsonBody(request);
-            const context = resolveContextFromBody(swarmManager, body);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
-            applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
-            sendJson(response, 200, snapshot as unknown as Record<string, unknown>);
-            return;
-          }
-
           if (pathname === PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH && request.method === "PUT") {
             const body = parseOverrideRequest(await readJsonBody(request));
             const context = resolveContextFromBody(swarmManager, body);
             const before = await resolver.resolve(context);
             const forgeDir = body.forgeDir === null ? null : resolve(body.forgeDir);
+            if (before.warning && forgeDir !== null) {
+              sendCorsJson(request, response, 400, { error: before.warning });
+              return;
+            }
             if (forgeDir !== null) {
               const overrideCheck = await new ProjectWorkspaceResolver({ dataDir, settingsStore: createOverrideProbeStore(before.workspaceKey, forgeDir) }).resolve(context);
               if (!overrideCheck.override?.valid) {
-                sendJson(response, 400, { error: overrideCheck.override?.error ?? "Invalid .forge override directory" });
+                sendCorsJson(request, response, 400, { error: overrideCheck.override?.error ?? "Invalid .forge override directory" });
                 return;
               }
             }
@@ -88,7 +81,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             const context = resolveContextFromBody(swarmManager, body);
             const resolution = await resolver.resolve(context);
             if (!resolution.effectiveForgeDirRealpath || !resolution.trust.key) {
-              sendJson(response, 400, { error: "No effective .forge directory is available for this workspace." });
+              sendCorsJson(request, response, 400, { error: "No effective .forge directory is available for this workspace." });
               return;
             }
             await settingsStore.setTrust(resolution.trust.key, body.action);
@@ -99,12 +92,10 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             return;
           }
 
-          applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
           response.setHeader("Allow", PROJECT_RESOURCES_METHODS);
-          sendJson(response, 405, { error: "Method Not Allowed" });
+          sendCorsJson(request, response, 405, { error: "Method Not Allowed" });
         } catch (error) {
-          applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
-          sendJson(response, 400, { error: error instanceof Error ? error.message : "Project resource request failed" });
+          sendCorsJson(request, response, 400, { error: error instanceof Error ? error.message : "Project resource request failed" });
         }
       }
     }
@@ -127,7 +118,7 @@ async function buildSnapshot(options: {
     sessionAgentId: resolution.sessionAgentId,
     cwdRealpath: resolution.cwdRealpath,
     ...(resolution.detectedGitRoot ? { detectedGitRoot: resolution.detectedGitRoot } : {}),
-    workspaceKey: resolution.workspaceKey,
+    ...(resolution.warning ? { warning: resolution.warning } : {}),
     ...(resolution.defaultForgeDir ? { defaultForgeDir: resolution.defaultForgeDir } : {}),
     ...(resolution.effectiveForgeDir ? { effectiveForgeDir: resolution.effectiveForgeDir } : {}),
     ...(resolution.effectiveForgeDirRealpath ? { effectiveForgeDirRealpath: resolution.effectiveForgeDirRealpath } : {}),
@@ -310,6 +301,16 @@ function parseTrustRequest(body: unknown): ProjectResourceTrustRequest {
     throw new Error("action must be trust, block, or reset.");
   }
   return { profileId: body.profileId, sessionAgentId: body.sessionAgentId, action: body.action };
+}
+
+function sendCorsJson(
+  request: Parameters<typeof applyCorsHeaders>[0],
+  response: Parameters<typeof sendJson>[0],
+  statusCode: number,
+  body: Record<string, unknown>
+): void {
+  applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
+  sendJson(response, statusCode, body);
 }
 
 function createOverrideProbeStore(workspaceKey: string, forgeDir: string): ProjectResourceSettingsStore {
