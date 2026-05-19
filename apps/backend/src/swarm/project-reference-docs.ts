@@ -1,4 +1,4 @@
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, opendir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { getProjectForgeReferenceDir } from "./data-paths.js";
 
@@ -8,36 +8,64 @@ export interface RepositoryReferenceDocInventory {
   truncated: boolean;
 }
 
+interface ReferenceDocTraversalState {
+  files: string[];
+  entriesScanned: number;
+  truncated: boolean;
+}
+
 export async function listRepositoryReferenceDocs(
   forgeDir: string,
-  options: { maxFiles?: number } = {}
+  options: { maxFiles?: number; maxEntries?: number } = {}
 ): Promise<RepositoryReferenceDocInventory> {
   const rootDir = getProjectForgeReferenceDir(forgeDir);
   const maxFiles = Math.max(0, options.maxFiles ?? 100);
-  const files: string[] = [];
-  await collectMarkdownFiles(rootDir, rootDir, files, maxFiles + 1);
-  files.sort((left, right) => left.localeCompare(right));
-  return { rootDir, files: files.slice(0, maxFiles), truncated: files.length > maxFiles };
+  const maxEntries = Math.max(0, options.maxEntries ?? 1000);
+  const state: ReferenceDocTraversalState = { files: [], entriesScanned: 0, truncated: false };
+  await collectMarkdownFiles(rootDir, rootDir, state, { maxFiles, maxEntries });
+  state.files.sort((left, right) => left.localeCompare(right));
+  return { rootDir, files: state.files.slice(0, maxFiles), truncated: state.truncated || state.files.length > maxFiles };
 }
 
 async function collectMarkdownFiles(
   rootDir: string,
   currentDir: string,
-  files: string[],
-  collectionLimit: number
+  state: ReferenceDocTraversalState,
+  limits: { maxFiles: number; maxEntries: number }
 ): Promise<void> {
-  if (files.length >= collectionLimit) {
+  if (state.files.length > limits.maxFiles || state.entriesScanned >= limits.maxEntries) {
+    state.truncated = true;
     return;
   }
-  let entries;
+
+  let directory;
   try {
-    entries = await readdir(currentDir, { withFileTypes: true });
+    directory = await opendir(currentDir);
   } catch {
     return;
   }
 
+  const entries = [];
+  try {
+    for await (const entry of directory) {
+      if (state.entriesScanned >= limits.maxEntries) {
+        state.truncated = true;
+        break;
+      }
+      state.entriesScanned += 1;
+      entries.push(entry);
+      if (state.files.length > limits.maxFiles) {
+        state.truncated = true;
+        break;
+      }
+    }
+  } finally {
+    await directory.close().catch(() => undefined);
+  }
+
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (files.length >= collectionLimit) {
+    if (state.files.length > limits.maxFiles || state.entriesScanned > limits.maxEntries) {
+      state.truncated = true;
       return;
     }
     const path = join(currentDir, entry.name);
@@ -46,12 +74,12 @@ async function collectMarkdownFiles(
       continue;
     }
     if (stats.isDirectory()) {
-      await collectMarkdownFiles(rootDir, path, files, collectionLimit);
+      await collectMarkdownFiles(rootDir, path, state, limits);
       continue;
     }
     if (!stats.isFile() || !entry.name.toLowerCase().endsWith(".md")) {
       continue;
     }
-    files.push(relative(rootDir, path));
+    state.files.push(relative(rootDir, path));
   }
 }

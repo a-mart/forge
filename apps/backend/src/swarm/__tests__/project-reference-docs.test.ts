@@ -34,7 +34,7 @@ describe("project reference docs", () => {
       await writeFile(join(referenceDir, "nested", `nested-${String(index).padStart(3, "0")}.md`), `nested ${index}`);
     }
 
-    const inventory = await listRepositoryReferenceDocs(forgeDir, { maxFiles: 10 });
+    const inventory = await listRepositoryReferenceDocs(forgeDir, { maxFiles: 10, maxEntries: 100 });
 
     expect(inventory.files).toHaveLength(10);
     expect(inventory.truncated).toBe(true);
@@ -50,5 +50,39 @@ describe("project reference docs", () => {
       "doc-008.md",
       "doc-009.md",
     ]);
+  });
+
+  it("marks overflow when non-markdown entries hit the filesystem enumeration cap", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-reference-docs-"));
+    const forgeDir = join(root, ".forge");
+    const referenceDir = join(forgeDir, "reference");
+    await mkdir(referenceDir, { recursive: true });
+
+    for (let index = 0; index < 25; index += 1) {
+      await writeFile(join(referenceDir, `ignored-${String(index).padStart(3, "0")}.txt`), "ignored");
+    }
+    await writeFile(join(referenceDir, "z-final.md"), "too late");
+
+    const inventory = await listRepositoryReferenceDocs(forgeDir, { maxFiles: 10, maxEntries: 5 });
+
+    expect(inventory.files.length).toBeLessThanOrEqual(1);
+    expect(inventory.truncated).toBe(true);
+  });
+
+  it("marks overflow when symlink-heavy directories hit the filesystem enumeration cap", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-reference-docs-"));
+    const forgeDir = join(root, ".forge");
+    const referenceDir = join(forgeDir, "reference");
+    await mkdir(referenceDir, { recursive: true });
+    await writeFile(join(referenceDir, "target.md"), "target");
+
+    for (let index = 0; index < 25; index += 1) {
+      await symlink(join(referenceDir, "target.md"), join(referenceDir, `link-${String(index).padStart(3, "0")}.md`));
+    }
+
+    const inventory = await listRepositoryReferenceDocs(forgeDir, { maxFiles: 10, maxEntries: 5 });
+
+    expect(inventory.files).not.toContain("link-000.md");
+    expect(inventory.truncated).toBe(true);
   });
 });
