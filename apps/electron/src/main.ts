@@ -8,6 +8,7 @@ import { installCli, verifyCliInstall, writeInstallHint, type CliInstallResult }
 import { buildSkillImportRouteUrl, findSkillImportUrlInArgs, parseSkillImportDeepLink, shouldRegisterExternalDeepLinkProtocol } from './deep-link.js'
 import { fixPath } from './fix-path.js'
 import { SleepBlockerService, type SleepBlockerSettingsPatch, type SleepBlockerStatus } from './sleep-blocker.js'
+import { sendSleepBlockerStatusToWindow } from './sleep-blocker-status-ipc.js'
 import { loadWindowState, trackWindowState } from './window-state.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 
@@ -545,9 +546,7 @@ if (!hasSingleInstanceLock) {
     sleepBlockerService = new SleepBlockerService({
       getBackendBaseUrl: () => backendBootstrap?.backendUrl ?? null,
       onStatusChange: (status) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('sleep-blocker-status', status)
-        }
+        sendSleepBlockerStatusToWindow(mainWindow, status)
       },
     })
     sleepBlockerService.initialize()
