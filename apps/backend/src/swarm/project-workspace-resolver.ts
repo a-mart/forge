@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, realpath, stat } from "node:fs/promises";
-import { basename, join, normalize, resolve, sep } from "node:path";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { basename, dirname, join, normalize, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   getProjectForgeExtensionsDir,
@@ -97,11 +97,7 @@ export class ProjectWorkspaceResolver {
           piSettingsPath: getProjectForgePiSettingsPath(effectiveForgeDirRealpath)
         }
       : {};
-    const legacyExecutableSurfaces = buildLegacyExecutableSurfaces({
-      cwdRealpath,
-      workspaceBasis,
-      trustKey: trust.key
-    });
+    const legacyExecutableSurfaces = buildLegacyExecutableSurfaces(cwdRealpath);
     const signature = await buildResolutionSignature({
       cwdRealpath,
       detectedGitRoot: detectedGitRootRealpath,
@@ -152,7 +148,7 @@ async function validateOverride(pathValue: string): Promise<{ path: string; vali
   }
 
   try {
-    const entry = await lstat(overridePath);
+    const entry = await stat(overridePath);
     if (!entry.isDirectory()) {
       return { path: overridePath, valid: false, error: "Override path is not a directory" };
     }
@@ -165,33 +161,25 @@ async function validateOverride(pathValue: string): Promise<{ path: string; vali
   }
 }
 
-function buildLegacyExecutableSurfaces(options: {
-  cwdRealpath: string;
-  workspaceBasis: string;
-  trustKey?: string;
-}): LegacyExecutableSurface[] {
-  const coveredByTrustKey = isPathAtOrUnder(options.cwdRealpath, options.workspaceBasis) ? options.trustKey : undefined;
+function buildLegacyExecutableSurfaces(cwdRealpath: string): LegacyExecutableSurface[] {
   return [
     {
       kind: "exact-cwd-forge-extension",
-      path: join(options.cwdRealpath, ".forge", "extensions"),
+      path: join(cwdRealpath, ".forge", "extensions"),
       activeToday: true,
-      compatibilityPolicy: "preserve-with-warning",
-      ...(coveredByTrustKey ? { coveredByTrustKey } : {})
+      compatibilityPolicy: "preserve-with-warning"
     },
     {
       kind: "exact-cwd-pi-extension",
-      path: join(options.cwdRealpath, ".pi", "extensions"),
+      path: join(cwdRealpath, ".pi", "extensions"),
       activeToday: true,
-      compatibilityPolicy: "preserve-with-warning",
-      ...(coveredByTrustKey ? { coveredByTrustKey } : {})
+      compatibilityPolicy: "preserve-with-warning"
     },
     {
       kind: "exact-cwd-pi-settings",
-      path: join(options.cwdRealpath, ".pi", "settings.json"),
+      path: join(cwdRealpath, ".pi", "settings.json"),
       activeToday: true,
-      compatibilityPolicy: "preserve-with-warning",
-      ...(coveredByTrustKey ? { coveredByTrustKey } : {})
+      compatibilityPolicy: "preserve-with-warning"
     }
   ];
 }
@@ -212,27 +200,155 @@ async function buildResolutionSignature(options: {
       : null
   }));
 
-  const candidates = [
+  const executableRoots = [
     options.repoRootResources.forgeExtensionsDir,
     options.repoRootResources.piExtensionsDir,
-    options.repoRootResources.piSettingsPath,
-    ...options.legacyExecutableSurfaces.map((surface) => surface.path)
+    ...options.legacyExecutableSurfaces
+      .filter((surface) => surface.kind !== "exact-cwd-pi-settings")
+      .map((surface) => surface.path)
   ].filter((pathValue): pathValue is string => typeof pathValue === "string");
 
-  for (const pathValue of candidates.sort((left, right) => left.localeCompare(right))) {
-    hash.update(await pathSignature(pathValue));
+  const executableSettingsPaths = [
+    options.repoRootResources.piSettingsPath,
+    ...options.legacyExecutableSurfaces
+      .filter((surface) => surface.kind === "exact-cwd-pi-settings")
+      .map((surface) => surface.path)
+  ].filter((pathValue): pathValue is string => typeof pathValue === "string");
+
+  const entries: string[] = [];
+  for (const pathValue of executableRoots) {
+    entries.push(...(await fingerprintExecutableRoot(pathValue)));
+  }
+  for (const settingsPath of executableSettingsPaths) {
+    entries.push(...(await fingerprintPiSettingsExecutableSurface(settingsPath)));
+  }
+
+  for (const entry of entries.sort((left, right) => left.localeCompare(right))) {
+    hash.update(entry);
   }
 
   return hash.digest("hex");
 }
 
-async function pathSignature(pathValue: string): Promise<string> {
+async function fingerprintExecutableRoot(rootPath: string): Promise<string[]> {
+  const entries: string[] = [];
+  await fingerprintPath(rootPath, entries);
+  return entries;
+}
+
+async function fingerprintPath(pathValue: string, target: string[]): Promise<void> {
+  const comparablePath = normalizeComparablePath(pathValue);
   try {
     const entry = await stat(pathValue);
-    return `${normalizeComparablePath(pathValue)}:${entry.isDirectory() ? "dir" : "file"}:${entry.mtimeMs}:${entry.size}`;
+    if (entry.isDirectory()) {
+      target.push(`${comparablePath}:dir:${entry.mtimeMs}:${entry.size}`);
+      const children = await readdir(pathValue);
+      for (const child of children.sort((left, right) => left.localeCompare(right))) {
+        await fingerprintPath(join(pathValue, child), target);
+      }
+      return;
+    }
+
+    if (entry.isFile()) {
+      const content = await readFile(pathValue);
+      const digest = createHash("sha256").update(content).digest("hex");
+      target.push(`${comparablePath}:file:${entry.mtimeMs}:${entry.size}:${digest}`);
+      return;
+    }
+
+    target.push(`${comparablePath}:other:${entry.mtimeMs}:${entry.size}`);
   } catch (error) {
     if (isEnoentError(error)) {
-      return `${normalizeComparablePath(pathValue)}:missing`;
+      target.push(`${comparablePath}:missing`);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function fingerprintPiSettingsExecutableSurface(settingsPath: string): Promise<string[]> {
+  const entries: string[] = [];
+  await fingerprintPath(settingsPath, entries);
+  const settings = await readJsonObject(settingsPath);
+  if (!settings) {
+    return entries;
+  }
+
+  const settingsDir = dirname(settingsPath);
+  for (const packageRoot of collectLocalPackageRoots(settings.packages, settingsDir)) {
+    entries.push(...(await fingerprintPiPackageExtensions(packageRoot)));
+  }
+  return entries;
+}
+
+async function fingerprintPiPackageExtensions(packageRoot: string): Promise<string[]> {
+  const entries: string[] = [];
+  const manifest = await readJsonObject(join(packageRoot, "package.json"));
+  const piManifest = isRecord(manifest?.pi) ? manifest.pi : undefined;
+  const manifestExtensions = getStringArray(piManifest?.extensions);
+
+  if (manifestExtensions.length > 0) {
+    for (const extensionPath of manifestExtensions) {
+      await fingerprintPath(resolve(packageRoot, extensionPath), entries);
+    }
+    return entries;
+  }
+
+  await fingerprintPath(join(packageRoot, "extensions"), entries);
+  return entries;
+}
+
+function collectLocalPackageRoots(packages: unknown, settingsDir: string): string[] {
+  if (!Array.isArray(packages)) {
+    return [];
+  }
+
+  const roots: string[] = [];
+  for (const entry of packages) {
+    const source = typeof entry === "string" ? entry : isRecord(entry) && typeof entry.source === "string" ? entry.source : undefined;
+    if (!source || !isLocalPackageSource(source)) {
+      continue;
+    }
+    roots.push(resolvePackageSourcePath(source, settingsDir));
+  }
+  return roots;
+}
+
+function resolvePackageSourcePath(source: string, settingsDir: string): string {
+  const trimmed = source.trim();
+  if (trimmed === "~") {
+    return resolve(process.env.HOME ?? "");
+  }
+  if (trimmed.startsWith("~/")) {
+    return resolve(process.env.HOME ?? "", trimmed.slice(2));
+  }
+  if (trimmed.startsWith("~")) {
+    return resolve(process.env.HOME ?? "", trimmed.slice(1));
+  }
+  return resolve(settingsDir, trimmed);
+}
+
+function isLocalPackageSource(source: string): boolean {
+  const trimmed = source.trim();
+  return (
+    trimmed.startsWith(".") ||
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("~") ||
+    (!trimmed.startsWith("npm:") && !trimmed.startsWith("git+") && !/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed))
+  );
+}
+
+function getStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+async function readJsonObject(pathValue: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(pathValue, "utf-8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch (error) {
+    if (isEnoentError(error) || error instanceof SyntaxError) {
+      return undefined;
     }
     throw error;
   }
@@ -266,19 +382,13 @@ async function tryRealpath(pathValue: string): Promise<string | undefined> {
   }
 }
 
-function isPathAtOrUnder(pathValue: string, parent: string): boolean {
-  const normalizedPath = withTrailingSeparator(normalizeComparablePath(pathValue));
-  const normalizedParent = withTrailingSeparator(normalizeComparablePath(parent));
-  return normalizedPath === normalizedParent || normalizedPath.startsWith(normalizedParent);
-}
-
-function withTrailingSeparator(pathValue: string): string {
-  return pathValue.endsWith(sep) ? pathValue : `${pathValue}${sep}`;
-}
-
 function normalizeComparablePath(pathValue: string): string {
   const normalized = normalize(resolve(pathValue));
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function isEnoentError(error: unknown): error is NodeJS.ErrnoException {

@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, normalize, resolve } from "node:path";
 import { getProjectResourceSettingsPath } from "./data-paths.js";
 
 export type ProjectExecutableTrustState = "trusted" | "blocked";
@@ -62,7 +62,7 @@ export class ProjectResourceSettingsStore {
 
   async getTrust(key: string): Promise<ProjectResourceSettingsTrustRecord | undefined> {
     const settings = await this.load();
-    return settings.executableTrust[key];
+    return settings.executableTrust[normalizeProjectResourceKey(key)];
   }
 
   async setTrust(
@@ -71,10 +71,11 @@ export class ProjectResourceSettingsStore {
     label = "forge"
   ): Promise<ProjectResourceSettingsData> {
     const settings = await this.load();
+    const normalizedKey = normalizeProjectResourceKey(key);
     if (action === "reset") {
-      delete settings.executableTrust[key];
+      delete settings.executableTrust[normalizedKey];
     } else {
-      settings.executableTrust[key] = {
+      settings.executableTrust[normalizedKey] = {
         state: action === "trust" ? "trusted" : "blocked",
         updatedAt: this.now(),
         label
@@ -86,7 +87,7 @@ export class ProjectResourceSettingsStore {
 
   async dismissExecutablePrompt(key: string, signature: string): Promise<ProjectResourceSettingsData> {
     const settings = await this.load();
-    settings.dismissedExecutablePrompts[key] = { signature, dismissedAt: this.now() };
+    settings.dismissedExecutablePrompts[normalizeProjectResourceKey(key)] = { signature, dismissedAt: this.now() };
     await this.save(settings);
     return settings;
   }
@@ -102,6 +103,11 @@ export class ProjectResourceSettingsStore {
   private get path(): string {
     return getProjectResourceSettingsPath(this.dataDir);
   }
+}
+
+export function normalizeProjectResourceKey(key: string): string {
+  const normalized = normalize(resolve(key));
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 export function createDefaultSettings(): ProjectResourceSettingsData {
@@ -145,7 +151,7 @@ function normalizeTrustRecords(records: Record<string, unknown>): Record<string,
     if (!isRecord(record) || (record.state !== "trusted" && record.state !== "blocked")) {
       continue;
     }
-    normalized[key] = {
+    normalized[normalizeProjectResourceKey(key)] = {
       state: record.state,
       updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
       label: typeof record.label === "string" && record.label.trim().length > 0 ? record.label : "forge"
@@ -162,7 +168,7 @@ function normalizeDismissedPromptRecords(
     if (!isRecord(record) || typeof record.signature !== "string" || typeof record.dismissedAt !== "string") {
       continue;
     }
-    normalized[key] = { signature: record.signature, dismissedAt: record.dismissedAt };
+    normalized[normalizeProjectResourceKey(key)] = { signature: record.signature, dismissedAt: record.dismissedAt };
   }
   return normalized;
 }
