@@ -65,6 +65,11 @@ export class ProjectResourceSettingsStore {
     return settings.executableTrust[normalizeProjectResourceKey(key)];
   }
 
+  async getDismissedExecutablePrompt(key: string): Promise<ProjectResourceSettingsDismissedPrompt | undefined> {
+    const settings = await this.load();
+    return settings.dismissedExecutablePrompts[normalizeProjectResourceKey(key)];
+  }
+
   async setTrust(
     key: string,
     action: "trust" | "block" | "reset",

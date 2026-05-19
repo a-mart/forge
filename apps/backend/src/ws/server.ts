@@ -72,6 +72,7 @@ import { createMermaidPreviewRoutes } from "./http/routes/mermaid-preview-routes
 import { createMobileRoutes } from "./http/routes/mobile-routes.js";
 import { createModelConfigRoutes } from "./http/routes/model-config-routes.js";
 import { createOpenRouterRoutes } from "./http/routes/openrouter-routes.js";
+import { createProjectResourceRoutes } from "./http/routes/project-resource-routes.js";
 import { createPromptRoutes } from "./http/routes/prompt-routes.js";
 import { createSchedulerRoutes } from "./http/routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/settings-routes.js";
@@ -499,6 +500,7 @@ export class SwarmWebSocketServer {
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
+      ...createProjectResourceRoutes({ swarmManager: this.swarmManager }),
       ...createOpenRouterRoutes({
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
