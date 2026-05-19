@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { LoadExtensionsResult } from "@mariozechner/pi-coding-agent";
 
 type SettingsStorage = {
@@ -136,7 +136,7 @@ function mergeProjectSettings(paths: string[]): string {
           const current = Array.isArray(merged[key]) ? (merged[key] as unknown[]) : [];
           const entries = absolutizeLocalEntries(value, dirname(settingsPath));
           merged[key] = key === "extensions"
-            ? [...current, ...entries, ...forceIncludeExtensionEntries(entries)]
+            ? [...current, ...entries, ...forceIncludeExtensionEntries(entries, dirname(settingsPath))]
             : [...current, ...entries];
         } else if (merged[key] === undefined) {
           merged[key] = value;
@@ -149,10 +149,101 @@ function mergeProjectSettings(paths: string[]): string {
   return JSON.stringify(merged);
 }
 
-function forceIncludeExtensionEntries(entries: unknown[]): string[] {
+function forceIncludeExtensionEntries(entries: unknown[], baseDir = process.cwd()): string[] {
   return entries
     .filter((entry): entry is string => typeof entry === "string" && !isOverridePattern(entry))
-    .map((entry) => `+${entry}`);
+    .flatMap((entry) => expandExtensionEntryToExactFiles(entry, baseDir))
+    .flatMap((entry) => [entry, `+${entry}`]);
+}
+
+function expandExtensionEntryToExactFiles(entry: string, baseDir: string): string[] {
+  const resolvedEntry = resolve(baseDir, entry);
+  if (hasGlobPattern(entry)) {
+    return collectPathEntriesSync(baseDir)
+      .filter((candidate) => matchesPattern(candidate, entry, baseDir))
+      .flatMap((candidate) => collectExtensionFilesSync(candidate));
+  }
+  return collectExtensionFilesSync(resolvedEntry);
+}
+
+function collectExtensionFilesSync(pathValue: string): string[] {
+  if (!existsSync(pathValue)) return [];
+  const stats = statSync(pathValue);
+  if (stats.isFile()) return isSupportedExtensionFile(pathValue) ? [pathValue] : [];
+  if (!stats.isDirectory()) return [];
+
+  const selfEntries = collectDirectorySelfExtensionEntriesSync(pathValue);
+  if (selfEntries) return uniqueSortedPaths(selfEntries);
+
+  const paths: string[] = [];
+  for (const entry of readdirSync(pathValue, { withFileTypes: true })) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const childPath = join(pathValue, entry.name);
+    if (entry.isDirectory()) {
+      const childEntries = collectDirectorySelfExtensionEntriesSync(childPath);
+      if (childEntries) paths.push(...childEntries);
+      continue;
+    }
+    if (entry.isFile() && isSupportedExtensionFile(entry.name)) {
+      paths.push(childPath);
+    }
+  }
+  return uniqueSortedPaths(paths);
+}
+
+function collectDirectorySelfExtensionEntriesSync(dirPath: string): string[] | undefined {
+  const manifest = readJsonObjectSync(join(dirPath, "package.json"));
+  const piManifest = isRecord(manifest?.pi) ? manifest.pi : undefined;
+  const manifestExtensions = Array.isArray(piManifest?.extensions)
+    ? piManifest.extensions.filter((value): value is string => typeof value === "string")
+    : [];
+  if (manifestExtensions.length > 0) {
+    const paths = manifestExtensions
+      .filter((entry) => !isOverridePattern(entry))
+      .flatMap((entry) => expandExtensionEntryToExactFiles(entry, dirPath));
+    if (paths.length > 0) return uniqueSortedPaths(paths);
+  }
+
+  const indexTs = join(dirPath, "index.ts");
+  if (existsSync(indexTs)) return [indexTs];
+  const indexJs = join(dirPath, "index.js");
+  if (existsSync(indexJs)) return [indexJs];
+  return undefined;
+}
+
+function collectPathEntriesSync(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const stats = statSync(root);
+  if (!stats.isDirectory()) return [root];
+  const paths: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entryPath = join(root, entry.name);
+    paths.push(entryPath);
+    if (entry.isDirectory()) paths.push(...collectPathEntriesSync(entryPath));
+  }
+  return uniqueSortedPaths(paths);
+}
+
+function readJsonObjectSync(pathValue: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(pathValue, "utf-8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+      return undefined;
+    }
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
+function matchesPattern(candidate: string, pattern: string, baseDir: string): boolean {
+  const normalizedPattern = normalizePattern(pattern);
+  return (
+    globToRegExp(normalizedPattern).test(toPosix(relative(baseDir, candidate))) ||
+    globToRegExp(normalizedPattern).test(basename(candidate)) ||
+    globToRegExp(normalizedPattern).test(toPosix(resolve(candidate)))
+  );
 }
 
 function absolutizeLocalEntries(entries: unknown[], baseDir: string): unknown[] {
@@ -172,6 +263,56 @@ function absolutizeLocalEntries(entries: unknown[], baseDir: string): unknown[] 
 
 function isOverridePattern(entry: string): boolean {
   return entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-");
+}
+
+function hasGlobPattern(pattern: string): boolean {
+  return /[*?\[\]{}]/.test(pattern);
+}
+
+function normalizePattern(pattern: string): string {
+  const trimmed = pattern.trim();
+  return toPosix(trimmed.startsWith("./") || trimmed.startsWith(".\\") ? trimmed.slice(2) : trimmed);
+}
+
+function globToRegExp(pattern: string): RegExp {
+  let source = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    const next = pattern[index + 1];
+    if (char === "*" && next === "*") {
+      source += ".*";
+      index += 1;
+      continue;
+    }
+    if (char === "*") {
+      source += "[^/]*";
+      continue;
+    }
+    source += escapeRegExp(char);
+  }
+  source += "$";
+  return new RegExp(source);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function toPosix(pathValue: string): string {
+  return pathValue.split(sep).join("/");
+}
+
+function isSupportedExtensionFile(fileName: string): boolean {
+  const normalized = fileName.toLowerCase();
+  return normalized.endsWith(".ts") || normalized.endsWith(".js");
+}
+
+function uniqueSortedPaths(paths: string[]): string[] {
+  return Array.from(new Set(paths.map((pathValue) => resolve(pathValue)))).sort((left, right) => left.localeCompare(right));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function isLocalSource(source: string): boolean {

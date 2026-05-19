@@ -103,6 +103,42 @@ describe("project executable trust helpers", () => {
     });
   });
 
+  it("preserves trusted repo directory extension entries while disabling legacy cwd auto-discovery", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-runtime-dir-"));
+    tempDirs.push(root);
+    const settingsPath = join(root, ".forge", "pi", "settings.json");
+    await mkdir(join(root, ".forge", "pi", "extensions", "nested"), { recursive: true });
+    await mkdir(join(root, ".pi", "extensions"), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify({ extensions: ["./extensions"] }), "utf8");
+    await writeFile(join(root, ".forge", "pi", "extensions", "repo.ts"), "export default () => {}\n", "utf8");
+    await writeFile(join(root, ".forge", "pi", "extensions", "nested", "index.ts"), "export default () => {}\n", "utf8");
+    await writeFile(join(root, ".pi", "extensions", "legacy.ts"), "export default () => {}\n", "utf8");
+
+    const loadedPaths = await loadTrustedProjectExtensionPaths(root, settingsPath);
+
+    expect(loadedPaths).toContain(join(root, ".forge", "pi", "extensions", "repo.ts"));
+    expect(loadedPaths).toContain(join(root, ".forge", "pi", "extensions", "nested", "index.ts"));
+    expect(loadedPaths).not.toContain(join(root, ".pi", "extensions", "legacy.ts"));
+  });
+
+  it("preserves trusted repo glob extension entries while disabling legacy cwd auto-discovery", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-pi-runtime-glob-"));
+    tempDirs.push(root);
+    const settingsPath = join(root, ".forge", "pi", "settings.json");
+    await mkdir(join(root, ".forge", "pi", "extensions"), { recursive: true });
+    await mkdir(join(root, ".pi", "extensions"), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify({ extensions: ["./extensions/*.ts"] }), "utf8");
+    await writeFile(join(root, ".forge", "pi", "extensions", "repo.ts"), "export default () => {}\n", "utf8");
+    await writeFile(join(root, ".forge", "pi", "extensions", "ignored.js"), "export default () => {}\n", "utf8");
+    await writeFile(join(root, ".pi", "extensions", "legacy.ts"), "export default () => {}\n", "utf8");
+
+    const loadedPaths = await loadTrustedProjectExtensionPaths(root, settingsPath);
+
+    expect(loadedPaths).toContain(join(root, ".forge", "pi", "extensions", "repo.ts"));
+    expect(loadedPaths).not.toContain(join(root, ".forge", "pi", "extensions", "ignored.js"));
+    expect(loadedPaths).not.toContain(join(root, ".pi", "extensions", "legacy.ts"));
+  });
+
   it("disables legacy cwd .pi/extensions auto-discovery even when trusted repo settings omit extensions", async () => {
     const root = await mkdtemp(join(tmpdir(), "forge-pi-runtime-"));
     tempDirs.push(root);
@@ -112,28 +148,32 @@ describe("project executable trust helpers", () => {
     await writeFile(settingsPath, JSON.stringify({ packages: ["./pkg"] }), "utf8");
     await writeFile(join(root, ".forge", "pi", "pkg", "extensions", "trusted.ts"), "export default () => {}\n", "utf8");
     await writeFile(join(root, ".pi", "extensions", "legacy.ts"), "export default () => {}\n", "utf8");
-    const storage = buildProjectSafePiProjectSettingsStorage({
-      agentDir: join(root, "agent"),
-      projectSettingsPaths: [settingsPath],
-      projectExecutablesTrusted: true
-    });
-    const loader = new DefaultResourceLoader({
-      cwd: root,
-      agentDir: join(root, "agent"),
-      settingsManager: SettingsManager.fromStorage(storage),
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true
-    });
-
-    await loader.reload();
-    const loadedPaths = loader.getExtensions().extensions.map((extension) => extension.path);
+    const loadedPaths = await loadTrustedProjectExtensionPaths(root, settingsPath);
 
     expect(loadedPaths).toContain(join(root, ".forge", "pi", "pkg", "extensions", "trusted.ts"));
     expect(loadedPaths).not.toContain(join(root, ".pi", "extensions", "legacy.ts"));
   });
 });
+
+async function loadTrustedProjectExtensionPaths(root: string, settingsPath: string): Promise<string[]> {
+  const storage = buildProjectSafePiProjectSettingsStorage({
+    agentDir: join(root, "agent"),
+    projectSettingsPaths: [settingsPath],
+    projectExecutablesTrusted: true
+  });
+  const loader = new DefaultResourceLoader({
+    cwd: root,
+    agentDir: join(root, "agent"),
+    settingsManager: SettingsManager.fromStorage(storage),
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true
+  });
+
+  await loader.reload();
+  return loader.getExtensions().extensions.map((extension) => extension.path);
+}
 
 function createLoadedExtension(path: string) {
   return {
