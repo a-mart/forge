@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import { seedProjectResources } from '@/components/file-browser/use-file-browser-queries'
 import { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
 import type {
@@ -50,10 +51,12 @@ export function useManagerActions({
   isCreatingManager: boolean
   isValidatingDirectory: boolean
   isPickingDirectory: boolean
+  scaffoldForgeResources: boolean
   handleNewManagerNameChange: (value: string) => void
   handleNewManagerCwdChange: (value: string) => void
   handleNewManagerModelSelectionChange: (value: ManagerExactModelSelection) => void
   handleNewManagerReasoningLevelChange: (value: ManagerReasoningLevel) => void
+  handleScaffoldForgeResourcesChange: (checked: boolean) => void
   handleOpenCreateManagerDialog: () => void
   handleCreateManagerDialogOpenChange: (open: boolean) => void
   handleBrowseDirectory: () => Promise<void>
@@ -77,6 +80,7 @@ export function useManagerActions({
   const [newManagerModelSelection, setNewManagerModelSelection] = useState<ManagerExactModelSelection | undefined>(undefined)
   const [newManagerReasoningLevel, setNewManagerReasoningLevel] = useState<ManagerReasoningLevel | undefined>(undefined)
   const [createManagerError, setCreateManagerError] = useState<string | null>(null)
+  const [scaffoldForgeResources, setScaffoldForgeResources] = useState(true)
   const [isCreatingManager, setIsCreatingManager] = useState(false)
   const [isValidatingDirectory, setIsValidatingDirectory] = useState(false)
 
@@ -112,6 +116,10 @@ export function useManagerActions({
   const handleNewManagerReasoningLevelChange = useCallback((value: ManagerReasoningLevel) => {
     setNewManagerReasoningLevel(value)
     setCreateManagerError(null)
+  }, [])
+
+  const handleScaffoldForgeResourcesChange = useCallback((checked: boolean) => {
+    setScaffoldForgeResources(checked)
   }, [])
 
   const handleCompactManager = useCallback(async (customInstructions?: string) => {
@@ -195,6 +203,7 @@ export function useManagerActions({
     setNewManagerCwd(defaultCwd)
     setNewManagerModelSelection(undefined)
     setNewManagerReasoningLevel(undefined)
+    setScaffoldForgeResources(true)
     setBrowseError(null)
     setCreateManagerError(null)
     setIsCreateManagerDialogOpen(true)
@@ -281,11 +290,20 @@ export function useManagerActions({
       navigateToRoute({ view: 'chat', agentId: manager.agentId, surface: 'builder' })
       client.subscribeToAgent(manager.agentId)
 
+      // Seed .forge project resources if the user opted in (non-blocking)
+      if (scaffoldForgeResources) {
+        const profileId = manager.profileId ?? manager.agentId
+        seedProjectResources(wsUrl, { profileId, sessionAgentId: manager.agentId }).catch((err) => {
+          console.warn('Failed to seed .forge project resources:', err)
+        })
+      }
+
       setIsCreateManagerDialogOpen(false)
       setNewManagerName('')
       setNewManagerCwd('')
       setNewManagerModelSelection(undefined)
       setNewManagerReasoningLevel(undefined)
+      setScaffoldForgeResources(true)
       setBrowseError(null)
       setCreateManagerError(null)
     } catch (error) {
@@ -301,6 +319,8 @@ export function useManagerActions({
     newManagerModelSelection,
     newManagerReasoningLevel,
     newManagerName,
+    scaffoldForgeResources,
+    wsUrl,
   ])
 
   const handleRequestDeleteManager = useCallback((managerId: string) => {
@@ -365,6 +385,7 @@ export function useManagerActions({
     newManagerCwd,
     newManagerModelSelection,
     newManagerReasoningLevel,
+    scaffoldForgeResources,
     createManagerError,
     browseError,
     isCreatingManager,
@@ -374,6 +395,7 @@ export function useManagerActions({
     handleNewManagerCwdChange,
     handleNewManagerModelSelectionChange,
     handleNewManagerReasoningLevelChange,
+    handleScaffoldForgeResourcesChange,
     handleOpenCreateManagerDialog,
     handleCreateManagerDialogOpenChange,
     handleBrowseDirectory,

@@ -5,6 +5,14 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Radix UI components require ResizeObserver in jsdom
+globalThis.ResizeObserver ??= class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as typeof ResizeObserver
+
 import { getProjectAgentSuggestions, IndexPage, isCortexDiffViewerSession, parseWindowRouteSearch } from './index'
 import { HelpProvider } from '@/components/help/HelpProvider'
 import { buildManagerModelRows } from '@/lib/manager-model-selection'

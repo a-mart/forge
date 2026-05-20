@@ -487,6 +487,7 @@ export function BuilderSurface({
     newManagerCwd,
     newManagerModelSelection,
     newManagerReasoningLevel,
+    scaffoldForgeResources,
     createManagerError,
     browseError,
     isCreatingManager,
@@ -496,6 +497,7 @@ export function BuilderSurface({
     handleNewManagerCwdChange,
     handleNewManagerModelSelectionChange,
     handleNewManagerReasoningLevelChange,
+    handleScaffoldForgeResourcesChange,
     handleOpenCreateManagerDialog,
     handleCreateManagerDialogOpenChange,
     handleBrowseDirectory,
@@ -1439,6 +1441,7 @@ export function BuilderSurface({
           newManagerCwd,
           newManagerModelSelection,
           newManagerReasoningLevel,
+          scaffoldForgeResources,
           createManagerError,
           browseError,
           onOpenChange: handleCreateManagerDialogOpenChange,
@@ -1446,6 +1449,7 @@ export function BuilderSurface({
           onCwdChange: handleNewManagerCwdChange,
           onModelSelectionChange: handleNewManagerModelSelectionChange,
           onReasoningLevelChange: handleNewManagerReasoningLevelChange,
+          onScaffoldForgeResourcesChange: handleScaffoldForgeResourcesChange,
           onBrowseDirectory: () => {
             void handleBrowseDirectory()
           },

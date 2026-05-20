@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,7 @@ interface CreateManagerDialogProps {
   newManagerCwd: string
   newManagerModelSelection: ManagerExactModelSelection | undefined
   newManagerReasoningLevel: ManagerReasoningLevel | undefined
+  scaffoldForgeResources: boolean
   createManagerError: string | null
   browseError: string | null
   onOpenChange: (open: boolean) => void
@@ -57,6 +59,7 @@ interface CreateManagerDialogProps {
   onCwdChange: (value: string) => void
   onModelSelectionChange: (value: ManagerExactModelSelection) => void
   onReasoningLevelChange: (value: ManagerReasoningLevel) => void
+  onScaffoldForgeResourcesChange: (checked: boolean) => void
   onBrowseDirectory: () => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }
@@ -71,6 +74,7 @@ export function CreateManagerDialog({
   newManagerCwd,
   newManagerModelSelection,
   newManagerReasoningLevel,
+  scaffoldForgeResources,
   createManagerError,
   browseError,
   onOpenChange,
@@ -78,6 +82,7 @@ export function CreateManagerDialog({
   onCwdChange,
   onModelSelectionChange,
   onReasoningLevelChange,
+  onScaffoldForgeResourcesChange,
   onBrowseDirectory,
   onSubmit,
 }: CreateManagerDialogProps) {
@@ -278,6 +283,23 @@ export function CreateManagerDialog({
             <p className="text-[11px] text-muted-foreground">
               Higher reasoning uses more tokens but improves complex task performance.
             </p>
+          </div>
+
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="scaffold-forge-resources"
+              checked={scaffoldForgeResources}
+              onCheckedChange={(checked) => onScaffoldForgeResourcesChange(checked === true)}
+              disabled={isCreatingManager}
+            />
+            <div className="grid gap-0.5 leading-none">
+              <Label htmlFor="scaffold-forge-resources" className="text-xs font-medium text-foreground leading-none cursor-pointer">
+                Create .forge project resources
+              </Label>
+              <p className="text-[11px] text-muted-foreground">
+                Adds a .forge directory for project-level skills, specialists, and extensions.
+              </p>
+            </div>
           </div>
 
           {createManagerError ? (
