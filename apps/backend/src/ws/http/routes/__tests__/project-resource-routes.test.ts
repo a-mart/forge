@@ -71,7 +71,11 @@ describe("project resource routes", () => {
     expect(payload.snapshot.resources.forgeExtensions.exists).toBe(true);
     expect(payload.snapshot.resources.piExtensions.exists).toBe(true);
     expect(JSON.parse(await readFile(join(forgeDir, "pi", "settings.json"), "utf-8"))).toEqual({ packages: [] });
-    expect(await readFile(join(forgeDir, "README.md"), "utf-8")).toContain("agent-facing resources");
+    const readme = await readFile(join(forgeDir, "README.md"), "utf-8");
+    expect(readme).toContain("agent-facing resources");
+    expect(readme).toContain("quote or escape injected output");
+    expect(readme).toContain("List repo Pi extensions/custom tools explicitly in `pi/settings.json`");
+    expect(readme).toContain("deterministic and harmless");
   });
 
   it("adds missing scaffold entries without overwriting existing README or settings", async () => {
