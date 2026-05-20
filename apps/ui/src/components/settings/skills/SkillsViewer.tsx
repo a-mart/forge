@@ -22,7 +22,7 @@ import { fetchSkillInventory, type SkillWorkspaceRequestContext } from './skills
 import { SkillImportDialog, SKILL_IMPORT_GLOBAL_SCOPE_VALUE } from './SkillImportDialog'
 import { SkillShareDialog } from './SkillShareDialog'
 import type { SkillInventoryEntry } from './skills-viewer-types'
-import type { ManagerProfile, CollaborationCategory, CollaborationChannel, SkillImportResultResponse } from '@forge/protocol'
+import type { AgentDescriptor, ManagerProfile, CollaborationCategory, CollaborationChannel, SkillImportResultResponse } from '@forge/protocol'
 import type { SettingsSessionContext } from '../session-context'
 import type { SettingsEnvVariable } from '../settings-types'
 import {
@@ -45,6 +45,7 @@ import { CollabSettingsBanner } from '../specialists/CollabSettingsBanner'
 /* ------------------------------------------------------------------ */
 
 const SCOPE_GLOBAL = '__global__'
+const EMPTY_MANAGERS: AgentDescriptor[] = []
 const COLLAB_CATEGORY_PREFIX = 'category:'
 const COLLAB_CHANNEL_PREFIX = 'channel:'
 
@@ -64,6 +65,7 @@ interface SkillsViewerProps {
   wsUrl: string
   apiClient?: SettingsApiClient
   profiles: ManagerProfile[]
+  managers?: AgentDescriptor[]
   previewSession?: SettingsSessionContext | null
   changeKey?: number
   /** Optional initial scope value (e.g. 'channel:ch-1') for testing */
@@ -78,6 +80,7 @@ export function SkillsViewer({
   wsUrl,
   apiClient,
   profiles,
+  managers = EMPTY_MANAGERS,
   previewSession,
   changeKey,
   initialScope,
@@ -195,11 +198,39 @@ export function SkillsViewer({
     selectedSkill && (selectedSkill.sourceKind === 'machine-local' || selectedSkill.sourceKind === 'profile'),
   )
   const canUseLocalSkillSharing = !isCollab && !isCollabCategory && !isCollabChannel
+  const sessionAgentIdByProfile = useMemo(() => {
+    const byProfile = new Map<string, string>()
+    const defaultSessionByProfile = new Map(profiles.map((profile) => [profile.profileId, profile.defaultSessionAgentId]))
+
+    for (const manager of managers) {
+      if (manager.role !== 'manager') continue
+      const profileId = manager.profileId ?? manager.agentId
+      if (manager.agentId === defaultSessionByProfile.get(profileId)) {
+        byProfile.set(profileId, manager.agentId)
+      }
+    }
+    for (const manager of managers) {
+      if (manager.role !== 'manager') continue
+      const profileId = manager.profileId ?? manager.agentId
+      if (!byProfile.has(profileId)) {
+        byProfile.set(profileId, manager.agentId)
+      }
+    }
+    for (const profile of profiles) {
+      if (profile.defaultSessionAgentId && !byProfile.has(profile.profileId)) {
+        byProfile.set(profile.profileId, profile.defaultSessionAgentId)
+      }
+    }
+    if (previewSession?.profileId) {
+      byProfile.set(previewSession.profileId, previewSession.agentId)
+    }
+    return byProfile
+  }, [managers, previewSession, profiles])
   const skillRequestContext = useMemo<SkillWorkspaceRequestContext | undefined>(() => {
     const profileId = skillLoadScope !== SCOPE_GLOBAL ? skillLoadScope : undefined
-    const sessionAgentId = profileId && previewSession?.profileId === profileId ? previewSession.agentId : undefined
+    const sessionAgentId = profileId ? sessionAgentIdByProfile.get(profileId) : undefined
     return profileId || sessionAgentId ? { profileId, sessionAgentId } : undefined
-  }, [previewSession, skillLoadScope])
+  }, [sessionAgentIdByProfile, skillLoadScope])
 
   const filteredEnvVariables = useMemo(() => {
     if (!selectedSkill) return []
@@ -218,7 +249,7 @@ export function SkillsViewer({
     setSkillsLoading(true)
     try {
       const profileId = scope !== SCOPE_GLOBAL ? scope : undefined
-      const sessionAgentId = profileId && previewSession?.profileId === profileId ? previewSession.agentId : undefined
+      const sessionAgentId = profileId ? sessionAgentIdByProfile.get(profileId) : undefined
       const result = await fetchSkillInventory(clientOrWsUrl, profileId, sessionAgentId)
       if (requestId !== loadSkillsRequestIdRef.current) {
         return
@@ -246,7 +277,7 @@ export function SkillsViewer({
         setSkillsLoading(false)
       }
     }
-  }, [clientOrWsUrl, previewSession])
+  }, [clientOrWsUrl, sessionAgentIdByProfile])
 
   const handleImportedSkill = useCallback(async (result: SkillImportResultResponse) => {
     const nextScope = result.target.scope === 'profile' && result.target.profileId

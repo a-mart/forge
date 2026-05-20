@@ -1,4 +1,4 @@
-import type { ManagerProfile } from '@forge/protocol'
+import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 import type { SettingsSessionContext } from './session-context'
 import { SkillsViewer } from './skills/SkillsViewer'
 import type { SettingsApiClient } from './settings-api-client'
@@ -11,6 +11,7 @@ interface SettingsSkillsProps {
   wsUrl: string
   apiClient?: SettingsApiClient
   profiles: ManagerProfile[]
+  managers?: AgentDescriptor[]
   previewSession?: SettingsSessionContext | null
   changeKey?: number
   initialImportUrl?: string
@@ -21,6 +22,7 @@ export function SettingsSkills({
   wsUrl,
   apiClient,
   profiles,
+  managers,
   previewSession,
   changeKey,
   initialImportUrl,
@@ -31,6 +33,7 @@ export function SettingsSkills({
       wsUrl={wsUrl}
       apiClient={apiClient}
       profiles={profiles}
+      managers={managers}
       previewSession={previewSession}
       changeKey={changeKey}
       initialImportUrl={initialImportUrl}

@@ -138,6 +138,7 @@ export function SettingsPanel({
           wsUrl={wsUrl}
           apiClient={apiClient}
           profiles={profiles}
+          managers={managers}
           previewSession={previewSession}
           changeKey={specialistChangeKey}
           initialImportUrl={initialSkillImportUrl}

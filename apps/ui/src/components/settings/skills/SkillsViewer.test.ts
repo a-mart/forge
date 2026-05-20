@@ -163,6 +163,52 @@ describe('SkillsViewer', () => {
     })
   })
 
+  it('uses the selected profile default session for repository-scoped skill discovery', async () => {
+    root = createRoot(container)
+
+    flushSync(() => {
+      root?.render(
+        createElement(
+          HelpProvider,
+          null,
+          createElement(SkillsViewer, {
+            wsUrl: 'ws://127.0.0.1:47287',
+            initialScope: 'profile-a',
+            profiles: [{
+              profileId: 'profile-a',
+              displayName: 'Profile A',
+              defaultSessionAgentId: 'session-a',
+              defaultModel: { provider: 'openai', modelId: 'gpt-5', thinkingLevel: 'medium' },
+              createdAt: '2026-05-20T00:00:00.000Z',
+              updatedAt: '2026-05-20T00:00:00.000Z',
+            }],
+            managers: [{
+              agentId: 'session-a',
+              managerId: 'session-a',
+              displayName: 'Session A',
+              role: 'manager',
+              status: 'idle',
+              createdAt: '2026-05-20T00:00:00.000Z',
+              updatedAt: '2026-05-20T00:00:00.000Z',
+              cwd: '/repo',
+              model: { provider: 'openai', modelId: 'gpt-5', thinkingLevel: 'medium' },
+              sessionFile: '/tmp/session.jsonl',
+              profileId: 'profile-a',
+            }],
+          }),
+        ),
+      )
+    })
+
+    await waitFor(() => {
+      expect(skillsViewerApiMock.fetchSkillInventory).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47287',
+        'profile-a',
+        'session-a',
+      )
+    })
+  })
+
   it('opens a URL import preview from route state without installing and requests route cleanup', async () => {
     root = createRoot(container)
     const onConsumed = vi.fn()
