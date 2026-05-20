@@ -132,7 +132,7 @@ describe("create-skill helper scripts", () => {
     });
   });
 
-  it("shows only global and project in scaffold help output", async () => {
+  it("shows global, project, and repo in scaffold help output without legacy aliases", async () => {
     const help = await runJsonScript(scaffoldScriptPath, ["--help"]);
     const helpText = JSON.stringify(help.json);
 
@@ -141,8 +141,9 @@ describe("create-skill helper scripts", () => {
       ok: true,
       usage: {
         options: {
-          "--scope": "global | project",
+          "--scope": "global | project | repo",
           "--project-id": "required for project scope",
+          "--repo-root": "required Git repository root for repo scope",
         },
       },
     });
@@ -152,6 +153,93 @@ describe("create-skill helper scripts", () => {
     expect(helpText).not.toContain("project-local");
     expect(helpText).not.toContain(".pi/skills");
     expect(helpText).not.toContain("repo-local");
+  });
+
+  it("scaffolds a repo-scoped skill under a Git repo root", async () => {
+    const tempRoot = await makeTempDir("create-skill-repo-");
+    const gitRepo = join(tempRoot, "repo");
+    await mkdir(gitRepo, { recursive: true });
+    await initGitRepo(gitRepo);
+
+    const scaffold = await runJsonScript(scaffoldScriptPath, [
+      "--name",
+      "repo-review",
+      "--description",
+      "Run repository-specific review workflows.",
+      "--scope",
+      "repo",
+      "--repo-root",
+      gitRepo,
+    ]);
+
+    const expectedRoot = join(gitRepo, ".forge", "skills", "repo-review");
+    expect(scaffold.exitCode).toBe(0);
+    expect(scaffold.json).toMatchObject({
+      ok: true,
+      scope: "repo",
+      template: "minimal",
+      skillName: "repo-review",
+      location: expectedRoot,
+      created: ["SKILL.md"],
+      warnings: [],
+    });
+
+    const validation = await runJsonScript(validateScriptPath, [expectedRoot]);
+    expect(validation.exitCode).toBe(0);
+    expect(validation.json.ok).toBe(true);
+  });
+
+  it("rejects repo scope when --repo-root is not inside a Git repository", async () => {
+    const tempRoot = await makeTempDir("create-skill-non-repo-");
+    const notRepo = join(tempRoot, "not-repo");
+    await mkdir(notRepo, { recursive: true });
+
+    const scaffold = await runJsonScript(scaffoldScriptPath, [
+      "--name",
+      "repo-review",
+      "--description",
+      "Run repository-specific review workflows.",
+      "--scope",
+      "repo",
+      "--repo-root",
+      notRepo,
+    ]);
+
+    expect(scaffold.exitCode).toBe(1);
+    expect(scaffold.json).toMatchObject({
+      ok: false,
+      error: "Repo scope requires --repo-root to be inside a Git repository.",
+    });
+    await expect(readFile(join(notRepo, ".forge", "skills", "repo-review", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects repo scope when --repo-root is a Git subdirectory instead of the root", async () => {
+    const tempRoot = await makeTempDir("create-skill-repo-subdir-");
+    const gitRepo = join(tempRoot, "repo");
+    const subdir = join(gitRepo, "packages", "app");
+    await mkdir(subdir, { recursive: true });
+    await initGitRepo(gitRepo);
+
+    const scaffold = await runJsonScript(scaffoldScriptPath, [
+      "--name",
+      "repo-review",
+      "--description",
+      "Run repository-specific review workflows.",
+      "--scope",
+      "repo",
+      "--repo-root",
+      subdir,
+    ]);
+
+    expect(scaffold.exitCode).toBe(1);
+    expect(scaffold.json).toMatchObject({
+      ok: false,
+      error: "Repo scope requires --repo-root to be the Git repository root.",
+      details: {
+        resolvedGitRoot: gitRepo,
+      },
+    });
+    await expect(readFile(join(gitRepo, ".forge", "skills", "repo-review", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects the removed project-local scope", async () => {
@@ -177,29 +265,32 @@ describe("create-skill helper scripts", () => {
       error: "Unsupported scope.",
       details: {
         received: "project-local",
-        allowed: ["global", "project"],
+        allowed: ["global", "project", "repo"],
       },
     });
   });
 
-  it("keeps user-facing create-skill docs free of repo-local scope terminology", async () => {
+  it("documents the supported global, project, and repo skill scopes accurately", async () => {
     const [skillDoc, locationsDoc] = await Promise.all([
       readFile(join(skillRoot, "SKILL.md"), "utf8"),
       readFile(join(skillRoot, "references", "locations.md"), "utf8"),
     ]);
 
     const frontmatter = extractFrontmatter(skillDoc);
-    expect(frontmatter).toContain("description: Use when creating, refining, or validating reusable global or project skills, including trigger wording, templates, helper scripts, and validation checks.");
+    expect(frontmatter).toContain("description: Use when creating, refining, or validating reusable global, project, or repository skills, including trigger wording, templates, helper scripts, and validation checks.");
 
     for (const doc of [skillDoc, locationsDoc, frontmatter]) {
-      expect(doc).not.toContain(".pi/skills");
       expect(doc).not.toContain(".swarm/skills");
       expect(doc).not.toContain("repo-local");
       expect(doc).not.toContain("repo-level");
       expect(doc).not.toContain("project-local");
-      expect(doc).not.toContain("profiles/");
-      expect(doc).not.toContain("pi/skills");
     }
+
+    expect(skillDoc).toContain("Normal user-facing options are **global**, **project**, and **repo**.");
+    expect(skillDoc).toContain("**Project skills** are scoped to one Forge profile and live under `~/.forge/profiles/<profileId>/pi/skills`.");
+    expect(skillDoc).toContain("**Repository skills** live under `<repo>/.forge/skills`, are checked in with the repository, and are discovered for sessions using that repo.");
+    expect(locationsDoc).toContain("Stored under `<repo>/.forge/skills`, checked in with the repo, and discovered for sessions using that repo.");
+    expect(locationsDoc).toContain("Repository skills are normal file-backed resources, not runtime state or secrets.");
   });
 
   it("keeps built-in skill changes out of scope in the user-facing skill doc", async () => {
@@ -655,6 +746,10 @@ async function makeTempDir(prefix: string) {
   const canonicalPath = await realpath(path);
   tempDirs.push(canonicalPath);
   return canonicalPath;
+}
+
+async function initGitRepo(path: string) {
+  await execFile("git", ["init", "--initial-branch", "main"], { cwd: path });
 }
 
 function toDarwinAmbientAliasPath(canonicalPath: string): string | null {

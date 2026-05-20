@@ -1,0 +1,4 @@
+{
+  "packages": [],
+  "extensions": ["./extensions/forge-resource-smoke-pi-extension.ts"]
+}

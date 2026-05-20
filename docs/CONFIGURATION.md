@@ -166,15 +166,15 @@ Override with `FORGE_DATA_DIR` in your environment or `.env` file.
 
 Forge automatically scans `${FORGE_DATA_DIR}/skills` for optional machine-local skills.
 
-Discovery precedence is:
+Baseline global skill precedence is:
 1. `${FORGE_DATA_DIR}/skills`
 2. built-in skill definitions shipped with Forge
 
-Skills are loaded from the machine-local directory first, and then from Forge's built-in definitions. There is no repo-local `.swarm/skills` layer in the current setup.
+Session-specific profile skills and trusted repo-root `.forge/skills` resources are layered into sessions for the active profile/workspace. There is no repo-local `.swarm/skills` layer in the current setup.
 
 Discovered skills are injected into all agent/runtime sessions the same way other loaded skills are.
 
-Use this for station-specific workflows that should stay outside a shared repository. The built-in `create-skill` helper can scaffold reusable global skills or project skills and validate the resulting structure. A local skill should live at:
+Use this for station-specific workflows that should stay outside a shared repository. The built-in `create-skill` helper can scaffold reusable global, profile/project, or repository skills and validate the resulting structure. A local skill should live at:
 
 ```text
 ${FORGE_DATA_DIR}/skills/<skillName>/SKILL.md

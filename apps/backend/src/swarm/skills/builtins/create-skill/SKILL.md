@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: Use when creating, refining, or validating reusable global or project skills, including trigger wording, templates, helper scripts, and validation checks.
+description: Use when creating, refining, or validating reusable global, project, or repository skills, including trigger wording, templates, helper scripts, and validation checks.
 ---
 
 # Create Skill
@@ -13,7 +13,7 @@ Use this skill when the request is about one or more of these:
 - creating a new custom skill from scratch,
 - turning a recurring workflow into a reusable custom skill,
 - improving an existing custom `SKILL.md`, helper script, template, or validation flow,
-- deciding **global vs project** skill placement,
+- deciding **global vs project vs repository** skill placement,
 - scaffolding a skill directory with safe defaults.
 
 ## Do not use this skill when
@@ -40,8 +40,10 @@ Use this skill when the request is about one or more of these:
    - If a detail is non-essential, choose a safe default instead of over-interviewing.
 3. **Choose scope before writing files**
    - **Global skills** are available across all Forge projects.
-   - **Project skills** are scoped to one Forge project.
-   - Normal user-facing options are only **global** and **project**.
+   - **Project skills** are scoped to one Forge profile and live under `~/.forge/profiles/<profileId>/pi/skills`.
+   - **Repository skills** live under `<repo>/.forge/skills`, are checked in with the repository, and are discovered for sessions using that repo.
+   - For repo scope, pass the Git repository root to `--repo-root`; nested directories and non-Git directories are rejected.
+   - Normal user-facing options are **global**, **project**, and **repo**.
 4. **Draft the contract before the implementation**
    - Start with concise frontmatter and a precise trigger section.
    - Add scripts only when they reduce ambiguity or repeated deterministic work.
@@ -52,7 +54,7 @@ Use this skill when the request is about one or more of these:
 ## Progressive disclosure
 
 Read only what you need:
-- `references/locations.md` — scope selection, storage paths, and the Forge project terminology note.
+- `references/locations.md` — scope selection, storage paths, and the Forge profile/repo terminology note.
 - `references/design-checklist.md` — frontmatter, trigger, checklist, guardrail, and report rubric.
 - `references/scripts-vs-instructions.md` — when to keep logic in markdown vs helper scripts.
 - `templates/minimal-SKILL.md.tmpl` — lightweight instruction-only starting point.
@@ -105,7 +107,8 @@ Run from this skill directory, or resolve the absolute paths from the skill root
 
 ```bash
 node ./scripts/scaffold-skill.mjs --name my-skill --scope global --data-dir "${SWARM_DATA_DIR}"
-node ./scripts/scaffold-skill.mjs --name my-skill --scope project --project-id my-project --data-dir "${SWARM_DATA_DIR}" --template scripted
+node ./scripts/scaffold-skill.mjs --name my-skill --scope project --project-id my-profile --data-dir "${SWARM_DATA_DIR}" --template scripted
+node ./scripts/scaffold-skill.mjs --name my-skill --scope repo --repo-root "/path/to/git-repo-root"
 node ./scripts/validate-skill.mjs <skill-root>
 ```
 
@@ -113,7 +116,7 @@ node ./scripts/validate-skill.mjs <skill-root>
 
 When you finish, report with this shape:
 - `skill:` skill name
-- `scope:` global | project
+- `scope:` global | project | repo
 - `location:` absolute skill root path
 - `files:` created/updated files
 - `validation:` commands run and results

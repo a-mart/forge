@@ -478,7 +478,7 @@ Go to **Settings → Skills** to configure agent capabilities:
 
 - **Brave Search** — Paste your Brave API key here. Gives all agents web search. You don't have to tell agents to use Brave; they'll search automatically when they need external information.
 - **Chrome CDP** — If you're running Chrome 146+, you can enable Chrome DevTools Protocol access. This lets agents connect to tabs you have open in your browser, with access to your authenticated sessions.
-- **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can create global skills or project skills as needed.
+- **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can create global skills, profile/project skills, or repository `.forge/skills` skills as needed.
 - **Skill sharing** — Share a user-created global or project skill to generate a temporary bearer link from the skill share service. Recipients can open the link or a `forge://skill-import` deep link, but Forge always shows a preview first and never auto-installs. Conflicts default to reject; replacing an existing directory or installing an override requires explicit confirmation. Built-in and repository skills are not shareable in v1.
 
 > **Chrome CDP tip:** Always set an allowlist of URLs. Without it, agents see every open tab (all 168 of them) and things get slow. And they will comment on your tab count.

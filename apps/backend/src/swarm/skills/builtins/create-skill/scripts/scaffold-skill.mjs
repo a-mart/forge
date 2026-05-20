@@ -1,15 +1,20 @@
 #!/usr/bin/env node
-import { access, lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
+import { access, lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const SCOPE_ALIASES = new Map([
   ["global", "global"],
   ["machine-local", "global"],
   ["project", "project"],
   ["profile", "project"],
+  ["repo", "repo"],
+  ["repository", "repo"],
+  ["workspace", "repo"],
 ]);
 const TEMPLATE_ALIASES = new Map([
   ["minimal", "minimal"],
@@ -18,6 +23,8 @@ const TEMPLATE_ALIASES = new Map([
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TODO_DESCRIPTION = "TODO: replace with a concise one-line description.";
+
+const execFile = promisify(execFileCallback);
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const skillRoot = resolve(scriptDir, "..");
@@ -31,8 +38,9 @@ async function main() {
       usage: {
         command: "node ./scripts/scaffold-skill.mjs --name <skill-name> [options]",
         options: {
-          "--scope": "global | project",
+          "--scope": "global | project | repo",
           "--project-id": "required for project scope",
+          "--repo-root": "required Git repository root for repo scope",
           "--data-dir": "defaults to SWARM_DATA_DIR, FORGE_DATA_DIR, or ~/.forge",
           "--description": "skill description for frontmatter",
           "--template": "minimal | scripted",
@@ -48,11 +56,12 @@ async function main() {
   const description = normalizeDescription(parsedArgs.description);
   const template = normalizeTemplate(parsedArgs.template ?? "minimal");
   const dataDir = resolve(parsedArgs["data-dir"] ?? process.env.SWARM_DATA_DIR ?? process.env.FORGE_DATA_DIR ?? join(homedir(), ".forge"));
-  const targetInfo = resolveSkillTargetInfo({
+  const targetInfo = await resolveSkillTargetInfo({
     scope,
     name,
     dataDir,
     projectId: parsedArgs["project-id"] ?? parsedArgs["profile-id"],
+    repoRoot: parsedArgs["repo-root"],
   });
   const templateFiles = await loadTemplateFiles(template);
   const filesToWrite = buildFiles({ name, description, template, templateFiles });
@@ -154,7 +163,7 @@ function normalizeDescription(value) {
   return value.trim();
 }
 
-function resolveSkillTargetInfo({ scope, name, dataDir, projectId }) {
+async function resolveSkillTargetInfo({ scope, name, dataDir, projectId, repoRoot }) {
   if (scope === "global") {
     const scopeBase = join(dataDir, "skills");
     return {
@@ -177,7 +186,58 @@ function resolveSkillTargetInfo({ scope, name, dataDir, projectId }) {
     };
   }
 
-  fail("Unsupported scope.", { received: scope, allowed: ["global", "project"] });
+  if (scope === "repo") {
+    if (typeof repoRoot !== "string" || repoRoot.trim().length === 0) {
+      fail("Repo scope requires a valid --repo-root.");
+    }
+
+    const normalizedRepoRoot = await resolveVerifiedGitRepoRoot(repoRoot.trim());
+
+    const scopeBase = join(normalizedRepoRoot, ".forge", "skills");
+    return {
+      scopeAnchor: normalizedRepoRoot,
+      scopeBase,
+      targetRoot: join(scopeBase, name),
+    };
+  }
+
+  fail("Unsupported scope.", { received: scope, allowed: ["global", "project", "repo"] });
+}
+
+async function resolveVerifiedGitRepoRoot(repoRoot) {
+  const normalizedRepoRoot = resolve(repoRoot);
+  const rootStats = await stat(normalizedRepoRoot).catch(() => null);
+  if (!rootStats) {
+    fail("Repo scope requires an existing --repo-root.", { received: repoRoot });
+  }
+  if (!rootStats.isDirectory()) {
+    fail("Repo scope requires --repo-root to be a directory.", { received: repoRoot });
+  }
+
+  let gitTopLevel;
+  try {
+    const result = await execFile("git", ["-C", normalizedRepoRoot, "rev-parse", "--show-toplevel"], {
+      windowsHide: true,
+    });
+    gitTopLevel = result.stdout.trim();
+  } catch {
+    fail("Repo scope requires --repo-root to be inside a Git repository.", { received: repoRoot });
+  }
+
+  if (gitTopLevel.length === 0) {
+    fail("Repo scope could not resolve a Git repository root.", { received: repoRoot });
+  }
+
+  const canonicalRepoRoot = await realpath(normalizedRepoRoot);
+  const canonicalGitTopLevel = await realpath(gitTopLevel);
+  if (canonicalRepoRoot !== canonicalGitTopLevel) {
+    fail("Repo scope requires --repo-root to be the Git repository root.", {
+      received: repoRoot,
+      resolvedGitRoot: gitTopLevel,
+    });
+  }
+
+  return normalizedRepoRoot;
 }
 
 async function loadTemplateFiles(template) {

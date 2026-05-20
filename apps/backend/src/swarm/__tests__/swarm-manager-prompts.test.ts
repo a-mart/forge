@@ -844,10 +844,11 @@ describe('SwarmManager', () => {
     expect(createSkillPath).toBeDefined()
     const createSkill = await readFile(createSkillPath!, 'utf8')
     expect(createSkill).toContain('name: create-skill')
-    expect(createSkill).toContain('description: Use when creating, refining, or validating reusable global or project skills, including trigger wording, templates, helper scripts, and validation checks.')
+    expect(createSkill).toContain('description: Use when creating, refining, or validating reusable global, project, or repository skills, including trigger wording, templates, helper scripts, and validation checks.')
     expect(createSkill).toContain('scripts/scaffold-skill.mjs')
     expect(createSkill).toContain('**Global skills** are available across all Forge projects.')
-    expect(createSkill).toContain('**Project skills** are scoped to one Forge project.')
+    expect(createSkill).toContain('**Project skills** are scoped to one Forge profile and live under `~/.forge/profiles/<profileId>/pi/skills`.')
+    expect(createSkill).toContain('**Repository skills** live under `<repo>/.forge/skills`, are checked in with the repository, and are discovered for sessions using that repo.')
   })
 
   it('lists the effective profile skill roster with inherited global skills', async () => {
