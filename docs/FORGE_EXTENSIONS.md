@@ -100,6 +100,7 @@ Behavior rules:
 - `tool:before` can block or replace the entire input object.
 - If one `tool:before` handler returns `{ input }`, later handlers see that replaced input.
 - If one `tool:before` handler returns `{ block: true }`, remaining `tool:before` handlers do not run.
+- If you rewrite a `bash` command, quote or escape injected output before returning the new string.
 - `tool:after` is observe-only.
 - `tool:after` receives the **final executed input** and a stable result envelope:
   - success: `{ ok: true, value, raw? }`
