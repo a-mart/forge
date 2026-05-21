@@ -28,7 +28,7 @@ import { readTerminalRuntimeConfig } from "./terminal/terminal-config.js";
 import { TerminalPersistence } from "./terminal/terminal-persistence.js";
 import { NodePtyRuntime } from "./terminal/terminal-pty-runtime.js";
 import { TerminalSettingsService } from "./terminal/terminal-settings-service.js";
-import type { TerminalSessionResolver } from "./terminal/terminal-session-resolver.js";
+import type { ResolvedTerminalSession, TerminalSessionResolver } from "./terminal/terminal-session-resolver.js";
 import { TerminalService } from "./terminal/terminal-service.js";
 import { EmbeddedGitVersioningService } from "./versioning/embedded-git-versioning-service.js";
 import { SwarmWebSocketServer } from "./ws/server.js";
@@ -234,18 +234,39 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     const terminalSessionResolver: TerminalSessionResolver = {
       resolveSession: (sessionAgentId) => {
         const descriptor = swarmManager.getAgent(sessionAgentId);
-        if (!descriptor || descriptor.role !== "manager") {
+        if (descriptor?.role === "manager") {
+          const profileId = descriptor.profileId ?? descriptor.agentId;
+          const profile = swarmManager.listProfiles().find((entry) => entry.profileId === profileId);
+          const profileArchived = Boolean(profile?.archivedAt);
+          return {
+            sessionAgentId: profileId,
+            profileId,
+            cwd: descriptor.cwd,
+            archived: swarmManager.isAgentEffectivelyArchived(descriptor.agentId),
+            terminalScopeArchived: profileArchived,
+          };
+        }
+
+        const profile = swarmManager.listProfiles().find((entry) => entry.profileId === sessionAgentId);
+        if (!profile) {
           return undefined;
         }
 
+        const profileSession = swarmManager
+          .listAgents()
+          .find((entry) => entry.role === "manager" && (entry.profileId ?? entry.agentId) === profile.profileId);
+
         return {
-          sessionAgentId: descriptor.profileId ?? descriptor.agentId,
-          profileId: descriptor.profileId ?? descriptor.agentId,
-          cwd: descriptor.cwd,
+          sessionAgentId: profile.profileId,
+          profileId: profile.profileId,
+          cwd: profileSession?.cwd ?? config.defaultCwd,
+          archived: Boolean(profile.archivedAt),
+          terminalScopeArchived: Boolean(profile.archivedAt),
+          storageScopeOnly: true,
         };
       },
       listSessions: () => {
-        const scopes = new Map<string, { sessionAgentId: string; profileId: string; cwd: string }>();
+        const scopes = new Map<string, ResolvedTerminalSession>();
         for (const descriptor of swarmManager.listAgents()) {
           if (descriptor.role !== "manager") {
             continue;
@@ -257,6 +278,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
               sessionAgentId: scopeAgentId,
               profileId: descriptor.profileId ?? descriptor.agentId,
               cwd: descriptor.cwd,
+              archived: swarmManager.isAgentEffectivelyArchived(descriptor.agentId),
+              terminalScopeArchived: Boolean(
+                swarmManager.listProfiles().find((entry) => entry.profileId === scopeAgentId)?.archivedAt,
+              ),
             });
           }
         }
@@ -284,6 +309,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         rootDir: config.paths.rootDir,
         allowlistRoots: config.cwdAllowlistRoots,
       },
+    });
+    swarmManager.setTerminalArchiveHooks({
+      suspendProfileTerminals: (profileId) => terminalService?.suspendSessionPreserving(profileId) ?? Promise.resolve(0),
+      restoreProfileTerminals: (profileId) => terminalService?.restorePersistedSession(profileId) ?? Promise.resolve(0),
     });
     handleTerminalSessionLifecycle = (event: SessionLifecycleEvent): void => {
       if (event.action !== "deleted") {

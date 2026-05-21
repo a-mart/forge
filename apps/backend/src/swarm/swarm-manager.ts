@@ -92,6 +92,13 @@ import type {
 } from "../stats/sidebar-perf-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
+import { ArchiveService } from "./archive/archive-service.js";
+import {
+  ARCHIVED_PROJECT_OPERATION_MESSAGE,
+  ARCHIVED_SESSION_OPERATION_MESSAGE,
+  isProfileArchived,
+  isSessionDirectlyArchived,
+} from "./archive/archive-resolver.js";
 import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
 import { ProjectAgentMirrorReconciler } from "./agents/descriptor-store/project-agent-mirror-reconciler.js";
 import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "./shared-config-migration.js";
@@ -1117,10 +1124,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly choiceService: SwarmChoiceService;
   private readonly promptService: SwarmPromptService;
   private readonly sessionService: SwarmSessionService;
+  private readonly archiveService: ArchiveService;
   private readonly projectAgentService: SwarmProjectAgentService;
   readonly promptRegistry: PromptRegistry;
 
   private integrationContextProvider: ((profileId: string) => string) | undefined;
+  private terminalArchiveHooks: {
+    suspendProfileTerminals: (profileId: string) => Promise<unknown>;
+    restoreProfileTerminals: (profileId: string) => Promise<unknown>;
+  } | undefined;
   private readonly versioningService: VersioningMutationSink | undefined;
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
 
@@ -1563,6 +1575,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         });
       }
     });
+    this.archiveService = new ArchiveService({
+      now: this.now,
+      getAgent: (agentId) => this.descriptors.get(agentId),
+      getProfile: (profileId) => this.profiles.get(profileId),
+      listSessions: () => this.sortedDescriptors().filter((descriptor) => descriptor.role === "manager"),
+      patchDescriptor: (agentId, patch) => this.descriptorStoreAdapter.patchDescriptor(agentId, patch),
+      patchProfile: (profileId, patch) => this.descriptorStoreAdapter.patchProfile(profileId, patch),
+      stopSession: (agentId) => this.stopSession(agentId),
+      onProfileArchiveStopError: (agentId, error) => {
+        this.logDebug("archive:profile_stop_session:error", {
+          agentId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    });
     this.sessionService = new SwarmSessionService({
       profiles: this.profiles,
       runtimes: this.runtimes,
@@ -1758,6 +1785,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   listAgents(): AgentDescriptor[] {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
+  }
+
+  isAgentEffectivelyArchived(agentId: string): boolean {
+    const descriptor = this.descriptors.get(agentId);
+    return descriptor ? this.isDescriptorEffectivelyArchived(descriptor) : false;
   }
 
   getCodexTransportDebugDiagnostics(): CodexTransportDebugAgentDiagnostics[] {
@@ -2353,6 +2385,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       cli?: AgentDescriptor["cli"];
     }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    this.assertProfileNotArchived(profileId);
     const createdSession = await this.sessionService.createSession(profileId, options);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "created",
@@ -2378,6 +2411,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       collab?: AgentDescriptor["collab"];
     } = {}
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    this.assertProfileNotArchived(profileId);
     const createdSession = await this.sessionService.createSessionWithOverrides(
       profileId,
       options,
@@ -2410,6 +2444,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       collab?: AgentDescriptor["collab"];
     } = {}
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    this.assertProfileNotArchived(profileId);
     const createdSession = await this.sessionService.createSessionFromBaseDescriptor(
       profileId,
       base,
@@ -2435,6 +2470,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   ): Promise<{ sessionAgentId: string; sessionLabel: string; profileId: string }> {
     const creatorDescriptor = this.getRequiredSessionDescriptor(creatorAgentId);
+    this.assertDescriptorNotEffectivelyArchived(creatorDescriptor);
 
     if (creatorDescriptor.role !== "manager") {
       throw new Error(`Only manager sessions can create child sessions: ${creatorAgentId}`);
@@ -2552,6 +2588,61 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return createdProjectAgent;
   }
 
+  async archiveSession(agentId: string): Promise<{ agentId: string; profileId: string; archivedAt: string; terminatedWorkerIds: string[] }> {
+    const result = await this.archiveService.archiveSession(agentId);
+    this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
+    this.emitAgentsSnapshot();
+    return result;
+  }
+
+  async restoreSession(agentId: string): Promise<{ agentId: string; profileId: string; openAgentId?: string }> {
+    const result = await this.archiveService.restoreSession(agentId);
+    this.emitAgentsSnapshot();
+    return result;
+  }
+
+  async archiveProfile(profileId: string): Promise<{ profileId: string; archivedAt: string; terminatedWorkerIds: string[] }> {
+    const result = await this.archiveService.archiveProfile(profileId);
+    for (const session of this.getSessionsForProfile(profileId)) {
+      this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(session.agentId));
+    }
+    try {
+      await this.terminalArchiveHooks?.suspendProfileTerminals(profileId);
+    } catch (error) {
+      this.logDebug("archive:terminal_suspend:error", {
+        profileId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    this.emitProfilesSnapshot();
+    this.emitAgentsSnapshot();
+    this.emitSessionLifecycle({
+      action: "archived",
+      sessionAgentId: profileId,
+      profileId,
+    });
+    return result;
+  }
+
+  async restoreProfile(profileId: string): Promise<{ profileId: string; openAgentId: string }> {
+    const result = await this.archiveService.restoreProfile(profileId);
+    try {
+      await this.terminalArchiveHooks?.restoreProfileTerminals(profileId);
+    } catch (error) {
+      this.logDebug("archive:terminal_restore:error", {
+        profileId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    this.emitProfilesSnapshot();
+    this.emitSessionLifecycle({
+      action: "restored",
+      sessionAgentId: profileId,
+      profileId,
+    });
+    return result;
+  }
+
   async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     this.getRequiredBuilderSessionDescriptor(agentId, "stop Builder sessions");
     const result = await this.lifecycleService.stopSession(agentId);
@@ -2567,7 +2658,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async resumeSession(agentId: string): Promise<void> {
-    this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions");
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     await this.lifecycleService.resumeSession(agentId);
   }
 
@@ -2603,6 +2695,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     pinned: boolean
   ): Promise<{ pinned: boolean; timestamp: string }> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     const sessionDir = this.getSessionDirForDescriptor(descriptor);
     const history = this.getConversationHistory(agentId);
     const message = history.find(
@@ -2654,6 +2747,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async clearAllPins(agentId: string): Promise<void> {
     const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "clear Builder pins");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     const sessionDir = this.getSessionDirForDescriptor(descriptor);
     const previouslyPinnedMessageIds = await clearAllSessionPins(sessionDir);
 
@@ -2681,13 +2775,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async clearSessionConversation(agentId: string): Promise<void> {
-    this.getRequiredBuilderSessionDescriptor(agentId, "clear Builder conversations");
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "clear Builder conversations");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     await this.sessionService.clearSessionConversation(agentId);
     this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
   }
 
   async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
-    this.getRequiredBuilderSessionDescriptor(agentId, "pin Builder sessions");
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "pin Builder sessions");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
 
     const updatedDescriptor = await this.descriptorStoreAdapter.patchDescriptor(agentId, (current) => {
       if (pinned) {
@@ -2716,6 +2812,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       | null
   ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
     const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "promote Builder sessions to project agents");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     this.assertSessionSupportsProjectAgent(descriptor);
     const previousProjectAgent = descriptor.projectAgent;
     const result = await this.projectAgentService.setSessionProjectAgent(agentId, projectAgent);
@@ -2736,6 +2833,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       agentId,
       "request project-agent recommendations for Builder sessions"
     );
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     this.assertSessionSupportsProjectAgent(descriptor);
 
     const [conversationHistory, currentSystemPrompt, analysisModel] = await Promise.all([
@@ -2758,7 +2856,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async renameSession(agentId: string, label: string): Promise<void> {
-    this.getRequiredBuilderSessionDescriptor(agentId, "rename Builder sessions");
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "rename Builder sessions");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     await this.sessionService.renameSession(agentId, label);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "renamed",
@@ -2771,6 +2870,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!profile) {
       throw new Error(`Profile not found: ${profileId}`);
     }
+    this.assertProfileNotArchived(profileId);
     const normalizedName = displayName.trim();
     if (!normalizedName) {
       throw new Error("Profile display name must be non-empty");
@@ -2784,7 +2884,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
-    this.getRequiredBuilderSessionDescriptor(agentId, "merge Builder session memory");
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "merge Builder session memory");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     return this.memoryMergeService.mergeSessionMemory(agentId);
   }
 
@@ -2795,6 +2896,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const sourceDescriptor = cloneDescriptor(
       this.getRequiredBuilderSessionDescriptor(sourceAgentId, "fork Builder sessions")
     );
+    this.assertDescriptorNotEffectivelyArchived(sourceDescriptor);
     const forkedSession = await this.sessionService.forkSession(sourceAgentId, options);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "forked",
@@ -2877,7 +2979,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelPreset: SwarmModelPreset,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
+    this.assertManagerSettingsTargetNotArchived(managerId, "update manager model");
     await this.settingsService.updateManagerModel(managerId, modelPreset, reasoningLevel);
+  }
+
+  async updateCollaborationSessionModel(
+    sessionAgentId: string,
+    modelPreset: SwarmModelPreset,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<void> {
+    const descriptor = this.getRequiredCollaborationSessionDescriptor(sessionAgentId, "update collaboration session model");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
+    await this.settingsService.updateManagerModel(sessionAgentId, modelPreset, reasoningLevel);
   }
 
   async updateManagerExactModel(
@@ -2885,6 +2998,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelSelection: ManagerExactModelSelection,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<AgentDescriptor["model"]> {
+    this.assertManagerSettingsTargetNotArchived(managerId, "update manager model");
     return this.settingsService.updateManagerExactModel(managerId, modelSelection, reasoningLevel);
   }
 
@@ -2893,6 +3007,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelPreset: SwarmModelPreset,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
+    this.assertProfileNotArchived(profileId);
     await this.settingsService.updateProfileDefaultModel(profileId, modelPreset, reasoningLevel);
   }
 
@@ -2901,6 +3016,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelSelection: ManagerExactModelSelection,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<AgentDescriptor["model"]> {
+    this.assertProfileNotArchived(profileId);
     return this.settingsService.updateProfileDefaultExactModel(profileId, modelSelection, reasoningLevel);
   }
 
@@ -2910,6 +3026,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelPreset?: SwarmModelPreset,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
+    const descriptor = this.getRequiredBuilderSessionDescriptor(sessionAgentId, "update Builder session model");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     await this.settingsService.updateSessionModel(sessionAgentId, mode, modelPreset, reasoningLevel);
   }
 
@@ -2918,10 +3036,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelSelection: ManagerExactModelSelection,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<AgentDescriptor["model"]> {
+    const descriptor = this.getRequiredBuilderSessionDescriptor(sessionAgentId, "update Builder session model");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     return this.settingsService.updateSessionExactModel(sessionAgentId, modelSelection, reasoningLevel);
   }
 
   async updateManagerCwd(managerId: string, newCwd: string): Promise<string> {
+    this.assertProfileNotArchived(managerId);
     return this.settingsService.updateManagerCwd(managerId, newCwd);
   }
 
@@ -3017,7 +3138,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<void> {
-    this.getRequiredBuilderSessionDescriptor(agentId, "edit Builder project-agent references");
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "edit Builder project-agent references");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     const flags = await this.projectAgentService.setProjectAgentReference(agentId, fileName, content);
     if (flags.referenceChanged) {
       await this.notifyProjectAgentPromptSourceChanged(agentId);
@@ -3025,7 +3147,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async deleteProjectAgentReference(agentId: string, fileName: string): Promise<void> {
-    this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder project-agent references");
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder project-agent references");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     const flags = await this.projectAgentService.deleteProjectAgentReference(agentId, fileName);
     if (flags.referenceChanged) {
       await this.notifyProjectAgentPromptSourceChanged(agentId);
@@ -3508,7 +3631,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options?: { origin?: "user" | "internal"; attachments?: ConversationAttachment[] }
   ): Promise<SendMessageReceipt> {
     const sender = this.descriptors.get(fromAgentId);
-    if (!sender || isNonRunningAgentStatus(sender.status)) {
+    if (!sender) {
+      throw new Error(`Unknown or unavailable sender agent: ${fromAgentId}`);
+    }
+    this.assertDescriptorNotEffectivelyArchived(sender);
+    if (isNonRunningAgentStatus(sender.status)) {
       throw new Error(`Unknown or unavailable sender agent: ${fromAgentId}`);
     }
 
@@ -3516,6 +3643,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!target) {
       throw new Error(`Unknown target agent: ${targetAgentId}`);
     }
+    this.assertDescriptorNotEffectivelyArchived(target);
     if (isNonRunningAgentStatus(target.status)) {
       throw new Error(`Target agent is not running: ${targetAgentId}`);
     }
@@ -4166,6 +4294,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Unknown target agent: ${resolvedTargetAgentId}`);
     }
 
+    this.assertDescriptorNotEffectivelyArchived(target);
     if (isNonRunningAgentStatus(target.status)) {
       throw new Error(`Target agent is not running: ${resolvedTargetAgentId}`);
     }
@@ -4465,6 +4594,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.integrationContextProvider = provider;
   }
 
+  setTerminalArchiveHooks(hooks?: {
+    suspendProfileTerminals: (profileId: string) => Promise<unknown>;
+    restoreProfileTerminals: (profileId: string) => Promise<unknown>;
+  }): void {
+    this.terminalArchiveHooks = hooks;
+  }
+
   async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
     return this.settingsService.listSettingsEnv();
   }
@@ -4677,6 +4813,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     includeStoppedOnRestart: boolean
   ): boolean {
     if (descriptor.role !== "manager") {
+      return false;
+    }
+
+    if (this.isDescriptorEffectivelyArchived(descriptor)) {
       return false;
     }
 
@@ -5516,7 +5656,52 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
     return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor);
+  }
+
+  private assertProfileNotArchived(profileId: string): void {
+    if (isProfileArchived(this.profiles.get(profileId))) {
+      throw new Error(ARCHIVED_PROJECT_OPERATION_MESSAGE);
+    }
+  }
+
+  private assertManagerSettingsTargetNotArchived(managerId: string, operation: string): void {
+    if (this.profiles.has(managerId)) {
+      this.assertProfileNotArchived(managerId);
+      return;
+    }
+
+    const descriptor = this.getRequiredBuilderSessionDescriptor(managerId, operation);
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
+  }
+
+  private assertDescriptorNotEffectivelyArchived(descriptor: AgentDescriptor): void {
+    const archivedReason = this.getDescriptorArchiveBlockReason(descriptor);
+    if (archivedReason) {
+      throw new Error(archivedReason);
+    }
+  }
+
+  private isDescriptorEffectivelyArchived(descriptor: AgentDescriptor): boolean {
+    return this.getDescriptorArchiveBlockReason(descriptor) !== undefined;
+  }
+
+  private getDescriptorArchiveBlockReason(descriptor: AgentDescriptor): string | undefined {
+    if (descriptor.role !== "manager") {
+      const owner = this.descriptors.get(descriptor.managerId);
+      return owner ? this.getDescriptorArchiveBlockReason(owner) : undefined;
+    }
+
+    const profileId = descriptor.profileId ?? descriptor.managerId;
+    const profile = this.profiles.get(profileId);
+    if (isProfileArchived(profile)) {
+      return ARCHIVED_PROJECT_OPERATION_MESSAGE;
+    }
+    if (isSessionDirectlyArchived(descriptor)) {
+      return ARCHIVED_SESSION_OPERATION_MESSAGE;
+    }
+    return undefined;
   }
 
   private getBootLogManagerDescriptor(): AgentDescriptor | undefined {

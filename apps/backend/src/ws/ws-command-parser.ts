@@ -56,6 +56,8 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "create_session":
     case "stop_session":
     case "resume_session":
+    case "archive_session":
+    case "restore_session":
     case "delete_session":
     case "clear_session":
     case "rename_session":
@@ -69,6 +71,8 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "delete_project_agent_reference":
     case "request_project_agent_recommendations":
     case "rename_profile":
+    case "archive_profile":
+    case "restore_profile":
     case "fork_session":
     case "merge_session_memory":
     case "get_session_workers":

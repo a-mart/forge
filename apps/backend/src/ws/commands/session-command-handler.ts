@@ -5,6 +5,7 @@ import type {
   SessionMemoryMergeStrategy
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
+import { ArchiveOperationError } from "../../swarm/archive/archive-service.js";
 import { inferSwarmModelPresetFromDescriptor } from "../../swarm/model-presets.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
@@ -43,6 +44,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "create_session" &&
     command.type !== "stop_session" &&
     command.type !== "resume_session" &&
+    command.type !== "archive_session" &&
+    command.type !== "restore_session" &&
     command.type !== "delete_session" &&
     command.type !== "clear_session" &&
     command.type !== "rename_session" &&
@@ -171,6 +174,55 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       send(socket, {
         type: "error",
         code: "RESUME_SESSION_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "archive_session") {
+    try {
+      requireNonSystemSessionProfile(command.agentId, swarmManager.listProfiles(), (agentId) => swarmManager.getAgent(agentId));
+      const result = await swarmManager.archiveSession(command.agentId);
+      if (result.terminatedWorkerIds.length > 0) {
+        handleDeletedAgentSubscriptions(new Set(result.terminatedWorkerIds));
+      }
+      send(socket, {
+        type: "session_archived",
+        agentId: result.agentId,
+        profileId: result.profileId,
+        archivedAt: result.archivedAt,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: archiveErrorCode(error, "ARCHIVE_SESSION_FAILED"),
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "restore_session") {
+    try {
+      requireNonSystemSessionProfile(command.agentId, swarmManager.listProfiles(), (agentId) => swarmManager.getAgent(agentId));
+      const result = await swarmManager.restoreSession(command.agentId);
+      send(socket, {
+        type: "session_restored",
+        agentId: result.agentId,
+        profileId: result.profileId,
+        openAgentId: result.openAgentId,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: archiveErrorCode(error, "RESTORE_SESSION_FAILED"),
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
       });
@@ -605,6 +657,10 @@ function getSessionMemoryMergeFailureDiagnostics(error: unknown): {
         : undefined,
     auditPath: typeof diagnostics.auditPath === "string" ? diagnostics.auditPath : undefined
   };
+}
+
+function archiveErrorCode(error: unknown, fallback: string): string {
+  return error instanceof ArchiveOperationError ? error.code : fallback;
 }
 
 function resolveSessionProfileId(swarmManager: SwarmManager, sessionAgentId: string): string {

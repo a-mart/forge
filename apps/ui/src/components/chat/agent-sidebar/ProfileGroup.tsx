@@ -1,4 +1,5 @@
 import {
+  Archive,
   BellOff,
   CheckCheck,
   ChevronDown,
@@ -45,6 +46,8 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   onStopSession,
   onResumeSession,
   onDeleteSession,
+  onArchiveSession,
+  onArchiveProfile,
   onRequestRenameSession,
   onRequestRenameProfile,
   onForkSession,
@@ -255,6 +258,12 @@ export const ProfileGroup = React.memo(function ProfileGroup({
           {!isCortexProfile(treeRow) ? (
             <>
               <ContextMenuSeparator />
+              {onArchiveProfile ? (
+                <ContextMenuItem onClick={() => onArchiveProfile(profile.profileId)}>
+                  <Archive className="mr-2 size-3.5" />
+                  Archive Project
+                </ContextMenuItem>
+              ) : null}
               <ContextMenuItem variant="destructive" onClick={() => onDeleteManager(profile.profileId)}>
                 <Trash2 className="mr-2 size-3.5" />
                 Delete Manager
@@ -363,6 +372,8 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                   onStop={onStopSession ? () => onStopSession(sid) : undefined}
                   onResume={onResumeSession ? () => onResumeSession(sid) : undefined}
                   onDelete={onDeleteSession ? () => onDeleteSession(sid) : undefined}
+                  onArchive={onArchiveSession && !session.isDefault ? () => onArchiveSession(sid) : undefined}
+                  archiveDisabledReason={session.isDefault ? 'The default session for a project can’t be archived directly.' : undefined}
                   onRename={onRequestRenameSession ? () => onRequestRenameSession(sid) : undefined}
                   onFork={onForkSession ? () => onForkSession(sid) : undefined}
                   onMarkUnread={onMarkUnread ? () => onMarkUnread(sid) : undefined}

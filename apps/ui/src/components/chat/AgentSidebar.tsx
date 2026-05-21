@@ -1,4 +1,4 @@
-import { SquarePen, X } from 'lucide-react'
+import { Archive, SquarePen, X } from 'lucide-react'
 import { ChangeCwdDialog } from './ChangeCwdDialog'
 import { ForkSessionDialog } from './ForkSessionDialog'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
@@ -66,6 +66,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   selectedAgentId,
   isSettingsActive,
   isStatsActive = false,
+  isArchiveActive = false,
   isMobileOpen = false,
   onMobileClose,
   onAddManager,
@@ -75,10 +76,13 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onOpenSettings,
   onOpenCortexReview,
   onOpenStats,
+  onOpenArchive,
   onCreateSession,
   onStopSession,
   onResumeSession,
   onDeleteSession,
+  onArchiveSession,
+  onArchiveProfile,
   onRenameSession,
   onPinSession,
   onRenameProfile,
@@ -437,6 +441,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       onStopSession={onStopSession}
       onResumeSession={onResumeSession}
       onDeleteSession={handleRequestDelete}
+      onArchiveSession={onArchiveSession}
+      onArchiveProfile={onArchiveProfile}
       onRequestRenameSession={handleRequestRename}
       onRequestRenameProfile={onRenameProfile ? handleRequestRenameProfile : undefined}
       onForkSession={onForkSession ? handleForkSetTarget : undefined}
@@ -468,6 +474,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     toggleProfileCollapsed, toggleSessionCollapsed, showMoreSessions, showLessSessions,
     toggleWorkerListExpanded, handleSelectAgent, onDeleteAgent, onDeleteManager, handleOpenSettings,
     onCreateSession, handleRequestCreateSession, onStopSession, onResumeSession, handleRequestDelete,
+    onArchiveSession, onArchiveProfile,
     handleRequestRename, onRenameProfile, handleRequestRenameProfile, onForkSession, handleForkSetTarget,
     onMarkUnread, onMarkAllRead, onUpdateManagerModel, handleRequestChangeModel,
     onUpdateSessionModel, handleRequestSessionModelChange, handleUseProjectDefault,
@@ -589,6 +596,23 @@ export const AgentSidebar = React.memo(function AgentSidebar({
             </button>
           ) : undefined}
         />
+
+        {onOpenArchive ? (
+          <button
+            type="button"
+            onClick={onOpenArchive}
+            className={cn(
+              'mt-2 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+              isArchiveActive
+                ? 'bg-sidebar-accent text-sidebar-foreground'
+                : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+            )}
+            aria-current={isArchiveActive ? 'page' : undefined}
+          >
+            <Archive className="size-4" aria-hidden="true" />
+            <span>Archive</span>
+          </button>
+        ) : null}
 
         {isSearchActive ? (
           <div className="px-1 pb-1">

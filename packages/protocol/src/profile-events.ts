@@ -11,3 +11,17 @@ export interface ProfileRenamedEvent {
   displayName: string
   requestId?: string
 }
+
+export interface ProfileArchivedEvent {
+  type: 'profile_archived'
+  profileId: string
+  archivedAt: string
+  requestId?: string
+}
+
+export interface ProfileRestoredEvent {
+  type: 'profile_restored'
+  profileId: string
+  requestId?: string
+  openAgentId: string
+}

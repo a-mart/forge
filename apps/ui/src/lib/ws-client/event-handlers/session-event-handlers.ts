@@ -25,6 +25,22 @@ export function handleSessionEvent(
       })
       return true
 
+    case 'session_archived':
+      context.requestTracker.resolve('archive_session', event.requestId, {
+        agentId: event.agentId,
+        profileId: event.profileId,
+        archivedAt: event.archivedAt,
+      })
+      return true
+
+    case 'session_restored':
+      context.requestTracker.resolve('restore_session', event.requestId, {
+        agentId: event.agentId,
+        profileId: event.profileId,
+        openAgentId: event.openAgentId,
+      })
+      return true
+
     case 'session_deleted':
       context.applySessionDeleted(event.agentId, event.profileId)
       context.requestTracker.resolve('delete_session', event.requestId, {
@@ -60,6 +76,20 @@ export function handleSessionEvent(
     case 'profile_renamed':
       context.requestTracker.resolve('rename_profile', event.requestId, {
         profileId: event.profileId,
+      })
+      return true
+
+    case 'profile_archived':
+      context.requestTracker.resolve('archive_profile', event.requestId, {
+        profileId: event.profileId,
+        archivedAt: event.archivedAt,
+      })
+      return true
+
+    case 'profile_restored':
+      context.requestTracker.resolve('restore_profile', event.requestId, {
+        profileId: event.profileId,
+        openAgentId: event.openAgentId,
       })
       return true
 

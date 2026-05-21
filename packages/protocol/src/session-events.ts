@@ -31,6 +31,22 @@ export interface SessionResumedEvent {
   requestId?: string
 }
 
+export interface SessionArchivedEvent {
+  type: 'session_archived'
+  agentId: string
+  profileId: string
+  archivedAt: string
+  requestId?: string
+}
+
+export interface SessionRestoredEvent {
+  type: 'session_restored'
+  agentId: string
+  profileId: string
+  requestId?: string
+  openAgentId?: string
+}
+
 export interface SessionDeletedEvent {
   type: 'session_deleted'
   agentId: string

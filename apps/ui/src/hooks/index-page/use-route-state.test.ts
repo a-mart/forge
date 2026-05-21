@@ -70,6 +70,44 @@ afterEach(() => {
   container.remove()
 })
 
+describe('useRouteState — archive view', () => {
+  it('parses and serializes archive route state as builder-only with sticky chat params', () => {
+    const parsed = parseRouteStateFromLocation('/', { view: 'archive', surface: 'collab' }, 'collab')
+
+    expect(parsed).toEqual({ view: 'archive', surface: 'builder' })
+    expect(toRouteSearch(parsed, { agent: 'session-a' }, 'collab')).toEqual({
+      view: 'archive',
+      agent: 'session-a',
+    })
+  })
+
+  it('exposes archive as builder surface even when default surface is collab', () => {
+    const parsed = parseRouteStateFromLocation('/', { view: 'archive' }, 'collab')
+    expect(parsed).toEqual({ view: 'archive', surface: 'builder' })
+
+    const navigate = vi.fn()
+    renderWith({ pathname: '/', search: { view: 'archive', surface: 'collab' }, navigate })
+
+    expect(captured.current?.routeState).toEqual({ view: 'archive', surface: 'builder' })
+    expect(captured.current?.activeView).toBe('archive')
+    expect(captured.current?.activeSurface).toBe('builder')
+  })
+
+  it('normalizes stale archive surface search params even when parsed route state is unchanged', () => {
+    const navigate = vi.fn()
+    renderWith({ pathname: '/', search: { view: 'archive', surface: 'collab', agent: 'session-a' }, navigate })
+
+    captured.current?.navigateToRoute({ view: 'archive', surface: 'builder' }, true)
+
+    expect(navigate).toHaveBeenCalledWith({
+      to: '/',
+      search: { view: 'archive', agent: 'session-a' },
+      replace: true,
+      resetScroll: false,
+    })
+  })
+})
+
 describe('useRouteState — settings surface', () => {
   it('defaults settings to builder surface when surface param is absent', () => {
     const navigate = vi.fn()

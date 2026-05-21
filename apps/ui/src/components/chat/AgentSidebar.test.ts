@@ -125,6 +125,9 @@ function renderSidebar({
   onDeleteManager = vi.fn(),
   onOpenSettings = vi.fn(),
   onOpenCortexReview = vi.fn(),
+  onOpenArchive,
+  onArchiveSession,
+  onArchiveProfile,
   isSettingsActive = false,
   statuses = {},
   wsUrl,
@@ -137,6 +140,9 @@ function renderSidebar({
   onDeleteManager?: (managerId: string) => void
   onOpenSettings?: () => void
   onOpenCortexReview?: (agentId: string) => void
+  onOpenArchive?: () => void
+  onArchiveSession?: (agentId: string) => void
+  onArchiveProfile?: (profileId: string) => void
   isSettingsActive?: boolean
   statuses?: Record<string, { status: AgentStatus; pendingCount: number }>
   wsUrl?: string
@@ -167,6 +173,9 @@ function renderSidebar({
           onDeleteManager,
           onOpenSettings,
           onOpenCortexReview,
+          onOpenArchive,
+          onArchiveSession,
+          onArchiveProfile,
           isSettingsActive,
         }),
       ),
@@ -185,6 +194,65 @@ function getDesktopSidebar(): HTMLElement {
 }
 
 describe('AgentSidebar', () => {
+  it('opens Archive from the sidebar entry', () => {
+    const onOpenArchive = vi.fn()
+    renderSidebar({ agents: [sessionManager('manager-alpha', 'manager-alpha')], onOpenArchive })
+
+    click(getByRole(getDesktopSidebar(), 'button', { name: 'Archive' }))
+
+    expect(onOpenArchive).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows archive actions and disables direct archive for the default session with explanatory copy', async () => {
+    const onArchiveSession = vi.fn()
+    const onArchiveProfile = vi.fn()
+    const defaultSession = sessionManager('project-a', 'project-a')
+    const extraSession = sessionManager('project-a--s2', 'project-a')
+    const projectProfile: ManagerProfile = {
+      ...profileFor(defaultSession),
+      profileId: 'project-a',
+      displayName: 'Project A',
+      defaultSessionAgentId: 'project-a',
+    }
+
+    renderSidebar({
+      agents: [defaultSession, extraSession],
+      profiles: [projectProfile],
+      selectedAgentId: 'project-a',
+      onArchiveSession,
+      onArchiveProfile,
+    })
+    const sidebar = getDesktopSidebar()
+
+    const sessionRow = getByText(sidebar, 'project-a--s2')
+    flushSync(() => {
+      sessionRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
+    })
+    await flushEffects()
+    const archiveSessionItem = getAllByRole(document.body, 'menuitem').find((item) => item.textContent === 'Archive')
+    expect(archiveSessionItem).toBeTruthy()
+    click(archiveSessionItem as HTMLElement)
+    expect(onArchiveSession).toHaveBeenCalledWith('project-a--s2')
+
+    const defaultRow = getByText(sidebar, 'Main')
+    flushSync(() => {
+      defaultRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
+    })
+    await flushEffects()
+    expect(queryByText(document.body, 'The default session for a project can’t be archived directly.')).toBeTruthy()
+
+    const profileHeader = getByText(sidebar, 'Project A').closest('button')
+    expect(profileHeader).toBeTruthy()
+    flushSync(() => {
+      profileHeader!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
+    })
+    await flushEffects()
+    const archiveProjectItem = getAllByRole(document.body, 'menuitem').find((item) => item.textContent?.includes('Archive Project'))
+    expect(archiveProjectItem).toBeTruthy()
+    click(archiveProjectItem as HTMLElement)
+    expect(onArchiveProfile).toHaveBeenCalledWith('project-a')
+  })
+
   it('shows workers under sessions and allows collapsing profile groups', () => {
     const mgr = sessionManager('manager-alpha', 'manager-alpha')
     const wrk = worker('worker-alpha', 'manager-alpha')

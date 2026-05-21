@@ -18,6 +18,54 @@ function isActiveAgent(agent: AgentDescriptor): boolean {
   return ACTIVE_STATUSES.has(agent.status)
 }
 
+export function isAgentEffectivelyArchived(agent: AgentDescriptor, profiles: ManagerProfile[]): boolean {
+  if (agent.role !== 'manager') return false
+  if (agent.archivedAt) return true
+  const profileId = agent.profileId ?? agent.agentId
+  return profiles.some((profile) => profile.profileId === profileId && Boolean(profile.archivedAt))
+}
+
+export function getArchivedProfileRows(
+  agents: AgentDescriptor[],
+  profiles: ManagerProfile[],
+): ProfileTreeRow[] {
+  return buildProfileTreeRows(agents, profiles, { includeArchived: true })
+    .filter((row) => Boolean(row.profile.archivedAt))
+}
+
+export function getDirectlyArchivedSessionRows(
+  agents: AgentDescriptor[],
+  profiles: ManagerProfile[],
+): SessionRow[] {
+  return buildProfileTreeRows(agents, profiles, { includeArchived: true })
+    .filter((row) => !row.profile.archivedAt)
+    .flatMap((row) => row.sessions.filter((session) => Boolean(session.sessionAgent.archivedAt)))
+}
+
+export function filterAgentsAfterSessionArchive(
+  agents: AgentDescriptor[],
+  archivedAgentId: string,
+): AgentDescriptor[] {
+  return agents.filter((agent) => agent.agentId !== archivedAgentId && agent.managerId !== archivedAgentId)
+}
+
+export function filterAgentsAfterProfileArchive(
+  agents: AgentDescriptor[],
+  archivedProfileId: string,
+): AgentDescriptor[] {
+  const archivedManagerIds = new Set(
+    agents
+      .filter((agent) => agent.role === 'manager' && (agent.profileId ?? agent.agentId) === archivedProfileId)
+      .map((agent) => agent.agentId),
+  )
+  return agents.filter((agent) => {
+    if (agent.role === 'manager') {
+      return (agent.profileId ?? agent.agentId) !== archivedProfileId
+    }
+    return !archivedManagerIds.has(agent.managerId)
+  })
+}
+
 export function filterBuilderVisibleAgents(agents: AgentDescriptor[]): AgentDescriptor[] {
   const collabManagerIds = new Set(
     agents
@@ -118,8 +166,10 @@ export { isSessionRunning }
 export function buildProfileTreeRows(
   agents: AgentDescriptor[],
   profiles: ManagerProfile[],
+  options: { includeArchived?: boolean } = {},
 ): ProfileTreeRow[] {
   const visibleAgents = filterBuilderVisibleAgents(agents)
+  const profileArchivedById = new Map(profiles.map((profile) => [profile.profileId, Boolean(profile.archivedAt)]))
 
   // Index profiles by profileId
   const profileMap = new Map<string, ManagerProfile>()
@@ -133,6 +183,9 @@ export function buildProfileTreeRows(
   const legacyManagers: AgentDescriptor[] = []
 
   for (const agent of visibleAgents) {
+    if (!options.includeArchived && agent.role === 'manager' && (agent.archivedAt || profileArchivedById.get(agent.profileId ?? agent.agentId))) {
+      continue
+    }
     if (agent.role === 'worker') {
       workers.push(agent)
     } else if (isSessionAgent(agent)) {
@@ -169,6 +222,7 @@ export function buildProfileTreeRows(
   const treeRows: ProfileTreeRow[] = []
 
   for (const profile of profiles) {
+    if (!options.includeArchived && profile.archivedAt) continue
     const sessions = sessionsByProfile.get(profile.profileId) ?? []
 
     // Sort: most recently active first (fall back to createdAt)
@@ -199,6 +253,7 @@ export function buildProfileTreeRows(
 
   // Handle legacy managers without profiles — create synthetic profile rows
   for (const manager of legacyManagers) {
+    if (!options.includeArchived && manager.archivedAt) continue
     // Skip if already handled via a profile
     if (profileMap.has(manager.agentId)) continue
 
@@ -241,8 +296,20 @@ export function resolveWorkerFetchManagerId(
   return null
 }
 
-export function chooseFallbackAgentId(agents: AgentDescriptor[], preferredAgentId?: string | null): string | null {
-  const activeAgents = filterBuilderVisibleAgents(agents).filter(isActiveAgent)
+export function chooseFallbackAgentId(
+  agents: AgentDescriptor[],
+  preferredAgentId?: string | null,
+  profiles: ManagerProfile[] = [],
+): string | null {
+  const archivedManagerIds = new Set(
+    agents
+      .filter((agent) => agent.role === 'manager' && isAgentEffectivelyArchived(agent, profiles))
+      .map((agent) => agent.agentId),
+  )
+  const activeAgents = filterBuilderVisibleAgents(agents)
+    .filter(isActiveAgent)
+    .filter((agent) => agent.role !== 'manager' || !isAgentEffectivelyArchived(agent, profiles))
+    .filter((agent) => agent.role !== 'worker' || !archivedManagerIds.has(agent.managerId))
   if (activeAgents.length === 0) {
     return null
   }

@@ -38,6 +38,7 @@ export function createInactiveRuntime(
     pty: null,
     closing: false,
     closed: false,
+    published: true,
     finalizePromise: null,
     snapshotInterval: null,
     lock: Promise.resolve(),

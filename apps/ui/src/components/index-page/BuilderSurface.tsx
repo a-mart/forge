@@ -7,6 +7,8 @@ import {
 } from 'react'
 import { reportBuilderConnected } from '@/lib/connection-health-store'
 import { AgentSidebar } from '@/components/chat/AgentSidebar'
+import { ArchiveView } from '@/components/index-page/ArchiveView'
+import { isUsableActiveTarget } from '@/components/index-page/archive-target-guards'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { type MessageInputHandle } from '@/components/chat/MessageInput'
@@ -18,7 +20,7 @@ import { ChatWorkspace } from '@/components/index-page/ChatWorkspace'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { StatsPage } from '@/components/index-page/StatsPage'
 import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
-import { chooseFallbackAgentId, resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
+import { chooseFallbackAgentId, filterAgentsAfterProfileArchive, filterAgentsAfterSessionArchive, isAgentEffectivelyArchived, resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
 import { hasProjectManagers } from '@/lib/onboarding-ui'
 import { useFeedback } from '@/lib/use-feedback'
@@ -71,6 +73,7 @@ type BuilderNavigationState =
   | { view: 'chat'; agentId: string }
   | { view: 'settings'; surface: ActiveSurface }
   | { view: 'stats'; statsTab?: StatsTab }
+  | { view: 'archive'; surface: ActiveSurface }
 
 interface BuilderSurfaceProps {
   wsUrl: string
@@ -126,8 +129,16 @@ export function BuilderSurface({
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
 
   const activeAgentId = useMemo(() => {
-    return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
-  }, [state.agents, state.subscribedAgentId, state.targetAgentId])
+    const preferredId = state.targetAgentId ?? state.subscribedAgentId ?? null
+    const preferredAgent = preferredId ? state.agents.find((agent) => agent.agentId === preferredId) : null
+    const preferredManager = preferredAgent?.role === 'worker'
+      ? state.agents.find((agent) => agent.role === 'manager' && agent.agentId === preferredAgent.managerId)
+      : preferredAgent
+    if (preferredManager?.role === 'manager' && isAgentEffectivelyArchived(preferredManager, state.profiles)) {
+      return chooseFallbackAgentId(state.agents, undefined, state.profiles)
+    }
+    return preferredId ?? chooseFallbackAgentId(state.agents, undefined, state.profiles)
+  }, [state.agents, state.profiles, state.subscribedAgentId, state.targetAgentId])
 
   const activeAgent = useMemo(() => {
     if (!activeAgentId) {
@@ -237,10 +248,10 @@ export function BuilderSurface({
     }
 
     if (activeAgent.role === 'manager') {
-      return activeAgent.profileId ?? activeAgent.agentId
+      return activeAgent.agentId
     }
 
-    return activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? activeAgent.managerId ?? null
+    return activeManagerAgent?.agentId ?? activeAgent.managerId ?? null
   }, [activeAgent, activeManagerAgent])
 
   // Project agents for @mention autocomplete — only when the active agent is a manager session
@@ -563,11 +574,13 @@ export function BuilderSurface({
       explicitSelectionAgentId &&
       explicitSelectionAgentId !== DEFAULT_MANAGER_AGENT_ID
     ) {
-      const explicitTargetExists = state.agents.some(
-        (agent) => agent.agentId === explicitSelectionAgentId,
+      const explicitTargetUsable = isUsableActiveTarget(
+        explicitSelectionAgentId,
+        state.agents,
+        state.profiles,
       )
 
-      if (explicitTargetExists) {
+      if (explicitTargetUsable) {
         if (currentAgentId !== explicitSelectionAgentId) {
           clientRef.current?.subscribeToAgent(explicitSelectionAgentId)
         }
@@ -583,7 +596,7 @@ export function BuilderSurface({
           state.agents,
           explicitSelectionAgentId,
           previousAgentsByIdRef.current,
-        ) ?? chooseFallbackAgentId(state.agents)
+        ) ?? chooseFallbackAgentId(state.agents, undefined, state.profiles)
 
       if (!fallbackAgentId) {
         navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true)
@@ -602,7 +615,7 @@ export function BuilderSurface({
       return
     }
 
-    if (state.agents.some((agent) => agent.agentId === routeState.agentId)) {
+    if (isUsableActiveTarget(routeState.agentId, state.agents, state.profiles)) {
       clientRef.current?.subscribeToAgent(routeState.agentId)
       return
     }
@@ -611,7 +624,7 @@ export function BuilderSurface({
       return
     }
 
-    const fallbackAgentId = chooseFallbackAgentId(state.agents)
+    const fallbackAgentId = chooseFallbackAgentId(state.agents, undefined, state.profiles)
     if (!fallbackAgentId || fallbackAgentId === currentAgentId) {
       return
     }
@@ -623,6 +636,7 @@ export function BuilderSurface({
     routeState,
     state.agents,
     state.hasReceivedAgentsSnapshot,
+    state.profiles,
     state.subscribedAgentId,
     state.targetAgentId,
   ])
@@ -793,6 +807,88 @@ export function BuilderSurface({
       }
     })()
   }, [clientRef, setState])
+
+  const handleArchiveSession = useCallback((agentId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.archiveSession(agentId)
+        const fallbackAgentId = chooseFallbackAgentId(
+          filterAgentsAfterSessionArchive(state.agents, agentId),
+          undefined,
+          state.profiles,
+        )
+        if (agentId === activeAgentId && fallbackAgentId) {
+          navigateToRoute({ view: 'chat', agentId: fallbackAgentId })
+        }
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to archive session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [activeAgentId, clientRef, navigateToRoute, setState, state.agents, state.profiles])
+
+  const handleArchiveProfile = useCallback((profileId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.archiveProfile(profileId)
+        const fallbackAgentId = chooseFallbackAgentId(
+          filterAgentsAfterProfileArchive(state.agents, profileId),
+          undefined,
+          state.profiles.filter((profile) => profile.profileId !== profileId),
+        )
+        if (activeAgent?.role === 'manager' && (activeAgent.profileId ?? activeAgent.agentId) === profileId && fallbackAgentId) {
+          navigateToRoute({ view: 'chat', agentId: fallbackAgentId })
+        }
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to archive project: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [activeAgent, clientRef, navigateToRoute, setState, state.agents, state.profiles])
+
+  const handleRestoreSession = useCallback((agentId: string, open = false) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        const result = await client.restoreSession(agentId)
+        if (open) navigateToRoute({ view: 'chat', agentId: result.openAgentId ?? result.agentId })
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to restore session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, navigateToRoute, setState])
+
+  const handleRestoreProfile = useCallback((profileId: string, open = false) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        const result = await client.restoreProfile(profileId)
+        if (open && result.openAgentId) navigateToRoute({ view: 'chat', agentId: result.openAgentId })
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to restore project: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, navigateToRoute, setState])
 
   const handleRenameSession = useCallback((agentId: string, label: string) => {
     const client = clientRef.current
@@ -1035,7 +1131,7 @@ export function BuilderSurface({
 
     if (activeAgentId === agentId) {
       const remainingAgents = state.agents.filter((entry) => entry.agentId !== agentId)
-      const fallbackAgentId = chooseFallbackAgentId(remainingAgents)
+      const fallbackAgentId = chooseFallbackAgentId(remainingAgents, undefined, state.profiles)
       if (fallbackAgentId) {
         navigateToRoute({ view: 'chat', agentId: fallbackAgentId })
         clientRef.current?.subscribeToAgent(fallbackAgentId)
@@ -1051,6 +1147,10 @@ export function BuilderSurface({
 
   const handleOpenStats = () => {
     navigateToRoute({ view: 'stats' })
+  }
+
+  const handleOpenArchive = () => {
+    navigateToRoute({ view: 'archive', surface: 'builder' })
   }
 
   const handleSaveOnboarding = useCallback((input: import('@/lib/onboarding-api').SaveOnboardingPreferencesInput) => {
@@ -1115,6 +1215,7 @@ export function BuilderSurface({
         selectedAgentId={activeAgentId}
         isSettingsActive={activeView === 'settings'}
         isStatsActive={activeView === 'stats'}
+        isArchiveActive={activeView === 'archive'}
         isMobileOpen={isMobileSidebarOpen}
         onMobileClose={() => setIsMobileSidebarOpen(false)}
         onAddManager={handleOpenCreateManagerDialog}
@@ -1124,10 +1225,13 @@ export function BuilderSurface({
         onOpenSettings={handleOpenSettingsPanel}
         onOpenCortexReview={handleOpenCortexReview}
         onOpenStats={handleOpenStats}
+        onOpenArchive={handleOpenArchive}
         onCreateSession={handleCreateSession}
         onStopSession={handleStopSession}
         onResumeSession={handleResumeSession}
         onDeleteSession={handleDeleteSession}
+        onArchiveSession={handleArchiveSession}
+        onArchiveProfile={handleArchiveProfile}
         onRenameSession={handleRenameSession}
         onPinSession={handlePinSession}
         onRenameProfile={handleRenameProfile}
@@ -1201,6 +1305,19 @@ export function BuilderSurface({
                 onTabChange={(tab) =>
                   navigateToRoute({ view: 'stats', statsTab: tab })
                 }
+              />
+            ) : activeView === 'archive' ? (
+              <ArchiveView
+                agents={state.agents}
+                profiles={state.profiles}
+                onBack={() =>
+                  navigateToRoute({
+                    view: 'chat',
+                    agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
+                  })
+                }
+                onRestoreProfile={handleRestoreProfile}
+                onRestoreSession={handleRestoreSession}
               />
             ) : (
               <ChatWorkspace

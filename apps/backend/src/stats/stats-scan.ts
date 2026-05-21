@@ -102,10 +102,24 @@ export async function scanProfilesData(
     }
   }
 
-  const agents = await readAgentsRegistry(dataDir);
-  const activeWorkerCount = agents.filter((agent) => agent.role === "worker" && agent.status === "streaming").length;
+  const { agents, profiles } = await readAgentsRegistry(dataDir);
+  const profileArchivedById = new Map(profiles.map((profile) => [profile.profileId, Boolean(profile.archivedAt)]));
+  const managerArchivedById = new Map(
+    agents
+      .filter((agent) => agent.role === "manager" && typeof agent.agentId === "string")
+      .map((agent) => [agent.agentId, Boolean(agent.archivedAt) || Boolean(profileArchivedById.get(agent.profileId ?? agent.agentId ?? ""))]),
+  );
+  const isAgentEffectivelyArchived = (agent: { role?: string; managerId?: string; agentId?: string; profileId?: string; archivedAt?: string }) => {
+    if (agent.role === "manager") {
+      return Boolean(agent.archivedAt) || Boolean(profileArchivedById.get(agent.profileId ?? agent.agentId ?? ""));
+    }
+    return Boolean(managerArchivedById.get(agent.managerId ?? ""));
+  };
+  const activeWorkerCount = agents.filter(
+    (agent) => agent.role === "worker" && agent.status === "streaming" && !isAgentEffectivelyArchived(agent),
+  ).length;
   const activeSessionCount = agents.filter(
-    (agent) => agent.role === "manager" && agent.status !== "terminated" && agent.status !== "stopped"
+    (agent) => agent.role === "manager" && agent.status !== "terminated" && agent.status !== "stopped" && !isAgentEffectivelyArchived(agent)
   ).length;
   const managerRepoPaths = collectManagerRepoPaths(agents);
 
@@ -212,12 +226,20 @@ async function readSessionMeta(path: string): Promise<SessionMetaLite | null> {
   return readJsonFileOrNull<SessionMetaLite>(path);
 }
 
-async function readAgentsRegistry(dataDir: string): Promise<Array<{ role?: string; status?: string; cwd?: string }>> {
+async function readAgentsRegistry(dataDir: string): Promise<{
+  agents: Array<{ agentId?: string; managerId?: string; profileId?: string; role?: string; status?: string; cwd?: string; archivedAt?: string }>;
+  profiles: Array<{ profileId: string; archivedAt?: string }>;
+}> {
   const path = getAgentsStoreFilePath(dataDir);
-  const parsed = await readJsonFileOrNull<{ agents?: unknown }>(path);
-  return Array.isArray(parsed?.agents)
-    ? parsed.agents.filter((agent): agent is { role?: string; status?: string; cwd?: string } => isRecord(agent))
-    : [];
+  const parsed = await readJsonFileOrNull<{ agents?: unknown; profiles?: unknown }>(path);
+  return {
+    agents: Array.isArray(parsed?.agents)
+      ? parsed.agents.filter((agent): agent is { agentId?: string; managerId?: string; profileId?: string; role?: string; status?: string; cwd?: string; archivedAt?: string } => isRecord(agent))
+      : [],
+    profiles: Array.isArray(parsed?.profiles)
+      ? parsed.profiles.filter((profile): profile is { profileId: string; archivedAt?: string } => isRecord(profile) && typeof profile.profileId === "string")
+      : [],
+  };
 }
 
 function extractModelId(message: unknown): string {

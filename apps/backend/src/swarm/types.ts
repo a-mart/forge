@@ -76,6 +76,7 @@ export interface AgentDescriptor {
   cli?: CliSessionMetadata;
   sessionSystemPrompt?: string;
   pinnedAt?: string;
+  archivedAt?: string;
   mergedAt?: string;
   compactionCount?: number;
   workerCount?: number;
@@ -346,7 +347,7 @@ export interface AgentsSnapshotEvent {
 }
 
 export interface SessionLifecycleEvent {
-  action: "created" | "deleted" | "renamed" | "forked";
+  action: "created" | "deleted" | "renamed" | "forked" | "archived" | "restored";
   sessionAgentId: string;
   profileId: string;
   label?: string;

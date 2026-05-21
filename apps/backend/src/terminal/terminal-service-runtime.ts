@@ -123,15 +123,17 @@ export class TerminalServiceRuntimeController {
         }
       }
 
-      this.context.emit("terminal_exit", event);
-      this.context.transport?.publish({
-        type: "terminal_exit",
-        terminalId: runtime.meta.terminalId,
-        sessionAgentId: runtime.meta.sessionAgentId,
-        exitCode,
-        exitSignal,
-      });
-      this.context.emitTerminalUpdated(runtime.descriptor);
+      if (runtime.published) {
+        this.context.emit("terminal_exit", event);
+        this.context.transport?.publish({
+          type: "terminal_exit",
+          terminalId: runtime.meta.terminalId,
+          sessionAgentId: runtime.meta.sessionAgentId,
+          exitCode,
+          exitSignal,
+        });
+        this.context.emitTerminalUpdated(runtime.descriptor);
+      }
     });
   }
 

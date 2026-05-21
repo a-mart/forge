@@ -36,6 +36,38 @@ describe("scanProfilesData", () => {
     expect(normalized.managerRepoPaths).toEqual(raw.managerRepoPaths);
   });
 
+  it("excludes archived sessions and projects from active counters while preserving historical session counts", async () => {
+    const dataDir = await createStatsFixture({
+      profiles: [{ profileId: "archived-profile", archivedAt: "2026-05-20T00:00:00.000Z" }],
+      agents: [
+        { agentId: "active-manager", role: "manager", status: "idle", profileId: PROFILE_ID },
+        {
+          agentId: "archived-session",
+          role: "manager",
+          status: "idle",
+          profileId: PROFILE_ID,
+          archivedAt: "2026-05-20T00:00:00.000Z",
+        },
+        { agentId: "archived-project-manager", role: "manager", status: "idle", profileId: "archived-profile" },
+        { agentId: "active-worker", managerId: "active-manager", role: "worker", status: "streaming" },
+        { agentId: "archived-session-worker", managerId: "archived-session", role: "worker", status: "streaming" },
+        {
+          agentId: "archived-project-worker",
+          managerId: "archived-project-manager",
+          role: "worker",
+          status: "streaming",
+        },
+      ],
+      sessionIds: ["session-one", "session-two", "session-three"],
+    });
+
+    const result = await scanProfilesData(dataDir, [PROFILE_ID], "UTC");
+
+    expect(result.totalSessionCount).toBe(3);
+    expect(result.activeSessionCount).toBe(1);
+    expect(result.activeWorkerCount).toBe(1);
+  });
+
   it("uses session directories, not agents.json managers, as the authoritative session count", async () => {
     const dataDir = await createStatsFixture({
       agents: [
@@ -105,7 +137,7 @@ function normalizedAgents(repoA: string, repoB: string): unknown[] {
   });
 }
 
-async function createStatsFixture(options: { agents: unknown[]; sessionIds: string[] }): Promise<string> {
+async function createStatsFixture(options: { agents: unknown[]; sessionIds: string[]; profiles?: unknown[] }): Promise<string> {
   const dataDir = await mkdtemp(join(tmpdir(), "forge-stats-scan-"));
   tempDirs.push(dataDir);
   const swarmDir = join(dataDir, "swarm");
@@ -113,7 +145,7 @@ async function createStatsFixture(options: { agents: unknown[]; sessionIds: stri
 
   await mkdir(swarmDir, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
-  await writeFile(join(swarmDir, "agents.json"), `${JSON.stringify({ agents: options.agents }, null, 2)}\n`, "utf8");
+  await writeFile(join(swarmDir, "agents.json"), `${JSON.stringify({ agents: options.agents, profiles: options.profiles }, null, 2)}\n`, "utf8");
 
   for (const sessionId of options.sessionIds) {
     await mkdir(join(sessionsDir, sessionId), { recursive: true });

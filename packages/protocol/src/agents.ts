@@ -85,6 +85,7 @@ export interface ManagerProfile {
   defaultModel: AgentModelDescriptor
   createdAt: string
   updatedAt: string
+  archivedAt?: string
   profileType?: 'user' | 'system'
   sortOrder?: number
 }
@@ -119,6 +120,7 @@ export interface AgentDescriptor {
   collab?: AgentCollaborationLink
   cli?: CliSessionMetadata
   pinnedAt?: string
+  archivedAt?: string
   mergedAt?: string
   compactionCount?: number
   workerCount?: number

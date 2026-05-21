@@ -139,19 +139,36 @@ describe("terminal routes", () => {
     const response = await fetch(`${server.baseUrl}/api/terminals/term-1/ticket`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionAgentId: "session-1" }),
+      body: JSON.stringify({ sessionAgentId: "profile-1", requesterAgentId: "session-1" }),
     });
 
     expect(response.status).toBe(200);
     expect(terminalService.issueWsTicket).toHaveBeenCalledWith({
       terminalId: "term-1",
-      sessionAgentId: "session-1",
+      sessionAgentId: "profile-1",
+      requesterAgentId: "session-1",
     });
     await expect(response.json()).resolves.toEqual({
       ticket: "ticket-123",
       expiresAt: "2026-04-08T12:00:00.000Z",
       terminalId: "term-1",
     });
+  });
+
+  it("rejects terminal ticket requests without a concrete requester id", async () => {
+    const terminalService = {
+      issueWsTicket: vi.fn(),
+    };
+    const server = await createTerminalRouteTestServer({ terminalService });
+
+    const response = await fetch(`${server.baseUrl}/api/terminals/term-1/ticket`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionAgentId: "profile-1" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(terminalService.issueWsTicket).not.toHaveBeenCalled();
   });
 
   it("maps TerminalServiceError codes to HTTP status codes", async () => {

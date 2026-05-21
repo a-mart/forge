@@ -45,6 +45,7 @@ export interface AgentSidebarProps {
   selectedAgentId: string | null
   isSettingsActive: boolean
   isStatsActive?: boolean
+  isArchiveActive?: boolean
   isMobileOpen?: boolean
   onMobileClose?: () => void
   onAddManager: () => void
@@ -54,10 +55,13 @@ export interface AgentSidebarProps {
   onOpenSettings: () => void
   onOpenCortexReview?: (agentId: string) => void
   onOpenStats?: () => void
+  onOpenArchive?: () => void
   onCreateSession?: (profileId: string, name?: string) => void
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
   onDeleteSession?: (agentId: string) => void
+  onArchiveSession?: (agentId: string) => void
+  onArchiveProfile?: (profileId: string) => void
   onRenameSession?: (agentId: string, label: string) => void
   onPinSession?: (agentId: string, pinned: boolean) => void
   onRenameProfile?: (profileId: string, displayName: string) => void
@@ -107,6 +111,8 @@ export interface SessionRowItemProps {
   onStop?: () => void
   onResume?: () => void
   onDelete?: () => void
+  onArchive?: () => void
+  archiveDisabledReason?: string
   onRename?: () => void
   onFork?: () => void
   onMarkUnread?: () => void
@@ -150,6 +156,8 @@ export interface ProfileGroupProps {
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
   onDeleteSession?: (agentId: string) => void
+  onArchiveSession?: (agentId: string) => void
+  onArchiveProfile?: (profileId: string) => void
   onRequestRenameSession?: (agentId: string) => void
   onRequestRenameProfile?: (profileId: string) => void
   onForkSession?: (sourceAgentId: string) => void

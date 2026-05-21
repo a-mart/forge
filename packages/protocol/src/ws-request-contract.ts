@@ -24,6 +24,8 @@ type ContractCommandType = Extract<
   | 'pick_directory'
   | 'get_session_workers'
   | 'rename_profile'
+  | 'archive_profile'
+  | 'restore_profile'
   | 'rename_session'
   | 'pin_session'
   | 'update_session_model'
@@ -38,6 +40,8 @@ type ContractCommandType = Extract<
   | 'create_session'
   | 'stop_session'
   | 'resume_session'
+  | 'archive_session'
+  | 'restore_session'
   | 'delete_session'
   | 'clear_session'
   | 'set_session_project_agent'
@@ -55,6 +59,8 @@ type ContractSuccessEventType = Extract<
   | 'directory_picked'
   | 'session_workers_snapshot'
   | 'profile_renamed'
+  | 'profile_archived'
+  | 'profile_restored'
   | 'session_renamed'
   | 'session_pinned'
   | 'session_model_updated'
@@ -69,6 +75,8 @@ type ContractSuccessEventType = Extract<
   | 'session_created'
   | 'session_stopped'
   | 'session_resumed'
+  | 'session_archived'
+  | 'session_restored'
   | 'session_deleted'
   | 'session_cleared'
   | 'session_project_agent_updated'
@@ -115,6 +123,20 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['profile_renamed'],
     errorCodeFragments: ['rename_profile'],
+  },
+  {
+    commandType: 'archive_profile',
+    resultFamily: 'archive_profile_result',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['profile_archived'],
+    errorCodeFragments: ['archive_profile'],
+  },
+  {
+    commandType: 'restore_profile',
+    resultFamily: 'restore_profile_result',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['profile_restored'],
+    errorCodeFragments: ['restore_profile'],
   },
   {
     commandType: 'rename_session',
@@ -213,6 +235,26 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_resumed'],
     errorCodeFragments: ['resume_session'],
+  },
+  {
+    commandType: 'archive_session',
+    resultFamily: 'archive_session_result',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_archived'],
+    errorCodeFragments: [
+      'archive_session',
+      'ARCHIVE_DEFAULT_SESSION_NOT_ALLOWED',
+    ],
+  },
+  {
+    commandType: 'restore_session',
+    resultFamily: 'restore_session_result',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['session_restored'],
+    errorCodeFragments: [
+      'restore_session',
+      'ARCHIVE_RESTORE_PARENT_PROJECT_REQUIRED',
+    ],
   },
   {
     commandType: 'delete_session',
