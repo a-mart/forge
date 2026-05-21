@@ -117,7 +117,7 @@ const modelsRouting: HelpArticle = {
 
 The manager model handles orchestration: reading your messages, deciding what to do, breaking work into tasks, and coordinating specialist workers. The manager does not write code directly. Pick a capable model here — it affects the quality of task planning and delegation.
 
-You can set the profile default from the profile header with **Change Default Model**, override a single session with **Override Session Model**, or switch a session back to inherited state with **Use Project Default**. The session override dialog is one screen now, and choosing Use Project Default clears the session override back to the project default.
+You can set the profile default from the profile header with **Change Default Model**, override a single session with **Override Session Model**, or switch a session back to inherited state with **Use Project Default**. The session override dialog is one screen now, and choosing Use Project Default clears the session override back to the project default. New Project/Create Project uses the same model-aware reasoning selector, with unsupported options hidden and defaults applied when reasoning is omitted.
 
 ## Specialist routing
 

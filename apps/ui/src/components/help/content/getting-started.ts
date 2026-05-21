@@ -18,7 +18,7 @@ One conversation can have dozens of workers running at once. You don't manage th
 ## What to do first
 
 1. **Add your credentials.** Open Settings and connect your OpenAI or Anthropic account. Forge needs at least one provider to run agents.
-2. **Create a manager.** Click the **+** button in the sidebar. Give it a name, point it at a project directory, and pick a model.
+2. **Create a manager.** Click the **+** button in the sidebar. Give it a name, point it at a project directory, pick a model, and choose a reasoning level if the model supports one.
 3. **Start talking.** Describe the work at whatever level makes sense — a feature, a bug fix, a batch of refactors. The manager figures out the rest.
 
 ## A tip before you start
@@ -57,7 +57,7 @@ Click the **+** button at the top of the sidebar. You'll need three things:
 
 - **Name** — something that identifies the project or workstream. You can rename it later.
 - **Working directory** — the project folder where workers will operate. Each worker gets its own worktree branched from this directory.
-- **Model** — which LLM powers the manager. Claude Sonnet and GPT models both work well. You can change this later in Settings.
+- **Model** — which LLM powers the manager. Claude Sonnet and GPT models both work well. You can change this later in Settings, and supported models also let you choose a reasoning level.
 
 Click **Create** and the manager appears in the sidebar.
 

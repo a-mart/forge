@@ -61,6 +61,7 @@ Click the **+** button to create a new manager agent. You'll be prompted for:
 
 - **Name** — Something meaningful. If it's for your web app, call it "webapp" or "analytics-api," not "test." You'll thank yourself later when you have five managers running.
 - **Project directory** — The root of the project you want to work on. This is where the manager and its workers will operate.
+- **Model** — Pick the manager model. If the model supports it, you can also choose a reasoning level; unsupported reasoning options are hidden and the default is used when you leave it out.
 
 That's it. Your manager is now live.
 
