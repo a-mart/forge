@@ -114,7 +114,7 @@ Currently read-only (you can't switch branches or make commits from the UI), but
 
 ### Session Sidebar
 
-The left sidebar shows all your sessions across all managers. You can switch sessions by clicking them, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation.
+The left sidebar shows all your sessions across all managers. You can switch sessions by clicking them, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Use the Archive nav in the Builder sidebar to view archived projects and directly archived sessions, then restore and reopen them from there.
 
 **Pinning sessions:** Right-click any session and select "Pin" to keep it at the top of the sidebar. Pinned sessions appear below project agents but above regular sessions and are never hidden by the "Show N more" pagination. Click "Unpin" to return a session to regular sorting. Sessions are pinned per profile — forked sessions don't inherit pin state.
 
@@ -139,7 +139,7 @@ If the backend detects real OAuth credentials for OpenAI or Anthropic, Forge can
 - **Sidebar widget** — Compact stacked gauges showing 5-hour rolling and weekly usage windows with reset timers. Click to expand for detailed metrics (deficit/reserve pace, runout estimates), and use the manual refresh button in the detail panel if you want to re-poll immediately.
 - **Dashboard stats panel** — Full usage breakdown with the same metrics in a dedicated section.
 
-Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
+Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. The Dashboard stats panel's Sessions card keeps archived projects and sessions in the historical total, while the active subtitle excludes them. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
 
 ---
 
@@ -215,6 +215,10 @@ Either way, the forked session keeps the source session's model state, including
 ### Switching Between Sessions
 
 Click any session in the sidebar to switch to it. Your manager tracks state independently per session, so you can bounce between "fix-auth-bug," "dark-mode-feature," and "api-docs-update" without losing your place.
+
+### Archive and Restore
+
+You can archive a session or an entire project from the sidebar, but archived items are read-only and unavailable for chat, model, CWD, project-agent reference edits, or terminal use until restored. The default Main session in a project cannot be archived directly. Archiving a project only marks the project as archived; it does not recursively stamp every session, but the whole project becomes operationally unavailable until restored. Archiving a project stops live sessions under that profile, clears active tool snapshots, and suspends running profile terminals so they can resume on restore. Session archives do not delete terminal data.
 
 ### Session Search
 

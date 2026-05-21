@@ -64,7 +64,7 @@ See the [README](README.md) for full setup instructions, including Windows-speci
 Per-session integrated terminals backed by `node-pty` (backend) and `xterm.js` (frontend). Each terminal gets a dedicated WebSocket for raw I/O, separate from the main app WebSocket. A headless `xterm.js` instance on the backend tracks terminal state for snapshot/restore.
 
 - **Persistence:** Periodic VT state snapshots + an output journal (`delta.ndjson`). On server restart, terminals are restored from the most recent snapshot plus any subsequent journal entries, preserving scrollback and screen state.
-- **Session scoping:** Terminals belong to a manager session and are cleaned up when the session is deleted.
+- **Session scoping:** Terminals belong to a manager session and are cleaned up when the session is deleted. Project archives suspend running profile terminals and restore brings them back; archived sessions cannot use terminals until restored. Archive does not delete terminal data, and deletion cleanup is separate.
 - **Cross-platform:** macOS/Linux use the user's default shell; Windows uses ConPTY. Shell can be overridden via `FORGE_TERMINAL_DEFAULT_SHELL`.
 - **Access control:** Terminal WebSocket connections use short-lived tickets issued over the authenticated main WebSocket.
 
@@ -101,6 +101,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Skill sharing** | `swarm/skills/skill-sharing-service.ts` | `apps/skill-share-worker/` | Temporary anonymous skill transfer service for user-created global/project skills. Share links and imports use the configured worker origin (default `https://forgeskills.radops.ai`); see [`apps/skill-share-worker/README.md`](apps/skill-share-worker/README.md) for quotas, TTL, and Cloudflare guardrails. |
 | **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | Settings Extensions UI | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
 | **Integrated terminals** | `terminal/` | `components/terminal/` | Per-session PTY terminals with persistence and state restoration |
+| **Archive** | `swarm/archive/*`, `swarm/agents.json` | `components/index-page/ArchiveView.tsx` | Reversible, lossless project/session archive state stored inline in `swarm/agents.json` via `ManagerProfile.archivedAt` and `AgentDescriptor.archivedAt`. Builder Archive shows archived projects and directly archived sessions with restore actions, and restore can immediately open the restored target. |
 | **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, silent worker/runtime fallback recovery, per-profile overrides, and specialist-specific research guidance such as the Brave-backed `web-researcher` |
 | **Model catalog** | `swarm/model-catalog-service.ts`, `swarm/model-catalog-projection.ts` | `components/settings/SettingsModels.tsx` | Authoritative single-source model metadata catalog with Pi projection, local overrides, and audit workflow for upstream sync. See [`docs/ADDING_MODELS.md`](docs/ADDING_MODELS.md) for how to add new models. |
 | **Model overrides** | `swarm/model-overrides.ts` | Settings Models UI | User-scoped model visibility and context-window caps persisted to `model-overrides.json` |
@@ -138,7 +139,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ```
 ~/.forge/
 ├── swarm/
-│   └── agents.json                        # Global agent registry
+│   └── agents.json                        # Global agent registry (ManagerProfile.archivedAt, AgentDescriptor.archivedAt)
 ├── extensions/                            # Global Forge extensions (auto-created)
 ├── agent/                                 # Pi agent runtime config
 │   ├── extensions/                        #   Global worker extensions (auto-created)

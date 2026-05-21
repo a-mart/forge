@@ -215,7 +215,7 @@ Sessions within a profile are independent. You can have one session debugging a 
 
 ## Lifecycle
 
-Sessions are either **running** (actively connected) or **idle** (saved but not processing). There is no "closed" state — a session exists until you delete it. Deleting a session removes its history, memory, and workers.
+Sessions are either **running** (actively connected) or **idle** (saved but not processing). Archived sessions and archived profiles are a reversible, lossless frozen state: the data stays on disk, but the session or project is read-only and unavailable for runtime use until restored. The default Main session in a project cannot be archived directly. Deleting a session still removes its history, memory, and workers.
 
 ## Forking
 
@@ -246,7 +246,7 @@ const conceptsProjectAgents: HelpArticle = {
   category: 'concepts',
   summary:
     'Promoted sessions that become discoverable, persistent agents for cross-session collaboration.',
-  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles, dedicated storage directories, and are discoverable by sibling sessions for async collaboration. If a cached sidecar was truncated, the project agent conversation rebuilds from canonical session history on first load.
+  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles, dedicated storage directories, and are discoverable by sibling sessions for async collaboration. If a cached sidecar was truncated, the project agent conversation rebuilds from canonical session history on first load. If a project-agent session is archived, it becomes read-only and unavailable for messaging until restored, just like any other archived session.
 
 ## What makes a project agent
 
