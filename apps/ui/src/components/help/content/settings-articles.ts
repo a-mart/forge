@@ -425,7 +425,7 @@ Skills are discovered at agent startup from builtin and user directories. You do
 
 ## Skill sharing
 
-Use the Share button on a user-created global or project skill to generate a temporary bearer link from the skill share service. Built-in and repository skills are not shareable in v1.
+Use the Share button on a user-created global or project skill to generate a temporary bearer link from the skill share service. The default service origin is \`https://forgeskills.radops.ai\`; you can override it with \`FORGE_SKILL_SHARE_BASE_URL\` or disable sharing with \`FORGE_SKILL_SHARE_DISABLED\`. Legacy \`MIDDLEMAN_SKILL_SHARE_BASE_URL\` and \`MIDDLEMAN_SKILL_SHARE_DISABLED\` are still accepted.
 
 Use **Import from URL** to paste a Forge skill-share link or a \`forge://skill-import\` deep link. Forge always opens a preview first so you can review files, warnings, and conflicts before anything is installed.
 
