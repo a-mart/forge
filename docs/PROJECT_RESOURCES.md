@@ -2,15 +2,17 @@
 
 Forge can load project-scoped resources from a repository-root `.forge/` directory. This keeps project guidance, reference material, and optional executable automation with the repository while user state stays in `FORGE_DATA_DIR`.
 
+For a concise authoring workflow, see the built-in `forge-project-resources` skill.
+
 Project resources are resolved from the nearest Git root for the selected session working directory. If no Git root is found, Forge does not ancestor-walk for `.forge/` resources. A profile can optionally override the resolved project-resource directory, but the override target must be an existing directory named exactly `.forge`.
 
 ## Layout
 
 ```text
 <repo>/.forge/
-  skills/                  # Project skills, file-backed skill directories
-  specialists/             # Project specialist markdown definitions
-  reference/               # Project reference docs injected as repository context
+  skills/                  # Repository skills, file-backed skill directories
+  specialists/             # Repository specialist markdown definitions
+  reference/               # Repository reference docs inventoried in prompt and read on demand
   extensions/              # Forge-native executable extensions, trust-gated
   pi/
     extensions/            # Pi-native executable extensions, trust-gated
@@ -19,9 +21,9 @@ Project resources are resolved from the nearest Git root for the selected sessio
 
 Passive resources are available without an executable trust grant:
 
-- `skills/` for repository/project skills.
-- `specialists/` for project specialist definitions.
-- `reference/` for repository reference docs.
+- `skills/` for repository skills.
+- `specialists/` for repository specialist definitions.
+- `reference/` for repository reference docs. They are inventoried in prompt assembly and read on demand, not injected as one full blob of context.
 
 Executable resources are blocked until trusted:
 
@@ -51,4 +53,12 @@ Executable project resources run local code with your user permissions. They can
 
 Denying trust disables executable resources only. Repository skills, specialists, and reference docs are still passive text resources and remain usable. Symlinked `.forge/reference` roots are skipped so reference inventories and prompt loading do not follow a repository-owned link out to another tree.
 
-Pi package discovery for trusted `.forge/pi/settings.json` follows Pi's local package extension behavior closely enough for Settings discovery and trust signatures: package manifest entries can point at files, directories, or glob matches; directory entries support package manifests and `index.ts` / `index.js`; object-form `extensions` filters support include/exclude patterns such as `*.ts` and `!legacy.ts`. Local file package sources are loaded even when object filters are empty or exclude the file, matching Pi behavior. Forge also injects a project-scope `extensions: ["!*"]` baseline before trusted repo settings so Pi does not auto-discover legacy `<cwd>/.pi/extensions` by default. For smoke tests or custom tools, list repo Pi extensions explicitly in `.forge/pi/settings.json` so loading stays deterministic under trust gating.
+Pi package discovery for trusted `.forge/pi/settings.json` follows Pi's local package extension behavior closely enough for Settings discovery and trust signatures: package manifest entries can point at files, directories, or glob matches; directory entries support package manifests and `index.ts` / `index.js`; object-form `extensions` filters support include/exclude patterns such as `*.ts` and `!legacy.ts`. Local file package sources are loaded even when object filters are empty or exclude the file, matching Pi behavior. Forge also injects a project-scope `extensions: ["!*"]` baseline before trusted repo settings so Pi does not auto-discover legacy `<cwd>/.pi/extensions` by default. For deterministic smoke tests or custom tools, list repo Pi extensions explicitly in `.forge/pi/settings.json`, for example:
+
+```json
+{
+  "extensions": ["./extensions/my-tool.ts"]
+}
+```
+
+You can also list packages explicitly when the repo uses package manifests. This keeps loading deterministic under trust gating.

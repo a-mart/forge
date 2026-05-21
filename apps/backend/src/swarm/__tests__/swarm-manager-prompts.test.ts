@@ -782,7 +782,7 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
   })
 
-    it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands + chrome-cdp + create-skill skills', async () => {
+  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands + chrome-cdp + create-skill + forge-project-resources skills', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -795,7 +795,7 @@ describe('SwarmManager', () => {
     expect(resources.memoryContextFile.path).toBe(rootSessionMemoryPath)
     expect(resources.memoryContextFile.content).toContain(persistedMemory.trim())
     expect(resources.memoryContextFile.content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
-    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(8)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(9)
 
     const memorySkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('memory', 'SKILL.md')))
     expect(memorySkillPath).toBeDefined()
@@ -849,6 +849,14 @@ describe('SwarmManager', () => {
     expect(createSkill).toContain('**Global skills** are available across all Forge projects.')
     expect(createSkill).toContain('**Project skills** are scoped to one Forge profile and live under `~/.forge/profiles/<profileId>/pi/skills`.')
     expect(createSkill).toContain('**Repository skills** live under `<repo>/.forge/skills`, are checked in with the repository, and are discovered for sessions using that repo.')
+
+    const forgeProjectResourcesSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('forge-project-resources', 'SKILL.md')))
+    expect(forgeProjectResourcesSkillPath).toBeDefined()
+    const forgeProjectResourcesSkill = await readFile(forgeProjectResourcesSkillPath!, 'utf8')
+    expect(forgeProjectResourcesSkill).toContain('name: forge-project-resources')
+    expect(forgeProjectResourcesSkill).toContain('repo-root `.forge/` resources')
+    expect(forgeProjectResourcesSkill).toContain('references/layouts.md')
+    expect(forgeProjectResourcesSkill).toContain('list repo Pi extensions explicitly in `.forge/pi/settings.json`')
   })
 
   it('lists the effective profile skill roster with inherited global skills', async () => {
@@ -1157,7 +1165,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(7)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(8)
     expect(resources.additionalSkillPaths).toContain(config.paths.repoMemorySkillFile)
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('brave-search', 'SKILL.md')))).toBe(true)
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('cron-scheduling', 'SKILL.md')))).toBe(true)
@@ -1190,7 +1198,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(7)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(8)
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('memory', 'SKILL.md')))).toBe(true)
     expect(resources.additionalSkillPaths).toContain(repoBraveSkillFile)
     expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('cron-scheduling', 'SKILL.md')))).toBe(true)
