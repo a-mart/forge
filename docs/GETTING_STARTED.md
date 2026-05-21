@@ -57,11 +57,13 @@ Once authenticated, you'll see the main interface: a chat window in the center, 
 
 ### Creating a Manager
 
-Click the **+** button to create a new manager agent. You'll be prompted for:
+Click the **+** button to create a new project. You'll be prompted for:
 
 - **Name** — Something meaningful. If it's for your web app, call it "webapp" or "analytics-api," not "test." You'll thank yourself later when you have five managers running.
 - **Project directory** — The root of the project you want to work on. This is where the manager and its workers will operate.
 - **Model** — Pick the manager model. If the model supports it, you can also choose a reasoning level; unsupported reasoning options are hidden and the default is used when you leave it out.
+
+By default, the Create Project dialog also seeds repo-root `.forge` project resources. Leave that checkbox on if you want the starter `.forge/` tree; turn it off to skip the scaffold.
 
 That's it. Your manager is now live.
 
@@ -102,7 +104,7 @@ You can pin important messages to preserve them through compaction. Hover over a
 
 ### File Browser
 
-The left sidebar has a file browser pointed at your project directory. Currently read-only, but you can browse your entire codebase without leaving Forge. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer.
+The left sidebar has a file browser pointed at your project directory. It's read-only for browsing, but the Files panel also has a scaffold action that can create a starter `.forge/` tree and README without overwriting existing files. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer.
 
 > **Editor preference:** By default, files open in VS Code. You can change this to Cursor (or other editors) in **Settings**.
 

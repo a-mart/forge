@@ -421,7 +421,13 @@ Skills like Chrome CDP have dedicated configuration UI in the right detail pane 
 
 ## How skills load
 
-Skills are discovered at agent startup from builtin and user directories. You don't need to restart Forge after saving an API key — the key is available to the next agent session that needs it.
+Skills are discovered at agent startup from builtin, user, and repository directories. You don't need to restart Forge after saving an API key — the key is available to the next agent session that needs it.
+
+## Repository skills
+
+If the current repository has a root \`.forge/skills/\` directory, Forge shows those skills in the browser alongside your global and per-profile skills. The built-in \`create-skill\` helper can scaffold directly into repository \`.forge/skills/\` when you want a project-scoped skill. Repository-root \`.forge/\` resources can also include \`.forge/specialists/\`, \`.forge/reference/\`, \`.forge/extensions/\`, \`.forge/pi/extensions/\`, and \`.forge/pi/settings.json\`.
+
+Repository skills stay visible as text resources even when executable trust is denied. Only executable repo resources stay blocked until you trust the repository's \`.forge\` directory.
 
 ## Skill sharing
 

@@ -94,6 +94,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |
 | **Daemon management** | `reboot/`, `scripts/prod-daemon*.mjs` | — | Production process lifecycle (start, restart, PID tracking) |
 | **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
+| **Repo-root .forge project resources** | `.forge/skills/`, `.forge/specialists/`, `.forge/reference/`, `.forge/extensions/`, `.forge/pi/extensions/`, `.forge/pi/settings.json` | Repo-scoped resources that live in the repository root. Passive text resources stay visible if executable trust is denied; only executable surfaces are gated. Do not introduce split `.forge/manager` or `.forge/worker` trees in v1. See [docs/PROJECT_RESOURCES.md](docs/PROJECT_RESOURCES.md) |
 | **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; projects worker turn failures into system messages with preserved error context, suppresses duplicate callback/summary reports, then nudges or auto-kills |
 | **Idle worker watchdog** | `swarm/swarm-manager.ts` (WorkerWatchdogState, finalizeWorkerIdleTurn) | — | Dual-path detection (onAgentEnd + status-idle) of workers that complete their turn without reporting back to the parent manager. Auto-sends the worker's last output to the manager and emits a batched ⚠️ system notification in chat. Complementary to the stall detector (which handles workers stuck mid-tool-execution). |
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points. Choice requests trigger a dedicated notification sound (configurable per-manager, default ON) that takes priority over regular notification sounds. |
@@ -211,6 +212,8 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 
 Session forks now support a **partial fork** from a specific message: the forked `session.jsonl` is copied up to that message only.
 The forked session memory header also records that truncation point so the parent history boundary is explicit. Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, including after async project-agent deliveries.
+
+Repo-root project resources live beside the checkout, not under `~/.forge`: `.forge/skills/`, `.forge/specialists/`, `.forge/reference/`, `.forge/extensions/`, `.forge/pi/extensions/`, and `.forge/pi/settings.json`. Only executable repo resources are trust-gated; passive text resources remain available if trust is denied. Do not introduce split `.forge/manager` or `.forge/worker` trees in v1.
 
 See `apps/backend/src/swarm/data-paths.ts` for the canonical path resolution logic.
 

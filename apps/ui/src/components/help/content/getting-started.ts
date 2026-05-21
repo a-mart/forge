@@ -53,11 +53,13 @@ After that, rate messages as you go. Thumbs up when the manager nails it, thumbs
 
 ## Create a manager
 
-Click the **+** button at the top of the sidebar. You'll need three things:
+Click the **+** button at the top of the sidebar to create a new project. You'll need three things:
 
 - **Name** — something that identifies the project or workstream. You can rename it later.
 - **Working directory** — the project folder where workers will operate. Each worker gets its own worktree branched from this directory.
 - **Model** — which LLM powers the manager. Claude Sonnet and GPT models both work well. You can change this later in Settings, and supported models also let you choose a reasoning level.
+
+By default, the Create Project dialog also seeds repo-root \`.forge\` project resources. Leave that checked if you want the starter \`.forge/\` tree; turn it off to skip the scaffold.
 
 Click **Create** and the manager appears in the sidebar.
 
