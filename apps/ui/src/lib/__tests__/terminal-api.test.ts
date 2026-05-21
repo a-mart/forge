@@ -170,13 +170,14 @@ describe('terminal-api', () => {
     )
 
     const response = await issueTerminalTicket(wsUrl, 'term-1', {
-      sessionAgentId: 'manager-1',
+      sessionAgentId: 'profile-1',
+      requesterAgentId: 'manager-1',
     })
 
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:47187/api/terminals/term-1/ticket', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionAgentId: 'manager-1' }),
+      body: JSON.stringify({ sessionAgentId: 'profile-1', requesterAgentId: 'manager-1' }),
     })
     expect(response.ticket).toBe('ticket-2')
   })

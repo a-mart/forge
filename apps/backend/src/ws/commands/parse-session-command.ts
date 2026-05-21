@@ -85,6 +85,42 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
     });
   }
 
+  if (maybe.type === "archive_session") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return fail("archive_session.agentId must be a non-empty string");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("archive_session.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "archive_session",
+      agentId: agentId.trim(),
+      requestId
+    });
+  }
+
+  if (maybe.type === "restore_session") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return fail("restore_session.agentId must be a non-empty string");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("restore_session.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "restore_session",
+      agentId: agentId.trim(),
+      requestId
+    });
+  }
+
   if (maybe.type === "delete_session") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const requestId = (maybe as { requestId?: unknown }).requestId;

@@ -77,6 +77,8 @@ export type ClientCommand =
   | { type: 'create_session'; profileId: string; label?: string; name?: string; sessionPurpose?: AgentSessionPurpose; requestId?: string }
   | { type: 'stop_session'; agentId: string; requestId?: string }
   | { type: 'resume_session'; agentId: string; requestId?: string }
+  | { type: 'archive_session'; agentId: string; requestId?: string }
+  | { type: 'restore_session'; agentId: string; requestId?: string }
   | { type: 'delete_session'; agentId: string; requestId?: string }
   | { type: 'rename_session'; agentId: string; label: string; requestId?: string }
   | { type: 'pin_session'; agentId: string; pinned: boolean; requestId?: string }
@@ -138,6 +140,8 @@ export type ClientCommand =
   | { type: 'validate_directory'; path: string; requestId?: string }
   | { type: 'pick_directory'; defaultPath?: string; requestId?: string }
   | { type: 'rename_profile'; profileId: string; displayName: string; requestId?: string }
+  | { type: 'archive_profile'; profileId: string; requestId?: string }
+  | { type: 'restore_profile'; profileId: string; requestId?: string }
   | { type: 'reorder_profiles'; profileIds: string[]; requestId?: string }
   | { type: 'choice_response'; agentId: string; choiceId: string; answers: ChoiceAnswer[] }
   | { type: 'choice_cancel'; agentId: string; choiceId: string }

@@ -30,6 +30,130 @@ const ALL_PROFILES: ManagerProfile[] = [
 ];
 
 describe("session command handler", () => {
+  it("handles archive_session and restore_session commands with request-correlated events", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      archiveSession: vi.fn(async () => ({
+        agentId: "manager--s2",
+        profileId: "manager",
+        archivedAt: "2026-05-20T00:00:00.000Z",
+        terminatedWorkerIds: ["worker-1", "worker-2"],
+      })),
+      restoreSession: vi.fn(async () => ({
+        agentId: "manager--s2",
+        profileId: "manager",
+        openAgentId: "manager--s2",
+      })),
+    };
+
+    const handleDeletedAgentSubscriptions = vi.fn();
+
+    await handleSessionCommand({
+      command: { type: "archive_session", agentId: "manager--s2", requestId: "req-archive" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions,
+    });
+
+    await handleSessionCommand({
+      command: { type: "restore_session", agentId: "manager--s2", requestId: "req-restore" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions,
+    });
+
+    expect(swarmManager.archiveSession).toHaveBeenCalledWith("manager--s2");
+    expect(swarmManager.restoreSession).toHaveBeenCalledWith("manager--s2");
+    expect(handleDeletedAgentSubscriptions).toHaveBeenCalledWith(new Set(["worker-1", "worker-2"]));
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_archived",
+        agentId: "manager--s2",
+        profileId: "manager",
+        archivedAt: "2026-05-20T00:00:00.000Z",
+        requestId: "req-archive",
+      }),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_restored",
+        agentId: "manager--s2",
+        profileId: "manager",
+        openAgentId: "manager--s2",
+        requestId: "req-restore",
+      }),
+    );
+  });
+
+  it("rejects archive_session and restore_session inside system-managed profiles", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "_collaboration" })),
+      archiveSession: vi.fn(async () => ({
+        agentId: "_collaboration--s2",
+        profileId: "_collaboration",
+        archivedAt: "2026-05-20T00:00:00.000Z",
+      })),
+      restoreSession: vi.fn(async () => ({
+        agentId: "_collaboration--s2",
+        profileId: "_collaboration",
+        openAgentId: "_collaboration--s2",
+      })),
+    };
+
+    await handleSessionCommand({
+      command: { type: "archive_session", agentId: "_collaboration--s2", requestId: "req-system-archive" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    await handleSessionCommand({
+      command: { type: "restore_session", agentId: "_collaboration--s2", requestId: "req-system-restore" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.archiveSession).not.toHaveBeenCalled();
+    expect(swarmManager.restoreSession).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "error",
+        code: "ARCHIVE_SESSION_FAILED",
+        message: "Cannot modify sessions in system-managed profiles",
+        requestId: "req-system-archive",
+      }),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "error",
+        code: "RESTORE_SESSION_FAILED",
+        message: "Cannot modify sessions in system-managed profiles",
+        requestId: "req-system-restore",
+      }),
+    );
+  });
+
   it("updates session model overrides with exact manager model selections while keeping legacy event fields stable", async () => {
     const send = vi.fn();
     const swarmManager = {

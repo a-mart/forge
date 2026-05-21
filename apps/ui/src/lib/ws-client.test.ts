@@ -85,6 +85,8 @@ describe('ManagerWsClient', () => {
       'pick_directory',
       'get_session_workers',
       'rename_profile',
+      'archive_profile',
+      'restore_profile',
       'rename_session',
       'pin_session',
       'update_session_model',
@@ -99,6 +101,8 @@ describe('ManagerWsClient', () => {
       'create_session',
       'stop_session',
       'resume_session',
+      'archive_session',
+      'restore_session',
       'delete_session',
       'clear_session',
       'set_session_project_agent',
@@ -1653,6 +1657,149 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+
+  it('sends archive_session commands and resolves session_archived events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const archivePromise = client.archiveSession(' session-a ')
+    const archivePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(archivePayload).toMatchObject({
+      type: 'archive_session',
+      agentId: 'session-a',
+    })
+    expect(typeof archivePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_archived',
+      requestId: archivePayload.requestId,
+      agentId: 'session-a',
+      profileId: 'profile-a',
+      archivedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    await expect(archivePromise).resolves.toEqual({
+      agentId: 'session-a',
+      profileId: 'profile-a',
+      archivedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    client.destroy()
+  })
+
+  it('rejects archive_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const archivePromise = client.archiveSession('session-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'ARCHIVE_DEFAULT_SESSION_NOT_ALLOWED',
+      message: 'The default session for a project can’t be archived directly.',
+    })
+
+    await expect(archivePromise).rejects.toThrow(
+      'ARCHIVE_DEFAULT_SESSION_NOT_ALLOWED: The default session for a project can’t be archived directly.',
+    )
+
+    client.destroy()
+  })
+
+  it('sends restore_session commands and resolves session_restored events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const restorePromise = client.restoreSession(' session-a ')
+    const restorePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(restorePayload).toMatchObject({
+      type: 'restore_session',
+      agentId: 'session-a',
+    })
+    expect(typeof restorePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'session_restored',
+      requestId: restorePayload.requestId,
+      agentId: 'session-a',
+      profileId: 'profile-a',
+      openAgentId: 'session-a',
+    })
+
+    await expect(restorePromise).resolves.toEqual({
+      agentId: 'session-a',
+      profileId: 'profile-a',
+      openAgentId: 'session-a',
+    })
+
+    client.destroy()
+  })
+
+  it('rejects restore_session via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const restorePromise = client.restoreSession('session-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'ARCHIVE_RESTORE_PARENT_PROJECT_REQUIRED',
+      message: 'Restore the project first.',
+    })
+
+    await expect(restorePromise).rejects.toThrow(
+      'ARCHIVE_RESTORE_PARENT_PROJECT_REQUIRED: Restore the project first.',
+    )
+
+    client.destroy()
+  })
+
   it('sends delete_session commands and resolves session_deleted events', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
@@ -2968,6 +3115,141 @@ describe('ManagerWsClient', () => {
     })
 
     await expect(renamePromise).rejects.toThrow('rename_profile_failed: Rename rejected for testing.')
+
+    client.destroy()
+  })
+
+
+  it('sends archive_profile commands and resolves profile_archived events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const archivePromise = client.archiveProfile(' profile-a ')
+    const archivePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(archivePayload).toMatchObject({
+      type: 'archive_profile',
+      profileId: 'profile-a',
+    })
+    expect(typeof archivePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'profile_archived',
+      requestId: archivePayload.requestId,
+      profileId: 'profile-a',
+      archivedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    await expect(archivePromise).resolves.toEqual({
+      profileId: 'profile-a',
+      archivedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    client.destroy()
+  })
+
+  it('rejects archive_profile via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const archivePromise = client.archiveProfile('profile-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'archive_profile_failed',
+      message: 'Project archive rejected for testing.',
+    })
+
+    await expect(archivePromise).rejects.toThrow('archive_profile_failed: Project archive rejected for testing.')
+
+    client.destroy()
+  })
+
+  it('sends restore_profile commands and resolves profile_restored events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const restorePromise = client.restoreProfile(' profile-a ')
+    const restorePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(restorePayload).toMatchObject({
+      type: 'restore_profile',
+      profileId: 'profile-a',
+    })
+    expect(typeof restorePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'profile_restored',
+      requestId: restorePayload.requestId,
+      profileId: 'profile-a',
+      openAgentId: 'session-a',
+    })
+
+    await expect(restorePromise).resolves.toEqual({
+      profileId: 'profile-a',
+      openAgentId: 'session-a',
+    })
+
+    client.destroy()
+  })
+
+  it('rejects restore_profile via fallback error hints from the shared request contract', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const restorePromise = client.restoreProfile('profile-a')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'restore_profile_failed',
+      message: 'Project restore rejected for testing.',
+    })
+
+    await expect(restorePromise).rejects.toThrow('restore_profile_failed: Project restore rejected for testing.')
 
     client.destroy()
   })

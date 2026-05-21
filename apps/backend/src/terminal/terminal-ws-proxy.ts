@@ -48,11 +48,12 @@ export class TerminalWsProxy {
 
     const requestUrl = resolveUpgradeRequestUrl(request);
     const sessionAgentId = requestUrl.searchParams.get("sessionAgentId")?.trim() ?? "";
+    const requesterAgentId = requestUrl.searchParams.get("requesterAgentId")?.trim() ?? "";
     const ticket = requestUrl.searchParams.get("ticket")?.trim() ?? "";
 
-    const hasTicketCredentials = Boolean(sessionAgentId && ticket);
+    const hasTicketCredentials = Boolean(sessionAgentId && requesterAgentId && ticket);
     const ticketValidated =
-      hasTicketCredentials && this.terminalService.validateWsTicket({ terminalId, sessionAgentId, ticket });
+      hasTicketCredentials && this.terminalService.validateWsTicket({ terminalId, sessionAgentId, requesterAgentId, ticket });
 
     const originValidation = validateTerminalWsOrigin(request);
     if (!originValidation.ok && !ticketValidated) {
@@ -61,7 +62,7 @@ export class TerminalWsProxy {
     }
 
     if (!hasTicketCredentials) {
-      writeUpgradeError(socket, 400, "Missing sessionAgentId or ticket");
+      writeUpgradeError(socket, 400, "Missing sessionAgentId, requesterAgentId, or ticket");
       return true;
     }
 
@@ -70,14 +71,14 @@ export class TerminalWsProxy {
       return true;
     }
 
-    const terminal = this.terminalService.getTerminal({ terminalId, sessionAgentId });
+    const terminal = this.terminalService.getTerminal({ terminalId, sessionAgentId: requesterAgentId });
     if (!terminal) {
       writeUpgradeError(socket, 404, "Unknown terminal");
       return true;
     }
 
     this.wss.handleUpgrade(request, socket, head, (client) => {
-      void this.handleConnection(client, terminalId, sessionAgentId);
+      void this.handleConnection(client, terminalId, requesterAgentId);
     });
     return true;
   }
@@ -360,6 +361,7 @@ function resolveCloseCodeForError(error: unknown): number | undefined {
     (error.code === "SESSION_NOT_FOUND" ||
       error.code === "TERMINAL_NOT_FOUND" ||
       error.code === "TERMINAL_SESSION_MISMATCH" ||
+      error.code === "SESSION_ARCHIVED" ||
       error.code === "TERMINAL_ALREADY_CLOSING")
   ) {
     return 1008;

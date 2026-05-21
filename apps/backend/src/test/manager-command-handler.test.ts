@@ -52,6 +52,64 @@ const ALL_PROFILES: ManagerProfile[] = [
 ];
 
 describe("manager command handler", () => {
+  it("handles archive_profile and restore_profile commands with request-correlated events", async () => {
+    const send = vi.fn();
+    const broadcastToSubscribed = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      archiveProfile: vi.fn(async () => ({
+        profileId: "alpha",
+        archivedAt: "2026-05-20T00:00:00.000Z",
+        terminatedWorkerIds: ["worker-1", "worker-2"],
+      })),
+      restoreProfile: vi.fn(async () => ({
+        profileId: "alpha",
+        openAgentId: "alpha--s2",
+      })),
+    };
+
+    const handleDeletedAgentSubscriptions = vi.fn();
+
+    await handleManagerCommand({
+      command: { type: "archive_profile", profileId: "alpha", requestId: "req-archive-profile" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      broadcastToSubscribed,
+      handleDeletedAgentSubscriptions,
+    });
+
+    await handleManagerCommand({
+      command: { type: "restore_profile", profileId: "alpha", requestId: "req-restore-profile" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      broadcastToSubscribed,
+      handleDeletedAgentSubscriptions,
+    });
+
+    expect(swarmManager.archiveProfile).toHaveBeenCalledWith("alpha");
+    expect(swarmManager.restoreProfile).toHaveBeenCalledWith("alpha");
+    expect(handleDeletedAgentSubscriptions).toHaveBeenCalledWith(new Set(["worker-1", "worker-2"]));
+    expect(broadcastToSubscribed).toHaveBeenCalledWith({
+      type: "profile_archived",
+      profileId: "alpha",
+      archivedAt: "2026-05-20T00:00:00.000Z",
+      requestId: "req-archive-profile",
+    });
+    expect(broadcastToSubscribed).toHaveBeenCalledWith({
+      type: "profile_restored",
+      profileId: "alpha",
+      openAgentId: "alpha--s2",
+      requestId: "req-restore-profile",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("deletes user profiles", async () => {
     const send = vi.fn();
     const broadcastToSubscribed = vi.fn();

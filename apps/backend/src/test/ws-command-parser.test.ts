@@ -38,6 +38,8 @@ describe('ws command parser session commands', () => {
       pick_directory: { type: 'pick_directory', defaultPath: '/tmp/project' },
       get_session_workers: { type: 'get_session_workers', sessionAgentId: 'session-a' },
       rename_profile: { type: 'rename_profile', profileId: 'profile-a', displayName: 'Profile A' },
+      archive_profile: { type: 'archive_profile', profileId: 'profile-a' },
+      restore_profile: { type: 'restore_profile', profileId: 'profile-a' },
       rename_session: { type: 'rename_session', agentId: 'session-a', label: 'Session A' },
       pin_session: { type: 'pin_session', agentId: 'session-a', pinned: false },
       update_session_model: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'inherit' },
@@ -52,6 +54,8 @@ describe('ws command parser session commands', () => {
       create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
       stop_session: { type: 'stop_session', agentId: 'session-a' },
       resume_session: { type: 'resume_session', agentId: 'session-a' },
+      archive_session: { type: 'archive_session', agentId: 'session-a' },
+      restore_session: { type: 'restore_session', agentId: 'session-a' },
       delete_session: { type: 'delete_session', agentId: 'session-a' },
       clear_session: { type: 'clear_session', agentId: 'session-a' },
       set_session_project_agent: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: null },
@@ -351,6 +355,8 @@ describe('ws command parser session commands', () => {
     const commands = [
       { type: 'stop_session', agentId: 'session-a', requestId: 'req-stop' },
       { type: 'resume_session', agentId: 'session-a', requestId: 'req-resume' },
+      { type: 'archive_session', agentId: 'session-a', requestId: 'req-archive' },
+      { type: 'restore_session', agentId: 'session-a', requestId: 'req-restore' },
       { type: 'delete_session', agentId: 'session-a', requestId: 'req-delete' },
       { type: 'clear_session', agentId: 'session-a', requestId: 'req-clear' },
       { type: 'rename_session', agentId: 'session-a', label: 'Renamed', requestId: 'req-rename' },
@@ -690,6 +696,22 @@ describe('ws command parser session commands', () => {
         message: 'resume_session.agentId must be a non-empty string',
       },
       {
+        payload: { type: 'archive_session', agentId: '' },
+        message: 'archive_session.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'restore_session', agentId: 42 },
+        message: 'restore_session.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'archive_session', agentId: 'session-a', requestId: 42 },
+        message: 'archive_session.requestId must be a string when provided',
+      },
+      {
+        payload: { type: 'restore_session', agentId: 'session-a', requestId: 42 },
+        message: 'restore_session.requestId must be a string when provided',
+      },
+      {
         payload: { type: 'delete_session', agentId: null },
         message: 'delete_session.agentId must be a non-empty string',
       },
@@ -984,6 +1006,8 @@ describe('ws command parser session commands', () => {
       { type: 'create_session', profileId: 'manager', requestId: 'req-create' },
       { type: 'stop_session', agentId: 'manager--s2', requestId: 'req-stop' },
       { type: 'resume_session', agentId: 'manager--s2', requestId: 'req-resume' },
+      { type: 'archive_session', agentId: 'manager--s2', requestId: 'req-archive' },
+      { type: 'restore_session', agentId: 'manager--s2', requestId: 'req-restore' },
       { type: 'delete_session', agentId: 'manager--s2', requestId: 'req-delete' },
       { type: 'clear_session', agentId: 'manager--s2', requestId: 'req-clear' },
       { type: 'rename_session', agentId: 'manager--s2', label: 'Renamed', requestId: 'req-rename' },
@@ -1036,6 +1060,8 @@ describe('ws command parser session commands', () => {
       { type: 'update_profile_default_model', profileId: 'manager', model: 'pi-5.4', requestId: 'req-update-profile-model' },
       { type: 'update_manager_model', managerId: 'manager', model: 'pi-5.4', requestId: 'req-update-model' },
       { type: 'update_manager_cwd', managerId: 'manager', cwd: '/tmp/project', requestId: 'req-update-cwd' },
+      { type: 'archive_profile', profileId: 'manager', requestId: 'req-archive-profile' },
+      { type: 'restore_profile', profileId: 'manager', requestId: 'req-restore-profile' },
     ] as const
 
     for (const command of commands) {

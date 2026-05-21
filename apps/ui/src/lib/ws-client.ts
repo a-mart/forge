@@ -22,6 +22,7 @@ import {
   buildMergeSessionMemoryCommand,
   buildPickDirectoryCommand,
   buildPinMessageCommand,
+  buildProfileArchiveActionCommand,
   buildPinSessionCommand,
   buildRenameProfileCommand,
   buildRenameSessionCommand,
@@ -63,10 +64,14 @@ import type {
   ProjectAgentReferenceResult,
   ProjectAgentReferencesResult,
   ProjectAgentReferenceSavedResult,
+  ProfileArchiveResult,
+  ProfileRestoreResult,
   SessionActionResult,
+  SessionArchiveResult,
   SessionCreatedResult,
   SessionForkedResult,
   SessionProjectAgentResult,
+  SessionRestoreResult,
   SessionWorkersResult,
 } from './ws-client/types'
 import { createSystemConversationMessage, normalizeAgentId, normalizeConversationAttachments, resolveTerminalScopeAgentId } from './ws-client/utils'
@@ -493,6 +498,20 @@ export class ManagerWsClient {
     )
   }
 
+  async archiveSession(agentId: string): Promise<SessionArchiveResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('archive_session', (requestId) =>
+      buildSessionActionCommand('archive_session', agentId, requestId),
+    )
+  }
+
+  async restoreSession(agentId: string): Promise<SessionRestoreResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('restore_session', (requestId) =>
+      buildSessionActionCommand('restore_session', agentId, requestId),
+    )
+  }
+
   async deleteSession(agentId: string): Promise<SessionActionResult> {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('delete_session', (requestId) =>
@@ -525,6 +544,20 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('rename_profile', (requestId) =>
       buildRenameProfileCommand(profileId, displayName, requestId),
+    )
+  }
+
+  async archiveProfile(profileId: string): Promise<ProfileArchiveResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('archive_profile', (requestId) =>
+      buildProfileArchiveActionCommand('archive_profile', profileId, requestId),
+    )
+  }
+
+  async restoreProfile(profileId: string): Promise<ProfileRestoreResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('restore_profile', (requestId) =>
+      buildProfileArchiveActionCommand('restore_profile', profileId, requestId),
     )
   }
 

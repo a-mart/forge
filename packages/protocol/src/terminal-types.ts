@@ -96,7 +96,10 @@ export interface TerminalDeleteRequest {
 }
 
 export interface TerminalIssueTicketRequest {
+  /** Shared terminal storage scope from TerminalDescriptor.sessionAgentId. */
   sessionAgentId: string
+  /** Concrete manager session requesting access. */
+  requesterAgentId: string
 }
 
 export interface TerminalIssueTicketResponse {

@@ -240,6 +240,7 @@ export function createTerminalRoutes(options: {
           const ticket = await terminalService.issueWsTicket({
             terminalId,
             sessionAgentId: payload.sessionAgentId,
+            requesterAgentId: payload.requesterAgentId,
           });
           sendJson(response, 200, { ...ticket });
         } catch (error) {
@@ -318,6 +319,7 @@ function parseTerminalIssueTicketRequest(input: unknown): TerminalIssueTicketReq
   const record = requireRecord(input, "Terminal ticket body must be an object.");
   return {
     sessionAgentId: requireBodyString(record, "sessionAgentId"),
+    requesterAgentId: requireBodyString(record, "requesterAgentId"),
   };
 }
 
@@ -443,6 +445,7 @@ export function resolveTerminalServiceStatusCode(error: TerminalServiceError): n
     case "TERMINAL_NOT_FOUND":
       return 404;
     case "TERMINAL_SESSION_MISMATCH":
+    case "SESSION_ARCHIVED":
       return 403;
     case "TERMINAL_LIMIT_REACHED":
     case "TERMINAL_ALREADY_CLOSING":

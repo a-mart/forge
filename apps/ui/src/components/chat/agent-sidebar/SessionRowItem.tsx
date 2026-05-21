@@ -1,4 +1,5 @@
 import {
+  Archive,
   ArrowDownToLine,
   ArrowUpFromLine,
   BellOff,
@@ -53,6 +54,8 @@ const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
   'onStop',
   'onResume',
   'onDelete',
+  'onArchive',
+  'archiveDisabledReason',
   'onRename',
   'onFork',
   'onMarkUnread',
@@ -102,6 +105,8 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   onStop,
   onResume,
   onDelete,
+  onArchive,
+  archiveDisabledReason,
   onRename,
   onFork,
   onMarkUnread,
@@ -383,15 +388,26 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             </ContextMenuItem>
           ) : null}
 
-          {/* ── Group 4: Destructive ── */}
+          {/* ── Group 4: Archive / destructive ── */}
+          {(onArchive || archiveDisabledReason || (!isDefault && onDelete)) ? (
+            <ContextMenuSeparator />
+          ) : null}
+          {onArchive ? (
+            <ContextMenuItem onClick={() => onArchive()}>
+              <Archive className="mr-2 size-3.5" />
+              Archive
+            </ContextMenuItem>
+          ) : archiveDisabledReason ? (
+            <ContextMenuItem disabled title={archiveDisabledReason}>
+              <Archive className="mr-2 size-3.5" />
+              {archiveDisabledReason}
+            </ContextMenuItem>
+          ) : null}
           {!isDefault && onDelete ? (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem variant="destructive" onClick={() => onDelete()}>
-                <Trash2 className="mr-2 size-3.5" />
-                Delete
-              </ContextMenuItem>
-            </>
+            <ContextMenuItem variant="destructive" onClick={() => onDelete()}>
+              <Trash2 className="mr-2 size-3.5" />
+              Delete
+            </ContextMenuItem>
           ) : null}
         </ContextMenuContent>
       </ContextMenu>

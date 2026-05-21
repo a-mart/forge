@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildCreateManagerCommand } from './request-definitions'
+import {
+  buildCreateManagerCommand,
+  buildProfileArchiveActionCommand,
+  buildSessionActionCommand,
+} from './request-definitions'
 
 describe('buildCreateManagerCommand', () => {
   it('serializes reasoningLevel with preset create_manager payloads', () => {
@@ -41,5 +45,33 @@ describe('buildCreateManagerCommand', () => {
       model: 'pi-codex',
       reasoningLevel: 'ultra' as never,
     }, 'req-3')).toThrow('Invalid reasoning level.')
+  })
+})
+
+describe('archive request command builders', () => {
+  it('serializes session archive and restore requests', () => {
+    expect(buildSessionActionCommand('archive_session', ' session-a ', 'req-archive')).toEqual({
+      type: 'archive_session',
+      agentId: 'session-a',
+      requestId: 'req-archive',
+    })
+    expect(buildSessionActionCommand('restore_session', ' session-a ', 'req-restore')).toEqual({
+      type: 'restore_session',
+      agentId: 'session-a',
+      requestId: 'req-restore',
+    })
+  })
+
+  it('serializes profile archive and restore requests', () => {
+    expect(buildProfileArchiveActionCommand('archive_profile', ' profile-a ', 'req-archive-profile')).toEqual({
+      type: 'archive_profile',
+      profileId: 'profile-a',
+      requestId: 'req-archive-profile',
+    })
+    expect(buildProfileArchiveActionCommand('restore_profile', ' profile-a ', 'req-restore-profile')).toEqual({
+      type: 'restore_profile',
+      profileId: 'profile-a',
+      requestId: 'req-restore-profile',
+    })
   })
 })

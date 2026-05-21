@@ -18,6 +18,10 @@ export type Listener = (state: ManagerWsState) => void
 
 export type SessionCreatedResult = { sessionAgent: AgentDescriptor; profileId: string }
 export type SessionActionResult = { agentId: string }
+export type SessionArchiveResult = { agentId: string; profileId: string; archivedAt: string }
+export type SessionRestoreResult = { agentId: string; profileId: string; openAgentId?: string }
+export type ProfileArchiveResult = { profileId: string; archivedAt: string }
+export type ProfileRestoreResult = { profileId: string; openAgentId: string }
 export type SessionForkedResult = { sourceAgentId: string; newSessionAgent: AgentDescriptor }
 export type SessionWorkersResult = { sessionAgentId: string; workers: AgentDescriptor[] }
 
@@ -55,12 +59,16 @@ export type WsRequestResultMap = {
   create_session: SessionCreatedResult
   stop_session: SessionActionResult
   resume_session: SessionActionResult
+  archive_session: SessionArchiveResult
+  restore_session: SessionRestoreResult
   delete_session: SessionActionResult
   clear_session: SessionActionResult
   rename_session: SessionActionResult
   pin_session: { pinnedAt: string | null }
   update_session_model: { sessionAgentId: string; mode: 'inherit' | 'override' }
   rename_profile: { profileId: string }
+  archive_profile: ProfileArchiveResult
+  restore_profile: ProfileRestoreResult
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
   set_session_project_agent: SessionProjectAgentResult

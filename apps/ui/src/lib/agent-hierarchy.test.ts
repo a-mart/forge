@@ -3,6 +3,10 @@ import {
   buildManagerTreeRows,
   buildProfileTreeRows,
   chooseFallbackAgentId,
+  filterAgentsAfterProfileArchive,
+  filterAgentsAfterSessionArchive,
+  getArchivedProfileRows,
+  getDirectlyArchivedSessionRows,
   getPrimaryManagerId,
   resolveWorkerFetchManagerId,
 } from './agent-hierarchy'
@@ -165,6 +169,83 @@ describe('agent-hierarchy', () => {
       // When activeAgent is null (cold boot), must return null — not any fallback
       expect(resolveWorkerFetchManagerId(null)).toBeNull()
     })
+  })
+
+  it('hides archived projects and directly archived sessions from active tree and fallback selection', () => {
+    const profileId = 'manager'
+    const activeProfile = profile(profileId)
+    const archivedProfile = { ...profile('archived-project'), archivedAt: '2026-05-20T00:00:00.000Z' }
+    const defaultSession = { ...manager(profileId), profileId, sessionLabel: 'Main' }
+    const archivedSession = {
+      ...manager('manager--archived'),
+      profileId,
+      sessionLabel: 'Archived Session',
+      archivedAt: '2026-05-20T00:00:00.000Z',
+    }
+    const activeSession = {
+      ...manager('manager--active'),
+      profileId,
+      sessionLabel: 'Active Session',
+      updatedAt: '2026-01-01T00:00:09.000Z',
+    }
+    const archivedProjectSession = {
+      ...manager('archived-project'),
+      profileId: 'archived-project',
+      sessionLabel: 'Archived Project Main',
+    }
+    const archivedWorker = worker('archived-worker', 'manager--archived')
+
+    const rows = buildProfileTreeRows(
+      [defaultSession, archivedSession, activeSession, archivedProjectSession, archivedWorker],
+      [activeProfile, archivedProfile],
+    )
+
+    expect(rows.map((row) => row.profile.profileId)).toEqual([profileId])
+    expect(rows[0]?.sessions.map((entry) => entry.sessionAgent.agentId)).toEqual(['manager--active', 'manager'])
+    expect(chooseFallbackAgentId([archivedSession, archivedWorker, activeSession], archivedWorker.agentId, [activeProfile])).toBe('manager--active')
+  })
+
+  it('filters workers owned by archived session/project before computing archive fallbacks', () => {
+    const activeSession = { ...manager('active-session'), profileId: 'active-profile' }
+    const archivedSession = { ...manager('archived-session'), profileId: 'active-profile' }
+    const archivedProjectSession = { ...manager('archived-project'), profileId: 'archived-project' }
+    const archivedSessionWorker = worker('archived-session-worker', 'archived-session')
+    const archivedProjectWorker = worker('archived-project-worker', 'archived-project')
+
+    expect(filterAgentsAfterSessionArchive([
+      activeSession,
+      archivedSession,
+      archivedSessionWorker,
+    ], 'archived-session').map((agent) => agent.agentId)).toEqual(['active-session'])
+
+    expect(filterAgentsAfterProfileArchive([
+      activeSession,
+      archivedProjectSession,
+      archivedProjectWorker,
+    ], 'archived-project').map((agent) => agent.agentId)).toEqual(['active-session'])
+  })
+
+  it('returns archive view rows for archived projects and directly archived sessions only', () => {
+    const profileId = 'manager'
+    const activeProfile = profile(profileId)
+    const archivedProfile = { ...profile('archived-project'), archivedAt: '2026-05-20T00:00:00.000Z' }
+    const archivedSession = {
+      ...manager('manager--archived'),
+      profileId,
+      sessionLabel: 'Archived Session',
+      archivedAt: '2026-05-20T00:00:00.000Z',
+    }
+    const archivedProjectSession = {
+      ...manager('archived-project'),
+      profileId: 'archived-project',
+      sessionLabel: 'Archived Project Main',
+    }
+
+    expect(getArchivedProfileRows([archivedProjectSession, archivedSession], [activeProfile, archivedProfile]))
+      .toHaveLength(1)
+    expect(getDirectlyArchivedSessionRows([archivedProjectSession, archivedSession], [activeProfile, archivedProfile])
+      .map((row) => row.sessionAgent.agentId))
+      .toEqual(['manager--archived'])
   })
 
   it('filters collab-backed sessions out of Builder tree and fallback selection', () => {

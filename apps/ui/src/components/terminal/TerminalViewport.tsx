@@ -17,7 +17,11 @@ interface TerminalViewportProps {
   sessionAgentId: string
   onFocusChatInput: () => void
   onAddToChat?: (context: TerminalSelectionContext) => void
-  issueTicket: (terminalId: string, sessionAgentId: string) => Promise<TerminalIssueTicketResponse>
+  issueTicket: (
+    terminalId: string,
+    sessionAgentId: string,
+    requesterAgentId: string,
+  ) => Promise<TerminalIssueTicketResponse>
   initialTicket?: { ticket: string; ticketExpiresAt: string }
 }
 
@@ -279,9 +283,10 @@ export function TerminalViewport({
         clientRef.current = new TerminalWsClient({
           wsUrl,
           terminalId: terminal.terminalId,
-          sessionAgentId,
+          sessionAgentId: terminal.sessionAgentId,
+          requesterAgentId: sessionAgentId,
           ticketProvider: {
-            getTicket: ({ terminalId, sessionAgentId }) => issueTicket(terminalId, sessionAgentId),
+            getTicket: ({ terminalId, sessionAgentId, requesterAgentId }) => issueTicket(terminalId, sessionAgentId, requesterAgentId),
           },
           initialTicket,
         })
@@ -390,7 +395,7 @@ export function TerminalViewport({
       xtermRef.current = null
       terminalInstance?.dispose()
     }
-  }, [initialTicket, issueTicket, onFocusChatInput, sessionAgentId, terminal.terminalId, wsUrl, updateSelectionButton, computeSelectionButtonPosition])
+  }, [initialTicket, issueTicket, onFocusChatInput, sessionAgentId, terminal.sessionAgentId, terminal.terminalId, wsUrl, updateSelectionButton, computeSelectionButtonPosition])
 
   return (
     <div ref={surfaceRef} className="forge-terminal-surface relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#141726] p-1">

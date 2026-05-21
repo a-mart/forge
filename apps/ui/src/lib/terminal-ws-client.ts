@@ -11,7 +11,11 @@ const PING_INTERVAL_MS = 20_000
 export type TerminalWsState = 'connecting' | 'connected' | 'disconnected' | 'failed'
 
 export interface TerminalTicketProvider {
-  getTicket(input: { terminalId: string; sessionAgentId: string }): Promise<TerminalIssueTicketResponse>
+  getTicket(input: {
+    terminalId: string
+    sessionAgentId: string
+    requesterAgentId: string
+  }): Promise<TerminalIssueTicketResponse>
 }
 
 function isTicketExpired(ticketExpiresAt: string, skewMs = 5_000): boolean {
@@ -27,11 +31,13 @@ function buildTerminalWsUrl(input: {
   wsUrl: string
   terminalId: string
   sessionAgentId: string
+  requesterAgentId: string
   ticket: string
 }): string {
   const base = new URL(input.wsUrl)
   const url = new URL(`/terminal/ws/${encodeURIComponent(input.terminalId)}`, base)
   url.searchParams.set('sessionAgentId', input.sessionAgentId)
+  url.searchParams.set('requesterAgentId', input.requesterAgentId)
   url.searchParams.set('ticket', input.ticket)
   return url.toString()
 }
@@ -48,6 +54,7 @@ export class TerminalWsClient {
   private readonly wsUrl: string
   private readonly terminalId: string
   private readonly sessionAgentId: string
+  private readonly requesterAgentId: string
   private readonly ticketProvider: TerminalTicketProvider
 
   private socket: WebSocket | null = null
@@ -74,12 +81,14 @@ export class TerminalWsClient {
     wsUrl: string
     terminalId: string
     sessionAgentId: string
+    requesterAgentId: string
     ticketProvider: TerminalTicketProvider
     initialTicket?: { ticket: string; ticketExpiresAt: string }
   }) {
     this.wsUrl = options.wsUrl
     this.terminalId = options.terminalId
     this.sessionAgentId = options.sessionAgentId
+    this.requesterAgentId = options.requesterAgentId
     this.ticketProvider = options.ticketProvider
     this.initialTicket = options.initialTicket
   }
@@ -174,6 +183,7 @@ export class TerminalWsClient {
           wsUrl: this.wsUrl,
           terminalId: this.terminalId,
           sessionAgentId: this.sessionAgentId,
+          requesterAgentId: this.requesterAgentId,
           ticket: ticket.ticket,
         }),
       )
@@ -308,6 +318,7 @@ export class TerminalWsClient {
     return this.ticketProvider.getTicket({
       terminalId: this.terminalId,
       sessionAgentId: this.sessionAgentId,
+      requesterAgentId: this.requesterAgentId,
     })
   }
 

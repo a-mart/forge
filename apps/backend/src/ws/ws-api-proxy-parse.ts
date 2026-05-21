@@ -111,6 +111,7 @@ export function parseApiProxyTerminalIssueTicketBody(value: unknown): TerminalIs
   const record = requireApiProxyRecord(value, "Terminal ticket body must be an object.");
   return {
     sessionAgentId: requireApiProxyBodyString(record, "sessionAgentId"),
+    requesterAgentId: requireApiProxyBodyString(record, "requesterAgentId"),
   };
 }
 

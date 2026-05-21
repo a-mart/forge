@@ -380,6 +380,7 @@ export class WsApiProxy {
       const ticket = await this.terminalService.issueWsTicket({
         terminalId,
         sessionAgentId: request.sessionAgentId,
+        requesterAgentId: request.requesterAgentId,
       });
       return this.createApiProxyJsonResponse(command.requestId, 200, { ...ticket });
     } catch (error) {

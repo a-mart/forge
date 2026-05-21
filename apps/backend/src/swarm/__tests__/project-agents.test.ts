@@ -28,6 +28,7 @@ function makeManagerDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentD
     sessionFile: overrides.sessionFile ?? `/tmp/${overrides.agentId}.jsonl`,
     profileId: overrides.profileId ?? 'manager',
     sessionLabel: overrides.sessionLabel,
+    archivedAt: overrides.archivedAt,
     projectAgent: overrides.projectAgent,
     creatorAgentId: overrides.creatorAgentId,
   }
@@ -83,6 +84,23 @@ describe('project-agents helpers', () => {
     expect(findProjectAgentByHandle(descriptors, 'manager', '@release notes!')?.agentId).toBe('release-notes--s2')
     expect(findProjectAgentByHandle(descriptors, 'manager', 'missing')).toBeUndefined()
     expect(listProjectAgents(descriptors, 'manager')[1]?.projectAgent.capabilities).toEqual(['create_session'])
+  })
+
+  it('excludes directly archived project agents from discovery', () => {
+    const descriptors: AgentDescriptor[] = [
+      makeManagerDescriptor({
+        agentId: 'active-project-agent',
+        projectAgent: { handle: 'active', whenToUse: 'Active work' },
+      }),
+      makeManagerDescriptor({
+        agentId: 'archived-project-agent',
+        archivedAt: '2026-05-20T00:00:00.000Z',
+        projectAgent: { handle: 'archived', whenToUse: 'Archived work' },
+      }),
+    ]
+
+    expect(listProjectAgents(descriptors, 'manager').map((entry) => entry.agentId)).toEqual(['active-project-agent'])
+    expect(findProjectAgentByHandle(descriptors, 'manager', 'archived')).toBeUndefined()
   })
 
   it('generates a prompt directory block with entries', () => {

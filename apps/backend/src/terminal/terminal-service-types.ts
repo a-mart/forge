@@ -72,6 +72,7 @@ export interface ActiveTerminalRuntime {
   pty: TerminalPtyHandle | null;
   closing: boolean;
   closed: boolean;
+  published: boolean;
   finalizePromise: Promise<void> | null;
   snapshotInterval: NodeJS.Timeout | null;
   lock: Promise<void>;
@@ -81,6 +82,7 @@ export interface ActiveTerminalRuntime {
 
 export type TerminalServiceErrorCode =
   | "SESSION_NOT_FOUND"
+  | "SESSION_ARCHIVED"
   | "SESSION_PROFILE_MISMATCH"
   | "TERMINAL_NOT_FOUND"
   | "TERMINAL_SESSION_MISMATCH"
@@ -145,6 +147,7 @@ export interface TerminalServiceContext {
   issueWsTicket(input: {
     terminalId: string;
     sessionAgentId: string;
+    requesterAgentId: string;
   }): Promise<TerminalIssueTicketResponse>;
   handleTransportEvent(event: TerminalTransportInboundEvent): Promise<void>;
   snapshotRuntime(runtime: ActiveTerminalRuntime): Promise<void>;

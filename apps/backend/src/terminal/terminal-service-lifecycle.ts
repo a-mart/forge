@@ -73,6 +73,40 @@ export class TerminalServiceLifecycleController {
             continue;
           }
 
+          const normalizedScopeArchived =
+            session.terminalScopeArchived ??
+            (storedMeta.sessionAgentId !== session.sessionAgentId
+              ? (this.context.sessionResolver.resolveSession(session.sessionAgentId)?.terminalScopeArchived ??
+                this.context.sessionResolver.resolveSession(session.sessionAgentId)?.archived ??
+                false)
+              : session.archived);
+
+          if (normalizedScopeArchived) {
+            if (storedMeta.state === "running" && typeof storedMeta.pid === "number") {
+              orphanPids.push(storedMeta.pid);
+            }
+            try {
+              if (storedMeta.sessionAgentId !== session.sessionAgentId) {
+                await this.context.persistence.moveTerminalScope(storedMeta, session.sessionAgentId);
+              }
+              await this.context.persistence.saveMeta({
+                ...storedMeta,
+                sessionAgentId: session.sessionAgentId,
+                profileId: session.profileId,
+                state: "exited",
+                pid: null,
+                recoveredFromPersistence: true,
+                updatedAt: this.context.timestamp(),
+              });
+            } catch (error) {
+              console.warn(`[terminal-service] Failed to repair archived terminal ${storedMeta.terminalId}: ${toErrorMessage(error)}`);
+              result.skipped += 1;
+              continue;
+            }
+            result.skipped += 1;
+            continue;
+          }
+
           try {
             if (storedMeta.sessionAgentId !== session.sessionAgentId) {
               await this.context.persistence.moveTerminalScope(storedMeta, session.sessionAgentId);
@@ -236,6 +270,9 @@ export class TerminalServiceLifecycleController {
 
   async create(request: TerminalCreateRequest): Promise<TerminalCreateResponse> {
     const session = this.context.requireSession(request.sessionAgentId);
+    if (session.storageScopeOnly) {
+      throw new TerminalServiceError("SESSION_ARCHIVED", "Terminal requests require an active session.");
+    }
     this.context.assertServiceReady();
 
     if (!(await this.context.ptyRuntime.isAvailable())) {
@@ -280,6 +317,7 @@ export class TerminalServiceLifecycleController {
       let createdHandle: TerminalPtyHandle | null = null;
       this.context.persistence.createMirror(runtime.meta);
       this.context.assertTerminalLimit(session.sessionAgentId);
+      runtime.published = false;
       this.context.terminals.set(terminalId, runtime);
 
       try {
@@ -313,12 +351,14 @@ export class TerminalServiceLifecycleController {
 
         await this.context.persistence.saveMeta(runtime.meta);
         this.context.startSnapshotInterval(runtime);
-        this.context.emitTerminalCreated(runtime.descriptor);
 
         const ticket = await this.context.issueWsTicket({
           terminalId: runtime.meta.terminalId,
           sessionAgentId: runtime.meta.sessionAgentId,
+          requesterAgentId: request.sessionAgentId,
         });
+        runtime.published = true;
+        this.context.emitTerminalCreated(runtime.descriptor);
         return {
           terminal: cloneDescriptor(runtime.descriptor),
           ...ticket,
@@ -361,7 +401,7 @@ export class TerminalServiceLifecycleController {
   listTerminals(sessionAgentId: string): TerminalDescriptor[] {
     const scopeSessionAgentId = this.context.resolveScopeSessionAgentId(sessionAgentId);
     return Array.from(this.context.terminals.values())
-      .filter((runtime) => runtime.meta.sessionAgentId === scopeSessionAgentId && !runtime.closed)
+      .filter((runtime) => runtime.meta.sessionAgentId === scopeSessionAgentId && !runtime.closed && runtime.published)
       .map((runtime) => cloneDescriptor(runtime.descriptor))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
@@ -369,7 +409,7 @@ export class TerminalServiceLifecycleController {
   getTerminal(input: string | { terminalId: string; sessionAgentId: string }): TerminalDescriptor | undefined {
     const terminalId = typeof input === "string" ? input : input.terminalId;
     const runtime = this.context.terminals.get(terminalId);
-    if (!runtime || runtime.closed) {
+    if (!runtime || runtime.closed || !runtime.published) {
       return undefined;
     }
 
@@ -553,6 +593,136 @@ export class TerminalServiceLifecycleController {
     }
 
     return stale.length;
+  }
+
+  async suspendSessionPreserving(sessionAgentId: string): Promise<number> {
+    const scopeSessionAgentId = this.context.resolveScopeSessionAgentId(sessionAgentId);
+    const runtimes = Array.from(this.context.terminals.values()).filter(
+      (runtime) =>
+        runtime.meta.sessionAgentId === scopeSessionAgentId &&
+        !runtime.closed &&
+        runtime.published &&
+        (runtime.meta.state === "running" || runtime.meta.state === "restoring" || Boolean(runtime.pty)),
+    );
+
+    let suspended = 0;
+    for (const runtime of runtimes) {
+      try {
+        await this.context.withRuntimeLock(runtime, async () => {
+          this.context.assertNotClosing(runtime);
+          runtime.closing = true;
+
+          try {
+            await this.context.snapshotRuntime(runtime);
+          } catch (error) {
+            console.warn(`[terminal-service] Failed to snapshot terminal ${runtime.meta.terminalId} before archive suspend: ${toErrorMessage(error)}`);
+          }
+
+          const pty = runtime.pty;
+          if (pty) {
+            try {
+              await this.context.ptyRuntime.killPty(pty);
+            } catch (error) {
+              runtime.closing = false;
+              console.warn(`[terminal-service] Failed to kill archived terminal ${runtime.meta.terminalId}: ${toErrorMessage(error)}`);
+              return;
+            }
+          }
+          runtime.pty = null;
+
+          if (runtime.snapshotInterval) {
+            clearInterval(runtime.snapshotInterval);
+            runtime.snapshotInterval = null;
+          }
+
+          runtime.descriptor = this.context.transitionDescriptorState(runtime.descriptor, "exited");
+          runtime.meta.state = "exited";
+          runtime.meta.pid = null;
+          runtime.descriptor.pid = null;
+          runtime.meta.exitCode = null;
+          runtime.descriptor.exitCode = null;
+          runtime.meta.exitSignal = null;
+          runtime.descriptor.exitSignal = null;
+          runtime.meta.updatedAt = runtime.descriptor.updatedAt;
+          runtime.attachedClients.clear();
+          runtime.closing = false;
+          try {
+            await this.context.persistence.saveMeta(runtime.meta);
+          } catch (error) {
+            console.warn(`[terminal-service] Failed to persist suspended archived terminal ${runtime.meta.terminalId}: ${toErrorMessage(error)}`);
+            await this.context.persistence.saveMeta(runtime.meta);
+          }
+          try {
+            this.context.emitTerminalUpdated(runtime.descriptor);
+          } catch (error) {
+            console.warn(`[terminal-service] Failed to emit suspended archived terminal ${runtime.meta.terminalId}: ${toErrorMessage(error)}`);
+          }
+          suspended += 1;
+        });
+      } catch (error) {
+        console.warn(`[terminal-service] Failed to suspend archived terminal ${runtime.meta.terminalId}: ${toErrorMessage(error)}`);
+      }
+    }
+
+    return suspended;
+  }
+
+  async restorePersistedSession(sessionAgentId: string): Promise<number> {
+    const session = this.context.requireSession(sessionAgentId);
+    const persisted = await this.context.persistence.listPersistedMeta();
+    let restored = 0;
+
+    for (const storedMeta of persisted) {
+      const storedSession = this.context.sessionResolver.resolveSession(storedMeta.sessionAgentId);
+      if (storedMeta.sessionAgentId !== session.sessionAgentId && storedSession?.sessionAgentId !== session.sessionAgentId) {
+        continue;
+      }
+
+      const normalizedMeta = storedMeta.sessionAgentId === session.sessionAgentId
+        ? storedMeta
+        : { ...storedMeta, sessionAgentId: session.sessionAgentId };
+
+      const existingRuntime = this.context.terminals.get(normalizedMeta.terminalId);
+      if (existingRuntime) {
+        if (
+          (normalizedMeta.state === "running" || normalizedMeta.state === "restoring" || normalizedMeta.pid !== null) &&
+          (existingRuntime.meta.state === "exited" || existingRuntime.meta.state === "restore_failed")
+        ) {
+          try {
+            await this.context.persistence.saveMeta(existingRuntime.meta);
+          } catch (error) {
+            console.warn(`[terminal-service] Failed to repair preserved terminal ${normalizedMeta.terminalId}: ${toErrorMessage(error)}`);
+          }
+        }
+        continue;
+      }
+
+      try {
+        if (storedMeta.sessionAgentId !== session.sessionAgentId) {
+          await this.context.persistence.moveTerminalScope(storedMeta, session.sessionAgentId);
+        }
+        const meta: TerminalMeta = {
+          ...normalizedMeta,
+          sessionAgentId: session.sessionAgentId,
+          profileId: session.profileId,
+          state: storedMeta.state === "running" || storedMeta.state === "restoring" ? "exited" : storedMeta.state,
+          pid: null,
+          recoveredFromPersistence: true,
+        };
+        const runtime = createInactiveRuntime(meta, session);
+        const restoredMirror = await this.context.persistence.restoreMirror(meta);
+        runtime.journalBytes = await this.context.persistence.getJournalSize(meta);
+        runtime.meta.nextSeq = Math.max(runtime.meta.nextSeq, restoredMirror.lastSeq + 1);
+        await this.context.persistence.saveMeta(runtime.meta);
+        this.context.terminals.set(runtime.meta.terminalId, runtime);
+        this.context.emitTerminalUpdated(runtime.descriptor);
+        restored += 1;
+      } catch (error) {
+        console.warn(`[terminal-service] Failed to restore preserved terminal ${normalizedMeta.terminalId}: ${toErrorMessage(error)}`);
+      }
+    }
+
+    return restored;
   }
 
   async reconcileSessions(): Promise<{ removed: number }> {

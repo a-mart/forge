@@ -448,6 +448,7 @@ export class ProjectAgentRegistry {
       descriptor.role === "manager" &&
       descriptor.profileId === profileId &&
       descriptor.agentId !== options?.excludeAgentId &&
+      !descriptor.archivedAt &&
       typeof descriptor.projectAgent?.handle === "string" &&
       descriptor.projectAgent.handle.trim().length > 0 &&
       typeof descriptor.projectAgent?.whenToUse === "string" &&

@@ -1,4 +1,4 @@
-import { chooseFallbackAgentId, filterBuilderVisibleAgents } from '../agent-hierarchy'
+import { chooseFallbackAgentId, filterBuilderVisibleAgents, isAgentEffectivelyArchived } from '../agent-hierarchy'
 import type { ManagerWsState } from '../ws-state'
 import { isManagerAgent, isWorkerAgent } from './runtime-types'
 import {
@@ -50,11 +50,20 @@ export function reduceAgentsSnapshot(input: {
   const { state, desiredAgentId, explicitAgentSelectionAgentId, agents } = input
   const visibleAgents = filterBuilderVisibleAgents(agents)
   const incomingAgentIds = new Set(visibleAgents.map((agent) => agent.agentId))
+  const managersById = new Map(
+    [...state.agents, ...visibleAgents]
+      .filter(isManagerAgent)
+      .map((agent) => [agent.agentId, agent]),
+  )
   const preservedWorkers = state.agents.filter(
     (agent) =>
       isWorkerAgent(agent) &&
       !incomingAgentIds.has(agent.agentId) &&
-      state.loadedSessionIds.has(agent.managerId),
+      state.loadedSessionIds.has(agent.managerId) &&
+      !(() => {
+        const manager = managersById.get(agent.managerId)
+        return manager ? isAgentEffectivelyArchived(manager, state.profiles) : false
+      })(),
   )
 
   const mergedAgents = [...visibleAgents, ...preservedWorkers]
@@ -104,20 +113,30 @@ export function reduceAgentsSnapshot(input: {
   }
 
   const currentTarget = state.targetAgentId ?? state.subscribedAgentId ?? desiredAgentId ?? undefined
-  const currentTargetStillExists = currentTarget ? mergedAgentIds.has(currentTarget) : false
+  const currentTargetAgent = currentTarget
+    ? mergedAgents.find((agent) => agent.agentId === currentTarget) ?? state.agents.find((agent) => agent.agentId === currentTarget)
+    : undefined
+  const currentTargetManager = currentTargetAgent?.role === 'worker'
+    ? mergedAgents.find((agent) => agent.agentId === currentTargetAgent.managerId && agent.role === 'manager')
+    : currentTargetAgent
+  const currentTargetArchived = currentTargetManager?.role === 'manager'
+    ? isAgentEffectivelyArchived(currentTargetManager, state.profiles)
+    : false
+  const currentTargetStillExists = currentTarget ? mergedAgentIds.has(currentTarget) && !currentTargetArchived : false
   const currentTargetIsIntentionalWorkerSubscription = Boolean(
     currentTarget &&
       currentTarget === state.subscribedAgentId &&
+      !currentTargetArchived &&
       !visibleAgents.some((agent) => agent.agentId === currentTarget && isManagerAgent(agent)),
   )
   const fallbackTarget = currentTargetStillExists
     ? currentTarget
     : currentTargetIsIntentionalWorkerSubscription
       ? currentTarget
-      : chooseFallbackAgentId(mergedAgents, currentTarget)
+      : chooseFallbackAgentId(mergedAgents, currentTarget, state.profiles)
   const targetChanged = fallbackTarget !== state.targetAgentId
   const nextSubscribedAgentId =
-    state.subscribedAgentId && mergedAgentIds.has(state.subscribedAgentId)
+    state.subscribedAgentId && mergedAgentIds.has(state.subscribedAgentId) && !currentTargetArchived
       ? state.subscribedAgentId
       : currentTargetIsIntentionalWorkerSubscription
         ? state.subscribedAgentId
@@ -347,7 +366,7 @@ export function reduceManagerDeleted(input: {
   nextLoadedSessionIds.delete(managerId)
 
   if (wasSelected) {
-    const fallbackId = chooseFallbackAgentId(nextAgents)
+    const fallbackId = chooseFallbackAgentId(nextAgents, undefined, state.profiles)
 
     if (fallbackId && socketOpen) {
       return {
@@ -430,7 +449,7 @@ export function reduceSessionDeleted(input: {
 
   if (wasSelected) {
     const fallbackId =
-      chooseMostRecentSessionAgentId(nextAgents, profileId, agentId) ?? chooseFallbackAgentId(nextAgents)
+      chooseMostRecentSessionAgentId(nextAgents, profileId, agentId) ?? chooseFallbackAgentId(nextAgents, undefined, state.profiles)
 
     if (fallbackId && socketOpen) {
       const previousTerminalScopeId = resolveTerminalScopeAgentId(agentId, state.agents)

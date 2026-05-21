@@ -253,14 +253,17 @@ export function createCollaborationChannelRoutes(options: {
               ? resolveRequestedChannelModelSettings(existingChannel, update)
               : null;
           if (nextModelSettings) {
-            if (!options.swarmManager?.updateManagerModel) {
+            const updateCollaborationModel = options.swarmManager?.updateCollaborationSessionModel
+              ?? options.swarmManager?.updateManagerModel;
+            if (!updateCollaborationModel) {
               throw new Error("Collaboration channel model updates require swarm manager support");
             }
 
             const modelChanged = nextModelSettings.modelId !== existingChannel.modelId;
             const reasoningChanged = nextModelSettings.reasoningLevel !== existingChannel.reasoningLevel;
             if (modelChanged || reasoningChanged) {
-              await options.swarmManager.updateManagerModel(
+              await updateCollaborationModel.call(
+                options.swarmManager,
                 existingChannel.sessionAgentId,
                 nextModelSettings.modelId,
                 nextModelSettings.reasoningLevel,

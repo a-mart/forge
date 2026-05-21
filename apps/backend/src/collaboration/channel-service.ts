@@ -68,6 +68,11 @@ export interface CollaborationChannelServiceSwarmManager {
     modelPreset: string,
     reasoningLevel?: SwarmReasoningLevel,
   ) => Promise<void>;
+  updateCollaborationSessionModel?: (
+    sessionAgentId: string,
+    modelPreset: string,
+    reasoningLevel?: SwarmReasoningLevel,
+  ) => Promise<void>;
 }
 
 export interface CreateCollaborationChannelParams {

@@ -56,7 +56,12 @@ import type {
   UnreadCountsSnapshotEvent,
   UnreadNotificationEvent,
 } from './notification-events.js'
-import type { ProfileRenamedEvent, ProfilesSnapshotEvent } from './profile-events.js'
+import type {
+  ProfileArchivedEvent,
+  ProfileRenamedEvent,
+  ProfileRestoredEvent,
+  ProfilesSnapshotEvent,
+} from './profile-events.js'
 import type {
   ProjectAgentConfigEvent,
   ProjectAgentRecommendationsErrorEvent,
@@ -68,6 +73,7 @@ import type {
   SessionProjectAgentUpdatedEvent,
 } from './project-agent-events.js'
 import type {
+  SessionArchivedEvent,
   SessionClearedEvent,
   SessionCreatedEvent,
   SessionDeletedEvent,
@@ -78,6 +84,7 @@ import type {
   SessionModelUpdatedEvent,
   SessionPinnedEvent,
   SessionRenamedEvent,
+  SessionRestoredEvent,
   SessionResumedEvent,
   SessionStoppedEvent,
 } from './session-events.js'
@@ -153,6 +160,8 @@ export type ServerEvent =
   | SessionCreatedEvent
   | SessionStoppedEvent
   | SessionResumedEvent
+  | SessionArchivedEvent
+  | SessionRestoredEvent
   | SessionDeletedEvent
   | SessionClearedEvent
   | SessionRenamedEvent
@@ -167,6 +176,8 @@ export type ServerEvent =
   | ProjectAgentReferenceSavedEvent
   | ProjectAgentReferenceDeletedEvent
   | ProfileRenamedEvent
+  | ProfileArchivedEvent
+  | ProfileRestoredEvent
   | SessionForkedEvent
   | SessionMemoryMergeStartedEvent
   | SessionMemoryMergedEvent

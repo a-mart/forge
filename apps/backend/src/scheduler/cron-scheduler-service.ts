@@ -262,6 +262,13 @@ export class CronSchedulerService {
       return true;
     }
 
+    if (this.swarmManager.isAgentEffectivelyArchived(schedule.sessionId)) {
+      console.warn(
+        `[scheduler] Skipping schedule ${schedule.id} (${schedule.name}): target session ${schedule.sessionId} is archived`
+      );
+      return true;
+    }
+
     if (isNonRunningAgentStatus(targetSession.status)) {
       console.warn(
         `[scheduler] Skipping schedule ${schedule.id} (${schedule.name}): target session ${schedule.sessionId} is not running (status: ${targetSession.status})`

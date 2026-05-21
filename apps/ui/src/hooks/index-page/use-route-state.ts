@@ -5,13 +5,14 @@ import { getConfiguredDefaultSurface, type DefaultSurface } from '@/lib/web-runt
 // The WS client will resolve this to the actual primary manager on connect.
 export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
-export type ActiveView = 'chat' | 'settings' | 'stats'
+export type ActiveView = 'chat' | 'settings' | 'stats' | 'archive'
 export type ActiveSurface = 'builder' | 'collab'
 export type StatsTab = 'overview' | 'tokens'
 export type AppRouteState =
   | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string; collab?: string }
   | { view: 'settings'; surface: ActiveSurface; settingsTab?: string; collabApiBaseUrl?: string; skillImportUrl?: string }
   | { view: 'stats'; statsTab?: StatsTab }
+  | { view: 'archive'; surface: ActiveSurface }
 
 type AppRouteSearch = {
   view?: string
@@ -104,6 +105,10 @@ export function parseRouteStateFromLocation(
     return { view: 'stats', statsTab }
   }
 
+  if (view === 'archive') {
+    return { view: 'archive', surface: 'builder' }
+  }
+
   if (view === 'chat' || agentId !== undefined || surface !== undefined) {
     const parsedSurface = parseSurface(surface, defaultSurface)
     return {
@@ -142,6 +147,10 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
     return { view: 'stats', statsTab: routeState.statsTab }
   }
 
+  if (routeState.view === 'archive') {
+    return { view: 'archive', surface: 'builder' }
+  }
+
   return {
     view: 'chat',
     agentId: normalizeAgentId(routeState.agentId),
@@ -178,6 +187,14 @@ export function toRouteSearch(
     return search
   }
 
+  if (routeState.view === 'archive') {
+    const search: AppRouteSearch = { view: 'archive' }
+    if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
+    if (stickyParams?.channel) search.channel = stickyParams.channel
+    if (stickyParams?.collab) search.collab = stickyParams.collab
+    return search
+  }
+
   const search: AppRouteSearch = {}
   const agentId = normalizeAgentId(routeState.agentId)
   if (agentId !== DEFAULT_MANAGER_AGENT_ID) {
@@ -206,6 +223,10 @@ function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
 
   if (left.view === 'stats' && right.view === 'stats') {
     return (left.statsTab ?? 'overview') === (right.statsTab ?? 'overview')
+  }
+
+  if (left.view === 'archive' && right.view === 'archive') {
+    return left.surface === right.surface
   }
 
   if (left.view === 'chat' && right.view === 'chat') {
@@ -258,13 +279,14 @@ export function useRouteState({
   const navigateToRoute = useCallback(
     (nextRouteState: AppRouteState, replace = false) => {
       const normalizedRouteState = normalizeRouteState(nextRouteState)
-      if (routeStatesEqual(routeState, normalizedRouteState)) {
+      const currentSearch = (typeof search === 'object' && search !== null ? search : {}) as AppRouteSearch
+      const shouldStripStaleArchiveSurface = normalizedRouteState.view === 'archive' && typeof currentSearch.surface === 'string'
+      if (routeStatesEqual(routeState, normalizedRouteState) && !shouldStripStaleArchiveSurface) {
         return
       }
 
       // Compute sticky params: use current agent/channel/collab as fallbacks when
       // navigating to non-chat views so they survive the round-trip
-      const currentSearch = (typeof search === 'object' && search !== null ? search : {}) as AppRouteSearch
       const effectiveStickyAgent = normalizedRouteState.view === 'chat'
         ? undefined
         : stickyAgent ?? currentSearch.agent

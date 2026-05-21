@@ -32,7 +32,11 @@ interface TerminalPanelProps {
   onPanelHeightChange: (height: number) => void
   onFocusChatInput: () => void
   onAddToChat?: (context: TerminalSelectionContext) => void
-  issueTicket: (terminalId: string, sessionAgentId: string) => Promise<TerminalIssueTicketResponse>
+  issueTicket: (
+    terminalId: string,
+    sessionAgentId: string,
+    requesterAgentId: string,
+  ) => Promise<TerminalIssueTicketResponse>
 }
 
 const HANDLE_HEIGHT_PX = 6

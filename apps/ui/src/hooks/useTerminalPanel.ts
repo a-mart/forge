@@ -69,7 +69,11 @@ interface UseTerminalPanelResult {
   setRenameDraft: (value: string) => void
   commitRenameTerminal: () => Promise<void>
   cancelRenameTerminal: () => void
-  issueTicket: (terminalId: string, sessionAgentId: string) => Promise<TerminalIssueTicketResponse>
+  issueTicket: (
+    terminalId: string,
+    sessionAgentId: string,
+    requesterAgentId: string,
+  ) => Promise<TerminalIssueTicketResponse>
 }
 
 function clampPanelHeight(value: number): number {
@@ -464,8 +468,11 @@ export function useTerminalPanel({
     }
   }, [createTerminal, enabled, selectNextTerminal, selectPreviousTerminal, togglePanel])
 
-  const issueTicket = useCallback((terminalId: string, requestSessionAgentId: string) => {
-    return issueTerminalTicket(wsUrl, terminalId, { sessionAgentId: requestSessionAgentId })
+  const issueTicket = useCallback((terminalId: string, terminalSessionAgentId: string, requesterAgentId: string) => {
+    return issueTerminalTicket(wsUrl, terminalId, {
+      sessionAgentId: terminalSessionAgentId,
+      requesterAgentId,
+    })
   }, [wsUrl])
 
   return {

@@ -222,13 +222,18 @@ export class TerminalService extends EventEmitter {
     await this.handleInput(input.terminalId, input.data, input.sessionAgentId);
   }
 
-  async issueTicket(terminalId: string, sessionAgentId: string): Promise<TerminalIssueTicketResponse> {
-    return this.issueWsTicket({ terminalId, sessionAgentId });
+  async issueTicket(
+    terminalId: string,
+    sessionAgentId: string,
+    requesterAgentId: string,
+  ): Promise<TerminalIssueTicketResponse> {
+    return this.issueWsTicket({ terminalId, sessionAgentId, requesterAgentId });
   }
 
   async issueWsTicket(input: {
     terminalId: string;
     sessionAgentId: string;
+    requesterAgentId: string;
   }): Promise<TerminalIssueTicketResponse> {
     return this.clientOperations.issueWsTicket(input);
   }
@@ -236,6 +241,7 @@ export class TerminalService extends EventEmitter {
   validateWsTicket(input: {
     terminalId: string;
     sessionAgentId: string;
+    requesterAgentId: string;
     ticket: string;
   }): boolean {
     return this.clientOperations.validateWsTicket(input);
@@ -268,6 +274,14 @@ export class TerminalService extends EventEmitter {
     reason: Extract<TerminalCloseReason, "session_deleted" | "manager_deleted" | "orphan_cleanup">,
   ): Promise<number> {
     return this.lifecycleOperations.cleanupSession(sessionAgentId, reason);
+  }
+
+  async suspendSessionPreserving(sessionAgentId: string): Promise<number> {
+    return this.lifecycleOperations.suspendSessionPreserving(sessionAgentId);
+  }
+
+  async restorePersistedSession(sessionAgentId: string): Promise<number> {
+    return this.lifecycleOperations.restorePersistedSession(sessionAgentId);
   }
 
   async reconcileSessions(): Promise<{ removed: number }> {
@@ -329,12 +343,22 @@ export class TerminalService extends EventEmitter {
     if (!session) {
       throw new TerminalServiceError("SESSION_NOT_FOUND", `Unknown terminal session: ${sessionAgentId}`);
     }
+    if (session.archived) {
+      throw new TerminalServiceError("SESSION_ARCHIVED", "Archived sessions can’t be used until restored.");
+    }
     return session;
   }
 
   private requireRuntime(terminalId: string, sessionAgentId: string): ActiveTerminalRuntime {
     const runtime = this.requireRuntimeById(terminalId);
-    const scopeSessionAgentId = this.resolveScopeSessionAgentId(sessionAgentId);
+    const session = this.sessionResolver.resolveSession(sessionAgentId);
+    if (session?.archived) {
+      throw new TerminalServiceError("SESSION_ARCHIVED", "Archived sessions can’t be used until restored.");
+    }
+    if (session?.storageScopeOnly) {
+      throw new TerminalServiceError("SESSION_ARCHIVED", "Terminal requests require an active session.");
+    }
+    const scopeSessionAgentId = session?.sessionAgentId ?? sessionAgentId;
     if (runtime.meta.sessionAgentId !== scopeSessionAgentId) {
       throw new TerminalServiceError(
         "TERMINAL_SESSION_MISMATCH",

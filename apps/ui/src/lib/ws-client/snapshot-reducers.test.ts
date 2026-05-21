@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createInitialManagerWsState } from '../ws-state'
-import { reduceSessionWorkersSnapshot, reduceAgentStatus } from './snapshot-reducers'
-import type { AgentDescriptor } from '@forge/protocol'
+import { reduceAgentsSnapshot, reduceSessionWorkersSnapshot, reduceAgentStatus } from './snapshot-reducers'
+import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,6 +44,52 @@ function makeWorker(
     ...overrides,
   }
 }
+
+function makeProfile(profileId: string, overrides: Partial<ManagerProfile> = {}): ManagerProfile {
+  return {
+    profileId,
+    displayName: profileId,
+    defaultSessionAgentId: profileId,
+    defaultModel: { modelId: 'test-model', provider: 'test', thinkingLevel: 'none' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// reduceAgentsSnapshot
+// ---------------------------------------------------------------------------
+
+describe('reduceAgentsSnapshot', () => {
+  it('does not preserve a selected worker when the parent manager becomes archived', () => {
+    const activeManager = makeManager({ agentId: 'active-manager', profileId: 'active-manager' })
+    const archivedManager = makeManager({
+      agentId: 'archived-manager',
+      profileId: 'archived-manager',
+      archivedAt: '2026-05-20T00:00:00.000Z',
+    })
+    const archivedWorker = makeWorker('archived-worker', 'archived-manager')
+    const state = {
+      ...createInitialManagerWsState('archived-worker'),
+      subscribedAgentId: 'archived-worker',
+      agents: [activeManager, makeManager({ agentId: 'archived-manager', profileId: 'archived-manager' }), archivedWorker],
+      profiles: [makeProfile('active-manager'), makeProfile('archived-manager')],
+      loadedSessionIds: new Set(['archived-manager']),
+    }
+
+    const result = reduceAgentsSnapshot({
+      state,
+      desiredAgentId: null,
+      explicitAgentSelectionAgentId: null,
+      agents: [activeManager, archivedManager],
+    })
+
+    expect(result.patch.targetAgentId).toBe('active-manager')
+    expect(result.patch.subscribedAgentId).toBe('active-manager')
+    expect(result.patch.agents?.some((agent) => agent.agentId === 'archived-worker')).toBe(false)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // reduceSessionWorkersSnapshot

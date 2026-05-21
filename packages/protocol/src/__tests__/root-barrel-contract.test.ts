@@ -58,6 +58,8 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'create_session',
   'stop_session',
   'resume_session',
+  'archive_session',
+  'restore_session',
   'delete_session',
   'rename_session',
   'pin_session',
@@ -78,6 +80,8 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'validate_directory',
   'pick_directory',
   'rename_profile',
+  'archive_profile',
+  'restore_profile',
   'reorder_profiles',
   'choice_response',
   'choice_cancel',
@@ -101,6 +105,8 @@ const REQUEST_ID_COMMAND_TYPES = [
   'create_session',
   'stop_session',
   'resume_session',
+  'archive_session',
+  'restore_session',
   'delete_session',
   'rename_session',
   'pin_session',
@@ -119,6 +125,8 @@ const REQUEST_ID_COMMAND_TYPES = [
   'validate_directory',
   'pick_directory',
   'rename_profile',
+  'archive_profile',
+  'restore_profile',
   'reorder_profiles',
   'mark_unread',
   'mark_all_read',
@@ -264,6 +272,10 @@ const serverEventsByLeafModule = [
   { type: 'manager_created', manager: agent, requestId: 'request-1' },
   { type: 'manager_deleted', managerId: agent.agentId, terminatedWorkerIds: [], requestId: 'request-2' },
   { type: 'session_created', profile, sessionAgent: agent, requestId: 'request-2' },
+  { type: 'session_archived', agentId: agent.agentId, profileId: profile.profileId, archivedAt: now, requestId: 'request-archive-session' },
+  { type: 'session_restored', agentId: agent.agentId, profileId: profile.profileId, openAgentId: agent.agentId, requestId: 'request-restore-session' },
+  { type: 'profile_archived', profileId: profile.profileId, archivedAt: now, requestId: 'request-archive-profile' },
+  { type: 'profile_restored', profileId: profile.profileId, openAgentId: agent.agentId, requestId: 'request-restore-profile' },
   { type: 'session_project_agent_updated', agentId: agent.agentId, profileId: profile.profileId, projectAgent: null },
   { type: 'session_workers_snapshot', sessionAgentId: agent.agentId, workers: [], requestId: 'request-3' },
   { type: 'directories_listed', path: '/tmp', directories: [], requestId: 'request-4' },
@@ -289,6 +301,8 @@ const requestIdCommands = [
   { type: 'create_session', profileId: profile.profileId, requestId: 'request-9' },
   { type: 'stop_session', agentId: agent.agentId, requestId: 'request-10' },
   { type: 'resume_session', agentId: agent.agentId, requestId: 'request-11' },
+  { type: 'archive_session', agentId: agent.agentId, requestId: 'request-archive-session' },
+  { type: 'restore_session', agentId: agent.agentId, requestId: 'request-restore-session' },
   { type: 'delete_session', agentId: agent.agentId, requestId: 'request-12' },
   { type: 'rename_session', agentId: agent.agentId, label: 'Renamed', requestId: 'request-13' },
   { type: 'pin_session', agentId: agent.agentId, pinned: true, requestId: 'request-14' },
@@ -307,6 +321,8 @@ const requestIdCommands = [
   { type: 'validate_directory', path: '/tmp', requestId: 'request-27' },
   { type: 'pick_directory', defaultPath: '/tmp', requestId: 'request-28' },
   { type: 'rename_profile', profileId: profile.profileId, displayName: 'Renamed', requestId: 'request-29' },
+  { type: 'archive_profile', profileId: profile.profileId, requestId: 'request-archive-profile' },
+  { type: 'restore_profile', profileId: profile.profileId, requestId: 'request-restore-profile' },
   { type: 'reorder_profiles', profileIds: [profile.profileId], requestId: 'request-30' },
   { type: 'mark_unread', agentId: agent.agentId, requestId: 'request-31' },
   { type: 'mark_all_read', profileId: profile.profileId, requestId: 'request-32' },
@@ -334,6 +350,8 @@ describe('protocol root barrel contract', () => {
       'pick_directory',
       'get_session_workers',
       'rename_profile',
+      'archive_profile',
+      'restore_profile',
       'rename_session',
       'pin_session',
       'update_session_model',
@@ -348,6 +366,8 @@ describe('protocol root barrel contract', () => {
       'create_session',
       'stop_session',
       'resume_session',
+      'archive_session',
+      'restore_session',
       'delete_session',
       'clear_session',
       'set_session_project_agent',
@@ -378,6 +398,18 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'profile_rename',
       successEvents: ['profile_renamed'],
       errorCodeFragments: ['rename_profile'],
+    })
+    expect(getWsRequestContract('archive_profile')).toMatchObject({
+      commandType: 'archive_profile',
+      resultFamily: 'archive_profile_result',
+      successEvents: ['profile_archived'],
+      errorCodeFragments: ['archive_profile'],
+    })
+    expect(getWsRequestContract('restore_profile')).toMatchObject({
+      commandType: 'restore_profile',
+      resultFamily: 'restore_profile_result',
+      successEvents: ['profile_restored'],
+      errorCodeFragments: ['restore_profile'],
     })
     expect(getWsRequestContract('rename_session')).toMatchObject({
       commandType: 'rename_session',
@@ -468,6 +500,18 @@ describe('protocol root barrel contract', () => {
       resultFamily: 'session_resume',
       successEvents: ['session_resumed'],
       errorCodeFragments: ['resume_session'],
+    })
+    expect(getWsRequestContract('archive_session')).toMatchObject({
+      commandType: 'archive_session',
+      resultFamily: 'archive_session_result',
+      successEvents: ['session_archived'],
+      errorCodeFragments: ['archive_session', 'ARCHIVE_DEFAULT_SESSION_NOT_ALLOWED'],
+    })
+    expect(getWsRequestContract('restore_session')).toMatchObject({
+      commandType: 'restore_session',
+      resultFamily: 'restore_session_result',
+      successEvents: ['session_restored'],
+      errorCodeFragments: ['restore_session', 'ARCHIVE_RESTORE_PARENT_PROJECT_REQUIRED'],
     })
     expect(getWsRequestContract('delete_session')).toMatchObject({
       commandType: 'delete_session',
@@ -565,7 +609,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(48)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(52)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -576,7 +620,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(32)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(36)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)
@@ -597,6 +641,10 @@ describe('protocol root barrel contract', () => {
       'manager_created',
       'manager_deleted',
       'session_created',
+      'session_archived',
+      'session_restored',
+      'profile_archived',
+      'profile_restored',
       'session_project_agent_updated',
       'session_workers_snapshot',
       'directories_listed',

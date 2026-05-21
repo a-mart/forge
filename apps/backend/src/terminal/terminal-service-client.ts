@@ -10,8 +10,15 @@ export class TerminalServiceClientController {
   async issueWsTicket(input: {
     terminalId: string;
     sessionAgentId: string;
+    requesterAgentId: string;
   }): Promise<import("@forge/protocol").TerminalIssueTicketResponse> {
-    this.context.requireRuntime(input.terminalId, input.sessionAgentId);
+    const runtime = this.context.requireRuntime(input.terminalId, input.requesterAgentId);
+    if (runtime.meta.sessionAgentId !== input.sessionAgentId) {
+      throw new TerminalServiceError(
+        "TERMINAL_SESSION_MISMATCH",
+        `Terminal ${input.terminalId} does not belong to session ${input.sessionAgentId}`,
+      );
+    }
     if (!this.context.runtimeConfig.enabled || this.context.getShuttingDown()) {
       throw new TerminalServiceError("SERVICE_SHUTTING_DOWN", "Terminal service is shutting down.");
     }
@@ -20,7 +27,7 @@ export class TerminalServiceClientController {
     }
 
     const expiresAt = this.context.now().getTime() + this.context.runtimeConfig.wsTicketTtlMs;
-    const payload = `${input.terminalId}:${input.sessionAgentId}:${expiresAt}`;
+    const payload = `${input.terminalId}:${input.sessionAgentId}:${input.requesterAgentId}:${expiresAt}`;
     const signature = createHmac("sha256", this.context.ticketSecret).update(payload).digest("base64url");
     return {
       ticket: `${payload}:${signature}`,
@@ -31,15 +38,20 @@ export class TerminalServiceClientController {
   validateWsTicket(input: {
     terminalId: string;
     sessionAgentId: string;
+    requesterAgentId: string;
     ticket: string;
   }): boolean {
     const parts = input.ticket.split(":");
-    if (parts.length !== 4) {
+    if (parts.length !== 5) {
       return false;
     }
 
-    const [terminalId, sessionAgentId, expiresAtRaw, signature] = parts;
-    if (terminalId !== input.terminalId || sessionAgentId !== input.sessionAgentId) {
+    const [terminalId, sessionAgentId, requesterAgentId, expiresAtRaw, signature] = parts;
+    if (
+      terminalId !== input.terminalId ||
+      sessionAgentId !== input.sessionAgentId ||
+      requesterAgentId !== input.requesterAgentId
+    ) {
       return false;
     }
 
@@ -48,7 +60,7 @@ export class TerminalServiceClientController {
       return false;
     }
 
-    const payload = `${terminalId}:${sessionAgentId}:${expiresAt}`;
+    const payload = `${terminalId}:${sessionAgentId}:${requesterAgentId}:${expiresAt}`;
     const expected = createHmac("sha256", this.context.ticketSecret).update(payload).digest("base64url");
 
     return safeEqual(signature, expected);

@@ -374,7 +374,7 @@ export function buildUpdateSessionModelCommand(
 }
 
 export function buildSessionActionCommand(
-  type: 'stop_session' | 'resume_session' | 'delete_session' | 'clear_session',
+  type: 'stop_session' | 'resume_session' | 'archive_session' | 'restore_session' | 'delete_session' | 'clear_session',
   agentId: string,
   requestId: string,
 ): ClientCommand {
@@ -407,6 +407,18 @@ export function buildPinSessionCommand(
     type: 'pin_session',
     agentId: requireTrimmedValue(agentId, 'Agent id is required.'),
     pinned,
+    requestId,
+  }
+}
+
+export function buildProfileArchiveActionCommand(
+  type: 'archive_profile' | 'restore_profile',
+  profileId: string,
+  requestId: string,
+): ClientCommand {
+  return {
+    type,
+    profileId: requireTrimmedValue(profileId, 'Profile id is required.'),
     requestId,
   }
 }

@@ -50,10 +50,12 @@ function createSessionDescriptor(
 function createSwarmManagerMock(options: {
   handleUserMessage?: ReturnType<typeof vi.fn>
   getAgent?: ReturnType<typeof vi.fn>
+  isAgentEffectivelyArchived?: ReturnType<typeof vi.fn>
 } = {}): SwarmManager {
   return {
     handleUserMessage: options.handleUserMessage ?? vi.fn(async () => undefined),
     getAgent: options.getAgent ?? vi.fn((agentId: string) => createSessionDescriptor({ agentId })),
+    isAgentEffectivelyArchived: options.isAgentEffectivelyArchived ?? vi.fn(() => false),
   } as unknown as SwarmManager
 }
 
@@ -280,7 +282,7 @@ describe('CronSchedulerService', () => {
     expect(stored.schedules[0]?.sessionId).toBe('manager')
   })
 
-  it('skips due schedules when the target session is missing, cross-profile, or not running', async () => {
+  it('skips due schedules when the target session is missing, cross-profile, archived, or not running', async () => {
     const root = await mkdtemp(join(tmpdir(), 'swarm-cron-test-'))
     const schedulesFile = join(root, 'schedules', 'manager.json')
     const now = new Date('2026-01-01T00:00:00.000Z')
@@ -291,12 +293,16 @@ describe('CronSchedulerService', () => {
       schedules: [
         createSchedule({ id: 'missing-session', sessionId: 'missing-session', nextFireAt: dueAt }),
         createSchedule({ id: 'wrong-profile-session', sessionId: 'wrong-profile-session', nextFireAt: dueAt }),
+        createSchedule({ id: 'archived-session', sessionId: 'archived-session', nextFireAt: dueAt }),
         createSchedule({ id: 'stopped-session', sessionId: 'stopped-session', nextFireAt: dueAt }),
       ],
     })
 
     const handleUserMessage = vi.fn(async () => undefined)
     const getAgent = vi.fn((agentId: string) => {
+      if (agentId === 'archived-session') {
+        return createSessionDescriptor({ agentId })
+      }
       if (agentId === 'wrong-profile-session') {
         return createSessionDescriptor({ agentId, profileId: 'other-profile' })
       }
@@ -305,10 +311,11 @@ describe('CronSchedulerService', () => {
       }
       return undefined
     })
+    const isAgentEffectivelyArchived = vi.fn((agentId: string) => agentId === 'archived-session')
 
     try {
       const service = new CronSchedulerService({
-        swarmManager: createSwarmManagerMock({ handleUserMessage, getAgent }),
+        swarmManager: createSwarmManagerMock({ handleUserMessage, getAgent, isAgentEffectivelyArchived }),
         schedulesFile,
         managerId: 'manager',
         now: () => now,
@@ -326,14 +333,18 @@ describe('CronSchedulerService', () => {
         expect.stringContaining('target session wrong-profile-session belongs to profile other-profile'),
       )
       expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('target session archived-session is archived'),
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining('target session stopped-session is not running'),
       )
 
       const stored = await readSchedulesFile(schedulesFile)
-      expect(stored.schedules).toHaveLength(3)
+      expect(stored.schedules).toHaveLength(4)
       expect(Date.parse(stored.schedules[0]?.nextFireAt ?? '')).toBeGreaterThan(Date.parse(dueAt))
       expect(Date.parse(stored.schedules[1]?.nextFireAt ?? '')).toBeGreaterThan(Date.parse(dueAt))
       expect(Date.parse(stored.schedules[2]?.nextFireAt ?? '')).toBeGreaterThan(Date.parse(dueAt))
+      expect(Date.parse(stored.schedules[3]?.nextFireAt ?? '')).toBeGreaterThan(Date.parse(dueAt))
     } finally {
       warnSpy.mockRestore()
     }

@@ -180,6 +180,42 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     });
   }
 
+  if (maybe.type === "archive_profile") {
+    const profileId = (maybe as { profileId?: unknown }).profileId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof profileId !== "string" || profileId.trim().length === 0) {
+      return fail("archive_profile.profileId must be a non-empty string");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("archive_profile.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "archive_profile",
+      profileId: profileId.trim(),
+      requestId
+    });
+  }
+
+  if (maybe.type === "restore_profile") {
+    const profileId = (maybe as { profileId?: unknown }).profileId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof profileId !== "string" || profileId.trim().length === 0) {
+      return fail("restore_profile.profileId must be a non-empty string");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("restore_profile.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "restore_profile",
+      profileId: profileId.trim(),
+      requestId
+    });
+  }
+
   if (maybe.type === "update_manager_cwd") {
     const managerId = (maybe as { managerId?: unknown }).managerId;
     const cwd = (maybe as { cwd?: unknown }).cwd;

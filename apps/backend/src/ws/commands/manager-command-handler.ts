@@ -1,5 +1,6 @@
 import { MANAGER_MODEL_PRESETS, type ClientCommand, type ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
+import { ArchiveOperationError } from "../../swarm/archive/archive-service.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   filterSystemProfileIds,
@@ -258,6 +259,53 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     return true;
   }
 
+  if (command.type === "archive_profile") {
+    try {
+      requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
+      const result = await swarmManager.archiveProfile(command.profileId);
+      if (result.terminatedWorkerIds.length > 0) {
+        handleDeletedAgentSubscriptions(new Set(result.terminatedWorkerIds));
+      }
+      broadcastToSubscribed({
+        type: "profile_archived",
+        profileId: result.profileId,
+        archivedAt: result.archivedAt,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: archiveErrorCode(error, "ARCHIVE_PROFILE_FAILED"),
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "restore_profile") {
+    try {
+      requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
+      const result = await swarmManager.restoreProfile(command.profileId);
+      broadcastToSubscribed({
+        type: "profile_restored",
+        profileId: result.profileId,
+        openAgentId: result.openAgentId,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: archiveErrorCode(error, "RESTORE_PROFILE_FAILED"),
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
   if (command.type === "rename_profile") {
     try {
       requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
@@ -310,6 +358,10 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
   }
 
   return false;
+}
+
+function archiveErrorCode(error: unknown, fallback: string): string {
+  return error instanceof ArchiveOperationError ? error.code : fallback;
 }
 
 function requireManagerModelPreset(value: string | undefined): SwarmModelPreset {
