@@ -96,4 +96,45 @@ describe('ArchiveView', () => {
     restoreButtons[1]?.click()
     expect(restoreSession).toHaveBeenCalledWith('archived-session', true)
   })
+
+  it('shows parent project name for directly archived sessions', () => {
+    const activeProfile = { ...profile('my-project'), displayName: 'My Cool Project' }
+    renderArchive({
+      profiles: [activeProfile],
+      agents: [
+        manager('my-project', 'my-project'),
+        manager('archived-session', 'my-project', '2026-05-20T00:00:00.000Z'),
+      ],
+    })
+
+    const sessionRow = container.querySelector('[data-testid="archived-session-row"]')
+    expect(sessionRow).toBeTruthy()
+    const projectIndicator = sessionRow!.querySelector('[data-testid="archived-session-project"]')
+    expect(projectIndicator).toBeTruthy()
+    expect(projectIndicator!.textContent).toBe('My Cool Project')
+  })
+
+  it('shows project name from profileId for multiple archived sessions from different projects', () => {
+    const projectA = { ...profile('project-a'), displayName: 'Project Alpha' }
+    const projectB = { ...profile('project-b'), displayName: 'Project Beta' }
+
+    renderArchive({
+      profiles: [projectA, projectB],
+      agents: [
+        manager('project-a', 'project-a'),
+        manager('project-b', 'project-b'),
+        manager('session-from-a', 'project-a', '2026-05-20T00:00:00.000Z'),
+        manager('session-from-b', 'project-b', '2026-05-20T00:00:00.000Z'),
+      ],
+    })
+
+    const sessionRows = container.querySelectorAll('[data-testid="archived-session-row"]')
+    expect(sessionRows).toHaveLength(2)
+
+    const projectIndicators = container.querySelectorAll('[data-testid="archived-session-project"]')
+    expect(projectIndicators).toHaveLength(2)
+    const labels = Array.from(projectIndicators).map((el) => el.textContent)
+    expect(labels).toContain('Project Alpha')
+    expect(labels).toContain('Project Beta')
+  })
 })

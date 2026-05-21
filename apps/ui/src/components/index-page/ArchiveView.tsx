@@ -80,22 +80,29 @@ export function ArchiveView({
           <section className="mt-6 space-y-3" aria-labelledby="archived-sessions-heading">
             <h2 id="archived-sessions-heading" className="text-sm font-semibold text-muted-foreground">Archived sessions</h2>
             <div className="space-y-2">
-              {archivedSessions.map((row) => (
-                <div key={row.sessionAgent.agentId} className="rounded-lg border bg-card p-4" data-testid="archived-session-row">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="truncate font-medium">{sessionLabel(row.sessionAgent, row.isDefault)}</h3>
-                      <p className="text-xs text-muted-foreground">{row.sessionAgent.agentId}</p>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      <Button type="button" size="sm" onClick={() => onRestoreSession(row.sessionAgent.agentId, true)}>
-                        <RotateCcw className="mr-2 size-4" aria-hidden="true" />
-                        Restore
-                      </Button>
+              {archivedSessions.map((row) => {
+                const parentProfile = profiles.find((p) => p.profileId === row.sessionAgent.profileId)
+                return (
+                  <div key={row.sessionAgent.agentId} className="rounded-lg border bg-card p-4" data-testid="archived-session-row">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="truncate font-medium">{sessionLabel(row.sessionAgent, row.isDefault)}</h3>
+                        {parentProfile ? (
+                          <p className="text-xs text-muted-foreground" data-testid="archived-session-project">{profileLabel(parentProfile)}</p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">{row.sessionAgent.agentId}</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button type="button" size="sm" onClick={() => onRestoreSession(row.sessionAgent.agentId, true)}>
+                          <RotateCcw className="mr-2 size-4" aria-hidden="true" />
+                          Restore
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </section>
         ) : null}

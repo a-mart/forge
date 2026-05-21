@@ -597,23 +597,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           ) : undefined}
         />
 
-        {onOpenArchive ? (
-          <button
-            type="button"
-            onClick={onOpenArchive}
-            className={cn(
-              'mt-2 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-              isArchiveActive
-                ? 'bg-sidebar-accent text-sidebar-foreground'
-                : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-            )}
-            aria-current={isArchiveActive ? 'page' : undefined}
-          >
-            <Archive className="size-4" aria-hidden="true" />
-            <span>Archive</span>
-          </button>
-        ) : null}
-
         {isSearchActive ? (
           <div className="px-1 pb-1">
             <h2 className="text-xs font-semibold text-muted-foreground">
@@ -676,6 +659,26 @@ export const AgentSidebar = React.memo(function AgentSidebar({
             </ul>
           )
         })()}
+
+        {/* Archive button at the bottom of the scrollable content */}
+        {onOpenArchive ? (
+          <div className="mt-4 border-t border-sidebar-border px-0 pt-1.5">
+            <button
+              type="button"
+              onClick={onOpenArchive}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                isArchiveActive
+                  ? 'bg-sidebar-accent text-sidebar-foreground'
+                  : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+              )}
+              aria-current={isArchiveActive ? 'page' : undefined}
+            >
+              <Archive className="size-4" aria-hidden="true" />
+              <span>Archive</span>
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <SidebarFooter
