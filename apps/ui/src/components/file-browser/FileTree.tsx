@@ -249,6 +249,15 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     const refresh = useCallback(() => {
       itemDataRef.current.clear()
       childrenIdsRef.current.clear()
+      // Clear the @headless-tree async data loader's internal cache so
+      // rebuildTree() re-fetches children from the server instead of
+      // returning stale data from the library's own dataRef.
+      const treeDataRef = tree.getDataRef<{
+        itemData: Record<string, unknown>
+        childrenIds: Record<string, string[]>
+      }>()
+      treeDataRef.current.itemData = {}
+      treeDataRef.current.childrenIds = {}
       tree.rebuildTree()
     }, [tree])
 
