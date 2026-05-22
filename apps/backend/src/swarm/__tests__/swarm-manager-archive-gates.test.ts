@@ -40,6 +40,85 @@ async function makeTempConfig(port = 8791): Promise<SwarmConfig> {
 }
 
 describe('SwarmManager archive gates', () => {
+  it('reorders visible active profiles without requiring archived profiles in the payload', async () => {
+    const config = await makeTempConfig(8891)
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createManager('manager', { name: 'Alpha', cwd: config.defaultCwd })
+    await manager.createManager('manager', { name: 'Beta', cwd: config.defaultCwd })
+    await manager.createManager('manager', { name: 'Gamma', cwd: config.defaultCwd })
+
+    await manager.archiveProfile('beta')
+    const archivedSortOrder = manager.listProfiles().find((profile) => profile.profileId === 'beta')?.sortOrder
+
+    await manager.reorderProfiles(['gamma', 'manager', 'alpha'])
+
+    const profiles = manager.listProfiles()
+    const sortOrders = profiles.map((profile) => profile.sortOrder)
+    expect(new Set(sortOrders).size).toBe(sortOrders.length)
+    expect(profiles.find((profile) => profile.profileId === 'beta')?.sortOrder).toBe(archivedSortOrder)
+    expect(
+      profiles
+        .filter((profile) => profile.profileId !== 'cortex' && profile.profileType !== 'system' && !profile.archivedAt)
+        .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+        .map((profile) => profile.profileId),
+    ).toEqual(['gamma', 'manager', 'alpha'])
+  })
+
+  it('preserves archived raw sort-order slots after the configured manager was reordered downward', async () => {
+    const config = await makeTempConfig(8894)
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createManager('manager', { name: 'Alpha', cwd: config.defaultCwd })
+    await manager.createManager('manager', { name: 'Beta', cwd: config.defaultCwd })
+    await manager.createManager('manager', { name: 'Gamma', cwd: config.defaultCwd })
+
+    await manager.reorderProfiles(['alpha', 'beta', 'manager', 'gamma'])
+    await manager.archiveProfile('beta')
+    const archivedSortOrder = manager.listProfiles().find((profile) => profile.profileId === 'beta')?.sortOrder
+
+    await manager.reorderProfiles(['gamma', 'alpha', 'manager'])
+
+    const profiles = manager.listProfiles()
+    const sortOrders = profiles.map((profile) => profile.sortOrder)
+    expect(new Set(sortOrders).size).toBe(sortOrders.length)
+    const sortOrderById = new Map(profiles.map((profile) => [profile.profileId, profile.sortOrder]))
+    expect(sortOrderById.get('beta')).toBe(archivedSortOrder)
+    expect(
+      profiles
+        .filter((profile) => profile.profileId !== 'cortex' && profile.profileType !== 'system' && !profile.archivedAt)
+        .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+        .map((profile) => profile.profileId),
+    ).toEqual(['gamma', 'alpha', 'manager'])
+  })
+
+  it('rejects archived profile IDs in reorder payloads even when the count matches active profiles', async () => {
+    const config = await makeTempConfig(8892)
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createManager('manager', { name: 'Alpha', cwd: config.defaultCwd })
+    await manager.createManager('manager', { name: 'Beta', cwd: config.defaultCwd })
+    await manager.createManager('manager', { name: 'Gamma', cwd: config.defaultCwd })
+
+    await manager.archiveProfile('beta')
+
+    await expect(manager.reorderProfiles(['gamma', 'manager', 'beta'])).rejects.toThrow(
+      'Unknown or non-reorderable profile ID: beta',
+    )
+  })
+
+  it('rejects duplicate active profile IDs in reorder payloads', async () => {
+    const config = await makeTempConfig(8893)
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createManager('manager', { name: 'Alpha', cwd: config.defaultCwd })
+    await manager.createManager('manager', { name: 'Gamma', cwd: config.defaultCwd })
+
+    await expect(manager.reorderProfiles(['gamma', 'gamma', 'manager'])).rejects.toThrow(
+      'Duplicate profile IDs in reorder request',
+    )
+  })
+
   it('blocks user/runtime/message operations for directly archived sessions', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

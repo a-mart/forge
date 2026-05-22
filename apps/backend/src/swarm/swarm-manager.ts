@@ -4873,12 +4873,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async reorderProfiles(profileIds: string[]): Promise<void> {
-    // Validate: profileIds must contain exactly the current non-Cortex profile IDs
+    // Validate: profileIds must contain exactly the current active, user-visible profile IDs.
+    // Archived projects are hidden from the Builder sidebar, so clients cannot include them in
+    // drag payloads; keep their existing sorted slots below when assigning new sortOrder values.
     const currentProfiles = Array.from(this.profiles.values());
 
     const reorderableIds = new Set(
       currentProfiles
-        .filter((profile) => profile.profileId !== CORTEX_PROFILE_ID && !isSystemProfile(profile))
+        .filter((profile) =>
+          profile.profileId !== CORTEX_PROFILE_ID && !isSystemProfile(profile) && !profile.archivedAt
+        )
         .map((profile) => profile.profileId)
     );
 
@@ -4895,9 +4899,39 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     }
 
-    // Assign sortOrder values
-    for (let i = 0; i < profileIds.length; i++) {
-      const profile = this.profiles.get(profileIds[i]);
+    const persistedOrderProfiles = [...currentProfiles].sort((a, b) => {
+      const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder;
+      }
+
+      if (a.createdAt !== b.createdAt) {
+        return a.createdAt.localeCompare(b.createdAt);
+      }
+
+      return a.profileId.localeCompare(b.profileId);
+    });
+    const orderedProfiles: ManagerProfile[] = [];
+    let nextReorderedIndex = 0;
+
+    for (const profile of persistedOrderProfiles) {
+      if (!reorderableIds.has(profile.profileId)) {
+        orderedProfiles.push(profile);
+        continue;
+      }
+
+      const reorderedProfile = this.profiles.get(profileIds[nextReorderedIndex]);
+      if (reorderedProfile) {
+        orderedProfiles.push(reorderedProfile);
+      }
+      nextReorderedIndex += 1;
+    }
+
+    // Assign unique sortOrder values across the full registry so hidden archived/system profiles
+    // retain stable slots and restored projects do not collide with active project ordering.
+    for (let i = 0; i < orderedProfiles.length; i++) {
+      const profile = this.profiles.get(orderedProfiles[i].profileId);
       if (profile) {
         profile.sortOrder = i;
         this.descriptorStoreAdapter.upsertProfileInLiveMaps(profile);
