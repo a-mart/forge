@@ -35,6 +35,10 @@ export interface WorkerRun {
   billableTokens: number;
 }
 
+export interface StatsScanDiagnostics {
+  skippedMissingTimestampUsageRecords: number;
+}
+
 export interface StatsScanResult {
   usageRecords: UsageRecord[];
   dailyUsage: Map<string, DailyTotals>;
@@ -45,6 +49,7 @@ export interface StatsScanResult {
   userMessages: number[];
   earliestUsageDayKey: string | null;
   managerRepoPaths: string[];
+  diagnostics: StatsScanDiagnostics;
 }
 
 export interface CacheEntry {

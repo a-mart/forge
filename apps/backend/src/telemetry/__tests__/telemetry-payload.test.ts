@@ -267,6 +267,12 @@ describe('telemetry payload helpers', () => {
         tokenCount: 200,
       },
       {
+        modelId: 'cursor-sdk/composer-2.5',
+        displayName: 'Composer 2.5',
+        percentage: 5,
+        tokenCount: 50,
+      },
+      {
         modelId: 'foo/bar',
         displayName: 'Unknown',
         percentage: 5,
@@ -274,7 +280,7 @@ describe('telemetry payload helpers', () => {
       },
     ]
 
-    expect(extractProvidersUsed(stats)).toEqual(['anthropic', 'openai-codex', 'openrouter', 'xai'])
+    expect(extractProvidersUsed(stats)).toEqual(['anthropic', 'cursor-sdk', 'openai-codex', 'openrouter', 'xai'])
   })
 
   it('prefers untruncated provider sets when present on the stats snapshot', () => {

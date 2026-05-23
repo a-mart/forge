@@ -7,6 +7,7 @@ import {
 } from "../../swarm/data-paths.js";
 import { resolveRoster } from "../../swarm/specialists/specialist-registry.js";
 import { modelCatalogService } from "../../swarm/model-catalog-service.js";
+import { parseCursorSdkUsageCustomEntry } from "../../utils/cursor-sdk-usage-records.js";
 import {
   extractReasoningLevel,
   extractUsage,
@@ -192,6 +193,21 @@ function toEventRecord(
     diagnostics: TokenAnalyticsScanDiagnostics;
   }
 ): TokenAnalyticsEventRecord | null {
+  return toMessageUsageEventRecord(entry, options) ?? toCursorSdkUsageEventRecord(entry, options);
+}
+
+function toMessageUsageEventRecord(
+  entry: unknown,
+  options: {
+    profileId: string;
+    sessionId: string;
+    workerId: string;
+    specialistId: string | null;
+    attributionKind: TokenAnalyticsAttributionKind;
+    fallbackThinkingLevel: string | null;
+    diagnostics: TokenAnalyticsScanDiagnostics;
+  }
+): TokenAnalyticsEventRecord | null {
   if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) {
     return null;
   }
@@ -222,6 +238,43 @@ function toEventRecord(
     attributionKind: options.attributionKind,
     usage: cloneUsageTotals(usage),
     cost: extractCostTotals(message.usage),
+  };
+}
+
+function toCursorSdkUsageEventRecord(
+  entry: unknown,
+  options: {
+    profileId: string;
+    sessionId: string;
+    workerId: string;
+    specialistId: string | null;
+    attributionKind: TokenAnalyticsAttributionKind;
+    diagnostics: TokenAnalyticsScanDiagnostics;
+  }
+): TokenAnalyticsEventRecord | null {
+  const parsed = parseCursorSdkUsageCustomEntry(entry);
+  if (!parsed) {
+    return null;
+  }
+
+  const timestampMs = toTimestampMs(parsed.timestamp) ?? toTimestampMs(parsed.capturedAt);
+  if (timestampMs === null) {
+    options.diagnostics.skippedMissingTimestampEvents += 1;
+    return null;
+  }
+
+  return {
+    timestampMs,
+    profileId: options.profileId,
+    sessionId: options.sessionId,
+    workerId: options.workerId,
+    provider: "cursor-sdk",
+    modelId: parsed.modelId,
+    reasoningLevel: parsed.reasoningLevel,
+    specialistId: options.specialistId,
+    attributionKind: options.attributionKind,
+    usage: cloneUsageTotals(parsed.usage),
+    cost: null,
   };
 }
 
@@ -256,7 +309,7 @@ function inferProviderFromScopedModelId(modelId: string): string | null {
   }
 
   const prefix = normalized.slice(0, slashIndex);
-  const knownPrefixes = new Set(["anthropic", "openai", "openai-codex", "claude-sdk", "xai", "openrouter"]);
+  const knownPrefixes = new Set(["anthropic", "openai", "openai-codex", "claude-sdk", "cursor-sdk", "xai", "openrouter"]);
   return knownPrefixes.has(prefix) ? prefix : null;
 }
 
