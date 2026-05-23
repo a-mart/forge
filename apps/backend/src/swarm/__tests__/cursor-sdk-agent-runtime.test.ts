@@ -223,6 +223,38 @@ describe("CursorSdkAgentRuntime", () => {
     ]);
   });
 
+  it("maps stream tool rows normally while usage persists once", async () => {
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({
+        streamItems: [
+          { type: "tool_call", call_id: "call-1", name: "shell", status: "running", args: { command: "pwd" } },
+          { type: "tool_call", call_id: "call-1", name: "shell", status: "completed", result: { stdout: "/tmp" } },
+          assistantText("ok")
+        ]
+      });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
+    expect(callbacks.onSessionEvent).toHaveBeenCalledWith("worker-1", expect.objectContaining({
+      type: "tool_execution_start",
+      toolName: "execute",
+      toolCallId: "call-1",
+      args: { command: "pwd" }
+    }));
+    expect(callbacks.onSessionEvent).toHaveBeenCalledWith("worker-1", expect.objectContaining({
+      type: "tool_execution_end",
+      toolName: "execute",
+      toolCallId: "call-1",
+      result: { stdout: "/tmp" },
+      isError: false
+    }));
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toHaveLength(1);
+  });
+
   it("dedupes duplicate turn-ended usage deltas", async () => {
     const usageDelta = { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } };
     const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
