@@ -267,13 +267,9 @@ async function handleAgentSystemPromptHttpRequest(
   const dataDir = swarmManager.getConfig().paths.dataDir;
 
   if (descriptor.role === "manager") {
-    try {
-      await swarmManager.validateProjectAgentSourceForRead(descriptor.agentId);
-    } catch (error) {
-      sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
-
+    // resolveAgentSystemPromptForRead runs preflightRepoProjectAgentRuntime
+    // internally, which handles repo-source drift detection and idle-runtime
+    // recycling. No separate validateProjectAgentSourceForRead call needed.
     let systemPrompt: string | null;
     try {
       systemPrompt = await swarmManager.resolveAgentSystemPromptForRead(descriptor.agentId);
