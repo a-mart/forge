@@ -155,7 +155,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
     || (Boolean(onPromoteToProjectAgent) && !isProjectAgent && sessionAgent.sessionPurpose !== 'cortex_review' && sessionAgent.sessionPurpose !== 'agent_creator')
     || (isProjectAgent && Boolean(onOpenProjectAgentSettings))
     || (isProjectAgent && Boolean(onViewCreationHistory))
-    || (isProjectAgent && !isRepoSourcedAgent && Boolean(onDemoteProjectAgent))
+    || (isProjectAgent && Boolean(onDemoteProjectAgent))
 
   // Compute streaming state from statuses map
   const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
@@ -385,18 +385,18 @@ export const SessionRowItem = React.memo(function SessionRowItem({
               View Creation History
             </ContextMenuItem>
           ) : null}
-          {isProjectAgent && !isRepoSourcedAgent && onDemoteProjectAgent ? (
+          {isProjectAgent && onDemoteProjectAgent ? (
             <ContextMenuItem onClick={() => {
               try {
                 void Promise.resolve(onDemoteProjectAgent()).catch((err) => {
-                  console.error('Failed to demote project agent:', err)
+                  console.error(isRepoSourcedAgent ? 'Failed to unlink repository project agent:' : 'Failed to demote project agent:', err)
                 })
               } catch (err) {
-                console.error('Failed to demote project agent:', err)
+                console.error(isRepoSourcedAgent ? 'Failed to unlink repository project agent:' : 'Failed to demote project agent:', err)
               }
             }}>
               <ArrowDownToLine className="mr-2 size-3.5" />
-              Demote to Session
+              {isRepoSourcedAgent ? 'Unlink from Repository Definition' : 'Demote to Session'}
             </ContextMenuItem>
           ) : null}
 

@@ -38,6 +38,8 @@ interface ProjectAgentReferenceDocsEditorProps {
   onDeleteReference: (fileName: string) => Promise<void>
   onAddReference: (fileName: string, content: string) => Promise<void>
   referenceEditingAvailable: boolean
+  readOnly?: boolean
+  readOnlyReason?: string
 }
 
 export function ProjectAgentReferenceDocsEditor({
@@ -57,6 +59,8 @@ export function ProjectAgentReferenceDocsEditor({
   onDeleteReference,
   onAddReference,
   referenceEditingAvailable,
+  readOnly = false,
+  readOnlyReason,
 }: ProjectAgentReferenceDocsEditorProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -145,7 +149,7 @@ export function ProjectAgentReferenceDocsEditor({
               Injected into this project agent's prompt inside <code>&lt;agent_reference_docs&gt;</code>.
             </p>
           </div>
-          {!isPromoting ? (
+          {!isPromoting && !readOnly ? (
             <Button
               type="button"
               variant="outline"
@@ -166,7 +170,13 @@ export function ProjectAgentReferenceDocsEditor({
         </p>
       ) : null}
 
-      {!isPromoting && !referenceEditingAvailable ? (
+      {!isPromoting && readOnly ? (
+        <p className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          {readOnlyReason ?? 'Reference documents are read-only.'}
+        </p>
+      ) : null}
+
+      {!isPromoting && !readOnly && !referenceEditingAvailable ? (
         <p className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
           Reference document editing is unavailable right now.
         </p>
@@ -197,24 +207,26 @@ export function ProjectAgentReferenceDocsEditor({
                   >
                     {isExpanded ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="size-4 shrink-0 text-muted-foreground" />}
                     <span className="min-w-0 truncate font-mono text-sm">{fileName}</span>
-                    {isDirty ? (
+                    {isDirty && !readOnly ? (
                       <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
                         Unsaved
                       </span>
                     ) : null}
                   </button>
                   {isSavingReference ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => void onDeleteReference(fileName)}
-                    disabled={isSavingReference || saving}
-                  >
-                    <Trash2 className="size-4" />
-                    <span className="sr-only">Delete {fileName}</span>
-                  </Button>
+                  {!readOnly ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => void onDeleteReference(fileName)}
+                      disabled={isSavingReference || saving}
+                    >
+                      <Trash2 className="size-4" />
+                      <span className="sr-only">Delete {fileName}</span>
+                    </Button>
+                  ) : null}
                 </div>
                 {isExpanded ? (
                   <div className="space-y-2 border-t border-border/60 px-3 py-3">
@@ -231,19 +243,23 @@ export function ProjectAgentReferenceDocsEditor({
                           rows={10}
                           className="max-h-80 resize-y overflow-y-auto font-mono text-xs"
                           style={{ fieldSizing: 'fixed' }}
+                          readOnly={readOnly}
+                          disabled={readOnly}
                         />
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-[11px] text-muted-foreground">
                             Markdown content injected into this project agent's runtime prompt.
                           </p>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => void onSaveReference(fileName)}
-                            disabled={!isDirty || isSavingReference || saving}
-                          >
-                            Save
-                          </Button>
+                          {!readOnly ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => void onSaveReference(fileName)}
+                              disabled={!isDirty || isSavingReference || saving}
+                            >
+                              Save
+                            </Button>
+                          ) : null}
                         </div>
                       </>
                     )}

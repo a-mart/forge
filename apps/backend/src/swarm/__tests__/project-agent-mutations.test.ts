@@ -140,7 +140,7 @@ describe("project-agent mutation helpers", () => {
     expect(buildProjectAgentInfoForMutation({ descriptor, whenToUse: "Docs", handle: "docs" }).source).toEqual(source);
   });
 
-  it("blocks repo-sourced project-agent mutation plans", () => {
+  it("blocks repo-sourced edits but allows unlink without deleting local records", () => {
     const descriptor = makeDescriptor({
       agentId: "docs",
       projectAgent: {
@@ -163,9 +163,19 @@ describe("project-agent mutation helpers", () => {
         updatedAt: "2026-04-04T00:00:00.000Z"
       })
     ).toThrow("Repository-managed project agents are read-only");
-    expect(() =>
+    expect(
       planSetSessionProjectAgentMutation({ descriptor, projectAgent: null, updatedAt: "2026-04-04T00:00:00.000Z" })
-    ).toThrow("Repository-managed project agents are read-only");
+    ).toEqual({
+      flags: {
+        directoryChanged: true,
+        promptChanged: false,
+        referenceChanged: false,
+        descriptorChanged: true,
+        recordChanged: true
+      },
+      nextProjectAgent: null,
+      configPlan: { kind: "none" }
+    });
   });
 
   it("builds demote delete plans", () => {

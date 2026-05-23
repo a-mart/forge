@@ -1,8 +1,9 @@
-import type {
-  PersistedProjectAgentConfig,
-  ProjectAgentCapability,
-  ProjectAgentConfigSourceSnapshot,
-  RepoProjectAgentSourceIdentity
+import {
+  isRepoProjectAgentSource,
+  type PersistedProjectAgentConfig,
+  type ProjectAgentCapability,
+  type ProjectAgentConfigSourceSnapshot,
+  type RepoProjectAgentSourceIdentity
 } from "@forge/protocol";
 import {
   backupProjectAgentRecordForRepoLink,
@@ -23,6 +24,7 @@ import {
 } from "./agents/project-agents.js";
 import { ProjectAgentRegistry } from "./agents/project-agent-registry.js";
 import { ProjectAgentSettingsSnapshotReader } from "./agents/project-agent-settings-snapshot.js";
+import { resolveRepoProjectAgentSource } from "./agents/repo-project-agent-source.js";
 import {
   deleteProjectAgentReferenceDoc,
   listProjectAgentReferenceDocs,
@@ -332,6 +334,10 @@ export class SwarmProjectAgentService {
       return { profileId: params.profileId, agentId: sessionDescriptor.agentId, projectAgent };
     }
 
+    if (params.applyRecommendedModel) {
+      throw new Error("applyRecommendedModel is not supported when linking a repository project agent; create a new session or change the model separately.");
+    }
+
     const targetAgentId = params.targetAgentId ?? existing?.agentId;
     if (!targetAgentId) {
       throw new Error("targetAgentId is required when linking a repository project agent");
@@ -468,6 +474,19 @@ export class SwarmProjectAgentService {
   }
 
   async getProjectAgentReference(agentId: string, fileName: string): Promise<string> {
+    const scope = this.registry.assertReferenceScope(agentId);
+    if (isRepoProjectAgentSource(scope.descriptor.projectAgent.source)) {
+      const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.dataDir });
+      if (resolution.source.status !== "valid" || !resolution.definition) {
+        throw new Error(`Reference document ${fileName} is unavailable because the repository project-agent source is ${resolution.source.status}`);
+      }
+      const doc = resolution.definition.referenceDocs.find((candidate) => candidate.path === fileName);
+      if (!doc) {
+        throw new Error(`Reference document ${fileName} does not exist`);
+      }
+      return doc.content;
+    }
+
     const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
     const content = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
     if (content === null) {
@@ -527,10 +546,10 @@ export class SwarmProjectAgentService {
     }
 
     if (params.explicitBindToSourceWorkspace) {
-      return;
+      throw new Error("Binding a repository Project Agent to a session from a different workspace is not supported yet. Link a session from the same workspace or create a new backing session.");
     }
 
-    throw new Error("Target session workspace does not match the repository project-agent source; pass explicitBindToSourceWorkspace to bind intentionally.");
+    throw new Error("Target session workspace does not match the repository project-agent source.");
   }
 
   private async assertProjectAgentHandleAvailable(profileId: string, handle: string, ownerAgentId?: string): Promise<void> {

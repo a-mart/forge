@@ -163,6 +163,7 @@ describe('SwarmManager', () => {
     const snapshot = await manager.getProjectAgentConfig(result.agentId)
     expect(snapshot.systemPrompt).toBe('Repo docs prompt')
     expect(snapshot.references).toEqual(['guide.md'])
+    expect(await manager.getProjectAgentReference(result.agentId, 'guide.md')).toBe('# Repo guide')
     expect(snapshot.source).toMatchObject({ status: 'valid', definitionId: 'docs' })
     expect(manager.notifiedProjectAgentProfileIds).toContain('manager')
   })
@@ -209,6 +210,15 @@ describe('SwarmManager', () => {
     const updatedSnapshot = await manager.getProjectAgentConfig(created.sessionAgent.agentId)
     expect(updatedSnapshot.config.whenToUse).toBe('Current repo docs.')
     expect(updatedSnapshot.config.capabilities).toBeUndefined()
+
+    const repoPromptPath = join(config.defaultCwd, '.forge', 'project-agents', 'docs', 'prompt.md')
+    const repoPromptBeforeUnlink = await readFile(repoPromptPath, 'utf8')
+    const demoted = await manager.setSessionProjectAgent(created.sessionAgent.agentId, null)
+    expect(demoted.projectAgent).toBeNull()
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toBeUndefined()
+    expect(manager.getConversationHistory(created.sessionAgent.agentId).some((entry) => entry.type === 'conversation_message')).toBe(true)
+    expect(await readFile(repoPromptPath, 'utf8')).toBe(repoPromptBeforeUnlink)
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'docs'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('recycles repo project-agent runtimes on signature changes and uses the fresh prompt for deliveries', async () => {
@@ -455,6 +465,22 @@ describe('SwarmManager', () => {
       mode: 'link',
       targetAgentId: other.sessionAgent.agentId,
     })).rejects.toThrow(/workspace does not match/i)
+    await expect(manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'qa',
+      mode: 'link',
+      targetAgentId: other.sessionAgent.agentId,
+      explicitBindToSourceWorkspace: true,
+    })).rejects.toThrow(/different workspace is not supported/i)
+    await expect(manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'qa',
+      mode: 'link',
+      targetAgentId: other.sessionAgent.agentId,
+      applyRecommendedModel: true,
+    })).rejects.toThrow(/applyRecommendedModel is not supported/i)
   })
 
   it('setSessionProjectAgent promotes, persists, emits, and survives clear_session', async () => {
@@ -805,7 +831,7 @@ describe('SwarmManager', () => {
         version: 1,
         agentId: created.sessionAgent.agentId,
         handle: 'docs',
-        whenToUse: 'Maintain docs.',
+        whenToUse: '',
         promotedAt: created.sessionAgent.createdAt,
         updatedAt: expect.any(String),
       },

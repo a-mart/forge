@@ -1,14 +1,15 @@
 import { lstat, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join, relative, resolve } from "node:path";
 import type {
+  ActivateRepoProjectAgentRequest,
+  ActivateRepoProjectAgentResponse,
   ProjectResourceExecutableSurface,
   ProjectResourceInventorySection,
   ProjectResourceMutationResponse,
   ProjectResourceOverrideRequest,
   ProjectResourcesSnapshotResponse,
   ProjectResourceSeedRequest,
-  ProjectResourceTrustRequest,
-  ActivateRepoProjectAgentRequest
+  ProjectResourceTrustRequest
 } from "@forge/protocol";
 import { scanRepoProjectAgentDefinitions } from "../../../swarm/repo-project-agent-definitions.js";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
@@ -107,12 +108,12 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             const result = await swarmManager.activateRepoProjectAgent(body);
             const context = resolveContextFromBody(swarmManager, body);
             const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
-            const payload: ProjectResourceMutationResponse = {
+            const payload: ActivateRepoProjectAgentResponse = {
               success: true,
               snapshot,
               agentId: result.agentId,
               projectAgent: result.projectAgent
-            } as ProjectResourceMutationResponse & { agentId: string; projectAgent: unknown };
+            };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
             return;

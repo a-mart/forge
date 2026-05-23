@@ -26,14 +26,22 @@ export class ProjectAgentSettingsSnapshotReader {
     const scope = this.options.registry.assertReferenceScope(agentId);
     if (isRepoProjectAgentSource(scope.descriptor.projectAgent.source)) {
       const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.dataDir });
+      if (resolution.source.status === "valid" && resolution.definition) {
+        return {
+          config: buildRepoProjectAgentConfigFromDefinition(scope, resolution.definition),
+          systemPrompt: resolution.definition.prompt,
+          references: resolution.definition.referenceDocs.map((doc) => doc.path),
+          source: resolution.source
+        };
+      }
+
       return {
-        config: resolution.definition
-          ? buildRepoProjectAgentConfigFromDefinition(scope, resolution.definition)
-          : this.options.registry.buildFallbackConfig(scope, this.options.now?.()),
-        systemPrompt: resolution.source.status === "valid" && resolution.definition ? resolution.definition.prompt : null,
-        references: resolution.source.status === "valid" && resolution.definition
-          ? resolution.definition.referenceDocs.map((doc) => doc.path)
-          : [],
+        config: {
+          ...this.options.registry.buildFallbackConfig(scope, this.options.now?.()),
+          whenToUse: ""
+        },
+        systemPrompt: null,
+        references: [],
         source: resolution.source
       };
     }

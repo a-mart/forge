@@ -105,10 +105,10 @@ export function ProjectAgentSettingsSheet({
       if (result.source) {
         setSourceSnapshot(result.source)
       }
-      // For repo-sourced agents, update whenToUse from the live config snapshot
-      // so the UI shows current repo values, not stale descriptor values
+      // For repo-sourced agents, only show live config when the repo source is valid.
+      // Missing/invalid sources must not display stale descriptor values as editable-looking truth.
       if (isRepoSourced) {
-        setWhenToUse(result.config.whenToUse)
+        setWhenToUse(result.source?.status === 'valid' ? result.config.whenToUse : '')
       }
       setConfigLoading(false)
     }).catch((err) => {
@@ -350,7 +350,7 @@ export function ProjectAgentSettingsSheet({
       await onDemote(agentId)
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to demote project agent.')
+      setError(err instanceof Error ? err.message : isRepoSourced ? 'Failed to deactivate repository Project Agent.' : 'Failed to demote project agent.')
     } finally {
       setSaving(false)
     }
@@ -600,7 +600,7 @@ export function ProjectAgentSettingsSheet({
                   </label>
                   <p className="text-[11px] text-muted-foreground">
                     {isRepoSourced
-                      ? 'Defined in config.json. Edit the repo file to change.'
+                      ? 'Approved at activation from config.json. Re-activate or link again to change capabilities.'
                       : 'Allow this agent to create new manager sessions in the same profile.'}
                   </p>
                 </div>
@@ -624,6 +624,8 @@ export function ProjectAgentSettingsSheet({
               onDeleteReference={handleDeleteReference}
               onAddReference={handleAddReference}
               referenceEditingAvailable={referenceEditingAvailable}
+              readOnly={isRepoSourced}
+              readOnlyReason={isRepoSourced ? 'Repository reference documents are read from .forge/project-agents/<definitionId>/reference and cannot be edited here.' : undefined}
             />
 
             {!isPromoting && !isRepoSourced && onRequestRecommendations ? (
@@ -653,9 +655,9 @@ export function ProjectAgentSettingsSheet({
                   {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
                 </Button>
               ) : null}
-              {!isPromoting && !isRepoSourced ? (
+              {!isPromoting ? (
                 <Button variant="outline" onClick={handleDemote} disabled={saving} className="text-destructive hover:text-destructive">
-                  Demote
+                  {isRepoSourced ? 'Deactivate repository Project Agent' : 'Demote'}
                 </Button>
               ) : null}
               <Button variant="ghost" onClick={handleRequestClose} disabled={saving}>

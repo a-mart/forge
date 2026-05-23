@@ -3260,7 +3260,7 @@ describe('SwarmWebSocketServer', () => {
         version: 1,
         agentId: sessionAgent.agentId,
         handle: 'docs',
-        whenToUse: 'Maintain docs.',
+        whenToUse: '',
       })
       expect(configEvent.source).toEqual({
         type: 'repo',

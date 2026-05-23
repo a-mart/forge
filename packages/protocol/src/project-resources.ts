@@ -1,4 +1,4 @@
-import type { AgentModelDescriptor, ProjectAgentCapability, ProjectAgentSourceProblem, ProjectAgentSourceStatus } from './agents.js'
+import type { AgentModelDescriptor, ProjectAgentCapability, ProjectAgentInfo, ProjectAgentSourceProblem, ProjectAgentSourceStatus } from './agents.js'
 
 export type ProjectResourceTrustState = 'trusted' | 'blocked' | 'untrusted' | 'not_applicable'
 
@@ -127,4 +127,9 @@ export interface ProjectResourceSeedRequest {
 export interface ProjectResourceMutationResponse {
   success: true
   snapshot: ProjectResourcesSnapshotResponse
+}
+
+export interface ActivateRepoProjectAgentResponse extends ProjectResourceMutationResponse {
+  agentId: string
+  projectAgent: ProjectAgentInfo
 }

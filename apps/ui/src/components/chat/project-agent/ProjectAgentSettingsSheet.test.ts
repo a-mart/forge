@@ -36,10 +36,14 @@ async function flushEffects(): Promise<void> {
 function renderSheet(overrides: {
   currentProjectAgent?: ProjectAgentInfo | null
   onSave?: ProjectAgentSettingsSheetProps['onSave']
+  onDemote?: ProjectAgentSettingsSheetProps['onDemote']
   onGetProjectAgentConfig?: ProjectAgentSettingsSheetProps['onGetProjectAgentConfig']
+  onGetReference?: ProjectAgentSettingsSheetProps['onGetReference']
+  onSetReference?: ProjectAgentSettingsSheetProps['onSetReference']
+  onDeleteReference?: ProjectAgentSettingsSheetProps['onDeleteReference']
 } = {}) {
   const onSave = overrides.onSave ?? vi.fn(async () => {})
-  const onDemote = vi.fn(async () => {})
+  const onDemote = overrides.onDemote ?? vi.fn(async () => {})
   const onClose = vi.fn()
 
   const currentProjectAgent: ProjectAgentInfo | null = overrides.currentProjectAgent !== undefined
@@ -72,6 +76,9 @@ function renderSheet(overrides: {
           systemPrompt: null,
           references: [],
         })),
+        onGetReference: overrides.onGetReference,
+        onSetReference: overrides.onSetReference,
+        onDeleteReference: overrides.onDeleteReference,
       }),
     )
   })
@@ -290,16 +297,22 @@ describe('ProjectAgentSettingsSheet', () => {
     expect(capabilitiesToggle).not.toBeNull()
     expect(capabilitiesToggle.disabled).toBe(true)
 
-    // Save and Demote buttons should NOT be present
+    expect(document.body.textContent).toContain('Approved at activation from config.json. Re-activate or link again to change capabilities.')
+    expect(document.body.textContent).toContain('Repository reference documents are read from .forge/project-agents/<definitionId>/reference')
+
+    // Save should not be present; repo agents expose a distinct deactivate action.
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (btn) => btn.textContent === 'Save',
     )
     expect(saveButton).toBeUndefined()
 
-    const demoteButton = Array.from(document.body.querySelectorAll('button')).find(
-      (btn) => btn.textContent === 'Demote',
+    const deactivateButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Deactivate repository Project Agent',
     )
-    expect(demoteButton).toBeUndefined()
+    expect(deactivateButton).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Add Reference Document')
+    expect(document.body.textContent).not.toContain('Delete ref.md')
+    expect(document.body.textContent).not.toContain('Save')
 
     // Close button should be present (not Cancel)
     const closeButton = Array.from(document.body.querySelectorAll('button')).find(
@@ -362,6 +375,9 @@ describe('ProjectAgentSettingsSheet', () => {
 
     // Should show source path
     expect(banner!.textContent).toContain('/test/repo/.forge')
+
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField.value).toBe('')
   })
 
   it('displays wrong_workspace status with actionable diagnostic', async () => {

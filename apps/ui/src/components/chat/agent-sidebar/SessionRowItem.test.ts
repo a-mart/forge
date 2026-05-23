@@ -165,7 +165,7 @@ describe('SessionRowItem repo-sourced project agent badge', () => {
     expect(repoLabel).toBeNull()
   })
 
-  it('does not show demote context menu item for repo-sourced agents', () => {
+  it('shows distinct unlink context menu item for repo-sourced agents', () => {
     renderRow({
       session: {
         sessionAgent: makeAgent({
@@ -188,8 +188,14 @@ describe('SessionRowItem repo-sourced project agent badge', () => {
       onOpenProjectAgentSettings: vi.fn(),
     })
 
-    // Demote should not be in the DOM (it's gated by !isRepoSourcedAgent)
-    const text = container.textContent ?? ''
+    const trigger = container.querySelector('[data-slot="context-menu-trigger"]') ?? container.firstElementChild
+    expect(trigger).not.toBeNull()
+    flushSync(() => {
+      trigger!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+    })
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Unlink from Repository Definition')
     expect(text).not.toContain('Demote to Session')
   })
 })

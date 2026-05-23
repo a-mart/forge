@@ -1,15 +1,11 @@
 import type {
   ActivateRepoProjectAgentRequest,
+  ActivateRepoProjectAgentResponse,
   ProjectResourceMutationResponse,
   ProjectResourcesSnapshotResponse,
   ProjectResourceTrustRequest,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
-
-export interface ActivateRepoProjectAgentResponse extends ProjectResourceMutationResponse {
-  agentId: string
-  projectAgent: Record<string, unknown>
-}
 
 export function fetchProjectResourcesSnapshot(
   apiClient: SettingsApiClient,
