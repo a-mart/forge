@@ -11,6 +11,10 @@ export function inferProviderFromModelId(modelId: string): string | null {
     return exactCatalogProvider
   }
 
+  if (normalized.startsWith('cursor-sdk/')) {
+    return 'cursor-sdk'
+  }
+
   if (isSlashScopedOpenRouterModelId(normalized)) {
     return 'openrouter'
   }

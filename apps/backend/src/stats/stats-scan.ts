@@ -13,7 +13,8 @@ import {
 import { buildDayRange, shiftDayKey, toDayKey } from "./stats-time.js";
 import { collectManagerRepoPaths } from "./stats-git.js";
 import { emptyDailyTotals, sumDailyEntries } from "./stats-usage.js";
-import type { DailyTotals, SessionMetaLite, StatsScanResult, UsageRecord, WorkerRun } from "./stats-types.js";
+import type { DailyTotals, SessionMetaLite, StatsScanDiagnostics, StatsScanResult, UsageRecord, WorkerRun } from "./stats-types.js";
+import { parseCursorSdkUsageCustomEntry } from "../utils/cursor-sdk-usage-records.js";
 
 export async function scanProfilesData(
   dataDir: string,
@@ -24,6 +25,7 @@ export async function scanProfilesData(
   const dailyUsage = new Map<string, DailyTotals>();
   const workerRuns: WorkerRun[] = [];
   const userMessages: number[] = [];
+  const diagnostics: StatsScanDiagnostics = { skippedMissingTimestampUsageRecords: 0 };
 
   let totalSessionCount = 0;
 
@@ -43,6 +45,7 @@ export async function scanProfilesData(
         collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
           fallbackThinkingLevel: context.thinkingLevel,
           timezone,
+          diagnostics,
         });
       });
 
@@ -59,6 +62,7 @@ export async function scanProfilesData(
           billableTokensForWorker += collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
             fallbackThinkingLevel: context.thinkingLevel,
             timezone,
+            diagnostics,
           });
         });
 
@@ -123,6 +127,12 @@ export async function scanProfilesData(
   ).length;
   const managerRepoPaths = collectManagerRepoPaths(agents);
 
+  if (diagnostics.skippedMissingTimestampUsageRecords > 0 && process.env.FORGE_DEBUG === "true") {
+    console.debug("[stats-scan] skipped Cursor SDK usage records with missing or invalid timestamps", {
+      count: diagnostics.skippedMissingTimestampUsageRecords,
+    });
+  }
+
   return {
     usageRecords,
     dailyUsage,
@@ -133,6 +143,7 @@ export async function scanProfilesData(
     userMessages,
     earliestUsageDayKey,
     managerRepoPaths,
+    diagnostics,
   };
 }
 
@@ -161,7 +172,7 @@ function collectUsageAndMessages(
   usageRecords: UsageRecord[],
   dailyUsage: Map<string, DailyTotals>,
   userMessages: number[],
-  options: { fallbackThinkingLevel: string | null; timezone: string }
+  options: { fallbackThinkingLevel: string | null; timezone: string; diagnostics: StatsScanDiagnostics }
 ): number {
   if (!isRecord(entry)) {
     return 0;
@@ -205,6 +216,11 @@ function collectUsageAndMessages(
     return 0;
   }
 
+  const cursorBillableTokens = collectCursorSdkUsage(entry, usageRecords, dailyUsage, options);
+  if (cursorBillableTokens > 0) {
+    return cursorBillableTokens;
+  }
+
   if (
     entry.type === "custom" &&
     entry.customType === "swarm_conversation_entry" &&
@@ -220,6 +236,51 @@ function collectUsageAndMessages(
   }
 
   return 0;
+}
+
+function collectCursorSdkUsage(
+  entry: unknown,
+  usageRecords: UsageRecord[],
+  dailyUsage: Map<string, DailyTotals>,
+  options: { fallbackThinkingLevel: string | null; timezone: string; diagnostics: StatsScanDiagnostics }
+): number {
+  const parsed = parseCursorSdkUsageCustomEntry(entry);
+  if (!parsed) {
+    return 0;
+  }
+
+  const timestampMs = toTimestampMs(parsed.timestamp) ?? toTimestampMs(parsed.capturedAt);
+  if (timestampMs === null) {
+    options.diagnostics.skippedMissingTimestampUsageRecords += 1;
+    return 0;
+  }
+
+  const modelId = `cursor-sdk/${parsed.modelId}`;
+  const reasoningLevel = parsed.reasoningLevel ?? options.fallbackThinkingLevel ?? "default";
+  const day = toDayKey(timestampMs, options.timezone);
+  const usage = parsed.usage;
+
+  usageRecords.push({
+    timestampMs,
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite,
+    total: usage.total,
+    modelId,
+    reasoningLevel,
+  });
+
+  const existing = dailyUsage.get(day) ?? emptyDailyTotals();
+  dailyUsage.set(day, {
+    input: existing.input + usage.input,
+    output: existing.output + usage.output,
+    cacheRead: existing.cacheRead + usage.cacheRead,
+    cacheWrite: existing.cacheWrite + usage.cacheWrite,
+    total: existing.total + usage.total,
+  });
+
+  return usage.input + usage.output;
 }
 
 async function readSessionMeta(path: string): Promise<SessionMetaLite | null> {
