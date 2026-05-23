@@ -47,6 +47,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `claude-opus-4-6` | Claude Opus 4.6 | Anthropic | low, medium, high |
 | `claude-sonnet-4-5-20250929` | Claude Sonnet 4.5 | Anthropic | low, medium, high |
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Anthropic | low, medium, high |
+| `composer-2.5` | Composer 2.5 | Cursor SDK | low, medium, high |
 | `grok-4` | Grok 4 | xAI | none, low, medium, high, xhigh |
 | `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
 | `grok-4.20-0309-reasoning` | Grok 4.20 Reasoning | xAI | none, low, medium, high, xhigh |
@@ -56,6 +57,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 - The table above shows models currently available in the Forge catalog. Some models listed in upstream Pi releases may not yet be curated into Forge.
 - For the authoritative, up-to-date model list with availability status, see **Settings → Models** in the UI.
 - xAI models require `XAI_API_KEY` to be configured (see Settings → Authentication).
+- Cursor SDK models are specialist-only. The built-in `cursor-builder` specialist targets Composer 2.5, ships disabled by default, and manager selectors do not offer Cursor SDK models.
 - To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 
 ## System Prompt
@@ -126,6 +128,8 @@ Only exhausted fallback failures surface upward.
 
 
 **Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
+
+`cursor-builder` is the built-in Cursor SDK specialist. It targets Composer 2.5, ships disabled by default, and is intended for opt-in implementation work rather than manager sessions.
 
 ### Resolution Order
 

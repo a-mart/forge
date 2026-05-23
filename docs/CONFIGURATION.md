@@ -80,9 +80,11 @@ FORGE_PORT=47187
 
 ## Provider Authentication
 
-Provider auth for **OpenAI**, **Anthropic**, and **xAI** is configured through the dashboard UI under **Settings → Authentication**. The pane shows provider labels with auth-mode badges so you can see whether a row is using OAuth or an API key.
+Provider auth for **OpenAI**, **Anthropic**, **xAI**, and **Cursor SDK** is configured through the dashboard UI under **Settings → Authentication**. The pane shows provider labels with auth-mode badges so you can see whether a row is using OAuth or an API key.
 
-OpenAI and Anthropic support either OAuth or API key auth. Claude SDK is separate and OAuth-only: it uses Claude Code CLI OAuth, with credentials stored in macOS Keychain on macOS and `~/.claude/.credentials.json` on Linux and Windows.
+OpenAI and Anthropic support either OAuth or API key auth. Claude SDK is separate and OAuth-only: it uses Claude Code CLI OAuth, with credentials stored in macOS Keychain on macOS and `~/.claude/.credentials.json` on Linux and Windows. Cursor SDK is API-key-based: set `CURSOR_API_KEY` in Settings → Authentication, shared secrets, or the environment. It is specialist-only; manager create/change/override selectors do not expose Cursor SDK or Composer 2.5.
+
+For the native Cursor runtime, Forge uses the Forge-owned Cursor SDK `stateRoot` and persisted `sdkAgentId` to keep runtime state local to the app.
 
 
 Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. Those visibility settings also control whether a model can appear in manager create-session, change-default, and per-session override selectors. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.

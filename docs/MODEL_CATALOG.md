@@ -33,6 +33,10 @@ Forge owns model metadata end-to-end:
 6. Request-time provider quirks are handled by `apps/backend/src/swarm/model-catalog-request-behaviors.ts`. xAI native search is future/experimental pending a dedicated adapter; it is not a current production path.
 
 
+## Cursor SDK provider
+
+`cursor-sdk` is a native specialist-only provider backed by `@cursor/sdk`. The curated model is `composer-2.5` (Composer 2.5), and it is visible only in specialist selectors. Manager create/change/override selectors intentionally hide or reject Cursor SDK models.
+
 ## Override semantics
 
 Local overrides are intentionally narrow and safe.

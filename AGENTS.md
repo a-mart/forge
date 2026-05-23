@@ -87,7 +87,8 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Memory system** | `swarm/memory-merge.ts`, `swarm/memory-paths.ts` | Chat UI | Per-session and per-profile persistent memory with merge lifecycle |
 | **Cortex** | `swarm/operational/` | `components/chat/cortex/` | AI self-improvement, first-launch welcome preferences, and knowledge management |
 | **Cortex auto-review** | `swarm/cortex-auto-review-settings.ts`, `ws/routes/cortex-auto-review-routes.ts` | `components/settings/SettingsGeneral.tsx`, `components/settings/cortex-auto-review-api.ts` | Periodic automated reviews that run only when sessions have changed (deterministic pre-check prevents unnecessary LLM sessions) |
-| **Agent runtime dispatch** | `swarm/runtime/runtime-factory.ts`, `swarm/runtime/runtime-{binding,callback-gate,prompt-plan,resource-plan,recovery-state,tool-plan}.ts`, `swarm/runtime/{acp,claude,pi}/` | Settings UI (model selectors) | Thin provider-dispatch facade plus shared planning/projector helpers and provider-specific runtime creators. Keep provider construction inside the creator modules, keep the facade stable, and preserve the public import surface while refactoring. |
+| **Agent runtime dispatch** | `swarm/runtime/runtime-factory.ts`, `swarm/runtime/runtime-{binding,callback-gate,prompt-plan,resource-plan,recovery-state,tool-plan}.ts`, `swarm/runtime/{acp,claude,cursor-sdk,pi}/` | Settings UI (manager model selectors and specialist selectors) | Thin provider-dispatch facade plus shared planning/projector helpers and provider-specific runtime creators. Keep provider construction inside the creator modules, keep the facade stable, and preserve the public import surface while refactoring. |
+| **Cursor SDK runtime** | `swarm/runtime/cursor-sdk/` | Settings UI (specialist selectors only) | Native Cursor SDK agent runtime via `@cursor/sdk` for specialist workers only. Uses API-key auth from `CURSOR_API_KEY` in Settings → Authentication, secrets, or env, persists Forge-owned `stateRoot` and `sdkAgentId`, and manager runtimes remain unsupported. Electron packaging stages and preflights `@cursor/sdk`, `sqlite3`, and platform binaries. |
 | **Cursor ACP runtime** | `swarm/runtime/acp/` | — | Cursor ACP agent runtime with HTTP MCP tool bridge for worker specialists. Requires Cursor CLI installed and `agent login`. Experimental; disable with `FORGE_ACP_ENABLED=false`. Cross-vendor fallback to OpenAI Codex. |
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
 | **Voice/transcription** | `ws/routes/transcription-routes.ts` | `lib/voice-transcription-client.ts` | Voice input and transcription |
@@ -296,6 +297,7 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `BRAVE_API_KEY` | — | Brave Search skill |
 | `GEMINI_API_KEY` | — | Image generation skill |
 | `XAI_API_KEY` | — | xAI/Grok models (when using external API key mode) |
+| `CURSOR_API_KEY` | — | Cursor SDK specialist runtime API key (specialist-only; manager selectors do not expose Cursor SDK/Composer 2.5) |
 | `FORGE_ACP_ENABLED` | `true` | Enable Cursor ACP runtime (requires Cursor CLI) |
 | `FORGE_TERMINAL_ENABLED` | `true` | Enable integrated terminal subsystem |
 | `FORGE_TERMINAL_MAX_PER_SESSION` | `10` | Max terminals per session |
