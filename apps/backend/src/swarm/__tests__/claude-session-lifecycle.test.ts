@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import { CLAUDE_SDK_AUTH_USER_MESSAGE } from "../claude-startup-errors.js";
 import { getProfileMemoryPath } from "../data-paths.js";
+import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../../utils/cursor-sdk-usage-records.js";
+import { CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE } from "../runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
 import { readSessionMeta } from "../session-manifest.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { RuntimeUserMessage, SmartCompactResult, SwarmAgentRuntime } from "../runtime-contracts.js";
@@ -308,6 +310,40 @@ describe("Claude session lifecycle", () => {
     expect(forkedContent).toContain('"id":"m1"');
     expect(forkedContent).toContain('"id":"m2"');
     expect(forkedContent).not.toContain("swarm_claude_session_state");
+  });
+
+  it("drops persisted Cursor SDK runtime state and usage when forking through the swarm path", async () => {
+    const config = await makeTempConfig(8907);
+    const manager = new TestSwarmManager(config);
+    const rootManager = await bootWithDefaultManager(manager, config);
+    const source = await manager.createManager(rootManager.agentId, {
+      name: "Cursor Source",
+      cwd: config.defaultCwd
+    });
+
+    await writeFile(
+      source.sessionFile,
+      [
+        JSON.stringify({ type: "session", version: 3, id: "hdr", timestamp: "2026-01-01T00:00:00.000Z", cwd: config.defaultCwd }),
+        JSON.stringify({ type: "custom", customType: "swarm_conversation_entry", id: "m1", data: { id: "m1", type: "conversation_message", role: "user", text: "copy me" } }),
+        JSON.stringify({ type: "custom", customType: CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE, id: "cursor-state", data: { version: 1, sdkAgentId: "sdk-parent", model: { provider: "cursor-sdk", modelId: "composer-2.5" }, cwd: config.defaultCwd, stateRoot: "parent-state", savedAt: "2026-01-01T00:00:01.000Z" } }),
+        JSON.stringify({ type: "custom", customType: CURSOR_SDK_USAGE_ENTRY_TYPE, id: "cursor-usage", data: { version: 1, source: "cursor_sdk_on_delta_turn_ended", provider: "cursor-sdk", modelId: "composer-2.5", reasoningLevel: "medium", usage: { input: 10, output: 4, cacheRead: 2, cacheWrite: 1, total: 17 }, sdkRunId: "run-parent", sdkAgentId: "sdk-parent", providerStatus: "FINISHED", runStatus: "finished", waitStatus: "finished", terminalStatus: "FINISHED", outcome: "completed", capturedAt: "2026-01-01T00:00:02.000Z" } }),
+        JSON.stringify({ type: "custom", customType: "swarm_conversation_entry", id: "m2", data: { id: "m2", type: "conversation_message", role: "assistant", text: "copy me too" } }),
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const forked = await manager.forkSession(source.agentId, { label: "Cursor Fork" });
+    const forkedContent = await readFile(forked.sessionAgent.sessionFile, "utf8");
+
+    expect(forkedContent).toContain('"customType":"swarm_conversation_entry"');
+    expect(forkedContent).toContain('"id":"m1"');
+    expect(forkedContent).toContain('"id":"m2"');
+    expect(forkedContent).not.toContain(CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE);
+    expect(forkedContent).not.toContain(CURSOR_SDK_USAGE_ENTRY_TYPE);
+    expect(forkedContent).not.toContain("sdk-parent");
+    expect(forkedContent).not.toContain("run-parent");
   });
 
   it("emits direct Claude SDK auth guidance system messages", async () => {

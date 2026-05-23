@@ -120,6 +120,8 @@ import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js
 import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
+import { CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE } from "./runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
+import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
 import { reconcileInterruptedToolCallsForBoot } from "./interrupted-tool-reconciliation.js";
 import {
@@ -1646,7 +1648,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           sourceSessionFile,
           targetSessionFile,
           fromMessageId,
-          omittedCustomTypes: [CLAUDE_RUNTIME_STATE_ENTRY_TYPE]
+          omittedCustomTypes: [
+            CLAUDE_RUNTIME_STATE_ENTRY_TYPE,
+            CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE,
+            CURSOR_SDK_USAGE_ENTRY_TYPE
+          ]
         }),
       copyPinnedMessagesForFork: (sourceDescriptor, forkedDescriptor) =>
         this.copyPinnedMessagesForFork(sourceDescriptor, forkedDescriptor),
