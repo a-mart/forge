@@ -1,7 +1,7 @@
 import { Archive, RotateCcw } from 'lucide-react'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
-import { getArchivedProfileRows, getDirectlyArchivedSessionRows, getProfileRowLastUserMessageAt } from '@/lib/agent-hierarchy'
+import { getArchivedProfileRows, getDirectlyArchivedSessionRows, getProfileRowLastUserMessageAt, getSessionLastUserMessageAt } from '@/lib/agent-hierarchy'
 
 interface ArchiveViewProps {
   agents: AgentDescriptor[]
@@ -105,6 +105,9 @@ export function ArchiveView({
                         ) : (
                           <p className="text-xs text-muted-foreground">{row.sessionAgent.agentId}</p>
                         )}
+                        <p className="text-xs text-muted-foreground" data-testid="archived-session-last-used">
+                          {formatLastUsed(getSessionLastUserMessageAt(row.sessionAgent))}
+                        </p>
                       </div>
                       <div className="flex shrink-0 gap-2">
                         <Button type="button" size="sm" onClick={() => onRestoreSession(row.sessionAgent.agentId, true)}>

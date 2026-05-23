@@ -243,6 +243,34 @@ describe('agent-hierarchy', () => {
     expect(getProfileRowLastUserMessageAt(rows[0]!)).toBe('2026-05-24T00:00:00.000Z')
   })
 
+  it('sorts directly archived session rows by last user message timestamp', () => {
+    const profileId = 'manager'
+    const activeProfile = profile(profileId)
+    const sessions = [
+      {
+        ...manager('archived-missing'),
+        profileId,
+        archivedAt: '2026-05-25T00:00:00.000Z',
+      },
+      {
+        ...manager('archived-older'),
+        profileId,
+        archivedAt: '2026-05-22T00:00:00.000Z',
+        lastUserMessageAt: '2026-05-20T00:00:00.000Z',
+      },
+      {
+        ...manager('archived-newer'),
+        profileId,
+        archivedAt: '2026-05-21T00:00:00.000Z',
+        lastUserMessageAt: '2026-05-24T00:00:00.000Z',
+      },
+    ]
+
+    expect(getDirectlyArchivedSessionRows(sessions, [activeProfile])
+      .map((row) => row.sessionAgent.agentId))
+      .toEqual(['archived-newer', 'archived-older', 'archived-missing'])
+  })
+
   it('returns archive view rows for archived projects and directly archived sessions only', () => {
     const profileId = 'manager'
     const activeProfile = profile(profileId)

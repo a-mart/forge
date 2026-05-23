@@ -61,6 +61,23 @@ export function getArchivedProfileRows(
     })
 }
 
+export function compareArchivedSessionRowsByLastUsed(a: SessionRow, b: SessionRow): number {
+  const aLastUsed = getSessionLastUserMessageAt(a.sessionAgent)
+  const bLastUsed = getSessionLastUserMessageAt(b.sessionAgent)
+  if (aLastUsed && bLastUsed) {
+    const lastUsedOrder = bLastUsed.localeCompare(aLastUsed)
+    if (lastUsedOrder !== 0) return lastUsedOrder
+  } else if (aLastUsed) {
+    return -1
+  } else if (bLastUsed) {
+    return 1
+  }
+
+  const archivedOrder = (b.sessionAgent.archivedAt ?? '').localeCompare(a.sessionAgent.archivedAt ?? '')
+  if (archivedOrder !== 0) return archivedOrder
+  return a.sessionAgent.agentId.localeCompare(b.sessionAgent.agentId)
+}
+
 export function getDirectlyArchivedSessionRows(
   agents: AgentDescriptor[],
   profiles: ManagerProfile[],
@@ -68,6 +85,7 @@ export function getDirectlyArchivedSessionRows(
   return buildProfileTreeRows(agents, profiles, { includeArchived: true })
     .filter((row) => !row.profile.archivedAt)
     .flatMap((row) => row.sessions.filter((session) => Boolean(session.sessionAgent.archivedAt)))
+    .sort(compareArchivedSessionRowsByLastUsed)
 }
 
 export function filterAgentsAfterSessionArchive(
