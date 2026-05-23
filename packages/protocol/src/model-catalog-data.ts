@@ -158,9 +158,9 @@ export const FORGE_MODEL_CATALOG = {
       provider: 'cursor-sdk',
       defaultModelId: 'composer-2.5',
       defaultReasoningLevel: 'medium',
-      visibleInCreateManager: false,
-      visibleInChangeManager: false,
-      visibleInSpawnPreset: false,
+      visibleInCreateManager: true,
+      visibleInChangeManager: true,
+      visibleInSpawnPreset: true,
       visibleInSpecialists: true,
     },
     'cursor-acp': {
@@ -499,7 +499,7 @@ export const FORGE_MODEL_CATALOG = {
       enabledByDefault: true,
       piUpstreamId: null,
       intentionalDivergenceNotes:
-        'Synthetic entry — Cursor SDK local runtime is not a Pi-managed runtime; specialist-only surface after live E2E and Electron packaging validation; manager runtimes remain unsupported',
+        'Synthetic entry — Cursor SDK local runtime is not a Pi-managed runtime; native Cursor SDK path for both manager and specialist runtime usage',
     },
 
     'cursor-acp/default': {

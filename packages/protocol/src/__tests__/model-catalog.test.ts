@@ -81,9 +81,9 @@ const EXPECTED_FAMILIES = {
   'cursor-composer': {
     provider: 'cursor-sdk',
     defaultModelId: 'composer-2.5',
-    visibleInCreateManager: false,
-    visibleInChangeManager: false,
-    visibleInSpawnPreset: false,
+    visibleInCreateManager: true,
+    visibleInChangeManager: true,
+    visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
   'cursor-acp': {
@@ -341,12 +341,12 @@ describe('model-catalog', () => {
     })
   })
 
-  it('exposes Cursor SDK only for specialists while keeping manager and spawn preset surfaces guarded', () => {
+  it('makes Cursor SDK accessible across manager and specialist surfaces', () => {
     expect(getCatalogFamily('cursor-sdk')).toBeUndefined()
     expect(getCatalogFamily('cursor-composer')).toMatchObject({
-      visibleInCreateManager: false,
-      visibleInChangeManager: false,
-      visibleInSpawnPreset: false,
+      visibleInCreateManager: true,
+      visibleInChangeManager: true,
+      visibleInSpawnPreset: true,
       visibleInSpecialists: true,
     })
     expect(getCatalogFamily('cursor-acp')).toMatchObject({
@@ -356,9 +356,9 @@ describe('model-catalog', () => {
       visibleInSpecialists: false,
     })
     expect(getSpecialistFamilies().map((family) => family.familyId)).toContain('cursor-composer')
-    expect(getCreateManagerFamilies().map((family) => family.familyId)).not.toContain('cursor-composer')
-    expect(getChangeManagerFamilies().map((family) => family.familyId)).not.toContain('cursor-composer')
-    expect(getSpawnPresetFamilies().map((family) => family.familyId)).not.toContain('cursor-composer')
+    expect(getCreateManagerFamilies().map((family) => family.familyId)).toContain('cursor-composer')
+    expect(getChangeManagerFamilies().map((family) => family.familyId)).toContain('cursor-composer')
+    expect(getSpawnPresetFamilies().map((family) => family.familyId)).toContain('cursor-composer')
   })
 
   it('ensures all models reference valid families', () => {
@@ -482,6 +482,7 @@ describe('model-catalog', () => {
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',
+      'cursor-composer',
     ])
 
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toEqual([
@@ -491,6 +492,7 @@ describe('model-catalog', () => {
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',
+      'cursor-composer',
     ])
 
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toEqual([
@@ -501,6 +503,7 @@ describe('model-catalog', () => {
       'sdk-opus',
       'sdk-sonnet',
       'pi-grok',
+      'cursor-composer',
     ])
 
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([

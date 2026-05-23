@@ -45,6 +45,14 @@
       "@tanstack/router-plugin>zod": "3.25.76",
       "@tanstack/start-plugin-core>zod": "3.25.76"
     },
+    "packageExtensions": {
+      "nitro-nightly@3.0.1-20260223-102354-c0b46421": {
+        "dependencies": {
+          "youch": "4.1.0-beta.14",
+          "youch-core": "0.3.3"
+        }
+      }
+    },
     "onlyBuiltDependencies": [
       "sharp",
       "esbuild",

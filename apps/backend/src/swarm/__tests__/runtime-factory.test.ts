@@ -1914,30 +1914,44 @@ describe("RuntimeFactory", () => {
     expect(getContextWindowSpy).toHaveBeenCalledWith("claude-opus-4-6", "claude-sdk");
   });
 
-  it("rejects Cursor SDK manager descriptors with v1 manager unsupported copy", async () => {
+  it("supports Cursor SDK descriptors for manager creation", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+    const close = vi.fn();
+    const create = vi.fn(async () => ({
+      agentId: "sdk-agent-1",
+      close,
+      send: vi.fn(),
+    }));
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create, resume: vi.fn() },
+      Cursor: { models: { list: vi.fn() } },
+    }));
 
     const factory = createFactory(rootDir);
-
-    await expect(
-      factory.createRuntimeForDescriptor(
-        createManagerDescriptor(rootDir, {
-          model: {
-            provider: "cursor-sdk",
-            modelId: "composer-2.5",
-            thinkingLevel: "medium",
-          },
-        }),
-        "system prompt",
-        3
-      )
-    ).rejects.toThrow(
-      "Cursor SDK manager runtimes are not supported in this release. Use Cursor SDK through a specialist worker."
+    const runtime = await factory.createRuntimeForDescriptor(
+      createManagerDescriptor(rootDir, {
+        model: {
+          provider: "cursor-sdk",
+          modelId: "composer-2.5",
+          thinkingLevel: "medium",
+        },
+      }),
+      "system prompt",
+      3
     );
 
-    expect(acpRuntimeMockState.create).not.toHaveBeenCalled();
-    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+    expect(runtime.runtimeType).toBe("cursor-sdk");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: "cursor-test-key",
+      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      platform: { stateRoot: join(rootDir, "cursor-sdk-state", "manager-1"), workspaceRef: rootDir },
+    }));
+
+    await runtime.terminate();
+    expect(close).toHaveBeenCalled();
   });
 
   it("selects the Cursor SDK runtime for worker descriptors without falling through to Pi or ACP", async () => {

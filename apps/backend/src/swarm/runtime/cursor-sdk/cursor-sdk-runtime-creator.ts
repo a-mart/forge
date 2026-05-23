@@ -17,8 +17,6 @@ import { loadCursorSdkModule } from "./cursor-sdk-loader.js";
 import { createCursorSdkMcpToolBridge } from "./cursor-sdk-mcp-tool-bridge.js";
 import { toCursorSdkModelSelection } from "./cursor-sdk-model-selection.js";
 
-export const CURSOR_SDK_MANAGER_UNSUPPORTED_MESSAGE =
-  "Cursor SDK manager runtimes are not supported in this release. Use Cursor SDK through a specialist worker.";
 
 interface CursorSdkRuntimeCreatorDependencies {
   host: SwarmToolHost;
@@ -57,10 +55,6 @@ export class CursorSdkRuntimeCreator {
     creationOptions?: RuntimeCreationOptions;
   }): Promise<SwarmAgentRuntime> {
     const { descriptor, systemPrompt, runtimeToken, sessionDescriptor } = options;
-
-    if (descriptor.role === "manager") {
-      throw new Error(CURSOR_SDK_MANAGER_UNSUPPORTED_MESSAGE);
-    }
 
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
