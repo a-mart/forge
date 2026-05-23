@@ -244,7 +244,7 @@ describe("CursorSdkAgentRuntime", () => {
 
     await runtime.sendMessage("hello");
     await waitFor(() => expect(sendOptions?.onDelta).toBeTypeOf("function"));
-    await sendOptions?.onDelta?.({ update: { type: "text-delta", text: "duplicate" } });
+    sendOptions?.onDelta?.({ update: { type: "text-delta", text: "duplicate" } });
     gate.resolve();
 
     await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
@@ -254,6 +254,29 @@ describe("CursorSdkAgentRuntime", () => {
     expect(messageUpdates).toEqual([
       expect.objectContaining({ message: { role: "assistant", content: [{ type: "text", text: "ok" }] } })
     ]);
+  });
+
+  it("contains malformed onDelta usage parsing so SDK callback delivery cannot create unhandled rejections", async () => {
+    const gate = deferred();
+    let sendOptions: CursorSdkSendOptions | undefined;
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      sendOptions = options;
+      return createRun({ streamGate: gate.promise, streamItems: [assistantText("ok")] });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+    const throwingUpdate = new Proxy({}, {
+      get() {
+        throw new Error("ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN");
+      }
+    });
+
+    await runtime.sendMessage("hello");
+    await waitFor(() => expect(sendOptions?.onDelta).toBeTypeOf("function"));
+    expect(sendOptions?.onDelta?.({ update: throwingUpdate })).toBeUndefined();
+    gate.resolve();
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
   });
 
   it("maps stream tool rows normally while usage persists once", async () => {
@@ -579,6 +602,109 @@ describe("CursorSdkAgentRuntime", () => {
     expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
       details: { errorName: "RateLimitError", errorCode: "429" }
     }));
+  });
+
+  it("projects Cursor SDK send auth/connect failures as runtime errors even when the projector callback rejects", async () => {
+    class ConnectError extends Error {
+      code = "ERR_NOT_LOGGED_IN";
+    }
+    const send = vi.fn(async () => {
+      throw new ConnectError("ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN");
+    });
+    const { runtime, callbacks } = await setupRuntime({
+      sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() },
+      callbacks: {
+        onRuntimeError: async () => {
+          throw new Error("projector rejected");
+        }
+      }
+    });
+
+    await runtime.sendMessage("first");
+
+    await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalled());
+    await waitFor(() => expect(runtime.getStatus()).toBe("idle"));
+    expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
+      message: "ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN",
+      details: { errorName: "ConnectError", errorCode: "ERR_NOT_LOGGED_IN" }
+    }));
+  });
+
+  it("rejects Agent.create auth/connect failures to the caller instead of starting a partially constructed runtime", async () => {
+    class ConnectError extends Error {
+      code = "ERR_NOT_LOGGED_IN";
+    }
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-cursor-sdk-runtime-"));
+    await mkdir(rootDir, { recursive: true });
+    const descriptor = createDescriptor(rootDir);
+    await writeFile(descriptor.sessionFile, "", "utf8");
+    const createError = new ConnectError("ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN");
+
+    await expect(CursorSdkAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: vi.fn(async () => undefined),
+        onSessionEvent: vi.fn(async () => undefined),
+        onAgentEnd: vi.fn(async () => undefined),
+        onRuntimeError: vi.fn(async () => undefined),
+      },
+      now: () => "2026-01-01T00:00:00.000Z",
+      sdk: { Agent: { create: vi.fn(async () => { throw createError; }), resume: vi.fn() }, Cursor: { models: { list: vi.fn() } } },
+      apiKey: "cursor-key",
+      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      systemPrompt: "Forge worker instructions",
+      mcpServers: {},
+      stateRoot: join(rootDir, "cursor-sdk-state", descriptor.agentId),
+      promptHash: "hash-1",
+    })).rejects.toMatchObject({
+      message: "ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN",
+      code: "ERR_NOT_LOGGED_IN"
+    });
+  });
+
+  it("contains Agent.resume auth/connect failures and falls back to Agent.create", async () => {
+    class ConnectError extends Error {
+      code = "ERR_NOT_LOGGED_IN";
+    }
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-cursor-sdk-runtime-"));
+    await mkdir(rootDir, { recursive: true });
+    const descriptor = createDescriptor(rootDir);
+    await writeFile(descriptor.sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "session-1", timestamp: "now", cwd: rootDir })}\n${JSON.stringify({
+      type: "custom",
+      customType: CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE,
+      id: "state-1",
+      parentId: "session-1",
+      timestamp: "now",
+      data: { version: 1, sdkAgentId: "persisted-agent", model: descriptor.model, cwd: rootDir, stateRoot: "old", savedAt: "old" },
+    })}\n`, "utf8");
+    const resume = vi.fn(async () => {
+      throw new ConnectError("ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN");
+    });
+    const create = vi.fn(async () => ({ agentId: "fresh-sdk-agent", send: vi.fn(async () => createRun()), close: vi.fn() }));
+
+    const runtime = await CursorSdkAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: vi.fn(async () => undefined),
+        onSessionEvent: vi.fn(async () => undefined),
+        onAgentEnd: vi.fn(async () => undefined),
+        onRuntimeError: vi.fn(async () => undefined),
+      },
+      now: () => "2026-01-01T00:00:00.000Z",
+      sdk: { Agent: { create, resume }, Cursor: { models: { list: vi.fn() } } },
+      apiKey: "cursor-key",
+      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      systemPrompt: "Forge worker instructions",
+      mcpServers: {},
+      stateRoot: join(rootDir, "cursor-sdk-state", descriptor.agentId),
+      promptHash: "hash-1",
+    });
+
+    expect(resume).toHaveBeenCalledWith("persisted-agent", expect.any(Object));
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(runtime.getCustomEntries(CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sdkAgentId: "fresh-sdk-agent" })
+    ]));
   });
 
   it("fallback snapshot preserves original text and images without Forge wrapper", async () => {
