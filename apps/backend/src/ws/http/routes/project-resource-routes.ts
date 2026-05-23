@@ -7,7 +7,8 @@ import type {
   ProjectResourceOverrideRequest,
   ProjectResourcesSnapshotResponse,
   ProjectResourceSeedRequest,
-  ProjectResourceTrustRequest
+  ProjectResourceTrustRequest,
+  ActivateRepoProjectAgentRequest
 } from "@forge/protocol";
 import { scanRepoProjectAgentDefinitions } from "../../../swarm/repo-project-agent-definitions.js";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
@@ -21,6 +22,7 @@ const PROJECT_RESOURCES_ENDPOINT_PATH = "/api/settings/project-resources";
 const PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH = "/api/settings/project-resources/override";
 const PROJECT_RESOURCES_TRUST_ENDPOINT_PATH = "/api/settings/project-resources/trust";
 const PROJECT_RESOURCES_SEED_ENDPOINT_PATH = "/api/settings/project-resources/seed";
+const PROJECT_RESOURCES_PROJECT_AGENT_ACTIVATE_ENDPOINT_PATH = "/api/settings/project-resources/project-agents/activate";
 const PROJECT_RESOURCES_METHODS = "GET, PUT, POST, OPTIONS";
 const MAX_INVENTORY_ITEMS = 50;
 const MAX_INVENTORY_ENTRIES = 1000;
@@ -38,7 +40,8 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
         pathname === PROJECT_RESOURCES_ENDPOINT_PATH ||
         pathname === PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH ||
         pathname === PROJECT_RESOURCES_TRUST_ENDPOINT_PATH ||
-        pathname === PROJECT_RESOURCES_SEED_ENDPOINT_PATH,
+        pathname === PROJECT_RESOURCES_SEED_ENDPOINT_PATH ||
+        pathname === PROJECT_RESOURCES_PROJECT_AGENT_ACTIVATE_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
         try {
           if (request.method === "OPTIONS") {
@@ -94,6 +97,22 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             await swarmManager.applyProjectResourceTrustChange(resolution.trust.key);
             const snapshot = await buildSnapshot({ resolver, settingsStore, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
+            applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
+            sendJson(response, 200, payload as unknown as Record<string, unknown>);
+            return;
+          }
+
+          if (pathname === PROJECT_RESOURCES_PROJECT_AGENT_ACTIVATE_ENDPOINT_PATH && request.method === "POST") {
+            const body = parseActivateRepoProjectAgentRequest(await readJsonBody(request));
+            const result = await swarmManager.activateRepoProjectAgent(body);
+            const context = resolveContextFromBody(swarmManager, body);
+            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const payload: ProjectResourceMutationResponse = {
+              success: true,
+              snapshot,
+              agentId: result.agentId,
+              projectAgent: result.projectAgent
+            } as ProjectResourceMutationResponse & { agentId: string; projectAgent: unknown };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
             return;
@@ -392,6 +411,40 @@ function parseTrustRequest(body: unknown): ProjectResourceTrustRequest {
     throw new Error("action must be trust, block, or reset.");
   }
   return { profileId: body.profileId, sessionAgentId: body.sessionAgentId, action: body.action };
+}
+
+function parseActivateRepoProjectAgentRequest(body: unknown): ActivateRepoProjectAgentRequest {
+  if (!isRecord(body) || typeof body.profileId !== "string" || typeof body.sessionAgentId !== "string") {
+    throw new Error("profileId and sessionAgentId are required.");
+  }
+  if (typeof body.definitionId !== "string" || body.definitionId.trim().length === 0) {
+    throw new Error("definitionId is required.");
+  }
+  if (body.mode !== "create" && body.mode !== "link") {
+    throw new Error("mode must be create or link.");
+  }
+  if (body.targetAgentId !== undefined && typeof body.targetAgentId !== "string") {
+    throw new Error("targetAgentId must be a string when provided.");
+  }
+  if (body.applyRecommendedModel !== undefined && typeof body.applyRecommendedModel !== "boolean") {
+    throw new Error("applyRecommendedModel must be a boolean when provided.");
+  }
+  if (body.explicitBindToSourceWorkspace !== undefined && typeof body.explicitBindToSourceWorkspace !== "boolean") {
+    throw new Error("explicitBindToSourceWorkspace must be a boolean when provided.");
+  }
+  if (body.approvedCapabilities !== undefined && !Array.isArray(body.approvedCapabilities)) {
+    throw new Error("approvedCapabilities must be an array when provided.");
+  }
+  return {
+    profileId: body.profileId,
+    sessionAgentId: body.sessionAgentId,
+    definitionId: body.definitionId.trim(),
+    mode: body.mode,
+    ...(body.targetAgentId !== undefined ? { targetAgentId: body.targetAgentId } : {}),
+    ...(body.applyRecommendedModel !== undefined ? { applyRecommendedModel: body.applyRecommendedModel } : {}),
+    ...(body.approvedCapabilities !== undefined ? { approvedCapabilities: body.approvedCapabilities as ActivateRepoProjectAgentRequest["approvedCapabilities"] } : {}),
+    ...(body.explicitBindToSourceWorkspace !== undefined ? { explicitBindToSourceWorkspace: body.explicitBindToSourceWorkspace } : {})
+  };
 }
 
 function parseSeedRequest(body: unknown): ProjectResourceSeedRequest {

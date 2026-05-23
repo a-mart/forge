@@ -115,6 +115,9 @@ export function cloneProjectAgentInfoValue(
       : {}),
     ...(projectAgent.capabilities !== undefined
       ? { capabilities: [...projectAgent.capabilities] }
+      : {}),
+    ...(projectAgent.source !== undefined
+      ? { source: { ...projectAgent.source } }
       : {})
   };
 }

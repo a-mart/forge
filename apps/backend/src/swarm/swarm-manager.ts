@@ -32,7 +32,8 @@ import type {
   SkillImportResultResponse,
   SkillImportTarget,
   SkillInventoryEntry,
-  SkillShareResponse
+  SkillShareResponse,
+  ActivateRepoProjectAgentRequest
 } from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import {
@@ -164,6 +165,7 @@ import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
+import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import { SessionActiveToolsState } from "./session-active-tools.js";
 import {
   normalizeAllowlistRoots,
@@ -2805,6 +2807,79 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return {
       pinnedAt: updatedDescriptor.pinnedAt ?? null
     };
+  }
+
+  async activateRepoProjectAgent(
+    request: ActivateRepoProjectAgentRequest
+  ): Promise<{ profileId: string; agentId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> }> {
+    const sourceDescriptor = this.getRequiredBuilderSessionDescriptor(
+      request.sessionAgentId,
+      "activate repository project agents"
+    );
+    this.assertDescriptorNotEffectivelyArchived(sourceDescriptor);
+    const profileId = sourceDescriptor.profileId ?? sourceDescriptor.agentId;
+    if (request.profileId !== profileId) {
+      throw new Error("Session does not belong to the requested profile.");
+    }
+
+    const settingsStore = new ProjectResourceSettingsStore(this.config.paths.dataDir);
+    const resolver = new ProjectWorkspaceResolver({ dataDir: this.config.paths.dataDir, settingsStore });
+    const resolution = await resolver.resolve({
+      profileId,
+      sessionAgentId: sourceDescriptor.agentId,
+      cwd: sourceDescriptor.cwd
+    });
+    if (resolution.warning) {
+      throw new Error(resolution.warning);
+    }
+    if (!resolution.effectiveForgeDirRealpath || !resolution.repoRootResources.projectAgentsDir) {
+      throw new Error("No repository project-agent definitions directory is available for this workspace.");
+    }
+
+    const inventory = await scanRepoProjectAgentDefinitions(resolution.repoRootResources.projectAgentsDir);
+    if (inventory.problems?.length) {
+      throw new Error(`Repository project-agent definitions are unavailable: ${inventory.problems.map((problem) => problem.message).join("; ")}`);
+    }
+    const item = inventory.items.find((candidate) => candidate.definitionId === request.definitionId);
+    if (!item) {
+      throw new Error(`Repository project-agent definition not found: ${request.definitionId}`);
+    }
+    if (item.status !== "valid") {
+      throw new Error(`Repository project-agent definition ${request.definitionId} is ${item.status}: ${item.problems.map((problem) => problem.message).join("; ")}`);
+    }
+    const definition = inventory.definitions.find((candidate) => candidate.definitionId === request.definitionId);
+    if (!definition) {
+      throw new Error(`Repository project-agent definition ${request.definitionId} is not activatable.`);
+    }
+
+    return this.projectAgentService.activateRepoProjectAgent({
+      profileId,
+      sourceSessionAgentId: sourceDescriptor.agentId,
+      mode: request.mode,
+      definition,
+      source: {
+        type: "repo",
+        workspaceKey: resolution.workspaceKey,
+        forgeDirRealpath: resolution.effectiveForgeDirRealpath,
+        definitionId: definition.definitionId,
+        activatedAt: this.now()
+      },
+      ...(request.targetAgentId ? { targetAgentId: request.targetAgentId } : {}),
+      applyRecommendedModel: request.applyRecommendedModel,
+      approvedCapabilities: request.approvedCapabilities,
+      explicitBindToSourceWorkspace: request.explicitBindToSourceWorkspace,
+      resolveSessionWorkspaceSource: async (descriptor) => {
+        const targetResolution = await resolver.resolve({
+          profileId: descriptor.profileId ?? descriptor.agentId,
+          sessionAgentId: descriptor.agentId,
+          cwd: descriptor.cwd
+        });
+        return {
+          workspaceKey: targetResolution.workspaceKey,
+          ...(targetResolution.effectiveForgeDirRealpath ? { forgeDirRealpath: targetResolution.effectiveForgeDirRealpath } : {})
+        };
+      }
+    });
   }
 
   async setSessionProjectAgent(

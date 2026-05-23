@@ -50,7 +50,7 @@ export interface RepoProjectAgentInventorySection {
 export interface ActivateRepoProjectAgentRequest {
   profileId: string
   sessionAgentId: string
-  handle: string
+  definitionId: string
   mode: 'create' | 'link'
   targetAgentId?: string
   applyRecommendedModel?: boolean

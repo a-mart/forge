@@ -104,7 +104,7 @@ export function buildRepoProjectAgentConfigFromDefinition(
     ...(scope.descriptor.projectAgent.creatorSessionId !== undefined
       ? { creatorSessionId: scope.descriptor.projectAgent.creatorSessionId }
       : {}),
-    ...(definition.config.capabilities !== undefined ? { capabilities: definition.config.capabilities } : {}),
+    ...(scope.descriptor.projectAgent.capabilities !== undefined ? { capabilities: scope.descriptor.projectAgent.capabilities } : {}),
     promotedAt: scope.descriptor.createdAt,
     updatedAt: scope.descriptor.projectAgent.source?.type === "repo"
       ? scope.descriptor.projectAgent.source.activatedAt
