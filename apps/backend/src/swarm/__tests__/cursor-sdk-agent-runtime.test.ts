@@ -6,6 +6,7 @@ import {
   CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE,
   CursorSdkAgentRuntime,
 } from "../runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
+import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../../utils/cursor-sdk-usage-records.js";
 import type { CursorSdkAgent, CursorSdkModule, CursorSdkRun, CursorSdkSendOptions } from "../runtime/cursor-sdk/cursor-sdk-loader.js";
 import type { RuntimeUserMessage, SwarmRuntimeCallbacks } from "../runtime-contracts.js";
 import type { AgentDescriptor } from "../types.js";
@@ -157,11 +158,133 @@ describe("CursorSdkAgentRuntime", () => {
       model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
       mcpServers: { forge: { type: "http", url: "http://127.0.0.1:1/mcp" } },
     });
-    expect(sendOptions).not.toHaveProperty("onDelta");
+    expect(typeof sendOptions?.onDelta).toBe("function");
     expect(callbacks.onSessionEvent).toHaveBeenCalledWith("worker-1", expect.objectContaining({ type: "message_update" }));
     expect(runtime.getCustomEntries(CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE)).toEqual([
       expect.objectContaining({ sdkAgentId: "sdk-agent-1", stateRoot: join(rootDir, "cursor-sdk-state", "worker-1") }),
     ]);
+  });
+
+  it("captures turn-ended usage from onDelta and persists one custom record", async () => {
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({
+        update: {
+          type: "turn-ended",
+          usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 1 }
+        }
+      });
+      return createRun({ id: "run-usage-1", streamItems: [statusMessage("FINISHED"), assistantText("ok")] });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+      expect.objectContaining({
+        version: 1,
+        source: "cursor_sdk_on_delta_turn_ended",
+        provider: "cursor-sdk",
+        modelId: "composer-2.5",
+        reasoningLevel: "medium",
+        usage: { input: 10, output: 4, cacheRead: 2, cacheWrite: 1, total: 17 },
+        sdkRunId: "run-usage-1",
+        sdkAgentId: "sdk-agent-1",
+        providerStatus: "FINISHED",
+        runStatus: "finished",
+        waitStatus: "finished",
+        terminalStatus: "FINISHED",
+        outcome: "completed",
+        capturedAt: "2026-01-01T00:00:00.000Z"
+      })
+    ]);
+  });
+
+  it("does not use onDelta text as a content source during an active turn", async () => {
+    const gate = deferred();
+    let sendOptions: CursorSdkSendOptions | undefined;
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      sendOptions = options;
+      return createRun({ streamGate: gate.promise, streamItems: [assistantText("ok")] });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+    await waitFor(() => expect(sendOptions?.onDelta).toBeTypeOf("function"));
+    await sendOptions?.onDelta?.({ update: { type: "text-delta", text: "duplicate" } });
+    gate.resolve();
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
+    const messageUpdates = callbacks.onSessionEvent.mock.calls
+      .map(([, event]) => event)
+      .filter((event) => event.type === "message_update");
+    expect(messageUpdates).toEqual([
+      expect.objectContaining({ message: { role: "assistant", content: [{ type: "text", text: "ok" }] } })
+    ]);
+  });
+
+  it("dedupes duplicate turn-ended usage deltas", async () => {
+    const usageDelta = { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } };
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: usageDelta });
+      await options?.onDelta?.({ update: usageDelta });
+      return createRun();
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toHaveLength(1);
+  });
+
+  it("records reported usage for cancelled runs when Cursor emits it before finalization", async () => {
+    const gate = deferred();
+    const cancel = vi.fn(async () => gate.resolve());
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({ streamGate: gate.promise, cancel });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+    await waitFor(() => expect(send).toHaveBeenCalled());
+    await runtime.stopInFlight();
+
+    await waitFor(() => expect(runtime.getStatus()).toBe("idle"));
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+      expect.objectContaining({ outcome: "cancelled", usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, total: 14 } })
+    ]);
+  });
+
+  it("retains reported usage when wait later errors", async () => {
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({ waitError: new Error("wait exploded") });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalled());
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+      expect.objectContaining({ outcome: "error", usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, total: 14 } })
+    ]);
+  });
+
+  it("ignores malformed or zero usage deltas", async () => {
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: -1, outputTokens: "4" } } });
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 0, outputTokens: 0 } } });
+      return createRun();
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalled());
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([]);
   });
 
   it("returns an accepted receipt before stream completion", async () => {

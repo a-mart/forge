@@ -31,6 +31,15 @@ import type {
   CursorSdkRun
 } from "./cursor-sdk-loader.js";
 import { CursorSdkEventMapper } from "./cursor-sdk-event-mapper.js";
+import {
+  CURSOR_SDK_PROVIDER_ID,
+  CURSOR_SDK_USAGE_ENTRY_TYPE,
+  CURSOR_SDK_USAGE_SOURCE,
+  type CursorSdkUsageOutcome,
+  type CursorSdkUsageRecordV1,
+  type CursorSdkUsageTotals,
+  extractCursorSdkUsageFromDelta
+} from "../../../utils/cursor-sdk-usage-records.js";
 
 export const CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE = "swarm_cursor_sdk_runtime_state";
 const SESSION_HEADER_VERSION = 3;
@@ -55,6 +64,13 @@ interface ActivePromptState {
   message: RuntimeUserMessage;
   run?: CursorSdkRun;
   cancelled: boolean;
+  cursorUsage?: CursorSdkUsageTotals;
+  usageRecorded: boolean;
+  providerStatus?: string | null;
+  runStatus?: string | null;
+  waitStatus?: string | null;
+  terminalStatus?: string | null;
+  outcome?: CursorSdkUsageOutcome;
 }
 
 export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
@@ -296,7 +312,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     }
 
     const token = ++this.nextPromptToken;
-    const active: ActivePromptState = { token, message, cancelled: this.stoppedPendingDispatch };
+    const active: ActivePromptState = { token, message, cancelled: this.stoppedPendingDispatch, usageRecorded: false };
     this.stoppedPendingDispatch = false;
     this.activePrompt = active;
     this.promptDispatchPending = true;
@@ -318,11 +334,18 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       if (this.shouldAbortPromptBeforeSend(active, token)) {
         return;
       }
-      // Deliberately do not pass onDelta here. The runtime consumes run.stream() as the single text source
-      // until live fixtures prove stream+delta can be safely deduped without duplicated assistant content.
       const run = await this.sdkAgent.send(payload, {
         model: this.model,
-        mcpServers: this.mcpServers
+        mcpServers: this.mcpServers,
+        onDelta: async ({ update }) => {
+          try {
+            this.captureCursorUsageDelta(token, update);
+          } catch (error) {
+            this.logDebug("cursor_usage:on_delta_capture:error", {
+              message: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
       });
       active.run = run;
       if (this.shouldAbortPromptBeforeSend(active, token)) {
@@ -334,17 +357,26 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
         if (active.cancelled || this.activePrompt?.token !== token) break;
         await this.emitSessionEvents(this.eventMapper.mapSdkMessage(sdkMessage));
       }
+      this.captureCursorRunStatuses(active);
 
       if (!active.cancelled) {
         const waitResult = await run.wait();
-        assertCursorRunSucceeded(run, waitResult, this.eventMapper.getTerminalStatus());
+        active.waitStatus = readStatus(waitResult) ?? null;
+        this.captureCursorRunStatuses(active);
+        assertCursorRunSucceeded(run, waitResult, active.terminalStatus ?? undefined);
+        active.outcome = deriveCursorUsageOutcome(active);
         await this.emitSessionEvents(this.eventMapper.completePrompt());
       }
     } catch (error) {
+      this.captureCursorRunStatuses(active);
+      active.outcome = deriveCursorUsageOutcome(active, active.cancelled ? undefined : "error");
       if (!active.cancelled) {
         await this.emitRuntimeError(error);
       }
     } finally {
+      this.captureCursorRunStatuses(active);
+      active.outcome = deriveCursorUsageOutcome(active, active.outcome);
+      this.persistCapturedCursorUsage(active);
       if (this.activePrompt?.token === token) {
         this.activePrompt = undefined;
       }
@@ -359,6 +391,63 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
 
   private shouldAbortPromptBeforeSend(active: ActivePromptState, token: number): boolean {
     return active.cancelled || this.activePrompt?.token !== token || this.isTerminated();
+  }
+
+  private captureCursorUsageDelta(token: number, update: unknown): void {
+    const active = this.activePrompt;
+    if (!active || active.token !== token) {
+      return;
+    }
+
+    const usage = extractCursorSdkUsageFromDelta(update);
+    if (!usage) {
+      return;
+    }
+
+    if (active.cursorUsage) {
+      this.logDebug("cursor_usage:on_delta_capture:duplicate", { updateType: "turn-ended", token });
+      return;
+    }
+
+    active.cursorUsage = usage;
+  }
+
+  private captureCursorRunStatuses(active: ActivePromptState): void {
+    active.terminalStatus = this.eventMapper.getTerminalStatus() ?? active.terminalStatus ?? null;
+    active.providerStatus = active.terminalStatus ?? active.providerStatus ?? null;
+    active.runStatus = readStatus(active.run) ?? active.runStatus ?? null;
+  }
+
+  private persistCapturedCursorUsage(active: ActivePromptState): void {
+    if (!active.cursorUsage || active.usageRecorded) {
+      return;
+    }
+
+    active.usageRecorded = true;
+    const record: CursorSdkUsageRecordV1 = {
+      version: 1,
+      source: CURSOR_SDK_USAGE_SOURCE,
+      provider: CURSOR_SDK_PROVIDER_ID,
+      modelId: this.model.id,
+      reasoningLevel: resolveCursorReasoningLevelSent(this.model),
+      usage: { ...active.cursorUsage },
+      sdkRunId: active.run?.id ?? null,
+      sdkAgentId: active.run?.agentId ?? this.sdkAgent.agentId ?? null,
+      providerStatus: active.providerStatus ?? null,
+      runStatus: active.runStatus ?? null,
+      waitStatus: active.waitStatus ?? null,
+      terminalStatus: active.terminalStatus ?? null,
+      outcome: deriveCursorUsageOutcome(active, active.outcome),
+      capturedAt: this.now()
+    };
+
+    try {
+      this.appendCustomEntry(CURSOR_SDK_USAGE_ENTRY_TYPE, record);
+    } catch (error) {
+      this.logDebug("cursor_usage:persist:error", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private buildSendPayload(message: RuntimeUserMessage): string | { text: string; images?: Array<{ data: string; mimeType: string }> } {
@@ -498,6 +587,36 @@ function extractCursorSdkErrorDetails(error: unknown): Record<string, unknown> |
   }
 
   return Object.keys(details).length > 0 ? details : undefined;
+}
+
+function resolveCursorReasoningLevelSent(model: CursorSdkModelSelection): string | null {
+  const thinking = model.params?.find((param) => param.id === "thinking")?.value;
+  return typeof thinking === "string" && thinking.trim().length > 0 ? thinking.trim() : null;
+}
+
+function deriveCursorUsageOutcome(active: ActivePromptState, fallback: CursorSdkUsageOutcome = "unknown"): CursorSdkUsageOutcome {
+  const statuses = [active.providerStatus, active.runStatus, active.waitStatus, active.terminalStatus]
+    .filter((status): status is string => typeof status === "string")
+    .map((status) => status.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (active.cancelled || statuses.includes("cancelled") || statuses.includes("canceled")) {
+    return "cancelled";
+  }
+
+  if (statuses.some((status) => ["error", "failed", "failure", "expired"].includes(status))) {
+    return "error";
+  }
+
+  if (fallback === "error") {
+    return "error";
+  }
+
+  if (statuses.some((status) => ["finished", "success", "succeeded", "completed"].includes(status))) {
+    return "completed";
+  }
+
+  return fallback;
 }
 
 function assertCursorRunSucceeded(run: CursorSdkRun, waitResult: unknown, terminalStatus: string | undefined): void {
