@@ -321,6 +321,56 @@ describe('ProjectAgentSettingsSheet', () => {
     expect(closeButton).not.toBeNull()
   })
 
+  it('renders read-only mode for reload-style public repo source marker', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Repository defined agent',
+        sourceKind: 'repo',
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Repository defined agent',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt content',
+        references: ['ref.md'],
+        source: {
+          type: 'repo' as const,
+          status: 'valid' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    expect(whenToUseField.disabled).toBe(true)
+
+    const systemPromptField = document.body.querySelector('#systemPrompt') as HTMLTextAreaElement
+    expect(systemPromptField).not.toBeNull()
+    expect(systemPromptField.disabled).toBe(true)
+
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Save',
+    )
+    expect(saveButton).toBeUndefined()
+
+    expect(document.body.textContent).toContain('Deactivate repository Project Agent')
+    expect(document.body.textContent).toContain('/test/repo/.forge')
+  })
+
   it('displays source status and problems for unhealthy repo-sourced agents', async () => {
     renderSheet({
       currentProjectAgent: {

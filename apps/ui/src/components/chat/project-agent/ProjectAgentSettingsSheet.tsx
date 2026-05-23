@@ -39,7 +39,7 @@ export function ProjectAgentSettingsSheet({
     currentProjectAgent?.source && isRepoProjectAgentSource(currentProjectAgent.source)
       ? currentProjectAgent.source
       : null
-  const isRepoSourced = repoSource !== null
+  const isRepoSourced = repoSource !== null || currentProjectAgent?.sourceKind === 'repo'
   const repoSourcePath = repoSource?.forgeDirRealpath ?? null
 
   const [handleInput, setHandleInput] = useState(slugifySessionName(sessionLabel))

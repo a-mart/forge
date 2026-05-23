@@ -76,6 +76,8 @@ export interface RepoProjectAgentSourceIdentity {
 
 export type ProjectAgentSourceIdentity = LocalProjectAgentSourceIdentity | RepoProjectAgentSourceIdentity
 
+export type ProjectAgentSourceKind = ProjectAgentSourceIdentity['type']
+
 export interface ProjectAgentInfo {
   handle: string
   whenToUse: string
@@ -83,6 +85,8 @@ export interface ProjectAgentInfo {
   systemPrompt?: string
   creatorSessionId?: string
   capabilities?: ProjectAgentCapability[]
+  /** Public non-sensitive source marker for snapshots/bootstrap payloads. */
+  sourceKind?: ProjectAgentSourceKind
   /** Durable source identity only. Computed source status belongs in snapshots/inventory/preflight DTOs. */
   source?: ProjectAgentSourceIdentity
 }

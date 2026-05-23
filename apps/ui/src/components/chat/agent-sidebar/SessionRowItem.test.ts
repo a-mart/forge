@@ -144,6 +144,25 @@ describe('SessionRowItem repo-sourced project agent badge', () => {
     expect(repoLabel).not.toBeNull()
   })
 
+  it('shows repo source indicator for reload-style public project agent source marker', () => {
+    renderRow({
+      session: {
+        sessionAgent: makeAgent({
+          projectAgent: {
+            handle: 'docs',
+            whenToUse: 'Documentation',
+            sourceKind: 'repo',
+          },
+        }),
+        workers: [],
+        isDefault: false,
+      },
+    })
+
+    const repoLabel = container.querySelector('[aria-label="Repository Project Agent"]')
+    expect(repoLabel).not.toBeNull()
+  })
+
   it('shows plain project agent icon for local project agents', () => {
     renderRow({
       session: {
@@ -165,20 +184,14 @@ describe('SessionRowItem repo-sourced project agent badge', () => {
     expect(repoLabel).toBeNull()
   })
 
-  it('shows distinct unlink context menu item for repo-sourced agents', () => {
+  it('shows distinct unlink context menu item for reload-style public project agent source marker', () => {
     renderRow({
       session: {
         sessionAgent: makeAgent({
           projectAgent: {
             handle: 'repo-agent',
             whenToUse: 'Repo tasks',
-            source: {
-              type: 'repo',
-              workspaceKey: 'ws-key',
-              forgeDirRealpath: '/test/.forge',
-              definitionId: 'def-repo',
-              activatedAt: '2026-01-01T00:00:00Z',
-            },
+            sourceKind: 'repo',
           },
         }),
         workers: [],

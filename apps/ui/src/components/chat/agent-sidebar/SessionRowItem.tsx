@@ -136,7 +136,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   const showUnread = unreadCount > 0
   const hasPendingChoice = (sessionAgent.pendingChoiceCount ?? 0) > 0
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
-  const isRepoSourcedAgent = sessionAgent.projectAgent?.source?.type === 'repo'
+  const isRepoSourcedAgent = sessionAgent.projectAgent?.sourceKind === 'repo' || sessionAgent.projectAgent?.source?.type === 'repo'
   const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
   const isPinned = Boolean(sessionAgent.pinnedAt)
   const isModelOverridden = sessionAgent.modelOrigin === 'session_override'

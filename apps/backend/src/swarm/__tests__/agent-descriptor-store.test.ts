@@ -179,10 +179,16 @@ describe("AgentDescriptorStore", () => {
       handle: "docs",
       whenToUse: "Maintain docs.",
       creatorSessionId: "creator",
-      capabilities: ["create_session"]
+      capabilities: ["create_session"],
+      sourceKind: "repo"
     });
     expect(store.snapshot().agents[0]?.projectAgent).not.toHaveProperty("systemPrompt");
     expect(store.snapshot().agents[0]?.projectAgent).not.toHaveProperty("source");
+    expect(store.snapshot().agents[0]?.projectAgent?.sourceKind).toBe("repo");
+    const publicProjectAgentJson = JSON.stringify(store.snapshot().agents[0]?.projectAgent);
+    expect(publicProjectAgentJson).not.toContain("workspace-a");
+    expect(publicProjectAgentJson).not.toContain("/repo/.forge");
+    expect(publicProjectAgentJson).not.toContain("activatedAt");
     expect(store.getForPersistence("manager")?.projectAgent?.systemPrompt).toBe("Private project-agent prompt mirror.");
     expect(store.getForPersistence("manager")?.projectAgent?.source).toEqual({
       type: "repo",
