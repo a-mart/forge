@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -82,8 +82,11 @@ afterEach(async () => {
 
 describe("specialist routes", () => {
   it("shows Cursor SDK specialist rows from /api/settings/models when CURSOR_API_KEY is configured", async () => {
-    process.env.CURSOR_API_KEY = "cursor-test-key";
-    const server = await createSpecialistRouteTestServer();
+    const dataDir = await mkdtemp(join(tmpdir(), "specialist-routes-cursor-"));
+    tempDirs.push(dataDir);
+    await mkdir(join(dataDir, "shared", "config"), { recursive: true });
+    await writeFile(join(dataDir, "shared", "config", "secrets.json"), JSON.stringify({ CURSOR_API_KEY: "cursor-test-key" }));
+    const server = await createSpecialistRouteTestServer({ dataDir });
 
     const response = await fetch(`${server.baseUrl}/api/settings/models`);
 
@@ -624,16 +627,18 @@ async function createSpecialistRouteTestServer(options?: {
   notifySpecialistRosterChanged?: (profileId: string, options?: { sessionAgentId?: string }) => Promise<void>;
   broadcastEvent?: (event: ServerEvent) => void;
   agents?: Array<{ agentId: string; role: string; profileId?: string; sessionSurface?: string; cwd?: string }>;
+  dataDir?: string;
 }): Promise<TestServer> {
   const profiles = options?.profiles ?? [];
+  const dataDir = options?.dataDir ?? "/tmp/data";
   const swarmManager = {
     getConfig: () => ({
       paths: {
-        dataDir: "/tmp/data",
-        sharedAuthFile: "/tmp/data/shared/config/auth/auth.json",
-        sharedSecretsFile: "/tmp/data/shared/config/secrets.json",
-        authFile: "/tmp/data/auth/auth.json",
-        secretsFile: "/tmp/data/secrets.json",
+        dataDir,
+        sharedAuthFile: join(dataDir, "shared", "config", "auth", "auth.json"),
+        sharedSecretsFile: join(dataDir, "shared", "config", "secrets.json"),
+        authFile: join(dataDir, "auth", "auth.json"),
+        secretsFile: join(dataDir, "secrets.json"),
       },
     }),
     listProfiles: () => profiles,
