@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  getProjectAgentBackupsDir,
   getProjectAgentConfigPath,
   getProjectAgentDir,
   getProjectAgentPromptPath,
@@ -208,6 +209,79 @@ describe('SwarmManager', () => {
     const updatedSnapshot = await manager.getProjectAgentConfig(created.sessionAgent.agentId)
     expect(updatedSnapshot.config.whenToUse).toBe('Current repo docs.')
     expect(updatedSnapshot.config.capabilities).toBeUndefined()
+  })
+
+  it('backs up local project-agent sidecars before linking to a repo source', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: 'Repo prompt' })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const created = await manager.createSession('manager', { label: 'Docs' })
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Local docs',
+      systemPrompt: 'Local prompt to preserve',
+    })
+
+    await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'link',
+      targetAgentId: created.sessionAgent.agentId,
+    })
+
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'docs'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const backups = await readdir(getProjectAgentBackupsDir(config.paths.dataDir, 'manager'))
+    expect(backups).toHaveLength(1)
+    expect(await readFile(join(getProjectAgentBackupsDir(config.paths.dataDir, 'manager'), backups[0]!, 'prompt.md'), 'utf8')).toBe('Local prompt to preserve')
+  })
+
+  it('rolls back repo project-agent create and link activation when persistence fails', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: 'Repo prompt' })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const originalSaveStore = (manager as unknown as { saveStore: () => Promise<void> }).saveStore.bind(manager)
+    let failNextSave = false
+    ;(manager as unknown as { saveStore: () => Promise<void> }).saveStore = async () => {
+      if (failNextSave) {
+        failNextSave = false
+        throw new Error('save failed')
+      }
+      await originalSaveStore()
+    }
+
+    failNextSave = true
+    await expect(manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+    })).rejects.toThrow('save failed')
+    expect(manager.listAgents().some((agent) => agent.agentId !== 'manager' && agent.projectAgent?.handle === 'docs')).toBe(false)
+
+    const created = await manager.createSession('manager', { label: 'Docs' })
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Local docs',
+      systemPrompt: 'Local prompt',
+    })
+    failNextSave = true
+    await expect(manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'link',
+      targetAgentId: created.sessionAgent.agentId,
+    })).rejects.toThrow('save failed')
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toMatchObject({
+      handle: 'docs',
+      whenToUse: 'Local docs',
+    })
+    expect(await readFile(getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'docs'), 'utf8')).toBe('Local prompt')
   })
 
   it('blocks repo project-agent activation collisions, workspace mismatches, and invalid definitions', async () => {

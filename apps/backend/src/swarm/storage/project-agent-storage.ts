@@ -105,6 +105,22 @@ export async function backupProjectAgentRecordForRepoLink(
   return targetDir;
 }
 
+export async function restoreProjectAgentRecordBackupForRepoLink(
+  dataDir: string,
+  profileId: string,
+  handle: string,
+  backupPath: string | null
+): Promise<void> {
+  if (!backupPath) {
+    return;
+  }
+
+  const targetDir = getProjectAgentDir(dataDir, profileId, handle);
+  await rm(targetDir, { recursive: true, force: true });
+  await mkdir(dirname(targetDir), { recursive: true });
+  await rename(backupPath, targetDir);
+}
+
 export async function deleteProjectAgentRecordByDirPath(
   dataDir: string,
   profileId: string,

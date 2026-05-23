@@ -54,7 +54,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
           const pathname = requestUrl.pathname;
           if (pathname === PROJECT_RESOURCES_ENDPOINT_PATH && request.method === "GET") {
             const context = resolveContextFromQuery(swarmManager, requestUrl);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, snapshot as unknown as Record<string, unknown>);
             return;
@@ -78,7 +78,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             }
             await settingsStore.setOverride(before.workspaceKey, forgeDir);
             await swarmManager.applyProjectResourceWorkspaceChange(before.workspaceKey);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -95,7 +95,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             }
             await settingsStore.setTrust(resolution.trust.key, body.action);
             await swarmManager.applyProjectResourceTrustChange(resolution.trust.key);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -106,7 +106,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             const body = parseActivateRepoProjectAgentRequest(await readJsonBody(request));
             const result = await swarmManager.activateRepoProjectAgent(body);
             const context = resolveContextFromBody(swarmManager, body);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             const payload: ProjectResourceMutationResponse = {
               success: true,
               snapshot,
@@ -127,7 +127,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
               return;
             }
             await seedProjectForgeScaffold(before);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -147,6 +147,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
 async function buildSnapshot(options: {
   resolver: ProjectWorkspaceResolver;
   settingsStore: ProjectResourceSettingsStore;
+  swarmManager: SwarmManager;
   context: { profileId: string; sessionAgentId: string; cwd: string };
 }): Promise<ProjectResourcesSnapshotResponse> {
   const resolution = await options.resolver.resolve(options.context);
@@ -170,7 +171,7 @@ async function buildSnapshot(options: {
     signature: resolution.signature,
     ...(dismissedPrompt ? { dismissedPrompt } : {}),
     scaffold: await buildScaffoldState(resolution),
-    resources: await buildResourceInventory(resolution),
+    resources: await buildResourceInventory(resolution, options.swarmManager),
     executableSurfaces: await buildExecutableSurfaces(resolution)
   };
 }
@@ -213,14 +214,21 @@ async function scaffoldEntryExists(pathValue: string, kind: "directory" | "file"
   return kind === "directory" ? entry.isDirectory() : entry.isFile();
 }
 
-async function buildResourceInventory(resolution: ProjectWorkspaceResolution): Promise<ProjectResourcesSnapshotResponse["resources"]> {
+async function buildResourceInventory(
+  resolution: ProjectWorkspaceResolution,
+  swarmManager: SwarmManager
+): Promise<ProjectResourcesSnapshotResponse["resources"]> {
   const resources = resolution.repoRootResources;
   const projectAgentInventory = await scanRepoProjectAgentDefinitions(resources.projectAgentsDir);
+  const activeProjectAgents = getActiveRepoProjectAgentsByDefinitionId(swarmManager, resolution.profileId, resolution.workspaceKey, resolution.effectiveForgeDirRealpath);
   const projectAgents = {
     ...(projectAgentInventory.path ? { path: projectAgentInventory.path } : {}),
     exists: projectAgentInventory.exists,
     count: projectAgentInventory.count,
-    items: projectAgentInventory.items,
+    items: projectAgentInventory.items.map((item) => ({
+      ...item,
+      ...(activeProjectAgents.get(item.definitionId) ? { activatedAgentId: activeProjectAgents.get(item.definitionId) } : {})
+    })),
     ...(projectAgentInventory.truncated ? { truncated: projectAgentInventory.truncated } : {}),
     ...(projectAgentInventory.problems ? { problems: projectAgentInventory.problems } : {})
   };
@@ -233,6 +241,30 @@ async function buildResourceInventory(resolution: ProjectWorkspaceResolution): P
     piExtensions: await listDirectoryEntries(resources.piExtensionsDir, { extension: [".ts", ".js"] }),
     piSettings: await listSingleFile(resources.piSettingsPath)
   };
+}
+
+function getActiveRepoProjectAgentsByDefinitionId(
+  swarmManager: SwarmManager,
+  profileId: string,
+  workspaceKey: string,
+  forgeDirRealpath: string | undefined
+): Map<string, string> {
+  const active = new Map<string, string>();
+  if (!forgeDirRealpath) {
+    return active;
+  }
+
+  for (const agent of swarmManager.listAgents()) {
+    const source = agent.role === "manager" && agent.profileId === profileId ? agent.projectAgent?.source : undefined;
+    if (
+      source?.type === "repo" &&
+      source.workspaceKey === workspaceKey &&
+      source.forgeDirRealpath === forgeDirRealpath
+    ) {
+      active.set(source.definitionId, agent.agentId);
+    }
+  }
+  return active;
 }
 
 async function buildExecutableSurfaces(resolution: ProjectWorkspaceResolution): Promise<ProjectResourceExecutableSurface[]> {

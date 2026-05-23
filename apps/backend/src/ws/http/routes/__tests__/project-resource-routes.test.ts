@@ -60,6 +60,34 @@ describe("project resource routes", () => {
     );
   });
 
+  it("activates a repo project-agent definition and marks it active in refreshed inventory", async () => {
+    const harness = await createHarness();
+    await mkdir(join(harness.workspaceDir, ".forge", "project-agents", "docs"), { recursive: true });
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "config.json"), JSON.stringify({ version: 1, handle: "docs", whenToUse: "Maintain docs" }), "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "prompt.md"), "You maintain docs.\n", "utf-8");
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/project-agents/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        profileId: "profile-a",
+        sessionAgentId: "session-a",
+        definitionId: "docs",
+        mode: "create"
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourceMutationResponse & { agentId: string; projectAgent: unknown };
+    expect(payload.success).toBe(true);
+    expect(payload.agentId).toBe("activated-docs");
+    expect(payload.projectAgent).toMatchObject({ handle: "docs", whenToUse: "Maintain docs" });
+    expect(payload.snapshot.resources.projectAgents?.items[0]).toMatchObject({
+      definitionId: "docs",
+      activatedAgentId: "activated-docs"
+    });
+  });
+
   it("seeds a missing repo-root .forge scaffold without arbitrary client paths", async () => {
     const harness = await createHarness({ missingForge: true });
 
@@ -376,10 +404,33 @@ async function createHarness(options: { missingCwd?: boolean; missingForge?: boo
     }
   }
   const descriptor = createDescriptor(workspaceDir);
+  const activatedAgents: AgentDescriptor[] = [];
   const swarmManager = {
     getConfig: () => ({ paths: { dataDir } }),
-    getAgent: (agentId: string) => (agentId === descriptor.agentId ? descriptor : undefined),
-    listAgents: () => [descriptor],
+    getAgent: (agentId: string) => (agentId === descriptor.agentId ? descriptor : activatedAgents.find((agent) => agent.agentId === agentId)),
+    listAgents: () => [descriptor, ...activatedAgents],
+    activateRepoProjectAgent: async (request: { definitionId: string }) => {
+      const workspaceRealpath = await realpath(workspaceDir);
+      const forgeDirRealpath = await realpath(join(workspaceDir, ".forge"));
+      const agent: AgentDescriptor = {
+        ...createDescriptor(workspaceDir),
+        agentId: `activated-${request.definitionId}`,
+        managerId: `activated-${request.definitionId}`,
+        projectAgent: {
+          handle: request.definitionId,
+          whenToUse: "Maintain docs",
+          source: {
+            type: "repo",
+            workspaceKey: `profile-a::${workspaceRealpath}`,
+            forgeDirRealpath,
+            definitionId: request.definitionId,
+            activatedAt: "2026-04-03T00:00:00.000Z"
+          }
+        }
+      };
+      activatedAgents.push(agent);
+      return { profileId: "profile-a", agentId: agent.agentId, projectAgent: agent.projectAgent! };
+    },
     applyProjectResourceTrustChange: async () => undefined,
     applyProjectResourceWorkspaceChange: async () => undefined
   } as unknown as SwarmManager;

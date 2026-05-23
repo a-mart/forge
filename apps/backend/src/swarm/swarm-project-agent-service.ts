@@ -5,7 +5,9 @@ import type {
   RepoProjectAgentSourceIdentity
 } from "@forge/protocol";
 import {
+  backupProjectAgentRecordForRepoLink,
   deleteProjectAgentRecord,
+  restoreProjectAgentRecordBackupForRepoLink,
   writeProjectAgentRecord
 } from "./project-agent-storage.js";
 import {
@@ -293,14 +295,30 @@ export class SwarmProjectAgentService {
         sessionDescriptor.modelOrigin = "session_override";
       }
 
-      await this.options.provisioner.provisionSession({
-        descriptor: sessionDescriptor,
-        initializeRuntime: async () => {
-          const runtime = await this.options.getOrCreateRuntimeForDescriptor(sessionDescriptor);
-          sessionDescriptor.contextUsage = runtime.getContextUsage();
+      let provisioned = false;
+      try {
+        await this.options.provisioner.provisionSession({
+          descriptor: sessionDescriptor,
+          initializeRuntime: async () => {
+            const runtime = await this.options.getOrCreateRuntimeForDescriptor(sessionDescriptor);
+            sessionDescriptor.contextUsage = runtime.getContextUsage();
+          }
+        });
+        provisioned = true;
+        await this.options.saveStore();
+      } catch (error) {
+        if (provisioned) {
+          await this.options.provisioner.rollbackCreatedSession(sessionDescriptor);
+          await this.options.saveStore().catch((rollbackSaveError) => {
+            this.options.logDebug("repo_project_agent:create:rollback_save_error", {
+              agentId: sessionDescriptor.agentId,
+              handle,
+              message: rollbackSaveError instanceof Error ? rollbackSaveError.message : String(rollbackSaveError)
+            });
+          });
         }
-      });
-      await this.options.saveStore();
+        throw error;
+      }
       this.options.emitSessionLifecycle({
         action: "created",
         sessionAgentId: sessionDescriptor.agentId,
@@ -331,15 +349,45 @@ export class SwarmProjectAgentService {
     }
 
     await this.assertLinkWorkspaceAllowed(descriptor, params);
-    await deleteProjectAgentRecord(this.options.dataDir, params.profileId, handle);
+    const previousDescriptor = structuredClone(descriptor);
+    const backupPath = await backupProjectAgentRecordForRepoLink(
+      this.options.dataDir,
+      params.profileId,
+      descriptor.agentId,
+      handle,
+      params.source.activatedAt
+    );
 
     descriptor.projectAgent = projectAgent;
     if (params.applyRecommendedModel && params.definition.config.model) {
-      descriptor.model = { ...params.definition.config.model };
-      descriptor.modelOrigin = "session_override";
+      this.options.logDebug("repo_project_agent:link:recommended_model_deferred", {
+        agentId: descriptor.agentId,
+        handle,
+        provider: params.definition.config.model.provider,
+        modelId: params.definition.config.model.modelId
+      });
     }
     this.options.upsertDescriptorInLiveMaps(descriptor);
-    await this.options.saveStore();
+    try {
+      await this.options.saveStore();
+    } catch (error) {
+      this.options.upsertDescriptorInLiveMaps(previousDescriptor);
+      await restoreProjectAgentRecordBackupForRepoLink(this.options.dataDir, params.profileId, handle, backupPath).catch((restoreError) => {
+        this.options.logDebug("repo_project_agent:link:rollback_restore_error", {
+          agentId: descriptor.agentId,
+          handle,
+          message: restoreError instanceof Error ? restoreError.message : String(restoreError)
+        });
+      });
+      await this.options.saveStore().catch((rollbackSaveError) => {
+        this.options.logDebug("repo_project_agent:link:rollback_save_error", {
+          agentId: descriptor.agentId,
+          handle,
+          message: rollbackSaveError instanceof Error ? rollbackSaveError.message : String(rollbackSaveError)
+        });
+      });
+      throw error;
+    }
     await this.options.captureSessionRuntimePromptMeta(descriptor).catch((error) => {
       console.warn(
         `[swarm] repo-project-agent:prompt_meta_sync_failed agentId=${descriptor.agentId} profile=${params.profileId} error=${error instanceof Error ? error.message : String(error)}`
