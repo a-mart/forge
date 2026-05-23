@@ -101,6 +101,7 @@ describe('ManagerWsClient', () => {
       'create_session',
       'stop_session',
       'resume_session',
+      'hydrate_archive_last_used',
       'archive_session',
       'restore_session',
       'delete_session',
@@ -3119,6 +3120,44 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+
+  it('sends hydrate_archive_last_used commands and resolves hydration events', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    const hydratePromise = client.hydrateArchiveLastUsed()
+    const hydratePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(hydratePayload).toMatchObject({
+      type: 'hydrate_archive_last_used',
+    })
+    expect(typeof hydratePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'archive_last_used_hydrated',
+      requestId: hydratePayload.requestId,
+      scannedSessionCount: 2,
+      hydratedSessionCount: 1,
+    })
+
+    await expect(hydratePromise).resolves.toEqual({
+      scannedSessionCount: 2,
+      hydratedSessionCount: 1,
+    })
+
+    client.destroy()
+  })
 
   it('sends archive_profile commands and resolves profile_archived events', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')

@@ -402,6 +402,10 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return "pinnedAt must be a string when provided";
   }
 
+  if (value.lastUserMessageAt !== undefined && !isNonEmptyString(value.lastUserMessageAt)) {
+    return "lastUserMessageAt must be a non-empty string when provided";
+  }
+
   let normalizedProjectAgentHandle: string | undefined;
   if (value.projectAgent !== undefined) {
     if (!isRecord(value.projectAgent)) {

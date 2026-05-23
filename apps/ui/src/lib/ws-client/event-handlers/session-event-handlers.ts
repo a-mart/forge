@@ -25,6 +25,13 @@ export function handleSessionEvent(
       })
       return true
 
+    case 'archive_last_used_hydrated':
+      context.requestTracker.resolve('hydrate_archive_last_used', event.requestId, {
+        scannedSessionCount: event.scannedSessionCount,
+        hydratedSessionCount: event.hydratedSessionCount,
+      })
+      return true
+
     case 'session_archived':
       context.requestTracker.resolve('archive_session', event.requestId, {
         agentId: event.agentId,

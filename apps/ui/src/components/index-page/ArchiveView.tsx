@@ -1,7 +1,7 @@
 import { Archive, RotateCcw } from 'lucide-react'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
-import { getArchivedProfileRows, getDirectlyArchivedSessionRows } from '@/lib/agent-hierarchy'
+import { getArchivedProfileRows, getDirectlyArchivedSessionRows, getProfileRowLastUserMessageAt } from '@/lib/agent-hierarchy'
 
 interface ArchiveViewProps {
   agents: AgentDescriptor[]
@@ -17,6 +17,13 @@ function sessionLabel(agent: AgentDescriptor, isDefault = false): string {
 
 function profileLabel(profile: ManagerProfile): string {
   return profile.displayName || profile.profileId
+}
+
+function formatLastUsed(timestamp: string | null): string {
+  if (!timestamp) return 'Last used unknown'
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return 'Last used unknown'
+  return `Last used ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)}`
 }
 
 export function ArchiveView({
@@ -54,24 +61,30 @@ export function ArchiveView({
           <section className="space-y-3" aria-labelledby="archived-projects-heading">
             <h2 id="archived-projects-heading" className="text-sm font-semibold text-muted-foreground">Archived projects</h2>
             <div className="space-y-2">
-              {archivedProfiles.map((row) => (
-                <div key={row.profile.profileId} className="rounded-lg border bg-card p-4" data-testid="archived-project-row">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="truncate font-medium">{profileLabel(row.profile)}</h3>
-                      <p className="text-xs text-muted-foreground">
-                        {row.sessions.length} session{row.sessions.length === 1 ? '' : 's'} archived with this project
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      <Button type="button" size="sm" onClick={() => onRestoreProfile(row.profile.profileId, true)}>
-                        <RotateCcw className="mr-2 size-4" aria-hidden="true" />
-                        Restore
-                      </Button>
+              {archivedProfiles.map((row) => {
+                const lastUsed = getProfileRowLastUserMessageAt(row)
+                return (
+                  <div key={row.profile.profileId} className="rounded-lg border bg-card p-4" data-testid="archived-project-row">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="truncate font-medium">{profileLabel(row.profile)}</h3>
+                        <p className="text-xs text-muted-foreground">
+                          {row.sessions.length} session{row.sessions.length === 1 ? '' : 's'} archived with this project
+                        </p>
+                        <p className="text-xs text-muted-foreground" data-testid="archived-project-last-used">
+                          {formatLastUsed(lastUsed)}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button type="button" size="sm" onClick={() => onRestoreProfile(row.profile.profileId, true)}>
+                          <RotateCcw className="mr-2 size-4" aria-hidden="true" />
+                          Restore
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </section>
         ) : null}

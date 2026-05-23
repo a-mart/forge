@@ -97,6 +97,23 @@ describe('ArchiveView', () => {
     expect(restoreSession).toHaveBeenCalledWith('archived-session', true)
   })
 
+  it('shows archived project last-used metadata', () => {
+    renderArchive({
+      profiles: [profile('archived-project', '2026-05-20T00:00:00.000Z')],
+      agents: [
+        {
+          ...manager('archived-project', 'archived-project'),
+          lastUserMessageAt: '2026-05-21T12:30:00.000Z',
+        },
+      ],
+    })
+
+    const lastUsed = container.querySelector('[data-testid="archived-project-last-used"]')
+    expect(lastUsed).toBeTruthy()
+    expect(lastUsed!.textContent).toMatch(/^Last used /)
+    expect(lastUsed!.textContent).not.toBe('Last used unknown')
+  })
+
   it('shows parent project name for directly archived sessions', () => {
     const activeProfile = { ...profile('my-project'), displayName: 'My Cool Project' }
     renderArchive({

@@ -77,6 +77,7 @@ export interface AgentDescriptor {
   sessionSystemPrompt?: string;
   pinnedAt?: string;
   archivedAt?: string;
+  lastUserMessageAt?: string;
   mergedAt?: string;
   compactionCount?: number;
   workerCount?: number;

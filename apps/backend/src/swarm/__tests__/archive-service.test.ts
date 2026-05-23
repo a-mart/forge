@@ -40,6 +40,8 @@ function createHarness(input?: {
   sessions?: AgentDescriptor[];
   stopMutatesUpdatedAt?: string;
   stopRejectAgentIds?: string[];
+  hydrateSessionLastUsed?: (agentId: string) => Promise<void>;
+  hydrateProfileLastUsed?: (profileId: string) => Promise<void>;
 }) {
   const profiles = new Map((input?.profiles ?? [profile()]).map((item) => [item.profileId, item]));
   const sessions = new Map((input?.sessions ?? [session()]).map((item) => [item.agentId, item]));
@@ -56,6 +58,8 @@ function createHarness(input?: {
     return { terminatedWorkerIds: [`${agentId}-worker`] };
   });
   const onProfileArchiveStopError = vi.fn();
+  const hydrateSessionLastUsed = vi.fn(input?.hydrateSessionLastUsed ?? (async () => undefined));
+  const hydrateProfileLastUsed = vi.fn(input?.hydrateProfileLastUsed ?? (async () => undefined));
   const service = new ArchiveService({
     now: () => now,
     getAgent: (agentId) => sessions.get(agentId),
@@ -76,10 +80,12 @@ function createHarness(input?: {
       return next;
     }),
     stopSession,
+    hydrateSessionLastUsed,
+    hydrateProfileLastUsed,
     onProfileArchiveStopError,
   });
 
-  return { service, profiles, sessions, stopSession, onProfileArchiveStopError };
+  return { service, profiles, sessions, stopSession, hydrateSessionLastUsed, hydrateProfileLastUsed, onProfileArchiveStopError };
 }
 
 describe("archive service", () => {
@@ -117,6 +123,20 @@ describe("archive service", () => {
       profile: profiles.get("profile-1")!,
       sessions: Array.from(sessions.values()),
     })).toBe("session-newer");
+  });
+
+  it("hydrates direct-session last-used metadata before archiving", async () => {
+    const { service, sessions, hydrateSessionLastUsed } = createHarness({
+      sessions: [session({ agentId: "session-secondary" })],
+      hydrateSessionLastUsed: async (agentId) => {
+        const current = sessions.get(agentId)!;
+        sessions.set(agentId, { ...current, lastUserMessageAt: "2026-05-19T00:00:00.000Z" });
+      },
+    });
+
+    await service.archiveSession("session-secondary");
+    expect(hydrateSessionLastUsed).toHaveBeenCalledWith("session-secondary");
+    expect(sessions.get("session-secondary")?.lastUserMessageAt).toBe("2026-05-19T00:00:00.000Z");
   });
 
   it("rejects direct archive of the profile default session with the public error code and copy", async () => {
@@ -177,6 +197,27 @@ describe("archive service", () => {
     expect(stopSession).toHaveBeenCalledTimes(2);
     expect(stopSession).toHaveBeenCalledWith("session-default");
     expect(stopSession).toHaveBeenCalledWith("session-secondary");
+  });
+
+  it("hydrates profile child session last-used metadata before archiving", async () => {
+    const { service, sessions, hydrateProfileLastUsed } = createHarness({
+      sessions: [
+        session({ agentId: "session-default", status: "stopped" }),
+        session({ agentId: "session-secondary", status: "stopped" }),
+      ],
+      hydrateProfileLastUsed: async (profileId) => {
+        for (const [agentId, current] of sessions) {
+          if (current.profileId === profileId) {
+            sessions.set(agentId, { ...current, lastUserMessageAt: `2026-05-19T00:00:00.000Z` });
+          }
+        }
+      },
+    });
+
+    await service.archiveProfile("profile-1");
+    expect(hydrateProfileLastUsed).toHaveBeenCalledWith("profile-1");
+    expect(sessions.get("session-default")?.lastUserMessageAt).toBe("2026-05-19T00:00:00.000Z");
+    expect(sessions.get("session-secondary")?.archivedAt).toBeUndefined();
   });
 
   it("keeps a committed profile archive successful when one child session fails to stop", async () => {

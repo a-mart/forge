@@ -73,6 +73,7 @@ import type {
   SessionProjectAgentUpdatedEvent,
 } from './project-agent-events.js'
 import type {
+  ArchiveLastUsedHydratedEvent,
   SessionArchivedEvent,
   SessionClearedEvent,
   SessionCreatedEvent,
@@ -158,6 +159,7 @@ export type ServerEvent =
   | ManagerModelUpdatedEvent
   | ManagerCwdUpdatedEvent
   | SessionCreatedEvent
+  | ArchiveLastUsedHydratedEvent
   | SessionStoppedEvent
   | SessionResumedEvent
   | SessionArchivedEvent

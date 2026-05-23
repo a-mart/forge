@@ -411,6 +411,13 @@ export function buildPinSessionCommand(
   }
 }
 
+export function buildHydrateArchiveLastUsedCommand(requestId: string): ClientCommand {
+  return {
+    type: 'hydrate_archive_last_used',
+    requestId,
+  }
+}
+
 export function buildProfileArchiveActionCommand(
   type: 'archive_profile' | 'restore_profile',
   profileId: string,

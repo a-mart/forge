@@ -8,6 +8,7 @@ import {
   getArchivedProfileRows,
   getDirectlyArchivedSessionRows,
   getPrimaryManagerId,
+  getProfileRowLastUserMessageAt,
   resolveWorkerFetchManagerId,
 } from './agent-hierarchy'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
@@ -223,6 +224,23 @@ describe('agent-hierarchy', () => {
       archivedProjectSession,
       archivedProjectWorker,
     ], 'archived-project').map((agent) => agent.agentId)).toEqual(['active-session'])
+  })
+
+  it('sorts archived project rows by latest child user message timestamp', () => {
+    const profileA = { ...profile('project-a'), archivedAt: '2026-05-20T00:00:00.000Z' }
+    const profileB = { ...profile('project-b'), archivedAt: '2026-05-22T00:00:00.000Z' }
+    const profileMissing = { ...profile('project-missing'), archivedAt: '2026-05-23T00:00:00.000Z' }
+    const sessions = [
+      { ...manager('a-older'), profileId: 'project-a', lastUserMessageAt: '2026-05-19T00:00:00.000Z' },
+      { ...manager('a-newer'), profileId: 'project-a', lastUserMessageAt: '2026-05-24T00:00:00.000Z' },
+      { ...manager('b-session'), profileId: 'project-b', lastUserMessageAt: '2026-05-21T00:00:00.000Z' },
+      { ...manager('missing-session'), profileId: 'project-missing' },
+    ]
+
+    const rows = getArchivedProfileRows(sessions, [profileMissing, profileB, profileA])
+
+    expect(rows.map((row) => row.profile.profileId)).toEqual(['project-a', 'project-b', 'project-missing'])
+    expect(getProfileRowLastUserMessageAt(rows[0]!)).toBe('2026-05-24T00:00:00.000Z')
   })
 
   it('returns archive view rows for archived projects and directly archived sessions only', () => {

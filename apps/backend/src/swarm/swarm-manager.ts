@@ -93,6 +93,7 @@ import type {
 import type { CredentialPoolService } from "./credential-pool.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import { ArchiveService } from "./archive/archive-service.js";
+import { ArchiveLastUsedHydrator, type ArchiveLastUsedHydrationResult } from "./archive/archive-last-used-hydrator.js";
 import {
   ARCHIVED_PROJECT_OPERATION_MESSAGE,
   ARCHIVED_SESSION_OPERATION_MESSAGE,
@@ -1124,6 +1125,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly choiceService: SwarmChoiceService;
   private readonly promptService: SwarmPromptService;
   private readonly sessionService: SwarmSessionService;
+  private readonly archiveLastUsedHydrator: ArchiveLastUsedHydrator;
   private readonly archiveService: ArchiveService;
   private readonly projectAgentService: SwarmProjectAgentService;
   readonly promptRegistry: PromptRegistry;
@@ -1575,6 +1577,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         });
       }
     });
+    this.archiveLastUsedHydrator = new ArchiveLastUsedHydrator({
+      getAgent: (agentId) => this.descriptors.get(agentId),
+      listSessions: () => this.sortedDescriptors().filter((descriptor) => descriptor.role === "manager"),
+      listProfiles: () => this.listProfiles(),
+      patchDescriptor: (agentId, patch) => this.descriptorStoreAdapter.patchDescriptor(agentId, patch),
+      warn: (message, details) => this.logDebug(message, details),
+    });
     this.archiveService = new ArchiveService({
       now: this.now,
       getAgent: (agentId) => this.descriptors.get(agentId),
@@ -1583,6 +1592,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       patchDescriptor: (agentId, patch) => this.descriptorStoreAdapter.patchDescriptor(agentId, patch),
       patchProfile: (profileId, patch) => this.descriptorStoreAdapter.patchProfile(profileId, patch),
       stopSession: (agentId) => this.stopSession(agentId),
+      hydrateSessionLastUsed: async (agentId) => {
+        await this.archiveLastUsedHydrator.hydrateSessionIfMissing(agentId);
+      },
+      hydrateProfileLastUsed: async (profileId) => {
+        await this.archiveLastUsedHydrator.hydrateProfileSessionsIfMissing(profileId);
+      },
       onProfileArchiveStopError: (agentId, error) => {
         this.logDebug("archive:profile_stop_session:error", {
           agentId,
@@ -2598,6 +2613,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async restoreSession(agentId: string): Promise<{ agentId: string; profileId: string; openAgentId?: string }> {
     const result = await this.archiveService.restoreSession(agentId);
     this.emitAgentsSnapshot();
+    return result;
+  }
+
+  async hydrateArchivedLastUsed(): Promise<ArchiveLastUsedHydrationResult> {
+    const result = await this.archiveLastUsedHydrator.hydrateArchivedRowsIfMissing();
+    if (result.hydratedSessionCount > 0) {
+      this.emitAgentsSnapshot();
+    }
     return result;
   }
 
@@ -4376,6 +4399,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     this.emitConversationMessage(event);
     this.markSessionActivity(target.agentId, timestamp);
+    if (payload.source === "user_input") {
+      this.markSessionUserMessageActivity(target.agentId, timestamp);
+    }
 
     return {
       event,
@@ -4749,6 +4775,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     descriptor.updatedAt = normalizedTimestamp;
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+    this.emitAgentsSnapshot();
+  }
+
+  private markSessionUserMessageActivity(agentId: string, timestamp: string): void {
+    const sessionAgentId = this.resolveSessionActivityAgentId(agentId);
+    if (!sessionAgentId) {
+      return;
+    }
+
+    const descriptor = this.descriptors.get(sessionAgentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      return;
+    }
+
+    if (descriptor.lastUserMessageAt && descriptor.lastUserMessageAt.localeCompare(timestamp) >= 0) {
+      return;
+    }
+
+    descriptor.lastUserMessageAt = timestamp;
     this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
     this.emitAgentsSnapshot();
   }

@@ -22,6 +22,7 @@ export type SessionArchiveResult = { agentId: string; profileId: string; archive
 export type SessionRestoreResult = { agentId: string; profileId: string; openAgentId?: string }
 export type ProfileArchiveResult = { profileId: string; archivedAt: string }
 export type ProfileRestoreResult = { profileId: string; openAgentId: string }
+export type ArchiveLastUsedHydrationResult = { scannedSessionCount: number; hydratedSessionCount: number }
 export type SessionForkedResult = { sourceAgentId: string; newSessionAgent: AgentDescriptor }
 export type SessionWorkersResult = { sessionAgentId: string; workers: AgentDescriptor[] }
 
@@ -69,6 +70,7 @@ export type WsRequestResultMap = {
   rename_profile: { profileId: string }
   archive_profile: ProfileArchiveResult
   restore_profile: ProfileRestoreResult
+  hydrate_archive_last_used: ArchiveLastUsedHydrationResult
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
   set_session_project_agent: SessionProjectAgentResult

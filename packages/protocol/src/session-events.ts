@@ -47,6 +47,13 @@ export interface SessionRestoredEvent {
   openAgentId?: string
 }
 
+export interface ArchiveLastUsedHydratedEvent {
+  type: 'archive_last_used_hydrated'
+  scannedSessionCount: number
+  hydratedSessionCount: number
+  requestId?: string
+}
+
 export interface SessionDeletedEvent {
   type: 'session_deleted'
   agentId: string
