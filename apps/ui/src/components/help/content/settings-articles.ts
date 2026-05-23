@@ -138,7 +138,7 @@ If clicking a file link does nothing, check that the editor is installed and tha
 - **Anthropic** — Claude-based workers and managers. Supports either OAuth or API key auth.
 - **OpenAI** — Codex runtime sessions and voice transcription. Supports either OAuth or API key auth.
 - **Claude SDK** — Native Claude Code CLI OAuth path for Claude models. OAuth only.
-- **Cursor SDK** — Native Cursor SDK specialist runtime for Composer 2.5. API key only via `CURSOR_API_KEY`. Specialist-only; manager models do not use it.
+- **Cursor SDK** — Native Cursor SDK specialist runtime for Composer 2.5. API key only via \`CURSOR_API_KEY\`. Specialist-only; manager models do not use it.
 - **xAI** — Grok-based workers.
 
 ## Configuring a provider
@@ -163,7 +163,7 @@ If the OAuth flow gets stuck, click **Clear** to reset it and try again.
 
 ## Which credential do I need?
 
-You need at least one provider credential to run agents. Most setups use Anthropic for Claude-based workers. Add OpenAI if you want Codex runtime sessions or voice transcription. Add xAI if you want to use Grok models. Use Claude SDK if you want the native Claude Code CLI OAuth path instead of an API key. Use Cursor SDK if you want specialist-only Composer 2.5 access through `CURSOR_API_KEY`.`,
+You need at least one provider credential to run agents. Most setups use Anthropic for Claude-based workers. Add OpenAI if you want Codex runtime sessions or voice transcription. Add xAI if you want to use Grok models. Use Claude SDK if you want the native Claude Code CLI OAuth path instead of an API key. Use Cursor SDK if you want specialist-only Composer 2.5 access through \`CURSOR_API_KEY\`.`,
     keywords: [
       'api key',
       'authentication',
