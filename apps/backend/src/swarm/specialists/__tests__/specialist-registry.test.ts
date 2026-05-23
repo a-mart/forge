@@ -903,8 +903,8 @@ describe("specialist-registry", () => {
 
     expect(byId.get("app-runtime")).toBeUndefined();
     expect(byId.get("cursor-builder")).toMatchObject({
-      provider: "cursor-acp",
-      modelId: "default",
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
       reasoningLevel: "medium",
       fallbackProvider: "openai-codex",
       fallbackModelId: "gpt-5.4",

@@ -78,6 +78,14 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
+  'cursor-composer': {
+    provider: 'cursor-sdk',
+    defaultModelId: 'composer-2.5',
+    visibleInCreateManager: false,
+    visibleInChangeManager: false,
+    visibleInSpawnPreset: false,
+    visibleInSpecialists: true,
+  },
   'cursor-acp': {
     provider: 'cursor-acp',
     defaultModelId: 'default',
@@ -225,6 +233,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: false,
     inputModes: ['text'],
   },
+  'cursor-sdk/composer-2.5': {
+    provider: 'cursor-sdk',
+    familyId: 'cursor-composer',
+    contextWindow: 200_000,
+    maxOutputTokens: 16_384,
+    supportsReasoning: true,
+    inputModes: ['text'],
+  },
   'cursor-acp/default': {
     provider: 'cursor-acp',
     familyId: 'cursor-acp',
@@ -243,11 +259,12 @@ describe('model-catalog', () => {
       'claude-sdk',
       'xai',
       'openrouter',
+      'cursor-sdk',
       'cursor-acp',
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(18)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(19)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
@@ -272,6 +289,11 @@ describe('model-catalog', () => {
       availabilityMode: 'external',
       piProjectionMode: 'custom-provider-merge',
       piApiProtocol: 'openai-completions',
+    })
+    expect(getCatalogProvider('cursor-sdk')).toMatchObject({
+      availabilityMode: 'managed-auth',
+      piProjectionMode: 'none',
+      projectionScope: 'catalog-only',
     })
   })
 
@@ -319,13 +341,24 @@ describe('model-catalog', () => {
     })
   })
 
-  it('keeps cursor-acp hidden from all manager and specialist visibility surfaces', () => {
+  it('exposes Cursor SDK only for specialists while keeping manager and spawn preset surfaces guarded', () => {
+    expect(getCatalogFamily('cursor-sdk')).toBeUndefined()
+    expect(getCatalogFamily('cursor-composer')).toMatchObject({
+      visibleInCreateManager: false,
+      visibleInChangeManager: false,
+      visibleInSpawnPreset: false,
+      visibleInSpecialists: true,
+    })
     expect(getCatalogFamily('cursor-acp')).toMatchObject({
       visibleInCreateManager: false,
       visibleInChangeManager: false,
       visibleInSpawnPreset: false,
       visibleInSpecialists: false,
     })
+    expect(getSpecialistFamilies().map((family) => family.familyId)).toContain('cursor-composer')
+    expect(getCreateManagerFamilies().map((family) => family.familyId)).not.toContain('cursor-composer')
+    expect(getChangeManagerFamilies().map((family) => family.familyId)).not.toContain('cursor-composer')
+    expect(getSpawnPresetFamilies().map((family) => family.familyId)).not.toContain('cursor-composer')
   })
 
   it('ensures all models reference valid families', () => {
@@ -396,6 +429,12 @@ describe('model-catalog', () => {
     expect(getCatalogContextWindow('grok-4-fast')).toBe(2_000_000)
     expect(getCatalogContextWindow('default')).toBeUndefined()
     expect(getCatalogContextWindow('default', 'cursor-acp')).toBe(200_000)
+    expect(getCatalogModel('composer-2.5', 'cursor-sdk')).toMatchObject({
+      catalogId: 'cursor-sdk/composer-2.5',
+      provider: 'cursor-sdk',
+      familyId: 'cursor-composer',
+    })
+    expect(inferCatalogFamily('cursor-sdk', 'composer-2.5')).toBe('cursor-composer')
     expect(inferCatalogProvider('gpt-5.4')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
@@ -472,6 +511,7 @@ describe('model-catalog', () => {
       'sdk-opus',
       'sdk-sonnet',
       'pi-grok',
+      'cursor-composer',
     ])
   })
 })

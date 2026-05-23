@@ -59,7 +59,7 @@ export class RuntimeErrorProjector {
     if (error.phase === "prompt_dispatch" || error.phase === "prompt_start") {
       const recoveredWithFallback = await this.deps.maybeRecoverWorkerWithSpecialistFallback(
         agentId,
-        message,
+        appendRuntimeErrorClassificationDetails(message, error.details),
         error.phase,
         runtimeToken
       );
@@ -76,11 +76,13 @@ export class RuntimeErrorProjector {
     this.deps.logDebug("runtime:error", {
       agentId,
       runtime:
-        descriptor.model.provider.includes("cursor-acp")
-          ? "cursor-acp"
-          : descriptor.model.provider.includes("claude-sdk")
-            ? "claude-sdk"
-            : "pi",
+        descriptor.model.provider.includes("cursor-sdk")
+          ? "cursor-sdk"
+          : descriptor.model.provider.includes("cursor-acp")
+            ? "cursor-acp"
+            : descriptor.model.provider.includes("claude-sdk")
+              ? "claude-sdk"
+              : "pi",
       phase: error.phase,
       message,
       stack: error.stack,
@@ -141,6 +143,12 @@ export class RuntimeErrorProjector {
       source: "system"
     });
   }
+}
+
+function appendRuntimeErrorClassificationDetails(message: string, details: Record<string, unknown> | undefined): string {
+  const detailParts = [readStringDetail(details, "errorName"), readStringDetail(details, "errorCode")]
+    .filter((value): value is string => !!value);
+  return detailParts.length > 0 ? `${message} (${detailParts.join(" ")})` : message;
 }
 
 function isCompactionSuccessRecoveryStage(stage: string | undefined): boolean {

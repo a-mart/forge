@@ -67,9 +67,15 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
     placeholder: 'sk-or-v1-...',
     helpUrl: 'https://openrouter.ai/keys',
   },
+  'cursor-sdk': {
+    label: 'Cursor API key',
+    description: 'Used by Cursor SDK Composer specialists.',
+    placeholder: 'key_... or Cursor API key',
+    helpUrl: 'https://cursor.com/dashboard?tab=api-keys',
+  },
 }
 
-export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex', 'xai', 'openrouter']
+export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex', 'xai', 'openrouter', 'cursor-sdk']
 
 export { SHARED_INTEGRATION_MANAGER_ID }
 
@@ -93,6 +99,7 @@ function normalizeSettingsAuthProviderId(value: unknown): SettingsAuthProviderId
   if (value === 'openai-codex') return 'openai-codex'
   if (value === 'xai') return 'xai'
   if (value === 'openrouter') return 'openrouter'
+  if (value === 'cursor-sdk') return 'cursor-sdk'
   return undefined
 }
 

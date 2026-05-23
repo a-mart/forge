@@ -1,0 +1,571 @@
+import { randomUUID } from "node:crypto";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
+import { transitionAgentStatus } from "../../agent-state-machine.js";
+import { normalizeRuntimeError, normalizeRuntimeUserMessage } from "../runtime-utils.js";
+import type {
+  RuntimeSessionEvent,
+  RuntimeShutdownOptions,
+  RuntimeUserMessage,
+  RuntimeUserMessageInput,
+  SmartCompactOptions,
+  SmartCompactResult,
+  SpecialistFallbackReplaySnapshot,
+  SwarmAgentRuntime,
+  SwarmRuntimeCallbacks
+} from "../../runtime-contracts.js";
+import type {
+  AgentContextUsage,
+  AgentDescriptor,
+  AgentStatus,
+  RequestedDeliveryMode,
+  SendMessageReceipt
+} from "../../types.js";
+import type {
+  CursorSdkAgent,
+  CursorSdkAgentOptions,
+  CursorSdkMcpServers,
+  CursorSdkModelSelection,
+  CursorSdkModule,
+  CursorSdkRun
+} from "./cursor-sdk-loader.js";
+import { CursorSdkEventMapper } from "./cursor-sdk-event-mapper.js";
+
+export const CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE = "swarm_cursor_sdk_runtime_state";
+const SESSION_HEADER_VERSION = 3;
+
+interface CursorSdkRuntimeState {
+  version: 1;
+  sdkAgentId: string;
+  model: { provider: "cursor-sdk"; modelId: string; thinkingLevel?: string };
+  cwd: string;
+  stateRoot: string;
+  promptHash?: string;
+  savedAt: string;
+}
+
+interface QueuedPrompt {
+  deliveryId: string;
+  message: RuntimeUserMessage;
+}
+
+interface ActivePromptState {
+  token: number;
+  message: RuntimeUserMessage;
+  run?: CursorSdkRun;
+  cancelled: boolean;
+}
+
+export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
+  readonly descriptor: AgentDescriptor;
+  readonly runtimeType = "cursor-sdk" as const;
+
+  private readonly callbacks: SwarmRuntimeCallbacks;
+  private readonly now: () => string;
+  private readonly model: CursorSdkModelSelection;
+  private readonly systemPrompt: string;
+  private readonly mcpServers: CursorSdkMcpServers;
+  private readonly stateRoot: string;
+  private readonly eventMapper: CursorSdkEventMapper;
+  private readonly customEntries = new Map<string, Array<{ id: string; data: unknown }>>();
+  private readonly queuedPrompts: QueuedPrompt[] = [];
+  private readonly promptHash: string | undefined;
+
+  private status: AgentStatus;
+  private sdkAgent: CursorSdkAgent;
+  private needsPromptInjection = true;
+  private activePrompt: ActivePromptState | undefined;
+  private promptDispatchPending = false;
+  private stoppedPendingDispatch = false;
+  private nextPromptToken = 0;
+  private currentTurnReplayMessage: RuntimeUserMessage | undefined;
+  private lastSessionEntryId: string | null = null;
+
+  private constructor(options: {
+    descriptor: AgentDescriptor;
+    callbacks: SwarmRuntimeCallbacks;
+    now?: () => string;
+    sdk: CursorSdkModule;
+    sdkAgent: CursorSdkAgent;
+    apiKey: string;
+    model: CursorSdkModelSelection;
+    systemPrompt: string;
+    mcpServers: CursorSdkMcpServers;
+    stateRoot: string;
+    promptHash?: string;
+  }) {
+    this.descriptor = options.descriptor;
+    this.callbacks = options.callbacks;
+    this.now = options.now ?? (() => new Date().toISOString());
+    this.sdkAgent = options.sdkAgent;
+    this.model = options.model;
+    this.systemPrompt = options.systemPrompt;
+    this.mcpServers = options.mcpServers;
+    this.stateRoot = options.stateRoot;
+    this.promptHash = options.promptHash;
+    this.status = options.descriptor.status;
+    this.eventMapper = new CursorSdkEventMapper({
+      debug: process.env.FORGE_DEBUG === "true",
+      logDebug: (message, details) => this.logDebug(`event_mapper:${message}`, details)
+    });
+
+    const sessionManager = openSessionManagerWithSizeGuard(options.descriptor.sessionFile, {
+      context: `runtime:create:cursor-sdk:${options.descriptor.agentId}`,
+      rotateOversizedFile: true
+    });
+    if (!sessionManager) {
+      throw new Error(`Unable to open session file for agent ${options.descriptor.agentId}: ${options.descriptor.sessionFile}`);
+    }
+
+    const existingEntries = typeof sessionManager.getEntries === "function" ? sessionManager.getEntries() : [];
+    for (const entry of existingEntries) {
+      this.lastSessionEntryId = entry.id;
+      if (entry.type !== "custom") continue;
+      const existing = this.customEntries.get(entry.customType) ?? [];
+      existing.push({ id: entry.id, data: entry.data });
+      this.customEntries.set(entry.customType, existing);
+    }
+  }
+
+  static async create(options: {
+    descriptor: AgentDescriptor;
+    callbacks: SwarmRuntimeCallbacks;
+    now?: () => string;
+    sdk: CursorSdkModule;
+    apiKey: string;
+    model: CursorSdkModelSelection;
+    systemPrompt: string;
+    mcpServers: CursorSdkMcpServers;
+    stateRoot: string;
+    promptHash?: string;
+  }): Promise<CursorSdkAgentRuntime> {
+    if (!options.stateRoot.trim()) {
+      throw new Error("Cursor SDK runtime requires a Forge-owned stateRoot.");
+    }
+
+    const persisted = readLatestRuntimeState(options.descriptor.sessionFile);
+    const agentOptions: CursorSdkAgentOptions = {
+      apiKey: options.apiKey,
+      model: options.model,
+      local: { cwd: options.descriptor.cwd, settingSources: [] },
+      platform: { stateRoot: options.stateRoot, workspaceRef: options.descriptor.cwd },
+      mcpServers: options.mcpServers,
+      name: options.descriptor.displayName
+    };
+
+    let sdkAgent: CursorSdkAgent;
+    if (persisted?.sdkAgentId) {
+      try {
+        sdkAgent = await options.sdk.Agent.resume(persisted.sdkAgentId, agentOptions);
+      } catch {
+        sdkAgent = await options.sdk.Agent.create(agentOptions);
+      }
+    } else {
+      sdkAgent = await options.sdk.Agent.create(agentOptions);
+    }
+
+    const runtime = new CursorSdkAgentRuntime({ ...options, sdkAgent });
+    runtime.persistRuntimeState();
+    return runtime;
+  }
+
+  getStatus(): AgentStatus {
+    return this.status;
+  }
+
+  getPendingCount(): number {
+    return this.queuedPrompts.length;
+  }
+
+  getContextUsage(): AgentContextUsage | undefined {
+    return undefined;
+  }
+
+  getSystemPrompt(): string {
+    return this.systemPrompt;
+  }
+
+  async prepareForSpecialistFallbackReplay(): Promise<SpecialistFallbackReplaySnapshot | undefined> {
+    const replayMessages = [
+      ...(this.currentTurnReplayMessage ? [cloneRuntimeUserMessage(this.currentTurnReplayMessage)] : []),
+      ...this.queuedPrompts.map((entry) => cloneRuntimeUserMessage(entry.message))
+    ];
+    return replayMessages.length > 0 ? { messages: replayMessages } : undefined;
+  }
+
+  async restorePreparedSpecialistFallbackReplay(): Promise<void> {
+    // Replay snapshots are non-destructive.
+  }
+
+  async sendMessage(input: RuntimeUserMessageInput, _requestedMode: RequestedDeliveryMode = "auto"): Promise<SendMessageReceipt> {
+    this.ensureNotTerminated();
+    const message = normalizeRuntimeUserMessage(input);
+    const deliveryId = randomUUID();
+
+    if (this.activePrompt || this.promptDispatchPending) {
+      this.queuedPrompts.push({ deliveryId, message });
+      await this.emitStatus();
+      return { targetAgentId: this.descriptor.agentId, deliveryId, acceptedMode: "followUp" };
+    }
+
+    this.promptDispatchPending = true;
+    this.currentTurnReplayMessage = cloneRuntimeUserMessage(message);
+    this.schedulePromptDispatch(message);
+    return { targetAgentId: this.descriptor.agentId, deliveryId, acceptedMode: "prompt" };
+  }
+
+  async compact(): Promise<unknown> {
+    this.ensureNotTerminated();
+    throw new Error(`Agent ${this.descriptor.agentId} does not support manual compaction`);
+  }
+
+  async smartCompact(_customInstructions?: string, _options?: SmartCompactOptions): Promise<SmartCompactResult> {
+    this.ensureNotTerminated();
+    throw new Error(`Agent ${this.descriptor.agentId} does not support smart compaction`);
+  }
+
+  async stopInFlight(): Promise<void> {
+    this.queuedPrompts.length = 0;
+    this.currentTurnReplayMessage = undefined;
+    const active = this.activePrompt;
+    if (active) {
+      active.cancelled = true;
+      if (active.run) {
+        await active.run.cancel().catch(() => undefined);
+      }
+    } else if (this.promptDispatchPending) {
+      this.stoppedPendingDispatch = true;
+    }
+    this.promptDispatchPending = false;
+    if (this.status !== "terminated") {
+      await this.updateStatus("idle");
+    }
+  }
+
+  async terminate(options?: RuntimeShutdownOptions): Promise<void> {
+    if (this.status === "terminated") return;
+    if (options?.abort ?? true) {
+      await this.stopInFlight();
+    }
+    this.sdkAgent.close();
+    this.status = transitionAgentStatus(this.status, "terminated");
+    this.descriptor.status = this.status;
+    this.descriptor.updatedAt = this.now();
+    await this.emitStatus();
+  }
+
+  async shutdownForReplacement(): Promise<void> {
+    this.assertIdleForReplacementShutdown();
+    this.sdkAgent.close();
+  }
+
+  async recycle(): Promise<void> {
+    this.assertIdleForReplacementShutdown();
+    this.sdkAgent.close();
+  }
+
+  getCustomEntries(customType: string): unknown[] {
+    const entries = this.customEntries.get(customType) ?? [];
+    return entries.map((entry) => entry.data);
+  }
+
+  appendCustomEntry(customType: string, data?: unknown): string {
+    const entryId = generateSessionEntryId();
+    const existing = this.customEntries.get(customType) ?? [];
+    existing.push({ id: entryId, data });
+    this.customEntries.set(customType, existing);
+    this.ensureSessionFileHeader();
+    appendFileSync(this.descriptor.sessionFile, `${JSON.stringify({
+      type: "custom",
+      customType,
+      data,
+      id: entryId,
+      parentId: this.lastSessionEntryId,
+      timestamp: this.now()
+    })}\n`, "utf8");
+    this.lastSessionEntryId = entryId;
+    return entryId;
+  }
+
+  private async dispatchPrompt(message: RuntimeUserMessage): Promise<void> {
+    if (this.status === "terminated") {
+      this.promptDispatchPending = false;
+      this.currentTurnReplayMessage = undefined;
+      return;
+    }
+
+    const token = ++this.nextPromptToken;
+    const active: ActivePromptState = { token, message, cancelled: this.stoppedPendingDispatch };
+    this.stoppedPendingDispatch = false;
+    this.activePrompt = active;
+    this.promptDispatchPending = true;
+    this.currentTurnReplayMessage = cloneRuntimeUserMessage(message);
+
+    try {
+      await this.updateStatus("streaming");
+      if (this.shouldAbortPromptBeforeSend(active, token)) {
+        return;
+      }
+
+      await this.emitSessionEvents(this.eventMapper.beginPrompt());
+      if (this.shouldAbortPromptBeforeSend(active, token)) {
+        return;
+      }
+
+      this.promptDispatchPending = false;
+      const payload = this.buildSendPayload(message);
+      if (this.shouldAbortPromptBeforeSend(active, token)) {
+        return;
+      }
+      // Deliberately do not pass onDelta here. The runtime consumes run.stream() as the single text source
+      // until live fixtures prove stream+delta can be safely deduped without duplicated assistant content.
+      const run = await this.sdkAgent.send(payload, {
+        model: this.model,
+        mcpServers: this.mcpServers
+      });
+      active.run = run;
+      if (this.shouldAbortPromptBeforeSend(active, token)) {
+        await run.cancel().catch(() => undefined);
+        return;
+      }
+
+      for await (const sdkMessage of run.stream()) {
+        if (active.cancelled || this.activePrompt?.token !== token) break;
+        await this.emitSessionEvents(this.eventMapper.mapSdkMessage(sdkMessage));
+      }
+
+      if (!active.cancelled) {
+        const waitResult = await run.wait();
+        assertCursorRunSucceeded(run, waitResult, this.eventMapper.getTerminalStatus());
+        await this.emitSessionEvents(this.eventMapper.completePrompt());
+      }
+    } catch (error) {
+      if (!active.cancelled) {
+        await this.emitRuntimeError(error);
+      }
+    } finally {
+      if (this.activePrompt?.token === token) {
+        this.activePrompt = undefined;
+      }
+      this.promptDispatchPending = false;
+      this.currentTurnReplayMessage = undefined;
+      if (!this.isTerminated()) {
+        await this.updateStatus("idle");
+        await this.dispatchQueuedPrompts();
+      }
+    }
+  }
+
+  private shouldAbortPromptBeforeSend(active: ActivePromptState, token: number): boolean {
+    return active.cancelled || this.activePrompt?.token !== token || this.isTerminated();
+  }
+
+  private buildSendPayload(message: RuntimeUserMessage): string | { text: string; images?: Array<{ data: string; mimeType: string }> } {
+    const text = this.needsPromptInjection ? wrapWithForgeSystemContext(this.systemPrompt, message.text) : message.text;
+    this.needsPromptInjection = false;
+    const images = (message.images ?? []).map((image) => ({ data: image.data, mimeType: image.mimeType }));
+    return images.length > 0 ? { text, images } : text;
+  }
+
+  private async emitRuntimeError(error: unknown): Promise<void> {
+    const normalized = normalizeRuntimeError(error);
+    await this.callbacks.onRuntimeError?.(this.descriptor.agentId, {
+      phase: "prompt_dispatch",
+      message: normalized.message,
+      stack: normalized.stack,
+      details: extractCursorSdkErrorDetails(error)
+    });
+  }
+
+  private async dispatchQueuedPrompts(): Promise<void> {
+    if (this.activePrompt || this.promptDispatchPending || this.queuedPrompts.length === 0 || this.status === "terminated") {
+      return;
+    }
+    const next = this.queuedPrompts.shift();
+    if (!next) return;
+    this.promptDispatchPending = true;
+    this.currentTurnReplayMessage = cloneRuntimeUserMessage(next.message);
+    this.schedulePromptDispatch(next.message);
+  }
+
+  private schedulePromptDispatch(message: RuntimeUserMessage): void {
+    void this.dispatchPrompt(message).catch(async (error) => {
+      await this.emitRuntimeError(error);
+      if (this.activePrompt === undefined) {
+        this.promptDispatchPending = false;
+        this.currentTurnReplayMessage = undefined;
+        if (this.status !== "terminated") {
+          await this.updateStatus("idle").catch(() => undefined);
+          await this.dispatchQueuedPrompts().catch(() => undefined);
+        }
+      }
+    });
+  }
+
+  private persistRuntimeState(): void {
+    this.appendCustomEntry(CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE, {
+      version: 1,
+      sdkAgentId: this.sdkAgent.agentId,
+      model: {
+        provider: "cursor-sdk",
+        modelId: this.descriptor.model.modelId,
+        thinkingLevel: this.descriptor.model.thinkingLevel
+      },
+      cwd: this.descriptor.cwd,
+      stateRoot: this.stateRoot,
+      ...(this.promptHash ? { promptHash: this.promptHash } : {}),
+      savedAt: this.now()
+    } satisfies CursorSdkRuntimeState);
+  }
+
+  private async emitSessionEvents(events: RuntimeSessionEvent[]): Promise<void> {
+    for (const event of events) {
+      await this.callbacks.onSessionEvent?.(this.descriptor.agentId, event);
+      if (event.type === "agent_end") {
+        await this.callbacks.onAgentEnd?.(this.descriptor.agentId);
+      }
+    }
+  }
+
+  private async updateStatus(status: AgentStatus): Promise<void> {
+    this.status = transitionAgentStatus(this.status, status);
+    this.descriptor.status = this.status;
+    this.descriptor.updatedAt = this.now();
+    await this.emitStatus();
+  }
+
+  private async emitStatus(): Promise<void> {
+    await this.callbacks.onStatusChange(this.descriptor.agentId, this.status, this.getPendingCount(), this.getContextUsage());
+  }
+
+  private ensureSessionFileHeader(): void {
+    if (hasValidSessionHeader(this.descriptor.sessionFile)) {
+      return;
+    }
+
+    writeFileSync(this.descriptor.sessionFile, `${JSON.stringify({
+      type: "session",
+      version: SESSION_HEADER_VERSION,
+      id: generateSessionEntryId(),
+      timestamp: this.now(),
+      cwd: this.descriptor.cwd
+    })}\n`, "utf8");
+    this.lastSessionEntryId = null;
+  }
+
+  private assertIdleForReplacementShutdown(): void {
+    if (this.status !== "idle" || this.promptDispatchPending || this.activePrompt || this.queuedPrompts.length > 0) {
+      throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
+    }
+  }
+
+  private ensureNotTerminated(): void {
+    if (this.isTerminated()) {
+      throw new Error(`Agent ${this.descriptor.agentId} is terminated`);
+    }
+  }
+
+  private isTerminated(): boolean {
+    return this.status === "terminated";
+  }
+
+  private logDebug(message: string, details?: unknown): void {
+    if (process.env.FORGE_DEBUG === "true") {
+      console.debug(`[cursor-sdk:${this.descriptor.agentId}] ${message}`, details ?? "");
+    }
+  }
+}
+
+function extractCursorSdkErrorDetails(error: unknown): Record<string, unknown> | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const details: Record<string, unknown> = {};
+  if (error instanceof Error) {
+    const errorName = error.name && error.name !== "Error" ? error.name : error.constructor.name;
+    if (errorName && errorName !== "Error") {
+      details.errorName = errorName;
+    }
+  }
+
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && code.trim().length > 0) {
+    details.errorCode = code.trim();
+  } else if (typeof code === "number" && Number.isFinite(code)) {
+    details.errorCode = code;
+  }
+
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
+function assertCursorRunSucceeded(run: CursorSdkRun, waitResult: unknown, terminalStatus: string | undefined): void {
+  const terminal = terminalStatus?.trim().toUpperCase();
+  if (terminal && terminal !== "FINISHED" && terminal !== "CANCELLED") {
+    throw new Error(`Cursor SDK run failed with terminal status ${terminal}.`);
+  }
+
+  const waitStatus = readStatus(waitResult)?.trim().toLowerCase();
+  if (waitStatus && !["finished", "success", "succeeded", "completed", "cancelled"].includes(waitStatus)) {
+    throw new Error(`Cursor SDK run failed with wait status ${waitStatus}.`);
+  }
+
+  const runStatus = typeof run.status === "string" ? run.status.trim().toLowerCase() : undefined;
+  if (runStatus && !["finished", "running", "cancelled"].includes(runStatus)) {
+    throw new Error(`Cursor SDK run failed with status ${runStatus}.`);
+  }
+}
+
+function readStatus(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const status = (value as { status?: unknown }).status;
+  return typeof status === "string" ? status : undefined;
+}
+
+function readLatestRuntimeState(sessionFile: string): CursorSdkRuntimeState | undefined {
+  const sessionManager = openSessionManagerWithSizeGuard(sessionFile, { context: "cursor-sdk:read-state" });
+  const entries = typeof sessionManager?.getEntries === "function" ? sessionManager.getEntries() : [];
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.type === "custom" && entry.customType === CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE && isCursorSdkRuntimeState(entry.data)) {
+      return entry.data;
+    }
+  }
+  return undefined;
+}
+
+function isCursorSdkRuntimeState(value: unknown): value is CursorSdkRuntimeState {
+  return !!value && typeof value === "object" && (value as { version?: unknown }).version === 1 && typeof (value as { sdkAgentId?: unknown }).sdkAgentId === "string";
+}
+
+function wrapWithForgeSystemContext(systemPrompt: string, userMessage: string): string {
+  return `<forge_system_context>\n${systemPrompt}\n</forge_system_context>\n\n<forge_user_message>\n${userMessage}\n</forge_user_message>`;
+}
+
+function cloneRuntimeUserMessage(message: RuntimeUserMessage): RuntimeUserMessage {
+  return { text: message.text, images: message.images?.map((image) => ({ ...image })) ?? [] };
+}
+
+function generateSessionEntryId(): string {
+  return `evt_${randomUUID()}`;
+}
+
+function hasValidSessionHeader(sessionFile: string): boolean {
+  try {
+    const firstLine = readFileSync(sessionFile, "utf8").split(/\r?\n/, 1)[0];
+    if (!firstLine) {
+      return false;
+    }
+    const parsed = JSON.parse(firstLine) as { type?: unknown };
+    return parsed.type === "session";
+  } catch {
+    return false;
+  }
+}
+
+export function getDefaultCursorSdkStateRoot(descriptor: AgentDescriptor): string {
+  return join(dirname(descriptor.sessionFile), "cursor-sdk-state", descriptor.agentId);
+}

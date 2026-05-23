@@ -204,6 +204,23 @@ describe("shouldRetrySpecialistSpawnWithFallback", () => {
       })
     ).toBe(true);
   });
+
+  it.each([
+    [Object.assign(new Error("Cursor SDK runtime is unavailable: @cursor/sdk could not be loaded."), { name: "CursorSdkUnavailableError" })],
+    [Object.assign(new Error("Cannot use this model: composer-2.5"), { name: "ConfigurationError" })],
+    [Object.assign(new Error("quota exceeded"), { name: "RateLimitError" })],
+    [new Error("usage limit reached")],
+    [new Error("request failed with 429")],
+    [Object.assign(new Error("Integration not connected"), { name: "IntegrationNotConnectedError" })],
+    [Object.assign(new Error("socket timeout"), { name: "NetworkError" })],
+  ])("returns true for Cursor SDK fallback-eligible errors %#", (error) => {
+    expect(
+      shouldRetrySpecialistSpawnWithFallback(error, {
+        provider: "cursor-sdk",
+        modelId: "composer-2.5"
+      })
+    ).toBe(true);
+  });
 });
 
 describe("clampModelCapacityBlockDurationMs", () => {

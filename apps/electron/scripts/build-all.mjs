@@ -3,7 +3,7 @@ import fs, { existsSync } from 'node:fs'
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { createRequire } from 'node:module'
+import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build as esbuild } from 'esbuild'
 
@@ -58,6 +58,13 @@ const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
     validateStagedPackageDir: (stagedPackageDir) => validateStagedClaudeSdkPackageDir(stagedPackageDir),
   },
   {
+    name: '@cursor/sdk',
+    optional: false,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.Agent?.create === 'function' ? null : 'expected an Agent.create() export',
+    validateStagedPackageDir: (stagedPackageDir) => validateStagedCursorSdkPackageDir(stagedPackageDir),
+  },
+  {
     name: 'koffi',
     optional: true,
     validateLoadedModule: (loadedModule) =>
@@ -90,11 +97,12 @@ const PACKAGE_SPECIFIC_DIRS_TO_PRUNE = new Map([
   ['koffi', new Set(['src', 'vendor'])],
   ['sharp', new Set(['install', 'src'])],
 ])
-const PACKAGES_KEEP_DECLARATION_FILES = new Set(['@anthropic-ai/claude-agent-sdk'])
+const PACKAGES_KEEP_DECLARATION_FILES = new Set(['@anthropic-ai/claude-agent-sdk', '@cursor/sdk'])
 const declarationSuffixes = ['.d.ts', '.d.mts', '.d.cts']
 const declarationMapSuffixes = ['.d.ts.map', '.d.mts.map', '.d.cts.map']
 const docsPrefixes = ['license', 'changelog', 'readme']
 const docsPrunableExtensions = new Set(['', '.md', '.mdx', '.markdown', '.txt', '.rst', '.adoc', '.rtf'])
+const NODE_BUILTIN_MODULES = new Set([...builtinModules, ...builtinModules.map((moduleName) => `node:${moduleName}`)])
 
 export async function cleanReleaseDir(targetDir = releaseDir) {
   await mkdir(targetDir, { recursive: true })
@@ -232,6 +240,8 @@ export async function validatePackagedRuntimePreflight() {
       `${runtimePackage.name} -> ${path.relative(backendStageDir, resolvedEntry)} (${describeLoadedModule(loadedModule)})`,
     )
   }
+
+  await validateStagedCursorSdkRuntime(stagedRequire)
 
   console.log(`[electron/build-all] Packaged-runtime preflight resolved and loaded ${verifiedPackages.length} staged runtime packages`)
   for (const resolution of verifiedPackages) {
@@ -421,11 +431,15 @@ function collectRuntimeDependencyDescriptors(manifest) {
   const descriptors = []
 
   for (const packageName of Object.keys(manifest.dependencies ?? {})) {
-    descriptors.push({ packageName, optional: false })
+    if (!NODE_BUILTIN_MODULES.has(packageName)) {
+      descriptors.push({ packageName, optional: false })
+    }
   }
 
   for (const packageName of Object.keys(manifest.optionalDependencies ?? {})) {
-    descriptors.push({ packageName, optional: true })
+    if (!NODE_BUILTIN_MODULES.has(packageName)) {
+      descriptors.push({ packageName, optional: true })
+    }
   }
 
   return descriptors
@@ -535,6 +549,96 @@ async function copyRuntimePackage(runtimePackage, targetDir) {
     dereference: true,
     filter: (sourcePath) => shouldCopyRuntimePackagePath(runtimePackage.name, runtimePackage.packageRoot, sourcePath),
   })
+}
+
+function validateStagedCursorSdkPackageDir(stagedPackageDir) {
+  const requiredPaths = [
+    'package.json',
+    path.join('dist', 'cjs', 'index.js'),
+    path.join('dist', 'esm', 'index.js'),
+  ]
+
+  for (const relativePath of requiredPaths) {
+    if (!existsSync(path.join(stagedPackageDir, relativePath))) {
+      return `missing required asset ${relativePath}`
+    }
+  }
+
+  return null
+}
+
+async function validateStagedCursorSdkRuntime(stagedRequire) {
+  const sqlite3Entry = stagedRequire.resolve('sqlite3')
+  assertPathIsWithinDirectory(
+    sqlite3Entry,
+    backendStageNodeModulesDir,
+    'Packaged-runtime preflight failed: sqlite3 resolved outside the staged node_modules directory',
+  )
+  const sqlite3 = stagedRequire('sqlite3')
+  await new Promise((resolve, reject) => {
+    const db = new sqlite3.Database(':memory:', (openError) => {
+      if (openError) {
+        reject(openError)
+        return
+      }
+
+      db.close((closeError) => {
+        if (closeError) {
+          reject(closeError)
+          return
+        }
+        resolve()
+      })
+    })
+  })
+
+  const platformPackageName = getCurrentCursorSdkPlatformPackageName()
+  const platformPackageDir = path.join(backendStageNodeModulesDir, ...platformPackageName.split('/'))
+  const requiredBinaries = [path.join('bin', 'rg'), path.join('bin', 'cursorsandbox')]
+  for (const relativePath of requiredBinaries) {
+    const binaryPath = path.join(platformPackageDir, relativePath)
+    if (!existsSync(binaryPath)) {
+      throw new Error(
+        `Packaged-runtime preflight failed: staged Cursor SDK platform package ${platformPackageName} is missing ${relativePath}`,
+      )
+    }
+  }
+
+  const platformPackageManifest = path.join(platformPackageDir, 'package.json')
+  if (!existsSync(platformPackageManifest)) {
+    throw new Error(
+      `Packaged-runtime preflight failed: staged Cursor SDK platform package ${platformPackageName} is missing package.json`,
+    )
+  }
+  assertPathIsWithinDirectory(
+    platformPackageManifest,
+    backendStageNodeModulesDir,
+    `Packaged-runtime preflight failed: Cursor SDK platform package "${platformPackageName}" resolved outside the staged node_modules directory`,
+  )
+
+  console.log(
+    `[electron/build-all] Packaged-runtime preflight verified Cursor SDK sqlite3 and ${platformPackageName} binaries`,
+  )
+}
+
+function getCurrentCursorSdkPlatformPackageName() {
+  const platformByNodePlatform = {
+    darwin: 'darwin',
+    linux: 'linux',
+    win32: 'win32',
+  }
+  const archByNodeArch = {
+    arm64: 'arm64',
+    x64: 'x64',
+  }
+
+  const platform = platformByNodePlatform[process.platform]
+  const arch = archByNodeArch[process.arch]
+  if (!platform || !arch) {
+    throw new Error(`Unsupported Cursor SDK packaged-runtime platform: ${process.platform}/${process.arch}`)
+  }
+
+  return `@cursor/sdk-${platform}-${arch}`
 }
 
 function validateStagedClaudeSdkPackageDir(stagedPackageDir) {

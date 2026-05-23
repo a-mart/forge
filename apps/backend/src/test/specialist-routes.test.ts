@@ -75,11 +75,25 @@ afterEach(async () => {
     async (profileId: string, dataDir: string, _workspaceDir: string | undefined, targetSpace: string) =>
       specialistRegistryState.resolveRoster(profileId, dataDir, targetSpace)
   );
+  delete process.env.CURSOR_API_KEY;
   await Promise.all(activeServers.splice(0).map((server) => server.close()));
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe("specialist routes", () => {
+  it("shows Cursor SDK specialist rows from /api/settings/models when CURSOR_API_KEY is configured", async () => {
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    const server = await createSpecialistRouteTestServer();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/models`);
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { models: Array<{ provider?: string; modelId?: string; presetId?: string }> };
+    expect(payload.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "cursor-sdk", modelId: "composer-2.5", presetId: "cursor-composer" })
+    ]));
+  });
+
   it("returns the builtin worker template", async () => {
     specialistRegistryState.getWorkerTemplate.mockResolvedValueOnce("# Worker\n");
 
@@ -613,7 +627,15 @@ async function createSpecialistRouteTestServer(options?: {
 }): Promise<TestServer> {
   const profiles = options?.profiles ?? [];
   const swarmManager = {
-    getConfig: () => ({ paths: { dataDir: "/tmp/data" } }),
+    getConfig: () => ({
+      paths: {
+        dataDir: "/tmp/data",
+        sharedAuthFile: "/tmp/data/shared/config/auth/auth.json",
+        sharedSecretsFile: "/tmp/data/shared/config/secrets.json",
+        authFile: "/tmp/data/auth/auth.json",
+        secretsFile: "/tmp/data/secrets.json",
+      },
+    }),
     listProfiles: () => profiles,
     listUserProfiles: () => profiles.filter((profile) => profile.profileType !== "system"),
     listAgents: () => options?.agents ?? [],

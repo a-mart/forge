@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 import { AuthStorage } from '@mariozechner/pi-coding-agent'
 import {
   getManagedModelProviderCredentialAvailability,
+  getManagedModelProviderCredentialSummaries,
+  resolveCursorSdkApiKey,
   SecretsEnvService,
 } from '../swarm/secrets-env-service.js'
 import type { SwarmConfig } from '../swarm/types.js'
@@ -189,6 +191,7 @@ describe('SecretsEnvService path migration', () => {
       expect(availability.get('xai')).toBe(true)
       expect(availability.get('anthropic')).toBe(true)
       expect(availability.get('openrouter')).toBe(true)
+      expect(availability.get('cursor-sdk')).toBe(false)
     } finally {
       if (previousAnthropic === undefined) {
         delete process.env.ANTHROPIC_API_KEY
@@ -202,5 +205,113 @@ describe('SecretsEnvService path migration', () => {
         process.env.OPENROUTER_API_KEY = previousOpenRouter
       }
     }
+  })
+
+  it('resolves Cursor SDK API keys from auth, secrets, then env without leaking secret values in errors', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-cursor-sdk-auth-'))
+    const paths = buildPaths(root)
+    const config = createConfig(paths)
+    const previousCursor = process.env.CURSOR_API_KEY
+    delete process.env.CURSOR_API_KEY
+
+    try {
+      await expect(resolveCursorSdkApiKey(config)).rejects.toThrow(
+        'Cursor SDK API key not configured. Add CURSOR_API_KEY in Settings → Authentication.',
+      )
+
+      const missingError = await resolveCursorSdkApiKey(config).catch((error: unknown) => error)
+      expect(missingError).toBeInstanceOf(Error)
+      expect((missingError as Error).message).not.toContain('cursor-secret')
+
+      process.env.CURSOR_API_KEY = 'cursor-env-secret-value'
+      await expect(resolveCursorSdkApiKey(config)).resolves.toEqual({
+        apiKey: 'cursor-env-secret-value',
+        source: 'env',
+      })
+
+      await mkdir(join(root, 'shared', 'config'), { recursive: true })
+      await writeFile(paths.sharedSecretsFile, JSON.stringify({ CURSOR_API_KEY: 'cursor-stored-secret-value' }), 'utf8')
+      await expect(resolveCursorSdkApiKey(config)).resolves.toEqual({
+        apiKey: 'cursor-stored-secret-value',
+        source: 'secrets',
+      })
+
+      await mkdir(join(root, 'shared', 'config', 'auth'), { recursive: true })
+      const sharedAuthStorage = AuthStorage.create(paths.sharedAuthFile)
+      sharedAuthStorage.set('cursor-sdk', {
+        type: 'api_key',
+        key: 'cursor-auth-secret-value',
+        access: 'cursor-auth-secret-value',
+        refresh: '',
+        expires: '',
+      } as any)
+
+      await expect(resolveCursorSdkApiKey(config)).resolves.toEqual({
+        apiKey: 'cursor-auth-secret-value',
+        source: 'auth_file',
+      })
+
+      const summaries = await getManagedModelProviderCredentialSummaries(config)
+      expect(summaries.get('cursor-sdk')).toEqual({
+        configured: true,
+        authTypes: ['api_key'],
+        sources: ['auth_file', 'secrets'],
+      })
+      expect(JSON.stringify([...summaries])).not.toContain('cursor-auth-secret-value')
+      expect(JSON.stringify([...summaries])).not.toContain('cursor-stored-secret-value')
+      expect(JSON.stringify([...summaries])).not.toContain('cursor-env-secret-value')
+    } finally {
+      if (previousCursor === undefined) {
+        delete process.env.CURSOR_API_KEY
+      } else {
+        process.env.CURSOR_API_KEY = previousCursor
+      }
+    }
+  })
+
+  it('lists Cursor SDK as API-key-only Settings auth and masks the stored key', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-cursor-sdk-list-'))
+    const paths = buildPaths(root)
+    const service = createService(paths)
+
+    await service.updateSettingsAuth({ 'cursor-sdk': 'cursor-api-key-secret' })
+    const providers = await service.listSettingsAuth()
+    const cursorProvider = providers.find((provider) => provider.provider === 'cursor-sdk')
+
+    expect(cursorProvider).toEqual({
+      provider: 'cursor-sdk',
+      configured: true,
+      authType: 'api_key',
+      maskedValue: '********cret',
+    })
+  })
+
+  it('does not treat OAuth-shaped cursor-sdk auth entries as usable credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-cursor-sdk-oauth-'))
+    const paths = buildPaths(root)
+    const config = createConfig(paths)
+    await mkdir(join(root, 'shared', 'config', 'auth'), { recursive: true })
+
+    const authStorage = AuthStorage.create(paths.sharedAuthFile)
+    authStorage.set('cursor-sdk', makeOAuthCredential('cursor-oauth-access-token') as any)
+
+    const service = createService(paths)
+    const providers = await service.listSettingsAuth()
+    expect(providers.find((provider) => provider.provider === 'cursor-sdk')).toEqual({
+      provider: 'cursor-sdk',
+      configured: false,
+      authType: undefined,
+      maskedValue: undefined,
+    })
+
+    await expect(resolveCursorSdkApiKey(config)).rejects.toThrow(
+      'Cursor SDK API key not configured. Add CURSOR_API_KEY in Settings → Authentication.',
+    )
+    const summaries = await getManagedModelProviderCredentialSummaries(config)
+    expect(summaries.get('cursor-sdk')).toEqual({
+      configured: false,
+      authTypes: [],
+      sources: [],
+    })
   })
 })

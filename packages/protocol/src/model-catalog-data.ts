@@ -56,6 +56,14 @@ export const FORGE_MODEL_CATALOG = {
       piApiKeyEnvVar: 'OPENROUTER_API_KEY',
       piApiProtocol: 'openai-completions',
     },
+    'cursor-sdk': {
+      providerId: 'cursor-sdk',
+      displayName: 'Cursor SDK',
+      availabilityMode: 'managed-auth',
+      piProjectionMode: 'none',
+      projectionScope: 'catalog-only',
+      requestBehaviorId: null,
+    },
     'cursor-acp': {
       providerId: 'cursor-acp',
       displayName: 'Cursor ACP',
@@ -142,6 +150,17 @@ export const FORGE_MODEL_CATALOG = {
       visibleInCreateManager: false,
       visibleInChangeManager: false,
       visibleInSpawnPreset: true,
+      visibleInSpecialists: true,
+    },
+    'cursor-composer': {
+      familyId: 'cursor-composer',
+      displayName: 'Composer 2.5 (Cursor SDK)',
+      provider: 'cursor-sdk',
+      defaultModelId: 'composer-2.5',
+      defaultReasoningLevel: 'medium',
+      visibleInCreateManager: false,
+      visibleInChangeManager: false,
+      visibleInSpawnPreset: false,
       visibleInSpecialists: true,
     },
     'cursor-acp': {
@@ -461,6 +480,26 @@ export const FORGE_MODEL_CATALOG = {
       piUpstreamId: 'grok-4.20-0309-non-reasoning',
       intentionalDivergenceNotes:
         'API overridden to openai-responses; reasoning: false per Pi upstream; Forge keeps this model text-only even though Pi upstream currently advertises image input',
+    },
+
+    'cursor-sdk/composer-2.5': {
+      catalogId: 'cursor-sdk/composer-2.5',
+      modelId: 'composer-2.5',
+      provider: 'cursor-sdk',
+      familyId: 'cursor-composer',
+      displayName: 'Composer 2.5',
+      isFamilyDefault: true,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+      defaultReasoningLevel: 'medium',
+      contextWindow: 200_000,
+      maxOutputTokens: 16_384,
+      inputModes: ['text'],
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: null,
+      intentionalDivergenceNotes:
+        'Synthetic entry — Cursor SDK local runtime is not a Pi-managed runtime; specialist-only surface after live E2E and Electron packaging validation; manager runtimes remain unsupported',
     },
 
     'cursor-acp/default': {

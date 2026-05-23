@@ -158,6 +158,8 @@ const QUOTA_OR_RATE_LIMIT_PATTERNS = [
   /\bresource exhausted\b/i,
   /\boverloaded_error\b/i,
   /^\s*429\b/i,
+  /\b(?:request|response|status|http|code|error)\b.{0,40}\b429\b/i,
+  /\bfailed\s+(?:with|status|code|http)\b.{0,20}\b429\b/i,
   /\b429\s+too many requests\b/i,
   /\b(?:status|http|code|error)\s*[:=]?\s*429\b/i,
   /^\s*529\b/i,

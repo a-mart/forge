@@ -283,6 +283,7 @@ import {
   parseSessionNumberFromAgentId,
   previewForLog,
   readFileHead,
+  readStringDetail,
   sanitizeCliSessionMetadata,
   sanitizeAttachmentFileName,
   sanitizePathSegment,
@@ -1048,6 +1049,12 @@ async function backupLegacyCortexWorkerPrompts(path: string, content: string): P
 
     throw error;
   }
+}
+
+function formatRuntimeErrorForCapacityClassification(error: RuntimeErrorEvent): string {
+  const detailParts = [readStringDetail(error.details, "errorName"), readStringDetail(error.details, "errorCode")]
+    .filter((value): value is string => !!value);
+  return detailParts.length > 0 ? `${error.message} ${detailParts.join(" ")}` : error.message;
 }
 
 interface DescriptorStoreAdapter {
@@ -5784,7 +5791,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    const classification = classifyRuntimeCapacityError(error.message);
+    const classification = classifyRuntimeCapacityError(formatRuntimeErrorForCapacityClassification(error));
     if (!classification.isQuotaOrRateLimit) {
       return;
     }

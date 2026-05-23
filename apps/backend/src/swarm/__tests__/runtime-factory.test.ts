@@ -54,6 +54,14 @@ const acpRuntimeMockState = vi.hoisted(() => ({
   createMcpBridge: vi.fn(),
 }));
 
+const cursorMcpMockState = vi.hoisted(() => ({
+  createMcpBridge: vi.fn(async () => ({
+    serverName: "forge-swarm-worker-1",
+    mcpServers: { "forge-swarm-worker-1": { type: "http", url: "http://127.0.0.1:1/mcp" } },
+    shutdown: vi.fn(async () => undefined),
+  })),
+}));
+
 const sessionFileGuardMockState = vi.hoisted(() => ({
   openSessionManagerWithSizeGuard: vi.fn(() => ({})),
 }));
@@ -147,6 +155,10 @@ vi.mock("../runtime/acp/acp-mcp-tool-bridge.js", () => ({
   createAcpMcpToolBridge: (...args: unknown[]) => acpRuntimeMockState.createMcpBridge(...args),
 }));
 
+vi.mock("../runtime/cursor-sdk/cursor-sdk-mcp-tool-bridge.js", () => ({
+  createCursorSdkMcpToolBridge: (...args: unknown[]) => cursorMcpMockState.createMcpBridge(...args),
+}));
+
 vi.mock("../claude-prompt-assembler.js", () => ({
   assembleClaudePrompt: vi.fn(async ({ basePrompt }: { basePrompt: string }) => basePrompt),
   discoverAgentsMd: vi.fn(async () => []),
@@ -171,6 +183,7 @@ import { modelCatalogService } from "../model-catalog-service.js";
 import { savePins } from "../message-pins.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { RuntimeFactory } from "../runtime-factory.js";
+import { resetCursorSdkLoaderForTests, setCursorSdkImporterForTests } from "../runtime/cursor-sdk/cursor-sdk-loader.js";
 import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 
@@ -277,6 +290,7 @@ function createFactory(
       skillMetadata: SkillMetadata[];
     }>;
     buildAcpRuntimeSystemPrompt?: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
+    buildCursorSdkRuntimeSystemPrompt?: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
     callbacks?: Partial<{
       onRuntimeError: (runtimeToken: number, agentId: string, error: unknown) => Promise<void>;
       onRuntimeExtensionSnapshot: (runtimeToken: number, agentId: string, snapshot: unknown) => Promise<void>;
@@ -333,6 +347,8 @@ function createFactory(
     buildClaudeRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
     buildAcpRuntimeSystemPrompt:
       overrides.buildAcpRuntimeSystemPrompt ?? (async (_descriptor, systemPrompt) => systemPrompt),
+    buildCursorSdkRuntimeSystemPrompt:
+      overrides.buildCursorSdkRuntimeSystemPrompt ?? (async (_descriptor, systemPrompt) => systemPrompt),
     mergeRuntimeContextFiles: (base) => base,
     callbacks: {
       onStatusChange: async () => {},
@@ -480,6 +496,8 @@ const providerRuntimeCases = [
 describe("RuntimeFactory", () => {
   beforeEach(() => {
     resetClaudeSdkLoaderForTests();
+    resetCursorSdkLoaderForTests();
+    delete process.env.CURSOR_API_KEY;
     piAiMockState.getModel.mockReset();
     piAiMockState.getModels.mockClear();
     piCodingAgentMockState.authStorageCreate.mockClear();
@@ -513,6 +531,12 @@ describe("RuntimeFactory", () => {
         url: "http://127.0.0.1:4321/mcp",
         headers: [],
       },
+      shutdown: vi.fn(async () => undefined),
+    });
+    cursorMcpMockState.createMcpBridge.mockReset();
+    cursorMcpMockState.createMcpBridge.mockResolvedValue({
+      serverName: "forge-swarm-worker-1",
+      mcpServers: { "forge-swarm-worker-1": { type: "http", url: "http://127.0.0.1:1/mcp" } },
       shutdown: vi.fn(async () => undefined),
     });
     sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReset();
@@ -1888,6 +1912,182 @@ describe("RuntimeFactory", () => {
     });
     expect(claudeOptions.modelContextWindow).toBe(123456);
     expect(getContextWindowSpy).toHaveBeenCalledWith("claude-opus-4-6", "claude-sdk");
+  });
+
+  it("rejects Cursor SDK manager descriptors with v1 manager unsupported copy", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const factory = createFactory(rootDir);
+
+    await expect(
+      factory.createRuntimeForDescriptor(
+        createManagerDescriptor(rootDir, {
+          model: {
+            provider: "cursor-sdk",
+            modelId: "composer-2.5",
+            thinkingLevel: "medium",
+          },
+        }),
+        "system prompt",
+        3
+      )
+    ).rejects.toThrow(
+      "Cursor SDK manager runtimes are not supported in this release. Use Cursor SDK through a specialist worker."
+    );
+
+    expect(acpRuntimeMockState.create).not.toHaveBeenCalled();
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("selects the Cursor SDK runtime for worker descriptors without falling through to Pi or ACP", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+    const close = vi.fn();
+    const create = vi.fn(async () => ({
+      agentId: "sdk-agent-1",
+      close,
+      send: vi.fn(),
+    }));
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create, resume: vi.fn() },
+      Cursor: { models: { list: vi.fn() } },
+    }));
+    const buildCursorSdkRuntimeSystemPrompt = vi.fn(async (_descriptor: AgentDescriptor, systemPrompt: string) => `${systemPrompt}\n\nCursor prompt`);
+
+    const factory = createFactory(rootDir, { buildCursorSdkRuntimeSystemPrompt });
+    const runtime = await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+      }),
+      "Base Cursor prompt",
+      3
+    );
+
+    expect(runtime.runtimeType).toBe("cursor-sdk");
+    expect(buildCursorSdkRuntimeSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({ agentId: "worker-1" }), "Base Cursor prompt");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: "cursor-test-key",
+      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      local: { cwd: rootDir, settingSources: [] },
+      platform: { stateRoot: join(rootDir, "cursor-sdk-state", "worker-1"), workspaceRef: rootDir },
+      mcpServers: expect.objectContaining({ "forge-swarm-worker-1": expect.objectContaining({ type: "http" }) }),
+    }));
+    expect(acpRuntimeMockState.create).not.toHaveBeenCalled();
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+    await runtime.terminate();
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("does not create a Cursor SDK MCP bridge when auth is missing", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create: vi.fn(), resume: vi.fn() },
+      Cursor: { models: { list: vi.fn() } },
+    }));
+
+    const factory = createFactory(rootDir);
+
+    await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir, {
+      model: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+    }), "Base Cursor prompt", 3)).rejects.toThrow(/Cursor SDK API key/);
+    expect(cursorMcpMockState.createMcpBridge).not.toHaveBeenCalled();
+  });
+
+  it("does not create a Cursor SDK MCP bridge when prompt assembly fails", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create: vi.fn(), resume: vi.fn() },
+      Cursor: { models: { list: vi.fn() } },
+    }));
+
+    const factory = createFactory(rootDir, {
+      buildCursorSdkRuntimeSystemPrompt: vi.fn(async () => {
+        throw new Error("prompt failed");
+      }),
+    });
+
+    await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir, {
+      model: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+    }), "Base Cursor prompt", 3)).rejects.toThrow("prompt failed");
+    expect(cursorMcpMockState.createMcpBridge).not.toHaveBeenCalled();
+  });
+
+  it("does not create a Cursor SDK MCP bridge when model selection is invalid", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create: vi.fn(), resume: vi.fn() },
+      Cursor: { models: { list: vi.fn() } },
+    }));
+
+    const factory = createFactory(rootDir);
+
+    await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir, {
+      model: { provider: "cursor-sdk", modelId: "not-composer", thinkingLevel: "medium" },
+    }), "Base Cursor prompt", 3)).rejects.toThrow(/Unsupported Cursor SDK model/);
+    expect(cursorMcpMockState.createMcpBridge).not.toHaveBeenCalled();
+  });
+
+  it("shuts down the Cursor SDK MCP bridge when runtime creation fails after bridge creation", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+    const shutdown = vi.fn(async () => undefined);
+    cursorMcpMockState.createMcpBridge.mockResolvedValue({
+      serverName: "forge-swarm-worker-1",
+      mcpServers: { "forge-swarm-worker-1": { type: "http", url: "http://127.0.0.1:1/mcp" } },
+      shutdown,
+    });
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create: vi.fn(async () => { throw new Error("sdk create failed"); }), resume: vi.fn() },
+      Cursor: { models: { list: vi.fn() } },
+    }));
+
+    const factory = createFactory(rootDir);
+
+    await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir, {
+      model: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+    }), "Base Cursor prompt", 3)).rejects.toThrow("sdk create failed");
+    expect(cursorMcpMockState.createMcpBridge).toHaveBeenCalledTimes(1);
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the Cursor SDK MCP bridge once across terminate and recycle cleanup paths", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+    const shutdown = vi.fn(async () => undefined);
+    cursorMcpMockState.createMcpBridge.mockResolvedValue({
+      serverName: "forge-swarm-worker-1",
+      mcpServers: { "forge-swarm-worker-1": { type: "http", url: "http://127.0.0.1:1/mcp" } },
+      shutdown,
+    });
+    const close = vi.fn();
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create: vi.fn(async () => ({ agentId: "sdk-agent-1", close, send: vi.fn() })), resume: vi.fn() },
+      Cursor: { models: { list: vi.fn() } },
+    }));
+
+    const factory = createFactory(rootDir);
+    const runtime = await factory.createRuntimeForDescriptor(createDescriptor(rootDir, {
+      model: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+    }), "Base Cursor prompt", 3);
+
+    await runtime.recycle();
+    await runtime.terminate({ abort: false });
+    expect(shutdown).toHaveBeenCalledTimes(1);
   });
 
   it("selects the ACP runtime and invokes the ACP prompt builder for cursor-acp providers", async () => {

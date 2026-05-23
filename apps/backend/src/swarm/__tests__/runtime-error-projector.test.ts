@@ -103,6 +103,21 @@ describe("RuntimeErrorProjector", () => {
     expect(emittedText(deps)).toBe("⚠️ Agent error: Unknown runtime error. Message may need to be resent.");
   });
 
+  it("logs cursor-sdk provider errors with cursor-sdk runtime label", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager-1",
+      model: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" }
+    });
+    descriptors.set(worker.agentId, worker);
+
+    await projector.projectError({ agentId: worker.agentId, error: defaultError() });
+
+    expect(deps.logDebug).toHaveBeenCalledWith("runtime:error", expect.objectContaining({ runtime: "cursor-sdk" }));
+  });
+
   it("dispatches Forge runtime errors before fallback, and fallback suppresses system message", async () => {
     const { projector, deps, descriptors } = createHarness();
     const worker = baseDescriptor({ agentId: "worker-1", role: "worker", managerId: "manager-1" });
@@ -126,6 +141,26 @@ describe("RuntimeErrorProjector", () => {
     expect(vi.mocked(deps.dispatchRuntimeError).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(deps.maybeRecoverWorkerWithSpecialistFallback).mock.invocationCallOrder[0]
     );
+  });
+
+  it("passes error name and code details into fallback classification text without changing chat text", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({ agentId: "worker-1", role: "worker", managerId: "manager-1" });
+    descriptors.set(worker.agentId, worker);
+
+    await projector.projectError({
+      runtimeToken: 11,
+      agentId: worker.agentId,
+      error: defaultError({ phase: "prompt_dispatch", message: "request failed", details: { errorName: "RateLimitError", errorCode: "429" } })
+    });
+
+    expect(deps.maybeRecoverWorkerWithSpecialistFallback).toHaveBeenCalledWith(
+      worker.agentId,
+      "request failed (RateLimitError 429)",
+      "prompt_dispatch",
+      11
+    );
+    expect(emittedText(deps)).toBe("⚠️ Agent error: request failed. Message may need to be resent.");
   });
 
   it("uses explicit runtime token before current token fallback and skips dispatch without either token", async () => {

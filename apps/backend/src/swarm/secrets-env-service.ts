@@ -41,6 +41,10 @@ const SETTINGS_AUTH_PROVIDER_DEFINITIONS: Array<{
   {
     provider: "openrouter",
     storageProvider: "openrouter"
+  },
+  {
+    provider: "cursor-sdk",
+    storageProvider: "cursor-sdk"
   }
 ];
 
@@ -48,7 +52,8 @@ const MANAGED_MODEL_PROVIDER_ENV_VARS: Record<SettingsAuthProviderName, string[]
   anthropic: ["ANTHROPIC_API_KEY"],
   "openai-codex": ["OPENAI_API_KEY"],
   xai: ["XAI_API_KEY"],
-  openrouter: ["OPENROUTER_API_KEY"]
+  openrouter: ["OPENROUTER_API_KEY"],
+  "cursor-sdk": ["CURSOR_API_KEY"]
 };
 
 interface SkillMetadataForSettings {
@@ -154,12 +159,12 @@ export class SecretsEnvService {
 
     return SETTINGS_AUTH_PROVIDER_DEFINITIONS.map((definition) => {
       const credential = authStorage.get(definition.storageProvider);
-      const resolvedToken = extractAuthCredentialToken(credential);
+      const resolvedToken = extractSettingsAuthProviderToken(definition.provider, credential);
 
       return {
         provider: definition.provider,
         configured: typeof resolvedToken === "string" && resolvedToken.length > 0,
-        authType: resolveAuthCredentialType(credential),
+        authType: resolvedToken ? resolveAuthCredentialType(credential) : undefined,
         maskedValue: resolvedToken ? maskSettingsAuthValue(resolvedToken) : undefined
       } satisfies SettingsAuthProvider;
     });
@@ -339,6 +344,37 @@ export class SecretsEnvService {
   }
 }
 
+export interface CursorSdkApiKeyResolution {
+  apiKey: string;
+  source: Extract<ForgeProviderCredentialSource, "auth_file" | "secrets" | "env">;
+}
+
+export async function resolveCursorSdkApiKey(config: SwarmConfig): Promise<CursorSdkApiKeyResolution> {
+  const [authFile, secrets] = await Promise.all([
+    resolveAuthFileForReadFromConfig(config),
+    readSecretsStoreFromConfig(config)
+  ]);
+  const authStorage = AuthStorage.create(authFile);
+  const definition = SETTINGS_AUTH_PROVIDER_DEFINITIONS.find((entry) => entry.provider === "cursor-sdk");
+  const credential = definition ? authStorage.get(definition.storageProvider) : undefined;
+  const authToken = extractSettingsAuthProviderToken("cursor-sdk", credential);
+  if (authToken) {
+    return { apiKey: authToken, source: "auth_file" };
+  }
+
+  const secretValue = secrets.CURSOR_API_KEY;
+  if (typeof secretValue === "string" && secretValue.trim().length > 0) {
+    return { apiKey: secretValue.trim(), source: "secrets" };
+  }
+
+  const envValue = process.env.CURSOR_API_KEY;
+  if (typeof envValue === "string" && envValue.trim().length > 0) {
+    return { apiKey: envValue.trim(), source: "env" };
+  }
+
+  throw new Error("Cursor SDK API key not configured. Add CURSOR_API_KEY in Settings → Authentication.");
+}
+
 export async function getManagedModelProviderCredentialAvailability(
   config: SwarmConfig,
   options: { credentialPoolService?: CredentialPoolService } = {}
@@ -375,7 +411,7 @@ export async function getManagedModelProviderCredentialSummaries(
 
     const definition = SETTINGS_AUTH_PROVIDER_DEFINITIONS.find((entry) => entry.provider === provider);
     const credential = definition ? authStorage.get(definition.storageProvider) : undefined;
-    if (extractAuthCredentialToken(credential)) {
+    if (extractSettingsAuthProviderToken(provider as SettingsAuthProviderName, credential)) {
       authTypes.add(resolveForgeCredentialAuthType(credential));
       sources.add("auth_file");
     }
@@ -558,6 +594,25 @@ function resolveAuthCredentialType(
   }
 
   return "unknown";
+}
+
+function extractSettingsAuthProviderToken(
+  provider: SettingsAuthProviderName,
+  credential: AuthCredential | undefined
+): string | undefined {
+  if (provider === "cursor-sdk") {
+    return extractApiKeyCredentialToken(credential);
+  }
+
+  return extractAuthCredentialToken(credential);
+}
+
+function extractApiKeyCredentialToken(credential: AuthCredential | undefined): string | undefined {
+  if (!credential || typeof credential !== "object" || credential.type !== "api_key") {
+    return undefined;
+  }
+
+  return normalizeAuthToken((credential as { key?: unknown }).key);
 }
 
 function extractAuthCredentialToken(credential: AuthCredential | undefined): string | undefined {

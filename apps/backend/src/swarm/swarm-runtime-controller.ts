@@ -69,6 +69,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   promptService: {
     buildClaudeRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
     buildAcpRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
+    buildCursorSdkRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
   };
   secretsEnvService: {
     getCredentialPoolService(): CredentialPoolService;
@@ -201,6 +202,8 @@ export class SwarmRuntimeController {
         this.host.promptService.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),
       buildAcpRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
         this.host.promptService.buildAcpRuntimeSystemPrompt(descriptor, systemPrompt),
+      buildCursorSdkRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
+        this.host.promptService.buildCursorSdkRuntimeSystemPrompt(descriptor, systemPrompt),
       mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
         this.mergeRuntimeContextFiles(baseAgentsFiles, options),
       callbacks: {

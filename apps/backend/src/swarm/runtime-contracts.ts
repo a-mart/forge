@@ -168,7 +168,7 @@ export interface SetPinnedContentOptions {
 
 export interface SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
-  readonly runtimeType?: "pi" | "claude" | "acp";
+  readonly runtimeType?: "pi" | "claude" | "acp" | "cursor-sdk";
 
   getStatus(): AgentStatus;
   getPendingCount(): number;

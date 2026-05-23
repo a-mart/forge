@@ -5,6 +5,8 @@ node_modules/
 **/.tanstack/
 .DS_Store
 .env
+.cursor-sdk-e2e.env
+.tmp/
 .middleman-test/
 .forge-test/
 .forge-collaboration-data/

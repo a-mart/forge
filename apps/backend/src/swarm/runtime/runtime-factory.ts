@@ -20,6 +20,7 @@ import type {
 } from "../types.js";
 import { ClaudeRuntimeCreator } from "./claude/claude-runtime-creator.js";
 import { PiRuntimeCreator } from "./pi/pi-runtime-creator.js";
+import { CursorSdkRuntimeCreator } from "./cursor-sdk/cursor-sdk-runtime-creator.js";
 
 export { resolveOpenAICodexTransport } from "./pi/pi-runtime-creator.js";
 
@@ -41,6 +42,7 @@ interface RuntimeFactoryDependencies {
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
   buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   buildAcpRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
+  buildCursorSdkRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   mergeRuntimeContextFiles: (
     baseAgentsFiles: Array<{ path: string; content: string }>,
     options: {
@@ -70,11 +72,13 @@ interface RuntimeFactoryDependencies {
 export class RuntimeFactory {
   private readonly acpRuntimeCreator: AcpRuntimeCreator;
   private readonly claudeRuntimeCreator: ClaudeRuntimeCreator;
+  private readonly cursorSdkRuntimeCreator: CursorSdkRuntimeCreator;
   private readonly piRuntimeCreator: PiRuntimeCreator;
 
   constructor(private readonly deps: RuntimeFactoryDependencies) {
     this.acpRuntimeCreator = new AcpRuntimeCreator(deps);
     this.claudeRuntimeCreator = new ClaudeRuntimeCreator(deps);
+    this.cursorSdkRuntimeCreator = new CursorSdkRuntimeCreator(deps);
     this.piRuntimeCreator = new PiRuntimeCreator(deps);
   }
 
@@ -111,6 +115,16 @@ export class RuntimeFactory {
       }
     }
 
+    if (isCursorSdkModelDescriptor(descriptor.model)) {
+      return this.cursorSdkRuntimeCreator.createRuntimeForDescriptor({
+        descriptor,
+        systemPrompt,
+        runtimeToken,
+        sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
+        creationOptions: options
+      });
+    }
+
     if (isAcpModelDescriptor(descriptor.model)) {
       return this.acpRuntimeCreator.createRuntimeForDescriptor({
         descriptor,
@@ -141,6 +155,10 @@ export class RuntimeFactory {
 
 function isClaudeSdkModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
   return descriptor.provider.trim().toLowerCase() === "claude-sdk";
+}
+
+function isCursorSdkModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
+  return descriptor.provider.trim().toLowerCase() === "cursor-sdk";
 }
 
 function isAcpModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
