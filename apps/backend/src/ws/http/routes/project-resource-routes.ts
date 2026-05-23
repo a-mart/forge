@@ -202,7 +202,8 @@ async function buildResourceInventory(resolution: ProjectWorkspaceResolution): P
     exists: projectAgentInventory.exists,
     count: projectAgentInventory.count,
     items: projectAgentInventory.items,
-    ...(projectAgentInventory.truncated ? { truncated: projectAgentInventory.truncated } : {})
+    ...(projectAgentInventory.truncated ? { truncated: projectAgentInventory.truncated } : {}),
+    ...(projectAgentInventory.problems ? { problems: projectAgentInventory.problems } : {})
   };
   return {
     skills: await listDirectoryEntries(resources.skillsDir, { directoryWithFile: "SKILL.md" }),

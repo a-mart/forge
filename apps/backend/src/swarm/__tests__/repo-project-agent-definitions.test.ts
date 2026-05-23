@@ -1,4 +1,4 @@
-import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,6 +98,64 @@ describe("repo project agent definitions", () => {
     const target = inventory.items.find((item) => item.definitionId === "target");
     expect(target?.status).toBe("invalid");
     expect(target?.problems.map((problem) => problem.code)).toContain("reference_symlink");
+  });
+
+  it("marks duplicate repo project-agent handles as conflicts and changes signatures", async () => {
+    const root = await makeTempDir("forge-repo-pa-duplicates-");
+    const firstDir = join(root, "docs-one");
+    const secondDir = join(root, "docs-two");
+    await mkdir(firstDir, { recursive: true });
+    await writeFile(join(firstDir, "config.json"), JSON.stringify({ version: 1, handle: "shared-docs", whenToUse: "Docs one" }), "utf-8");
+    await writeFile(join(firstDir, "prompt.md"), "First prompt", "utf-8");
+    const before = await scanRepoProjectAgentDefinitions(root);
+
+    await mkdir(secondDir, { recursive: true });
+    await writeFile(join(secondDir, "config.json"), JSON.stringify({ version: 1, handle: "shared-docs", whenToUse: "Docs two" }), "utf-8");
+    await writeFile(join(secondDir, "prompt.md"), "Second prompt", "utf-8");
+    const after = await scanRepoProjectAgentDefinitions(root);
+
+    expect(before.items).toHaveLength(1);
+    expect(before.items[0]).toMatchObject({ definitionId: "docs-one", status: "valid" });
+    expect(after.items.map((item) => [item.definitionId, item.status])).toEqual([
+      ["docs-one", "conflict"],
+      ["docs-two", "conflict"]
+    ]);
+    expect(after.items.flatMap((item) => item.problems.map((problem) => problem.code))).toEqual([
+      "repo_project_agent_handle_conflict",
+      "repo_project_agent_handle_conflict"
+    ]);
+    expect(after.definitions).toEqual([]);
+    expect(after.items.find((item) => item.definitionId === "docs-one")?.signature).not.toBe(before.items[0].signature);
+  });
+
+  it("surfaces root readdir failures as inventory problems", async () => {
+    const root = await makeTempDir("forge-repo-pa-root-readdir-");
+    await chmod(root, 0o000);
+    try {
+      const inventory = await scanRepoProjectAgentDefinitions(root);
+      expect(inventory.exists).toBe(true);
+      expect(inventory.problems?.map((problem) => problem.code)).toContain("directory_readdir_failed");
+    } finally {
+      await chmod(root, 0o700);
+    }
+  });
+
+  it("surfaces reference readdir failures as definition problems", async () => {
+    const root = await makeTempDir("forge-repo-pa-reference-readdir-");
+    const definitionDir = join(root, "docs");
+    const referenceDir = join(definitionDir, "reference");
+    await mkdir(referenceDir, { recursive: true });
+    await writeFile(join(definitionDir, "config.json"), JSON.stringify({ version: 1, handle: "docs", whenToUse: "Docs" }), "utf-8");
+    await writeFile(join(definitionDir, "prompt.md"), "Prompt", "utf-8");
+    await chmod(referenceDir, 0o000);
+    try {
+      const inventory = await scanRepoProjectAgentDefinitions(root);
+      expect(inventory.items[0].status).toBe("invalid");
+      expect(inventory.items[0].problems.map((problem) => problem.code)).toContain("directory_readdir_failed");
+      expect(inventory.definitions).toEqual([]);
+    } finally {
+      await chmod(referenceDir, 0o700);
+    }
   });
 
   it("changes the signature when definition content changes", async () => {

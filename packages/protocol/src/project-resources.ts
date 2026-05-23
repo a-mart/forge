@@ -44,6 +44,7 @@ export interface RepoProjectAgentInventorySection {
   count: number
   items: RepoProjectAgentInventoryItem[]
   truncated?: boolean
+  problems?: ProjectAgentSourceProblem[]
 }
 
 export interface ActivateRepoProjectAgentRequest {

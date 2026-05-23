@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 import {
@@ -50,8 +51,13 @@ export async function scanRepoProjectAgentDefinitions(rootDir: string | undefine
     return { path: rootDir, exists: false, count: 0, items: [], definitions: [] };
   }
 
-  const entries = await readdir(rootDir, { withFileTypes: true }).catch(() => []);
-  const items: RepoProjectAgentInventoryItem[] = [];
+  const rootEntriesResult = await readDirectoryEntries(rootDir, "project-agents");
+  if (rootEntriesResult.problems.length > 0) {
+    return { path: rootDir, exists: true, count: 0, items: [], definitions: [], problems: rootEntriesResult.problems };
+  }
+
+  const entries = rootEntriesResult.entries;
+  const items: Array<RepoProjectAgentInventoryItem & { signature?: string }> = [];
   const definitions: ParsedRepoProjectAgentDefinition[] = [];
   let truncated = entries.length > MAX_DIRECTORY_ENTRIES;
 
@@ -75,9 +81,12 @@ export async function scanRepoProjectAgentDefinitions(rootDir: string | undefine
     }
   }
 
+  const conflictDefinitionIds = applyDuplicateHandleConflicts(items, definitions);
+  const validDefinitions = definitions.filter((definition) => !conflictDefinitionIds.has(definition.definitionId));
+
   items.sort((left, right) => left.definitionId.localeCompare(right.definitionId));
-  definitions.sort((left, right) => left.definitionId.localeCompare(right.definitionId));
-  return { path: rootDir, exists: true, count: items.length, items, definitions, ...(truncated ? { truncated: true } : {}) };
+  validDefinitions.sort((left, right) => left.definitionId.localeCompare(right.definitionId));
+  return { path: rootDir, exists: true, count: items.length, items, definitions: validDefinitions, ...(truncated ? { truncated: true } : {}) };
 }
 
 async function parseRepoProjectAgentDefinition(
@@ -156,6 +165,43 @@ async function parseRepoProjectAgentDefinition(
   };
 }
 
+function applyDuplicateHandleConflicts(
+  items: Array<RepoProjectAgentInventoryItem & { signature?: string }>,
+  definitions: ParsedRepoProjectAgentDefinition[]
+): Set<string> {
+  const definitionsByHandle = new Map<string, ParsedRepoProjectAgentDefinition[]>();
+  for (const definition of definitions) {
+    const normalizedHandle = normalizeProjectAgentHandle(definition.config.handle);
+    definitionsByHandle.set(normalizedHandle, [...(definitionsByHandle.get(normalizedHandle) ?? []), definition]);
+  }
+
+  const conflictDefinitionIds = new Set<string>();
+  for (const [handle, duplicateDefinitions] of definitionsByHandle) {
+    if (duplicateDefinitions.length < 2) {
+      continue;
+    }
+
+    const duplicateIds = duplicateDefinitions.map((definition) => definition.definitionId).sort();
+    for (const definition of duplicateDefinitions) {
+      conflictDefinitionIds.add(definition.definitionId);
+      const item = items.find((candidate) => candidate.definitionId === definition.definitionId);
+      if (!item) {
+        continue;
+      }
+      const problem: ProjectAgentSourceProblem = {
+        code: "repo_project_agent_handle_conflict",
+        message: `Repository project-agent handle "${handle}" is used by multiple definitions: ${duplicateIds.join(", ")}.`,
+        path: "config.json"
+      };
+      item.status = "conflict";
+      item.problems = [...item.problems, problem];
+      item.signature = createConflictSignature(item.signature, problem, duplicateIds);
+    }
+  }
+
+  return conflictDefinitionIds;
+}
+
 function parseConfig(content: string, problems: ProjectAgentSourceProblem[]): RepoProjectAgentDefinitionConfig | undefined {
   try {
     const parsed = JSON.parse(content) as unknown;
@@ -221,7 +267,13 @@ async function readReferenceDocs(dirPath: string): Promise<{ docs: Array<{ path:
     return { docs, problems };
   }
 
-  const entries = await readdir(referenceDir, { withFileTypes: true }).catch(() => []);
+  const entriesResult = await readDirectoryEntries(referenceDir, "reference");
+  problems.push(...entriesResult.problems);
+  if (entriesResult.problems.length > 0) {
+    return { docs, problems };
+  }
+
+  const entries = entriesResult.entries;
   let totalBytes = 0;
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     const entryPath = join(referenceDir, entry.name);
@@ -258,6 +310,26 @@ async function readReferenceDocs(dirPath: string): Promise<{ docs: Array<{ path:
     docs.push({ path: entry.name, content: contentResult.content, sha256: sha256(contentResult.content) });
   }
   return { docs, problems };
+}
+
+async function readDirectoryEntries(path: string, relativePath: string): Promise<{ entries: Dirent[]; problems: ProjectAgentSourceProblem[] }> {
+  try {
+    return { entries: await readdir(path, { withFileTypes: true }), problems: [] };
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return { entries: [], problems: [] };
+    }
+    return {
+      entries: [],
+      problems: [
+        {
+          code: "directory_readdir_failed",
+          message: error instanceof Error ? error.message : `Unable to read directory: ${relativePath}`,
+          path: relativePath
+        }
+      ]
+    };
+  }
 }
 
 async function readLimitedText(path: string, maxBytes: number, relativePath: string): Promise<{ content?: string; problems: ProjectAgentSourceProblem[] }> {
@@ -326,6 +398,14 @@ function createDefinitionSignature(options: {
       problems: options.problems.map((problem) => ({ code: problem.code, message: problem.message, path: problem.path ?? null })).sort((left, right) => `${left.path}:${left.code}:${left.message}`.localeCompare(`${right.path}:${right.code}:${right.message}`))
     })
   );
+}
+
+function createConflictSignature(
+  previousSignature: string | undefined,
+  problem: ProjectAgentSourceProblem,
+  duplicateIds: string[]
+): string {
+  return sha256(JSON.stringify({ version: 1, previousSignature: previousSignature ?? null, problem, duplicateIds }));
 }
 
 function buildInvalidItem(
