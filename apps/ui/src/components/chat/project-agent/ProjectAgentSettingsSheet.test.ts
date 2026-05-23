@@ -308,6 +308,197 @@ describe('ProjectAgentSettingsSheet', () => {
     expect(closeButton).not.toBeNull()
   })
 
+  it('displays source status and problems for unhealthy repo-sourced agents', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Stale descriptor description',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Live repo description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt',
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'missing' as const,
+          problems: [
+            { code: 'DEFINITION_DIR_NOT_FOUND', message: 'Definition directory does not exist' },
+          ],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    // Should show warning banner with status
+    const banner = document.body.querySelector('[data-testid="source-status-banner"]')
+    expect(banner).not.toBeNull()
+    expect(banner!.textContent).toContain('missing')
+
+    // Should show problem message
+    expect(banner!.textContent).toContain('Definition directory does not exist')
+
+    // Should show definitionId
+    expect(banner!.textContent).toContain('def-repo-agent')
+
+    // Should show source path
+    expect(banner!.textContent).toContain('/test/repo/.forge')
+  })
+
+  it('displays wrong_workspace status with actionable diagnostic', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'ws-agent',
+        whenToUse: 'Some description',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/other/repo/.forge',
+          definitionId: 'def-ws-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'ws-agent',
+          whenToUse: 'Some description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: null,
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'wrong_workspace' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/other/repo/.forge',
+          definitionId: 'def-ws-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    const banner = document.body.querySelector('[data-testid="source-status-banner"]')
+    expect(banner).not.toBeNull()
+    expect(banner!.textContent).toContain('workspace mismatch')
+    expect(banner!.textContent).toContain('Switch to the original workspace')
+  })
+
+  it('updates whenToUse from live config snapshot for repo-sourced agents', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Stale descriptor value',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Updated live repo description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt',
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'valid' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    // whenToUse field should show the live config value, not the stale descriptor
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    expect(whenToUseField.value).toBe('Updated live repo description')
+  })
+
+  it('uses definitionId in repo source path copy, not handle', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'my-handle',
+        whenToUse: 'Test agent',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'custom-definition-id',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'my-handle',
+          whenToUse: 'Test agent',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Prompt content',
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'valid' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'custom-definition-id',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    // Path copy should reference definitionId, not handle
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('custom-definition-id/prompt.md')
+    expect(text).not.toContain('my-handle/prompt.md')
+  })
+
   it('local project agents remain fully editable', async () => {
     renderSheet({
       currentProjectAgent: {

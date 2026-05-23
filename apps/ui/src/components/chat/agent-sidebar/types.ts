@@ -6,6 +6,7 @@ import type {
   ManagerReasoningLevel,
   ManagerProfile,
   ProjectAgentCapability,
+  ProjectAgentConfigSourceSnapshot,
   ProjectAgentInfo,
   PersistedProjectAgentConfig,
   SessionModelUpdateMode,
@@ -76,7 +77,7 @@ export interface AgentSidebarProps {
   onRequestSessionWorkers?: (sessionId: string) => void
   onReorderProfiles?: (profileIds: string[]) => void
   onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null) => Promise<void>
-  onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[] }>
+  onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[]; source?: ProjectAgentConfigSourceSnapshot }>
   onListProjectAgentReferences?: (agentId: string) => Promise<{ agentId: string; references: string[] }>
   onGetProjectAgentReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string; content: string }>
   onSetProjectAgentReference?: (agentId: string, fileName: string, content: string) => Promise<{ agentId: string; fileName: string }>
@@ -221,7 +222,7 @@ export interface ProjectAgentSettingsSheetProps {
   onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] }) => Promise<void>
   onDemote: (agentId: string) => Promise<void>
   onClose: () => void
-  onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[] }>
+  onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[]; source?: ProjectAgentConfigSourceSnapshot }>
   onListReferences?: (agentId: string) => Promise<{ agentId: string; references: string[] }>
   onGetReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string; content: string }>
   onSetReference?: (agentId: string, fileName: string, content: string) => Promise<{ agentId: string; fileName: string }>

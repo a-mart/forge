@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { isRepoProjectAgentSource, type RepoProjectAgentSourceIdentity } from '@forge/protocol'
-import { GitBranch, Loader2, Sparkles } from 'lucide-react'
+import { isRepoProjectAgentSource, type ProjectAgentConfigSourceSnapshot, type RepoProjectAgentSourceIdentity } from '@forge/protocol'
+import { AlertTriangle, GitBranch, Loader2, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
@@ -47,6 +47,7 @@ export function ProjectAgentSettingsSheet({
 
   const [configLoading, setConfigLoading] = useState(!isPromoting)
   const [configError, setConfigError] = useState<string | null>(null)
+  const [sourceSnapshot, setSourceSnapshot] = useState<ProjectAgentConfigSourceSnapshot | null>(null)
   const fetchedSystemPromptRef = useRef<string>('')
 
   const [whenToUse, setWhenToUse] = useState(currentProjectAgent?.whenToUse ?? '')
@@ -101,6 +102,14 @@ export function ProjectAgentSettingsSheet({
       }
       setCanCreateSessions(result.config.capabilities?.includes('create_session') ?? false)
       setReferenceDocs(result.references)
+      if (result.source) {
+        setSourceSnapshot(result.source)
+      }
+      // For repo-sourced agents, update whenToUse from the live config snapshot
+      // so the UI shows current repo values, not stale descriptor values
+      if (isRepoSourced) {
+        setWhenToUse(result.config.whenToUse)
+      }
       setConfigLoading(false)
     }).catch((err) => {
       if (cancelled) return
@@ -110,6 +119,13 @@ export function ProjectAgentSettingsSheet({
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, isPromoting])
+
+  // Source diagnostics: use the live snapshot when available, fall back to descriptor identity
+  const effectiveSourcePath = sourceSnapshot?.forgeDirRealpath ?? repoSourcePath
+  const effectiveDefinitionId = sourceSnapshot?.definitionId ?? repoSource?.definitionId ?? null
+  const sourceStatus = sourceSnapshot?.status ?? (isRepoSourced ? 'valid' : null)
+  const sourceProblems = sourceSnapshot?.problems ?? []
+  const isSourceHealthy = !sourceStatus || sourceStatus === 'valid'
 
   const trimmedWhenToUse = whenToUse.trim()
   const trimmedSystemPrompt = systemPrompt.trim()
@@ -399,18 +415,56 @@ export function ProjectAgentSettingsSheet({
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-4 px-4">
-            {isRepoSourced && repoSourcePath ? (
-              <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3 space-y-1">
-                <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                  <GitBranch className="h-3.5 w-3.5 text-blue-400" />
-                  Repository source
+            {isRepoSourced ? (
+              isSourceHealthy ? (
+                <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3 space-y-1">
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <GitBranch className="h-3.5 w-3.5 text-blue-400" />
+                    Repository source
+                  </div>
+                  {effectiveSourcePath ? (
+                    <p className="break-all text-xs text-muted-foreground">{effectiveSourcePath}</p>
+                  ) : null}
+                  <p className="text-[11px] text-muted-foreground">
+                    Prompt is read live from <code>.forge/project-agents/{effectiveDefinitionId ?? currentProjectAgent?.handle}/prompt.md</code>.
+                    Edit the file directly to update the agent prompt.
+                  </p>
                 </div>
-                <p className="break-all text-xs text-muted-foreground">{repoSourcePath}</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Prompt is read live from <code>.forge/project-agents/{currentProjectAgent?.handle}/prompt.md</code>.
-                  Edit the file directly to update the agent prompt.
-                </p>
-              </div>
+              ) : (
+                <div data-testid="source-status-banner" className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    Repository source {sourceStatus === 'missing' ? 'missing' : sourceStatus === 'wrong_workspace' ? 'workspace mismatch' : sourceStatus === 'unavailable' ? 'unavailable' : sourceStatus === 'invalid' ? 'invalid' : 'error'}
+                  </div>
+                  {effectiveSourcePath ? (
+                    <p className="break-all text-xs text-muted-foreground">{effectiveSourcePath}</p>
+                  ) : null}
+                  {effectiveDefinitionId ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Definition: <code>{effectiveDefinitionId}</code>
+                    </p>
+                  ) : null}
+                  {sourceProblems.length > 0 ? (
+                    <ul className="space-y-0.5">
+                      {sourceProblems.map((problem, i) => (
+                        <li key={i} className="text-xs text-amber-600 dark:text-amber-400">
+                          {problem.message}{problem.path ? <> — <code className="text-[10px]">{problem.path}</code></> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {sourceStatus === 'missing'
+                        ? 'The repo definition directory for this agent no longer exists. Re-create the definition files or deactivate the agent.'
+                        : sourceStatus === 'wrong_workspace'
+                          ? 'This agent was activated from a different workspace. Switch to the original workspace or re-activate.'
+                          : sourceStatus === 'unavailable'
+                            ? 'The repository .forge directory is not accessible. Verify the workspace path and try again.'
+                            : 'The repo definition has validation errors. Check config.json and prompt.md.'}
+                    </p>
+                  )}
+                </div>
+              )
             ) : null}
             <div className="space-y-1">
               <label className="text-sm font-medium text-foreground">Session</label>
