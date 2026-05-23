@@ -7,6 +7,7 @@ import {
   type ProjectAgentCapability
 } from "@forge/protocol";
 import {
+  getProjectAgentBackupDir,
   getProjectAgentConfigPath,
   getProjectAgentDir,
   getProjectAgentPromptPath,
@@ -77,6 +78,31 @@ export async function renameProjectAgentRecord(
 export async function deleteProjectAgentRecord(dataDir: string, profileId: string, handle: string): Promise<void> {
   const dirPath = getProjectAgentDir(dataDir, profileId, handle);
   await rm(dirPath, { recursive: true, force: true });
+}
+
+export async function backupProjectAgentRecordForRepoLink(
+  dataDir: string,
+  profileId: string,
+  agentId: string,
+  handle: string,
+  timestamp = new Date().toISOString()
+): Promise<string | null> {
+  const sourceDir = getProjectAgentDir(dataDir, profileId, handle);
+
+  try {
+    await access(sourceDir);
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+
+  const targetDir = getProjectAgentBackupDir(dataDir, profileId, agentId, handle, timestamp);
+  await mkdir(dirname(targetDir), { recursive: true });
+  await rename(sourceDir, targetDir);
+  return targetDir;
 }
 
 export async function deleteProjectAgentRecordByDirPath(

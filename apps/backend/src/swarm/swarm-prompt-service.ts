@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { PromptPreviewResponse, PromptPreviewSection, SpecialistTargetSpace } from "@forge/protocol";
+import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPreviewSection, type SpecialistTargetSpace } from "@forge/protocol";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
 import {
   getCommonKnowledgePath,
@@ -741,6 +741,12 @@ export class SwarmPromptService {
       };
     }
 
+    if (isRepoProjectAgentSource(descriptor.projectAgent.source)) {
+      throw new Error(
+        `Project agent ${descriptor.agentId} is repository-managed, but repository source resolution is not available yet.`
+      );
+    }
+
     const profileId = descriptor.profileId ?? descriptor.agentId;
     const onDiskRecord = await this.readOwnedProjectAgentRecord(descriptor, profileId);
     if (onDiskRecord?.systemPrompt !== null && onDiskRecord?.systemPrompt !== undefined) {
@@ -768,7 +774,7 @@ export class SwarmPromptService {
     descriptor: AgentDescriptor,
     profileId: string,
   ): Promise<ProjectAgentOnDiskRecord | null> {
-    if (!descriptor.projectAgent?.handle) {
+    if (!descriptor.projectAgent?.handle || isRepoProjectAgentSource(descriptor.projectAgent.source)) {
       return null;
     }
 

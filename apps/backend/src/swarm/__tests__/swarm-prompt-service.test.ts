@@ -710,6 +710,61 @@ describe("SwarmPromptService", () => {
     expect(systemSection?.content).not.toContain("Winner on-disk prompt");
   });
 
+  it("blocks repo-sourced project-agent prompt resolution instead of falling back to stale local prompt bodies", async () => {
+    const { config } = await makeConfig();
+    const dataDir = config.paths.dataDir;
+    const profileId = "manager";
+    const handle = "repo-docs";
+    await writeProjectAgentRecord(
+      dataDir,
+      profileId,
+      {
+        version: 1,
+        agentId: "agent-1",
+        handle,
+        whenToUse: "Stale local guidance",
+        promotedAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-02T00:00:00.000Z"
+      },
+      "Stale local prompt"
+    );
+
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "agent-1",
+      projectAgent: {
+        handle,
+        whenToUse: "Repo guidance mirror",
+        systemPrompt: "Stale descriptor prompt",
+        source: {
+          type: "repo",
+          workspaceKey: "workspace-a",
+          forgeDirRealpath: "/repo/.forge",
+          definitionId: handle,
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    const service = new SwarmPromptService({
+      config,
+      descriptors: new Map([[descriptor.agentId, descriptor]]),
+      profiles: new Map([[profileId, createProfile(descriptor.agentId)]]),
+      promptRegistry: {} as never,
+      skillMetadataService: {} as never,
+      getAgentMemoryPath: () => "/tmp/memory.md",
+      ensureAgentMemoryFile: async () => {},
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => profileId,
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [descriptor],
+      loadSpecialistRegistryModule: async () => specialistRegistryStub(),
+      getIntegrationContext: () => undefined,
+      logDebug: () => {}
+    });
+
+    await expect(service.resolveProjectAgentSystemPromptOverride(descriptor)).rejects.toThrow(/repository-managed/i);
+  });
+
   it("resolveProjectAgentSystemPromptOverride prefers on-disk project agent prompt.md", async () => {
     const { config } = await makeConfig();
     const dataDir = config.paths.dataDir;

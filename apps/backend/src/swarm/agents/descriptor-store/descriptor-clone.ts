@@ -25,7 +25,7 @@ function cloneCliSessionMetadata(descriptor: AgentDescriptor): AgentDescriptor["
 
 function cloneProjectAgent(
   projectAgent: AgentDescriptor["projectAgent"],
-  options: { includeSystemPrompt: boolean }
+  options: { includeSystemPrompt: boolean; includeSource: boolean }
 ): AgentDescriptor["projectAgent"] {
   if (!projectAgent) {
     return undefined;
@@ -38,7 +38,8 @@ function cloneProjectAgent(
       ? { systemPrompt: projectAgent.systemPrompt }
       : {}),
     ...(projectAgent.creatorSessionId !== undefined ? { creatorSessionId: projectAgent.creatorSessionId } : {}),
-    ...(projectAgent.capabilities !== undefined ? { capabilities: [...projectAgent.capabilities] } : {})
+    ...(projectAgent.capabilities !== undefined ? { capabilities: [...projectAgent.capabilities] } : {}),
+    ...(options.includeSource && projectAgent.source !== undefined ? { source: { ...projectAgent.source } } : {})
   };
 }
 
@@ -51,7 +52,7 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
       thinkingLevel: descriptor.model.thinkingLevel
     },
     contextUsage: cloneContextUsage(descriptor),
-    projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: true }),
+    projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: true, includeSource: true }),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
     cli: cloneCliSessionMetadata(descriptor),
     ...(descriptor.agentCreatorResult !== undefined
@@ -69,7 +70,7 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
 export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...cloneDescriptorForPersistence(descriptor),
-    projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: false })
+    projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: false, includeSource: false })
   };
 }
 

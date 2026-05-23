@@ -572,6 +572,155 @@ describe("ProjectAgentRegistry", () => {
     });
   });
 
+  it("skips hydrating and materializing repo-sourced descriptors through local sidecar records", async () => {
+    const dataDir = await createTempDataDir();
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Repo docs mirror",
+        source: {
+          type: "repo",
+          workspaceKey: "workspace-a",
+          forgeDirRealpath: "/repo/.forge",
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    await writeProjectAgentRecord(
+      dataDir,
+      "profile-a",
+      makeConfig({ agentId: "agent-1", handle: "docs", whenToUse: "Stale local docs" }),
+      "Stale local prompt"
+    );
+    const registry = new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) });
+
+    await expect(registry.reconcileProfile("profile-a")).resolves.toEqual({
+      hydrated: [],
+      materialized: [],
+      orphansRemoved: []
+    });
+    expect(descriptor.projectAgent).toEqual({
+      handle: "docs",
+      whenToUse: "Repo docs mirror",
+      source: {
+        type: "repo",
+        workspaceKey: "workspace-a",
+        forgeDirRealpath: "/repo/.forge",
+        definitionId: "docs",
+        activatedAt: "2026-04-03T00:00:00.000Z"
+      }
+    });
+    await expect(access(getProjectAgentDir(dataDir, "profile-a", "docs"))).resolves.toBeUndefined();
+  });
+
+  it("does not materialize missing local sidecars for repo-sourced descriptors", async () => {
+    const dataDir = await createTempDataDir();
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Repo docs mirror",
+        source: {
+          type: "repo",
+          workspaceKey: "workspace-a",
+          forgeDirRealpath: "/repo/.forge",
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    const registry = new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) });
+
+    await expect(registry.reconcileProfile("profile-a")).resolves.toEqual({
+      hydrated: [],
+      materialized: [],
+      orphansRemoved: []
+    });
+    await expect(access(getProjectAgentDir(dataDir, "profile-a", "docs"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("returns a source-aware settings snapshot for repo-sourced descriptors without local fallback", async () => {
+    const dataDir = await createTempDataDir();
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Repo docs mirror",
+        systemPrompt: "Stale descriptor prompt",
+        source: {
+          type: "repo",
+          workspaceKey: "workspace-a",
+          forgeDirRealpath: "/repo/.forge",
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    await writeProjectAgentRecord(
+      dataDir,
+      "profile-a",
+      makeConfig({ agentId: "agent-1", handle: "docs", whenToUse: "Stale local docs" }),
+      "Stale local prompt"
+    );
+    await writeProjectAgentReferenceDoc(dataDir, "profile-a", "docs", "stale.md", "# Stale");
+    const registry = new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) });
+    const reader = new ProjectAgentSettingsSnapshotReader({
+      dataDir,
+      registry,
+      now: () => "2026-04-04T00:00:00.000Z"
+    });
+
+    await expect(reader.read("agent-1")).resolves.toEqual({
+      config: {
+        version: 1,
+        agentId: "agent-1",
+        handle: "docs",
+        whenToUse: "Repo docs mirror",
+        promotedAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-04T00:00:00.000Z"
+      },
+      systemPrompt: null,
+      references: [],
+      source: {
+        type: "repo",
+        status: "unavailable",
+        problems: [
+          {
+            code: "repo_project_agent_resolver_pending",
+            message: "Repository project-agent source resolution is not available yet."
+          }
+        ],
+        workspaceKey: "workspace-a",
+        forgeDirRealpath: "/repo/.forge",
+        definitionId: "docs",
+        activatedAt: "2026-04-03T00:00:00.000Z"
+      }
+    });
+  });
+
+  it("rejects local reference writes for repo-sourced descriptors", async () => {
+    const dataDir = await createTempDataDir();
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Repo docs mirror",
+        source: {
+          type: "repo",
+          workspaceKey: "workspace-a",
+          forgeDirRealpath: "/repo/.forge",
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    const registry = new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) });
+
+    await expect(registry.assertOwnedReferenceScope("agent-1")).rejects.toThrow(/repository-managed/i);
+  });
+
   it("keeps storage reconciliation as a compatibility wrapper for registry-owned policy", async () => {
     const dataDir = await createTempDataDir();
     const descriptor = makeDescriptor({

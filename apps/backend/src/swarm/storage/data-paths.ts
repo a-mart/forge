@@ -206,6 +206,24 @@ export function getProjectAgentsDir(dataDir: string, profileId: string): string 
   return join(getProfileDir(dataDir, profileId), "project-agents");
 }
 
+export function getProjectAgentBackupsDir(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "project-agent-backups");
+}
+
+export function getProjectAgentBackupDir(
+  dataDir: string,
+  profileId: string,
+  agentId: string,
+  handle: string,
+  timestamp: string
+): string {
+  const safeTimestamp = timestamp.replace(/[^0-9A-Za-z._-]/g, "-");
+  return join(
+    getProjectAgentBackupsDir(dataDir, profileId),
+    `${sanitizePathSegment(agentId)}-${sanitizePathSegment(handle)}-${safeTimestamp}`
+  );
+}
+
 export function getProjectAgentDir(dataDir: string, profileId: string, handle: string): string {
   return join(getProjectAgentsDir(dataDir, profileId), sanitizePathSegment(handle));
 }

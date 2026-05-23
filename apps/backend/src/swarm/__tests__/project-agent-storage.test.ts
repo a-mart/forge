@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { PersistedProjectAgentConfig } from "@forge/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  backupProjectAgentRecordForRepoLink,
   deleteProjectAgentRecord,
   readProjectAgentRecord,
   reconcileProjectAgentStorage,
@@ -216,6 +217,33 @@ describe("project-agent-storage", () => {
     const record = await readProjectAgentRecord(dataDir, "profile-a", "new-handle");
     expect(record?.config.handle).toBe("new-handle");
     expect(record?.systemPrompt).toBe("New prompt");
+  });
+
+  it("backs up a local project-agent sidecar before local-to-repo link conversion", async () => {
+    const dataDir = await createTempDataDir();
+    const config = makeConfig({ agentId: "agent-1", handle: "docs", whenToUse: "Maintain docs" });
+    await writeProjectAgentRecord(dataDir, "profile-a", config, "Local prompt");
+
+    const backupPath = await backupProjectAgentRecordForRepoLink(
+      dataDir,
+      "profile-a",
+      "agent-1",
+      "docs",
+      "2026-04-03T00:00:00.000Z"
+    );
+
+    expect(backupPath).toContain(join("project-agent-backups", "agent-1-docs-2026-04-03T00-00-00.000Z"));
+    await expect(access(getProjectAgentDir(dataDir, "profile-a", "docs"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(backupPath!, "prompt.md"), "utf8")).resolves.toBe("Local prompt");
+    await expect(readFile(join(backupPath!, "config.json"), "utf8")).resolves.toContain('"handle": "docs"');
+  });
+
+  it("returns null when backing up a missing local project-agent sidecar", async () => {
+    const dataDir = await createTempDataDir();
+
+    await expect(
+      backupProjectAgentRecordForRepoLink(dataDir, "profile-a", "agent-1", "missing", "2026-04-03T00:00:00.000Z")
+    ).resolves.toBeNull();
   });
 
   it("deletes a project agent record directory", async () => {

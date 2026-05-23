@@ -1,6 +1,7 @@
 import { basename, resolve } from "node:path";
 import {
   PROJECT_AGENT_CAPABILITIES,
+  isRepoProjectAgentSource,
   type PersistedProjectAgentConfig,
   type ProjectAgentCapability
 } from "@forge/protocol";
@@ -186,6 +187,10 @@ export class ProjectAgentRegistry {
 
   async assertOwnedReferenceScope(agentId: string): Promise<ProjectAgentReferenceScope> {
     const scope = this.assertReferenceScope(agentId);
+    if (isRepoProjectAgentDescriptor(scope.descriptor)) {
+      throw new Error(`Project agent ${agentId} is repository-managed; local reference documents are read-only`);
+    }
+
     const record = await this.readRecord(scope.profileId, scope.handle);
     if (record && record.config.agentId !== agentId) {
       throw new Error(
@@ -233,6 +238,13 @@ export class ProjectAgentRegistry {
 
     for (const record of dedupedRecords) {
       const descriptor = descriptorsByAgentId.get(record.config.agentId);
+      if (descriptor?.projectAgent && isRepoProjectAgentDescriptor(descriptor)) {
+        console.info(
+          `[swarm] project-agent-registry:skip_hydrate_repo_source profile=${profileId} agentId=${record.config.agentId} handle=${record.config.handle} dirPath=${record.dirPath}`
+        );
+        continue;
+      }
+
       if (!descriptor) {
         console.info(
           `[swarm] project-agent-registry:remove_orphan profile=${profileId} agentId=${record.config.agentId} handle=${record.config.handle} dirPath=${record.dirPath}`
@@ -259,6 +271,13 @@ export class ProjectAgentRegistry {
 
     for (const descriptor of profileDescriptors) {
       if (!descriptor.projectAgent) {
+        continue;
+      }
+
+      if (isRepoProjectAgentDescriptor(descriptor)) {
+        console.info(
+          `[swarm] project-agent-registry:skip_materialize_repo_source profile=${profileId} agentId=${descriptor.agentId} handle=${descriptor.projectAgent.handle}`
+        );
         continue;
       }
 
@@ -471,6 +490,10 @@ function compareRecordsByUpdatedAtDesc(left: ProjectAgentOnDiskRecord, right: Pr
 }
 
 function hydrateDescriptorFromRecord(descriptor: AgentDescriptor, record: ProjectAgentOnDiskRecord): boolean {
+  if (isRepoProjectAgentDescriptor(descriptor)) {
+    return false;
+  }
+
   const previous = descriptor.projectAgent;
   const nextHandle = previous?.handle === record.config.handle ? previous.handle : record.config.handle;
   const nextProjectAgent: NonNullable<AgentDescriptor["projectAgent"]> = {
@@ -490,6 +513,12 @@ function hydrateDescriptorFromRecord(descriptor: AgentDescriptor, record: Projec
 
   descriptor.projectAgent = nextProjectAgent;
   return changed;
+}
+
+function isRepoProjectAgentDescriptor(
+  descriptor: AgentDescriptor
+): descriptor is AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> } {
+  return isRepoProjectAgentSource(descriptor.projectAgent?.source);
 }
 
 function normalizeProjectAgentCapabilities(value: unknown): ProjectAgentCapability[] {
