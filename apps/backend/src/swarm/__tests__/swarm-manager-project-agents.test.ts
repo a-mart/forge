@@ -157,8 +157,10 @@ describe('SwarmManager', () => {
       handle: 'docs',
       whenToUse: 'Maintain repository docs.',
       capabilities: ['create_session'],
-      source: expect.objectContaining({ type: 'repo', definitionId: 'docs' }),
+      sourceKind: 'repo',
     })
+    expect(descriptor.projectAgent).not.toHaveProperty('source')
+    expect(manager.getAgentForInternalUse(result.agentId)?.projectAgent?.source).toMatchObject({ type: 'repo', definitionId: 'docs' })
     await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'docs'))).rejects.toMatchObject({ code: 'ENOENT' })
     const snapshot = await manager.getProjectAgentConfig(result.agentId)
     expect(snapshot.systemPrompt).toBe('Repo docs prompt')
@@ -166,6 +168,49 @@ describe('SwarmManager', () => {
     expect(await manager.getProjectAgentReference(result.agentId, 'guide.md')).toBe('# Repo guide')
     expect(snapshot.source).toMatchObject({ status: 'valid', definitionId: 'docs' })
     expect(manager.notifiedProjectAgentProfileIds).toContain('manager')
+  })
+
+  it('redacts repo project-agent source metadata from public list/bootstrap/snapshot payloads', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Maintain repository docs.',
+      prompt: 'Repo docs prompt',
+    })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const snapshots: Array<{ agents: AgentDescriptor[] }> = []
+    const projectAgentUpdates: Array<{ projectAgent: AgentDescriptor['projectAgent'] | null }> = []
+    manager.on('agents_snapshot', (event) => snapshots.push(event as { agents: AgentDescriptor[] }))
+    manager.on('session_project_agent_updated', (event) => {
+      projectAgentUpdates.push(event as { projectAgent: AgentDescriptor['projectAgent'] | null })
+    })
+
+    const result = await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+    })
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+
+    const assertPublicProjectAgent = (projectAgent: AgentDescriptor['projectAgent'] | undefined) => {
+      expect(projectAgent).toMatchObject({ handle: 'docs', whenToUse: 'Maintain repository docs.', sourceKind: 'repo' })
+      expect(projectAgent).not.toHaveProperty('source')
+      expect(projectAgent).not.toHaveProperty('systemPrompt')
+      expect(JSON.stringify(projectAgent)).not.toContain('forgeDirRealpath')
+      expect(JSON.stringify(projectAgent)).not.toContain('workspaceKey')
+      expect(JSON.stringify(projectAgent)).not.toContain('activatedAt')
+    }
+
+    assertPublicProjectAgent(result.projectAgent)
+    assertPublicProjectAgent(manager.listAgents().find((agent) => agent.agentId === result.agentId)?.projectAgent)
+    assertPublicProjectAgent(manager.listBootstrapAgents().find((agent) => agent.agentId === result.agentId)?.projectAgent)
+    assertPublicProjectAgent(manager.listManagerAgents().find((agent) => agent.agentId === result.agentId)?.projectAgent)
+    assertPublicProjectAgent(snapshots.at(-1)?.agents.find((agent) => agent.agentId === result.agentId)?.projectAgent)
+    assertPublicProjectAgent(projectAgentUpdates.at(-1)?.projectAgent ?? undefined)
+    expect(manager.getAgentForInternalUse(result.agentId)?.projectAgent?.source).toMatchObject({ type: 'repo', definitionId: 'docs' })
   })
 
   it('links an existing session to a repo project-agent source while preserving history and ignoring stale local prompt/reference', async () => {

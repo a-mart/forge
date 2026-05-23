@@ -344,15 +344,26 @@ describe("compareRuntimeExtensionSnapshots", () => {
 });
 
 describe("cloneProjectAgentInfoValue / cloneDescriptor", () => {
-  it("clones project agent capabilities array", () => {
+  it("clones project agent public fields and redacts private source fields", () => {
     const pa = {
       handle: "h",
       whenToUse: "w",
-      capabilities: ["create_session" as const]
+      capabilities: ["create_session" as const],
+      systemPrompt: "private prompt",
+      source: {
+        type: "repo" as const,
+        workspaceKey: "profile::/repo",
+        forgeDirRealpath: "/repo/.forge",
+        definitionId: "docs",
+        activatedAt: "2026-04-03T00:00:00.000Z",
+        signature: "abc"
+      }
     };
     const cloned = cloneProjectAgentInfoValue(pa);
-    expect(cloned?.capabilities).toEqual(["create_session"]);
+    expect(cloned).toMatchObject({ handle: "h", whenToUse: "w", capabilities: ["create_session"], sourceKind: "repo" });
     expect(cloned?.capabilities).not.toBe(pa.capabilities);
+    expect(cloned).not.toHaveProperty("systemPrompt");
+    expect(cloned).not.toHaveProperty("source");
   });
 
   it("cloneDescriptor deep-copies model, contextUsage, and cli metadata", () => {

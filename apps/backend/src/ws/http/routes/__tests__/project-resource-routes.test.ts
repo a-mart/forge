@@ -81,7 +81,9 @@ describe("project resource routes", () => {
     const payload = (await response.json()) as ProjectResourceMutationResponse & { agentId: string; projectAgent: unknown };
     expect(payload.success).toBe(true);
     expect(payload.agentId).toBe("activated-docs");
-    expect(payload.projectAgent).toMatchObject({ handle: "docs", whenToUse: "Maintain docs" });
+    expect(payload.projectAgent).toMatchObject({ handle: "docs", whenToUse: "Maintain docs", sourceKind: "repo" });
+    expect(payload.projectAgent).not.toHaveProperty("source");
+    expect(JSON.stringify(payload.projectAgent)).not.toContain("forgeDirRealpath");
     expect(payload.snapshot.resources.projectAgents?.items[0]).toMatchObject({
       definitionId: "docs",
       activatedAgentId: "activated-docs"
@@ -409,6 +411,7 @@ async function createHarness(options: { missingCwd?: boolean; missingForge?: boo
     getConfig: () => ({ paths: { dataDir } }),
     getAgent: (agentId: string) => (agentId === descriptor.agentId ? descriptor : activatedAgents.find((agent) => agent.agentId === agentId)),
     listAgents: () => [descriptor, ...activatedAgents],
+    listAgentsForInternalUse: () => [descriptor, ...activatedAgents],
     activateRepoProjectAgent: async (request: { definitionId: string }) => {
       const workspaceRealpath = await realpath(workspaceDir);
       const forgeDirRealpath = await realpath(join(workspaceDir, ".forge"));

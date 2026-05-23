@@ -14,6 +14,7 @@ import type {
 import { scanRepoProjectAgentDefinitions } from "../../../swarm/repo-project-agent-definitions.js";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
 import { ProjectWorkspaceResolver, type ProjectWorkspaceResolution } from "../../../swarm/project-workspace-resolver.js";
+import { cloneProjectAgentInfoValue } from "../../../swarm/swarm-manager-utils.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import type { AgentDescriptor } from "../../../swarm/types.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
@@ -112,7 +113,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
               success: true,
               snapshot,
               agentId: result.agentId,
-              projectAgent: result.projectAgent
+              projectAgent: cloneProjectAgentInfoValue(result.projectAgent) ?? result.projectAgent
             };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -255,7 +256,7 @@ function getActiveRepoProjectAgentsByDefinitionId(
     return active;
   }
 
-  for (const agent of swarmManager.listAgents()) {
+  for (const agent of swarmManager.listAgentsForInternalUse()) {
     const source = agent.role === "manager" && agent.profileId === profileId ? agent.projectAgent?.source : undefined;
     if (
       source?.type === "repo" &&

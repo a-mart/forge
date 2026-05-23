@@ -23,7 +23,7 @@ function cloneCliSessionMetadata(descriptor: AgentDescriptor): AgentDescriptor["
     : undefined;
 }
 
-function cloneProjectAgent(
+export function cloneProjectAgent(
   projectAgent: AgentDescriptor["projectAgent"],
   options: { includeSystemPrompt: boolean; includeSource: boolean; includePublicSourceKind: boolean }
 ): AgentDescriptor["projectAgent"] {
@@ -74,14 +74,18 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
   };
 }
 
+export function cloneProjectAgentForPublic(projectAgent: AgentDescriptor["projectAgent"]): AgentDescriptor["projectAgent"] {
+  return cloneProjectAgent(projectAgent, {
+    includeSystemPrompt: false,
+    includeSource: false,
+    includePublicSourceKind: true
+  });
+}
+
 export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...cloneDescriptorForPersistence(descriptor),
-    projectAgent: cloneProjectAgent(descriptor.projectAgent, {
-      includeSystemPrompt: false,
-      includeSource: false,
-      includePublicSourceKind: true
-    })
+    projectAgent: cloneProjectAgentForPublic(descriptor.projectAgent)
   };
 }
 

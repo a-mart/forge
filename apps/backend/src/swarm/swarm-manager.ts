@@ -258,6 +258,7 @@ import type {
   SwarmModelPreset,
   SwarmReasoningLevel
 } from "./types.js";
+import { cloneDescriptorForPersistence } from "./agents/descriptor-store/descriptor-clone.js";
 import {
   assertBuilderSession,
   assertCollabSession,
@@ -1800,6 +1801,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
   }
 
+  listAgentsForInternalUse(): AgentDescriptor[] {
+    return this.sortedDescriptors().map((descriptor) => cloneDescriptorForPersistence(descriptor));
+  }
+
   isAgentEffectivelyArchived(agentId: string): boolean {
     const descriptor = this.descriptors.get(agentId);
     return descriptor ? this.isDescriptorEffectivelyArchived(descriptor) : false;
@@ -2856,7 +2861,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Repository project-agent definition ${request.definitionId} is not activatable.`);
     }
 
-    return this.projectAgentService.activateRepoProjectAgent({
+    const result = await this.projectAgentService.activateRepoProjectAgent({
       profileId,
       sourceSessionAgentId: sourceDescriptor.agentId,
       mode: request.mode,
@@ -2885,6 +2890,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         };
       }
     });
+
+    return {
+      ...result,
+      projectAgent: cloneProjectAgentInfoValue(result.projectAgent) as NonNullable<AgentDescriptor["projectAgent"]>
+    };
   }
 
   async setSessionProjectAgent(
@@ -3203,6 +3213,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return cloneDescriptor(descriptor);
+  }
+
+  getAgentForInternalUse(agentId: string): AgentDescriptor | undefined {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) {
+      return undefined;
+    }
+
+    return cloneDescriptorForPersistence(descriptor);
   }
 
   async getProjectAgentConfig(agentId: string): Promise<{
