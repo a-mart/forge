@@ -23,6 +23,10 @@ import {
   getProjectAgentPublicName,
   listProjectAgents,
 } from "./project-agents.js";
+import {
+  assertRepoProjectAgentSourceAvailable,
+  resolveRepoProjectAgentSource
+} from "./agents/repo-project-agent-source.js";
 import { readProjectAgentRecord, type ProjectAgentOnDiskRecord } from "./project-agent-storage.js";
 import { listRepositoryReferenceDocs } from "./project-reference-docs.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
@@ -269,30 +273,9 @@ export class SwarmPromptService {
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
 
-    const projectAgentRecord = await this.readOwnedProjectAgentRecord(descriptor, profileId);
-    if (projectAgentRecord) {
-      const refDocFiles = await listProjectAgentReferenceDocs(
-        this.options.config.paths.dataDir,
-        profileId,
-        projectAgentRecord.config.handle,
-      );
-      if (refDocFiles.length > 0) {
-        const refContents: string[] = [];
-        for (const fileName of refDocFiles) {
-          const content = await readProjectAgentReferenceDoc(
-            this.options.config.paths.dataDir,
-            profileId,
-            projectAgentRecord.config.handle,
-            fileName,
-          );
-          if (content) {
-            refContents.push(`## ${fileName}\n${content}`);
-          }
-        }
-        if (refContents.length > 0) {
-          prompt = `${prompt.trimEnd()}\n\n<agent_reference_docs>\n${refContents.join("\n\n")}\n</agent_reference_docs>`;
-        }
-      }
+    const projectAgentReferenceDocs = await this.resolveProjectAgentReferenceDocs(descriptor, profileId);
+    if (projectAgentReferenceDocs.length > 0) {
+      prompt = `${prompt.trimEnd()}\n\n<agent_reference_docs>\n${projectAgentReferenceDocs.map((doc) => `## ${doc.path}\n${doc.content}`).join("\n\n")}\n</agent_reference_docs>`;
     }
 
     // eslint-disable-next-line no-template-curly-in-string
@@ -742,9 +725,14 @@ export class SwarmPromptService {
     }
 
     if (isRepoProjectAgentSource(descriptor.projectAgent.source)) {
-      throw new Error(
-        `Project agent ${descriptor.agentId} is repository-managed, but repository source resolution is not available yet.`
-      );
+      const scope = this.buildProjectAgentReferenceScope(descriptor);
+      const resolution = await resolveRepoProjectAgentSource(scope);
+      const definition = assertRepoProjectAgentSourceAvailable(resolution);
+      const prompt = definition.prompt.trim() || undefined;
+      return {
+        prompt,
+        sourcePath: prompt ? join(definition.dirPath, "prompt.md") : undefined,
+      };
     }
 
     const profileId = descriptor.profileId ?? descriptor.agentId;
@@ -768,6 +756,63 @@ export class SwarmPromptService {
 
   private getProjectAgentDescriptorPromptSource(descriptor: AgentDescriptor): string {
     return `project-agent-descriptor:${descriptor.projectAgent?.handle ?? descriptor.agentId}`;
+  }
+
+  private async resolveProjectAgentReferenceDocs(
+    descriptor: AgentDescriptor,
+    profileId: string,
+  ): Promise<Array<{ path: string; content: string }>> {
+    if (!descriptor.projectAgent?.handle) {
+      return [];
+    }
+
+    if (isRepoProjectAgentSource(descriptor.projectAgent.source)) {
+      const scope = this.buildProjectAgentReferenceScope(descriptor);
+      const resolution = await resolveRepoProjectAgentSource(scope);
+      const definition = assertRepoProjectAgentSourceAvailable(resolution);
+      return definition.referenceDocs.map((doc) => ({ path: doc.path, content: doc.content }));
+    }
+
+    const projectAgentRecord = await this.readOwnedProjectAgentRecord(descriptor, profileId);
+    if (!projectAgentRecord) {
+      return [];
+    }
+
+    const refDocFiles = await listProjectAgentReferenceDocs(
+      this.options.config.paths.dataDir,
+      profileId,
+      projectAgentRecord.config.handle,
+    );
+    const refContents: Array<{ path: string; content: string }> = [];
+    for (const fileName of refDocFiles) {
+      const content = await readProjectAgentReferenceDoc(
+        this.options.config.paths.dataDir,
+        profileId,
+        projectAgentRecord.config.handle,
+        fileName,
+      );
+      if (content) {
+        refContents.push({ path: fileName, content });
+      }
+    }
+
+    return refContents;
+  }
+
+  private buildProjectAgentReferenceScope(descriptor: AgentDescriptor) {
+    if (!descriptor.projectAgent?.handle) {
+      throw new Error(`Agent ${descriptor.agentId} is not a project agent`);
+    }
+
+    return {
+      descriptor: descriptor as AgentDescriptor & {
+        role: "manager";
+        profileId: string;
+        projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+      },
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      handle: descriptor.projectAgent.handle,
+    };
   }
 
   private async readOwnedProjectAgentRecord(

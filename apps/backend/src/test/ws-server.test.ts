@@ -3258,11 +3258,12 @@ describe('SwarmWebSocketServer', () => {
       })
       expect(configEvent.source).toEqual({
         type: 'repo',
-        status: 'unavailable',
+        status: 'missing',
         problems: [
           {
-            code: 'repo_project_agent_resolver_pending',
-            message: 'Repository project-agent source resolution is not available yet.',
+            code: 'repo_project_agents_missing',
+            message: 'Repository project-agent definitions directory is missing: /repo/.forge/project-agents',
+            path: 'project-agents',
           },
         ],
         ...source,

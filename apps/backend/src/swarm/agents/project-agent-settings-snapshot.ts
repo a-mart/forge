@@ -1,6 +1,10 @@
 import { isRepoProjectAgentSource, type PersistedProjectAgentConfig, type ProjectAgentConfigSourceSnapshot } from "@forge/protocol";
 import { listProjectAgentReferenceDocs } from "../reference-docs.js";
 import { ProjectAgentRegistry } from "./project-agent-registry.js";
+import {
+  buildRepoProjectAgentConfigFromDefinition,
+  resolveRepoProjectAgentSource
+} from "./repo-project-agent-source.js";
 
 export interface ProjectAgentSettingsSnapshot {
   config: PersistedProjectAgentConfig;
@@ -21,24 +25,16 @@ export class ProjectAgentSettingsSnapshotReader {
   async read(agentId: string): Promise<ProjectAgentSettingsSnapshot> {
     const scope = this.options.registry.assertReferenceScope(agentId);
     if (isRepoProjectAgentSource(scope.descriptor.projectAgent.source)) {
+      const resolution = await resolveRepoProjectAgentSource(scope);
       return {
-        config: this.options.registry.buildFallbackConfig(scope, this.options.now?.()),
-        systemPrompt: null,
-        references: [],
-        source: {
-          type: "repo",
-          status: "unavailable",
-          problems: [
-            {
-              code: "repo_project_agent_resolver_pending",
-              message: "Repository project-agent source resolution is not available yet."
-            }
-          ],
-          workspaceKey: scope.descriptor.projectAgent.source.workspaceKey,
-          forgeDirRealpath: scope.descriptor.projectAgent.source.forgeDirRealpath,
-          definitionId: scope.descriptor.projectAgent.source.definitionId,
-          activatedAt: scope.descriptor.projectAgent.source.activatedAt
-        }
+        config: resolution.definition
+          ? buildRepoProjectAgentConfigFromDefinition(scope, resolution.definition)
+          : this.options.registry.buildFallbackConfig(scope, this.options.now?.()),
+        systemPrompt: resolution.source.status === "valid" && resolution.definition ? resolution.definition.prompt : null,
+        references: resolution.source.status === "valid" && resolution.definition
+          ? resolution.definition.referenceDocs.map((doc) => doc.path)
+          : [],
+        source: resolution.source
       };
     }
 

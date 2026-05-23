@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -710,11 +710,21 @@ describe("SwarmPromptService", () => {
     expect(systemSection?.content).not.toContain("Winner on-disk prompt");
   });
 
-  it("blocks repo-sourced project-agent prompt resolution instead of falling back to stale local prompt bodies", async () => {
+  it("resolves repo-sourced project-agent prompt and references without falling back to stale local prompt bodies", async () => {
     const { config } = await makeConfig();
     const dataDir = config.paths.dataDir;
     const profileId = "manager";
     const handle = "repo-docs";
+    const forgeDir = join(dataDir, "repo-forge");
+    const definitionDir = join(forgeDir, "project-agents", handle);
+    await mkdir(join(definitionDir, "reference"), { recursive: true });
+    await writeFile(join(definitionDir, "config.json"), JSON.stringify({
+      version: 1,
+      handle,
+      whenToUse: "Repo docs guidance"
+    }));
+    await writeFile(join(definitionDir, "prompt.md"), "Repo prompt body");
+    await writeFile(join(definitionDir, "reference", "repo.md"), "Repo reference body");
     await writeProjectAgentRecord(
       dataDir,
       profileId,
@@ -728,6 +738,7 @@ describe("SwarmPromptService", () => {
       },
       "Stale local prompt"
     );
+    await writeProjectAgentReferenceDoc(dataDir, profileId, handle, "stale.md", "Stale local reference");
 
     const descriptor = createManagerDescriptor(config, repoRoot, {
       agentId: "agent-1",
@@ -738,7 +749,7 @@ describe("SwarmPromptService", () => {
         source: {
           type: "repo",
           workspaceKey: "workspace-a",
-          forgeDirRealpath: "/repo/.forge",
+          forgeDirRealpath: await realpath(forgeDir),
           definitionId: handle,
           activatedAt: "2026-04-03T00:00:00.000Z"
         }
@@ -748,8 +759,13 @@ describe("SwarmPromptService", () => {
       config,
       descriptors: new Map([[descriptor.agentId, descriptor]]),
       profiles: new Map([[profileId, createProfile(descriptor.agentId)]]),
-      promptRegistry: {} as never,
-      skillMetadataService: {} as never,
+      promptRegistry: new FileBackedPromptRegistry({
+        dataDir,
+        repoDir: config.paths.rootDir,
+        builtinArchetypesDir: BUILTIN_ARCHETYPES,
+        builtinOperationalDir: BUILTIN_OPERATIONAL
+      }),
+      skillMetadataService: { getEnabledSkillsForAgent: async () => [] } as never,
       getAgentMemoryPath: () => "/tmp/memory.md",
       ensureAgentMemoryFile: async () => {},
       resolveMemoryOwnerAgentId: (d) => d.agentId,
@@ -762,7 +778,61 @@ describe("SwarmPromptService", () => {
       logDebug: () => {}
     });
 
-    await expect(service.resolveProjectAgentSystemPromptOverride(descriptor)).rejects.toThrow(/repository-managed/i);
+    await expect(service.resolveProjectAgentSystemPromptOverride(descriptor)).resolves.toEqual({
+      prompt: "Repo prompt body",
+      sourcePath: join(await realpath(definitionDir), "prompt.md")
+    });
+    const resolved = await service.buildResolvedManagerPrompt(descriptor);
+    expect(resolved).toContain("Repo prompt body");
+    expect(resolved).toContain("Repo reference body");
+    expect(resolved).not.toContain("Stale local prompt");
+    expect(resolved).not.toContain("Stale local reference");
+  });
+
+  it("reports missing repo-sourced project-agent definitions without falling back to archetype/default prompts", async () => {
+    const { config } = await makeConfig();
+    const forgeDir = join(config.paths.dataDir, "repo-forge");
+    await mkdir(forgeDir, { recursive: true });
+    const descriptor = createManagerDescriptor(config, repoRoot, {
+      agentId: "agent-1",
+      projectAgent: {
+        handle: "missing-docs",
+        whenToUse: "Repo guidance mirror",
+        systemPrompt: "Stale descriptor prompt",
+        source: {
+          type: "repo",
+          workspaceKey: "workspace-a",
+          forgeDirRealpath: await realpath(forgeDir),
+          definitionId: "missing-docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    const service = new SwarmPromptService({
+      config,
+      descriptors: new Map([[descriptor.agentId, descriptor]]),
+      profiles: new Map([["manager", createProfile(descriptor.agentId)]]),
+      promptRegistry: new FileBackedPromptRegistry({
+        dataDir: config.paths.dataDir,
+        repoDir: config.paths.rootDir,
+        builtinArchetypesDir: BUILTIN_ARCHETYPES,
+        builtinOperationalDir: BUILTIN_OPERATIONAL
+      }),
+      skillMetadataService: { getEnabledSkillsForAgent: async () => [] } as never,
+      getAgentMemoryPath: () => "/tmp/memory.md",
+      ensureAgentMemoryFile: async () => {},
+      resolveMemoryOwnerAgentId: (d) => d.agentId,
+      resolveSessionProfileId: () => "manager",
+      refreshSessionMetaStats: async () => {},
+      refreshSessionMetaStatsBySessionId: async () => {},
+      getSessionsForProfile: () => [descriptor],
+      loadSpecialistRegistryModule: async () => specialistRegistryStub(),
+      getIntegrationContext: () => undefined,
+      logDebug: () => {}
+    });
+
+    await expect(service.previewManagerSystemPromptForAgent(descriptor.agentId)).rejects.toThrow(/repo_project_agents_missing|missing/i);
+    await expect(service.buildResolvedManagerPrompt(descriptor)).rejects.toThrow(/repo_project_agents_missing|missing/i);
   });
 
   it("resolveProjectAgentSystemPromptOverride prefers on-disk project agent prompt.md", async () => {
