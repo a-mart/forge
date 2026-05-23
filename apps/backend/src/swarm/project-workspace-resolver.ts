@@ -7,6 +7,7 @@ import {
   getProjectForgeExtensionsDir,
   getProjectForgePiExtensionsDir,
   getProjectForgePiSettingsPath,
+  getProjectForgeProjectAgentsDir,
   getProjectForgeReferenceDir,
   getProjectForgeSkillsDir,
   getProjectForgeSpecialistsDir
@@ -47,6 +48,7 @@ export interface ProjectPassiveWorkspaceResolution {
     skillsDir?: string;
     specialistsDir?: string;
     referenceDir?: string;
+    projectAgentsDir?: string;
     forgeExtensionsDir?: string;
     piExtensionsDir?: string;
     piRoleExtensionDirs?: string[];
@@ -113,6 +115,7 @@ export class ProjectWorkspaceResolver {
           skillsDir: getProjectForgeSkillsDir(effectiveForgeDirRealpath),
           specialistsDir: getProjectForgeSpecialistsDir(effectiveForgeDirRealpath),
           referenceDir: getProjectForgeReferenceDir(effectiveForgeDirRealpath),
+          projectAgentsDir: getProjectForgeProjectAgentsDir(effectiveForgeDirRealpath),
           forgeExtensionsDir: getProjectForgeExtensionsDir(effectiveForgeDirRealpath),
           piExtensionsDir: getProjectForgePiExtensionsDir(effectiveForgeDirRealpath),
           piRoleExtensionDirs: [],

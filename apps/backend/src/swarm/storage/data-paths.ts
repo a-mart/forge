@@ -63,6 +63,10 @@ export function getProjectForgeReferenceDir(forgeDir: string): string {
   return join(forgeDir, "reference");
 }
 
+export function getProjectForgeProjectAgentsDir(forgeDir: string): string {
+  return join(forgeDir, "project-agents");
+}
+
 export function getProjectForgeExtensionsDir(forgeDir: string): string {
   return join(forgeDir, "extensions");
 }

@@ -29,10 +29,14 @@ describe("project resource routes", () => {
     await mkdir(join(harness.workspaceDir, ".forge", "skills", "repo-skill"), { recursive: true });
     await mkdir(join(harness.workspaceDir, ".forge", "specialists"), { recursive: true });
     await mkdir(join(harness.workspaceDir, ".forge", "reference", "nested"), { recursive: true });
+    await mkdir(join(harness.workspaceDir, ".forge", "project-agents", "docs", "reference"), { recursive: true });
     await mkdir(join(harness.workspaceDir, ".forge", "extensions"), { recursive: true });
     await writeFile(join(harness.workspaceDir, ".forge", "skills", "repo-skill", "SKILL.md"), "# Skill\n", "utf-8");
     await writeFile(join(harness.workspaceDir, ".forge", "specialists", "backend.md"), "# Specialist\n", "utf-8");
     await writeFile(join(harness.workspaceDir, ".forge", "reference", "nested", "notes.md"), "# Notes\n", "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "config.json"), JSON.stringify({ version: 1, handle: "docs", whenToUse: "Maintain docs" }), "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "prompt.md"), "You maintain docs.\n", "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "reference", "guide.md"), "# Guide\n", "utf-8");
     await writeFile(join(harness.workspaceDir, ".forge", "extensions", "marker.js"), "export default function() {}\n", "utf-8");
 
     const response = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
@@ -45,6 +49,10 @@ describe("project resource routes", () => {
     expect(payload.resources.skills.count).toBe(1);
     expect(payload.resources.specialists.count).toBe(1);
     expect(payload.resources.reference.items.map((item) => item.path)).toEqual([join("nested", "notes.md")]);
+    expect(payload.resources.projectAgents?.items).toEqual([
+      expect.objectContaining({ definitionId: "docs", handle: "docs", status: "valid", whenToUse: "Maintain docs" })
+    ]);
+    expect(payload.resources.projectAgents?.items[0]?.signature).toMatch(/^[a-f0-9]{64}$/);
     expect(payload.resources.forgeExtensions.count).toBe(1);
     expect(payload.trust.state).toBe("untrusted");
     expect(payload.executableSurfaces.some((surface) => surface.kind === "repo-forge-extensions" && surface.exists)).toBe(
@@ -68,6 +76,7 @@ describe("project resource routes", () => {
     expect(payload.snapshot.resources.skills.exists).toBe(true);
     expect(payload.snapshot.resources.specialists.exists).toBe(true);
     expect(payload.snapshot.resources.reference.exists).toBe(true);
+    expect(payload.snapshot.resources.projectAgents?.exists).toBe(true);
     expect(payload.snapshot.resources.forgeExtensions.exists).toBe(true);
     expect(payload.snapshot.resources.piExtensions.exists).toBe(true);
     expect(JSON.parse(await readFile(join(forgeDir, "pi", "settings.json"), "utf-8"))).toEqual({ packages: [] });
@@ -93,6 +102,7 @@ describe("project resource routes", () => {
       ".forge/skills/",
       ".forge/specialists/",
       ".forge/reference/",
+      ".forge/project-agents/",
       ".forge/extensions/",
       ".forge/pi/extensions/"
     ]));
@@ -136,6 +146,7 @@ describe("project resource routes", () => {
       ".forge/skills/",
       ".forge/specialists/",
       ".forge/reference/",
+      ".forge/project-agents/",
       ".forge/extensions/",
       ".forge/pi/extensions/",
       ".forge/pi/settings.json"

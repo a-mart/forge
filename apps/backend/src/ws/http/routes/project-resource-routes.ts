@@ -9,6 +9,7 @@ import type {
   ProjectResourceSeedRequest,
   ProjectResourceTrustRequest
 } from "@forge/protocol";
+import { scanRepoProjectAgentDefinitions } from "../../../swarm/repo-project-agent-definitions.js";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
 import { ProjectWorkspaceResolver, type ProjectWorkspaceResolution } from "../../../swarm/project-workspace-resolver.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
@@ -166,6 +167,7 @@ async function buildScaffoldState(resolution: ProjectWorkspaceResolution): Promi
     { label: ".forge/skills/", path: join(targetDir, "skills"), kind: "directory" as const },
     { label: ".forge/specialists/", path: join(targetDir, "specialists"), kind: "directory" as const },
     { label: ".forge/reference/", path: join(targetDir, "reference"), kind: "directory" as const },
+    { label: ".forge/project-agents/", path: join(targetDir, "project-agents"), kind: "directory" as const },
     { label: ".forge/extensions/", path: join(targetDir, "extensions"), kind: "directory" as const },
     { label: ".forge/pi/extensions/", path: join(targetDir, "pi", "extensions"), kind: "directory" as const },
     { label: ".forge/pi/settings.json", path: join(targetDir, "pi", "settings.json"), kind: "file" as const }
@@ -194,10 +196,19 @@ async function scaffoldEntryExists(pathValue: string, kind: "directory" | "file"
 
 async function buildResourceInventory(resolution: ProjectWorkspaceResolution): Promise<ProjectResourcesSnapshotResponse["resources"]> {
   const resources = resolution.repoRootResources;
+  const projectAgentInventory = await scanRepoProjectAgentDefinitions(resources.projectAgentsDir);
+  const projectAgents = {
+    ...(projectAgentInventory.path ? { path: projectAgentInventory.path } : {}),
+    exists: projectAgentInventory.exists,
+    count: projectAgentInventory.count,
+    items: projectAgentInventory.items,
+    ...(projectAgentInventory.truncated ? { truncated: projectAgentInventory.truncated } : {})
+  };
   return {
     skills: await listDirectoryEntries(resources.skillsDir, { directoryWithFile: "SKILL.md" }),
     specialists: await listDirectoryEntries(resources.specialistsDir, { extension: ".md" }),
     reference: await listDirectoryEntries(resources.referenceDir, { extension: ".md", recursive: true, skipSymlinks: true }),
+    projectAgents,
     forgeExtensions: await listDirectoryEntries(resources.forgeExtensionsDir, { extension: [".ts", ".js"] }),
     piExtensions: await listDirectoryEntries(resources.piExtensionsDir, { extension: [".ts", ".js"] }),
     piSettings: await listSingleFile(resources.piSettingsPath)
@@ -396,6 +407,7 @@ async function seedProjectForgeScaffold(resolution: ProjectWorkspaceResolution):
     ensureDirectory(join(forgeDir, "skills")),
     ensureDirectory(join(forgeDir, "specialists")),
     ensureDirectory(join(forgeDir, "reference")),
+    ensureDirectory(join(forgeDir, "project-agents")),
     ensureDirectory(join(forgeDir, "extensions")),
     ensureDirectory(join(forgeDir, "pi")),
     ensureDirectory(join(forgeDir, "pi", "extensions"))
@@ -459,6 +471,7 @@ This directory contains shared, agent-facing resources for this repository.
 - \`skills/\`: project skills that agents can use as workflow instructions.
 - \`specialists/\`: project-specific specialist definitions.
 - \`reference/\`: passive markdown context and repository notes.
+- \`project-agents/\`: passive repository-managed Project Agent definitions. Each definition uses \`config.json\`, a required \`prompt.md\`, and optional flat \`reference/*.md\` files.
 - \`extensions/\`: Forge extensions. These are executable and require trust. If they rewrite shell commands, quote or escape injected output before it reaches \`bash\`; avoid building shell fragments such as \`; token ...\`.
 - \`pi/extensions/\` and \`pi/settings.json\`: Pi extensions and package config. These are executable and require trust. List repo Pi extensions/custom tools explicitly in \`pi/settings.json\` so trust-gated loading stays deterministic.
 - Keep executable smoke/test tools deterministic and harmless.

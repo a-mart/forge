@@ -35,6 +35,7 @@ export interface RepoProjectAgentInventoryItem {
   requestedCapabilities?: ProjectAgentCapability[]
   recommendedModel?: AgentModelDescriptor
   activatedAgentId?: string
+  signature?: string
 }
 
 export interface RepoProjectAgentInventorySection {
