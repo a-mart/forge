@@ -136,12 +136,12 @@ If you've set up scheduled tasks (like automated Cortex reviews on a cron schedu
 
 ### Provider Usage
 
-If the backend detects real OAuth credentials for OpenAI or Anthropic, Forge can display subscription rate-limit monitoring in two places:
+If the backend detects real provider credentials for OpenAI, Anthropic, or Cursor SDK, Forge can display subscription rate-limit monitoring in two places:
 
 - **Sidebar widget** — Compact stacked gauges showing 5-hour rolling and weekly usage windows with reset timers. Click to expand for detailed metrics (deficit/reserve pace, runout estimates), and use the manual refresh button in the detail panel if you want to re-poll immediately.
 - **Dashboard stats panel** — Full usage breakdown with the same metrics in a dedicated section.
 
-Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. The Dashboard stats panel's Sessions card keeps archived projects and sessions in the historical total, while the active subtitle excludes them. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
+Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Cursor SDK usage is included in the same stats, analytics, and telemetry provider inference when Composer 2.5 sessions are active. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. The Dashboard stats panel's Sessions card keeps archived projects and sessions in the historical total, while the active subtitle excludes them. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
 
 ---
 
@@ -212,7 +212,7 @@ Forking is one of the most useful features for daily workflow. Say you've had a 
 
 **Fork the full conversation:** Use the fork option at the session level to copy the entire conversation into a new session. Same context, fresh workspace.
 
-Either way, the forked session keeps the source session's model state, including whether it was inheriting the profile default or using an explicit override. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
+Either way, the forked session keeps the source session's model state, including whether it was inheriting the profile default or using an explicit override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
 
 ### Switching Between Sessions
 

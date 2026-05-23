@@ -57,7 +57,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 - The table above shows models currently available in the Forge catalog. Some models listed in upstream Pi releases may not yet be curated into Forge.
 - For the authoritative, up-to-date model list with availability status, see **Settings → Models** in the UI.
 - xAI models require `XAI_API_KEY` to be configured (see Settings → Authentication).
-- Cursor SDK models are specialist-only. The built-in `cursor-builder` specialist targets Composer 2.5, ships disabled by default, and manager selectors do not offer Cursor SDK models.
+- Cursor SDK models are specialist-only. The built-in `cursor-builder` specialist targets Composer 2.5, ships disabled by default, and manager selectors do not offer Cursor SDK models. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
 - To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 
 ## System Prompt

@@ -337,6 +337,7 @@ The forked session's memory header records where the fork happened, so the bound
 
 - The original session is unchanged. Forking is non-destructive.
 - Session memory content from the parent is not carried over. The new session starts with its own empty memory (plus the fork header).
+- Cursor SDK runtime state and usage records are not copied, so forks do not leak SDK resume state or double-count usage.
 - Workers from the parent session are not duplicated.
 
 ## When to use it
