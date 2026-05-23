@@ -288,9 +288,6 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
 
   appendCustomEntry(customType: string, data?: unknown): string {
     const entryId = generateSessionEntryId();
-    const existing = this.customEntries.get(customType) ?? [];
-    existing.push({ id: entryId, data });
-    this.customEntries.set(customType, existing);
     this.ensureSessionFileHeader();
     appendFileSync(this.descriptor.sessionFile, `${JSON.stringify({
       type: "custom",
@@ -300,6 +297,10 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       parentId: this.lastSessionEntryId,
       timestamp: this.now()
     })}\n`, "utf8");
+
+    const existing = this.customEntries.get(customType) ?? [];
+    existing.push({ id: entryId, data });
+    this.customEntries.set(customType, existing);
     this.lastSessionEntryId = entryId;
     return entryId;
   }
@@ -364,18 +365,18 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
         active.waitStatus = readStatus(waitResult) ?? null;
         this.captureCursorRunStatuses(active);
         assertCursorRunSucceeded(run, waitResult, active.terminalStatus ?? undefined);
-        active.outcome = deriveCursorUsageOutcome(active);
+        freezeCursorUsageOutcome(active);
         await this.emitSessionEvents(this.eventMapper.completePrompt());
       }
     } catch (error) {
       this.captureCursorRunStatuses(active);
-      active.outcome = deriveCursorUsageOutcome(active, active.cancelled ? undefined : "error");
+      freezeCursorUsageOutcome(active, active.cancelled ? undefined : "error");
       if (!active.cancelled) {
         await this.emitRuntimeError(error);
       }
     } finally {
       this.captureCursorRunStatuses(active);
-      active.outcome = deriveCursorUsageOutcome(active, active.outcome);
+      freezeCursorUsageOutcome(active, active.outcome);
       this.persistCapturedCursorUsage(active);
       if (this.activePrompt?.token === token) {
         this.activePrompt = undefined;
@@ -437,7 +438,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       runStatus: active.runStatus ?? null,
       waitStatus: active.waitStatus ?? null,
       terminalStatus: active.terminalStatus ?? null,
-      outcome: deriveCursorUsageOutcome(active, active.outcome),
+      outcome: active.outcome ?? deriveCursorUsageOutcome(active),
       capturedAt: this.now()
     };
 
@@ -592,6 +593,14 @@ function extractCursorSdkErrorDetails(error: unknown): Record<string, unknown> |
 function resolveCursorReasoningLevelSent(model: CursorSdkModelSelection): string | null {
   const thinking = model.params?.find((param) => param.id === "thinking")?.value;
   return typeof thinking === "string" && thinking.trim().length > 0 ? thinking.trim() : null;
+}
+
+function freezeCursorUsageOutcome(active: ActivePromptState, fallback: CursorSdkUsageOutcome = "unknown"): CursorSdkUsageOutcome {
+  if (active.outcome && active.outcome !== "unknown") {
+    return active.outcome;
+  }
+  active.outcome = deriveCursorUsageOutcome(active, fallback);
+  return active.outcome;
 }
 
 function deriveCursorUsageOutcome(active: ActivePromptState, fallback: CursorSdkUsageOutcome = "unknown"): CursorSdkUsageOutcome {

@@ -165,6 +165,15 @@ describe("CursorSdkAgentRuntime", () => {
     ]);
   });
 
+  it("keeps in-memory custom entries consistent when disk append fails", async () => {
+    const { rootDir, runtime } = await setupRuntime();
+
+    runtime.descriptor.sessionFile = join(rootDir, "missing-parent", "worker.jsonl");
+
+    expect(() => runtime.appendCustomEntry("failing_custom_entry", { persisted: false })).toThrow();
+    expect(runtime.getCustomEntries("failing_custom_entry")).toEqual([]);
+  });
+
   it("captures turn-ended usage from onDelta and persists one custom record", async () => {
     const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
       await options?.onDelta?.({
@@ -197,6 +206,30 @@ describe("CursorSdkAgentRuntime", () => {
         outcome: "completed",
         capturedAt: "2026-01-01T00:00:00.000Z"
       })
+    ]);
+  });
+
+  it("does not relabel completed usage as cancelled if stop arrives during finalization", async () => {
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({ streamItems: [assistantText("ok")] });
+    });
+    const holder: { runtime?: CursorSdkAgentRuntime } = {};
+    const setup = await setupRuntime({
+      sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() },
+      callbacks: {
+        onAgentEnd: async () => {
+          await holder.runtime?.stopInFlight();
+        }
+      }
+    });
+    holder.runtime = setup.runtime;
+
+    await setup.runtime.sendMessage("hello");
+
+    await waitFor(() => expect(setup.callbacks.onAgentEnd).toHaveBeenCalled());
+    expect(setup.runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+      expect.objectContaining({ outcome: "completed" })
     ]);
   });
 
