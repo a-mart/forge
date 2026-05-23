@@ -352,7 +352,16 @@ async function readLimitedText(path: string, maxBytes: number, relativePath: str
     problems.push({ code: "file_too_large", message: `${relativePath} must be ${maxBytes} bytes or fewer.`, path: relativePath });
     return { problems };
   }
-  return { content: await readFile(path, "utf-8"), problems };
+  try {
+    return { content: await readFile(path, "utf-8"), problems };
+  } catch (error) {
+    problems.push({
+      code: "file_read_failed",
+      message: error instanceof Error ? error.message : `Unable to read ${relativePath}.`,
+      path: relativePath
+    });
+    return { problems };
+  }
 }
 
 function validateDefinitionId(definitionId: string, problems: ProjectAgentSourceProblem[]): void {

@@ -158,6 +158,43 @@ describe("repo project agent definitions", () => {
     }
   });
 
+  it("surfaces unreadable config, prompt, and reference files as definition problems", async () => {
+    const root = await makeTempDir("forge-repo-pa-unreadable-files-");
+    const configDir = join(root, "bad-config");
+    const promptDir = join(root, "bad-prompt");
+    const referenceDir = join(root, "bad-reference", "reference");
+    await mkdir(configDir, { recursive: true });
+    await mkdir(promptDir, { recursive: true });
+    await mkdir(referenceDir, { recursive: true });
+    await writeFile(join(configDir, "config.json"), JSON.stringify({ version: 1, handle: "bad-config", whenToUse: "Docs" }), "utf-8");
+    await writeFile(join(configDir, "prompt.md"), "Prompt", "utf-8");
+    await writeFile(join(promptDir, "config.json"), JSON.stringify({ version: 1, handle: "bad-prompt", whenToUse: "Docs" }), "utf-8");
+    await writeFile(join(promptDir, "prompt.md"), "Prompt", "utf-8");
+    await writeFile(join(root, "bad-reference", "config.json"), JSON.stringify({ version: 1, handle: "bad-reference", whenToUse: "Docs" }), "utf-8");
+    await writeFile(join(root, "bad-reference", "prompt.md"), "Prompt", "utf-8");
+    await writeFile(join(referenceDir, "guide.md"), "# Guide", "utf-8");
+
+    await chmod(join(configDir, "config.json"), 0o000);
+    await chmod(join(promptDir, "prompt.md"), 0o000);
+    await chmod(join(referenceDir, "guide.md"), 0o000);
+    try {
+      const inventory = await scanRepoProjectAgentDefinitions(root);
+      expect(inventory.items.map((item) => [item.definitionId, item.status])).toEqual([
+        ["bad-config", "invalid"],
+        ["bad-prompt", "invalid"],
+        ["bad-reference", "invalid"]
+      ]);
+      for (const item of inventory.items) {
+        expect(item.problems.map((problem) => problem.code)).toContain("file_read_failed");
+      }
+      expect(inventory.definitions).toEqual([]);
+    } finally {
+      await chmod(join(configDir, "config.json"), 0o600).catch(() => undefined);
+      await chmod(join(promptDir, "prompt.md"), 0o600).catch(() => undefined);
+      await chmod(join(referenceDir, "guide.md"), 0o600).catch(() => undefined);
+    }
+  });
+
   it("changes the signature when definition content changes", async () => {
     const root = await makeTempDir("forge-repo-pa-signature-");
     const definitionDir = join(root, "docs");

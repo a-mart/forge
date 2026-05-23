@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,8 @@ import { getProjectAgentDir } from "../data-paths.js";
 import { writeProjectAgentReferenceDoc } from "../reference-docs.js";
 import { reconcileProjectAgentStorage, writeProjectAgentRecord } from "../project-agent-storage.js";
 import type { AgentDescriptor, ManagerProfile } from "../types.js";
+import { createWorkspaceKey } from "../project-workspace-resolver.js";
+import { ProjectResourceSettingsStore } from "../project-resource-settings.js";
 
 const tempRoots: string[] = [];
 
@@ -36,9 +39,11 @@ async function createRepoProjectAgentDefinition(options: {
   whenToUse?: string;
   prompt?: string;
   references?: Record<string, string>;
-}): Promise<{ forgeDir: string; forgeDirRealpath: string }> {
+}): Promise<{ root: string; rootRealpath: string; forgeDir: string; forgeDirRealpath: string }> {
   const root = await mkdtemp(join(tmpdir(), "repo-project-agent-definition-"));
   tempRoots.push(root);
+  execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+  const rootRealpath = await realpath(root);
   const forgeDir = join(root, ".forge");
   const definitionDir = join(forgeDir, "project-agents", options.definitionId);
   await mkdir(definitionDir, { recursive: true });
@@ -55,7 +60,7 @@ async function createRepoProjectAgentDefinition(options: {
       await writeFile(join(referenceDir, fileName), content);
     }
   }
-  return { forgeDir, forgeDirRealpath: await realpath(forgeDir) };
+  return { root, rootRealpath, forgeDir, forgeDirRealpath: await realpath(forgeDir) };
 }
 
 function makeConfig(
@@ -679,13 +684,14 @@ describe("ProjectAgentRegistry", () => {
     });
     const descriptor = makeDescriptor({
       agentId: "agent-1",
+      cwd: repo.rootRealpath,
       projectAgent: {
         handle: "docs",
         whenToUse: "Repo docs mirror",
         systemPrompt: "Stale descriptor prompt",
         source: {
           type: "repo",
-          workspaceKey: "workspace-a",
+          workspaceKey: createWorkspaceKey("profile-a", repo.rootRealpath),
           forgeDirRealpath: repo.forgeDirRealpath,
           definitionId: "docs",
           activatedAt: "2026-04-03T00:00:00.000Z"
@@ -721,7 +727,7 @@ describe("ProjectAgentRegistry", () => {
         type: "repo",
         status: "valid",
         problems: [],
-        workspaceKey: "workspace-a",
+        workspaceKey: createWorkspaceKey("profile-a", repo.rootRealpath),
         forgeDirRealpath: repo.forgeDirRealpath,
         definitionId: "docs",
         activatedAt: "2026-04-03T00:00:00.000Z"
@@ -737,13 +743,14 @@ describe("ProjectAgentRegistry", () => {
     });
     const descriptor = makeDescriptor({
       agentId: "agent-1",
+      cwd: repo.rootRealpath,
       projectAgent: {
         handle: "docs",
         whenToUse: "Repo docs mirror",
         systemPrompt: "Stale descriptor prompt",
         source: {
           type: "repo",
-          workspaceKey: "workspace-a",
+          workspaceKey: createWorkspaceKey("profile-a", repo.rootRealpath),
           forgeDirRealpath: repo.forgeDirRealpath,
           definitionId: "docs",
           activatedAt: "2026-04-03T00:00:00.000Z"
@@ -768,6 +775,103 @@ describe("ProjectAgentRegistry", () => {
     expect(snapshot.references).toEqual([]);
     expect(snapshot.source?.status).toBe("invalid");
     expect(snapshot.source?.problems.map((problem) => problem.code)).toContain("prompt_empty");
+  });
+
+  it("returns wrong_workspace when a repo-sourced descriptor cwd drifts to another git root", async () => {
+    const dataDir = await createTempDataDir();
+    const repo = await createRepoProjectAgentDefinition({ definitionId: "docs" });
+    const otherRepo = await createRepoProjectAgentDefinition({ definitionId: "other" });
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      cwd: otherRepo.rootRealpath,
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Repo docs mirror",
+        source: {
+          type: "repo",
+          workspaceKey: createWorkspaceKey("profile-a", repo.rootRealpath),
+          forgeDirRealpath: repo.forgeDirRealpath,
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    const reader = new ProjectAgentSettingsSnapshotReader({
+      dataDir,
+      registry: new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) })
+    });
+
+    const snapshot = await reader.read("agent-1");
+    expect(snapshot.source?.status).toBe("wrong_workspace");
+    expect(snapshot.source?.problems.map((problem) => problem.code)).toEqual(expect.arrayContaining([
+      "repo_project_agent_workspace_key_mismatch",
+      "repo_project_agent_forge_dir_mismatch"
+    ]));
+    expect(snapshot.systemPrompt).toBeNull();
+  });
+
+  it("returns wrong_workspace when a repo-sourced descriptor .forge override drifts", async () => {
+    const dataDir = await createTempDataDir();
+    const repo = await createRepoProjectAgentDefinition({ definitionId: "docs" });
+    const overrideRoot = await mkdtemp(join(tmpdir(), "repo-project-agent-override-"));
+    tempRoots.push(overrideRoot);
+    const overrideForgeDir = join(overrideRoot, ".forge");
+    await mkdir(overrideForgeDir, { recursive: true });
+    await new ProjectResourceSettingsStore(dataDir).setOverride(
+      createWorkspaceKey("profile-a", repo.rootRealpath),
+      overrideForgeDir
+    );
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      cwd: repo.rootRealpath,
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Repo docs mirror",
+        source: {
+          type: "repo",
+          workspaceKey: createWorkspaceKey("profile-a", repo.rootRealpath),
+          forgeDirRealpath: repo.forgeDirRealpath,
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    const reader = new ProjectAgentSettingsSnapshotReader({
+      dataDir,
+      registry: new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) })
+    });
+
+    const snapshot = await reader.read("agent-1");
+    expect(snapshot.source?.status).toBe("wrong_workspace");
+    expect(snapshot.source?.problems.map((problem) => problem.code)).toContain("repo_project_agent_forge_dir_mismatch");
+  });
+
+  it("returns wrong_workspace when a repo-sourced descriptor cwd is unavailable", async () => {
+    const dataDir = await createTempDataDir();
+    const repo = await createRepoProjectAgentDefinition({ definitionId: "docs" });
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      cwd: join(repo.rootRealpath, "missing"),
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Repo docs mirror",
+        source: {
+          type: "repo",
+          workspaceKey: createWorkspaceKey("profile-a", repo.rootRealpath),
+          forgeDirRealpath: repo.forgeDirRealpath,
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+    const reader = new ProjectAgentSettingsSnapshotReader({
+      dataDir,
+      registry: new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) })
+    });
+
+    const snapshot = await reader.read("agent-1");
+    expect(snapshot.source?.status).toBe("wrong_workspace");
+    expect(snapshot.source?.problems.map((problem) => problem.code)).toContain("repo_project_agent_workspace_unavailable");
   });
 
   it("rejects local reference writes for repo-sourced descriptors", async () => {

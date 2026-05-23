@@ -25,7 +25,7 @@ export class ProjectAgentSettingsSnapshotReader {
   async read(agentId: string): Promise<ProjectAgentSettingsSnapshot> {
     const scope = this.options.registry.assertReferenceScope(agentId);
     if (isRepoProjectAgentSource(scope.descriptor.projectAgent.source)) {
-      const resolution = await resolveRepoProjectAgentSource(scope);
+      const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.dataDir });
       return {
         config: resolution.definition
           ? buildRepoProjectAgentConfigFromDefinition(scope, resolution.definition)

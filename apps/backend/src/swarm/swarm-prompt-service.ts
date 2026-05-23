@@ -726,7 +726,7 @@ export class SwarmPromptService {
 
     if (isRepoProjectAgentSource(descriptor.projectAgent.source)) {
       const scope = this.buildProjectAgentReferenceScope(descriptor);
-      const resolution = await resolveRepoProjectAgentSource(scope);
+      const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.config.paths.dataDir });
       const definition = assertRepoProjectAgentSourceAvailable(resolution);
       const prompt = definition.prompt.trim() || undefined;
       return {
@@ -768,7 +768,7 @@ export class SwarmPromptService {
 
     if (isRepoProjectAgentSource(descriptor.projectAgent.source)) {
       const scope = this.buildProjectAgentReferenceScope(descriptor);
-      const resolution = await resolveRepoProjectAgentSource(scope);
+      const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.config.paths.dataDir });
       const definition = assertRepoProjectAgentSourceAvailable(resolution);
       return definition.referenceDocs.map((doc) => ({ path: doc.path, content: doc.content }));
     }

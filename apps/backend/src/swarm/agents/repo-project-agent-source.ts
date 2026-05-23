@@ -9,6 +9,8 @@ import {
   scanRepoProjectAgentDefinitions,
   type ParsedRepoProjectAgentDefinition
 } from "../repo-project-agent-definitions.js";
+import { ProjectResourceSettingsStore } from "../project-resource-settings.js";
+import { ProjectWorkspaceResolver } from "../project-workspace-resolver.js";
 import type { ProjectAgentReferenceScope } from "./project-agent-registry.js";
 
 export interface RepoProjectAgentSourceResolution {
@@ -17,11 +19,19 @@ export interface RepoProjectAgentSourceResolution {
 }
 
 export async function resolveRepoProjectAgentSource(
-  scope: ProjectAgentReferenceScope
+  scope: ProjectAgentReferenceScope,
+  options?: { dataDir?: string }
 ): Promise<RepoProjectAgentSourceResolution> {
   const source = scope.descriptor.projectAgent.source;
   if (!source || source.type !== "repo") {
     throw new Error(`Project agent ${scope.descriptor.agentId} is not repository-managed`);
+  }
+
+  const currentWorkspace = options?.dataDir
+    ? await resolveCurrentWorkspaceSource(scope, options.dataDir, source)
+    : undefined;
+  if (currentWorkspace) {
+    return { source: currentWorkspace };
   }
 
   const rootDir = join(source.forgeDirRealpath, "project-agents");
@@ -113,6 +123,45 @@ export function assertRepoProjectAgentSourceAvailable(resolution: RepoProjectAge
   }
 
   return resolution.definition;
+}
+
+async function resolveCurrentWorkspaceSource(
+  scope: ProjectAgentReferenceScope,
+  dataDir: string,
+  source: RepoProjectAgentSourceIdentity
+): Promise<ProjectAgentConfigSourceSnapshot | undefined> {
+  const resolver = new ProjectWorkspaceResolver({
+    dataDir,
+    settingsStore: new ProjectResourceSettingsStore(dataDir)
+  });
+  const resolution = await resolver.resolve({
+    profileId: scope.profileId,
+    sessionAgentId: scope.descriptor.agentId,
+    cwd: scope.descriptor.cwd
+  });
+
+  const problems: ProjectAgentSourceProblem[] = [];
+  if (resolution.warning) {
+    problems.push({
+      code: "repo_project_agent_workspace_unavailable",
+      message: resolution.warning
+    });
+  }
+  if (resolution.workspaceKey !== source.workspaceKey) {
+    problems.push({
+      code: "repo_project_agent_workspace_key_mismatch",
+      message: `Current workspace ${resolution.workspaceKey} does not match activated workspace ${source.workspaceKey}.`
+    });
+  }
+  if (resolution.effectiveForgeDirRealpath !== source.forgeDirRealpath) {
+    problems.push({
+      code: "repo_project_agent_forge_dir_mismatch",
+      message: `Current .forge directory ${resolution.effectiveForgeDirRealpath ?? "<none>"} does not match activated .forge directory ${source.forgeDirRealpath}.`,
+      path: "project-agents"
+    });
+  }
+
+  return problems.length > 0 ? buildSourceSnapshot(source, "wrong_workspace", problems) : undefined;
 }
 
 function buildSourceSnapshot(
