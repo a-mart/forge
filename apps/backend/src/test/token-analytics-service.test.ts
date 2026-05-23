@@ -7,6 +7,7 @@ import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
 import { hydratePersistedScanResult } from "../stats/token-analytics/token-analytics-serialize.js";
 import { getSharedTokenAnalyticsCachePath } from "../swarm/data-paths.js";
+import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 import { getProfileSpecialistsDir, getSharedSpecialistsDir } from "../swarm/specialists/specialist-paths.js";
 
 interface TestContext {
@@ -155,6 +156,106 @@ describe("TokenAnalyticsService", () => {
     expect(snapshot.specialistBreakdown).toEqual([]);
   });
 
+  it("includes Cursor SDK custom usage in provider filters and worker drill-down", async () => {
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-specialist.jsonl"),
+      cursorUsageEntry("cursor-usage", "2026-04-02T10:03:00.000Z", {
+        input: 12,
+        output: 5,
+        cacheRead: 4,
+        cacheWrite: 1,
+        total: 999,
+      }, { reasoningLevel: "medium" })
+    );
+
+    const snapshot = await context.service.getSnapshot(
+      { rangePreset: "all", timezone: "UTC", provider: "cursor-sdk" },
+      { forceRefresh: true }
+    );
+
+    expect(snapshot.availableFilters.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "cursor-sdk", usage: expect.objectContaining({ total: 22 }) })
+    ]));
+    expect(snapshot.totals.usage).toEqual({ input: 12, output: 5, cacheRead: 4, cacheWrite: 1, total: 22 });
+    expect(snapshot.totals.cost.costCoverage).toBe("none");
+    expect(snapshot.attribution.specialist.usage.total).toBe(22);
+
+    const workerEvents = await context.service.getWorkerEvents({
+      profileId: "alpha",
+      sessionId: "alpha",
+      workerId: "worker-specialist",
+    });
+
+    expect(workerEvents.worker).toEqual(expect.objectContaining({
+      workerId: "worker-specialist",
+      specialistId: "backend",
+      attributionKind: "specialist",
+    }));
+    expect(workerEvents.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: "cursor-sdk",
+        modelId: "composer-2.5",
+        reasoningLevel: "medium",
+        usage: { input: 12, output: 5, cacheRead: 4, cacheWrite: 1, total: 22 },
+        cost: null,
+      })
+    ]));
+  });
+
+  it("infers cursor-sdk provider from scoped legacy message model IDs", async () => {
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-adhoc.jsonl"),
+      {
+        type: "message",
+        timestamp: "2026-04-03T11:02:00.000Z",
+        message: {
+          model: "cursor-sdk/composer-2.5",
+          usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3 },
+        },
+      }
+    );
+
+    const snapshot = await context.service.getSnapshot(
+      { rangePreset: "all", timezone: "UTC", provider: "cursor-sdk" },
+      { forceRefresh: true }
+    );
+
+    expect(snapshot.totals.usage.total).toBe(3);
+    expect(snapshot.availableFilters.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "cursor-sdk", usage: expect.objectContaining({ total: 3 }) })
+    ]));
+  });
+
+  it("uses scanner-context ad hoc attribution and nullable reasoning for Cursor SDK usage", async () => {
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-adhoc.jsonl"),
+      cursorUsageEntry("cursor-adhoc", "2026-04-03T11:02:00.000Z", {
+        input: 2,
+        output: 3,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 5,
+      }, { reasoningLevel: null })
+    );
+
+    const workerEvents = await context.service.getWorkerEvents({
+      profileId: "alpha",
+      sessionId: "alpha",
+      workerId: "worker-adhoc",
+    }, { forceRefresh: true });
+
+    expect(workerEvents.worker).toEqual(expect.objectContaining({ specialistId: null, attributionKind: "ad_hoc" }));
+    expect(workerEvents.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: "cursor-sdk",
+        modelId: "composer-2.5",
+        reasoningLevel: null,
+        usage: expect.objectContaining({ total: 5 }),
+        cost: null,
+      })
+    ]));
+  });
+
   it("skips malformed usage rows with missing or invalid timestamps", async () => {
     const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
 
@@ -194,6 +295,26 @@ describe("TokenAnalyticsService", () => {
         },
       }
     );
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-adhoc.jsonl"),
+      cursorUsageEntry("cursor-invalid-timestamp", "not-a-timestamp", {
+        input: 9,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 11,
+      }, { capturedAt: "still-not-a-timestamp", reasoningLevel: "medium" })
+    );
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-adhoc.jsonl"),
+      cursorUsageEntry("cursor-malformed-zero", "2026-04-03T11:03:00.000Z", {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      }, { reasoningLevel: "medium" })
+    );
 
     const snapshot = await context.service.getSnapshot(
       { rangePreset: "all", timezone: "UTC" },
@@ -204,7 +325,7 @@ describe("TokenAnalyticsService", () => {
     expect(snapshot.totals.usage.total).toBe(55);
     expect(debugSpy).toHaveBeenCalledTimes(1);
     expect(debugSpy.mock.calls[0]?.[0]).toContain(
-      "Skipped 2 usage events with missing or invalid timestamps during scan"
+      "Skipped 3 usage events with missing or invalid timestamps during scan"
     );
   });
 
@@ -806,6 +927,36 @@ async function writeSession(
       "utf8"
     );
   }
+}
+
+function cursorUsageEntry(
+  id: string,
+  timestamp: string,
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number },
+  options: { capturedAt?: string; reasoningLevel: string | null }
+): unknown {
+  return {
+    type: "custom",
+    customType: CURSOR_SDK_USAGE_ENTRY_TYPE,
+    id,
+    timestamp,
+    data: {
+      version: 1,
+      source: "cursor_sdk_on_delta_turn_ended",
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      reasoningLevel: options.reasoningLevel,
+      usage,
+      sdkRunId: "run-1",
+      sdkAgentId: "sdk-agent-1",
+      providerStatus: "FINISHED",
+      runStatus: "finished",
+      waitStatus: "finished",
+      terminalStatus: "FINISHED",
+      outcome: "completed",
+      capturedAt: options.capturedAt ?? timestamp,
+    },
+  };
 }
 
 async function appendWorkerEvent(path: string, event: unknown): Promise<void> {
