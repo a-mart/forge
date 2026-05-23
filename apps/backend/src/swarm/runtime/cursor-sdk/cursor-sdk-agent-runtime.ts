@@ -338,7 +338,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       const run = await this.sdkAgent.send(payload, {
         model: this.model,
         mcpServers: this.mcpServers,
-        onDelta: async ({ update }) => {
+        onDelta: ({ update }) => {
           try {
             this.captureCursorUsageDelta(token, update);
           } catch (error) {
@@ -372,7 +372,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       this.captureCursorRunStatuses(active);
       freezeCursorUsageOutcome(active, active.cancelled ? undefined : "error");
       if (!active.cancelled) {
-        await this.emitRuntimeError(error);
+        await this.safeEmitRuntimeError(error);
       }
     } finally {
       this.captureCursorRunStatuses(active);
@@ -468,6 +468,17 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     });
   }
 
+  private async safeEmitRuntimeError(error: unknown): Promise<void> {
+    try {
+      await this.emitRuntimeError(error);
+    } catch (callbackError) {
+      this.logDebug("runtime_error_callback_failed", {
+        originalMessage: error instanceof Error ? error.message : String(error),
+        callbackMessage: callbackError instanceof Error ? callbackError.message : String(callbackError)
+      });
+    }
+  }
+
   private async dispatchQueuedPrompts(): Promise<void> {
     if (this.activePrompt || this.promptDispatchPending || this.queuedPrompts.length === 0 || this.status === "terminated") {
       return;
@@ -481,7 +492,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
 
   private schedulePromptDispatch(message: RuntimeUserMessage): void {
     void this.dispatchPrompt(message).catch(async (error) => {
-      await this.emitRuntimeError(error);
+      await this.safeEmitRuntimeError(error);
       if (this.activePrompt === undefined) {
         this.promptDispatchPending = false;
         this.currentTurnReplayMessage = undefined;

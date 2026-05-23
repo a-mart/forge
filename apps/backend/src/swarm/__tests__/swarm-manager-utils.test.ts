@@ -213,6 +213,7 @@ describe("shouldRetrySpecialistSpawnWithFallback", () => {
     [new Error("request failed with 429")],
     [Object.assign(new Error("Integration not connected"), { name: "IntegrationNotConnectedError" })],
     [Object.assign(new Error("socket timeout"), { name: "NetworkError" })],
+    [Object.assign(new Error("ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN"), { name: "ConnectError", code: "ERR_NOT_LOGGED_IN" })],
   ])("returns true for Cursor SDK fallback-eligible errors %#", (error) => {
     expect(
       shouldRetrySpecialistSpawnWithFallback(error, {

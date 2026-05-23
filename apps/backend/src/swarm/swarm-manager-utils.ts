@@ -722,6 +722,8 @@ function isCursorSdkFallbackEligibleError(error: unknown, normalizedMessage: str
     "native binding",
     "sqlite",
     "unauthenticated",
+    "err_not_logged_in",
+    "not logged in",
     "invalid api key",
     "cannot use this model",
     "unsupported cursor sdk model",
