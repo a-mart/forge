@@ -5837,16 +5837,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    const resolution = await resolveRepoProjectAgentSource({
-      descriptor: descriptor as AgentDescriptor & {
-        role: "manager";
-        profileId: string;
-        projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
-      },
-      profileId: descriptor.profileId ?? descriptor.agentId,
-      handle: descriptor.projectAgent.handle
-    }, { dataDir: this.config.paths.dataDir });
-    assertRepoProjectAgentSourceAvailable(resolution);
+    await this.preflightRepoProjectAgentRuntime(descriptor);
+  }
+
+  async resolveAgentSystemPromptForRead(agentId: string): Promise<string | null> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      return null;
+    }
+
+    await this.preflightRepoProjectAgentRuntime(descriptor);
+    return this.resolveSystemPromptForDescriptor(descriptor);
   }
 
   private assertProfileNotArchived(profileId: string): void {

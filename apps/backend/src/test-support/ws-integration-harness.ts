@@ -23,6 +23,7 @@ export class WsServerTestFakeRuntime {
   private readonly sessionManager: SessionManager
   compactCalls: Array<string | undefined> = []
   sendCalls: Array<{ message: string; delivery: RequestedDeliveryMode }> = []
+  pendingCount = 0
   terminateCalls = 0
   recycleCalls = 0
   stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
@@ -39,7 +40,7 @@ export class WsServerTestFakeRuntime {
   }
 
   getPendingCount(): number {
-    return 0
+    return this.pendingCount
   }
 
   getContextUsage(): AgentContextUsage | undefined {

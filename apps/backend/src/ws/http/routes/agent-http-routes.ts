@@ -274,13 +274,18 @@ async function handleAgentSystemPromptHttpRequest(
       return;
     }
 
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-    const meta = await readSessionMeta(dataDir, profileId, descriptor.agentId);
+    let systemPrompt: string | null;
+    try {
+      systemPrompt = await swarmManager.resolveAgentSystemPromptForRead(descriptor.agentId);
+    } catch (error) {
+      sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
 
     sendJson(response, 200, {
       agentId: descriptor.agentId,
       role: descriptor.role,
-      systemPrompt: meta?.resolvedSystemPrompt ?? null,
+      systemPrompt,
       model: buildAgentModelIdentifier(descriptor),
       archetypeId: descriptor.archetypeId ?? null
     });
