@@ -240,4 +240,126 @@ describe('ProjectAgentSettingsSheet', () => {
       capabilities: ['create_session'],
     }))
   })
+
+  it('renders read-only mode for repo-sourced project agents', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Repository defined agent',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Repository defined agent',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt content',
+        references: ['ref.md'],
+      })),
+    })
+
+    await flushEffects()
+
+    // Repository badge should be visible
+    expect(document.body.textContent).toContain('Repository')
+
+    // Source path should be displayed
+    expect(document.body.textContent).toContain('/test/repo/.forge')
+
+    // Fields should be disabled/read-only
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    expect(whenToUseField.disabled).toBe(true)
+
+    const systemPromptField = document.body.querySelector('#systemPrompt') as HTMLTextAreaElement
+    expect(systemPromptField).not.toBeNull()
+    expect(systemPromptField.disabled).toBe(true)
+
+    const capabilitiesToggle = document.body.querySelector('#canCreateSessions') as HTMLButtonElement
+    expect(capabilitiesToggle).not.toBeNull()
+    expect(capabilitiesToggle.disabled).toBe(true)
+
+    // Save and Demote buttons should NOT be present
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Save',
+    )
+    expect(saveButton).toBeUndefined()
+
+    const demoteButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Demote',
+    )
+    expect(demoteButton).toBeUndefined()
+
+    // Close button should be present (not Cancel)
+    const closeButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Close',
+    )
+    expect(closeButton).not.toBeNull()
+  })
+
+  it('local project agents remain fully editable', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'local-agent',
+        whenToUse: 'Local agent description',
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'local-agent',
+          whenToUse: 'Local agent description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: null,
+        references: [],
+      })),
+    })
+
+    await flushEffects()
+
+    // No Repository badge
+    const badges = Array.from(document.body.querySelectorAll('[class*="badge"]'))
+    const repoBadge = badges.find((b) => b.textContent?.includes('Repository'))
+    expect(repoBadge).toBeUndefined()
+
+    // Fields should be enabled
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    expect(whenToUseField.disabled).toBe(false)
+
+    const systemPromptField = document.body.querySelector('#systemPrompt') as HTMLTextAreaElement
+    expect(systemPromptField).not.toBeNull()
+    expect(systemPromptField.disabled).toBe(false)
+
+    // Save and Demote buttons present
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Save',
+    )
+    expect(saveButton).toBeTruthy()
+
+    const demoteButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Demote',
+    )
+    expect(demoteButton).toBeTruthy()
+
+    // Cancel button (not Close)
+    const cancelButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Cancel',
+    )
+    expect(cancelButton).toBeTruthy()
+  })
 })

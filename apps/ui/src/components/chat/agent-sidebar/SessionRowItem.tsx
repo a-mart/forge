@@ -9,6 +9,7 @@ import {
   Copy,
   Edit3,
   EyeOff,
+  GitBranch,
   GitFork,
   History,
   Pause,
@@ -135,6 +136,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   const showUnread = unreadCount > 0
   const hasPendingChoice = (sessionAgent.pendingChoiceCount ?? 0) > 0
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
+  const isRepoSourcedAgent = sessionAgent.projectAgent?.source?.type === 'repo'
   const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
   const isPinned = Boolean(sessionAgent.pinnedAt)
   const isModelOverridden = sessionAgent.modelOrigin === 'session_override'
@@ -153,7 +155,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
     || (Boolean(onPromoteToProjectAgent) && !isProjectAgent && sessionAgent.sessionPurpose !== 'cortex_review' && sessionAgent.sessionPurpose !== 'agent_creator')
     || (isProjectAgent && Boolean(onOpenProjectAgentSettings))
     || (isProjectAgent && Boolean(onViewCreationHistory))
-    || (isProjectAgent && Boolean(onDemoteProjectAgent))
+    || (isProjectAgent && !isRepoSourcedAgent && Boolean(onDemoteProjectAgent))
 
   // Compute streaming state from statuses map
   const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
@@ -252,7 +254,14 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                       <BellOff className="size-3 shrink-0 text-muted-foreground opacity-60" aria-label="Muted" />
                     ) : null}
                     {isProjectAgent ? (
-                      <Zap className="size-3 shrink-0 text-blue-400 dark:text-blue-400" aria-label="Project Agent" />
+                      isRepoSourcedAgent ? (
+                        <span className="inline-flex shrink-0 items-center gap-0.5" aria-label="Repository Project Agent">
+                          <GitBranch className="size-2.5 text-blue-400/70" />
+                          <Zap className="size-3 text-blue-400" />
+                        </span>
+                      ) : (
+                        <Zap className="size-3 shrink-0 text-blue-400 dark:text-blue-400" aria-label="Project Agent" />
+                      )
                     ) : null}
                     {hasPendingChoice ? (
                       <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white">
@@ -272,6 +281,9 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                     <p className="opacity-80">reasoning: {sessionAgent.model.thinkingLevel}</p>
                   ) : null}
                   <p className="opacity-60">{isModelOverridden ? 'session override' : 'project default'}</p>
+                  {isRepoSourcedAgent ? (
+                    <p className="opacity-60">source: repository definition</p>
+                  ) : null}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -373,7 +385,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
               View Creation History
             </ContextMenuItem>
           ) : null}
-          {isProjectAgent && onDemoteProjectAgent ? (
+          {isProjectAgent && !isRepoSourcedAgent && onDemoteProjectAgent ? (
             <ContextMenuItem onClick={() => {
               try {
                 void Promise.resolve(onDemoteProjectAgent()).catch((err) => {

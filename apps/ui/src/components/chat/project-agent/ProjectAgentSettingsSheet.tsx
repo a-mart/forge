@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Sparkles } from 'lucide-react'
+import { isRepoProjectAgentSource, type RepoProjectAgentSourceIdentity } from '@forge/protocol'
+import { GitBranch, Loader2, Sparkles } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
@@ -33,6 +35,12 @@ export function ProjectAgentSettingsSheet({
   onRequestRecommendations,
 }: ProjectAgentSettingsSheetProps) {
   const isPromoting = !currentProjectAgent
+  const repoSource: RepoProjectAgentSourceIdentity | null =
+    currentProjectAgent?.source && isRepoProjectAgentSource(currentProjectAgent.source)
+      ? currentProjectAgent.source
+      : null
+  const isRepoSourced = repoSource !== null
+  const repoSourcePath = repoSource?.forgeDirRealpath ?? null
 
   const [handleInput, setHandleInput] = useState(slugifySessionName(sessionLabel))
   const normalizedHandle = slugifySessionName(handleInput)
@@ -330,7 +338,7 @@ export function ProjectAgentSettingsSheet({
     }
   }
 
-  const referenceEditingAvailable = !isPromoting && !!onGetReference && !!onSetReference && !!onDeleteReference
+  const referenceEditingAvailable = !isPromoting && !isRepoSourced && !!onGetReference && !!onSetReference && !!onDeleteReference
 
   return (
     <>
@@ -373,14 +381,37 @@ export function ProjectAgentSettingsSheet({
           />
 
           <SheetHeader>
-            <SheetTitle>{isPromoting ? 'Promote to Project Agent' : 'Project Agent Settings'}</SheetTitle>
+            <SheetTitle className="flex items-center gap-2">
+              {isPromoting ? 'Promote to Project Agent' : 'Project Agent Settings'}
+              {isRepoSourced ? (
+                <Badge variant="secondary" className="gap-1 text-[10px] font-normal">
+                  <GitBranch className="h-3 w-3" />
+                  Repository
+                </Badge>
+              ) : null}
+            </SheetTitle>
             <SheetDescription>
               {isPromoting
                 ? 'Make this session discoverable by other sessions in the same profile.'
-                : 'Configure how other sessions discover and interact with this project agent.'}
+                : isRepoSourced
+                  ? 'This agent is defined in the repository. Configuration is read-only and sourced from the repo definition files.'
+                  : 'Configure how other sessions discover and interact with this project agent.'}
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-4 px-4">
+            {isRepoSourced && repoSourcePath ? (
+              <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3 space-y-1">
+                <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <GitBranch className="h-3.5 w-3.5 text-blue-400" />
+                  Repository source
+                </div>
+                <p className="break-all text-xs text-muted-foreground">{repoSourcePath}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Prompt is read live from <code>.forge/project-agents/{currentProjectAgent?.handle}/prompt.md</code>.
+                  Edit the file directly to update the agent prompt.
+                </p>
+              </div>
+            ) : null}
             <div className="space-y-1">
               <label className="text-sm font-medium text-foreground">Session</label>
               <p className="text-sm text-muted-foreground">{sessionLabel}</p>
@@ -455,29 +486,44 @@ export function ProjectAgentSettingsSheet({
                 rows={3}
                 maxLength={PROJECT_AGENT_WHEN_TO_USE_MAX}
                 className="resize-none"
-                autoFocus={!analyzing}
+                autoFocus={!analyzing && !isRepoSourced}
+                readOnly={isRepoSourced}
+                disabled={isRepoSourced}
               />
-              <p className="text-[11px] text-muted-foreground">
-                {trimmedWhenToUse.length}/{PROJECT_AGENT_WHEN_TO_USE_MAX}
-              </p>
+              {!isRepoSourced ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {trimmedWhenToUse.length}/{PROJECT_AGENT_WHEN_TO_USE_MAX}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  Defined in <code>config.json</code>. Edit the repo file to change.
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">
               <label htmlFor="systemPrompt" className="text-sm font-medium text-foreground">
-                System Prompt
-                <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
+                {isRepoSourced ? 'System Prompt' : (
+                  <>
+                    System Prompt
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
+                  </>
+                )}
               </label>
               <Textarea
                 id="systemPrompt"
                 value={systemPrompt}
                 onChange={handleSystemPromptChange}
-                placeholder={configLoading ? 'Loading…' : analyzing ? 'Generating recommendation…' : 'Custom system prompt for this project agent…'}
+                placeholder={configLoading ? 'Loading…' : analyzing ? 'Generating recommendation…' : isRepoSourced ? 'No prompt loaded.' : 'Custom system prompt for this project agent…'}
                 rows={8}
                 className="resize-y font-mono text-xs"
-                disabled={configLoading}
+                disabled={configLoading || isRepoSourced}
+                readOnly={isRepoSourced}
               />
               <p className="text-[11px] text-muted-foreground">
-                When set, this replaces the standard manager prompt for this session.
+                {isRepoSourced
+                  ? 'Read from prompt.md in the repo definition directory. Edit the file directly to update.'
+                  : 'When set, this replaces the standard manager prompt for this session.'}
               </p>
             </div>
 
@@ -487,16 +533,19 @@ export function ProjectAgentSettingsSheet({
                 <Switch
                   id="canCreateSessions"
                   checked={canCreateSessions}
-                  onCheckedChange={setCanCreateSessions}
+                  onCheckedChange={isRepoSourced ? undefined : setCanCreateSessions}
                   className="mt-0.5"
                   size="sm"
+                  disabled={isRepoSourced}
                 />
                 <div className="space-y-0.5">
                   <label htmlFor="canCreateSessions" className="text-sm text-foreground">
                     Can create sessions
                   </label>
                   <p className="text-[11px] text-muted-foreground">
-                    Allow this agent to create new manager sessions in the same profile.
+                    {isRepoSourced
+                      ? 'Defined in config.json. Edit the repo file to change.'
+                      : 'Allow this agent to create new manager sessions in the same profile.'}
                   </p>
                 </div>
               </div>
@@ -521,7 +570,7 @@ export function ProjectAgentSettingsSheet({
               referenceEditingAvailable={referenceEditingAvailable}
             />
 
-            {!isPromoting && onRequestRecommendations ? (
+            {!isPromoting && !isRepoSourced && onRequestRecommendations ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -543,16 +592,18 @@ export function ProjectAgentSettingsSheet({
               </p>
             ) : null}
             <div className="flex items-center gap-2">
-              <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving || configLoading}>
-                {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
-              </Button>
-              {!isPromoting ? (
+              {!isRepoSourced ? (
+                <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving || configLoading}>
+                  {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
+                </Button>
+              ) : null}
+              {!isPromoting && !isRepoSourced ? (
                 <Button variant="outline" onClick={handleDemote} disabled={saving} className="text-destructive hover:text-destructive">
                   Demote
                 </Button>
               ) : null}
               <Button variant="ghost" onClick={handleRequestClose} disabled={saving}>
-                Cancel
+                {isRepoSourced ? 'Close' : 'Cancel'}
               </Button>
             </div>
           </div>
