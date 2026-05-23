@@ -1,6 +1,8 @@
 import type {
   PersistedProjectAgentConfig,
   ProjectAgentInfo,
+  ProjectAgentSourceProblem,
+  ProjectAgentSourceStatus,
 } from './shared-types.js'
 
 export interface SessionProjectAgentUpdatedEvent {
@@ -26,12 +28,23 @@ export interface ProjectAgentRecommendationsErrorEvent {
   requestId?: string
 }
 
+export interface ProjectAgentConfigSourceSnapshot {
+  type: 'repo'
+  status: ProjectAgentSourceStatus
+  problems: ProjectAgentSourceProblem[]
+  workspaceKey: string
+  forgeDirRealpath: string
+  definitionId: string
+  activatedAt: string
+}
+
 export interface ProjectAgentConfigEvent {
   type: 'project_agent_config'
   agentId: string
   config: PersistedProjectAgentConfig
   systemPrompt: string | null
   references: string[]
+  source?: ProjectAgentConfigSourceSnapshot
   requestId?: string
 }
 

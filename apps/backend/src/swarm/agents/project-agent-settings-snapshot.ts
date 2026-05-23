@@ -1,4 +1,4 @@
-import { isRepoProjectAgentSource, type PersistedProjectAgentConfig, type ProjectAgentSourceProblem, type ProjectAgentSourceStatus } from "@forge/protocol";
+import { isRepoProjectAgentSource, type PersistedProjectAgentConfig, type ProjectAgentConfigSourceSnapshot } from "@forge/protocol";
 import { listProjectAgentReferenceDocs } from "../reference-docs.js";
 import { ProjectAgentRegistry } from "./project-agent-registry.js";
 
@@ -6,15 +6,7 @@ export interface ProjectAgentSettingsSnapshot {
   config: PersistedProjectAgentConfig;
   systemPrompt: string | null;
   references: string[];
-  source?: {
-    type: "repo";
-    status: ProjectAgentSourceStatus;
-    problems: ProjectAgentSourceProblem[];
-    workspaceKey: string;
-    forgeDirRealpath: string;
-    definitionId: string;
-    activatedAt: string;
-  };
+  source?: ProjectAgentConfigSourceSnapshot;
 }
 
 export interface ProjectAgentSettingsSnapshotReaderOptions {

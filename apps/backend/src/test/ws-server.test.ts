@@ -3198,6 +3198,82 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('returns repo source unavailable payload from get_project_agent_config', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Docs' })
+    const source = {
+      type: 'repo' as const,
+      workspaceKey: 'manager::/repo',
+      forgeDirRealpath: '/repo/.forge',
+      definitionId: 'docs',
+      activatedAt: '2026-04-03T00:00:00.000Z',
+    }
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    state.descriptors.get(sessionAgent.agentId)!.projectAgent = {
+      handle: 'docs',
+      whenToUse: 'Maintain docs.',
+      source,
+    }
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(JSON.stringify({ type: 'get_project_agent_config', agentId: sessionAgent.agentId, requestId: 'repo-config' }))
+
+    const configEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'project_agent_config' && event.requestId === 'repo-config',
+    )
+
+    expect(configEvent.type).toBe('project_agent_config')
+    if (configEvent.type === 'project_agent_config') {
+      expect(configEvent.systemPrompt).toBeNull()
+      expect(configEvent.references).toEqual([])
+      expect(configEvent.config).toMatchObject({
+        version: 1,
+        agentId: sessionAgent.agentId,
+        handle: 'docs',
+        whenToUse: 'Maintain docs.',
+      })
+      expect(configEvent.source).toEqual({
+        type: 'repo',
+        status: 'unavailable',
+        problems: [
+          {
+            code: 'repo_project_agent_resolver_pending',
+            message: 'Repository project-agent source resolution is not available yet.',
+          },
+        ],
+        ...source,
+      })
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('returns NOT_A_PROJECT_AGENT errors for get_project_agent_config on non-project agents', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)

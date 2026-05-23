@@ -411,6 +411,61 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('blocks edits to repo-sourced project agents and exposes unavailable source config', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Docs' })
+    const source = {
+      type: 'repo' as const,
+      workspaceKey: 'manager::/repo',
+      forgeDirRealpath: '/repo/.forge',
+      definitionId: 'docs',
+      activatedAt: '2026-04-03T00:00:00.000Z',
+    }
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    const descriptor = state.descriptors.get(created.sessionAgent.agentId)
+    expect(descriptor).toBeDefined()
+    descriptor!.projectAgent = {
+      handle: 'docs',
+      whenToUse: 'Maintain docs.',
+      source,
+    }
+
+    await expect(
+      manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+        whenToUse: 'Updated docs.',
+        systemPrompt: 'Localized prompt',
+      }),
+    ).rejects.toThrow('Repository-managed project agents are read-only')
+
+    expect(state.descriptors.get(created.sessionAgent.agentId)?.projectAgent?.source).toEqual(source)
+    expect(await manager.getProjectAgentConfig(created.sessionAgent.agentId)).toEqual({
+      config: {
+        version: 1,
+        agentId: created.sessionAgent.agentId,
+        handle: 'docs',
+        whenToUse: 'Maintain docs.',
+        promotedAt: created.sessionAgent.createdAt,
+        updatedAt: expect.any(String),
+      },
+      systemPrompt: null,
+      references: [],
+      source: {
+        type: 'repo',
+        status: 'unavailable',
+        problems: [
+          {
+            code: 'repo_project_agent_resolver_pending',
+            message: 'Repository project-agent source resolution is not available yet.',
+          },
+        ],
+        ...source,
+      },
+    })
+  })
+
   it('rejects project-agent reference path traversal through the manager facade', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)

@@ -1,4 +1,4 @@
-import type { PersistedProjectAgentConfig, ProjectAgentCapability } from "@forge/protocol";
+import type { PersistedProjectAgentConfig, ProjectAgentCapability, ProjectAgentConfigSourceSnapshot } from "@forge/protocol";
 import {
   deleteProjectAgentRecord,
   writeProjectAgentRecord
@@ -296,6 +296,7 @@ export class SwarmProjectAgentService {
     config: PersistedProjectAgentConfig;
     systemPrompt: string | null;
     references: string[];
+    source?: ProjectAgentConfigSourceSnapshot;
   }> {
     return this.settingsSnapshotReader.read(agentId);
   }

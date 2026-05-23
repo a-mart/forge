@@ -3129,6 +3129,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     config: import("@forge/protocol").PersistedProjectAgentConfig;
     systemPrompt: string | null;
     references: string[];
+    source?: import("@forge/protocol").ProjectAgentConfigSourceSnapshot;
   }> {
     this.getRequiredBuilderSessionDescriptor(agentId, "inspect Builder project-agent settings");
     return this.projectAgentService.getProjectAgentConfig(agentId);
