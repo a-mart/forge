@@ -65,7 +65,7 @@ Claude SDK uses the local Claude Code CLI OAuth session instead of an API key. I
 
 ## Cursor SDK
 
-Cursor SDK uses `CURSOR_API_KEY` and exposes Composer 2.5 for specialist workers only. It is native to the Cursor runtime and is hidden from manager create/change/override selectors.
+Cursor SDK uses \`CURSOR_API_KEY\` and exposes Composer 2.5 for specialist workers only. It is native to the Cursor runtime and is hidden from manager create/change/override selectors.
 
 ## xAI / Grok
 
@@ -75,7 +75,7 @@ xAI provides the Grok model family. Grok models are available for specialist wor
 - **Grok 4 Fast** — Optimized for speed at some quality tradeoff.
 - **Grok 4.20** — A newer variant with expanded capabilities.
 
-You need provider credentials for each provider configured in Settings > Auth before its models appear in selectors. Claude SDK uses Claude Code CLI OAuth, Cursor SDK uses `CURSOR_API_KEY`, and SDK models can be disabled in Settings > Models if you do not want to see them. Manager-facing availability is also controlled there, so only enabled models show up in manager create/change/override selectors. Cursor SDK stays specialist-only even when enabled.`,
+You need provider credentials for each provider configured in Settings > Auth before its models appear in selectors. Claude SDK uses Claude Code CLI OAuth, Cursor SDK uses \`CURSOR_API_KEY\`, and SDK models can be disabled in Settings > Models if you do not want to see them. Manager-facing availability is also controlled there, so only enabled models show up in manager create/change/override selectors. Cursor SDK stays specialist-only even when enabled.`,
   keywords: ['provider', 'OpenAI', 'Codex', 'Anthropic', 'Claude', 'Grok', 'xAI', 'GPT', 'Opus', 'Sonnet', 'Haiku'],
   relatedIds: ['models-overview', 'models-cost', 'models-reasoning'],
   contextKeys: ['settings.general', 'settings.auth', 'settings.specialists'],
