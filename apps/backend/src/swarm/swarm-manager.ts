@@ -1580,6 +1580,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.archiveLastUsedHydrator = new ArchiveLastUsedHydrator({
       getAgent: (agentId) => this.descriptors.get(agentId),
       listSessions: () => this.sortedDescriptors().filter((descriptor) => descriptor.role === "manager"),
+      listAgents: () => this.sortedDescriptors(),
       listProfiles: () => this.listProfiles(),
       patchDescriptor: (agentId, patch) => this.descriptorStoreAdapter.patchDescriptor(agentId, patch),
       warn: (message, details) => this.logDebug(message, details),

@@ -63,6 +63,22 @@ function conversationMessage(timestamp: string, overrides: Record<string, unknow
   };
 }
 
+function userToAgentMessage(timestamp: string, overrides: Record<string, unknown> = {}) {
+  return {
+    type: "custom",
+    customType: CONVERSATION_ENTRY_TYPE,
+    data: {
+      type: "agent_message",
+      agentId: "session-1",
+      source: "user_to_agent",
+      toAgentId: "worker-1",
+      text: "worker please",
+      timestamp,
+      ...overrides,
+    },
+  };
+}
+
 describe("ArchiveLastUsedHydrator", () => {
   it("hydrates a missing session value from the latest real user input message", async () => {
     const file = await sessionFile([
@@ -90,6 +106,80 @@ describe("ArchiveLastUsedHydrator", () => {
       hydratedSessionCount: 1,
     });
     expect(sessions.get("session-1")?.lastUserMessageAt).toBe("2026-05-21T00:00:00.000Z");
+  });
+
+  it("hydrates worker-targeted user messages from manager agent_message and worker transcript rows", async () => {
+    const managerFile = await sessionFile([
+      conversationMessage("2026-05-19T00:00:00.000Z"),
+      userToAgentMessage("2026-05-21T00:00:00.000Z"),
+    ]);
+    const workerFile = await sessionFile([
+      conversationMessage("2026-05-22T00:00:00.000Z", { agentId: "worker-1" }),
+    ]);
+    const sessions = new Map([["session-1", session({ sessionFile: managerFile })]]);
+    const agents = new Map([
+      ["session-1", session({ sessionFile: managerFile })],
+      ["worker-1", session({
+        agentId: "worker-1",
+        managerId: "session-1",
+        role: "worker",
+        sessionFile: workerFile,
+        profileId: undefined,
+      })],
+    ]);
+    const hydrator = new ArchiveLastUsedHydrator({
+      getAgent: (agentId) => agents.get(agentId),
+      listSessions: () => Array.from(sessions.values()),
+      listAgents: () => Array.from(agents.values()),
+      listProfiles: () => [profile()],
+      patchDescriptor: async (agentId, patch) => {
+        const current = agents.get(agentId)!;
+        const next = { ...current, ...patch };
+        agents.set(agentId, next);
+        if (sessions.has(agentId)) sessions.set(agentId, next);
+        return next;
+      },
+    });
+
+    await expect(hydrator.hydrateSessionIfMissing("session-1")).resolves.toEqual({
+      scannedSessionCount: 1,
+      hydratedSessionCount: 1,
+    });
+    expect(agents.get("session-1")?.lastUserMessageAt).toBe("2026-05-22T00:00:00.000Z");
+  });
+
+  it("lazy hydrates an archived project from worker-targeted user messages", async () => {
+    const managerFile = await sessionFile([userToAgentMessage("2026-05-21T00:00:00.000Z")]);
+    const workerFile = await sessionFile([conversationMessage("2026-05-23T00:00:00.000Z", { agentId: "worker-1" })]);
+    const projectSession = session({ agentId: "project-child", profileId: "archived-project", sessionFile: managerFile });
+    const workerDescriptor = session({
+      agentId: "worker-1",
+      managerId: "project-child",
+      role: "worker",
+      sessionFile: workerFile,
+      profileId: undefined,
+    });
+    const sessions = new Map([["project-child", projectSession]]);
+    const agents = new Map([["project-child", projectSession], ["worker-1", workerDescriptor]]);
+    const hydrator = new ArchiveLastUsedHydrator({
+      getAgent: (agentId) => agents.get(agentId),
+      listSessions: () => Array.from(sessions.values()),
+      listAgents: () => Array.from(agents.values()),
+      listProfiles: () => [profile({ profileId: "archived-project", archivedAt: now })],
+      patchDescriptor: async (agentId, patch) => {
+        const current = agents.get(agentId)!;
+        const next = { ...current, ...patch };
+        agents.set(agentId, next);
+        if (sessions.has(agentId)) sessions.set(agentId, next);
+        return next;
+      },
+    });
+
+    await expect(hydrator.hydrateArchivedRowsIfMissing()).resolves.toEqual({
+      scannedSessionCount: 1,
+      hydratedSessionCount: 1,
+    });
+    expect(agents.get("project-child")?.lastUserMessageAt).toBe("2026-05-23T00:00:00.000Z");
   });
 
   it("lazy hydrates only archived rows and archived project children", async () => {

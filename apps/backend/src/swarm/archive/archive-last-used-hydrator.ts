@@ -7,6 +7,7 @@ import { CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
 export interface ArchiveLastUsedHydratorDeps {
   getAgent(agentId: string): AgentDescriptor | undefined;
   listSessions(): AgentDescriptor[];
+  listAgents?: () => AgentDescriptor[];
   listProfiles(): ManagerProfile[];
   patchDescriptor(agentId: string, patch: Partial<AgentDescriptor>): Promise<AgentDescriptor>;
   warn?: (message: string, details?: unknown) => void;
@@ -75,15 +76,36 @@ export class ArchiveLastUsedHydrator {
   }
 
   private async findLastUserMessageAt(session: AgentDescriptor): Promise<string | undefined> {
+    let lastUserMessageAt = await this.findLastUserMessageAtInDescriptorFile(session);
+
+    for (const worker of this.workerDescriptorsForSession(session.agentId)) {
+      const workerLastUserMessageAt = await this.findLastUserMessageAtInDescriptorFile(worker);
+      if (
+        workerLastUserMessageAt &&
+        (!lastUserMessageAt || workerLastUserMessageAt.localeCompare(lastUserMessageAt) > 0)
+      ) {
+        lastUserMessageAt = workerLastUserMessageAt;
+      }
+    }
+
+    return lastUserMessageAt;
+  }
+
+  private workerDescriptorsForSession(sessionAgentId: string): AgentDescriptor[] {
+    const agents = this.deps.listAgents?.() ?? this.deps.listSessions();
+    return agents.filter((agent) => agent.role === "worker" && agent.managerId === sessionAgentId && Boolean(agent.sessionFile));
+  }
+
+  private async findLastUserMessageAtInDescriptorFile(descriptor: AgentDescriptor): Promise<string | undefined> {
     try {
-      await access(session.sessionFile);
+      await access(descriptor.sessionFile);
     } catch {
       return undefined;
     }
 
     let lastUserMessageAt: string | undefined;
     const reader = createInterface({
-      input: createReadStream(session.sessionFile, { encoding: "utf8" }),
+      input: createReadStream(descriptor.sessionFile, { encoding: "utf8" }),
       crlfDelay: Infinity,
     });
 
@@ -96,8 +118,8 @@ export class ArchiveLastUsedHydrator {
       }
     } catch (error) {
       this.deps.warn?.("archive_last_used:scan_failed", {
-        agentId: session.agentId,
-        sessionFile: session.sessionFile,
+        agentId: descriptor.agentId,
+        sessionFile: descriptor.sessionFile,
         error: error instanceof Error ? error.message : String(error),
       });
       return undefined;
@@ -127,9 +149,19 @@ function extractUserInputTimestamp(line: string): string | undefined {
   if (parsed.type !== "custom" || parsed.customType !== CONVERSATION_ENTRY_TYPE) return undefined;
   const data = parsed.data;
   if (!isRecord(data)) return undefined;
-  if (data.type !== "conversation_message") return undefined;
-  if (data.role !== "user" || data.source !== "user_input") return undefined;
-  return typeof data.timestamp === "string" && data.timestamp.trim().length > 0 ? data.timestamp : undefined;
+  if (data.type === "conversation_message") {
+    if (data.role !== "user" || data.source !== "user_input") return undefined;
+    return nonEmptyTimestamp(data.timestamp);
+  }
+  if (data.type === "agent_message") {
+    if (data.source !== "user_to_agent") return undefined;
+    return nonEmptyTimestamp(data.timestamp);
+  }
+  return undefined;
+}
+
+function nonEmptyTimestamp(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
