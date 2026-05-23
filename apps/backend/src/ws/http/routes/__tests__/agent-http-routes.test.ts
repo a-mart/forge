@@ -147,6 +147,43 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
+  it('returns persisted local manager prompt after override changes before runtime recycle', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    const managerDescriptor = await bootWithDefaultManager(manager, config)
+    const metaBeforeChange = await readSessionMeta(config.paths.dataDir, 'manager', managerDescriptor.agentId)
+    expect(metaBeforeChange?.resolvedSystemPrompt).toEqual(expect.any(String))
+
+    const liveState = manager as unknown as {
+      descriptors: Map<string, { sessionSystemPrompt?: string }>
+    }
+    liveState.descriptors.get(managerDescriptor.agentId)!.sessionSystemPrompt = 'New override that should wait for recycle.'
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/agents/${encodeURIComponent(managerDescriptor.agentId)}/system-prompt`,
+      )
+
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as { systemPrompt: string | null }
+      expect(payload.systemPrompt).toBe(metaBeforeChange?.resolvedSystemPrompt)
+      expect(payload.systemPrompt).not.toContain('New override that should wait for recycle.')
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('refreshes repo project-agent prompts on idle source drift through GET /api/agents/:agentId/system-prompt', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)

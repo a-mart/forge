@@ -454,6 +454,62 @@ describe('ProjectAgentSettingsSheet', () => {
     expect(whenToUseField.value).toBe('Updated live repo description')
   })
 
+  it('closes repo-sourced agents without discard prompt when live config differs from descriptor', async () => {
+    const { onClose } = renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Stale descriptor value',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Updated live repo description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt',
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'valid' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    const closeButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Close',
+    )
+    expect(closeButton).not.toBeNull()
+    flushSync(() => {
+      closeButton!.click()
+    })
+
+    await flushEffects()
+
+    expect(onClose).toHaveBeenCalled()
+    const discardButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Discard',
+    )
+    expect(discardButton).toBeUndefined()
+  })
+
   it('uses definitionId in repo source path copy, not handle', async () => {
     renderSheet({
       currentProjectAgent: {

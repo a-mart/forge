@@ -131,17 +131,19 @@ export function ProjectAgentSettingsSheet({
   const trimmedSystemPrompt = systemPrompt.trim()
   const canSave = isPromoting
     ? trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX && normalizedHandle.length > 0
-    : trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
+    : !isRepoSourced && trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
   const storedCanCreateSessions = currentProjectAgent?.capabilities?.includes('create_session') ?? false
   const hasChanges = isPromoting
-    || trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
-    || trimmedSystemPrompt !== fetchedSystemPromptRef.current.trim()
-    || canCreateSessions !== storedCanCreateSessions
+    || (!isRepoSourced && (
+      trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
+      || trimmedSystemPrompt !== fetchedSystemPromptRef.current.trim()
+      || canCreateSessions !== storedCanCreateSessions
+    ))
 
   // Dirty state: would closing lose user-entered data?
   const isDirty = isPromoting
     ? (trimmedWhenToUse.length > 0 || trimmedSystemPrompt.length > 0)
-    : (hasChanges || dirtyReferenceFiles.size > 0)
+    : (!isRepoSourced && (hasChanges || dirtyReferenceFiles.size > 0))
 
   // ── Close flow: confirm if dirty, otherwise close immediately ──
 

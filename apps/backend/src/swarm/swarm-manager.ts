@@ -5846,8 +5846,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return null;
     }
 
-    await this.preflightRepoProjectAgentRuntime(descriptor);
-    return this.resolveSystemPromptForDescriptor(descriptor);
+    if (isRepoProjectAgentSource(descriptor.projectAgent?.source)) {
+      await this.preflightRepoProjectAgentRuntime(descriptor);
+      return this.resolveSystemPromptForDescriptor(descriptor);
+    }
+
+    const meta = await this.sessionMetaService.readSessionMetaForDescriptor(descriptor);
+    return meta?.resolvedSystemPrompt ?? null;
   }
 
   private assertProfileNotArchived(profileId: string): void {
