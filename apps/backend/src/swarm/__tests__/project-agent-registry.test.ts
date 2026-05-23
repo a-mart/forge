@@ -730,7 +730,8 @@ describe("ProjectAgentRegistry", () => {
         workspaceKey: createWorkspaceKey("profile-a", repo.rootRealpath),
         forgeDirRealpath: repo.forgeDirRealpath,
         definitionId: "docs",
-        activatedAt: "2026-04-03T00:00:00.000Z"
+        activatedAt: "2026-04-03T00:00:00.000Z",
+        signature: expect.any(String)
       }
     });
   });

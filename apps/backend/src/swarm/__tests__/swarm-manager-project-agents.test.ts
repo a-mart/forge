@@ -211,6 +211,142 @@ describe('SwarmManager', () => {
     expect(updatedSnapshot.config.capabilities).toBeUndefined()
   })
 
+  it('recycles repo project-agent runtimes on signature changes and uses the fresh prompt for deliveries', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Maintain repository docs.',
+      prompt: 'Repo docs prompt v1',
+    })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const result = await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+    })
+    const firstRuntime = manager.runtimeByAgentId.get(result.agentId)
+    expect(firstRuntime?.getSystemPrompt()).toContain('Repo docs prompt v1')
+
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Maintain repository docs.',
+      prompt: 'Repo docs prompt v2',
+    })
+
+    await manager.sendMessage('manager', result.agentId, 'Use the latest docs prompt.', 'auto')
+
+    expect(firstRuntime?.recycleCalls).toBe(1)
+    const freshRuntime = manager.runtimeByAgentId.get(result.agentId)
+    expect(freshRuntime).not.toBe(firstRuntime)
+    expect(freshRuntime?.getSystemPrompt()).toContain('Repo docs prompt v2')
+    expect(freshRuntime?.getSystemPrompt()).not.toContain('Repo docs prompt v1')
+    expect(manager.getAgent(result.agentId)?.projectAgent?.whenToUse).toBe('Maintain repository docs.')
+  })
+
+  it('blocks repo project-agent delivery and runtime creation when the source is missing or busy-stale', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: 'Repo prompt v1' })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const result = await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+    })
+
+    const runtime = manager.runtimeByAgentId.get(result.agentId)!
+    runtime.busy = true
+    runtime.descriptor.status = 'streaming'
+    const liveState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    liveState.descriptors.get(result.agentId)!.status = 'streaming'
+    await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: 'Repo prompt v2' })
+
+    await expect(manager.sendMessage('manager', result.agentId, 'stale busy delivery', 'auto')).rejects.toThrow(/changed while .*active runtime/i)
+    expect(runtime.sendCalls.some((call) => String(call.message).includes('stale busy delivery'))).toBe(false)
+
+    runtime.busy = false
+    runtime.descriptor.status = 'idle'
+    liveState.descriptors.get(result.agentId)!.status = 'idle'
+    await rm(join(config.defaultCwd, '.forge', 'project-agents', 'docs'), { recursive: true, force: true })
+    manager.runtimeByAgentId.delete(result.agentId)
+    liveState.descriptors.get(result.agentId)!.contextUsage = undefined
+
+    await expect(manager.handleUserMessage('missing direct user message', { targetAgentId: result.agentId })).rejects.toThrow(/Repository project-agent source docs is missing/i)
+    expect(manager.runtimeByAgentId.has(result.agentId)).toBe(false)
+    expect(
+      manager.getConversationHistory(result.agentId).some(
+        (entry) => entry.type === 'conversation_message' && entry.text === 'missing direct user message',
+      ),
+    ).toBe(false)
+
+    await expect(manager.sendMessage('manager', result.agentId, 'missing delivery', 'auto')).rejects.toThrow(/Repository project-agent source docs is missing/i)
+    expect(manager.runtimeByAgentId.has(result.agentId)).toBe(false)
+  })
+
+  it('keeps project-agent directory source-aware while preserving approved capabilities', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Old repo docs blurb.',
+      prompt: 'Repo docs prompt',
+      capabilities: ['create_session'],
+    })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const result = await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+      approvedCapabilities: ['create_session'],
+    })
+
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Updated repo docs blurb.',
+      prompt: 'Repo docs prompt',
+    })
+    const preview = await manager.previewManagerSystemPromptForAgent('manager')
+    const content = preview.sections.map((section) => section.content).join('\n')
+    expect(content).toContain('Updated repo docs blurb.')
+    expect(content).not.toContain('Old repo docs blurb.')
+    expect(content).toContain('@docs')
+    expect(manager.getAgent(result.agentId)?.projectAgent?.capabilities).toEqual(['create_session'])
+
+    await writeFile(join(config.defaultCwd, '.forge', 'project-agents', 'docs', 'prompt.md'), '   ', 'utf8')
+    const invalidPreview = await manager.previewManagerSystemPromptForAgent('manager')
+    const invalidContent = invalidPreview.sections.map((section) => section.content).join('\n')
+    expect(invalidContent).not.toContain('@docs')
+    expect(invalidContent).toContain('Project agents in this profile')
+  })
+
+  it('leaves local project agents unaffected by repo source preflights', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const created = await manager.createSession('manager', { label: 'Local Docs' })
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'local-docs',
+      whenToUse: 'Use local docs agent.',
+      systemPrompt: 'Local docs prompt.',
+    })
+
+    await manager.sendMessage('manager', created.sessionAgent.agentId, 'local delivery', 'auto')
+
+    expect(manager.runtimeByAgentId.get(created.sessionAgent.agentId)?.sendCalls.at(-1)?.message).toContain('local delivery')
+    expect(
+      manager.getConversationHistory(created.sessionAgent.agentId).some(
+        (entry) => entry.type === 'conversation_message' && entry.source === 'project_agent_input' && entry.text === 'local delivery',
+      ),
+    ).toBe(true)
+  })
+
   it('backs up local project-agent sidecars before linking to a repo source', async () => {
     const config = await makeTempConfig()
     execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })

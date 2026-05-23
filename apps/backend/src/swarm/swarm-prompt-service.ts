@@ -22,6 +22,7 @@ import {
   generateProjectAgentDirectoryBlock,
   getProjectAgentPublicName,
   listProjectAgents,
+  type ProjectAgentDirectoryEntry,
 } from "./project-agents.js";
 import {
   assertRepoProjectAgentSourceAvailable,
@@ -256,15 +257,7 @@ export class SwarmPromptService {
       ? specialistRegistry.generateRosterBlock(roster)
       : specialistRegistry.legacyModelRoutingGuidance;
     const projectAgentDirectoryBlock = generateProjectAgentDirectoryBlock(
-      listProjectAgents(this.options.descriptors.values(), profileId, {
-        excludeAgentId: descriptor.agentId,
-      }).map((entry) => ({
-        agentId: entry.agentId,
-        displayName: getProjectAgentPublicName(entry),
-        handle: entry.projectAgent.handle,
-        whenToUse: entry.projectAgent.whenToUse,
-        capabilities: entry.projectAgent.capabilities,
-      })),
+      await this.resolveProjectAgentDirectoryEntries(profileId, descriptor),
     );
     const createSessionCapabilityNote =
       descriptor.projectAgent?.capabilities?.includes("create_session")
@@ -324,6 +317,76 @@ export class SwarmPromptService {
     }
 
     return prompt;
+  }
+
+  private async resolveProjectAgentDirectoryEntries(
+    profileId: string,
+    requester: AgentDescriptor,
+  ): Promise<ProjectAgentDirectoryEntry[]> {
+    const entries: ProjectAgentDirectoryEntry[] = [];
+    for (const entry of listProjectAgents(this.options.descriptors.values(), profileId, {
+      excludeAgentId: requester.agentId,
+    })) {
+      if (isRepoProjectAgentSource(entry.projectAgent.source)) {
+        try {
+          const resolution = await resolveRepoProjectAgentSource({
+            descriptor: entry,
+            profileId,
+            handle: entry.projectAgent.handle,
+          }, { dataDir: this.options.config.paths.dataDir });
+          const definition = assertRepoProjectAgentSourceAvailable(resolution);
+          await this.assertRequesterWorkspaceMatchesRepoSource(requester, entry.projectAgent.source);
+          entries.push({
+            agentId: entry.agentId,
+            displayName: getProjectAgentPublicName(entry),
+            handle: definition.config.handle,
+            whenToUse: definition.config.whenToUse,
+            ...(entry.projectAgent.capabilities !== undefined ? { capabilities: entry.projectAgent.capabilities } : {}),
+          });
+        } catch (error) {
+          this.options.logDebug("project_agent:directory:exclude_unavailable_repo_source", {
+            requesterAgentId: requester.agentId,
+            agentId: entry.agentId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        continue;
+      }
+
+      entries.push({
+        agentId: entry.agentId,
+        displayName: getProjectAgentPublicName(entry),
+        handle: entry.projectAgent.handle,
+        whenToUse: entry.projectAgent.whenToUse,
+        ...(entry.projectAgent.capabilities !== undefined ? { capabilities: entry.projectAgent.capabilities } : {}),
+      });
+    }
+    return entries;
+  }
+
+  private async assertRequesterWorkspaceMatchesRepoSource(
+    requester: AgentDescriptor,
+    source: NonNullable<AgentDescriptor["projectAgent"]>["source"],
+  ): Promise<void> {
+    if (!isRepoProjectAgentSource(source)) {
+      return;
+    }
+    const resolution = await new ProjectWorkspaceResolver({
+      dataDir: this.options.config.paths.dataDir,
+      settingsStore: new ProjectResourceSettingsStore(this.options.config.paths.dataDir),
+    }).resolvePassive({
+      profileId: requester.profileId ?? requester.agentId,
+      sessionAgentId: requester.agentId,
+      cwd: requester.cwd,
+    });
+    if (
+      resolution.workspaceKey !== source.workspaceKey ||
+      resolution.effectiveForgeDirRealpath !== source.forgeDirRealpath
+    ) {
+      throw new Error(
+        `Requester workspace ${resolution.workspaceKey} does not match repository project-agent workspace ${source.workspaceKey}`,
+      );
+    }
   }
 
   async resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string> {

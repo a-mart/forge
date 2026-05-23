@@ -5,7 +5,7 @@ import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:
 import { dirname, join } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
-import { isSystemProfile, type SpecialistTargetSpace } from "@forge/protocol";
+import { isRepoProjectAgentSource, isSystemProfile, type SpecialistTargetSpace } from "@forge/protocol";
 import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
@@ -166,6 +166,10 @@ import { SessionProvisioner } from "./session-provisioner.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
+import {
+  assertRepoProjectAgentSourceAvailable,
+  resolveRepoProjectAgentSource
+} from "./agents/repo-project-agent-source.js";
 import { SessionActiveToolsState } from "./session-active-tools.js";
 import {
   normalizeAllowlistRoots,
@@ -2862,7 +2866,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         workspaceKey: resolution.workspaceKey,
         forgeDirRealpath: resolution.effectiveForgeDirRealpath,
         definitionId: definition.definitionId,
-        activatedAt: this.now()
+        activatedAt: this.now(),
+        signature: definition.signature
       },
       ...(request.targetAgentId ? { targetAgentId: request.targetAgentId } : {}),
       applyRecommendedModel: request.applyRecommendedModel,
@@ -4318,6 +4323,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
     const target = this.resolveUserMessageTarget(options?.targetAgentId);
+    await this.preflightRepoProjectAgentRuntime(target);
 
     if (target.role === "manager" && attachments.length === 0) {
       const routedReviewRun = await this.maybeStartCortexReviewRunFromIncomingMessage(trimmed, target, sourceContext);
@@ -5774,7 +5780,73 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
     this.assertDescriptorNotEffectivelyArchived(descriptor);
+    await this.preflightRepoProjectAgentRuntime(descriptor);
     return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor);
+  }
+
+  private async preflightRepoProjectAgentRuntime(descriptor: AgentDescriptor): Promise<void> {
+    if (descriptor.role !== "manager" || !isRepoProjectAgentSource(descriptor.projectAgent?.source)) {
+      return;
+    }
+
+    const resolution = await resolveRepoProjectAgentSource({
+      descriptor: descriptor as AgentDescriptor & {
+        role: "manager";
+        profileId: string;
+        projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+      },
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      handle: descriptor.projectAgent.handle
+    }, { dataDir: this.config.paths.dataDir });
+    const definition = assertRepoProjectAgentSourceAvailable(resolution);
+    const currentSource = descriptor.projectAgent.source;
+    const signatureChanged = currentSource.signature !== definition.signature;
+    const whenToUseChanged = descriptor.projectAgent.whenToUse !== definition.config.whenToUse;
+
+    if (!signatureChanged && !whenToUseChanged) {
+      return;
+    }
+
+    const runtime = this.runtimes.get(descriptor.agentId);
+    if (runtime) {
+      const disposition = await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "prompt_mode_change");
+      if (disposition !== "recycled") {
+        throw new Error(
+          `Repository project-agent source ${currentSource.definitionId} changed while ${descriptor.agentId} has an active runtime. Wait for the current turn to finish before sending another message.`
+        );
+      }
+    }
+
+    descriptor.projectAgent = {
+      ...descriptor.projectAgent,
+      whenToUse: definition.config.whenToUse,
+      source: {
+        ...currentSource,
+        signature: definition.signature
+      }
+    };
+    descriptor.updatedAt = this.now();
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+  }
+
+  async validateProjectAgentSourceForRead(agentId: string): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "manager" || !isRepoProjectAgentSource(descriptor.projectAgent?.source)) {
+      return;
+    }
+
+    const resolution = await resolveRepoProjectAgentSource({
+      descriptor: descriptor as AgentDescriptor & {
+        role: "manager";
+        profileId: string;
+        projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+      },
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      handle: descriptor.projectAgent.handle
+    }, { dataDir: this.config.paths.dataDir });
+    assertRepoProjectAgentSourceAvailable(resolution);
   }
 
   private assertProfileNotArchived(profileId: string): void {

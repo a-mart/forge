@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -3201,14 +3202,19 @@ describe('SwarmWebSocketServer', () => {
   it('returns repo source unavailable payload from get_project_agent_config', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
     const { sessionAgent } = await manager.createSession('manager', { label: 'Docs' })
+    const forgeDir = join(config.defaultCwd, '.forge')
+    await mkdir(forgeDir, { recursive: true })
+    const workspaceRealpath = await realpath(config.defaultCwd)
+    const forgeDirRealpath = await realpath(forgeDir)
     const source = {
       type: 'repo' as const,
-      workspaceKey: 'manager::/repo',
-      forgeDirRealpath: '/repo/.forge',
+      workspaceKey: `manager::${workspaceRealpath}`,
+      forgeDirRealpath,
       definitionId: 'docs',
       activatedAt: '2026-04-03T00:00:00.000Z',
     }
@@ -3262,7 +3268,7 @@ describe('SwarmWebSocketServer', () => {
         problems: [
           {
             code: 'repo_project_agents_missing',
-            message: 'Repository project-agent definitions directory is missing: /repo/.forge/project-agents',
+            message: `Repository project-agent definitions directory is missing: ${join(forgeDirRealpath, 'project-agents')}`,
             path: 'project-agents',
           },
         ],

@@ -267,6 +267,13 @@ async function handleAgentSystemPromptHttpRequest(
   const dataDir = swarmManager.getConfig().paths.dataDir;
 
   if (descriptor.role === "manager") {
+    try {
+      await swarmManager.validateProjectAgentSourceForRead(descriptor.agentId);
+    } catch (error) {
+      sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
     const profileId = descriptor.profileId ?? descriptor.agentId;
     const meta = await readSessionMeta(dataDir, profileId, descriptor.agentId);
 

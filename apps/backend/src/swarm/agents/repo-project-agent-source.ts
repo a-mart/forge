@@ -89,7 +89,7 @@ export async function resolveRepoProjectAgentSource(
     return { definition, source: buildSourceSnapshot(source, "conflict", problems) };
   }
 
-  return { definition, source: buildSourceSnapshot(source, "valid", []) };
+  return { definition, source: buildSourceSnapshot(source, "valid", [], definition.signature) };
 }
 
 export function buildRepoProjectAgentConfigFromDefinition(
@@ -167,7 +167,8 @@ async function resolveCurrentWorkspaceSource(
 function buildSourceSnapshot(
   source: RepoProjectAgentSourceIdentity,
   status: ProjectAgentConfigSourceSnapshot["status"],
-  problems: ProjectAgentSourceProblem[]
+  problems: ProjectAgentSourceProblem[],
+  signature = source.signature
 ): ProjectAgentConfigSourceSnapshot {
   return {
     type: "repo",
@@ -176,6 +177,7 @@ function buildSourceSnapshot(
     workspaceKey: source.workspaceKey,
     forgeDirRealpath: source.forgeDirRealpath,
     definitionId: source.definitionId,
-    activatedAt: source.activatedAt
+    activatedAt: source.activatedAt,
+    ...(signature ? { signature } : {})
   };
 }

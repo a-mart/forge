@@ -715,7 +715,10 @@ describe("SwarmPromptService", () => {
     const dataDir = config.paths.dataDir;
     const profileId = "manager";
     const handle = "repo-docs";
-    const forgeDir = join(dataDir, "repo-forge");
+    const workspace = join(dataDir, "workspace");
+    await mkdir(workspace, { recursive: true });
+    execFileSync("git", ["init"], { cwd: workspace, stdio: "ignore" });
+    const forgeDir = join(workspace, ".forge");
     const definitionDir = join(forgeDir, "project-agents", handle);
     await mkdir(join(definitionDir, "reference"), { recursive: true });
     await writeFile(join(definitionDir, "config.json"), JSON.stringify({
@@ -740,7 +743,8 @@ describe("SwarmPromptService", () => {
     );
     await writeProjectAgentReferenceDoc(dataDir, profileId, handle, "stale.md", "Stale local reference");
 
-    const descriptor = createManagerDescriptor(config, repoRoot, {
+    const workspaceRealpath = await realpath(workspace);
+    const descriptor = createManagerDescriptor(config, workspace, {
       agentId: "agent-1",
       projectAgent: {
         handle,
@@ -748,7 +752,7 @@ describe("SwarmPromptService", () => {
         systemPrompt: "Stale descriptor prompt",
         source: {
           type: "repo",
-          workspaceKey: "workspace-a",
+          workspaceKey: `${profileId}::${workspaceRealpath}`,
           forgeDirRealpath: await realpath(forgeDir),
           definitionId: handle,
           activatedAt: "2026-04-03T00:00:00.000Z"

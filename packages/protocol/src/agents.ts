@@ -70,6 +70,8 @@ export interface RepoProjectAgentSourceIdentity {
   forgeDirRealpath: string
   definitionId: string
   activatedAt: string
+  /** Signature of the activated repo definition. Used to detect live prompt/reference drift. */
+  signature?: string
 }
 
 export type ProjectAgentSourceIdentity = LocalProjectAgentSourceIdentity | RepoProjectAgentSourceIdentity

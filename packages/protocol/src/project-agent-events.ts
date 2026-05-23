@@ -36,6 +36,7 @@ export interface ProjectAgentConfigSourceSnapshot {
   forgeDirRealpath: string
   definitionId: string
   activatedAt: string
+  signature?: string
 }
 
 export interface ProjectAgentConfigEvent {
