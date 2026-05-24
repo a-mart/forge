@@ -386,6 +386,32 @@ describe("cloneProjectAgentInfoValue / cloneDescriptor", () => {
     expect(c.model).toEqual(d.model);
     expect(c.cli).toEqual(d.cli);
   });
+
+  it("cloneDescriptor redacts private project-agent prompts while preserving public source kind", () => {
+    const d = baseDescriptor({
+      sessionSystemPrompt: "private session role instructions",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Maintain docs.",
+        systemPrompt: "private stored role prompt",
+        source: {
+          type: "repo",
+          workspaceKey: "profile::/repo",
+          forgeDirRealpath: "/repo/.forge",
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z",
+          signature: "abc"
+        }
+      }
+    });
+
+    const c = cloneDescriptor(d);
+
+    expect(c).not.toHaveProperty("sessionSystemPrompt");
+    expect(c.projectAgent).toMatchObject({ handle: "docs", whenToUse: "Maintain docs.", sourceKind: "repo" });
+    expect(c.projectAgent).not.toHaveProperty("systemPrompt");
+    expect(c.projectAgent).not.toHaveProperty("source");
+  });
 });
 
 describe("validateAgentDescriptor", () => {

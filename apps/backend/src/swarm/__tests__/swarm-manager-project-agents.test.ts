@@ -193,6 +193,10 @@ describe('SwarmManager', () => {
       definitionId: 'docs',
       mode: 'create',
     })
+
+    const liveDescriptor = (manager as unknown as { descriptors: Map<string, AgentDescriptor> }).descriptors.get(result.agentId)!
+    liveDescriptor.sessionSystemPrompt = 'Private session role instructions from repo prompt composition.'
+    ;(manager as unknown as { emitAgentsSnapshot: () => void }).emitAgentsSnapshot()
     await new Promise<void>((resolve) => queueMicrotask(resolve))
 
     const assertPublicProjectAgent = (projectAgent: AgentDescriptor['projectAgent'] | undefined) => {
@@ -203,13 +207,20 @@ describe('SwarmManager', () => {
       expect(JSON.stringify(projectAgent)).not.toContain('workspaceKey')
       expect(JSON.stringify(projectAgent)).not.toContain('activatedAt')
     }
+    const assertPublicDescriptor = (descriptor: AgentDescriptor | undefined) => {
+      expect(descriptor).toBeDefined()
+      expect(descriptor).not.toHaveProperty('sessionSystemPrompt')
+      assertPublicProjectAgent(descriptor?.projectAgent)
+    }
 
     assertPublicProjectAgent(result.projectAgent)
-    assertPublicProjectAgent(manager.listAgents().find((agent) => agent.agentId === result.agentId)?.projectAgent)
-    assertPublicProjectAgent(manager.listBootstrapAgents().find((agent) => agent.agentId === result.agentId)?.projectAgent)
-    assertPublicProjectAgent(manager.listManagerAgents().find((agent) => agent.agentId === result.agentId)?.projectAgent)
-    assertPublicProjectAgent(snapshots.at(-1)?.agents.find((agent) => agent.agentId === result.agentId)?.projectAgent)
+    assertPublicDescriptor(manager.getAgent(result.agentId))
+    assertPublicDescriptor(manager.listAgents().find((agent) => agent.agentId === result.agentId))
+    assertPublicDescriptor(manager.listBootstrapAgents().find((agent) => agent.agentId === result.agentId))
+    assertPublicDescriptor(manager.listManagerAgents().find((agent) => agent.agentId === result.agentId))
+    assertPublicDescriptor(snapshots.at(-1)?.agents.find((agent) => agent.agentId === result.agentId))
     assertPublicProjectAgent(projectAgentUpdates.at(-1)?.projectAgent ?? undefined)
+    expect(manager.getAgentForInternalUse(result.agentId)?.sessionSystemPrompt).toBe('Private session role instructions from repo prompt composition.')
     expect(manager.getAgentForInternalUse(result.agentId)?.projectAgent?.source).toMatchObject({ type: 'repo', definitionId: 'docs' })
   })
 

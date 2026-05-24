@@ -83,8 +83,10 @@ export function cloneProjectAgentForPublic(projectAgent: AgentDescriptor["projec
 }
 
 export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDescriptor {
+  const { sessionSystemPrompt: _sessionSystemPrompt, ...publicDescriptor } = cloneDescriptorForPersistence(descriptor);
+
   return {
-    ...cloneDescriptorForPersistence(descriptor),
+    ...publicDescriptor,
     projectAgent: cloneProjectAgentForPublic(descriptor.projectAgent)
   };
 }
