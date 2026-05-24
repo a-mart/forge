@@ -97,6 +97,41 @@ describe('ArchiveView', () => {
     expect(restoreSession).toHaveBeenCalledWith('archived-session', true)
   })
 
+  it('shows archived project last-used metadata', () => {
+    renderArchive({
+      profiles: [profile('archived-project', '2026-05-20T00:00:00.000Z')],
+      agents: [
+        {
+          ...manager('archived-project', 'archived-project'),
+          lastUserMessageAt: '2026-05-21T12:30:00.000Z',
+        },
+      ],
+    })
+
+    const lastUsed = container.querySelector('[data-testid="archived-project-last-used"]')
+    expect(lastUsed).toBeTruthy()
+    expect(lastUsed!.textContent).toMatch(/^Last used /)
+    expect(lastUsed!.textContent).not.toBe('Last used unknown')
+  })
+
+  it('shows directly archived session last-used metadata', () => {
+    renderArchive({
+      profiles: [profile('my-project')],
+      agents: [
+        manager('my-project', 'my-project'),
+        {
+          ...manager('archived-session', 'my-project', '2026-05-20T00:00:00.000Z'),
+          lastUserMessageAt: '2026-05-22T09:15:00.000Z',
+        },
+      ],
+    })
+
+    const lastUsed = container.querySelector('[data-testid="archived-session-last-used"]')
+    expect(lastUsed).toBeTruthy()
+    expect(lastUsed!.textContent).toMatch(/^Last used /)
+    expect(lastUsed!.textContent).not.toBe('Last used unknown')
+  })
+
   it('shows parent project name for directly archived sessions', () => {
     const activeProfile = { ...profile('my-project'), displayName: 'My Cool Project' }
     renderArchive({
@@ -136,5 +171,26 @@ describe('ArchiveView', () => {
     const labels = Array.from(projectIndicators).map((el) => el.textContent)
     expect(labels).toContain('Project Alpha')
     expect(labels).toContain('Project Beta')
+  })
+
+  it('renders directly archived sessions in last-used order', () => {
+    renderArchive({
+      profiles: [profile('my-project')],
+      agents: [
+        manager('my-project', 'my-project'),
+        {
+          ...manager('older-session', 'my-project', '2026-05-20T00:00:00.000Z'),
+          lastUserMessageAt: '2026-05-21T00:00:00.000Z',
+        },
+        {
+          ...manager('newer-session', 'my-project', '2026-05-20T00:00:00.000Z'),
+          lastUserMessageAt: '2026-05-23T00:00:00.000Z',
+        },
+      ],
+    })
+
+    const sessionLabels = Array.from(container.querySelectorAll('[data-testid="archived-session-row"] h3'))
+      .map((el) => el.textContent)
+    expect(sessionLabels).toEqual(['newer-session', 'older-session'])
   })
 })

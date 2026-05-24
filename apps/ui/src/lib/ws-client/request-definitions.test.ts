@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCreateManagerCommand,
+  buildHydrateArchiveLastUsedCommand,
   buildProfileArchiveActionCommand,
   buildSessionActionCommand,
 } from './request-definitions'
@@ -59,6 +60,13 @@ describe('archive request command builders', () => {
       type: 'restore_session',
       agentId: 'session-a',
       requestId: 'req-restore',
+    })
+  })
+
+  it('serializes archive last-used hydration requests', () => {
+    expect(buildHydrateArchiveLastUsedCommand('req-hydrate')).toEqual({
+      type: 'hydrate_archive_last_used',
+      requestId: 'req-hydrate',
     })
   })
 

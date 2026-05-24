@@ -54,6 +54,7 @@ describe('ws command parser session commands', () => {
       create_session: { type: 'create_session', profileId: 'manager-a', label: 'Session A', name: 'Session A', sessionPurpose: 'agent_creator' },
       stop_session: { type: 'stop_session', agentId: 'session-a' },
       resume_session: { type: 'resume_session', agentId: 'session-a' },
+      hydrate_archive_last_used: { type: 'hydrate_archive_last_used' },
       archive_session: { type: 'archive_session', agentId: 'session-a' },
       restore_session: { type: 'restore_session', agentId: 'session-a' },
       delete_session: { type: 'delete_session', agentId: 'session-a' },

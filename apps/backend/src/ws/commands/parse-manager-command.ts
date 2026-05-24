@@ -180,6 +180,18 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     });
   }
 
+  if (maybe.type === "hydrate_archive_last_used") {
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("hydrate_archive_last_used.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "hydrate_archive_last_used",
+      requestId
+    });
+  }
+
   if (maybe.type === "archive_profile") {
     const profileId = (maybe as { profileId?: unknown }).profileId;
     const requestId = (maybe as { requestId?: unknown }).requestId;

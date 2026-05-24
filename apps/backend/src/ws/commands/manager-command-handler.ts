@@ -259,6 +259,27 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     return true;
   }
 
+  if (command.type === "hydrate_archive_last_used") {
+    try {
+      const result = await swarmManager.hydrateArchivedLastUsed();
+      send(socket, {
+        type: "archive_last_used_hydrated",
+        scannedSessionCount: result.scannedSessionCount,
+        hydratedSessionCount: result.hydratedSessionCount,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "HYDRATE_ARCHIVE_LAST_USED_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
   if (command.type === "archive_profile") {
     try {
       requireNonSystemProfile(command.profileId, swarmManager.listProfiles());

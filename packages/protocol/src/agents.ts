@@ -121,6 +121,7 @@ export interface AgentDescriptor {
   cli?: CliSessionMetadata
   pinnedAt?: string
   archivedAt?: string
+  lastUserMessageAt?: string
   mergedAt?: string
   compactionCount?: number
   workerCount?: number

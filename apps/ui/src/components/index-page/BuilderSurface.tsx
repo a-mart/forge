@@ -107,6 +107,7 @@ export function BuilderSurface({
   const messageInputRef = useRef<MessageInputHandle | null>(null)
   const messageListRef = useRef<MessageListHandle | null>(null)
   const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())
+  const archiveHydrationRequestedRef = useRef(false)
 
   const { clientRef, state, setState } = useWsConnection(wsUrl)
 
@@ -117,6 +118,19 @@ export function BuilderSurface({
   useEffect(() => {
     reportBuilderConnected(state.connected)
   }, [state.connected])
+
+  useEffect(() => {
+    if (activeView !== 'archive') {
+      archiveHydrationRequestedRef.current = false
+      return
+    }
+    if (!state.connected || archiveHydrationRequestedRef.current) return
+    archiveHydrationRequestedRef.current = true
+    clientRef.current?.hydrateArchiveLastUsed().catch((error) => {
+      console.warn('Failed to hydrate archive last-used metadata', error)
+      archiveHydrationRequestedRef.current = false
+    })
+  }, [activeView, clientRef, state.connected])
 
   const {
     onboardingState,

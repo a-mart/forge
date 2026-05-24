@@ -58,6 +58,7 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'create_session',
   'stop_session',
   'resume_session',
+  'hydrate_archive_last_used',
   'archive_session',
   'restore_session',
   'delete_session',
@@ -96,6 +97,7 @@ type RequestIdCommandType = RequestIdCommand['type']
 const REQUEST_ID_COMMAND_TYPES = [
   'api_proxy',
   'stop_all_agents',
+  'hydrate_archive_last_used',
   'create_manager',
   'delete_manager',
   'update_profile_default_model',
@@ -272,6 +274,7 @@ const serverEventsByLeafModule = [
   { type: 'manager_created', manager: agent, requestId: 'request-1' },
   { type: 'manager_deleted', managerId: agent.agentId, terminatedWorkerIds: [], requestId: 'request-2' },
   { type: 'session_created', profile, sessionAgent: agent, requestId: 'request-2' },
+  { type: 'archive_last_used_hydrated', scannedSessionCount: 1, hydratedSessionCount: 1, requestId: 'request-hydrate-archive-last-used' },
   { type: 'session_archived', agentId: agent.agentId, profileId: profile.profileId, archivedAt: now, requestId: 'request-archive-session' },
   { type: 'session_restored', agentId: agent.agentId, profileId: profile.profileId, openAgentId: agent.agentId, requestId: 'request-restore-session' },
   { type: 'profile_archived', profileId: profile.profileId, archivedAt: now, requestId: 'request-archive-profile' },
@@ -292,6 +295,7 @@ const serverEventsByLeafModule = [
 const requestIdCommands = [
   { type: 'api_proxy', requestId: 'request-1', method: 'GET', path: '/api/test' },
   { type: 'stop_all_agents', managerId: agent.agentId, requestId: 'request-2' },
+  { type: 'hydrate_archive_last_used', requestId: 'request-hydrate-archive-last-used' },
   { type: 'create_manager', name: 'Manager', cwd: '/tmp', model: 'pi-5.4', requestId: 'request-3' },
   { type: 'delete_manager', managerId: agent.agentId, requestId: 'request-4' },
   { type: 'update_profile_default_model', profileId: profile.profileId, model: 'pi-5.4', requestId: 'request-5' },
@@ -366,6 +370,7 @@ describe('protocol root barrel contract', () => {
       'create_session',
       'stop_session',
       'resume_session',
+      'hydrate_archive_last_used',
       'archive_session',
       'restore_session',
       'delete_session',
@@ -609,7 +614,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(52)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(53)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -620,7 +625,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(36)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(37)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)
@@ -641,6 +646,7 @@ describe('protocol root barrel contract', () => {
       'manager_created',
       'manager_deleted',
       'session_created',
+      'archive_last_used_hydrated',
       'session_archived',
       'session_restored',
       'profile_archived',

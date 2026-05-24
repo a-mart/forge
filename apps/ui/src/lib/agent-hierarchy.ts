@@ -25,12 +25,57 @@ export function isAgentEffectivelyArchived(agent: AgentDescriptor, profiles: Man
   return profiles.some((profile) => profile.profileId === profileId && Boolean(profile.archivedAt))
 }
 
+export function getSessionLastUserMessageAt(session: AgentDescriptor): string | null {
+  return session.lastUserMessageAt || null
+}
+
+export function getProfileRowLastUserMessageAt(row: ProfileTreeRow): string | null {
+  return row.sessions.reduce<string | null>((latest, session) => {
+    const timestamp = getSessionLastUserMessageAt(session.sessionAgent)
+    if (!timestamp) return latest
+    return latest === null || timestamp.localeCompare(latest) > 0 ? timestamp : latest
+  }, null)
+}
+
 export function getArchivedProfileRows(
   agents: AgentDescriptor[],
   profiles: ManagerProfile[],
 ): ProfileTreeRow[] {
   return buildProfileTreeRows(agents, profiles, { includeArchived: true })
     .filter((row) => Boolean(row.profile.archivedAt))
+    .sort((a, b) => {
+      const aLastUsed = getProfileRowLastUserMessageAt(a)
+      const bLastUsed = getProfileRowLastUserMessageAt(b)
+      if (aLastUsed && bLastUsed) {
+        const lastUsedOrder = bLastUsed.localeCompare(aLastUsed)
+        if (lastUsedOrder !== 0) return lastUsedOrder
+      } else if (aLastUsed) {
+        return -1
+      } else if (bLastUsed) {
+        return 1
+      }
+
+      const archivedOrder = (b.profile.archivedAt ?? '').localeCompare(a.profile.archivedAt ?? '')
+      if (archivedOrder !== 0) return archivedOrder
+      return a.profile.profileId.localeCompare(b.profile.profileId)
+    })
+}
+
+export function compareArchivedSessionRowsByLastUsed(a: SessionRow, b: SessionRow): number {
+  const aLastUsed = getSessionLastUserMessageAt(a.sessionAgent)
+  const bLastUsed = getSessionLastUserMessageAt(b.sessionAgent)
+  if (aLastUsed && bLastUsed) {
+    const lastUsedOrder = bLastUsed.localeCompare(aLastUsed)
+    if (lastUsedOrder !== 0) return lastUsedOrder
+  } else if (aLastUsed) {
+    return -1
+  } else if (bLastUsed) {
+    return 1
+  }
+
+  const archivedOrder = (b.sessionAgent.archivedAt ?? '').localeCompare(a.sessionAgent.archivedAt ?? '')
+  if (archivedOrder !== 0) return archivedOrder
+  return a.sessionAgent.agentId.localeCompare(b.sessionAgent.agentId)
 }
 
 export function getDirectlyArchivedSessionRows(
@@ -40,6 +85,7 @@ export function getDirectlyArchivedSessionRows(
   return buildProfileTreeRows(agents, profiles, { includeArchived: true })
     .filter((row) => !row.profile.archivedAt)
     .flatMap((row) => row.sessions.filter((session) => Boolean(session.sessionAgent.archivedAt)))
+    .sort(compareArchivedSessionRowsByLastUsed)
 }
 
 export function filterAgentsAfterSessionArchive(

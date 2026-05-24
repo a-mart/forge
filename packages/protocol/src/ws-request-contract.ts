@@ -40,6 +40,7 @@ type ContractCommandType = Extract<
   | 'create_session'
   | 'stop_session'
   | 'resume_session'
+  | 'hydrate_archive_last_used'
   | 'archive_session'
   | 'restore_session'
   | 'delete_session'
@@ -75,6 +76,7 @@ type ContractSuccessEventType = Extract<
   | 'session_created'
   | 'session_stopped'
   | 'session_resumed'
+  | 'archive_last_used_hydrated'
   | 'session_archived'
   | 'session_restored'
   | 'session_deleted'
@@ -235,6 +237,13 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['session_resumed'],
     errorCodeFragments: ['resume_session'],
+  },
+  {
+    commandType: 'hydrate_archive_last_used',
+    resultFamily: 'archive_last_used_hydration',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['archive_last_used_hydrated'],
+    errorCodeFragments: ['hydrate_archive_last_used'],
   },
   {
     commandType: 'archive_session',

@@ -60,6 +60,8 @@ export interface ArchiveServiceDeps {
     patch: Partial<ManagerProfile> | ((profile: ManagerProfile) => ManagerProfile),
   ) => Promise<ManagerProfile>;
   stopSession: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
+  hydrateSessionLastUsed?: (agentId: string) => Promise<void>;
+  hydrateProfileLastUsed?: (profileId: string) => Promise<void>;
   onProfileArchiveStopError?: (agentId: string, error: unknown) => void;
 }
 
@@ -78,6 +80,7 @@ export class ArchiveService {
     }
 
     const preStopUpdatedAt = session.updatedAt;
+    await this.deps.hydrateSessionLastUsed?.(session.agentId);
     const terminatedWorkerIds = await this.stopIfLive(session);
     const stoppedSession = this.deps.getAgent(agentId);
     if (stoppedSession && stoppedSession.updatedAt !== preStopUpdatedAt) {
@@ -128,6 +131,7 @@ export class ArchiveService {
     const archivedAt = profile.archivedAt ?? this.deps.now();
     const sessions = this.sessionsForProfile(profile.profileId);
     const preStopUpdatedAtByAgentId = new Map(sessions.map((session) => [session.agentId, session.updatedAt]));
+    await this.deps.hydrateProfileLastUsed?.(profile.profileId);
 
     const updated = await this.deps.patchProfile(profile.profileId, (current) => ({
       ...current,

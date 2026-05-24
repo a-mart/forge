@@ -14,6 +14,7 @@ import {
   buildGetProjectAgentConfigCommand,
   buildGetProjectAgentReferenceCommand,
   buildGetSessionWorkersCommand,
+  buildHydrateArchiveLastUsedCommand,
   buildKillAgentCommand,
   buildListDirectoriesCommand,
   buildListProjectAgentReferencesCommand,
@@ -64,6 +65,7 @@ import type {
   ProjectAgentReferenceResult,
   ProjectAgentReferencesResult,
   ProjectAgentReferenceSavedResult,
+  ArchiveLastUsedHydrationResult,
   ProfileArchiveResult,
   ProfileRestoreResult,
   SessionActionResult,
@@ -558,6 +560,13 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('restore_profile', (requestId) =>
       buildProfileArchiveActionCommand('restore_profile', profileId, requestId),
+    )
+  }
+
+  async hydrateArchiveLastUsed(): Promise<ArchiveLastUsedHydrationResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('hydrate_archive_last_used', (requestId) =>
+      buildHydrateArchiveLastUsedCommand(requestId),
     )
   }
 

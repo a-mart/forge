@@ -77,6 +77,7 @@ export type ClientCommand =
   | { type: 'create_session'; profileId: string; label?: string; name?: string; sessionPurpose?: AgentSessionPurpose; requestId?: string }
   | { type: 'stop_session'; agentId: string; requestId?: string }
   | { type: 'resume_session'; agentId: string; requestId?: string }
+  | { type: 'hydrate_archive_last_used'; requestId?: string }
   | { type: 'archive_session'; agentId: string; requestId?: string }
   | { type: 'restore_session'; agentId: string; requestId?: string }
   | { type: 'delete_session'; agentId: string; requestId?: string }
