@@ -708,7 +708,7 @@ describe('SwarmManager', () => {
         profileId: 'manager',
         sessionCwd: expect.stringContaining('swarm-manager-test-'),
       })
-      expect(options.currentSystemPrompt).toContain('Every user-facing message MUST go through `speak_to_user`.')
+      expect(options.currentSystemPrompt).toContain('Never use plain assistant text for user communication.')
       expect(options.currentSystemPrompt).not.toContain('old release-notes override prompt')
     } finally {
       if (previousAnthropicApiKey === undefined) {
@@ -762,12 +762,16 @@ describe('SwarmManager', () => {
     const managerPrompt = manager.systemPromptByAgentId.get('manager')
     const managerMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
     expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
-    expect(managerPrompt).toContain('Every user-facing message MUST go through `speak_to_user`.')
+    expect(managerPrompt).toContain('Never use plain assistant text for user communication.')
     expect(managerPrompt).toContain('End users only see:')
-    expect(managerPrompt).toContain('Non-user/internal inbound messages may be prefixed with `SYSTEM:`.')
+    expect(managerPrompt).toContain('Messages prefixed `SYSTEM:` are internal context, not direct user requests.')
     expect(managerPrompt).toContain('Project agents in this profile — none configured.')
-    expect(managerPrompt).toContain('Workers do not receive this directory.')
+    expect(managerPrompt).toContain('Workers do not receive the project-agent directory.')
     expect(managerPrompt).toContain('[projectAgentContext] { ... }')
+    expect(managerPrompt).toContain('Treat new user messages as high-priority steering input')
+    expect(managerPrompt).toContain('do not rely on `present_choices` as the only response')
+    expect(managerPrompt).toContain('respond with `send_message_to_agent` to the source `fromAgentId`')
+    expect(managerPrompt).toContain('This does not require extra confirmation for direct replies to the user in the channel they used')
     expect(managerPrompt).toContain(managerMemoryPath)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Prompt Worker' })

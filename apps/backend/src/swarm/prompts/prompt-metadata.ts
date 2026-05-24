@@ -41,6 +41,14 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
       'Core instructions for all manager agents. Defines delegation protocol, communication rules, and safety constraints.',
     variables: [
       { name: 'SWARM_MEMORY_FILE', description: "Path to the agent's memory file" },
+      {
+        name: 'MODEL_SPECIFIC_INSTRUCTIONS',
+        description: 'Model-specific manager instructions injected from the model catalog.',
+      },
+      {
+        name: 'SPECIALIST_ROSTER',
+        description: 'Specialist roster block injected into manager prompts when specialists are enabled.',
+      },
     ],
   },
   {
