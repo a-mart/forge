@@ -1,4 +1,6 @@
 import type {
+  ActivateRepoProjectAgentRequest,
+  ActivateRepoProjectAgentResponse,
   ProjectResourceMutationResponse,
   ProjectResourcesSnapshotResponse,
   ProjectResourceTrustRequest,
@@ -30,6 +32,17 @@ export function updateProjectResourcesTrust(
 ): Promise<ProjectResourceMutationResponse> {
   return apiClient.fetchJson<ProjectResourceMutationResponse>('/api/settings/project-resources/trust', {
     method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+}
+
+export function activateRepoProjectAgent(
+  apiClient: SettingsApiClient,
+  params: ActivateRepoProjectAgentRequest,
+): Promise<ActivateRepoProjectAgentResponse> {
+  return apiClient.fetchJson<ActivateRepoProjectAgentResponse>('/api/settings/project-resources/project-agents/activate', {
+    method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(params),
   })

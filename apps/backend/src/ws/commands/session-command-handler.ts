@@ -444,6 +444,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         config: result.config,
         systemPrompt: result.systemPrompt,
         references: result.references,
+        ...(result.source ? { source: result.source } : {}),
         requestId: command.requestId
       });
     } catch (error) {

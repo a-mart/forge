@@ -23,9 +23,9 @@ function cloneCliSessionMetadata(descriptor: AgentDescriptor): AgentDescriptor["
     : undefined;
 }
 
-function cloneProjectAgent(
+export function cloneProjectAgent(
   projectAgent: AgentDescriptor["projectAgent"],
-  options: { includeSystemPrompt: boolean }
+  options: { includeSystemPrompt: boolean; includeSource: boolean; includePublicSourceKind: boolean }
 ): AgentDescriptor["projectAgent"] {
   if (!projectAgent) {
     return undefined;
@@ -38,7 +38,11 @@ function cloneProjectAgent(
       ? { systemPrompt: projectAgent.systemPrompt }
       : {}),
     ...(projectAgent.creatorSessionId !== undefined ? { creatorSessionId: projectAgent.creatorSessionId } : {}),
-    ...(projectAgent.capabilities !== undefined ? { capabilities: [...projectAgent.capabilities] } : {})
+    ...(projectAgent.capabilities !== undefined ? { capabilities: [...projectAgent.capabilities] } : {}),
+    ...(options.includePublicSourceKind && projectAgent.source?.type !== undefined
+      ? { sourceKind: projectAgent.source.type }
+      : {}),
+    ...(options.includeSource && projectAgent.source !== undefined ? { source: { ...projectAgent.source } } : {})
   };
 }
 
@@ -51,7 +55,11 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
       thinkingLevel: descriptor.model.thinkingLevel
     },
     contextUsage: cloneContextUsage(descriptor),
-    projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: true }),
+    projectAgent: cloneProjectAgent(descriptor.projectAgent, {
+      includeSystemPrompt: true,
+      includeSource: true,
+      includePublicSourceKind: false
+    }),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
     cli: cloneCliSessionMetadata(descriptor),
     ...(descriptor.agentCreatorResult !== undefined
@@ -66,10 +74,18 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
   };
 }
 
+export function cloneProjectAgentForPublic(projectAgent: AgentDescriptor["projectAgent"]): AgentDescriptor["projectAgent"] {
+  return cloneProjectAgent(projectAgent, {
+    includeSystemPrompt: false,
+    includeSource: false,
+    includePublicSourceKind: true
+  });
+}
+
 export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...cloneDescriptorForPersistence(descriptor),
-    projectAgent: cloneProjectAgent(descriptor.projectAgent, { includeSystemPrompt: false })
+    projectAgent: cloneProjectAgentForPublic(descriptor.projectAgent)
   };
 }
 

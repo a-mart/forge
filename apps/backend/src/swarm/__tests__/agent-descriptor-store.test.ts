@@ -154,7 +154,7 @@ describe("AgentDescriptorStore", () => {
     expect(persisted.profiles.map((item) => item.profileId)).toEqual(["configured", "a", "z"]);
   });
 
-  it("keeps public and persisted project-agent prompt projections distinct", async () => {
+  it("keeps public and persisted project-agent prompt/source projections distinct", async () => {
     const config = await makeTempConfig();
     const projectAgentDescriptor = descriptor(config, {
       projectAgent: {
@@ -162,7 +162,14 @@ describe("AgentDescriptorStore", () => {
         whenToUse: "Maintain docs.",
         systemPrompt: "Private project-agent prompt mirror.",
         creatorSessionId: "creator",
-        capabilities: ["create_session"]
+        capabilities: ["create_session"],
+        source: {
+          type: "repo",
+          workspaceKey: "workspace-a",
+          forgeDirRealpath: "/repo/.forge",
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
       }
     });
     const store = createStore(config);
@@ -172,14 +179,35 @@ describe("AgentDescriptorStore", () => {
       handle: "docs",
       whenToUse: "Maintain docs.",
       creatorSessionId: "creator",
-      capabilities: ["create_session"]
+      capabilities: ["create_session"],
+      sourceKind: "repo"
     });
     expect(store.snapshot().agents[0]?.projectAgent).not.toHaveProperty("systemPrompt");
+    expect(store.snapshot().agents[0]?.projectAgent).not.toHaveProperty("source");
+    expect(store.snapshot().agents[0]?.projectAgent?.sourceKind).toBe("repo");
+    const publicProjectAgentJson = JSON.stringify(store.snapshot().agents[0]?.projectAgent);
+    expect(publicProjectAgentJson).not.toContain("workspace-a");
+    expect(publicProjectAgentJson).not.toContain("/repo/.forge");
+    expect(publicProjectAgentJson).not.toContain("activatedAt");
     expect(store.getForPersistence("manager")?.projectAgent?.systemPrompt).toBe("Private project-agent prompt mirror.");
+    expect(store.getForPersistence("manager")?.projectAgent?.source).toEqual({
+      type: "repo",
+      workspaceKey: "workspace-a",
+      forgeDirRealpath: "/repo/.forge",
+      definitionId: "docs",
+      activatedAt: "2026-04-03T00:00:00.000Z"
+    });
 
     await store.save();
     const persisted = JSON.parse(await readFile(config.paths.agentsStoreFile, "utf8")) as { agents: AgentDescriptor[] };
     expect(persisted.agents[0]?.projectAgent?.systemPrompt).toBe("Private project-agent prompt mirror.");
+    expect(persisted.agents[0]?.projectAgent?.source).toEqual({
+      type: "repo",
+      workspaceKey: "workspace-a",
+      forgeDirRealpath: "/repo/.forge",
+      definitionId: "docs",
+      activatedAt: "2026-04-03T00:00:00.000Z"
+    });
   });
 
   it("rolls back in-memory changes when a transaction callback throws", async () => {

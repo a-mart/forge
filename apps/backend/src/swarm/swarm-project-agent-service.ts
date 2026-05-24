@@ -1,6 +1,14 @@
-import type { PersistedProjectAgentConfig, ProjectAgentCapability } from "@forge/protocol";
 import {
+  isRepoProjectAgentSource,
+  type PersistedProjectAgentConfig,
+  type ProjectAgentCapability,
+  type ProjectAgentConfigSourceSnapshot,
+  type RepoProjectAgentSourceIdentity
+} from "@forge/protocol";
+import {
+  backupProjectAgentRecordForRepoLink,
   deleteProjectAgentRecord,
+  restoreProjectAgentRecordBackupForRepoLink,
   writeProjectAgentRecord
 } from "./project-agent-storage.js";
 import {
@@ -16,6 +24,7 @@ import {
 } from "./agents/project-agents.js";
 import { ProjectAgentRegistry } from "./agents/project-agent-registry.js";
 import { ProjectAgentSettingsSnapshotReader } from "./agents/project-agent-settings-snapshot.js";
+import { resolveRepoProjectAgentSource } from "./agents/repo-project-agent-source.js";
 import {
   deleteProjectAgentReferenceDoc,
   listProjectAgentReferenceDocs,
@@ -25,6 +34,7 @@ import {
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import { cloneProjectAgentInfoValue } from "./swarm-manager-utils.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
+import type { ParsedRepoProjectAgentDefinition } from "./repo-project-agent-definitions.js";
 
 export interface SwarmProjectAgentServiceOptions {
   dataDir: string;
@@ -238,6 +248,163 @@ export class SwarmProjectAgentService {
     };
   }
 
+  async activateRepoProjectAgent(params: {
+    profileId: string;
+    sourceSessionAgentId: string;
+    mode: "create" | "link";
+    definition: ParsedRepoProjectAgentDefinition;
+    source: RepoProjectAgentSourceIdentity;
+    targetAgentId?: string;
+    applyRecommendedModel?: boolean;
+    approvedCapabilities?: ProjectAgentCapability[];
+    explicitBindToSourceWorkspace?: boolean;
+    resolveSessionWorkspaceSource?: (descriptor: AgentDescriptor & { role: "manager" }) => Promise<{ workspaceKey: string; forgeDirRealpath?: string }>;
+  }): Promise<{ profileId: string; agentId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> }> {
+    const handle = normalizeProjectAgentHandle(params.definition.config.handle);
+    if (!handle || handle !== params.definition.config.handle) {
+      throw new Error("Repository project-agent definition handle is invalid");
+    }
+    const whenToUse = normalizeProjectAgentInlineText(params.definition.config.whenToUse);
+    if (!whenToUse) {
+      throw new Error("Repository project-agent definition whenToUse must be non-empty");
+    }
+
+    const approvedCapabilities = normalizeApprovedCapabilities(
+      params.definition.config.capabilities ?? [],
+      params.approvedCapabilities ?? []
+    );
+    const projectAgent: NonNullable<AgentDescriptor["projectAgent"]> = {
+      handle,
+      whenToUse,
+      ...(approvedCapabilities.length > 0 ? { capabilities: approvedCapabilities } : {}),
+      source: params.source
+    };
+
+    const existing = this.registry.findByHandle(params.profileId, handle);
+    if (params.mode === "create") {
+      if (existing) {
+        throw new Error(getProjectAgentHandleCollisionError(handle));
+      }
+      await this.assertProjectAgentHandleAvailable(params.profileId, handle);
+      const prepared = this.options.prepareSessionCreation(params.profileId, {
+        name: params.definition.config.displayName ?? handle,
+        label: params.definition.config.displayName ?? handle
+      });
+      const sessionDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
+      sessionDescriptor.projectAgent = projectAgent;
+      if (params.applyRecommendedModel && params.definition.config.model) {
+        sessionDescriptor.model = { ...params.definition.config.model };
+        sessionDescriptor.modelOrigin = "session_override";
+      }
+
+      let provisioned = false;
+      try {
+        await this.options.provisioner.provisionSession({
+          descriptor: sessionDescriptor,
+          initializeRuntime: async () => {
+            const runtime = await this.options.getOrCreateRuntimeForDescriptor(sessionDescriptor);
+            sessionDescriptor.contextUsage = runtime.getContextUsage();
+          }
+        });
+        provisioned = true;
+        await this.options.saveStore();
+      } catch (error) {
+        if (provisioned) {
+          await this.options.provisioner.rollbackCreatedSession(sessionDescriptor);
+          await this.options.saveStore().catch((rollbackSaveError) => {
+            this.options.logDebug("repo_project_agent:create:rollback_save_error", {
+              agentId: sessionDescriptor.agentId,
+              handle,
+              message: rollbackSaveError instanceof Error ? rollbackSaveError.message : String(rollbackSaveError)
+            });
+          });
+        }
+        throw error;
+      }
+      this.options.emitSessionLifecycle({
+        action: "created",
+        sessionAgentId: sessionDescriptor.agentId,
+        profileId: params.profileId,
+        label: sessionDescriptor.sessionLabel
+      });
+      this.options.emitAgentsSnapshot();
+      this.options.emitProfilesSnapshot();
+      this.options.emitSessionProjectAgentUpdated(sessionDescriptor.agentId, params.profileId, sessionDescriptor.projectAgent ?? null);
+      await this.options.notifyProjectAgentsChanged(params.profileId);
+      return { profileId: params.profileId, agentId: sessionDescriptor.agentId, projectAgent };
+    }
+
+    if (params.applyRecommendedModel) {
+      throw new Error("applyRecommendedModel is not supported when linking a repository project agent; create a new session or change the model separately.");
+    }
+
+    const targetAgentId = params.targetAgentId ?? existing?.agentId;
+    if (!targetAgentId) {
+      throw new Error("targetAgentId is required when linking a repository project agent");
+    }
+    const descriptor = this.options.getRequiredSessionDescriptor(targetAgentId);
+    this.options.assertSessionSupportsProjectAgent(descriptor);
+    if (descriptor.profileId !== params.profileId) {
+      throw new Error("Target session does not belong to the requested profile");
+    }
+    if (existing && existing.agentId !== descriptor.agentId) {
+      throw new Error(getProjectAgentHandleCollisionError(handle));
+    }
+    if (descriptor.projectAgent?.handle && normalizeProjectAgentHandle(descriptor.projectAgent.handle) !== handle) {
+      throw new Error(getProjectAgentHandleCollisionError(handle));
+    }
+
+    await this.assertLinkWorkspaceAllowed(descriptor, params);
+    const previousDescriptor = structuredClone(descriptor);
+    const backupPath = await backupProjectAgentRecordForRepoLink(
+      this.options.dataDir,
+      params.profileId,
+      descriptor.agentId,
+      handle,
+      params.source.activatedAt
+    );
+
+    descriptor.projectAgent = projectAgent;
+    if (params.applyRecommendedModel && params.definition.config.model) {
+      this.options.logDebug("repo_project_agent:link:recommended_model_deferred", {
+        agentId: descriptor.agentId,
+        handle,
+        provider: params.definition.config.model.provider,
+        modelId: params.definition.config.model.modelId
+      });
+    }
+    this.options.upsertDescriptorInLiveMaps(descriptor);
+    try {
+      await this.options.saveStore();
+    } catch (error) {
+      this.options.upsertDescriptorInLiveMaps(previousDescriptor);
+      await restoreProjectAgentRecordBackupForRepoLink(this.options.dataDir, params.profileId, handle, backupPath).catch((restoreError) => {
+        this.options.logDebug("repo_project_agent:link:rollback_restore_error", {
+          agentId: descriptor.agentId,
+          handle,
+          message: restoreError instanceof Error ? restoreError.message : String(restoreError)
+        });
+      });
+      await this.options.saveStore().catch((rollbackSaveError) => {
+        this.options.logDebug("repo_project_agent:link:rollback_save_error", {
+          agentId: descriptor.agentId,
+          handle,
+          message: rollbackSaveError instanceof Error ? rollbackSaveError.message : String(rollbackSaveError)
+        });
+      });
+      throw error;
+    }
+    await this.options.captureSessionRuntimePromptMeta(descriptor).catch((error) => {
+      console.warn(
+        `[swarm] repo-project-agent:prompt_meta_sync_failed agentId=${descriptor.agentId} profile=${params.profileId} error=${error instanceof Error ? error.message : String(error)}`
+      );
+    });
+    this.options.emitAgentsSnapshot();
+    this.options.emitSessionProjectAgentUpdated(descriptor.agentId, params.profileId, descriptor.projectAgent ?? null);
+    await this.options.notifyProjectAgentsChanged(params.profileId);
+    return { profileId: params.profileId, agentId: descriptor.agentId, projectAgent };
+  }
+
   async setSessionProjectAgent(
     agentId: string,
     projectAgent:
@@ -296,6 +463,7 @@ export class SwarmProjectAgentService {
     config: PersistedProjectAgentConfig;
     systemPrompt: string | null;
     references: string[];
+    source?: ProjectAgentConfigSourceSnapshot;
   }> {
     return this.settingsSnapshotReader.read(agentId);
   }
@@ -306,6 +474,19 @@ export class SwarmProjectAgentService {
   }
 
   async getProjectAgentReference(agentId: string, fileName: string): Promise<string> {
+    const scope = this.registry.assertReferenceScope(agentId);
+    if (isRepoProjectAgentSource(scope.descriptor.projectAgent.source)) {
+      const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.dataDir });
+      if (resolution.source.status !== "valid" || !resolution.definition) {
+        throw new Error(`Reference document ${fileName} is unavailable because the repository project-agent source is ${resolution.source.status}`);
+      }
+      const doc = resolution.definition.referenceDocs.find((candidate) => candidate.path === fileName);
+      if (!doc) {
+        throw new Error(`Reference document ${fileName} does not exist`);
+      }
+      return doc.content;
+    }
+
     const { profileId, handle } = await this.registry.assertOwnedReferenceScope(agentId);
     const content = await readProjectAgentReferenceDoc(this.options.dataDir, profileId, handle, fileName);
     if (content === null) {
@@ -334,6 +515,43 @@ export class SwarmProjectAgentService {
     return mutation.flags;
   }
 
+  private async assertLinkWorkspaceAllowed(
+    descriptor: ProvisionedSessionDescriptor,
+    params: {
+      source: RepoProjectAgentSourceIdentity;
+      explicitBindToSourceWorkspace?: boolean;
+      resolveSessionWorkspaceSource?: (descriptor: AgentDescriptor & { role: "manager" }) => Promise<{ workspaceKey: string; forgeDirRealpath?: string }>;
+    }
+  ): Promise<void> {
+    const existingSource = descriptor.projectAgent?.source;
+    if (existingSource?.type === "repo") {
+      if (
+        existingSource.workspaceKey === params.source.workspaceKey &&
+        existingSource.forgeDirRealpath === params.source.forgeDirRealpath &&
+        existingSource.definitionId === params.source.definitionId
+      ) {
+        return;
+      }
+      throw new Error("Target session is already bound to a different repository project-agent source");
+    }
+
+    if (params.resolveSessionWorkspaceSource) {
+      const targetWorkspace = await params.resolveSessionWorkspaceSource(descriptor);
+      if (
+        targetWorkspace.workspaceKey === params.source.workspaceKey &&
+        targetWorkspace.forgeDirRealpath === params.source.forgeDirRealpath
+      ) {
+        return;
+      }
+    }
+
+    if (params.explicitBindToSourceWorkspace) {
+      throw new Error("Binding a repository Project Agent to a session from a different workspace is not supported yet. Link a session from the same workspace or create a new backing session.");
+    }
+
+    throw new Error("Target session workspace does not match the repository project-agent source.");
+  }
+
   private async assertProjectAgentHandleAvailable(profileId: string, handle: string, ownerAgentId?: string): Promise<void> {
     const descriptorCollision = this.registry.findByHandle(profileId, handle);
     if (descriptorCollision && descriptorCollision.agentId !== ownerAgentId) {
@@ -344,4 +562,23 @@ export class SwarmProjectAgentService {
       throw new Error(getProjectAgentHandleCollisionError(handle));
     }
   }
+}
+
+function normalizeApprovedCapabilities(
+  requested: ProjectAgentCapability[],
+  approved: ProjectAgentCapability[]
+): ProjectAgentCapability[] {
+  const requestedSet = new Set(requested);
+  const approvedSet = new Set(approved);
+  for (const capability of approvedSet) {
+    if (!requestedSet.has(capability)) {
+      throw new Error(`Capability ${capability} was not requested by the repository project-agent definition`);
+    }
+  }
+  for (const capability of requestedSet) {
+    if (!approvedSet.has(capability)) {
+      throw new Error(`Capability ${capability} must be approved before activating this repository project agent`);
+    }
+  }
+  return Array.from(approvedSet).sort();
 }

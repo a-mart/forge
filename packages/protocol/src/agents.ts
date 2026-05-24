@@ -40,13 +40,61 @@ export interface AgentContextUsage {
 export const PROJECT_AGENT_CAPABILITIES = ['create_session'] as const
 export type ProjectAgentCapability = (typeof PROJECT_AGENT_CAPABILITIES)[number]
 
+export const PROJECT_AGENT_SOURCE_TYPES = ['local', 'repo'] as const
+export type ProjectAgentSourceType = (typeof PROJECT_AGENT_SOURCE_TYPES)[number]
+
+export const PROJECT_AGENT_SOURCE_STATUSES = [
+  'local',
+  'valid',
+  'missing',
+  'invalid',
+  'conflict',
+  'wrong_workspace',
+  'unavailable',
+] as const
+export type ProjectAgentSourceStatus = (typeof PROJECT_AGENT_SOURCE_STATUSES)[number]
+
+export interface ProjectAgentSourceProblem {
+  code: string
+  message: string
+  path?: string
+}
+
+export interface LocalProjectAgentSourceIdentity {
+  type: 'local'
+}
+
+export interface RepoProjectAgentSourceIdentity {
+  type: 'repo'
+  workspaceKey: string
+  forgeDirRealpath: string
+  definitionId: string
+  activatedAt: string
+  /** Signature of the activated repo definition. Used to detect live prompt/reference drift. */
+  signature?: string
+}
+
+export type ProjectAgentSourceIdentity = LocalProjectAgentSourceIdentity | RepoProjectAgentSourceIdentity
+
+export type ProjectAgentSourceKind = ProjectAgentSourceIdentity['type']
+
 export interface ProjectAgentInfo {
   handle: string
   whenToUse: string
-  /** @deprecated Use PersistedProjectAgentConfig + prompt.md-backed storage instead. */
+  /** @deprecated Use PersistedProjectAgentConfig + prompt.md-backed storage instead. Local-source only. */
   systemPrompt?: string
   creatorSessionId?: string
   capabilities?: ProjectAgentCapability[]
+  /** Public non-sensitive source marker for snapshots/bootstrap payloads. */
+  sourceKind?: ProjectAgentSourceKind
+  /** Durable source identity only. Computed source status belongs in snapshots/inventory/preflight DTOs. */
+  source?: ProjectAgentSourceIdentity
+}
+
+export function isRepoProjectAgentSource(
+  source: ProjectAgentSourceIdentity | undefined,
+): source is RepoProjectAgentSourceIdentity {
+  return source?.type === 'repo'
 }
 
 export interface PersistedProjectAgentConfig {

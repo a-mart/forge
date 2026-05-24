@@ -1,5 +1,5 @@
 import type { WsRequestTracker } from '../ws-request-tracker'
-import type { AgentDescriptor, PersistedProjectAgentConfig, ProjectAgentInfo, SessionMemoryMergeResult } from '@forge/protocol'
+import type { AgentDescriptor, PersistedProjectAgentConfig, ProjectAgentConfigSourceSnapshot, ProjectAgentInfo, SessionMemoryMergeResult } from '@forge/protocol'
 import type { ManagerWsState } from '../ws-state'
 
 export interface DirectoriesListedResult {
@@ -37,6 +37,7 @@ export type ProjectAgentConfigResult = {
   config: PersistedProjectAgentConfig
   systemPrompt: string | null
   references: string[]
+  source?: ProjectAgentConfigSourceSnapshot
 }
 
 export type ProjectAgentReferencesResult = { agentId: string; references: string[] }

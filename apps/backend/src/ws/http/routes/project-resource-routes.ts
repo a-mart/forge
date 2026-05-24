@@ -1,6 +1,8 @@
 import { lstat, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join, relative, resolve } from "node:path";
 import type {
+  ActivateRepoProjectAgentRequest,
+  ActivateRepoProjectAgentResponse,
   ProjectResourceExecutableSurface,
   ProjectResourceInventorySection,
   ProjectResourceMutationResponse,
@@ -9,8 +11,10 @@ import type {
   ProjectResourceSeedRequest,
   ProjectResourceTrustRequest
 } from "@forge/protocol";
+import { scanRepoProjectAgentDefinitions } from "../../../swarm/repo-project-agent-definitions.js";
 import { ProjectResourceSettingsStore } from "../../../swarm/project-resource-settings.js";
 import { ProjectWorkspaceResolver, type ProjectWorkspaceResolution } from "../../../swarm/project-workspace-resolver.js";
+import { cloneProjectAgentInfoValue } from "../../../swarm/swarm-manager-utils.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import type { AgentDescriptor } from "../../../swarm/types.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
@@ -20,6 +24,7 @@ const PROJECT_RESOURCES_ENDPOINT_PATH = "/api/settings/project-resources";
 const PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH = "/api/settings/project-resources/override";
 const PROJECT_RESOURCES_TRUST_ENDPOINT_PATH = "/api/settings/project-resources/trust";
 const PROJECT_RESOURCES_SEED_ENDPOINT_PATH = "/api/settings/project-resources/seed";
+const PROJECT_RESOURCES_PROJECT_AGENT_ACTIVATE_ENDPOINT_PATH = "/api/settings/project-resources/project-agents/activate";
 const PROJECT_RESOURCES_METHODS = "GET, PUT, POST, OPTIONS";
 const MAX_INVENTORY_ITEMS = 50;
 const MAX_INVENTORY_ENTRIES = 1000;
@@ -37,7 +42,8 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
         pathname === PROJECT_RESOURCES_ENDPOINT_PATH ||
         pathname === PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH ||
         pathname === PROJECT_RESOURCES_TRUST_ENDPOINT_PATH ||
-        pathname === PROJECT_RESOURCES_SEED_ENDPOINT_PATH,
+        pathname === PROJECT_RESOURCES_SEED_ENDPOINT_PATH ||
+        pathname === PROJECT_RESOURCES_PROJECT_AGENT_ACTIVATE_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
         try {
           if (request.method === "OPTIONS") {
@@ -50,7 +56,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
           const pathname = requestUrl.pathname;
           if (pathname === PROJECT_RESOURCES_ENDPOINT_PATH && request.method === "GET") {
             const context = resolveContextFromQuery(swarmManager, requestUrl);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, snapshot as unknown as Record<string, unknown>);
             return;
@@ -74,7 +80,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             }
             await settingsStore.setOverride(before.workspaceKey, forgeDir);
             await swarmManager.applyProjectResourceWorkspaceChange(before.workspaceKey);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -91,8 +97,24 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
             }
             await settingsStore.setTrust(resolution.trust.key, body.action);
             await swarmManager.applyProjectResourceTrustChange(resolution.trust.key);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
+            applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
+            sendJson(response, 200, payload as unknown as Record<string, unknown>);
+            return;
+          }
+
+          if (pathname === PROJECT_RESOURCES_PROJECT_AGENT_ACTIVATE_ENDPOINT_PATH && request.method === "POST") {
+            const body = parseActivateRepoProjectAgentRequest(await readJsonBody(request));
+            const result = await swarmManager.activateRepoProjectAgent(body);
+            const context = resolveContextFromBody(swarmManager, body);
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
+            const payload: ActivateRepoProjectAgentResponse = {
+              success: true,
+              snapshot,
+              agentId: result.agentId,
+              projectAgent: cloneProjectAgentInfoValue(result.projectAgent) ?? result.projectAgent
+            };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
             return;
@@ -107,7 +129,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
               return;
             }
             await seedProjectForgeScaffold(before);
-            const snapshot = await buildSnapshot({ resolver, settingsStore, context });
+            const snapshot = await buildSnapshot({ resolver, settingsStore, swarmManager, context });
             const payload: ProjectResourceMutationResponse = { success: true, snapshot };
             applyCorsHeaders(request, response, PROJECT_RESOURCES_METHODS);
             sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -127,6 +149,7 @@ export function createProjectResourceRoutes(options: { swarmManager: SwarmManage
 async function buildSnapshot(options: {
   resolver: ProjectWorkspaceResolver;
   settingsStore: ProjectResourceSettingsStore;
+  swarmManager: SwarmManager;
   context: { profileId: string; sessionAgentId: string; cwd: string };
 }): Promise<ProjectResourcesSnapshotResponse> {
   const resolution = await options.resolver.resolve(options.context);
@@ -150,7 +173,7 @@ async function buildSnapshot(options: {
     signature: resolution.signature,
     ...(dismissedPrompt ? { dismissedPrompt } : {}),
     scaffold: await buildScaffoldState(resolution),
-    resources: await buildResourceInventory(resolution),
+    resources: await buildResourceInventory(resolution, options.swarmManager),
     executableSurfaces: await buildExecutableSurfaces(resolution)
   };
 }
@@ -166,6 +189,7 @@ async function buildScaffoldState(resolution: ProjectWorkspaceResolution): Promi
     { label: ".forge/skills/", path: join(targetDir, "skills"), kind: "directory" as const },
     { label: ".forge/specialists/", path: join(targetDir, "specialists"), kind: "directory" as const },
     { label: ".forge/reference/", path: join(targetDir, "reference"), kind: "directory" as const },
+    { label: ".forge/project-agents/", path: join(targetDir, "project-agents"), kind: "directory" as const },
     { label: ".forge/extensions/", path: join(targetDir, "extensions"), kind: "directory" as const },
     { label: ".forge/pi/extensions/", path: join(targetDir, "pi", "extensions"), kind: "directory" as const },
     { label: ".forge/pi/settings.json", path: join(targetDir, "pi", "settings.json"), kind: "file" as const }
@@ -192,16 +216,57 @@ async function scaffoldEntryExists(pathValue: string, kind: "directory" | "file"
   return kind === "directory" ? entry.isDirectory() : entry.isFile();
 }
 
-async function buildResourceInventory(resolution: ProjectWorkspaceResolution): Promise<ProjectResourcesSnapshotResponse["resources"]> {
+async function buildResourceInventory(
+  resolution: ProjectWorkspaceResolution,
+  swarmManager: SwarmManager
+): Promise<ProjectResourcesSnapshotResponse["resources"]> {
   const resources = resolution.repoRootResources;
+  const projectAgentInventory = await scanRepoProjectAgentDefinitions(resources.projectAgentsDir);
+  const activeProjectAgents = getActiveRepoProjectAgentsByDefinitionId(swarmManager, resolution.profileId, resolution.workspaceKey, resolution.effectiveForgeDirRealpath);
+  const projectAgents = {
+    ...(projectAgentInventory.path ? { path: projectAgentInventory.path } : {}),
+    exists: projectAgentInventory.exists,
+    count: projectAgentInventory.count,
+    items: projectAgentInventory.items.map((item) => ({
+      ...item,
+      ...(activeProjectAgents.get(item.definitionId) ? { activatedAgentId: activeProjectAgents.get(item.definitionId) } : {})
+    })),
+    ...(projectAgentInventory.truncated ? { truncated: projectAgentInventory.truncated } : {}),
+    ...(projectAgentInventory.problems ? { problems: projectAgentInventory.problems } : {})
+  };
   return {
     skills: await listDirectoryEntries(resources.skillsDir, { directoryWithFile: "SKILL.md" }),
     specialists: await listDirectoryEntries(resources.specialistsDir, { extension: ".md" }),
     reference: await listDirectoryEntries(resources.referenceDir, { extension: ".md", recursive: true, skipSymlinks: true }),
+    projectAgents,
     forgeExtensions: await listDirectoryEntries(resources.forgeExtensionsDir, { extension: [".ts", ".js"] }),
     piExtensions: await listDirectoryEntries(resources.piExtensionsDir, { extension: [".ts", ".js"] }),
     piSettings: await listSingleFile(resources.piSettingsPath)
   };
+}
+
+function getActiveRepoProjectAgentsByDefinitionId(
+  swarmManager: SwarmManager,
+  profileId: string,
+  workspaceKey: string,
+  forgeDirRealpath: string | undefined
+): Map<string, string> {
+  const active = new Map<string, string>();
+  if (!forgeDirRealpath) {
+    return active;
+  }
+
+  for (const agent of swarmManager.listAgentsForInternalUse()) {
+    const source = agent.role === "manager" && agent.profileId === profileId ? agent.projectAgent?.source : undefined;
+    if (
+      source?.type === "repo" &&
+      source.workspaceKey === workspaceKey &&
+      source.forgeDirRealpath === forgeDirRealpath
+    ) {
+      active.set(source.definitionId, agent.agentId);
+    }
+  }
+  return active;
 }
 
 async function buildExecutableSurfaces(resolution: ProjectWorkspaceResolution): Promise<ProjectResourceExecutableSurface[]> {
@@ -382,6 +447,40 @@ function parseTrustRequest(body: unknown): ProjectResourceTrustRequest {
   return { profileId: body.profileId, sessionAgentId: body.sessionAgentId, action: body.action };
 }
 
+function parseActivateRepoProjectAgentRequest(body: unknown): ActivateRepoProjectAgentRequest {
+  if (!isRecord(body) || typeof body.profileId !== "string" || typeof body.sessionAgentId !== "string") {
+    throw new Error("profileId and sessionAgentId are required.");
+  }
+  if (typeof body.definitionId !== "string" || body.definitionId.trim().length === 0) {
+    throw new Error("definitionId is required.");
+  }
+  if (body.mode !== "create" && body.mode !== "link") {
+    throw new Error("mode must be create or link.");
+  }
+  if (body.targetAgentId !== undefined && typeof body.targetAgentId !== "string") {
+    throw new Error("targetAgentId must be a string when provided.");
+  }
+  if (body.applyRecommendedModel !== undefined && typeof body.applyRecommendedModel !== "boolean") {
+    throw new Error("applyRecommendedModel must be a boolean when provided.");
+  }
+  if (body.explicitBindToSourceWorkspace !== undefined && typeof body.explicitBindToSourceWorkspace !== "boolean") {
+    throw new Error("explicitBindToSourceWorkspace must be a boolean when provided.");
+  }
+  if (body.approvedCapabilities !== undefined && !Array.isArray(body.approvedCapabilities)) {
+    throw new Error("approvedCapabilities must be an array when provided.");
+  }
+  return {
+    profileId: body.profileId,
+    sessionAgentId: body.sessionAgentId,
+    definitionId: body.definitionId.trim(),
+    mode: body.mode,
+    ...(body.targetAgentId !== undefined ? { targetAgentId: body.targetAgentId } : {}),
+    ...(body.applyRecommendedModel !== undefined ? { applyRecommendedModel: body.applyRecommendedModel } : {}),
+    ...(body.approvedCapabilities !== undefined ? { approvedCapabilities: body.approvedCapabilities as ActivateRepoProjectAgentRequest["approvedCapabilities"] } : {}),
+    ...(body.explicitBindToSourceWorkspace !== undefined ? { explicitBindToSourceWorkspace: body.explicitBindToSourceWorkspace } : {})
+  };
+}
+
 function parseSeedRequest(body: unknown): ProjectResourceSeedRequest {
   if (!isRecord(body) || typeof body.profileId !== "string" || typeof body.sessionAgentId !== "string") {
     throw new Error("profileId and sessionAgentId are required.");
@@ -396,6 +495,7 @@ async function seedProjectForgeScaffold(resolution: ProjectWorkspaceResolution):
     ensureDirectory(join(forgeDir, "skills")),
     ensureDirectory(join(forgeDir, "specialists")),
     ensureDirectory(join(forgeDir, "reference")),
+    ensureDirectory(join(forgeDir, "project-agents")),
     ensureDirectory(join(forgeDir, "extensions")),
     ensureDirectory(join(forgeDir, "pi")),
     ensureDirectory(join(forgeDir, "pi", "extensions"))
@@ -459,6 +559,7 @@ This directory contains shared, agent-facing resources for this repository.
 - \`skills/\`: project skills that agents can use as workflow instructions.
 - \`specialists/\`: project-specific specialist definitions.
 - \`reference/\`: passive markdown context and repository notes.
+- \`project-agents/\`: passive repository-managed Project Agent definitions. Each definition uses \`config.json\`, a required \`prompt.md\`, and optional flat \`reference/*.md\` files.
 - \`extensions/\`: Forge extensions. These are executable and require trust. If they rewrite shell commands, quote or escape injected output before it reaches \`bash\`; avoid building shell fragments such as \`; token ...\`.
 - \`pi/extensions/\` and \`pi/settings.json\`: Pi extensions and package config. These are executable and require trust. List repo Pi extensions/custom tools explicitly in \`pi/settings.json\` so trust-gated loading stays deterministic.
 - Keep executable smoke/test tools deterministic and harmless.

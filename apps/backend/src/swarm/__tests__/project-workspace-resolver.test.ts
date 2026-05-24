@@ -35,6 +35,7 @@ describe("ProjectWorkspaceResolver", () => {
     expect(result.effectiveForgeDirRealpath).toBe(join(rootRealpath, ".forge"));
     expect(result.source).toBe("git-root");
     expect(result.repoRootResources.skillsDir).toBe(join(rootRealpath, ".forge", "skills"));
+    expect(result.repoRootResources.projectAgentsDir).toBe(join(rootRealpath, ".forge", "project-agents"));
     expect(result.repoRootResources.forgeExtensionsDir).toBe(join(rootRealpath, ".forge", "extensions"));
     expect(result.repoRootResources.piExtensionsDir).toBe(join(rootRealpath, ".forge", "pi", "extensions"));
     expect(result.repoRootResources.piSettingsPath).toBe(join(rootRealpath, ".forge", "pi", "settings.json"));

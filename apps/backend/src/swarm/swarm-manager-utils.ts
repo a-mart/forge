@@ -25,6 +25,7 @@ import type {
   RuntimeImageAttachment,
   RuntimeUserMessage
 } from "./runtime-contracts.js";
+import { cloneDescriptorForPublic, cloneProjectAgentForPublic } from "./agents/descriptor-store/descriptor-clone.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -72,33 +73,6 @@ const WORKER_ERROR_SUMMARY_PATTERNS = [
   /^🚨\s*Context recovery failed\b/i,
 ];
 
-function cloneContextUsage(contextUsage: AgentContextUsage | undefined): AgentContextUsage | undefined {
-  if (!contextUsage) {
-    return undefined;
-  }
-
-  return {
-    tokens: contextUsage.tokens,
-    contextWindow: contextUsage.contextWindow,
-    percent: contextUsage.percent
-  };
-}
-
-function cloneCliSessionMetadata(cli: CliSessionMetadata | undefined): CliSessionMetadata | undefined {
-  if (!cli) {
-    return undefined;
-  }
-
-  return {
-    createdBy: cli.createdBy,
-    runId: cli.runId,
-    command: cli.command,
-    startedAt: cli.startedAt,
-    ...(cli.invocationCwd !== undefined ? { invocationCwd: cli.invocationCwd } : {}),
-    ...(cli.label !== undefined ? { label: cli.label } : {})
-  };
-}
-
 export function cloneProjectAgentInfoValue(
   projectAgent: AgentDescriptor["projectAgent"] | null | undefined
 ): AgentDescriptor["projectAgent"] | null | undefined {
@@ -106,21 +80,7 @@ export function cloneProjectAgentInfoValue(
     return projectAgent;
   }
 
-  return {
-    handle: projectAgent.handle,
-    whenToUse: projectAgent.whenToUse,
-    // systemPrompt intentionally omitted — fetched via get_project_agent_config
-    ...(projectAgent.creatorSessionId !== undefined
-      ? { creatorSessionId: projectAgent.creatorSessionId }
-      : {}),
-    ...(projectAgent.capabilities !== undefined
-      ? { capabilities: [...projectAgent.capabilities] }
-      : {})
-  };
-}
-
-function cloneProjectAgentInfo(descriptor: AgentDescriptor): AgentDescriptor["projectAgent"] {
-  return cloneProjectAgentInfoValue(descriptor.projectAgent) ?? undefined;
+  return cloneProjectAgentForPublic(projectAgent);
 }
 
 export function isCollabSession(
@@ -174,27 +134,7 @@ export function assertCollabSession(
 }
 
 export function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
-  return {
-    ...descriptor,
-    model: {
-      provider: descriptor.model.provider,
-      modelId: descriptor.model.modelId,
-      thinkingLevel: descriptor.model.thinkingLevel
-    },
-    contextUsage: cloneContextUsage(descriptor.contextUsage),
-    projectAgent: cloneProjectAgentInfo(descriptor),
-    collab: descriptor.collab ? { ...descriptor.collab } : undefined,
-    cli: cloneCliSessionMetadata(descriptor.cli),
-    ...(descriptor.agentCreatorResult !== undefined
-      ? {
-          agentCreatorResult: {
-            createdAgentId: descriptor.agentCreatorResult.createdAgentId,
-            createdHandle: descriptor.agentCreatorResult.createdHandle,
-            createdAt: descriptor.agentCreatorResult.createdAt
-          }
-        }
-      : {})
-  };
+  return cloneDescriptorForPublic(descriptor);
 }
 
 export function normalizeContextUsage(contextUsage: AgentContextUsage | undefined): AgentContextUsage | undefined {

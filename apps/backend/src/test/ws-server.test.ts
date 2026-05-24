@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -3190,6 +3191,88 @@ describe('SwarmWebSocketServer', () => {
         agentId: sessionAgent.agentId,
         handle: 'release-notes',
         whenToUse: 'Draft release notes and changelog copy.',
+      })
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns repo source unavailable payload from get_project_agent_config', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Docs' })
+    const forgeDir = join(config.defaultCwd, '.forge')
+    await mkdir(forgeDir, { recursive: true })
+    const workspaceRealpath = await realpath(config.defaultCwd)
+    const forgeDirRealpath = await realpath(forgeDir)
+    const source = {
+      type: 'repo' as const,
+      workspaceKey: `manager::${workspaceRealpath}`,
+      forgeDirRealpath,
+      definitionId: 'docs',
+      activatedAt: '2026-04-03T00:00:00.000Z',
+    }
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    state.descriptors.get(sessionAgent.agentId)!.projectAgent = {
+      handle: 'docs',
+      whenToUse: 'Maintain docs.',
+      source,
+    }
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(JSON.stringify({ type: 'get_project_agent_config', agentId: sessionAgent.agentId, requestId: 'repo-config' }))
+
+    const configEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'project_agent_config' && event.requestId === 'repo-config',
+    )
+
+    expect(configEvent.type).toBe('project_agent_config')
+    if (configEvent.type === 'project_agent_config') {
+      expect(configEvent.systemPrompt).toBeNull()
+      expect(configEvent.references).toEqual([])
+      expect(configEvent.config).toMatchObject({
+        version: 1,
+        agentId: sessionAgent.agentId,
+        handle: 'docs',
+        whenToUse: '',
+      })
+      expect(configEvent.source).toEqual({
+        type: 'repo',
+        status: 'missing',
+        problems: [
+          {
+            code: 'repo_project_agents_missing',
+            message: `Repository project-agent definitions directory is missing: ${join(forgeDirRealpath, 'project-agents')}`,
+            path: 'project-agents',
+          },
+        ],
+        ...source,
       })
     }
 

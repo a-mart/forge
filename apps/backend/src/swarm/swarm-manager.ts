@@ -5,7 +5,7 @@ import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:
 import { dirname, join } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
-import { isSystemProfile, type SpecialistTargetSpace } from "@forge/protocol";
+import { isRepoProjectAgentSource, isSystemProfile, type SpecialistTargetSpace } from "@forge/protocol";
 import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
@@ -32,7 +32,8 @@ import type {
   SkillImportResultResponse,
   SkillImportTarget,
   SkillInventoryEntry,
-  SkillShareResponse
+  SkillShareResponse,
+  ActivateRepoProjectAgentRequest
 } from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import {
@@ -167,6 +168,11 @@ import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
+import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
+import {
+  assertRepoProjectAgentSourceAvailable,
+  resolveRepoProjectAgentSource
+} from "./agents/repo-project-agent-source.js";
 import { SessionActiveToolsState } from "./session-active-tools.js";
 import {
   normalizeAllowlistRoots,
@@ -255,6 +261,7 @@ import type {
   SwarmModelPreset,
   SwarmReasoningLevel
 } from "./types.js";
+import { cloneDescriptorForPersistence } from "./agents/descriptor-store/descriptor-clone.js";
 import {
   assertBuilderSession,
   assertCollabSession,
@@ -1816,6 +1823,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
   }
 
+  listAgentsForInternalUse(): AgentDescriptor[] {
+    return this.sortedDescriptors().map((descriptor) => cloneDescriptorForPersistence(descriptor));
+  }
+
   isAgentEffectivelyArchived(agentId: string): boolean {
     const descriptor = this.descriptors.get(agentId);
     return descriptor ? this.isDescriptorEffectivelyArchived(descriptor) : false;
@@ -2837,6 +2848,85 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  async activateRepoProjectAgent(
+    request: ActivateRepoProjectAgentRequest
+  ): Promise<{ profileId: string; agentId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> }> {
+    const sourceDescriptor = this.getRequiredBuilderSessionDescriptor(
+      request.sessionAgentId,
+      "activate repository project agents"
+    );
+    this.assertDescriptorNotEffectivelyArchived(sourceDescriptor);
+    const profileId = sourceDescriptor.profileId ?? sourceDescriptor.agentId;
+    if (request.profileId !== profileId) {
+      throw new Error("Session does not belong to the requested profile.");
+    }
+
+    const settingsStore = new ProjectResourceSettingsStore(this.config.paths.dataDir);
+    const resolver = new ProjectWorkspaceResolver({ dataDir: this.config.paths.dataDir, settingsStore });
+    const resolution = await resolver.resolve({
+      profileId,
+      sessionAgentId: sourceDescriptor.agentId,
+      cwd: sourceDescriptor.cwd
+    });
+    if (resolution.warning) {
+      throw new Error(resolution.warning);
+    }
+    if (!resolution.effectiveForgeDirRealpath || !resolution.repoRootResources.projectAgentsDir) {
+      throw new Error("No repository project-agent definitions directory is available for this workspace.");
+    }
+
+    const inventory = await scanRepoProjectAgentDefinitions(resolution.repoRootResources.projectAgentsDir);
+    if (inventory.problems?.length) {
+      throw new Error(`Repository project-agent definitions are unavailable: ${inventory.problems.map((problem) => problem.message).join("; ")}`);
+    }
+    const item = inventory.items.find((candidate) => candidate.definitionId === request.definitionId);
+    if (!item) {
+      throw new Error(`Repository project-agent definition not found: ${request.definitionId}`);
+    }
+    if (item.status !== "valid") {
+      throw new Error(`Repository project-agent definition ${request.definitionId} is ${item.status}: ${item.problems.map((problem) => problem.message).join("; ")}`);
+    }
+    const definition = inventory.definitions.find((candidate) => candidate.definitionId === request.definitionId);
+    if (!definition) {
+      throw new Error(`Repository project-agent definition ${request.definitionId} is not activatable.`);
+    }
+
+    const result = await this.projectAgentService.activateRepoProjectAgent({
+      profileId,
+      sourceSessionAgentId: sourceDescriptor.agentId,
+      mode: request.mode,
+      definition,
+      source: {
+        type: "repo",
+        workspaceKey: resolution.workspaceKey,
+        forgeDirRealpath: resolution.effectiveForgeDirRealpath,
+        definitionId: definition.definitionId,
+        activatedAt: this.now(),
+        signature: definition.signature
+      },
+      ...(request.targetAgentId ? { targetAgentId: request.targetAgentId } : {}),
+      applyRecommendedModel: request.applyRecommendedModel,
+      approvedCapabilities: request.approvedCapabilities,
+      explicitBindToSourceWorkspace: request.explicitBindToSourceWorkspace,
+      resolveSessionWorkspaceSource: async (descriptor) => {
+        const targetResolution = await resolver.resolve({
+          profileId: descriptor.profileId ?? descriptor.agentId,
+          sessionAgentId: descriptor.agentId,
+          cwd: descriptor.cwd
+        });
+        return {
+          workspaceKey: targetResolution.workspaceKey,
+          ...(targetResolution.effectiveForgeDirRealpath ? { forgeDirRealpath: targetResolution.effectiveForgeDirRealpath } : {})
+        };
+      }
+    });
+
+    return {
+      ...result,
+      projectAgent: cloneProjectAgentInfoValue(result.projectAgent) as NonNullable<AgentDescriptor["projectAgent"]>
+    };
+  }
+
   async setSessionProjectAgent(
     agentId: string,
     projectAgent:
@@ -3155,10 +3245,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return cloneDescriptor(descriptor);
   }
 
+  getAgentForInternalUse(agentId: string): AgentDescriptor | undefined {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) {
+      return undefined;
+    }
+
+    return cloneDescriptorForPersistence(descriptor);
+  }
+
   async getProjectAgentConfig(agentId: string): Promise<{
     config: import("@forge/protocol").PersistedProjectAgentConfig;
     systemPrompt: string | null;
     references: string[];
+    source?: import("@forge/protocol").ProjectAgentConfigSourceSnapshot;
   }> {
     this.getRequiredBuilderSessionDescriptor(agentId, "inspect Builder project-agent settings");
     return this.projectAgentService.getProjectAgentConfig(agentId);
@@ -4272,6 +4372,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
     const target = this.resolveUserMessageTarget(options?.targetAgentId);
+    await this.preflightRepoProjectAgentRuntime(target);
 
     if (target.role === "manager" && attachments.length === 0) {
       const routedReviewRun = await this.maybeStartCortexReviewRunFromIncomingMessage(trimmed, target, sourceContext);
@@ -5751,7 +5852,79 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
     this.assertDescriptorNotEffectivelyArchived(descriptor);
+    await this.preflightRepoProjectAgentRuntime(descriptor);
     return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor);
+  }
+
+  private async preflightRepoProjectAgentRuntime(descriptor: AgentDescriptor): Promise<void> {
+    if (descriptor.role !== "manager" || !isRepoProjectAgentSource(descriptor.projectAgent?.source)) {
+      return;
+    }
+
+    const resolution = await resolveRepoProjectAgentSource({
+      descriptor: descriptor as AgentDescriptor & {
+        role: "manager";
+        profileId: string;
+        projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+      },
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      handle: descriptor.projectAgent.handle
+    }, { dataDir: this.config.paths.dataDir });
+    const definition = assertRepoProjectAgentSourceAvailable(resolution);
+    const currentSource = descriptor.projectAgent.source;
+    const signatureChanged = currentSource.signature !== definition.signature;
+    const whenToUseChanged = descriptor.projectAgent.whenToUse !== definition.config.whenToUse;
+
+    if (!signatureChanged && !whenToUseChanged) {
+      return;
+    }
+
+    const runtime = this.runtimes.get(descriptor.agentId);
+    if (runtime) {
+      const disposition = await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "prompt_mode_change");
+      if (disposition !== "recycled") {
+        throw new Error(
+          `Repository project-agent source ${currentSource.definitionId} changed while ${descriptor.agentId} has an active runtime. Wait for the current turn to finish before sending another message.`
+        );
+      }
+    }
+
+    descriptor.projectAgent = {
+      ...descriptor.projectAgent,
+      whenToUse: definition.config.whenToUse,
+      source: {
+        ...currentSource,
+        signature: definition.signature
+      }
+    };
+    descriptor.updatedAt = this.now();
+    this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+  }
+
+  async validateProjectAgentSourceForRead(agentId: string): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "manager" || !isRepoProjectAgentSource(descriptor.projectAgent?.source)) {
+      return;
+    }
+
+    await this.preflightRepoProjectAgentRuntime(descriptor);
+  }
+
+  async resolveAgentSystemPromptForRead(agentId: string): Promise<string | null> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      return null;
+    }
+
+    if (isRepoProjectAgentSource(descriptor.projectAgent?.source)) {
+      await this.preflightRepoProjectAgentRuntime(descriptor);
+      return this.resolveSystemPromptForDescriptor(descriptor);
+    }
+
+    const meta = await this.sessionMetaService.readSessionMetaForDescriptor(descriptor);
+    return meta?.resolvedSystemPrompt ?? null;
   }
 
   private assertProfileNotArchived(profileId: string): void {

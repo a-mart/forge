@@ -13,6 +13,11 @@ Project resources are resolved from the nearest Git root for the selected sessio
   skills/                  # Repository skills, file-backed skill directories
   specialists/             # Repository specialist markdown definitions
   reference/               # Repository reference docs inventoried in prompt and read on demand
+  project-agents/          # Repository Project Agent definitions
+    <definitionId>/
+      config.json          # handle, whenToUse, optional capabilities/model recommendation
+      prompt.md            # live system prompt for the activated Project Agent
+      reference/*.md       # optional read-only reference docs for that agent
   extensions/              # Forge-native executable extensions, trust-gated
   pi/
     extensions/            # Pi-native executable extensions, trust-gated
@@ -24,6 +29,20 @@ Passive resources are available without an executable trust grant:
 - `skills/` for repository skills.
 - `specialists/` for repository specialist definitions.
 - `reference/` for repository reference docs. They are inventoried in prompt assembly and read on demand, not injected as one full blob of context.
+- `project-agents/` for repository Project Agent definitions. Activating a definition creates or links a normal session, then stores only a source link in Forge data. The session/history stay local and are not written back to the repository.
+
+Repository Project Agent definition layout:
+
+```text
+<repo>/.forge/project-agents/<definitionId>/
+  config.json       # version: 1, handle, whenToUse, optional displayName/capabilities/model
+  prompt.md         # required system prompt, read live from the repo while the source is valid
+  reference/*.md    # optional per-agent reference docs, read-only in the UI
+```
+
+`prompt.md` and `reference/*.md` are live repo-backed inputs: changing them on a branch updates future prompt assembly after runtime refresh. `whenToUse` is read from `config.json` when the source is valid. Requested capabilities in `config.json` are approval-time only: Forge requires explicit approval during activation, stores the approved capability set on the session, and does not silently grant newly added capabilities from later repo edits. Re-activate or link again to change approved capabilities.
+
+If the source definition is missing, invalid, or points at a different workspace/branch, Forge keeps the backing session and history but marks the source unhealthy. Live read-only fields are unavailable rather than using stale descriptor text. Use the settings/sidebar action to **Deactivate repository Project Agent** / **Unlink from repository definition** to clear the session's repository Project Agent link without deleting the session, history, or repository files.
 
 Executable resources are blocked until trusted:
 

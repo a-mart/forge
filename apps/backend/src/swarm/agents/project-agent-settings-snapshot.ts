@@ -1,11 +1,16 @@
-import type { PersistedProjectAgentConfig } from "@forge/protocol";
+import { isRepoProjectAgentSource, type PersistedProjectAgentConfig, type ProjectAgentConfigSourceSnapshot } from "@forge/protocol";
 import { listProjectAgentReferenceDocs } from "../reference-docs.js";
 import { ProjectAgentRegistry } from "./project-agent-registry.js";
+import {
+  buildRepoProjectAgentConfigFromDefinition,
+  resolveRepoProjectAgentSource
+} from "./repo-project-agent-source.js";
 
 export interface ProjectAgentSettingsSnapshot {
   config: PersistedProjectAgentConfig;
   systemPrompt: string | null;
   references: string[];
+  source?: ProjectAgentConfigSourceSnapshot;
 }
 
 export interface ProjectAgentSettingsSnapshotReaderOptions {
@@ -19,6 +24,28 @@ export class ProjectAgentSettingsSnapshotReader {
 
   async read(agentId: string): Promise<ProjectAgentSettingsSnapshot> {
     const scope = this.options.registry.assertReferenceScope(agentId);
+    if (isRepoProjectAgentSource(scope.descriptor.projectAgent.source)) {
+      const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.dataDir });
+      if (resolution.source.status === "valid" && resolution.definition) {
+        return {
+          config: buildRepoProjectAgentConfigFromDefinition(scope, resolution.definition),
+          systemPrompt: resolution.definition.prompt,
+          references: resolution.definition.referenceDocs.map((doc) => doc.path),
+          source: resolution.source
+        };
+      }
+
+      return {
+        config: {
+          ...this.options.registry.buildFallbackConfig(scope, this.options.now?.()),
+          whenToUse: ""
+        },
+        systemPrompt: null,
+        references: [],
+        source: resolution.source
+      };
+    }
+
     const record = await this.options.registry.readRecord(scope.profileId, scope.handle);
 
     if (record?.config.agentId === agentId) {

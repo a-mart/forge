@@ -124,6 +124,60 @@ describe("project-agent mutation helpers", () => {
     });
   });
 
+  it("preserves source metadata when building project-agent info directly", () => {
+    const source = {
+      type: "repo" as const,
+      workspaceKey: "profile-a::/repo",
+      forgeDirRealpath: "/repo/.forge",
+      definitionId: "docs",
+      activatedAt: "2026-04-03T00:00:00.000Z"
+    };
+    const descriptor = makeDescriptor({
+      agentId: "docs",
+      projectAgent: { handle: "docs", whenToUse: "Docs", source }
+    });
+
+    expect(buildProjectAgentInfoForMutation({ descriptor, whenToUse: "Docs", handle: "docs" }).source).toEqual(source);
+  });
+
+  it("blocks repo-sourced edits but allows unlink without deleting local records", () => {
+    const descriptor = makeDescriptor({
+      agentId: "docs",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Docs",
+        source: {
+          type: "repo",
+          workspaceKey: "profile-a::/repo",
+          forgeDirRealpath: "/repo/.forge",
+          definitionId: "docs",
+          activatedAt: "2026-04-03T00:00:00.000Z"
+        }
+      }
+    });
+
+    expect(() =>
+      planSetSessionProjectAgentMutation({
+        descriptor,
+        projectAgent: { whenToUse: "Updated docs" },
+        updatedAt: "2026-04-04T00:00:00.000Z"
+      })
+    ).toThrow("Repository-managed project agents are read-only");
+    expect(
+      planSetSessionProjectAgentMutation({ descriptor, projectAgent: null, updatedAt: "2026-04-04T00:00:00.000Z" })
+    ).toEqual({
+      flags: {
+        directoryChanged: true,
+        promptChanged: false,
+        referenceChanged: false,
+        descriptorChanged: true,
+        recordChanged: true
+      },
+      nextProjectAgent: null,
+      configPlan: { kind: "none" }
+    });
+  });
+
   it("builds demote delete plans", () => {
     const descriptor = makeDescriptor({
       agentId: "docs",

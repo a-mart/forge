@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { PromptPreviewResponse, PromptPreviewSection, SpecialistTargetSpace } from "@forge/protocol";
+import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPreviewSection, type SpecialistTargetSpace } from "@forge/protocol";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
 import {
   getCommonKnowledgePath,
@@ -22,7 +22,12 @@ import {
   generateProjectAgentDirectoryBlock,
   getProjectAgentPublicName,
   listProjectAgents,
+  type ProjectAgentDirectoryEntry,
 } from "./project-agents.js";
+import {
+  assertRepoProjectAgentSourceAvailable,
+  resolveRepoProjectAgentSource
+} from "./agents/repo-project-agent-source.js";
 import { readProjectAgentRecord, type ProjectAgentOnDiskRecord } from "./project-agent-storage.js";
 import { listRepositoryReferenceDocs } from "./project-reference-docs.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
@@ -252,15 +257,7 @@ export class SwarmPromptService {
       ? specialistRegistry.generateRosterBlock(roster)
       : specialistRegistry.legacyModelRoutingGuidance;
     const projectAgentDirectoryBlock = generateProjectAgentDirectoryBlock(
-      listProjectAgents(this.options.descriptors.values(), profileId, {
-        excludeAgentId: descriptor.agentId,
-      }).map((entry) => ({
-        agentId: entry.agentId,
-        displayName: getProjectAgentPublicName(entry),
-        handle: entry.projectAgent.handle,
-        whenToUse: entry.projectAgent.whenToUse,
-        capabilities: entry.projectAgent.capabilities,
-      })),
+      await this.resolveProjectAgentDirectoryEntries(profileId, descriptor),
     );
     const createSessionCapabilityNote =
       descriptor.projectAgent?.capabilities?.includes("create_session")
@@ -269,30 +266,9 @@ export class SwarmPromptService {
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
 
-    const projectAgentRecord = await this.readOwnedProjectAgentRecord(descriptor, profileId);
-    if (projectAgentRecord) {
-      const refDocFiles = await listProjectAgentReferenceDocs(
-        this.options.config.paths.dataDir,
-        profileId,
-        projectAgentRecord.config.handle,
-      );
-      if (refDocFiles.length > 0) {
-        const refContents: string[] = [];
-        for (const fileName of refDocFiles) {
-          const content = await readProjectAgentReferenceDoc(
-            this.options.config.paths.dataDir,
-            profileId,
-            projectAgentRecord.config.handle,
-            fileName,
-          );
-          if (content) {
-            refContents.push(`## ${fileName}\n${content}`);
-          }
-        }
-        if (refContents.length > 0) {
-          prompt = `${prompt.trimEnd()}\n\n<agent_reference_docs>\n${refContents.join("\n\n")}\n</agent_reference_docs>`;
-        }
-      }
+    const projectAgentReferenceDocs = await this.resolveProjectAgentReferenceDocs(descriptor, profileId);
+    if (projectAgentReferenceDocs.length > 0) {
+      prompt = `${prompt.trimEnd()}\n\n<agent_reference_docs>\n${projectAgentReferenceDocs.map((doc) => `## ${doc.path}\n${doc.content}`).join("\n\n")}\n</agent_reference_docs>`;
     }
 
     // eslint-disable-next-line no-template-curly-in-string
@@ -341,6 +317,76 @@ export class SwarmPromptService {
     }
 
     return prompt;
+  }
+
+  private async resolveProjectAgentDirectoryEntries(
+    profileId: string,
+    requester: AgentDescriptor,
+  ): Promise<ProjectAgentDirectoryEntry[]> {
+    const entries: ProjectAgentDirectoryEntry[] = [];
+    for (const entry of listProjectAgents(this.options.descriptors.values(), profileId, {
+      excludeAgentId: requester.agentId,
+    })) {
+      if (isRepoProjectAgentSource(entry.projectAgent.source)) {
+        try {
+          const resolution = await resolveRepoProjectAgentSource({
+            descriptor: entry,
+            profileId,
+            handle: entry.projectAgent.handle,
+          }, { dataDir: this.options.config.paths.dataDir });
+          const definition = assertRepoProjectAgentSourceAvailable(resolution);
+          await this.assertRequesterWorkspaceMatchesRepoSource(requester, entry.projectAgent.source);
+          entries.push({
+            agentId: entry.agentId,
+            displayName: getProjectAgentPublicName(entry),
+            handle: definition.config.handle,
+            whenToUse: definition.config.whenToUse,
+            ...(entry.projectAgent.capabilities !== undefined ? { capabilities: entry.projectAgent.capabilities } : {}),
+          });
+        } catch (error) {
+          this.options.logDebug("project_agent:directory:exclude_unavailable_repo_source", {
+            requesterAgentId: requester.agentId,
+            agentId: entry.agentId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        continue;
+      }
+
+      entries.push({
+        agentId: entry.agentId,
+        displayName: getProjectAgentPublicName(entry),
+        handle: entry.projectAgent.handle,
+        whenToUse: entry.projectAgent.whenToUse,
+        ...(entry.projectAgent.capabilities !== undefined ? { capabilities: entry.projectAgent.capabilities } : {}),
+      });
+    }
+    return entries;
+  }
+
+  private async assertRequesterWorkspaceMatchesRepoSource(
+    requester: AgentDescriptor,
+    source: NonNullable<AgentDescriptor["projectAgent"]>["source"],
+  ): Promise<void> {
+    if (!isRepoProjectAgentSource(source)) {
+      return;
+    }
+    const resolution = await new ProjectWorkspaceResolver({
+      dataDir: this.options.config.paths.dataDir,
+      settingsStore: new ProjectResourceSettingsStore(this.options.config.paths.dataDir),
+    }).resolvePassive({
+      profileId: requester.profileId ?? requester.agentId,
+      sessionAgentId: requester.agentId,
+      cwd: requester.cwd,
+    });
+    if (
+      resolution.workspaceKey !== source.workspaceKey ||
+      resolution.effectiveForgeDirRealpath !== source.forgeDirRealpath
+    ) {
+      throw new Error(
+        `Requester workspace ${resolution.workspaceKey} does not match repository project-agent workspace ${source.workspaceKey}`,
+      );
+    }
   }
 
   async resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string> {
@@ -741,6 +787,17 @@ export class SwarmPromptService {
       };
     }
 
+    if (isRepoProjectAgentSource(descriptor.projectAgent.source)) {
+      const scope = this.buildProjectAgentReferenceScope(descriptor);
+      const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.config.paths.dataDir });
+      const definition = assertRepoProjectAgentSourceAvailable(resolution);
+      const prompt = definition.prompt.trim() || undefined;
+      return {
+        prompt,
+        sourcePath: prompt ? join(definition.dirPath, "prompt.md") : undefined,
+      };
+    }
+
     const profileId = descriptor.profileId ?? descriptor.agentId;
     const onDiskRecord = await this.readOwnedProjectAgentRecord(descriptor, profileId);
     if (onDiskRecord?.systemPrompt !== null && onDiskRecord?.systemPrompt !== undefined) {
@@ -764,11 +821,68 @@ export class SwarmPromptService {
     return `project-agent-descriptor:${descriptor.projectAgent?.handle ?? descriptor.agentId}`;
   }
 
+  private async resolveProjectAgentReferenceDocs(
+    descriptor: AgentDescriptor,
+    profileId: string,
+  ): Promise<Array<{ path: string; content: string }>> {
+    if (!descriptor.projectAgent?.handle) {
+      return [];
+    }
+
+    if (isRepoProjectAgentSource(descriptor.projectAgent.source)) {
+      const scope = this.buildProjectAgentReferenceScope(descriptor);
+      const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.config.paths.dataDir });
+      const definition = assertRepoProjectAgentSourceAvailable(resolution);
+      return definition.referenceDocs.map((doc) => ({ path: doc.path, content: doc.content }));
+    }
+
+    const projectAgentRecord = await this.readOwnedProjectAgentRecord(descriptor, profileId);
+    if (!projectAgentRecord) {
+      return [];
+    }
+
+    const refDocFiles = await listProjectAgentReferenceDocs(
+      this.options.config.paths.dataDir,
+      profileId,
+      projectAgentRecord.config.handle,
+    );
+    const refContents: Array<{ path: string; content: string }> = [];
+    for (const fileName of refDocFiles) {
+      const content = await readProjectAgentReferenceDoc(
+        this.options.config.paths.dataDir,
+        profileId,
+        projectAgentRecord.config.handle,
+        fileName,
+      );
+      if (content) {
+        refContents.push({ path: fileName, content });
+      }
+    }
+
+    return refContents;
+  }
+
+  private buildProjectAgentReferenceScope(descriptor: AgentDescriptor) {
+    if (!descriptor.projectAgent?.handle) {
+      throw new Error(`Agent ${descriptor.agentId} is not a project agent`);
+    }
+
+    return {
+      descriptor: descriptor as AgentDescriptor & {
+        role: "manager";
+        profileId: string;
+        projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+      },
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      handle: descriptor.projectAgent.handle,
+    };
+  }
+
   private async readOwnedProjectAgentRecord(
     descriptor: AgentDescriptor,
     profileId: string,
   ): Promise<ProjectAgentOnDiskRecord | null> {
-    if (!descriptor.projectAgent?.handle) {
+    if (!descriptor.projectAgent?.handle || isRepoProjectAgentSource(descriptor.projectAgent.source)) {
       return null;
     }
 

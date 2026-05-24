@@ -236,7 +236,7 @@ Sometimes you want a session to serve as a persistent specialist that other sess
 - **When to use** — A brief description that helps other session agents understand when to message this project agent (e.g., "Ask me to write or review documentation").
 - **System prompt** — An authoritative prompt that completely replaces the base manager template. Defines the project agent's role and behavior.
 
-Promoted agents are stored in dedicated per-handle directories under `profiles/<profileId>/project-agents/<handle>/`, with a `config.json`, editable `prompt.md` file, and per-agent `reference/` documents. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle.
+Profile-local promoted agents are stored in dedicated per-handle directories under `profiles/<profileId>/project-agents/<handle>/`, with a `config.json`, editable `prompt.md` file, and per-agent `reference/` documents. Repositories can also ship Project Agent definitions under `.forge/project-agents/<definitionId>/` with `config.json`, live `prompt.md`, and optional read-only `reference/*.md`; activating/linking creates a normal session source link, and unlinking preserves session history and repository files. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle.
 
 **AI-assisted promotion:** The promotion dialog includes an "AI Assist" option that analyzes the session's history and suggests a handle, description, and system prompt based on what the session has actually been doing.
 

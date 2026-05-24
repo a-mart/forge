@@ -116,3 +116,99 @@ describe('SessionRowItem creator attribution', () => {
     expect(text).not.toContain('@')
   })
 })
+
+describe('SessionRowItem repo-sourced project agent badge', () => {
+  it('shows repo source indicator for repo-sourced project agents', () => {
+    renderRow({
+      session: {
+        sessionAgent: makeAgent({
+          projectAgent: {
+            handle: 'docs',
+            whenToUse: 'Documentation',
+            source: {
+              type: 'repo',
+              workspaceKey: 'ws-key',
+              forgeDirRealpath: '/test/.forge',
+              definitionId: 'def-docs',
+              activatedAt: '2026-01-01T00:00:00Z',
+            },
+          },
+        }),
+        workers: [],
+        isDefault: false,
+      },
+    })
+
+    // Should have the repo project agent aria-label
+    const repoLabel = container.querySelector('[aria-label="Repository Project Agent"]')
+    expect(repoLabel).not.toBeNull()
+  })
+
+  it('shows repo source indicator for reload-style public project agent source marker', () => {
+    renderRow({
+      session: {
+        sessionAgent: makeAgent({
+          projectAgent: {
+            handle: 'docs',
+            whenToUse: 'Documentation',
+            sourceKind: 'repo',
+          },
+        }),
+        workers: [],
+        isDefault: false,
+      },
+    })
+
+    const repoLabel = container.querySelector('[aria-label="Repository Project Agent"]')
+    expect(repoLabel).not.toBeNull()
+  })
+
+  it('shows plain project agent icon for local project agents', () => {
+    renderRow({
+      session: {
+        sessionAgent: makeAgent({
+          projectAgent: {
+            handle: 'local-agent',
+            whenToUse: 'Local tasks',
+          },
+        }),
+        workers: [],
+        isDefault: false,
+      },
+    })
+
+    // Should have the plain project agent aria-label, not repo
+    const projectAgentLabel = container.querySelector('[aria-label="Project Agent"]')
+    expect(projectAgentLabel).not.toBeNull()
+    const repoLabel = container.querySelector('[aria-label="Repository Project Agent"]')
+    expect(repoLabel).toBeNull()
+  })
+
+  it('shows distinct unlink context menu item for reload-style public project agent source marker', () => {
+    renderRow({
+      session: {
+        sessionAgent: makeAgent({
+          projectAgent: {
+            handle: 'repo-agent',
+            whenToUse: 'Repo tasks',
+            sourceKind: 'repo',
+          },
+        }),
+        workers: [],
+        isDefault: false,
+      },
+      onDemoteProjectAgent: vi.fn(),
+      onOpenProjectAgentSettings: vi.fn(),
+    })
+
+    const trigger = container.querySelector('[data-slot="context-menu-trigger"]') ?? container.firstElementChild
+    expect(trigger).not.toBeNull()
+    flushSync(() => {
+      trigger!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+    })
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Unlink from Repository Definition')
+    expect(text).not.toContain('Demote to Session')
+  })
+})

@@ -121,7 +121,9 @@ export function createPromptRoutes(options: {
               ? 501
               : message.includes("Unknown profile") || message.includes("Unknown manager session")
                 ? 404
-                : 500;
+                : message.includes("Repository project-agent source")
+                  ? 409
+                  : 500;
           sendJson(response, statusCode, { error: message });
         }
       },

@@ -23,6 +23,7 @@ export function handleProjectAgentEvent(
           config: event.config,
           systemPrompt: event.systemPrompt,
           references: event.references,
+          ...(event.source ? { source: event.source } : {}),
         })
       }
       return true

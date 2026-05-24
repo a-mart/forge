@@ -1,6 +1,6 @@
 ---
 name: forge-project-resources
-description: Author repo-root .forge project resources, including skills, specialists, reference docs, Forge extensions, and Pi extensions/settings.
+description: Author repo-root .forge project resources, including skills, specialists, reference docs, Project Agent definitions, Forge extensions, and Pi extensions/settings.
 ---
 
 # Forge Project Resources
@@ -8,14 +8,14 @@ description: Author repo-root .forge project resources, including skills, specia
 Use this skill when you need to add or update repo-root `.forge/` resources that should travel with one repository.
 
 ## Use this skill when
-- you are editing `<repo>/.forge/skills/`, `.forge/specialists/`, `.forge/reference/`, `.forge/extensions/`, or `.forge/pi/`
+- you are editing `<repo>/.forge/skills/`, `.forge/specialists/`, `.forge/reference/`, `.forge/project-agents/`, `.forge/extensions/`, or `.forge/pi/`
 - you need a quick reminder of repo vs global/profile placement
 - you want the smallest safe layout for a new project resource
 
 ## Do not use this skill when
 - the resource belongs in a global path like `~/.forge/skills/` or `~/.forge/agent/extensions/`
 - the resource belongs to one profile under `~/.forge/profiles/<profileId>/...`
-- you are creating a project agent; project agents are related, but they are not repo `.forge` resources
+- you are creating a profile-local Project Agent from an existing session; this skill is for repository-backed Project Agent definitions under `.forge/project-agents/`
 - you just need a new reusable skill; use `create-skill` instead
 
 ## Workflow
@@ -35,11 +35,15 @@ See `references/layouts.md` for the quick path cheat sheet. In short:
 - `.forge/skills/` for repository skills
 - `.forge/specialists/` for repository specialist markdown
 - `.forge/reference/` for passive repository context
+- `.forge/project-agents/<definitionId>/config.json`, `prompt.md`, and optional `reference/*.md` for repository Project Agent definitions
 - `.forge/extensions/` for trust-gated Forge extensions
 - `.forge/pi/extensions/` and `.forge/pi/settings.json` for trust-gated Pi extensions and package config
 
 ## Safety notes
-- Repository skills, specialists, and reference docs are passive text.
+- Repository skills, specialists, reference docs, and Project Agent definition files are passive text.
+- Repository Project Agent `prompt.md` and `reference/*.md` are read live while the source is valid; missing/invalid sources leave the backing session/history intact but make live fields unavailable.
+- Project Agent capabilities are approved at activation from `config.json`; later repo edits do not silently grant capabilities. Re-activate or link again to change approvals.
+- Deactivating/unlinking a repository Project Agent clears the session's source link only. It does not edit repo files or delete session history.
 - Forge/Pi extensions and Pi settings can execute code, so review them before trusting.
 - Keep `.forge` resources free of secrets.
 

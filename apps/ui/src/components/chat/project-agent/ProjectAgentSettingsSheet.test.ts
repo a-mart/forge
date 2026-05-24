@@ -36,10 +36,14 @@ async function flushEffects(): Promise<void> {
 function renderSheet(overrides: {
   currentProjectAgent?: ProjectAgentInfo | null
   onSave?: ProjectAgentSettingsSheetProps['onSave']
+  onDemote?: ProjectAgentSettingsSheetProps['onDemote']
   onGetProjectAgentConfig?: ProjectAgentSettingsSheetProps['onGetProjectAgentConfig']
+  onGetReference?: ProjectAgentSettingsSheetProps['onGetReference']
+  onSetReference?: ProjectAgentSettingsSheetProps['onSetReference']
+  onDeleteReference?: ProjectAgentSettingsSheetProps['onDeleteReference']
 } = {}) {
   const onSave = overrides.onSave ?? vi.fn(async () => {})
-  const onDemote = vi.fn(async () => {})
+  const onDemote = overrides.onDemote ?? vi.fn(async () => {})
   const onClose = vi.fn()
 
   const currentProjectAgent: ProjectAgentInfo | null = overrides.currentProjectAgent !== undefined
@@ -72,6 +76,9 @@ function renderSheet(overrides: {
           systemPrompt: null,
           references: [],
         })),
+        onGetReference: overrides.onGetReference,
+        onSetReference: overrides.onSetReference,
+        onDeleteReference: overrides.onDeleteReference,
       }),
     )
   })
@@ -239,5 +246,433 @@ describe('ProjectAgentSettingsSheet', () => {
     expect(onSave).toHaveBeenCalledWith('agent-1', expect.objectContaining({
       capabilities: ['create_session'],
     }))
+  })
+
+  it('renders read-only mode for repo-sourced project agents', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Repository defined agent',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Repository defined agent',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt content',
+        references: ['ref.md'],
+      })),
+    })
+
+    await flushEffects()
+
+    // Repository badge should be visible
+    expect(document.body.textContent).toContain('Repository')
+
+    // Source path should be displayed
+    expect(document.body.textContent).toContain('/test/repo/.forge')
+
+    // Fields should be disabled/read-only
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    expect(whenToUseField.disabled).toBe(true)
+
+    const systemPromptField = document.body.querySelector('#systemPrompt') as HTMLTextAreaElement
+    expect(systemPromptField).not.toBeNull()
+    expect(systemPromptField.disabled).toBe(true)
+
+    const capabilitiesToggle = document.body.querySelector('#canCreateSessions') as HTMLButtonElement
+    expect(capabilitiesToggle).not.toBeNull()
+    expect(capabilitiesToggle.disabled).toBe(true)
+
+    expect(document.body.textContent).toContain('Approved at activation from config.json. Re-activate or link again to change capabilities.')
+    expect(document.body.textContent).toContain('Repository reference documents are read from .forge/project-agents/<definitionId>/reference')
+
+    // Save should not be present; repo agents expose a distinct deactivate action.
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Save',
+    )
+    expect(saveButton).toBeUndefined()
+
+    const deactivateButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Deactivate repository Project Agent',
+    )
+    expect(deactivateButton).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Add Reference Document')
+    expect(document.body.textContent).not.toContain('Delete ref.md')
+    expect(document.body.textContent).not.toContain('Save')
+
+    // Close button should be present (not Cancel)
+    const closeButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Close',
+    )
+    expect(closeButton).not.toBeNull()
+  })
+
+  it('renders read-only mode for reload-style public repo source marker', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Repository defined agent',
+        sourceKind: 'repo',
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Repository defined agent',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt content',
+        references: ['ref.md'],
+        source: {
+          type: 'repo' as const,
+          status: 'valid' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    expect(whenToUseField.disabled).toBe(true)
+
+    const systemPromptField = document.body.querySelector('#systemPrompt') as HTMLTextAreaElement
+    expect(systemPromptField).not.toBeNull()
+    expect(systemPromptField.disabled).toBe(true)
+
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Save',
+    )
+    expect(saveButton).toBeUndefined()
+
+    expect(document.body.textContent).toContain('Deactivate repository Project Agent')
+    expect(document.body.textContent).toContain('/test/repo/.forge')
+  })
+
+  it('displays source status and problems for unhealthy repo-sourced agents', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Stale descriptor description',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Live repo description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt',
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'missing' as const,
+          problems: [
+            { code: 'DEFINITION_DIR_NOT_FOUND', message: 'Definition directory does not exist' },
+          ],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    // Should show warning banner with status
+    const banner = document.body.querySelector('[data-testid="source-status-banner"]')
+    expect(banner).not.toBeNull()
+    expect(banner!.textContent).toContain('missing')
+
+    // Should show problem message
+    expect(banner!.textContent).toContain('Definition directory does not exist')
+
+    // Should show definitionId
+    expect(banner!.textContent).toContain('def-repo-agent')
+
+    // Should show source path
+    expect(banner!.textContent).toContain('/test/repo/.forge')
+
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField.value).toBe('')
+  })
+
+  it('displays wrong_workspace status with actionable diagnostic', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'ws-agent',
+        whenToUse: 'Some description',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/other/repo/.forge',
+          definitionId: 'def-ws-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'ws-agent',
+          whenToUse: 'Some description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: null,
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'wrong_workspace' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/other/repo/.forge',
+          definitionId: 'def-ws-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    const banner = document.body.querySelector('[data-testid="source-status-banner"]')
+    expect(banner).not.toBeNull()
+    expect(banner!.textContent).toContain('workspace mismatch')
+    expect(banner!.textContent).toContain('Switch to the original workspace')
+  })
+
+  it('updates whenToUse from live config snapshot for repo-sourced agents', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Stale descriptor value',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Updated live repo description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt',
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'valid' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    // whenToUse field should show the live config value, not the stale descriptor
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    expect(whenToUseField.value).toBe('Updated live repo description')
+  })
+
+  it('closes repo-sourced agents without discard prompt when live config differs from descriptor', async () => {
+    const { onClose } = renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Stale descriptor value',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Updated live repo description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Repo prompt',
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'valid' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'def-repo-agent',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    const closeButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Close',
+    )
+    expect(closeButton).not.toBeNull()
+    flushSync(() => {
+      closeButton!.click()
+    })
+
+    await flushEffects()
+
+    expect(onClose).toHaveBeenCalled()
+    const discardButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Discard',
+    )
+    expect(discardButton).toBeUndefined()
+  })
+
+  it('uses definitionId in repo source path copy, not handle', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'my-handle',
+        whenToUse: 'Test agent',
+        source: {
+          type: 'repo',
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'custom-definition-id',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'my-handle',
+          whenToUse: 'Test agent',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: 'Prompt content',
+        references: [],
+        source: {
+          type: 'repo' as const,
+          status: 'valid' as const,
+          problems: [],
+          workspaceKey: 'ws-key',
+          forgeDirRealpath: '/test/repo/.forge',
+          definitionId: 'custom-definition-id',
+          activatedAt: '2026-01-01T00:00:00Z',
+        },
+      })),
+    })
+
+    await flushEffects()
+
+    // Path copy should reference definitionId, not handle
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('custom-definition-id/prompt.md')
+    expect(text).not.toContain('my-handle/prompt.md')
+  })
+
+  it('local project agents remain fully editable', async () => {
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'local-agent',
+        whenToUse: 'Local agent description',
+      },
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'local-agent',
+          whenToUse: 'Local agent description',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: null,
+        references: [],
+      })),
+    })
+
+    await flushEffects()
+
+    // No Repository badge
+    const badges = Array.from(document.body.querySelectorAll('[class*="badge"]'))
+    const repoBadge = badges.find((b) => b.textContent?.includes('Repository'))
+    expect(repoBadge).toBeUndefined()
+
+    // Fields should be enabled
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    expect(whenToUseField.disabled).toBe(false)
+
+    const systemPromptField = document.body.querySelector('#systemPrompt') as HTMLTextAreaElement
+    expect(systemPromptField).not.toBeNull()
+    expect(systemPromptField.disabled).toBe(false)
+
+    // Save and Demote buttons present
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Save',
+    )
+    expect(saveButton).toBeTruthy()
+
+    const demoteButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Demote',
+    )
+    expect(demoteButton).toBeTruthy()
+
+    // Cancel button (not Close)
+    const cancelButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Cancel',
+    )
+    expect(cancelButton).toBeTruthy()
   })
 })

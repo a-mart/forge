@@ -1,4 +1,4 @@
-import type { PersistedProjectAgentConfig, ProjectAgentCapability } from "@forge/protocol";
+import { isRepoProjectAgentSource, type PersistedProjectAgentConfig, type ProjectAgentCapability } from "@forge/protocol";
 import { normalizeProjectAgentCapabilities } from "../storage/project-agent-storage.js";
 import type { AgentDescriptor } from "../types.js";
 import { getProjectAgentPublicName, normalizeProjectAgentHandle } from "./project-agent-registry.js";
@@ -108,7 +108,8 @@ export function buildProjectAgentInfoForMutation(input: BuildProjectAgentInfoInp
     whenToUse,
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     ...(previous?.creatorSessionId !== undefined ? { creatorSessionId: previous.creatorSessionId } : {}),
-    ...(capabilities.length > 0 ? { capabilities } : {})
+    ...(capabilities.length > 0 ? { capabilities } : {}),
+    ...(previous?.source !== undefined ? { source: previous.source } : {})
   };
 }
 
@@ -136,6 +137,7 @@ export function planSetSessionProjectAgentMutation(input: {
   updatedAt: string;
 }): ProjectAgentPromotionMutationPlan {
   const previousProjectAgent = input.descriptor.projectAgent;
+  const isRepoSourced = isRepoProjectAgentSource(previousProjectAgent?.source);
   if (!input.projectAgent) {
     return {
       flags: {
@@ -145,10 +147,13 @@ export function planSetSessionProjectAgentMutation(input: {
         recordChanged: Boolean(previousProjectAgent)
       },
       nextProjectAgent: null,
-      configPlan: previousProjectAgent?.handle
+      configPlan: previousProjectAgent?.handle && !isRepoSourced
         ? { kind: "delete", profileId: input.descriptor.profileId, handle: previousProjectAgent.handle }
         : { kind: "none" }
     };
+  }
+  if (isRepoSourced) {
+    throw new Error("Repository-managed project agents are read-only until repository source editing is available.");
   }
 
   const nextHandle = input.projectAgent.handle !== undefined ? normalizeProjectAgentHandle(input.projectAgent.handle) : undefined;

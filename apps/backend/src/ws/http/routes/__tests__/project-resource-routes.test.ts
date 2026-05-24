@@ -29,10 +29,14 @@ describe("project resource routes", () => {
     await mkdir(join(harness.workspaceDir, ".forge", "skills", "repo-skill"), { recursive: true });
     await mkdir(join(harness.workspaceDir, ".forge", "specialists"), { recursive: true });
     await mkdir(join(harness.workspaceDir, ".forge", "reference", "nested"), { recursive: true });
+    await mkdir(join(harness.workspaceDir, ".forge", "project-agents", "docs", "reference"), { recursive: true });
     await mkdir(join(harness.workspaceDir, ".forge", "extensions"), { recursive: true });
     await writeFile(join(harness.workspaceDir, ".forge", "skills", "repo-skill", "SKILL.md"), "# Skill\n", "utf-8");
     await writeFile(join(harness.workspaceDir, ".forge", "specialists", "backend.md"), "# Specialist\n", "utf-8");
     await writeFile(join(harness.workspaceDir, ".forge", "reference", "nested", "notes.md"), "# Notes\n", "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "config.json"), JSON.stringify({ version: 1, handle: "docs", whenToUse: "Maintain docs" }), "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "prompt.md"), "You maintain docs.\n", "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "reference", "guide.md"), "# Guide\n", "utf-8");
     await writeFile(join(harness.workspaceDir, ".forge", "extensions", "marker.js"), "export default function() {}\n", "utf-8");
 
     const response = await fetch(`${harness.baseUrl}/api/settings/project-resources?profileId=profile-a&sessionAgentId=session-a`);
@@ -45,11 +49,45 @@ describe("project resource routes", () => {
     expect(payload.resources.skills.count).toBe(1);
     expect(payload.resources.specialists.count).toBe(1);
     expect(payload.resources.reference.items.map((item) => item.path)).toEqual([join("nested", "notes.md")]);
+    expect(payload.resources.projectAgents?.items).toEqual([
+      expect.objectContaining({ definitionId: "docs", handle: "docs", status: "valid", whenToUse: "Maintain docs" })
+    ]);
+    expect(payload.resources.projectAgents?.items[0]?.signature).toMatch(/^[a-f0-9]{64}$/);
     expect(payload.resources.forgeExtensions.count).toBe(1);
     expect(payload.trust.state).toBe("untrusted");
     expect(payload.executableSurfaces.some((surface) => surface.kind === "repo-forge-extensions" && surface.exists)).toBe(
       true
     );
+  });
+
+  it("activates a repo project-agent definition and marks it active in refreshed inventory", async () => {
+    const harness = await createHarness();
+    await mkdir(join(harness.workspaceDir, ".forge", "project-agents", "docs"), { recursive: true });
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "config.json"), JSON.stringify({ version: 1, handle: "docs", whenToUse: "Maintain docs" }), "utf-8");
+    await writeFile(join(harness.workspaceDir, ".forge", "project-agents", "docs", "prompt.md"), "You maintain docs.\n", "utf-8");
+
+    const response = await fetch(`${harness.baseUrl}/api/settings/project-resources/project-agents/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        profileId: "profile-a",
+        sessionAgentId: "session-a",
+        definitionId: "docs",
+        mode: "create"
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProjectResourceMutationResponse & { agentId: string; projectAgent: unknown };
+    expect(payload.success).toBe(true);
+    expect(payload.agentId).toBe("activated-docs");
+    expect(payload.projectAgent).toMatchObject({ handle: "docs", whenToUse: "Maintain docs", sourceKind: "repo" });
+    expect(payload.projectAgent).not.toHaveProperty("source");
+    expect(JSON.stringify(payload.projectAgent)).not.toContain("forgeDirRealpath");
+    expect(payload.snapshot.resources.projectAgents?.items[0]).toMatchObject({
+      definitionId: "docs",
+      activatedAgentId: "activated-docs"
+    });
   });
 
   it("seeds a missing repo-root .forge scaffold without arbitrary client paths", async () => {
@@ -68,6 +106,7 @@ describe("project resource routes", () => {
     expect(payload.snapshot.resources.skills.exists).toBe(true);
     expect(payload.snapshot.resources.specialists.exists).toBe(true);
     expect(payload.snapshot.resources.reference.exists).toBe(true);
+    expect(payload.snapshot.resources.projectAgents?.exists).toBe(true);
     expect(payload.snapshot.resources.forgeExtensions.exists).toBe(true);
     expect(payload.snapshot.resources.piExtensions.exists).toBe(true);
     expect(JSON.parse(await readFile(join(forgeDir, "pi", "settings.json"), "utf-8"))).toEqual({ packages: [] });
@@ -93,6 +132,7 @@ describe("project resource routes", () => {
       ".forge/skills/",
       ".forge/specialists/",
       ".forge/reference/",
+      ".forge/project-agents/",
       ".forge/extensions/",
       ".forge/pi/extensions/"
     ]));
@@ -136,6 +176,7 @@ describe("project resource routes", () => {
       ".forge/skills/",
       ".forge/specialists/",
       ".forge/reference/",
+      ".forge/project-agents/",
       ".forge/extensions/",
       ".forge/pi/extensions/",
       ".forge/pi/settings.json"
@@ -365,10 +406,34 @@ async function createHarness(options: { missingCwd?: boolean; missingForge?: boo
     }
   }
   const descriptor = createDescriptor(workspaceDir);
+  const activatedAgents: AgentDescriptor[] = [];
   const swarmManager = {
     getConfig: () => ({ paths: { dataDir } }),
-    getAgent: (agentId: string) => (agentId === descriptor.agentId ? descriptor : undefined),
-    listAgents: () => [descriptor],
+    getAgent: (agentId: string) => (agentId === descriptor.agentId ? descriptor : activatedAgents.find((agent) => agent.agentId === agentId)),
+    listAgents: () => [descriptor, ...activatedAgents],
+    listAgentsForInternalUse: () => [descriptor, ...activatedAgents],
+    activateRepoProjectAgent: async (request: { definitionId: string }) => {
+      const workspaceRealpath = await realpath(workspaceDir);
+      const forgeDirRealpath = await realpath(join(workspaceDir, ".forge"));
+      const agent: AgentDescriptor = {
+        ...createDescriptor(workspaceDir),
+        agentId: `activated-${request.definitionId}`,
+        managerId: `activated-${request.definitionId}`,
+        projectAgent: {
+          handle: request.definitionId,
+          whenToUse: "Maintain docs",
+          source: {
+            type: "repo",
+            workspaceKey: `profile-a::${workspaceRealpath}`,
+            forgeDirRealpath,
+            definitionId: request.definitionId,
+            activatedAt: "2026-04-03T00:00:00.000Z"
+          }
+        }
+      };
+      activatedAgents.push(agent);
+      return { profileId: "profile-a", agentId: agent.agentId, projectAgent: agent.projectAgent! };
+    },
     applyProjectResourceTrustChange: async () => undefined,
     applyProjectResourceWorkspaceChange: async () => undefined
   } as unknown as SwarmManager;

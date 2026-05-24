@@ -9,6 +9,7 @@ import {
   Copy,
   Edit3,
   EyeOff,
+  GitBranch,
   GitFork,
   History,
   Pause,
@@ -135,6 +136,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   const showUnread = unreadCount > 0
   const hasPendingChoice = (sessionAgent.pendingChoiceCount ?? 0) > 0
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
+  const isRepoSourcedAgent = sessionAgent.projectAgent?.sourceKind === 'repo' || sessionAgent.projectAgent?.source?.type === 'repo'
   const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
   const isPinned = Boolean(sessionAgent.pinnedAt)
   const isModelOverridden = sessionAgent.modelOrigin === 'session_override'
@@ -252,7 +254,14 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                       <BellOff className="size-3 shrink-0 text-muted-foreground opacity-60" aria-label="Muted" />
                     ) : null}
                     {isProjectAgent ? (
-                      <Zap className="size-3 shrink-0 text-blue-400 dark:text-blue-400" aria-label="Project Agent" />
+                      isRepoSourcedAgent ? (
+                        <span className="inline-flex shrink-0 items-center gap-0.5" aria-label="Repository Project Agent">
+                          <GitBranch className="size-2.5 text-blue-400/70" />
+                          <Zap className="size-3 text-blue-400" />
+                        </span>
+                      ) : (
+                        <Zap className="size-3 shrink-0 text-blue-400 dark:text-blue-400" aria-label="Project Agent" />
+                      )
                     ) : null}
                     {hasPendingChoice ? (
                       <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white">
@@ -272,6 +281,9 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                     <p className="opacity-80">reasoning: {sessionAgent.model.thinkingLevel}</p>
                   ) : null}
                   <p className="opacity-60">{isModelOverridden ? 'session override' : 'project default'}</p>
+                  {isRepoSourcedAgent ? (
+                    <p className="opacity-60">source: repository definition</p>
+                  ) : null}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -377,14 +389,14 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             <ContextMenuItem onClick={() => {
               try {
                 void Promise.resolve(onDemoteProjectAgent()).catch((err) => {
-                  console.error('Failed to demote project agent:', err)
+                  console.error(isRepoSourcedAgent ? 'Failed to unlink repository project agent:' : 'Failed to demote project agent:', err)
                 })
               } catch (err) {
-                console.error('Failed to demote project agent:', err)
+                console.error(isRepoSourcedAgent ? 'Failed to unlink repository project agent:' : 'Failed to demote project agent:', err)
               }
             }}>
               <ArrowDownToLine className="mr-2 size-3.5" />
-              Demote to Session
+              {isRepoSourcedAgent ? 'Unlink from Repository Definition' : 'Demote to Session'}
             </ContextMenuItem>
           ) : null}
 
