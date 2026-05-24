@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ManagerWsState } from '@/lib/ws-state'
 import type {
   AgentContextUsage,
@@ -181,29 +181,38 @@ export function useContextWindow({
 }: UseContextWindowOptions): {
   contextWindowUsage: ContextWindowDisplay | null
 } {
-  const hadAuthoritativeByAgentRef = useRef(new Map<string, boolean>())
+  const [hadAuthoritativeByAgent, setHadAuthoritativeByAgent] = useState<Record<string, boolean>>({})
 
-  const contextWindowUsage = useMemo(() => {
+  const contextWindowResult = useMemo(() => {
     const statusEntry = activeAgentId !== null ? statuses[activeAgentId] : undefined
     const hadAuthoritativeUsage =
-      activeAgentId !== null ? (hadAuthoritativeByAgentRef.current.get(activeAgentId) ?? false) : false
+      activeAgentId !== null ? (hadAuthoritativeByAgent[activeAgentId] ?? false) : false
 
-    const result = resolveContextWindowDisplay({
+    return resolveContextWindowDisplay({
       activeAgent,
       activeAgentId,
       messages,
       statusEntry,
       hadAuthoritativeUsage,
     })
+  }, [activeAgent, activeAgentId, hadAuthoritativeByAgent, messages, statuses])
 
-    if (activeAgentId !== null) {
-      hadAuthoritativeByAgentRef.current.set(activeAgentId, result.hadAuthoritativeUsage)
+  useEffect(() => {
+    if (activeAgentId === null) {
+      return
     }
 
-    return result.display
-  }, [activeAgent, activeAgentId, messages, statuses])
+    const nextValue = contextWindowResult.hadAuthoritativeUsage
+    setHadAuthoritativeByAgent((current) => {
+      if ((current[activeAgentId] ?? false) === nextValue) {
+        return current
+      }
+
+      return { ...current, [activeAgentId]: nextValue }
+    })
+  }, [activeAgentId, contextWindowResult.hadAuthoritativeUsage])
 
   return {
-    contextWindowUsage,
+    contextWindowUsage: contextWindowResult.display,
   }
 }
