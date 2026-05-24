@@ -563,7 +563,7 @@ describe('SwarmManager', () => {
     expect(systemPrompt).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
   })
 
-  it('leaves custom manager prompts unchanged when they do not opt into model-specific instructions', async () => {
+  it('injects model-specific instructions through the Project Agent base prompt even when role instructions lack the slot', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -576,12 +576,13 @@ describe('SwarmManager', () => {
     const preview = await manager.previewManagerSystemPrompt('manager')
     const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
 
+    expect(systemPrompt).toContain('Forge Project Agent Operating Contract')
     expect(systemPrompt).toContain('You are a custom manager prompt without the model instructions slot.')
-    expect(systemPrompt).not.toContain('# Model-Specific Instructions')
-    expect(systemPrompt).not.toContain('Return the requested sections only, in the requested order.')
+    expect(systemPrompt).toContain('# Model-Specific Instructions')
+    expect(systemPrompt).toContain('Return the requested sections only, in the requested order.')
   })
 
-  it('labels prompt preview sections with the project-agent system prompt source when overridden', async () => {
+  it('labels prompt preview sections with the composed project-agent prompt sources when overridden', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -595,8 +596,9 @@ describe('SwarmManager', () => {
     const systemPromptSection = preview.sections.find((section) => section.label === 'System Prompt')
 
     expect(systemPromptSection).toMatchObject({
-      source: getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'manager'),
+      source: `project-agent-base + ${getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'manager')}`,
     })
+    expect(systemPromptSection?.content).toContain('Forge Project Agent Operating Contract')
     expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
     expect(systemPromptSection?.content).not.toContain('You are the manager agent in a multi-agent swarm.')
   })
@@ -639,8 +641,9 @@ describe('SwarmManager', () => {
     const systemPromptSection = preview.sections.find((section) => section.label === 'System Prompt')
 
     expect(systemPromptSection).toMatchObject({
-      source: getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'manager'),
+      source: `project-agent-base + ${getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'manager')}`,
     })
+    expect(systemPromptSection?.content).toContain('Forge Project Agent Operating Contract')
     expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
   })
 
@@ -708,7 +711,8 @@ describe('SwarmManager', () => {
         profileId: 'manager',
         sessionCwd: expect.stringContaining('swarm-manager-test-'),
       })
-      expect(options.currentSystemPrompt).toContain('Never use plain assistant text for user communication.')
+      expect(options.currentSystemPrompt).toContain('Forge Project Agent Operating Contract')
+      expect(options.currentSystemPrompt).toContain('Never rely on plain assistant text as user-visible output.')
       expect(options.currentSystemPrompt).not.toContain('old release-notes override prompt')
     } finally {
       if (previousAnthropicApiKey === undefined) {

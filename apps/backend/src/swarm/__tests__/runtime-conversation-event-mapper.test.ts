@@ -231,6 +231,32 @@ describe("RuntimeConversationEventMapper", () => {
     ]);
   });
 
+  it("does not project successful Project Agent manager assistant message_end as visible conversation text", () => {
+    const descriptor = makeDescriptor({
+      agentId: "project-agent",
+      role: "manager",
+      managerId: "project-agent",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "documentation coordination"
+      }
+    });
+
+    expect(
+      mapRuntimeEvent({
+        descriptor,
+        event: {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: "This must remain runtime-only unless speak_to_user is used.",
+            stopReason: "end_turn"
+          } as never
+        }
+      })
+    ).toEqual([]);
+  });
+
   it("maps manager assistant message_end errors to only a system error row", () => {
     const descriptor = makeDescriptor({ agentId: "manager", role: "manager", managerId: "manager" });
 

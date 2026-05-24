@@ -94,6 +94,32 @@ const COLLABORATION_CHANNEL_INSTRUCTIONS = `This session backs a trusted Forge c
 - Keep answers concise, easy to scan, and explicit about decisions, blockers, and next steps when relevant.
 - Normal manager capabilities remain available here, including specialists, workers, current activity visibility, and current tool behavior.
 - Delegate when it helps, then summarize the outcome back into the channel in a way humans can follow.`;
+const PROJECT_AGENT_BASE_PROMPT_ID = "project-agent-base";
+const PROJECT_AGENT_BASE_FALLBACK = `# Forge Project Agent Operating Contract
+
+You are a Forge Project Agent: a promoted peer manager session. Direct end-user requests must be answered with speak_to_user. Peer manager or Project Agent context messages must be coordinated with send_message_to_agent unless explicitly reporting to the end user.
+
+\${MODEL_SPECIFIC_INSTRUCTIONS}
+
+\${SPECIALIST_ROSTER}`;
+const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
+- Direct end-user requests to this Project Agent session: reply with \`speak_to_user\`.
+- Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender; do not use \`speak_to_user\` unless explicitly reporting to the end user.
+- Never rely on plain assistant text as user-visible output.`;
+
+export type ProjectAgentPromptSource =
+  | { kind: "project_agent_base"; sourcePath?: string; fallback?: boolean }
+  | { kind: "session_system_prompt"; agentId: string }
+  | { kind: "repo_prompt"; sourcePath: string; definitionId: string }
+  | { kind: "profile_prompt"; sourcePath: string; handle: string }
+  | { kind: "descriptor_fallback"; handle: string }
+  | { kind: "base_only" };
+
+export interface ProjectAgentPromptComposition {
+  content: string;
+  rolePrompt?: string;
+  sources: ProjectAgentPromptSource[];
+}
 
 interface ResolvedSpecialistDefinitionLike {
   specialistId: string;
@@ -164,15 +190,16 @@ export class SwarmPromptService {
     }
 
     const resolvedProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? descriptor.agentId;
-    const { prompt: projectAgentPrompt, sourcePath: projectAgentPromptSourcePath } =
-      await this.resolveProjectAgentSystemPromptOverride(descriptor);
+    const projectAgentComposition = descriptor.projectAgent?.handle
+      ? await this.resolveProjectAgentPromptComposition(descriptor)
+      : undefined;
     const archetypeId = descriptor.archetypeId
       ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
       : MANAGER_ARCHETYPE_ID;
-    const archetypeEntry = projectAgentPrompt
+    const archetypeEntry = projectAgentComposition
       ? undefined
       : await this.options.promptRegistry.resolveEntry("archetype", archetypeId, resolvedProfileId);
-    if (!projectAgentPrompt && !archetypeEntry) {
+    if (!projectAgentComposition && !archetypeEntry) {
       throw new Error(`Prompt not found: archetype/${archetypeId}`);
     }
 
@@ -183,8 +210,8 @@ export class SwarmPromptService {
     ]);
     const systemPrompt = await this.appendAvailableSkillsBlock(resolvedSystemPrompt, descriptor);
 
-    const systemPromptSource = projectAgentPrompt
-      ? projectAgentPromptSourcePath ?? this.getProjectAgentDescriptorPromptSource(descriptor)
+    const systemPromptSource = projectAgentComposition
+      ? this.formatProjectAgentPromptSources(projectAgentComposition.sources)
       : archetypeEntry!.sourcePath;
 
     const sections: PromptPreviewSection[] = [
@@ -238,16 +265,15 @@ export class SwarmPromptService {
       : MANAGER_ARCHETYPE_ID;
 
     const specialistRegistry = await this.options.loadSpecialistRegistryModule();
-    const { prompt: projectAgentPrompt } = await this.resolveProjectAgentSystemPromptOverride(
-      descriptor,
-      options,
-    );
+    const projectAgentComposition = descriptor.projectAgent?.handle
+      ? await this.resolveProjectAgentPromptComposition(descriptor, options)
+      : undefined;
     const normalizedSessionSystemPrompt = normalizeOptionalAgentId(descriptor.sessionSystemPrompt)?.trim();
     const [promptTemplate, roster, specialistsEnabled] = await Promise.all([
-      normalizedSessionSystemPrompt
-        ? Promise.resolve(normalizedSessionSystemPrompt)
-        : projectAgentPrompt
-          ? Promise.resolve(projectAgentPrompt)
+      projectAgentComposition
+        ? Promise.resolve(projectAgentComposition.content)
+        : normalizedSessionSystemPrompt
+          ? Promise.resolve(normalizedSessionSystemPrompt)
           : this.options.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
       this.resolveSpecialistRosterForDescriptor(descriptor, specialistRegistry),
       specialistRegistry.getSpecialistsEnabled(),
@@ -776,6 +802,47 @@ export class SwarmPromptService {
     };
   }
 
+  async resolveProjectAgentPromptComposition(
+    descriptor: AgentDescriptor,
+    options?: { ignoreProjectAgentSystemPrompt?: boolean },
+  ): Promise<ProjectAgentPromptComposition> {
+    if (!descriptor.projectAgent?.handle) {
+      throw new Error(`Agent ${descriptor.agentId} is not a project agent`);
+    }
+
+    const base = await this.resolveProjectAgentBasePrompt();
+    const sources: ProjectAgentPromptSource[] = [base.source];
+    let rolePrompt: string | undefined;
+
+    if (!options?.ignoreProjectAgentSystemPrompt) {
+      const normalizedSessionSystemPrompt = normalizeOptionalAgentId(descriptor.sessionSystemPrompt)?.trim();
+      if (normalizedSessionSystemPrompt) {
+        rolePrompt = normalizedSessionSystemPrompt;
+        sources.push({ kind: "session_system_prompt", agentId: descriptor.agentId });
+      } else {
+        const role = await this.resolveProjectAgentRolePrompt(descriptor);
+        rolePrompt = role.prompt;
+        if (role.source) {
+          sources.push(role.source);
+        }
+      }
+    }
+
+    if (!rolePrompt) {
+      sources.push({ kind: "base_only" });
+      return {
+        content: `${base.content.trimEnd()}\n\n${PROJECT_AGENT_ROUTING_FOOTER}`,
+        sources,
+      };
+    }
+
+    return {
+      content: `${base.content.trimEnd()}\n\n# Project Agent Role Instructions\n\n${rolePrompt.trim()}\n\n${PROJECT_AGENT_ROUTING_FOOTER}`,
+      rolePrompt,
+      sources,
+    };
+  }
+
   async resolveProjectAgentSystemPromptOverride(
     descriptor: AgentDescriptor,
     options?: { ignoreProjectAgentSystemPrompt?: boolean },
@@ -787,6 +854,45 @@ export class SwarmPromptService {
       };
     }
 
+    const role = await this.resolveProjectAgentRolePrompt(descriptor);
+    return {
+      prompt: role.prompt,
+      sourcePath: role.source && "sourcePath" in role.source ? role.source.sourcePath : undefined,
+    };
+  }
+
+  private async resolveProjectAgentBasePrompt(): Promise<{ content: string; source: ProjectAgentPromptSource }> {
+    try {
+      const content = await this.options.promptRegistry.resolveAtLayer(
+        "operational",
+        PROJECT_AGENT_BASE_PROMPT_ID,
+        "builtin",
+      );
+      if (content?.trim()) {
+        return {
+          content,
+          source: { kind: "project_agent_base" },
+        };
+      }
+    } catch (error) {
+      this.options.logDebug("project_agent:base_prompt:resolve_error", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return {
+      content: PROJECT_AGENT_BASE_FALLBACK,
+      source: { kind: "project_agent_base", fallback: true },
+    };
+  }
+
+  private async resolveProjectAgentRolePrompt(
+    descriptor: AgentDescriptor,
+  ): Promise<{ prompt: string | undefined; source?: ProjectAgentPromptSource }> {
+    if (!descriptor.projectAgent?.handle) {
+      return { prompt: undefined };
+    }
+
     if (isRepoProjectAgentSource(descriptor.projectAgent.source)) {
       const scope = this.buildProjectAgentReferenceScope(descriptor);
       const resolution = await resolveRepoProjectAgentSource(scope, { dataDir: this.options.config.paths.dataDir });
@@ -794,7 +900,9 @@ export class SwarmPromptService {
       const prompt = definition.prompt.trim() || undefined;
       return {
         prompt,
-        sourcePath: prompt ? join(definition.dirPath, "prompt.md") : undefined,
+        source: prompt
+          ? { kind: "repo_prompt", sourcePath: join(definition.dirPath, "prompt.md"), definitionId: definition.config.handle }
+          : undefined,
       };
     }
 
@@ -804,8 +912,12 @@ export class SwarmPromptService {
       const prompt = onDiskRecord.systemPrompt.trim() || undefined;
       return {
         prompt,
-        sourcePath: prompt
-          ? getProjectAgentPromptPath(this.options.config.paths.dataDir, profileId, onDiskRecord.config.handle)
+        source: prompt
+          ? {
+              kind: "profile_prompt",
+              sourcePath: getProjectAgentPromptPath(this.options.config.paths.dataDir, profileId, onDiskRecord.config.handle),
+              handle: onDiskRecord.config.handle,
+            }
           : undefined,
       };
     }
@@ -813,12 +925,26 @@ export class SwarmPromptService {
     const prompt = descriptor.projectAgent.systemPrompt?.trim() || undefined;
     return {
       prompt,
-      sourcePath: undefined,
+      source: prompt ? { kind: "descriptor_fallback", handle: descriptor.projectAgent.handle } : undefined,
     };
   }
 
-  private getProjectAgentDescriptorPromptSource(descriptor: AgentDescriptor): string {
-    return `project-agent-descriptor:${descriptor.projectAgent?.handle ?? descriptor.agentId}`;
+  private formatProjectAgentPromptSources(sources: ProjectAgentPromptSource[]): string {
+    return sources.map((source) => {
+      switch (source.kind) {
+        case "project_agent_base":
+          return source.fallback ? "project-agent-base:fallback" : "project-agent-base";
+        case "session_system_prompt":
+          return `sessionSystemPrompt:${source.agentId}`;
+        case "repo_prompt":
+        case "profile_prompt":
+          return source.sourcePath;
+        case "descriptor_fallback":
+          return `project-agent-descriptor:${source.handle}`;
+        case "base_only":
+          return "base-only";
+      }
+    }).join(" + ");
   }
 
   private async resolveProjectAgentReferenceDocs(
