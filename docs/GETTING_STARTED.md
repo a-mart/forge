@@ -430,9 +430,11 @@ Hover over any user or assistant message and click the pin icon to mark it as im
 
 You can have up to 10 pinned messages per session. The pin count badge appears in the chat header near the compaction controls when you have active pins. Click the badge to open a navigator that lets you jump directly to any pinned message with prev/next buttons (keyboard arrow keys also work). The chat auto-scrolls and highlights each pin as you navigate. Click the pin icon again to unpin.
 
+While a runtime is live, the context meter follows runtime status rather than a stale pre-compaction header value, so compaction can update the view without making old descriptor usage look fresh.
+
 ### Context Window Indicator
 
-The small dial icon in the chat header shows current context utilization. Watch it creep up during long sessions. When smart compaction triggers during active work, you'll see a brief pause while the handoff and summary are generated, then work resumes.
+The small dial icon in the chat header shows current context utilization. When the runtime is live, that live status is authoritative for the meter. Watch it creep up during long sessions. When smart compaction triggers during active work, you'll see a brief pause while the handoff and summary are generated, then work resumes.
 
 You can also trigger compaction manually from the three-dot menu (**⋯ → Smart Compact**) if you want to proactively clear space. Pinned messages are preserved during manual compaction the same way they are during automatic compaction. If the manager is already idle, a manual Smart compact leaves it idle afterward on Pi-backed managers.
 
@@ -440,7 +442,7 @@ You can also trigger compaction manually from the three-dot menu (**⋯ → Smar
 
 Workers are supposed to report back to the manager when they finish. But LLMs are probabilistic. Sometimes a worker completes its task and just doesn't send the callback message.
 
-Forge detects this. When a worker goes idle without reporting back, the system notifies the session agent: "This worker went idle without sending a message." The session agent can then inspect the worker's output, nudge it, or spin up a replacement.
+Forge detects this. When a worker goes idle without reporting back, the system notifies the session agent: "This worker went idle without sending a message." The session agent can then inspect the worker's output, nudge it, or spin up a replacement. Those idle/stall reports are suppressed while the worker or parent runtime is recovering, so recovery can finish without duplicate watchdog noise.
 
 If a worker turn fails instead of finishing cleanly, that failure can now surface in the transcript as a system message with the error context preserved, so it does not just look like a missing callback.
 
@@ -450,8 +452,8 @@ Sometimes workers get stuck on a command that hangs. An infinite loop, a misconf
 
 Forge's stall detector works in two stages:
 
-1. **5-minute warning** — If a worker has been streaming without making progress for 5 minutes, the system notifies the manager. The manager can inspect and decide what to do.
-2. **10-minute auto-kill** — If the worker is still stuck after another 5 minutes (10 total), the system kills it and notifies the manager.
+1. **5-minute warning** — If a worker has been streaming without making progress for 5 minutes, the system notifies the manager. The manager can inspect and decide what to do. This is skipped while the worker or parent runtime is recovering.
+2. **10-minute auto-kill** — If the worker is still stuck after another 5 minutes (10 total), the system kills it and notifies the manager, unless runtime recovery is already in progress.
 
 ### Manual Stop Controls
 

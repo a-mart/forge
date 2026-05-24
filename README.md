@@ -162,9 +162,9 @@ Sessions can run indefinitely. Conversations that have compacted 50+ times still
 
 Agents hang. Models stall. Workers finish their work and forget to report back. Forge handles all of this:
 
-- **Idle detection** — if a worker completes a task but doesn't report to the manager, Forge detects the idle state and notifies the manager, which can nudge or re-engage the worker.
-- **Stall detection** — workers stuck in a streaming state with no progress for five minutes get flagged. The manager is notified and can intervene.
-- **Auto-kill** — if a stalled worker doesn't recover after a second five-minute window, it's terminated and reported to the manager.
+- **Idle detection** — if a worker completes a task but doesn't report to the manager, Forge detects the idle state and notifies the manager, which can nudge or re-engage the worker. This path is suppressed while the worker or parent runtime is recovering, so normal completion reporting is not duplicated.
+- **Stall detection** — workers stuck in a streaming state with no progress for five minutes get flagged. The manager is notified and can intervene, unless worker or parent runtime recovery is active.
+- **Auto-kill** — if a stalled worker doesn't recover after a second five-minute window, it's terminated and reported to the manager, again skipped during runtime recovery.
 
 Worker turn failures are projected into the manager conversation as system messages with preserved error context, and duplicate callback or summary reports for the same turn are suppressed.
 

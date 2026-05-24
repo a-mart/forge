@@ -32,7 +32,7 @@ Mermaid code blocks also render inline as interactive diagrams, with controls to
 
 ## Context window
 
-The ring icon next to the channel toggle shows how full the context window is. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.
+The ring icon next to the channel toggle shows how full the context window is. While a runtime is live, the live runtime status is authoritative for that meter. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.
 
 ## Header controls
 
@@ -413,7 +413,7 @@ If you've pinned messages (shown by the pin count in the header), their content 
 
 ## After compaction
 
-Your older messages are replaced with a summary. Recent messages stay intact. The context window indicator should show more available space. You can continue the conversation normally.`,
+Your older messages are replaced with a summary. Recent messages stay intact. The context window indicator should reflect the live runtime state rather than stale pre-compaction descriptor usage. You can continue the conversation normally.`,
     keywords: ['compact', 'compaction', 'context', 'token', 'summary', 'smart compact', 'auto', 'pin'],
     relatedIds: ['chat-overview', 'chat-system-prompt'],
     contextKeys: ['chat.compaction'],
