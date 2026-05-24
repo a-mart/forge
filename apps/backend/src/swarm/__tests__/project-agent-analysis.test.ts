@@ -118,7 +118,7 @@ describe('project-agent-analysis', () => {
     expect(completeFn).toHaveBeenCalledTimes(1)
     const firstCall = completeFn.mock.calls[0] as any[] | undefined
     expect(firstCall?.[1]).toMatchObject({
-      systemPrompt: expect.stringContaining('The generated systemPrompt becomes the BASE TEMPLATE inside buildResolvedManagerPrompt().'),
+      systemPrompt: expect.stringContaining('systemPrompt: role instructions for this specialized Project Agent'),
       messages: [
         expect.objectContaining({
           role: 'user',
@@ -131,6 +131,14 @@ describe('project-agent-analysis', () => {
         }),
       ],
     })
+    const analysisSystemPrompt = firstCall?.[1]?.systemPrompt as string
+    expect(analysisSystemPrompt).toContain("layered with Forge's built-in Project Agent base prompt")
+    expect(analysisSystemPrompt).toContain('not a complete manager base prompt')
+    expect(analysisSystemPrompt).not.toContain('full replacement BASE manager prompt')
+    expect(analysisSystemPrompt).not.toContain('BASE TEMPLATE inside buildResolvedManagerPrompt')
+    expect(firstCall?.[1]?.messages?.[0]?.content?.[0]?.text).toContain(
+      'Current effective prompt context (Forge base norms plus durable conventions; use this as context, but do not copy generic Project Agent base rules into systemPrompt):',
+    )
     expect(firstCall?.[2]).toEqual({ apiKey: 'test-key' })
   })
 })

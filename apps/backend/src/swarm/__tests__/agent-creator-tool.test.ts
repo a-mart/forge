@@ -28,6 +28,8 @@ describe('buildCreateProjectAgentTool', () => {
     expect((tool.parameters as any).properties.whenToUse.minLength).toBe(1)
     expect((tool.parameters as any).properties.whenToUse.maxLength).toBe(280)
     expect((tool.parameters as any).properties.systemPrompt.minLength).toBe(1)
+    expect((tool.parameters as any).properties.systemPrompt.description).toContain('Role/system instructions')
+    expect((tool.parameters as any).properties.systemPrompt.description).toContain("layered with Forge's Project Agent base prompt")
 
     const result = await tool.execute(
       'tool-1',

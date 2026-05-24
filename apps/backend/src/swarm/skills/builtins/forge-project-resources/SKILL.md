@@ -35,13 +35,13 @@ See `references/layouts.md` for the quick path cheat sheet. In short:
 - `.forge/skills/` for repository skills
 - `.forge/specialists/` for repository specialist markdown
 - `.forge/reference/` for passive repository context
-- `.forge/project-agents/<definitionId>/config.json`, `prompt.md`, and optional `reference/*.md` for repository Project Agent definitions
+- `.forge/project-agents/<definitionId>/config.json`, `prompt.md` role instructions, and optional `reference/*.md` for repository Project Agent definitions
 - `.forge/extensions/` for trust-gated Forge extensions
 - `.forge/pi/extensions/` and `.forge/pi/settings.json` for trust-gated Pi extensions and package config
 
 ## Safety notes
 - Repository skills, specialists, reference docs, and Project Agent definition files are passive text.
-- Repository Project Agent `prompt.md` and `reference/*.md` are read live while the source is valid; missing/invalid sources leave the backing session/history intact but make live fields unavailable.
+- Repository Project Agent `prompt.md` contains role instructions layered with Forge's Project Agent base prompt, and `prompt.md` / `reference/*.md` are read live while the source is valid; missing/invalid sources leave the backing session/history intact but make live fields unavailable.
 - Project Agent capabilities are approved at activation from `config.json`; later repo edits do not silently grant capabilities. Re-activate or link again to change approvals.
 - Deactivating/unlinking a repository Project Agent clears the session's source link only. It does not edit repo files or delete session history.
 - Forge/Pi extensions and Pi settings can execute code, so review them before trusting.

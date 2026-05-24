@@ -298,6 +298,8 @@ describe('ProjectAgentSettingsSheet', () => {
     expect(capabilitiesToggle.disabled).toBe(true)
 
     expect(document.body.textContent).toContain('Approved at activation from config.json. Re-activate or link again to change capabilities.')
+    expect(document.body.textContent).toContain('Read live from prompt.md in the repo definition directory as role instructions.')
+    expect(document.body.textContent).toContain('Forge adds the Project Agent base prompt automatically.')
     expect(document.body.textContent).toContain('Repository reference documents are read from .forge/project-agents/<definitionId>/reference')
 
     // Save should not be present; repo agents expose a distinct deactivate action.
@@ -657,6 +659,9 @@ describe('ProjectAgentSettingsSheet', () => {
     const systemPromptField = document.body.querySelector('#systemPrompt') as HTMLTextAreaElement
     expect(systemPromptField).not.toBeNull()
     expect(systemPromptField.disabled).toBe(false)
+    expect(document.body.textContent).toContain('Role Instructions')
+    expect(document.body.textContent).toContain('Use this for role, scope, constraints, and validation habits.')
+    expect(document.body.textContent).toContain('Forge layers it after the Project Agent base prompt automatically.')
 
     // Save and Demote buttons present
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(

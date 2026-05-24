@@ -234,17 +234,17 @@ Sometimes you want a session to serve as a persistent specialist that other sess
 
 - **Handle** — A unique identifier like `@docs` or `@research`. Used for discovery and @mentions in chat.
 - **When to use** — A brief description that helps other session agents understand when to message this project agent (e.g., "Ask me to write or review documentation").
-- **System prompt** — An authoritative prompt that completely replaces the base manager template. Defines the project agent's role and behavior.
+- **Role instructions** — Stored in the `systemPrompt`/`prompt.md` field and layered after Forge's Project Agent base prompt. Use this for the project agent's role, scope, constraints, validation habits, and domain-specific behavior.
 
 Profile-local promoted agents are stored in dedicated per-handle directories under `profiles/<profileId>/project-agents/<handle>/`, with a `config.json`, editable `prompt.md` file, and per-agent `reference/` documents. Repositories can also ship Project Agent definitions under `.forge/project-agents/<definitionId>/` with `config.json`, live `prompt.md`, and optional read-only `reference/*.md`; activating/linking creates a normal session source link, and unlinking preserves session history and repository files. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle.
 
-**AI-assisted promotion:** The promotion dialog includes an "AI Assist" option that analyzes the session's history and suggests a handle, description, and system prompt based on what the session has actually been doing.
+**AI-assisted promotion:** The promotion dialog includes an "AI Assist" option that analyzes the session's history and suggests a handle, description, and role instructions based on what the session has actually been doing.
 
 **Creating with the Agent Architect:** Instead of promoting an existing session, you can use the Agent Creator wizard for a guided creation flow. Right-click any profile header in the sidebar and select "Create Project Agent." This opens a fresh Agent Architect session (marked with a violet Sparkles icon) that:
 
-1. Spawns a scout worker to explore your repository structure, `AGENTS.md`, git history, and existing project agent prompts
+1. Spawns a scout worker to explore your repository structure, `AGENTS.md`, git history, and existing project agent role instructions
 2. Runs a focused 2–3 turn interview about the new agent's role, autonomy level, and validation expectations
-3. Drafts a complete proposal including session name, handle, `whenToUse` description (max 280 chars), and full system prompt
+3. Drafts a complete proposal including session name, handle, `whenToUse` description (max 280 chars), and role instructions for the `systemPrompt` field
 4. Waits for your explicit approval before proceeding
 5. Atomically creates and promotes the new session via `create_project_agent`
 
@@ -617,7 +617,7 @@ No database. Everything is files (JSON, JSONL, and Markdown):
     ├── memory.md                  # Profile-level memory
     ├── project-agents/<handle>/
     │   ├── config.json            # Agent config (handle, whenToUse, agentId, timestamps)
-    │   ├── prompt.md              # System prompt (editable, takes effect on restart)
+    │   ├── prompt.md              # Project Agent role instructions (editable, layered with Forge's base prompt)
     │   └── reference/             # Per-agent reference documents
     └── sessions/<sessionId>/
         ├── session.jsonl          # Conversation history (the source of truth)

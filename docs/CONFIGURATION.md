@@ -127,7 +127,7 @@ All persistent state lives in a single data directory:
 │   ├── memory.md              # Profile-level memory
 │   ├── project-agents/<handle>/  # Per-project-agent data
 │   │   ├── config.json        # Agent config
-│   │   ├── prompt.md          # Editable system prompt
+│   │   ├── prompt.md          # Editable Project Agent role instructions
 │   │   └── reference/         # Per-agent reference docs
 │   └── sessions/<sessionId>/  # Per-session data
 │       ├── session.jsonl      # Conversation history

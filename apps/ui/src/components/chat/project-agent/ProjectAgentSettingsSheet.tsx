@@ -559,9 +559,9 @@ export function ProjectAgentSettingsSheet({
 
             <div className="space-y-1.5">
               <label htmlFor="systemPrompt" className="text-sm font-medium text-foreground">
-                {isRepoSourced ? 'System Prompt' : (
+                {isRepoSourced ? 'Role Instructions' : (
                   <>
-                    System Prompt
+                    Role Instructions
                     <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
                   </>
                 )}
@@ -570,7 +570,15 @@ export function ProjectAgentSettingsSheet({
                 id="systemPrompt"
                 value={systemPrompt}
                 onChange={handleSystemPromptChange}
-                placeholder={configLoading ? 'Loading…' : analyzing ? 'Generating recommendation…' : isRepoSourced ? 'No prompt loaded.' : 'Custom system prompt for this project agent…'}
+                placeholder={
+                  configLoading
+                    ? 'Loading…'
+                    : analyzing
+                      ? 'Generating recommendation…'
+                      : isRepoSourced
+                        ? 'No role instructions loaded.'
+                        : 'Role, scope, constraints, and validation habits for this project agent…'
+                }
                 rows={8}
                 className="resize-y font-mono text-xs"
                 disabled={configLoading || isRepoSourced}
@@ -578,8 +586,8 @@ export function ProjectAgentSettingsSheet({
               />
               <p className="text-[11px] text-muted-foreground">
                 {isRepoSourced
-                  ? 'Read from prompt.md in the repo definition directory. Edit the file directly to update.'
-                  : 'When set, this replaces the standard manager prompt for this session.'}
+                  ? 'Read live from prompt.md in the repo definition directory as role instructions. Forge adds the Project Agent base prompt automatically.'
+                  : 'Use this for role, scope, constraints, and validation habits. Forge layers it after the Project Agent base prompt automatically.'}
               </p>
             </div>
 

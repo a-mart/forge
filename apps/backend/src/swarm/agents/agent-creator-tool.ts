@@ -11,7 +11,7 @@ export function buildCreateProjectAgentTool(
     name: "create_project_agent",
     label: "Create Project Agent",
     description:
-      "Create a new project agent with the given configuration. Only call this after the user has explicitly approved the session name, handle (if customized), whenToUse directive, and system prompt.",
+      "Create a new project agent with the given configuration. Only call this after the user has explicitly approved the session name, handle (if customized), whenToUse directive, and role instructions for the systemPrompt field.",
     parameters: Type.Object({
       sessionName: Type.String({
         minLength: 1,
@@ -28,7 +28,10 @@ export function buildCreateProjectAgentTool(
       }),
       systemPrompt: Type.String({
         minLength: 1,
-        description: "Complete base manager system prompt for the new project agent."
+        description: [
+          "Role/system instructions for the new project agent, layered with Forge's Project Agent base prompt.",
+          "Do not include a full standalone manager prompt unless the role specifically requires stricter domain rules."
+        ].join(" ")
       })
     }),
     async execute(_toolCallId, params) {

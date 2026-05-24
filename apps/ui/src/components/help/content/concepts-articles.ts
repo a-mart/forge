@@ -254,7 +254,7 @@ A project agent is a regular session with special properties:
 
 - A **unique handle** (like \`@releases\` or \`@docs\`) that identifies it across the profile
 - A **"when to use"** blurb that tells other sessions what this agent is for
-- A dedicated \`prompt.md\` file containing the system prompt, editable directly in your preferred editor
+- A dedicated \`prompt.md\` file containing role instructions layered with Forge's Project Agent base prompt, editable directly in your preferred editor
 - Optional **per-agent reference documents** that are injected into the agent's prompt context
 - Appears **pinned at the top** of the profile section in the sidebar with a badge
 
@@ -280,7 +280,7 @@ The chat composer offers autocomplete for project agent handles when you type \`
 
 You can create project agents in two ways:
 
-1. **Manual promotion** — Right-click an existing session and choose "Promote to Project Agent." Fill in the handle and "when to use" description. Optionally request AI-generated recommendations for both fields based on the session's conversation history.
+1. **Manual promotion** — Right-click an existing session and choose "Promote to Project Agent." Fill in the handle, "when to use" description, and optional role instructions. AI Assist can recommend role instructions from the session's conversation history.
 
 2. **Agent Creator wizard** — Right-click a profile header and choose "Create Project Agent." This opens a dedicated Agent Architect session that explores your repository, interviews you about the new agent's role, drafts a configuration proposal, and atomically creates and promotes the agent after you approve.
 
