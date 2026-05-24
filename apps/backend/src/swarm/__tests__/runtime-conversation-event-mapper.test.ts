@@ -259,49 +259,6 @@ describe("RuntimeConversationEventMapper", () => {
     ]);
   });
 
-  it("maps successful repo project-agent manager final answers to visible conversation messages", () => {
-    const descriptor = makeDescriptor({
-      agentId: "repo-agent",
-      role: "manager",
-      managerId: "repo-agent",
-      projectAgent: {
-        handle: "frpa-smoke-agent",
-        whenToUse: "Smoke test repo project agent.",
-        source: {
-          type: "repo",
-          workspaceKey: "profile::/tmp/forge-test",
-          forgeDirRealpath: "/tmp/forge-test/.forge",
-          definitionId: "frpa-smoke-agent",
-          activatedAt: FIXED_NOW,
-          signature: "sig"
-        }
-      }
-    });
-
-    expect(
-      mapRuntimeEvent({
-        descriptor,
-        event: {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: "Smoke-test output: Received. FRPA-2026-05-24",
-            stopReason: "stop"
-          } as never
-        }
-      })
-    ).toEqual([
-      {
-        type: "conversation_message",
-        agentId: "repo-agent",
-        role: "assistant",
-        text: "Smoke-test output: Received. FRPA-2026-05-24",
-        timestamp: FIXED_NOW,
-        source: "speak_to_user"
-      }
-    ]);
-  });
-
   it("preserves missing descriptor behavior for tool events", () => {
     expect(
       mapRuntimeEvent({

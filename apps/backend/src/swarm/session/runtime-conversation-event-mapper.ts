@@ -44,11 +44,6 @@ export class RuntimeConversationEventMapper {
     }
 
     if (descriptor?.role === "manager") {
-      const projectAgentReplyProjection = mapProjectAgentManagerReplyConversationEvent(agentId, event, timestamp, descriptor);
-      if (projectAgentReplyProjection) {
-        projections.push(projectAgentReplyProjection);
-      }
-
       const managerErrorProjection = mapManagerRuntimeErrorConversationEvent(agentId, event, timestamp);
       if (managerErrorProjection) {
         projections.push(managerErrorProjection);
@@ -199,44 +194,6 @@ function mapNonManagerRuntimeEvent(
     case "auto_retry_end":
       return [];
   }
-}
-
-function mapProjectAgentManagerReplyConversationEvent(
-  agentId: string,
-  event: RuntimeSessionEvent,
-  timestamp: string,
-  descriptor: AgentDescriptor
-): ConversationMessageEvent | undefined {
-  if (!descriptor.projectAgent || event.type !== "message_end") {
-    return undefined;
-  }
-
-  const role = extractRole(event.message);
-  if (role !== "assistant") {
-    return undefined;
-  }
-
-  const stopReason = extractMessageStopReason(event.message);
-  const hasStructuredErrorMessage = hasMessageErrorMessageField(event.message);
-  if (stopReason === "error" || hasStructuredErrorMessage) {
-    return undefined;
-  }
-
-  const text = extractMessageText(event.message);
-  const attachments = extractMessageImageAttachments(event.message);
-  if (!text && attachments.length === 0) {
-    return undefined;
-  }
-
-  return {
-    type: "conversation_message",
-    agentId,
-    role: "assistant",
-    text: text ?? "",
-    attachments: attachments.length > 0 ? attachments : undefined,
-    timestamp,
-    source: "speak_to_user"
-  };
 }
 
 function mapManagerRuntimeErrorConversationEvent(
