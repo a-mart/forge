@@ -684,11 +684,12 @@ describe("SwarmPromptService", () => {
     expect(composition.rolePrompt).toBeUndefined();
     expect(composition.sources.map((source) => source.kind)).toEqual(["project_agent_base", "base_only"]);
     expect(composition.content).toContain("Forge Project Agent Operating Contract");
-    expect(composition.content).toContain("Non-Negotiable Forge Routing Contract");
+    expect(composition.content).not.toContain("Non-Negotiable Forge Routing Contract");
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
     expect(resolved).toContain("Forge Project Agent Operating Contract");
     expect(resolved).toContain("Direct end-user requests to this Project Agent session");
+    expect(resolved.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
 
     const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
     const systemSection = preview.sections.find((section) => section.label === "System Prompt");
@@ -759,7 +760,7 @@ describe("SwarmPromptService", () => {
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
     expect(resolved).toContain("# Model-Specific Instructions");
-    expect(resolved).not.toContain("${MODEL_SPECIFIC_INSTRUCTIONS}");
+    expect(resolved).not.toContain("$" + "{MODEL_SPECIFIC_INSTRUCTIONS}");
   });
 
   it("buildResolvedManagerPrompt and prompt override ignore foreign project-agent handle records", async () => {
@@ -917,7 +918,7 @@ describe("SwarmPromptService", () => {
     const composition = await service.resolveProjectAgentPromptComposition(descriptor);
     expect(composition.content).toContain("Forge Project Agent Operating Contract");
     expect(composition.content).toContain("Repo prompt body");
-    expect(composition.content).toContain("Non-Negotiable Forge Routing Contract");
+    expect(composition.content).not.toContain("Non-Negotiable Forge Routing Contract");
     expect(composition.sources).toContainEqual({
       kind: "repo_prompt",
       sourcePath: join(await realpath(definitionDir), "prompt.md"),
@@ -927,6 +928,8 @@ describe("SwarmPromptService", () => {
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
     expect(resolved).toContain("Repo prompt body");
     expect(resolved).toContain("Repo reference body");
+    expect(resolved.indexOf("Repo reference body")).toBeLessThan(resolved.indexOf("# Non-Negotiable Forge Routing Contract"));
+    expect(resolved.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
     expect(resolved).not.toContain("Stale local prompt");
     expect(resolved).not.toContain("Stale local reference");
   });
@@ -992,6 +995,7 @@ describe("SwarmPromptService", () => {
       updatedAt: "2026-01-02T00:00:00.000Z"
     };
     await writeProjectAgentRecord(dataDir, profileId, paConfig, "On-disk override body for tests.");
+    await writeProjectAgentReferenceDoc(dataDir, profileId, handle, "local-ref.md", "Local reference body");
 
     const descriptor = createManagerDescriptor(config, repoRoot, {
       agentId: "agent-1",
@@ -1030,12 +1034,17 @@ describe("SwarmPromptService", () => {
     const composition = await service.resolveProjectAgentPromptComposition(descriptor);
     expect(composition.content).toContain("Forge Project Agent Operating Contract");
     expect(composition.content).toContain("On-disk override body for tests.");
-    expect(composition.content).toContain("Non-Negotiable Forge Routing Contract");
+    expect(composition.content).not.toContain("Non-Negotiable Forge Routing Contract");
     expect(composition.sources).toContainEqual({
       kind: "profile_prompt",
       sourcePath: resolved.sourcePath,
       handle,
     });
+
+    const finalPrompt = await service.buildResolvedManagerPrompt(descriptor);
+    expect(finalPrompt).toContain("Local reference body");
+    expect(finalPrompt.indexOf("Local reference body")).toBeLessThan(finalPrompt.indexOf("# Non-Negotiable Forge Routing Contract"));
+    expect(finalPrompt.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
   });
 
   it("getSwarmContextFiles walks parent directories and returns nearest-first ordering", async () => {

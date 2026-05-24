@@ -342,6 +342,10 @@ export class SwarmPromptService {
       prompt = await this.appendRepositoryReferenceInventory(prompt, descriptor);
     }
 
+    if (projectAgentComposition) {
+      prompt = `${prompt.trimEnd()}\n\n${PROJECT_AGENT_ROUTING_FOOTER}`;
+    }
+
     return prompt;
   }
 
@@ -831,13 +835,13 @@ export class SwarmPromptService {
     if (!rolePrompt) {
       sources.push({ kind: "base_only" });
       return {
-        content: `${base.content.trimEnd()}\n\n${PROJECT_AGENT_ROUTING_FOOTER}`,
+        content: base.content.trimEnd(),
         sources,
       };
     }
 
     return {
-      content: `${base.content.trimEnd()}\n\n# Project Agent Role Instructions\n\n${rolePrompt.trim()}\n\n${PROJECT_AGENT_ROUTING_FOOTER}`,
+      content: `${base.content.trimEnd()}\n\n# Project Agent Role Instructions\n\n${rolePrompt.trim()}`,
       rolePrompt,
       sources,
     };
