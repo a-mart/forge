@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import type { ManagerWsState } from '@/lib/ws-state'
 import type {
   AgentContextUsage,
@@ -11,6 +11,10 @@ import { getCatalogContextWindow } from '@forge/protocol'
 
 const CHARS_PER_TOKEN_ESTIMATE = 4
 const MAX_REASONABLE_CONTEXT_USAGE_MULTIPLIER = 5
+
+export type ContextWindowDisplay =
+  | { mode: 'known'; usedTokens: number; contextWindow: number }
+  | { mode: 'updating'; contextWindow: number }
 
 export function contextWindowForAgent(agent: AgentDescriptor | null): number | null {
   if (!agent) {
@@ -44,7 +48,7 @@ function estimateTextAttachmentChars(attachment: ConversationMessageAttachment):
   return 0
 }
 
-function estimateUsedTokens(messages: ConversationEntry[]): number {
+export function estimateUsedTokens(messages: ConversationEntry[]): number {
   let totalChars = 0
 
   for (const entry of messages) {
@@ -85,6 +89,83 @@ export function toContextWindowUsage(
   }
 }
 
+export function resolveAuthoritativeContextUsage(
+  statusEntry: ManagerWsState['statuses'][string] | undefined,
+  activeAgent: AgentDescriptor | null,
+): { usedTokens: number; contextWindow: number } | null {
+  const liveFromStatus = toContextWindowUsage(statusEntry?.contextUsage)
+  if (liveFromStatus) {
+    return liveFromStatus
+  }
+
+  // Manager status events omit managerId, so descriptor contextUsage can remain stale
+  // after compaction/recovery. Only trust descriptor usage when no live status exists.
+  if (statusEntry !== undefined) {
+    return null
+  }
+
+  return toContextWindowUsage(activeAgent?.contextUsage)
+}
+
+function expectsRuntimeUsageRefresh(input: {
+  statusEntry: ManagerWsState['statuses'][string] | undefined
+  activeAgent: AgentDescriptor | null
+}): boolean {
+  const { statusEntry, activeAgent } = input
+
+  if (statusEntry?.contextRecoveryInProgress === true) {
+    return true
+  }
+
+  const liveStatus = statusEntry?.status ?? activeAgent?.status
+  return liveStatus === 'streaming'
+}
+
+export function resolveContextWindowDisplay(input: {
+  activeAgent: AgentDescriptor | null
+  activeAgentId: string | null
+  messages: ConversationEntry[]
+  statusEntry: ManagerWsState['statuses'][string] | undefined
+  hadAuthoritativeUsage: boolean
+}): { display: ContextWindowDisplay | null; hadAuthoritativeUsage: boolean } {
+  const { activeAgent, activeAgentId, messages, statusEntry, hadAuthoritativeUsage } = input
+  const contextWindow = contextWindowForAgent(activeAgent)
+
+  if (!contextWindow || !activeAgentId) {
+    return { display: null, hadAuthoritativeUsage: false }
+  }
+
+  const recoveryActive = statusEntry?.contextRecoveryInProgress === true
+  const authoritative = resolveAuthoritativeContextUsage(statusEntry, activeAgent)
+
+  if (authoritative) {
+    return {
+      display: { mode: 'known', ...authoritative },
+      hadAuthoritativeUsage: true,
+    }
+  }
+
+  const awaitingRefresh =
+    expectsRuntimeUsageRefresh({ statusEntry, activeAgent }) &&
+    (recoveryActive || hadAuthoritativeUsage)
+
+  if (awaitingRefresh) {
+    return {
+      display: { mode: 'updating', contextWindow },
+      hadAuthoritativeUsage: true,
+    }
+  }
+
+  return {
+    display: {
+      mode: 'known',
+      usedTokens: estimateUsedTokens(messages),
+      contextWindow,
+    },
+    hadAuthoritativeUsage: false,
+  }
+}
+
 interface UseContextWindowOptions {
   activeAgent: AgentDescriptor | null
   activeAgentId: string | null
@@ -98,31 +179,29 @@ export function useContextWindow({
   messages,
   statuses,
 }: UseContextWindowOptions): {
-  contextWindowUsage: { usedTokens: number; contextWindow: number } | null
+  contextWindowUsage: ContextWindowDisplay | null
 } {
-  const contextWindow = useMemo(() => contextWindowForAgent(activeAgent), [activeAgent])
+  const hadAuthoritativeByAgentRef = useRef(new Map<string, boolean>())
 
   const contextWindowUsage = useMemo(() => {
-    const liveFromStatus =
-      activeAgentId !== null ? toContextWindowUsage(statuses[activeAgentId]?.contextUsage) : null
-    if (liveFromStatus) {
-      return liveFromStatus
+    const statusEntry = activeAgentId !== null ? statuses[activeAgentId] : undefined
+    const hadAuthoritativeUsage =
+      activeAgentId !== null ? (hadAuthoritativeByAgentRef.current.get(activeAgentId) ?? false) : false
+
+    const result = resolveContextWindowDisplay({
+      activeAgent,
+      activeAgentId,
+      messages,
+      statusEntry,
+      hadAuthoritativeUsage,
+    })
+
+    if (activeAgentId !== null) {
+      hadAuthoritativeByAgentRef.current.set(activeAgentId, result.hadAuthoritativeUsage)
     }
 
-    const liveFromDescriptor = toContextWindowUsage(activeAgent?.contextUsage)
-    if (liveFromDescriptor) {
-      return liveFromDescriptor
-    }
-
-    if (!contextWindow) {
-      return null
-    }
-
-    return {
-      usedTokens: estimateUsedTokens(messages),
-      contextWindow,
-    }
-  }, [activeAgent, activeAgentId, contextWindow, messages, statuses])
+    return result.display
+  }, [activeAgent, activeAgentId, messages, statuses])
 
   return {
     contextWindowUsage,

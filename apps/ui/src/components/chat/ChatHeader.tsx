@@ -37,7 +37,7 @@ interface ChatHeaderProps {
   activeAgentUpdatedAt?: string | null
   channelView: MessageSourceView
   onChannelViewChange: (view: MessageSourceView) => void
-  contextWindowUsage: { usedTokens: number; contextWindow: number } | null
+  contextWindowUsage: { mode: 'known'; usedTokens: number; contextWindow: number } | { mode: 'updating'; contextWindow: number } | null
   compactionCount?: number
   showCompact: boolean
   compactInProgress: boolean
@@ -365,9 +365,10 @@ export function ChatHeader({
 
           {contextWindowUsage ? (
             <ContextWindowIndicator
-              usedTokens={contextWindowUsage.usedTokens}
+              usedTokens={contextWindowUsage.mode === 'known' ? contextWindowUsage.usedTokens : undefined}
               contextWindow={contextWindowUsage.contextWindow}
               compactionCount={compactionCount}
+              isUpdating={contextWindowUsage.mode === 'updating'}
             />
           ) : null}
         </div>

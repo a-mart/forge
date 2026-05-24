@@ -682,6 +682,27 @@ export class SwarmWorkerHealthService {
     return this.options.isRuntimeRecoveryActive?.(agentId) ?? this.options.isRuntimeInContextRecovery(agentId);
   }
 
+  private isWorkerStallRecoveryActive(agentId: string, descriptor?: AgentDescriptor): boolean {
+    if (this.isRuntimeRecoveryActive(agentId)) {
+      return true;
+    }
+
+    const resolvedDescriptor = descriptor ?? this.options.descriptors.get(agentId);
+    const managerId = normalizeOptionalAgentId(resolvedDescriptor?.managerId);
+    if (!managerId || managerId === agentId) {
+      return false;
+    }
+
+    return this.isRuntimeRecoveryActive(managerId);
+  }
+
+  private resetWorkerStallProgressDuringRecovery(agentId: string): void {
+    if (!this.workerStallState.has(agentId)) {
+      return;
+    }
+
+    this.recordWorkerStallProgress(agentId);
+  }
 
   private async runStalledWorkerCheck(): Promise<void> {
     const now = Date.now();
@@ -696,7 +717,8 @@ export class SwarmWorkerHealthService {
         continue;
       }
 
-      if (this.isRuntimeRecoveryActive(agentId)) {
+      if (this.isWorkerStallRecoveryActive(agentId, descriptor)) {
+        this.resetWorkerStallProgressDuringRecovery(agentId);
         continue;
       }
 
@@ -735,7 +757,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (descriptor.status !== "streaming" || this.isRuntimeRecoveryActive(agentId)) {
+    if (descriptor.status !== "streaming" || this.isWorkerStallRecoveryActive(agentId, descriptor)) {
       return;
     }
 
@@ -794,7 +816,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (descriptor.status !== "streaming" || this.isRuntimeRecoveryActive(agentId)) {
+    if (descriptor.status !== "streaming" || this.isWorkerStallRecoveryActive(agentId, descriptor)) {
       return;
     }
 
@@ -866,7 +888,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    if (descriptor.status !== "streaming" || this.isRuntimeRecoveryActive(agentId)) {
+    if (descriptor.status !== "streaming" || this.isWorkerStallRecoveryActive(agentId, descriptor)) {
       if (descriptor.status !== "streaming") {
         this.workerStallState.delete(agentId);
         this.workerActivityState.delete(agentId);

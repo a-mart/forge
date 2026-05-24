@@ -160,6 +160,47 @@ describe("SwarmWorkerHealthService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  it("checkForStalledWorkers does not nudge while the parent manager runtime is in recovery", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-20T12:00:00.000Z"));
+
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "streaming"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+
+    const sendMessage = vi.fn();
+    const isRuntimeRecoveryActive = vi.fn((agentId: string) => agentId === manager.agentId);
+    const svc = new SwarmWorkerHealthService(
+      baseHealthOptions({ descriptors, sendMessage, isRuntimeRecoveryActive })
+    );
+
+    svc.workerStallState.set("w1", {
+      lastProgressAt: Date.now() - STALL_NUDGE_THRESHOLD_MS - 60_000,
+      nudgeSent: true,
+      nudgeSentAt: Date.now() - 26 * 60_000,
+      lastToolName: "bash",
+      lastToolInput: null,
+      lastToolOutput: null,
+      lastDetailedReportAt: null
+    });
+
+    await svc.checkForStalledWorkers();
+
+    expect(isRuntimeRecoveryActive).toHaveBeenCalledWith(manager.agentId);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(svc.workerStallState.get("w1")?.nudgeSent).toBe(false);
+    expect(svc.workerStallState.get("w1")?.nudgeSentAt).toBeNull();
+  });
+
   it("checkForStalledWorkers sends a nudge when the worker exceeds the stall threshold", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-20T12:00:00.000Z"));
