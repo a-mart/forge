@@ -81,9 +81,9 @@ Workers run independently. You can keep talking to the manager, start a new task
 
 ## Sessions and profiles
 
-Your manager can have multiple **sessions** — independent conversations with their own history and memory. Right-click the manager in the sidebar to create a new session or fork an existing one. You can also archive sessions or whole projects from the sidebar; archived items stay on disk, but they are read-only and unavailable until restored.
+Your manager can have multiple **sessions** — independent conversations with their own history and memory. Right-click the manager in the sidebar to create a new session or fork an existing one. You can also archive sessions or whole projects from the sidebar; archived items stay on disk, but they are read-only and unavailable until restored. Archive entries are sorted by last user-message activity and show the last-used date.
 
-Sessions belong to a **profile**, which holds shared settings like model choice, system prompt, and persistent memory. Changes to the profile apply to all sessions under it. Archiving a profile marks only the profile as archived, not each session individually, but the whole project becomes unavailable until restored.
+Sessions belong to a **profile**, which holds shared settings like model choice, system prompt, and persistent memory. Changes to the profile apply to all sessions under it. Archiving a profile marks only the profile as archived, not each session individually, but the whole project becomes unavailable until restored. Archive entries are sorted by last user-message activity and show the last-used date.
 
 Once you're comfortable with sessions, you can promote them to **project agents** — persistent specialist sessions that other sessions can discover and message for cross-session coordination. See the Project Agents help article for details.`,
     keywords: [
