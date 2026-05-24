@@ -208,8 +208,10 @@ describe('collaboration session surface metadata', () => {
       model: base.model,
       cwd: base.cwd,
       archetypeId: base.archetypeId,
-      sessionSystemPrompt: base.sessionSystemPrompt,
     })
+    expect(created.sessionAgent).not.toHaveProperty('sessionSystemPrompt')
+    expect(manager.getAgent(sessionAgentId)).not.toHaveProperty('sessionSystemPrompt')
+    expect(manager.getAgentForInternalUse(sessionAgentId)?.sessionSystemPrompt).toBe(base.sessionSystemPrompt)
     expect(manager.runtimeCreateCalls).toEqual([])
     expect(manager.listManagerAgents().some((descriptor) => descriptor.agentId === sessionAgentId)).toBe(false)
     expect(manager.listAgents().find((descriptor) => descriptor.agentId === sessionAgentId)).toMatchObject({
