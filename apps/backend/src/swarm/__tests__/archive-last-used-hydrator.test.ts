@@ -79,6 +79,19 @@ function userToAgentMessage(timestamp: string, overrides: Record<string, unknown
   };
 }
 
+function legacyUserMessage(timestamp: string, text: string) {
+  return {
+    type: "message",
+    id: `legacy-${timestamp}`,
+    parentId: null,
+    timestamp,
+    message: {
+      role: "user",
+      content: [{ type: "text", text }],
+    },
+  };
+}
+
 describe("ArchiveLastUsedHydrator", () => {
   it("hydrates a missing session value from the latest real user input message", async () => {
     const file = await sessionFile([
@@ -106,6 +119,57 @@ describe("ArchiveLastUsedHydrator", () => {
       hydratedSessionCount: 1,
     });
     expect(sessions.get("session-1")?.lastUserMessageAt).toBe("2026-05-21T00:00:00.000Z");
+  });
+
+  it("hydrates legacy raw user messages while ignoring bootstrap system prompts", async () => {
+    const file = await sessionFile([
+      legacyUserMessage("2026-05-19T00:00:00.000Z", "SYSTEM: You are a newly created manager agent."),
+      legacyUserMessage("2026-05-20T00:00:00.000Z", "Please investigate the archive view."),
+      legacyUserMessage("2026-05-21T00:00:00.000Z", "SYSTEM: Runtime bootstrap context."),
+      legacyUserMessage("2026-05-22T00:00:00.000Z", "Fix the regression."),
+    ]);
+    const sessions = new Map([["session-1", session({ sessionFile: file })]]);
+    const hydrator = new ArchiveLastUsedHydrator({
+      getAgent: (agentId) => sessions.get(agentId),
+      listSessions: () => Array.from(sessions.values()),
+      listProfiles: () => [profile()],
+      patchDescriptor: async (agentId, patch) => {
+        const current = sessions.get(agentId)!;
+        const next = { ...current, ...patch };
+        sessions.set(agentId, next);
+        return next;
+      },
+    });
+
+    await expect(hydrator.hydrateSessionIfMissing("session-1")).resolves.toEqual({
+      scannedSessionCount: 1,
+      hydratedSessionCount: 1,
+    });
+    expect(sessions.get("session-1")?.lastUserMessageAt).toBe("2026-05-22T00:00:00.000Z");
+  });
+
+  it("does not hydrate legacy bootstrap-only sessions", async () => {
+    const file = await sessionFile([
+      legacyUserMessage("2026-05-19T00:00:00.000Z", "SYSTEM: You are a newly created manager agent."),
+    ]);
+    const sessions = new Map([["session-1", session({ sessionFile: file })]]);
+    const hydrator = new ArchiveLastUsedHydrator({
+      getAgent: (agentId) => sessions.get(agentId),
+      listSessions: () => Array.from(sessions.values()),
+      listProfiles: () => [profile()],
+      patchDescriptor: async (agentId, patch) => {
+        const current = sessions.get(agentId)!;
+        const next = { ...current, ...patch };
+        sessions.set(agentId, next);
+        return next;
+      },
+    });
+
+    await expect(hydrator.hydrateSessionIfMissing("session-1")).resolves.toEqual({
+      scannedSessionCount: 1,
+      hydratedSessionCount: 0,
+    });
+    expect(sessions.get("session-1")?.lastUserMessageAt).toBeUndefined();
   });
 
   it("hydrates worker-targeted user messages from manager agent_message and worker transcript rows", async () => {

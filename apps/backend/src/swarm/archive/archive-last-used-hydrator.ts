@@ -146,6 +146,10 @@ function extractUserInputTimestamp(line: string): string | undefined {
   }
 
   if (!isRecord(parsed)) return undefined;
+
+  const legacyUserMessageTimestamp = extractLegacyUserMessageTimestamp(parsed);
+  if (legacyUserMessageTimestamp) return legacyUserMessageTimestamp;
+
   if (parsed.type !== "custom" || parsed.customType !== CONVERSATION_ENTRY_TYPE) return undefined;
   const data = parsed.data;
   if (!isRecord(data)) return undefined;
@@ -158,6 +162,30 @@ function extractUserInputTimestamp(line: string): string | undefined {
     return nonEmptyTimestamp(data.timestamp);
   }
   return undefined;
+}
+
+function extractLegacyUserMessageTimestamp(entry: Record<string, unknown>): string | undefined {
+  if (entry.type !== "message") return undefined;
+  const message = entry.message;
+  if (!isRecord(message) || message.role !== "user") return undefined;
+
+  const text = extractMessageText(message);
+  if (!text || text.trimStart().startsWith("SYSTEM:")) return undefined;
+
+  return nonEmptyTimestamp(entry.timestamp);
+}
+
+function extractMessageText(message: Record<string, unknown>): string {
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (isRecord(part) && typeof part.text === "string") return part.text;
+      return "";
+    })
+    .join("\n");
 }
 
 function nonEmptyTimestamp(value: unknown): string | undefined {
