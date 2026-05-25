@@ -5015,7 +5015,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
    * Ensures every profile has an explicit sortOrder.
    * Called on first profile creation after upgrade so legacy profiles
    * (which have sortOrder: undefined) get values matching their current
-   * visible order, preventing new profiles from sorting before them.
+   * visible order before new profiles are inserted at the top.
    */
   private materializeSortOrder(): void {
     const needsMaterialization = Array.from(this.profiles.values()).some(

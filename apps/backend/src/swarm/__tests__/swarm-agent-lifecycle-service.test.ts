@@ -1261,6 +1261,64 @@ describe("SwarmAgentLifecycleService", () => {
     expect(sendManagerBootstrapMessage).toHaveBeenCalledWith(created.agentId);
   });
 
+  it("createManager inserts new profiles at the top of sortOrder", async () => {
+    const descriptors = new Map<string, AgentDescriptor>();
+    const profiles = new Map<string, ManagerProfile>([
+      [
+        "manager",
+        {
+          profileId: "manager",
+          displayName: "Main",
+          defaultSessionAgentId: "manager",
+          createdAt: NOW,
+          updatedAt: NOW,
+          sortOrder: 0
+        }
+      ],
+      [
+        "alpha",
+        {
+          profileId: "alpha",
+          displayName: "Alpha",
+          defaultSessionAgentId: "alpha",
+          createdAt: NOW,
+          updatedAt: NOW,
+          sortOrder: 1
+        }
+      ]
+    ]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const sessionProvisioner = {
+      provisionSession: vi.fn(
+        async (opts: {
+          profile?: ManagerProfile;
+          initializeRuntime?: () => Promise<void>;
+        }) => {
+          if (opts.profile) {
+            profiles.set(opts.profile.profileId, opts.profile);
+          }
+          await opts.initializeRuntime?.();
+        }
+      )
+    } as unknown as SessionProvisioner;
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        profiles,
+        runtimes,
+        hasRunningManagers: () => false,
+        sessionProvisioner
+      })
+    );
+
+    const created = await svc.createManager("bootstrap", { name: "beta", cwd: "/tmp/proj" });
+
+    expect(profiles.get("manager")?.sortOrder).toBe(1);
+    expect(profiles.get("alpha")?.sortOrder).toBe(2);
+    expect(profiles.get(created.agentId)?.sortOrder).toBe(0);
+  });
+
   it("deleteManager refuses Cortex archetype sessions", async () => {
     const cortexManager = createAgentDescriptor({
       agentId: "cx",

@@ -40,6 +40,23 @@ async function makeTempConfig(port = 8791): Promise<SwarmConfig> {
 }
 
 describe('SwarmManager archive gates', () => {
+  it('places newly created projects at the top of sidebar sort order', async () => {
+    const config = await makeTempConfig(8890)
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.createManager('manager', { name: 'Alpha', cwd: config.defaultCwd })
+    await manager.createManager('manager', { name: 'Beta', cwd: config.defaultCwd })
+
+    const visibleOrder = manager
+      .listProfiles()
+      .filter((profile) => profile.profileId !== 'cortex' && profile.profileType !== 'system' && !profile.archivedAt)
+      .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+      .map((profile) => profile.profileId)
+
+    expect(visibleOrder[0]).toBe('beta')
+    expect(visibleOrder).toEqual(['beta', 'alpha', 'manager'])
+  })
+
   it('reorders visible active profiles without requiring archived profiles in the payload', async () => {
     const config = await makeTempConfig(8891)
     const manager = new TestSwarmManager(config)

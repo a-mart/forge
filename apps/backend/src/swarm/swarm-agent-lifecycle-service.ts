@@ -888,10 +888,10 @@ export class SwarmAgentLifecycleService {
 
     this.options.materializeSortOrder();
 
-    const maxSortOrder = Array.from(this.options.profiles.values()).reduce(
-      (max, profile) => Math.max(max, profile.sortOrder ?? -1),
-      -1
-    );
+    for (const existingProfile of this.options.profiles.values()) {
+      existingProfile.sortOrder = (existingProfile.sortOrder ?? 0) + 1;
+      this.options.descriptorMutations.upsertProfile(existingProfile);
+    }
 
     const profile: ManagerProfile = {
       profileId: descriptor.agentId,
@@ -900,7 +900,7 @@ export class SwarmAgentLifecycleService {
       defaultModel: { ...initialModel },
       createdAt: descriptor.createdAt,
       updatedAt: descriptor.createdAt,
-      sortOrder: maxSortOrder + 1
+      sortOrder: 0
     };
 
     let runtime: SwarmAgentRuntime | undefined;
