@@ -178,7 +178,7 @@ describe("ForgeExtensionHost", () => {
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "acp",
+      runtimeType: "cursor-sdk",
       runtimeToken: 1
     });
 
@@ -701,7 +701,7 @@ describe("ForgeExtensionHost", () => {
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(workerCwd),
       sessionDescriptor: createManagerDescriptor(managerCwd, { sessionLabel: "Manager Session" }),
-      runtimeType: "acp",
+      runtimeType: "cursor-sdk",
       runtimeToken: 1
     });
     host.activateRuntimeBindings(bindings!);

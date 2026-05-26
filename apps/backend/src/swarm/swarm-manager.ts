@@ -5770,7 +5770,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           const provider = typeof entry.provider === "string" ? entry.provider : null;
           const modelId = typeof entry.modelId === "string" ? entry.modelId : null;
           if (provider && modelId) {
-            model = { provider, modelId, thinkingLevel: "none" };
+            model = normalizePersistedSwarmModelDescriptor({ provider, modelId, thinkingLevel: "none" }) ?? { provider, modelId, thinkingLevel: "none" };
           }
           if (!updatedAt && typeof entry.timestamp === "string") {
             updatedAt = entry.timestamp;
@@ -5780,7 +5780,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         if (entry.type === "thinking_level_change" && model) {
           const thinkingLevel = typeof entry.thinkingLevel === "string" ? entry.thinkingLevel : undefined;
           if (thinkingLevel) {
-            model = { ...model, thinkingLevel };
+            model = normalizePersistedSwarmModelDescriptor({ ...model, thinkingLevel }) ?? { ...model, thinkingLevel };
           }
         }
       } catch {

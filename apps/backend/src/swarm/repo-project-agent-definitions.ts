@@ -13,6 +13,7 @@ import {
 } from "@forge/protocol";
 import { normalizeProjectAgentHandle } from "./agents/project-agent-registry.js";
 import { sanitizePathSegment } from "./data-paths.js";
+import { normalizePersistedSwarmModelDescriptor } from "./model-presets.js";
 
 const MAX_DEFINITIONS = 50;
 const MAX_DIRECTORY_ENTRIES = 200;
@@ -128,6 +129,10 @@ async function parseRepoProjectAgentDefinition(
     problems
   });
 
+  const recommendedModel = isAgentModelDescriptor(config?.model)
+    ? normalizePersistedSwarmModelDescriptor(config.model) ?? config.model
+    : undefined;
+
   const item: RepoProjectAgentInventoryItem & { signature?: string } = {
     definitionId,
     handle: typeof config?.handle === "string" && normalizedHandle ? normalizedHandle : definitionId,
@@ -137,7 +142,7 @@ async function parseRepoProjectAgentDefinition(
     ...(typeof config?.displayName === "string" && config.displayName.trim() ? { displayName: config.displayName.trim() } : {}),
     ...(typeof config?.whenToUse === "string" && config.whenToUse.trim() ? { whenToUse: normalizeInlineText(config.whenToUse) } : {}),
     ...(Array.isArray(config?.capabilities) ? { requestedCapabilities: normalizeCapabilities(config.capabilities) } : {}),
-    ...(isAgentModelDescriptor(config?.model) ? { recommendedModel: config.model } : {}),
+    ...(recommendedModel ? { recommendedModel } : {}),
     signature
   };
 
@@ -156,7 +161,7 @@ async function parseRepoProjectAgentDefinition(
         ...(config.displayName?.trim() ? { displayName: config.displayName.trim() } : {}),
         whenToUse: normalizeInlineText(config.whenToUse),
         ...(config.capabilities && normalizeCapabilities(config.capabilities).length > 0 ? { capabilities: normalizeCapabilities(config.capabilities) } : {}),
-        ...(isAgentModelDescriptor(config.model) ? { model: config.model } : {})
+        ...(recommendedModel ? { model: recommendedModel } : {})
       },
       prompt,
       referenceDocs: referenceResult.docs,

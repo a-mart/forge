@@ -269,11 +269,11 @@ Forge runs three layers on your machine:
 |-------|-------------|
 | **Dashboard UI** (`apps/ui`) | TanStack Start + Vite SPA. Real-time agent monitoring, chat, file browser, settings. |
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
-| **Agents** | Manager and worker agents run through Forge's runtime facade, backed by Pi, Claude SDK, Cursor SDK (specialists only), or Cursor ACP depending on the selected model/provider. Cursor SDK exposes Composer 2.5 for specialists only; manager selectors do not offer it. Each worker runs in its own worktree. |
+| **Agents** | Manager and worker agents run through Forge's runtime facade, backed by Pi, Claude SDK, or Cursor SDK depending on the selected model/provider. Cursor SDK exposes Composer 2.5 for manager and specialist selectors and replaces the legacy Cursor ACP runtime. Each worker runs in its own worktree. |
 
 Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling. Agents are extensible through both [Forge Extensions](docs/FORGE_EXTENSIONS.md) and Pi's [extension system](docs/PI_EXTENSIONS.md).
 
-Backend internals are split into thin facades and leaf modules. Runtime selection now goes through a provider-dispatch facade, with provider-specific creators under `apps/backend/src/swarm/runtime/{acp,claude,pi}/` and shared planning/projector helpers in `runtime-*` modules. When changing those areas, keep the public facade stable and move new behavior behind it.
+Backend internals are split into thin facades and leaf modules. Runtime selection now goes through a provider-dispatch facade, with provider-specific creators under `apps/backend/src/swarm/runtime/{claude,cursor-sdk,pi}/` and shared planning/projector helpers in `runtime-*` modules. When changing those areas, keep the public facade stable and move new behavior behind it.
 
 All runtime data lives locally. No cloud, no database. Just JSON, JSONL, and markdown files under `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows). Backup means copying a folder. Recovery means pasting it back. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full data layout.
 

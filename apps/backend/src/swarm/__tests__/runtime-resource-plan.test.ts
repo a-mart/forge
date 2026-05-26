@@ -214,7 +214,7 @@ describe("runtime resource plan", () => {
       ]);
   });
 
-  it("plans exact Claude/ACP runtime env values", async () => {
+  it("plans exact Claude/Cursor SDK runtime env values", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-resource-"));
     const config = createConfig(rootDir);
     expect(planRuntimeEnv({ dataDir: config.paths.dataDir, memoryContextFile: { path: join(rootDir, "memory.md"), content: "" } }))

@@ -86,14 +86,6 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
-  'cursor-acp': {
-    provider: 'cursor-acp',
-    defaultModelId: 'default',
-    visibleInCreateManager: false,
-    visibleInChangeManager: false,
-    visibleInSpawnPreset: false,
-    visibleInSpecialists: false,
-  },
 } as const
 
 const EXPECTED_MODELS = {
@@ -241,14 +233,6 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text'],
   },
-  'cursor-acp/default': {
-    provider: 'cursor-acp',
-    familyId: 'cursor-acp',
-    contextWindow: 200_000,
-    maxOutputTokens: 16_384,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
 } as const
 
 describe('model-catalog', () => {
@@ -260,11 +244,10 @@ describe('model-catalog', () => {
       'xai',
       'openrouter',
       'cursor-sdk',
-      'cursor-acp',
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(19)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(18)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
@@ -317,27 +300,19 @@ describe('model-catalog', () => {
     }
   })
 
-  it('requires provider qualification for synthetic default models while keeping cursor-acp addressable', () => {
-    expect(getCatalogProvider('cursor-acp')).toMatchObject({
-      providerId: 'cursor-acp',
-      availabilityMode: 'external',
-      piProjectionMode: 'none',
-      projectionScope: 'catalog-only',
-    })
-
+  it('removes legacy Cursor ACP from the catalog while keeping Cursor SDK provider-qualified', () => {
+    expect(getCatalogProvider('cursor-acp')).toBeUndefined()
+    expect(getCatalogFamily('cursor-acp')).toBeUndefined()
+    expect(getCatalogModel('cursor-acp/default')).toBeUndefined()
+    expect(getCatalogModel('default', 'cursor-acp')).toBeUndefined()
     expect(getCatalogModel('default')).toBeUndefined()
     expect(inferCatalogProvider('default')).toBeNull()
 
-    expect(getCatalogModel('cursor-acp/default')).toMatchObject({
-      catalogId: 'cursor-acp/default',
-      modelId: 'default',
-      provider: 'cursor-acp',
-      familyId: 'cursor-acp',
-    })
-
-    expect(getCatalogModel('default', 'cursor-acp')).toMatchObject({
-      catalogId: 'cursor-acp/default',
-      provider: 'cursor-acp',
+    expect(getCatalogModel('cursor-sdk/composer-2.5')).toMatchObject({
+      catalogId: 'cursor-sdk/composer-2.5',
+      modelId: 'composer-2.5',
+      provider: 'cursor-sdk',
+      familyId: 'cursor-composer',
     })
   })
 
@@ -349,12 +324,7 @@ describe('model-catalog', () => {
       visibleInSpawnPreset: true,
       visibleInSpecialists: true,
     })
-    expect(getCatalogFamily('cursor-acp')).toMatchObject({
-      visibleInCreateManager: false,
-      visibleInChangeManager: false,
-      visibleInSpawnPreset: false,
-      visibleInSpecialists: false,
-    })
+    expect(getCatalogFamily('cursor-acp')).toBeUndefined()
     expect(getSpecialistFamilies().map((family) => family.familyId)).toContain('cursor-composer')
     expect(getCreateManagerFamilies().map((family) => family.familyId)).toContain('cursor-composer')
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toContain('cursor-composer')
@@ -428,7 +398,7 @@ describe('model-catalog', () => {
     expect(getCatalogModel('claude-sdk/claude-sonnet-4-5-20250929')?.provider).toBe('claude-sdk')
     expect(getCatalogContextWindow('grok-4-fast')).toBe(2_000_000)
     expect(getCatalogContextWindow('default')).toBeUndefined()
-    expect(getCatalogContextWindow('default', 'cursor-acp')).toBe(200_000)
+    expect(getCatalogContextWindow('default', 'cursor-acp')).toBeUndefined()
     expect(getCatalogModel('composer-2.5', 'cursor-sdk')).toMatchObject({
       catalogId: 'cursor-sdk/composer-2.5',
       provider: 'cursor-sdk',

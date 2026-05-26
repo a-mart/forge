@@ -13,7 +13,7 @@ export const IGNORABLE_INTERNAL_CUSTOM_TYPES = new Set<string>([
   "swarm_model_change_continuity_applied",
   "swarm_claude_session_state",
   "swarm_claude_compaction_summary",
-  "swarm_acp_runtime_state",
+  "swarm_acp_runtime_state", // legacy Cursor ACP state entries remain inert historical noise.
 ]);
 
 const MAX_CLASSIFIED_TRANSCRIPT_DELTA_BYTES = 8 * 1024 * 1024;

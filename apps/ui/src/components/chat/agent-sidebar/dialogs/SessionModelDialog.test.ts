@@ -219,7 +219,7 @@ describe('SessionModelDialog', () => {
     it('does not silently switch model when only reasoning changes', async () => {
       const props = await renderDialog({
         currentModel: {
-          provider: 'cursor-acp',
+          provider: 'cursor-sdk',
           modelId: 'cursor-model',
           thinkingLevel: 'medium',
         },
@@ -227,7 +227,7 @@ describe('SessionModelDialog', () => {
         modelOrigin: 'session_override',
       })
 
-      // The dialog should show cursor-acp model as the selected model
+      // The dialog should show cursor-sdk model as the selected model
       const dialog = document.body.querySelector('[role="dialog"]')
       expect(dialog?.textContent).toContain('(current)')
 

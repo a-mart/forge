@@ -78,11 +78,9 @@ export class RuntimeErrorProjector {
       runtime:
         descriptor.model.provider.includes("cursor-sdk")
           ? "cursor-sdk"
-          : descriptor.model.provider.includes("cursor-acp")
-            ? "cursor-acp"
-            : descriptor.model.provider.includes("claude-sdk")
-              ? "claude-sdk"
-              : "pi",
+          : descriptor.model.provider.includes("claude-sdk")
+            ? "claude-sdk"
+            : "pi",
       phase: error.phase,
       message,
       stack: error.stack,

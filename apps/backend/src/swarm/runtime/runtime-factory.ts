@@ -1,5 +1,4 @@
 import { type AgentRuntimeExtensionSnapshot } from "@forge/protocol";
-import { AcpRuntimeCreator } from "./acp/acp-runtime-creator.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
@@ -41,7 +40,6 @@ interface RuntimeFactoryDependencies {
   }>;
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
   buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
-  buildAcpRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   buildCursorSdkRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   mergeRuntimeContextFiles: (
     baseAgentsFiles: Array<{ path: string; content: string }>,
@@ -70,13 +68,11 @@ interface RuntimeFactoryDependencies {
 }
 
 export class RuntimeFactory {
-  private readonly acpRuntimeCreator: AcpRuntimeCreator;
   private readonly claudeRuntimeCreator: ClaudeRuntimeCreator;
   private readonly cursorSdkRuntimeCreator: CursorSdkRuntimeCreator;
   private readonly piRuntimeCreator: PiRuntimeCreator;
 
   constructor(private readonly deps: RuntimeFactoryDependencies) {
-    this.acpRuntimeCreator = new AcpRuntimeCreator(deps);
     this.claudeRuntimeCreator = new ClaudeRuntimeCreator(deps);
     this.cursorSdkRuntimeCreator = new CursorSdkRuntimeCreator(deps);
     this.piRuntimeCreator = new PiRuntimeCreator(deps);
@@ -126,12 +122,7 @@ export class RuntimeFactory {
     }
 
     if (isAcpModelDescriptor(descriptor.model)) {
-      return this.acpRuntimeCreator.createRuntimeForDescriptor({
-        descriptor,
-        systemPrompt,
-        runtimeToken,
-        sessionDescriptor: this.getForgeSessionDescriptor(descriptor)
-      });
+      throw new Error("Cursor ACP has been removed. Restart Forge to migrate this agent to Cursor SDK Composer 2.5, or change the model manually.");
     }
 
     return this.piRuntimeCreator.createRuntimeForDescriptor({

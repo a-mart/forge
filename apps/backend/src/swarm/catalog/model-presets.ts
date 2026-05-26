@@ -7,10 +7,12 @@ export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
 
 const REMOVED_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "codex-app": "pi-codex",
+  "cursor-acp": "cursor-composer",
 };
 
 const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "openai-codex-app-server": "pi-codex",
+  "cursor-acp": "cursor-composer",
 };
 
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
@@ -149,10 +151,37 @@ export function normalizePersistedSwarmModelDescriptor(
   const replacement = resolveModelDescriptorFromPreset(replacementPreset);
   return {
     ...replacement,
-    thinkingLevel: normalizeDescriptorThinkingLevel(descriptor.thinkingLevel) ?? replacement.thinkingLevel,
+    thinkingLevel: normalizeDescriptorThinkingLevelForPreset(descriptor.thinkingLevel, replacementPreset),
   };
 }
 
+function normalizeDescriptorThinkingLevelForPreset(level: string | undefined, preset: SwarmModelPreset): string {
+  if (preset === "cursor-composer") {
+    return normalizeCursorSdkThinkingLevel(level);
+  }
+
+  return normalizeDescriptorThinkingLevel(level);
+}
+
+export function normalizeCursorSdkThinkingLevel(level: string | undefined): string {
+  const normalized = typeof level === "string" ? level.trim().toLowerCase() : "";
+  switch (normalized) {
+    case "none":
+    case "low":
+      return "low";
+    case "high":
+    case "xhigh":
+    case "x-high":
+      return "high";
+    case "medium":
+    case "":
+      return "medium";
+    default:
+      return "medium";
+  }
+}
+
 function normalizeDescriptorThinkingLevel(level: string | undefined): string {
-  return typeof level === "string" && level === "x-high" ? "xhigh" : (level ?? "xhigh");
+  const normalized = typeof level === "string" ? level.trim().toLowerCase() : "";
+  return normalized === "x-high" ? "xhigh" : (normalized || "xhigh");
 }
