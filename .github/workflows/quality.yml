@@ -1,16 +1,29 @@
-name: Quality Gate
+name: Manual Quality Gate
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Local quality tier to run
+        required: true
+        default: full
+        type: choice
+        options:
+          - quick
+          - changed
+          - full
+      base:
+        description: Optional base ref for changed-file routing
+        required: false
+        type: string
 
 jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -23,14 +36,21 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
+      - name: Run local quality
+        env:
+          QUALITY_TIER: ${{ inputs.tier }}
+          QUALITY_BASE: ${{ inputs.base }}
+        run: |
+          args=("--json")
+          if [ -n "$QUALITY_BASE" ]; then
+            args+=("--base" "$QUALITY_BASE")
+          fi
+          pnpm "quality:$QUALITY_TIER" -- "${args[@]}"
 
-      - name: Dead code check
-        run: pnpm exec knip
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
-        run: pnpm test
+      - name: Upload quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-quality-report
+          path: .forge/quality/latest.json
+          if-no-files-found: ignore

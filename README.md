@@ -314,6 +314,11 @@ pnpm package:electron
 # Run tests
 pnpm test
 
+# Run routed local quality checks (manual; writes .forge/quality/latest.json)
+pnpm quality:quick
+pnpm quality:changed
+pnpm quality:full
+
 # Typecheck (run from each package, not root)
 # Backend note: tsconfig.build.json is production-only and excludes tests.
 # Pair it with backend tests for test-file validation.

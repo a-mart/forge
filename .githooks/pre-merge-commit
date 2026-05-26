@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+if [ "${FORGE_SKIP_LOCAL_QUALITY:-}" = "1" ]; then
+  echo "FORGE_SKIP_LOCAL_QUALITY=1 set; skipping local quality pre-merge-commit hook." >&2
+  exit 0
+fi
+
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+case "$branch" in
+  main|master)
+    echo "Protected branch merge detected; running pnpm quality:changed." >&2
+    echo "Set FORGE_SKIP_LOCAL_QUALITY=1 to bypass this optional hook." >&2
+    pnpm quality:changed
+    ;;
+  *)
+    exit 0
+    ;;
+esac

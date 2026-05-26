@@ -264,6 +264,10 @@ Production ports:
 ### Validation
 
 ```bash
+pnpm quality:quick                                        # Fast changed-file validation with a local JSON report
+pnpm quality:changed                                      # Conservative path-aware validation before merge/push
+pnpm quality:full                                         # Full local validation, including build
+pnpm quality:report                                       # Print the latest .forge/quality/latest.json report
 pnpm build                                                # Build all packages
 pnpm lint                                                 # Run repo-wide ESLint
 pnpm exec knip                                            # Detect unused code, exports, and dependency issues
@@ -272,6 +276,8 @@ cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # Backend pro
 cd apps/ui && pnpm exec tsc --noEmit                               # UI typecheck
 pnpm model-catalog:audit                                  # Audit model catalog against Pi upstream
 ```
+
+The local quality runner writes agent-readable results to `.forge/quality/latest.json` by default. Use `pnpm quality:changed -- --json --no-write` for machine-readable output without updating the local artifact. Git hooks remain optional and run local quality checks only after `core.hooksPath` opt-in on protected-branch push/merge paths.
 
 Run individual test files with Vitest:
 ```bash
