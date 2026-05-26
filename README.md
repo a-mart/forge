@@ -269,7 +269,7 @@ Forge runs three layers on your machine:
 |-------|-------------|
 | **Dashboard UI** (`apps/ui`) | TanStack Start + Vite SPA. Real-time agent monitoring, chat, file browser, settings. |
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
-| **Agents** | Manager and worker agents run through Forge's runtime facade, backed by Pi, Claude SDK, or Cursor SDK depending on the selected model/provider. Cursor SDK exposes Composer 2.5 for manager and specialist selectors and replaces the legacy Cursor ACP runtime. Each worker runs in its own worktree. |
+| **Agents** | Manager and worker agents run through Forge's runtime facade, backed by Pi, Claude SDK, or Cursor SDK depending on the selected model/provider. Cursor SDK exposes Composer 2.5 for manager and specialist selectors. Each worker runs in its own worktree. |
 
 Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling. Agents are extensible through both [Forge Extensions](docs/FORGE_EXTENSIONS.md) and Pi's [extension system](docs/PI_EXTENSIONS.md).
 
