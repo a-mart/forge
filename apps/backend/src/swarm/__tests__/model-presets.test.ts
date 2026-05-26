@@ -5,6 +5,7 @@ import {
   inferSwarmModelPresetFromDescriptor,
   normalizePersistedSwarmModelDescriptor,
   normalizeSwarmModelDescriptor,
+  parseSwarmModelPreset,
   resolveRemovedSwarmModelPresetAlias,
 } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
@@ -111,6 +112,8 @@ describe("model-presets", () => {
 
   it("maps removed Cursor ACP descriptors and aliases to Cursor SDK Composer", () => {
     expect(resolveRemovedSwarmModelPresetAlias("cursor-acp")).toBe("cursor-composer");
+    expect(parseSwarmModelPreset("cursor-acp", "model")).toBe("cursor-composer");
+    expect(parseSwarmModelPreset(" Cursor-ACP ", "model")).toBe("cursor-composer");
     expect(normalizePersistedSwarmModelDescriptor({
       provider: "cursor-acp",
       modelId: "default",

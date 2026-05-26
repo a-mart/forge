@@ -935,6 +935,12 @@ describe('SwarmManager', () => {
       model: 'pi-opus',
     })
 
+    const cursorAliasManager = await manager.createManager('manager', {
+      name: 'Cursor Alias Manager',
+      cwd: config.defaultCwd,
+      model: 'cursor-acp',
+    })
+
     expect(codexManager.model).toEqual({
       provider: 'openai-codex',
       modelId: 'gpt-5.3-codex',
@@ -949,6 +955,11 @@ describe('SwarmManager', () => {
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'high',
+    })
+    expect(cursorAliasManager.model).toEqual({
+      provider: 'cursor-sdk',
+      modelId: 'composer-2.5',
+      thinkingLevel: 'medium',
     })
   })
 

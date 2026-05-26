@@ -13,6 +13,23 @@ async function postJson(url: string, payload: unknown): Promise<unknown> {
 }
 
 describe("cursor-sdk-mcp-tool-bridge", () => {
+  it("binds to loopback, rejects unsupported methods, and shuts down idempotently", async () => {
+    const bridge = await createCursorSdkMcpToolBridge([]);
+
+    const serverConfig = bridge.mcpServers[bridge.serverName];
+    if (!serverConfig || !("url" in serverConfig)) {
+      throw new Error("Expected HTTP server config");
+    }
+    expect(serverConfig.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+
+    const response = await fetch(serverConfig.url, { method: "GET" });
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+
+    await bridge.shutdown();
+    await bridge.shutdown();
+  });
+
   it("returns Cursor SDK mcpServers record-map shape and serves MCP tools", async () => {
     const execute = vi.fn(async (_callId: string, args: Record<string, unknown>) => ({ ok: true, args }));
     const bridge = await createCursorSdkMcpToolBridge([
@@ -39,8 +56,17 @@ describe("cursor-sdk-mcp-tool-bridge", () => {
       await expect(postJson(serverConfig.url, { jsonrpc: "2.0", id: 1, method: "initialize" })).resolves.toMatchObject({
         result: { serverInfo: { name: "forge-swarm-worker-1" } }
       });
+      const initializedResponse = await fetch(serverConfig.url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+      });
+      expect(initializedResponse.status).toBe(202);
       await expect(postJson(serverConfig.url, { jsonrpc: "2.0", id: 2, method: "tools/list" })).resolves.toMatchObject({
-        result: { tools: [expect.objectContaining({ name: "send_message_to_agent" })] }
+        result: { tools: [expect.objectContaining({
+          name: "send_message_to_agent",
+          inputSchema: expect.objectContaining({ type: "object" })
+        })] }
       });
       await expect(postJson(serverConfig.url, {
         jsonrpc: "2.0",
@@ -51,6 +77,50 @@ describe("cursor-sdk-mcp-tool-bridge", () => {
         result: { content: [{ type: "text", text: JSON.stringify({ ok: true, args: { targetAgentId: "manager-1", message: "hi" } }) }] }
       });
       expect(execute).toHaveBeenCalledTimes(1);
+    } finally {
+      await bridge.shutdown();
+    }
+  });
+
+  it("returns default schemas and MCP isError results for unknown tools", async () => {
+    const bridge = await createCursorSdkMcpToolBridge([
+      { name: "no_schema", execute: async () => "ok" } as unknown as ToolDefinition
+    ]);
+
+    try {
+      const serverConfig = bridge.mcpServers[bridge.serverName];
+      if (!serverConfig || !("url" in serverConfig)) throw new Error("Expected URL");
+      await expect(postJson(serverConfig.url, { jsonrpc: "2.0", id: "list", method: "tools/list" })).resolves.toMatchObject({
+        result: { tools: [expect.objectContaining({ inputSchema: { type: "object", properties: {} } })] }
+      });
+      await expect(postJson(serverConfig.url, {
+        jsonrpc: "2.0",
+        id: "unknown",
+        method: "tools/call",
+        params: { name: "missing", arguments: {} }
+      })).resolves.toMatchObject({
+        result: { isError: true, content: [{ type: "text", text: "Unknown tool: missing" }] }
+      });
+    } finally {
+      await bridge.shutdown();
+    }
+  });
+
+  it("returns JSON-RPC errors for unknown methods", async () => {
+    const bridge = await createCursorSdkMcpToolBridge([]);
+
+    try {
+      const serverConfig = bridge.mcpServers[bridge.serverName];
+      if (!serverConfig || !("url" in serverConfig)) throw new Error("Expected URL");
+      const response = await fetch(serverConfig.url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "bad", method: "unknown/method" })
+      });
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: -32601, message: "Method not found: unknown/method" }
+      });
     } finally {
       await bridge.shutdown();
     }

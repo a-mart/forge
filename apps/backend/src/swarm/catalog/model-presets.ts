@@ -27,7 +27,7 @@ export function describeSwarmReasoningLevels(): string {
 }
 
 export function isSwarmModelPreset(value: unknown): value is SwarmModelPreset {
-  return typeof value === "string" && VALID_SWARM_MODEL_PRESET_VALUES.has(value);
+  return normalizeSwarmModelPresetValue(value) !== undefined;
 }
 
 export function isSwarmReasoningLevel(value: unknown): value is SwarmReasoningLevel {
@@ -39,11 +39,12 @@ export function parseSwarmModelPreset(value: unknown, fieldName: string): SwarmM
     return undefined;
   }
 
-  if (!isSwarmModelPreset(value)) {
+  const normalizedPreset = normalizeSwarmModelPresetValue(value);
+  if (!normalizedPreset) {
     throw new Error(`${fieldName} must be one of ${describeSwarmModelPresets()}`);
   }
 
-  return value;
+  return normalizedPreset;
 }
 
 export function parseSwarmReasoningLevel(
@@ -126,6 +127,17 @@ export function normalizeSwarmModelDescriptor(
   return resolveModelDescriptorFromPreset(preset);
 }
 
+export function normalizeSwarmModelPresetValue(value: unknown): SwarmModelPreset | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalizedPreset = value.trim().toLowerCase();
+  return VALID_SWARM_MODEL_PRESET_VALUES.has(normalizedPreset)
+    ? normalizedPreset
+    : REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
+}
+
 export function resolveRemovedSwarmModelPresetAlias(preset: string): SwarmModelPreset | undefined {
   const normalizedPreset = preset.trim().toLowerCase();
   return REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
@@ -139,12 +151,15 @@ export function normalizePersistedSwarmModelDescriptor(
   }
 
   const provider = descriptor.provider.trim().toLowerCase();
+  const modelId = descriptor.modelId.trim().toLowerCase();
   const replacementPreset = REMOVED_PROVIDER_REPLACEMENTS[provider];
   if (!replacementPreset) {
     return {
       provider: descriptor.provider,
       modelId: descriptor.modelId,
-      thinkingLevel: normalizeDescriptorThinkingLevel(descriptor.thinkingLevel),
+      thinkingLevel: provider === "cursor-sdk" && modelId === "composer-2.5"
+        ? normalizeCursorSdkThinkingLevel(descriptor.thinkingLevel)
+        : normalizeDescriptorThinkingLevel(descriptor.thinkingLevel),
     };
   }
 

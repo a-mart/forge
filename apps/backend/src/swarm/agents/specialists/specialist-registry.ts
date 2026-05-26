@@ -1074,17 +1074,25 @@ function normalizeLegacyCursorAcpSpecialistModel(model: {
   const normalizedModelId = modelId?.toLowerCase();
 
   if (normalizedProvider === "cursor-acp" && (!normalizedModelId || normalizedModelId === "default")) {
-    return {
-      provider: "cursor-sdk",
-      modelId: "composer-2.5",
-      reasoningLevel: normalizeCursorSdkThinkingLevel(model.reasoningLevel),
-    };
+    return normalizeCursorSdkSpecialistModel(model.reasoningLevel);
+  }
+
+  if (normalizedProvider === "cursor-sdk" && normalizedModelId === "composer-2.5") {
+    return normalizeCursorSdkSpecialistModel(model.reasoningLevel);
   }
 
   return {
     provider,
     modelId,
     reasoningLevel: normalizeLegacyReasoningLevel(model.reasoningLevel),
+  };
+}
+
+function normalizeCursorSdkSpecialistModel(reasoningLevel: string | undefined): { provider: string; modelId: string; reasoningLevel: string } {
+  return {
+    provider: "cursor-sdk",
+    modelId: "composer-2.5",
+    reasoningLevel: normalizeCursorSdkThinkingLevel(reasoningLevel),
   };
 }
 
