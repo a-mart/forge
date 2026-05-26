@@ -9,6 +9,7 @@ node_modules/
 .tmp/
 .middleman-test/
 .forge-test/
+/.forge/
 .forge-collaboration-data/
 .forge-collaboration-data-secondary/
 .cta.json
