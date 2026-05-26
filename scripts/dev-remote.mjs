@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,7 +34,17 @@ const processes = [
   },
 ];
 
+const preflight = {
+  label: "preflight",
+  command: pnpmCommand,
+  args: ["run", "dev:preflight"],
+  env: commonEnv,
+};
+
 if (dryRun) {
+  console.log(
+    `[dev:remote] ${preflight.label}: ${preflight.command} ${preflight.args.join(" ")}`,
+  );
   for (const processConfig of processes) {
     const envSummary = [
       `FORGE_HOST=${processConfig.env.FORGE_HOST}`,
@@ -52,6 +62,24 @@ if (dryRun) {
     );
   }
   process.exit(0);
+}
+
+const preflightResult = spawnSync(preflight.command, preflight.args, {
+  cwd: repoRoot,
+  env: preflight.env,
+  stdio: "inherit",
+  // Windows package-manager shims are .cmd files; launch them via cmd.exe.
+  shell: isWindows,
+  windowsHide: false,
+});
+
+if (preflightResult.error) {
+  console.error(`[dev:remote] Failed to run preflight: ${preflightResult.error.message}`);
+  process.exit(1);
+}
+
+if (preflightResult.status !== 0) {
+  process.exit(preflightResult.status ?? 1);
 }
 
 let shuttingDown = false;
