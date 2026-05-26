@@ -2,7 +2,8 @@ import {
   describeSwarmModelPresets,
   describeSwarmReasoningLevels,
   isSwarmModelPreset,
-  isSwarmReasoningLevel
+  isSwarmReasoningLevel,
+  parseSwarmModelPreset
 } from "../../swarm/model-presets.js";
 import {
   fail,
@@ -223,6 +224,9 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
     if (mode === "override" && modelSelection === undefined && !isSwarmModelPreset(model)) {
       return fail(`update_session_model.model must be one of ${describeSwarmModelPresets()}`);
     }
+    const parsedModel = mode === "override" && modelSelection === undefined
+      ? parseSwarmModelPreset(model, "update_session_model.model")
+      : undefined;
     const parsedModelSelection = modelSelection === undefined
       ? undefined
       : parseManagerExactModelSelection(modelSelection, "update_session_model.modelSelection");
@@ -252,7 +256,7 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
       ...(mode === "override"
         ? parsedModelSelection
           ? { modelSelection: parsedModelSelection, reasoningLevel }
-          : { model: model as string, reasoningLevel }
+          : { model: parsedModel, reasoningLevel }
         : {}),
       requestId
     });

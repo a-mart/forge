@@ -703,6 +703,39 @@ describe('buildSwarmTools', () => {
     })
   })
 
+  it('normalizes removed Cursor ACP spawn_agent preset aliases before host.spawnAgent', async () => {
+    let receivedInput: SpawnAgentInput | undefined
+
+    const host = makeHost(async (_callerAgentId, input) => {
+      receivedInput = input
+      return {
+        ...makeWorkerDescriptor('worker-cursor'),
+        model: {
+          provider: 'cursor-sdk',
+          modelId: 'composer-2.5',
+          thinkingLevel: 'medium',
+        },
+      }
+    })
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const spawnTool = tools.find((tool) => tool.name === 'spawn_agent')
+    expect(spawnTool).toBeDefined()
+
+    await spawnTool!.execute(
+      'tool-call',
+      {
+        agentId: 'Worker Cursor',
+        model: 'cursor-acp',
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    expect(receivedInput?.model).toBe('cursor-composer')
+  })
+
   it('propagates spawn_agent modelId and reasoningLevel overrides to host.spawnAgent', async () => {
     let receivedInput: SpawnAgentInput | undefined
 
@@ -751,7 +784,7 @@ describe('buildSwarmTools', () => {
         undefined,
         undefined as any,
       ),
-    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-acp')
+    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer')
   })
 
   it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {

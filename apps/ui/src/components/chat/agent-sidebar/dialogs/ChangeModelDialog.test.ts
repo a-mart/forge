@@ -109,7 +109,7 @@ describe('ChangeModelDialog', () => {
     it('does not call onConfirm when unavailable model is selected', async () => {
       const props = await renderDialog({
         currentModel: {
-          provider: 'cursor-acp',
+          provider: 'cursor-sdk',
           modelId: 'cursor-model',
           thinkingLevel: 'medium',
         },

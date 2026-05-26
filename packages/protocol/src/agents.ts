@@ -3,7 +3,7 @@ import { CATALOG_FAMILY_IDS } from './model-catalog.js'
 
 export type AgentStatus = 'idle' | 'streaming' | 'terminated' | 'stopped' | 'error'
 
-export const MANAGER_MODEL_PRESETS = CATALOG_FAMILY_IDS.filter((familyId) => familyId !== 'cursor-composer')
+export const MANAGER_MODEL_PRESETS = CATALOG_FAMILY_IDS
 export type ManagerModelPreset = string
 
 export const MANAGER_REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const

@@ -3,7 +3,10 @@ import {
   getModelPresetInfoList,
   inferProviderFromModelId,
   inferSwarmModelPresetFromDescriptor,
+  normalizePersistedSwarmModelDescriptor,
   normalizeSwarmModelDescriptor,
+  parseSwarmModelPreset,
+  resolveRemovedSwarmModelPresetAlias,
 } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
 
@@ -102,9 +105,38 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-codex", "pi-5.4", "pi-5.5", "pi-opus", "sdk-opus", "sdk-sonnet", "cursor-acp"] as const) {
+    for (const presetId of ["pi-codex", "pi-5.4", "pi-5.5", "pi-opus", "sdk-opus", "sdk-sonnet", "cursor-composer"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
+  });
+
+  it("maps removed Cursor ACP descriptors and aliases to Cursor SDK Composer", () => {
+    expect(resolveRemovedSwarmModelPresetAlias("cursor-acp")).toBe("cursor-composer");
+    expect(parseSwarmModelPreset("cursor-acp", "model")).toBe("cursor-composer");
+    expect(parseSwarmModelPreset(" Cursor-ACP ", "model")).toBe("cursor-composer");
+    expect(normalizePersistedSwarmModelDescriptor({
+      provider: "cursor-acp",
+      modelId: "default",
+      thinkingLevel: "xhigh",
+    })).toEqual({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      thinkingLevel: "high",
+    });
+    expect(normalizePersistedSwarmModelDescriptor({
+      provider: " Cursor-ACP ",
+      modelId: " DEFAULT ",
+      thinkingLevel: "x-high",
+    })).toEqual({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      thinkingLevel: "high",
+    });
+    expect(normalizePersistedSwarmModelDescriptor({
+      provider: "cursor-acp",
+      modelId: "default",
+      thinkingLevel: "none",
+    })?.thinkingLevel).toBe("low");
   });
 
   it("uses the catalog-backed known model list", () => {

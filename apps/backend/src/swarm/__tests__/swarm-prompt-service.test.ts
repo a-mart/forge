@@ -1078,7 +1078,7 @@ describe("SwarmPromptService", () => {
     expect(files.map((f) => f.content.trim())).toEqual(["root", "level1"]);
   });
 
-  it("uses descriptor-aware skills for preview, memory resources, Claude, and ACP prompts", async () => {
+  it("uses descriptor-aware skills for preview, memory resources, Claude, and Cursor SDK prompts", async () => {
     const { config } = await makeConfig();
     const dataDir = config.paths.dataDir;
     const descriptor = createManagerDescriptor(config, repoRoot, { sessionSurface: "collab" });
@@ -1135,11 +1135,11 @@ describe("SwarmPromptService", () => {
     expect(claudePrompt).toContain("<name>brave-search</name>");
     expect(claudePrompt).not.toContain("agent-browser");
 
-    const acpPrompt = await service.buildAcpRuntimeSystemPrompt(descriptor, "Base prompt");
-    expect(acpPrompt).toContain("<name>memory</name>");
-    expect(acpPrompt).toContain("<name>brave-search</name>");
-    expect(acpPrompt).not.toContain("agent-browser");
-    expect(acpPrompt).toContain("## ACP Runtime");
+    const cursorSdkPrompt = await service.buildCursorSdkRuntimeSystemPrompt(descriptor, "Base prompt");
+    expect(cursorSdkPrompt).toContain("<name>memory</name>");
+    expect(cursorSdkPrompt).toContain("<name>brave-search</name>");
+    expect(cursorSdkPrompt).not.toContain("agent-browser");
+    expect(cursorSdkPrompt).toContain("## Cursor SDK Runtime");
   });
 
   it("getMemoryRuntimeResources builds composite memory with profile + session and common knowledge", async () => {

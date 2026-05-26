@@ -13,6 +13,7 @@ import {
 import {
   inferProviderFromModelId,
   isSwarmReasoningLevel,
+  normalizeCursorSdkThinkingLevel,
   resolveModelDescriptorFromPreset,
   resolveRemovedSwarmModelPresetAlias,
 } from "../../model-presets.js";
@@ -813,16 +814,21 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
     return null;
   }
 
-  const provider = parseOptionalString(frontmatterValues.provider);
-  const reasoningLevel = parseOptionalString(frontmatterValues.reasoningLevel);
-  if (reasoningLevel && !isSwarmReasoningLevel(reasoningLevel)) {
+  const normalizedModel = normalizeLegacyCursorAcpSpecialistModel({
+    provider: parseOptionalString(frontmatterValues.provider),
+    modelId,
+    reasoningLevel: parseOptionalString(frontmatterValues.reasoningLevel),
+  });
+  if (normalizedModel.reasoningLevel && !isSwarmReasoningLevel(normalizedModel.reasoningLevel)) {
     return null;
   }
 
-  const fallbackModelId = parseOptionalString(frontmatterValues.fallbackModelId);
-  const fallbackProvider = parseOptionalString(frontmatterValues.fallbackProvider);
-  const fallbackReasoningLevel = parseOptionalString(frontmatterValues.fallbackReasoningLevel);
-  if (fallbackReasoningLevel && !isSwarmReasoningLevel(fallbackReasoningLevel)) {
+  const normalizedFallbackModel = normalizeLegacyCursorAcpSpecialistModel({
+    provider: parseOptionalString(frontmatterValues.fallbackProvider),
+    modelId: parseOptionalString(frontmatterValues.fallbackModelId),
+    reasoningLevel: parseOptionalString(frontmatterValues.fallbackReasoningLevel),
+  });
+  if (normalizedFallbackModel.reasoningLevel && !isSwarmReasoningLevel(normalizedFallbackModel.reasoningLevel)) {
     return null;
   }
 
@@ -837,12 +843,12 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
       color,
       enabled: enabled ?? true,
       whenToUse,
-      modelId,
-      provider,
-      reasoningLevel,
-      fallbackModelId,
-      fallbackProvider,
-      fallbackReasoningLevel,
+      modelId: normalizedModel.modelId ?? modelId,
+      provider: normalizedModel.provider,
+      reasoningLevel: normalizedModel.reasoningLevel,
+      fallbackModelId: normalizedFallbackModel.modelId,
+      fallbackProvider: normalizedFallbackModel.provider,
+      fallbackReasoningLevel: normalizedFallbackModel.reasoningLevel,
       builtin: builtin ?? false,
       pinned: pinned ?? false,
       webSearch: webSearch ?? false,
@@ -1055,6 +1061,47 @@ function parseYamlStringValue(value: string): string {
 function normalizeWebSearchForModelId(provider: string | undefined, modelId: string, webSearch: boolean): boolean {
   const resolvedProvider = provider?.trim() || inferProviderFromModelId(modelId) || "";
   return webSearch && resolvedProvider === "xai";
+}
+
+function normalizeLegacyCursorAcpSpecialistModel(model: {
+  provider?: string;
+  modelId?: string;
+  reasoningLevel?: string;
+}): { provider?: string; modelId?: string; reasoningLevel?: string } {
+  const provider = model.provider?.trim();
+  const modelId = model.modelId?.trim();
+  const normalizedProvider = provider?.toLowerCase();
+  const normalizedModelId = modelId?.toLowerCase();
+
+  if (normalizedProvider === "cursor-acp" && (!normalizedModelId || normalizedModelId === "default")) {
+    return normalizeCursorSdkSpecialistModel(model.reasoningLevel);
+  }
+
+  if (normalizedProvider === "cursor-sdk" && normalizedModelId === "composer-2.5") {
+    return normalizeCursorSdkSpecialistModel(model.reasoningLevel);
+  }
+
+  return {
+    provider,
+    modelId,
+    reasoningLevel: normalizeLegacyReasoningLevel(model.reasoningLevel),
+  };
+}
+
+function normalizeCursorSdkSpecialistModel(reasoningLevel: string | undefined): { provider: string; modelId: string; reasoningLevel: string } {
+  return {
+    provider: "cursor-sdk",
+    modelId: "composer-2.5",
+    reasoningLevel: normalizeCursorSdkThinkingLevel(reasoningLevel),
+  };
+}
+
+function normalizeLegacyReasoningLevel(level: string | undefined): string | undefined {
+  const normalized = level?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized === "x-high" ? "xhigh" : normalized;
 }
 
 function toResolvedSpecialistDefinition(options: {

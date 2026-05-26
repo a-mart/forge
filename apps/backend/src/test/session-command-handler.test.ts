@@ -236,6 +236,43 @@ describe("session command handler", () => {
     );
   });
 
+  it("canonicalizes removed Cursor ACP session model aliases before updating and emitting", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      updateSessionModel: vi.fn(async () => undefined),
+    };
+
+    await handleSessionCommand({
+      command: {
+        type: "update_session_model",
+        sessionAgentId: "manager--s2",
+        mode: "override",
+        model: "cursor-acp",
+        requestId: "req-session-model-cursor-acp",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.updateSessionModel).toHaveBeenCalledWith("manager--s2", "override", "cursor-composer", undefined);
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_model_updated",
+        sessionAgentId: "manager--s2",
+        mode: "override",
+        model: "cursor-composer",
+        requestId: "req-session-model-cursor-acp",
+      }),
+    );
+  });
+
   it("rejects session model changes inside system-managed profiles", async () => {
     const send = vi.fn();
     const swarmManager = {

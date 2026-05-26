@@ -66,7 +66,6 @@ export const PROVIDER_LABELS: Record<string, string> = {
   'anthropic': 'Anthropic',
   'claude-sdk': 'Claude SDK',
   'cursor-sdk': 'Cursor SDK',
-  'cursor-acp': 'Cursor ACP (deprecated)',
   xai: 'xAI',
 }
 

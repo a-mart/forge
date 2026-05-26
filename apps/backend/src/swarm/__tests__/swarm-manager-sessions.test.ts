@@ -935,6 +935,12 @@ describe('SwarmManager', () => {
       model: 'pi-opus',
     })
 
+    const cursorAliasManager = await manager.createManager('manager', {
+      name: 'Cursor Alias Manager',
+      cwd: config.defaultCwd,
+      model: 'cursor-acp',
+    })
+
     expect(codexManager.model).toEqual({
       provider: 'openai-codex',
       modelId: 'gpt-5.3-codex',
@@ -949,6 +955,11 @@ describe('SwarmManager', () => {
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'high',
+    })
+    expect(cursorAliasManager.model).toEqual({
+      provider: 'cursor-sdk',
+      modelId: 'composer-2.5',
+      thinkingLevel: 'medium',
     })
   })
 
@@ -1060,7 +1071,7 @@ describe('SwarmManager', () => {
         cwd: config.defaultCwd,
         model: 'invalid-model' as any,
       }),
-     ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-acp')
+     ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer')
   })
 
   it('replacement-shuts down idle manager session runtimes after a profile model change and recreates them on the next prompt', async () => {

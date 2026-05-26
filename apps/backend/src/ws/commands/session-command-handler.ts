@@ -6,7 +6,7 @@ import type {
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { ArchiveOperationError } from "../../swarm/archive/archive-service.js";
-import { inferSwarmModelPresetFromDescriptor } from "../../swarm/model-presets.js";
+import { inferSwarmModelPresetFromDescriptor, parseSwarmModelPreset } from "../../swarm/model-presets.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   requireNonSystemProfile,
@@ -346,6 +346,9 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         (agentId) => swarmManager.getAgent(agentId),
       );
 
+      const canonicalPreset = command.mode === "override" && !command.modelSelection
+        ? parseSwarmModelPreset(command.model, "update_session_model.model")
+        : undefined;
       const eventModel = command.mode === "inherit"
         ? undefined
         : command.modelSelection
@@ -356,13 +359,13 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
                 command.reasoningLevel,
               )
             )
-          : command.model;
+          : canonicalPreset;
 
       if (command.mode === "override" && !command.modelSelection) {
         await swarmManager.updateSessionModel(
           command.sessionAgentId,
           command.mode,
-          command.model,
+          canonicalPreset,
           command.reasoningLevel,
         );
       }

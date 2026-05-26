@@ -1,4 +1,4 @@
-import { MANAGER_MODEL_PRESETS, type ClientCommand, type ServerEvent } from "@forge/protocol";
+import { type ClientCommand, type ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { ArchiveOperationError } from "../../swarm/archive/archive-service.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
@@ -8,7 +8,7 @@ import {
   requireNonSystemSessionProfile,
 } from "../../swarm/system-profile-guards.js";
 import type { UnreadTracker } from "../../swarm/unread-tracker.js";
-import { inferSwarmModelPresetFromDescriptor } from "../../swarm/model-presets.js";
+import { inferSwarmModelPresetFromDescriptor, parseSwarmModelPreset } from "../../swarm/model-presets.js";
 import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";
 
 export interface ManagerCommandRouteContext {
@@ -386,11 +386,15 @@ function archiveErrorCode(error: unknown, fallback: string): string {
 }
 
 function requireManagerModelPreset(value: string | undefined): SwarmModelPreset {
-  if (!value || !MANAGER_MODEL_PRESETS.includes(value)) {
+  try {
+    const preset = parseSwarmModelPreset(value, "model");
+    if (!preset) {
+      throw new Error(`Invalid model preset: ${value}`);
+    }
+    return preset;
+  } catch {
     throw new Error(`Invalid model preset: ${value}`);
   }
-
-  return value as SwarmModelPreset;
 }
 
 function inferEventModelPreset(descriptor: { provider: string; modelId: string }): SwarmModelPreset {

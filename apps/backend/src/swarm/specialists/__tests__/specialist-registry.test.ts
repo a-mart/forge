@@ -69,6 +69,57 @@ describe("specialist-registry", () => {
     invalidateSpecialistCache();
   });
 
+  it("normalizes legacy Cursor ACP specialist models at read time", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const filePath = join(root, "legacy-cursor.md");
+    const presetFilePath = join(root, "legacy-cursor-preset.md");
+    await writeFile(filePath, [
+      "---",
+      "displayName: Legacy Cursor",
+      "color: '#2563eb'",
+      "enabled: true",
+      "whenToUse: Legacy Cursor work",
+      "modelId: ' DEFAULT '",
+      "provider: ' Cursor-ACP '",
+      "reasoningLevel: x-high",
+      "fallbackModelId: default",
+      "fallbackProvider: cursor-acp",
+      "fallbackReasoningLevel: none",
+      "TargetSpace: [builder]",
+      "---",
+      "Specialist prompt body.",
+    ].join("\n"), "utf8");
+
+    const parsed = await parseSpecialistFile(filePath);
+    expect(parsed?.frontmatter).toMatchObject({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      reasoningLevel: "high",
+      fallbackProvider: "cursor-sdk",
+      fallbackModelId: "composer-2.5",
+      fallbackReasoningLevel: "low",
+    });
+
+    await writeFile(presetFilePath, [
+      "---",
+      "displayName: Legacy Cursor Preset",
+      "color: '#2563eb'",
+      "enabled: true",
+      "whenToUse: Legacy Cursor preset work",
+      "model: cursor-acp",
+      "reasoningLevel: none",
+      "TargetSpace: [builder]",
+      "---",
+      "Specialist prompt body.",
+    ].join("\n"), "utf8");
+
+    expect((await parseSpecialistFile(presetFilePath))?.frontmatter).toMatchObject({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      reasoningLevel: "low",
+    });
+  });
+
   it("resolves workspace specialists without overriding global entries unless explicitly requested", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");

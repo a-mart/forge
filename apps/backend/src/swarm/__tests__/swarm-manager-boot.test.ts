@@ -2124,7 +2124,7 @@ describe('SwarmManager', () => {
     const workerId = 'recovered-worker'
     await writeFile(
       join(workersDir, `${workerId}.jsonl`),
-      `${JSON.stringify({ type: 'session', timestamp: '2026-01-01T00:00:00.000Z', cwd: config.defaultCwd })}\n${JSON.stringify({ type: 'model_change', timestamp: '2026-01-01T00:00:01.000Z', provider: config.defaultModel.provider, modelId: config.defaultModel.modelId })}\n`,
+      `${JSON.stringify({ type: 'session', timestamp: '2026-01-01T00:00:00.000Z', cwd: config.defaultCwd })}\n${JSON.stringify({ type: 'model_change', timestamp: '2026-01-01T00:00:01.000Z', provider: 'cursor-acp', modelId: 'default' })}\n${JSON.stringify({ type: 'thinking_level_change', timestamp: '2026-01-01T00:00:02.000Z', thinkingLevel: 'x-high' })}\n`,
       'utf8',
     )
 
@@ -2141,6 +2141,11 @@ describe('SwarmManager', () => {
       role: 'worker',
       managerId: 'manager',
       status: 'terminated',
+      model: {
+        provider: 'cursor-sdk',
+        modelId: 'composer-2.5',
+        thinkingLevel: 'high',
+      },
     })
     expect(secondBoot.listWorkersForSession('manager').map((worker) => worker.agentId)).toEqual([workerId])
     expect(secondBoot.listManagerAgents().find((agent) => agent.agentId === 'manager')).toMatchObject({
@@ -2449,6 +2454,97 @@ describe('SwarmManager', () => {
     )
     expect(persistedStore.profiles.find((profile) => profile.profileId === 'manager')).toEqual(
       expect.objectContaining({ defaultModel: expectedMigratedModel }),
+    )
+  })
+
+  it('migrates removed Cursor ACP descriptors to Cursor SDK Composer on boot', async () => {
+    const config = await makeTempConfig()
+    const legacyCursorModel = {
+      provider: 'cursor-acp',
+      modelId: 'default',
+      thinkingLevel: 'xhigh',
+    }
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              profileId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:00:00.000Z',
+              updatedAt: '2026-03-27T00:00:00.000Z',
+              cwd: config.defaultCwd,
+              model: legacyCursorModel,
+              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+            },
+            {
+              agentId: 'worker',
+              displayName: 'Worker',
+              role: 'worker',
+              managerId: 'manager',
+              profileId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:01:00.000Z',
+              updatedAt: '2026-03-27T00:01:00.000Z',
+              cwd: config.defaultCwd,
+              model: { ...legacyCursorModel, thinkingLevel: 'none' },
+              sessionFile: join(config.paths.sessionsDir, 'worker.jsonl'),
+            },
+          ],
+          profiles: [
+            {
+              profileId: 'manager',
+              displayName: 'Manager',
+              defaultSessionAgentId: 'manager',
+              defaultModel: legacyCursorModel,
+              createdAt: '2026-03-27T00:00:00.000Z',
+              updatedAt: '2026-03-27T00:00:00.000Z',
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const expectedHighModel = {
+      provider: 'cursor-sdk',
+      modelId: 'composer-2.5',
+      thinkingLevel: 'high',
+    }
+    const expectedLowModel = {
+      ...expectedHighModel,
+      thinkingLevel: 'low',
+    }
+
+    expect(manager.getAgent('manager')).toMatchObject({ model: expectedHighModel })
+    expect(manager.getAgent('worker')).toMatchObject({ model: expectedLowModel })
+    expect(manager.listProfiles().find((profile) => profile.profileId === 'manager')?.defaultModel).toEqual(
+      expectedHighModel,
+    )
+
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: Array<{ agentId: string; model: unknown }>
+      profiles: Array<{ profileId: string; defaultModel?: unknown }>
+    }
+    expect(persistedStore.agents.find((agent) => agent.agentId === 'manager')).toEqual(
+      expect.objectContaining({ model: expectedHighModel }),
+    )
+    expect(persistedStore.agents.find((agent) => agent.agentId === 'worker')).toEqual(
+      expect.objectContaining({ model: expectedLowModel }),
+    )
+    expect(persistedStore.profiles.find((profile) => profile.profileId === 'manager')).toEqual(
+      expect.objectContaining({ defaultModel: expectedHighModel }),
     )
   })
 

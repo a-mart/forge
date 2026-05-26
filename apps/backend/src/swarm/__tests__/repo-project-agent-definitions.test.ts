@@ -51,6 +51,27 @@ describe("repo project agent definitions", () => {
     expect(first.definitions[0].referenceDocs.map((doc) => doc.path)).toEqual(["guide.md"]);
   });
 
+  it("normalizes legacy Cursor ACP recommended models", async () => {
+    const root = await makeTempDir("forge-repo-pa-cursor-acp-");
+    const definitionDir = join(root, "cursor-agent");
+    await mkdir(definitionDir, { recursive: true });
+    await writeFile(
+      join(definitionDir, "config.json"),
+      JSON.stringify({ version: 1, handle: "cursor-agent", whenToUse: "Use Cursor", model: { provider: "cursor-acp", modelId: "default", thinkingLevel: "xhigh" } }),
+      "utf-8"
+    );
+    await writeFile(join(definitionDir, "prompt.md"), "Use Cursor SDK.\n", "utf-8");
+
+    const inventory = await scanRepoProjectAgentDefinitions(root);
+
+    expect(inventory.items[0].recommendedModel).toEqual({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      thinkingLevel: "high"
+    });
+    expect(inventory.definitions[0].config.model).toEqual(inventory.items[0].recommendedModel);
+  });
+
   it("includes invalid entries with diagnostics instead of failing the scan", async () => {
     const root = await makeTempDir("forge-repo-pa-invalid-");
     const validDir = join(root, "valid-agent");

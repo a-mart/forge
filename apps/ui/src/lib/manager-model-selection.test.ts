@@ -78,7 +78,7 @@ describe('buildManagerModelRows provider availability gating', () => {
     // External providers (e.g. OpenRouter) should always be available regardless of providerAvailability
     const rows = buildManagerModelRows('change', {}, {})
 
-    const externalRows = rows.filter((r) => r.provider === 'openrouter' || r.provider === 'cursor-acp')
+    const externalRows = rows.filter((r) => r.provider === 'openrouter')
     // External providers may or may not have models on the change surface,
     // but if they do, they should not be marked unavailable
     for (const row of externalRows) {

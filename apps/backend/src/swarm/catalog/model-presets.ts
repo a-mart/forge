@@ -7,10 +7,12 @@ export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
 
 const REMOVED_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "codex-app": "pi-codex",
+  "cursor-acp": "cursor-composer",
 };
 
 const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
   "openai-codex-app-server": "pi-codex",
+  "cursor-acp": "cursor-composer",
 };
 
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
@@ -25,7 +27,7 @@ export function describeSwarmReasoningLevels(): string {
 }
 
 export function isSwarmModelPreset(value: unknown): value is SwarmModelPreset {
-  return typeof value === "string" && VALID_SWARM_MODEL_PRESET_VALUES.has(value);
+  return normalizeSwarmModelPresetValue(value) !== undefined;
 }
 
 export function isSwarmReasoningLevel(value: unknown): value is SwarmReasoningLevel {
@@ -37,11 +39,12 @@ export function parseSwarmModelPreset(value: unknown, fieldName: string): SwarmM
     return undefined;
   }
 
-  if (!isSwarmModelPreset(value)) {
+  const normalizedPreset = normalizeSwarmModelPresetValue(value);
+  if (!normalizedPreset) {
     throw new Error(`${fieldName} must be one of ${describeSwarmModelPresets()}`);
   }
 
-  return value;
+  return normalizedPreset;
 }
 
 export function parseSwarmReasoningLevel(
@@ -124,6 +127,17 @@ export function normalizeSwarmModelDescriptor(
   return resolveModelDescriptorFromPreset(preset);
 }
 
+export function normalizeSwarmModelPresetValue(value: unknown): SwarmModelPreset | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalizedPreset = value.trim().toLowerCase();
+  return VALID_SWARM_MODEL_PRESET_VALUES.has(normalizedPreset)
+    ? normalizedPreset
+    : REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
+}
+
 export function resolveRemovedSwarmModelPresetAlias(preset: string): SwarmModelPreset | undefined {
   const normalizedPreset = preset.trim().toLowerCase();
   return REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
@@ -137,22 +151,52 @@ export function normalizePersistedSwarmModelDescriptor(
   }
 
   const provider = descriptor.provider.trim().toLowerCase();
+  const modelId = descriptor.modelId.trim().toLowerCase();
   const replacementPreset = REMOVED_PROVIDER_REPLACEMENTS[provider];
   if (!replacementPreset) {
     return {
       provider: descriptor.provider,
       modelId: descriptor.modelId,
-      thinkingLevel: normalizeDescriptorThinkingLevel(descriptor.thinkingLevel),
+      thinkingLevel: provider === "cursor-sdk" && modelId === "composer-2.5"
+        ? normalizeCursorSdkThinkingLevel(descriptor.thinkingLevel)
+        : normalizeDescriptorThinkingLevel(descriptor.thinkingLevel),
     };
   }
 
   const replacement = resolveModelDescriptorFromPreset(replacementPreset);
   return {
     ...replacement,
-    thinkingLevel: normalizeDescriptorThinkingLevel(descriptor.thinkingLevel) ?? replacement.thinkingLevel,
+    thinkingLevel: normalizeDescriptorThinkingLevelForPreset(descriptor.thinkingLevel, replacementPreset),
   };
 }
 
+function normalizeDescriptorThinkingLevelForPreset(level: string | undefined, preset: SwarmModelPreset): string {
+  if (preset === "cursor-composer") {
+    return normalizeCursorSdkThinkingLevel(level);
+  }
+
+  return normalizeDescriptorThinkingLevel(level);
+}
+
+export function normalizeCursorSdkThinkingLevel(level: string | undefined): string {
+  const normalized = typeof level === "string" ? level.trim().toLowerCase() : "";
+  switch (normalized) {
+    case "none":
+    case "low":
+      return "low";
+    case "high":
+    case "xhigh":
+    case "x-high":
+      return "high";
+    case "medium":
+    case "":
+      return "medium";
+    default:
+      return "medium";
+  }
+}
+
 function normalizeDescriptorThinkingLevel(level: string | undefined): string {
-  return typeof level === "string" && level === "x-high" ? "xhigh" : (level ?? "xhigh");
+  const normalized = typeof level === "string" ? level.trim().toLowerCase() : "";
+  return normalized === "x-high" ? "xhigh" : (normalized || "xhigh");
 }

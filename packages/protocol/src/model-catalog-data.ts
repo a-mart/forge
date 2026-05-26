@@ -64,14 +64,6 @@ export const FORGE_MODEL_CATALOG = {
       projectionScope: 'catalog-only',
       requestBehaviorId: null,
     },
-    'cursor-acp': {
-      providerId: 'cursor-acp',
-      displayName: 'Cursor ACP',
-      availabilityMode: 'external',
-      piProjectionMode: 'none',
-      projectionScope: 'catalog-only',
-      requestBehaviorId: null,
-    },
   },
 
   families: {
@@ -162,17 +154,6 @@ export const FORGE_MODEL_CATALOG = {
       visibleInChangeManager: true,
       visibleInSpawnPreset: true,
       visibleInSpecialists: true,
-    },
-    'cursor-acp': {
-      familyId: 'cursor-acp',
-      displayName: 'Cursor ACP (Experimental)',
-      provider: 'cursor-acp',
-      defaultModelId: 'default',
-      defaultReasoningLevel: 'medium',
-      visibleInCreateManager: false,
-      visibleInChangeManager: false,
-      visibleInSpawnPreset: false,
-      visibleInSpecialists: false,
     },
   },
 
@@ -500,25 +481,6 @@ export const FORGE_MODEL_CATALOG = {
       piUpstreamId: null,
       intentionalDivergenceNotes:
         'Synthetic entry — Cursor SDK local runtime is not a Pi-managed runtime; native Cursor SDK path for both manager and specialist runtime usage',
-    },
-
-    'cursor-acp/default': {
-      catalogId: 'cursor-acp/default',
-      modelId: 'default',
-      provider: 'cursor-acp',
-      familyId: 'cursor-acp',
-      displayName: 'Cursor ACP (Experimental)',
-      isFamilyDefault: true,
-      supportsReasoning: true,
-      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-      defaultReasoningLevel: 'medium',
-      contextWindow: 200_000,
-      maxOutputTokens: 16_384,
-      inputModes: ['text', 'image'],
-      webSearchCapability: 'none',
-      enabledByDefault: true,
-      piUpstreamId: null,
-      intentionalDivergenceNotes: 'Synthetic entry — Cursor ACP is not a Pi-managed runtime',
     },
   },
 } as const satisfies ForgeModelCatalog

@@ -2,7 +2,8 @@ import {
   describeSwarmModelPresets,
   describeSwarmReasoningLevels,
   isSwarmModelPreset,
-  isSwarmReasoningLevel
+  isSwarmReasoningLevel,
+  parseSwarmModelPreset
 } from "../../swarm/model-presets.js";
 import {
   fail,
@@ -120,6 +121,9 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     if (modelSelection === undefined && !isSwarmModelPreset(model)) {
       return fail(`update_profile_default_model.model must be one of ${describeSwarmModelPresets()}`);
     }
+    const parsedModel = modelSelection === undefined
+      ? parseSwarmModelPreset(model, "update_profile_default_model.model")
+      : undefined;
     const parsedModelSelection = modelSelection === undefined
       ? undefined
       : parseManagerExactModelSelection(modelSelection, "update_profile_default_model.modelSelection");
@@ -136,7 +140,7 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     return ok({
       type: "update_profile_default_model",
       profileId: profileId.trim(),
-      ...(parsedModelSelection ? { modelSelection: parsedModelSelection } : { model: model as string }),
+      ...(parsedModelSelection ? { modelSelection: parsedModelSelection } : { model: parsedModel }),
       reasoningLevel,
       requestId
     });
@@ -158,6 +162,9 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     if (modelSelection === undefined && !isSwarmModelPreset(model)) {
       return fail(`update_manager_model.model must be one of ${describeSwarmModelPresets()}`);
     }
+    const parsedModel = modelSelection === undefined
+      ? parseSwarmModelPreset(model, "update_manager_model.model")
+      : undefined;
     const parsedModelSelection = modelSelection === undefined
       ? undefined
       : parseManagerExactModelSelection(modelSelection, "update_manager_model.modelSelection");
@@ -174,7 +181,7 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     return ok({
       type: "update_manager_model",
       managerId: managerId.trim(),
-      ...(parsedModelSelection ? { modelSelection: parsedModelSelection } : { model: model as string }),
+      ...(parsedModelSelection ? { modelSelection: parsedModelSelection } : { model: parsedModel }),
       reasoningLevel,
       requestId
     });

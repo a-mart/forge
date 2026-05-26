@@ -390,6 +390,73 @@ describe("manager command handler", () => {
     });
   });
 
+  it("canonicalizes removed Cursor ACP profile default model aliases before updating and emitting", async () => {
+    const broadcastToSubscribed = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      updateProfileDefaultModel: vi.fn(async () => undefined),
+    };
+
+    await handleManagerCommand({
+      command: {
+        type: "update_profile_default_model",
+        profileId: "alpha",
+        model: "cursor-acp",
+        requestId: "req-default-model-cursor-acp",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send: vi.fn(),
+      broadcastToSubscribed,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.updateProfileDefaultModel).toHaveBeenCalledWith("alpha", "cursor-composer", undefined);
+    expect(broadcastToSubscribed).toHaveBeenCalledWith({
+      type: "profile_default_model_updated",
+      profileId: "alpha",
+      model: "cursor-composer",
+      reasoningLevel: undefined,
+      requestId: "req-default-model-cursor-acp",
+    });
+  });
+
+  it("canonicalizes removed Cursor ACP manager model aliases before updating and emitting", async () => {
+    const broadcastToSubscribed = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "alpha" })),
+      updateManagerModel: vi.fn(async () => undefined),
+    };
+
+    await handleManagerCommand({
+      command: {
+        type: "update_manager_model",
+        managerId: "alpha",
+        model: "cursor-acp",
+        requestId: "req-manager-model-cursor-acp",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send: vi.fn(),
+      broadcastToSubscribed,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.updateManagerModel).toHaveBeenCalledWith("alpha", "cursor-composer", undefined);
+    expect(broadcastToSubscribed).toHaveBeenCalledWith({
+      type: "manager_model_updated",
+      managerId: "alpha",
+      model: "cursor-composer",
+      reasoningLevel: undefined,
+      requestId: "req-manager-model-cursor-acp",
+    });
+  });
+
   it("rejects update_manager_model when targeting a session inside a system-managed profile", async () => {
     const send = vi.fn();
     const swarmManager = {
