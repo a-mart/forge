@@ -114,6 +114,10 @@ describe('ws command parser session commands', () => {
       ok: false,
       error: 'update_session_model.requestId must be a string when provided',
     })
+    expect(parseJsonCommand({ type: 'update_session_model', sessionAgentId: 'session-a', mode: 'override', model: 'cursor-acp' })).toEqual({
+      ok: true,
+      command: { type: 'update_session_model', sessionAgentId: 'session-a', mode: 'override', model: 'cursor-composer', reasoningLevel: undefined, modelSelection: undefined, requestId: undefined },
+    })
     expect(parseJsonCommand({ type: 'fork_session', sourceAgentId: 'session-a' })).toEqual({
       ok: true,
       command: { type: 'fork_session', sourceAgentId: 'session-a', label: undefined, fromMessageId: undefined, requestId: undefined },
@@ -138,6 +142,10 @@ describe('ws command parser session commands', () => {
       ok: false,
       error: 'update_profile_default_model.requestId must be a string when provided',
     })
+    expect(parseJsonCommand({ type: 'update_profile_default_model', profileId: 'profile-a', model: 'cursor-acp' })).toEqual({
+      ok: true,
+      command: { type: 'update_profile_default_model', profileId: 'profile-a', model: 'cursor-composer', reasoningLevel: undefined, requestId: undefined },
+    })
     expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4' })).toEqual({
       ok: true,
       command: { type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', reasoningLevel: undefined, requestId: undefined },
@@ -145,6 +153,10 @@ describe('ws command parser session commands', () => {
     expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'pi-5.4', requestId: 123 })).toEqual({
       ok: false,
       error: 'update_manager_model.requestId must be a string when provided',
+    })
+    expect(parseJsonCommand({ type: 'update_manager_model', managerId: 'manager-a', model: 'cursor-acp' })).toEqual({
+      ok: true,
+      command: { type: 'update_manager_model', managerId: 'manager-a', model: 'cursor-composer', reasoningLevel: undefined, requestId: undefined },
     })
     expect(parseJsonCommand({ type: 'update_manager_cwd', managerId: 'manager-a', cwd: '/tmp/project' })).toEqual({
       ok: true,
