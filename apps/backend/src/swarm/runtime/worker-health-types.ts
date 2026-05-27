@@ -5,6 +5,9 @@ export interface WorkerWatchdogStateLike {
   deferredFinalizeTurnSeq: number | null;
   hadStreamingThisTurn: boolean;
   lastFinalizedTurnSeq: number | null;
+  pendingTransientTerminatedTurnSeq?: number | null;
+  pendingTransientTerminatedStartedAtMs?: number | null;
+  pendingTransientTerminatedCount?: number;
 }
 
 export interface WorkerStallStateLike {

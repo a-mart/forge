@@ -58,6 +58,9 @@ function createHarness(debug = false): {
     consumePendingManualManagerStopNoticeIfApplicable: vi.fn(() => false),
     stripManagerAbortErrorFromEvent: vi.fn((event: RuntimeSessionEvent) => event),
     isRuntimeRecoveryActive: vi.fn(() => false),
+    beginPendingTransientWorkerTerminatedError: vi.fn(() => true),
+    cancelPendingTransientWorkerTerminatedError: vi.fn(),
+    hasPendingTransientWorkerTerminatedError: vi.fn(() => false),
     queueVersionedToolMutation: vi.fn(async () => undefined),
     logDebug: vi.fn()
   };
@@ -165,6 +168,76 @@ describe("RuntimeEventProjector", () => {
     expect(deps.conversationProjector.captureConversationEventFromRuntime).not.toHaveBeenCalled();
     expect(deps.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
     expect(runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(worker.agentId)).toBe(true);
+  });
+
+  it("defers bare worker terminated errors and cancels them on later positive progress", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({ agentId: "worker-transient", role: "worker", managerId: "manager-1", status: "streaming" });
+    descriptors.set(worker.agentId, worker);
+    const first = assistantEnd("", { stopReason: "error", errorMessage: "terminated" });
+    const second = assistantEnd("", { stopReason: "error", errorMessage: "terminated." });
+    const progressEvents: RuntimeSessionEvent[] = [
+      { type: "turn_start" },
+      { type: "message_start", message: { role: "assistant" } },
+      { type: "tool_execution_start", toolName: "bash", toolCallId: "t1", args: { command: "echo ok" } }
+    ];
+
+    await projector.projectEvent({ agentId: worker.agentId, runtimeToken: 7, event: first });
+    await projector.projectEvent({ agentId: worker.agentId, runtimeToken: 7, event: second });
+    for (const progress of progressEvents) {
+      await projector.projectEvent({ agentId: worker.agentId, runtimeToken: 7, event: progress });
+    }
+
+    expect(deps.beginPendingTransientWorkerTerminatedError).toHaveBeenCalledTimes(2);
+    expect(deps.beginPendingTransientWorkerTerminatedError).toHaveBeenNthCalledWith(
+      1,
+      worker.agentId,
+      first,
+      expect.any(Function)
+    );
+    expect(deps.beginPendingTransientWorkerTerminatedError).toHaveBeenNthCalledWith(
+      2,
+      worker.agentId,
+      second,
+      expect.any(Function)
+    );
+    expect(deps.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
+    expect(deps.maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+    expect(deps.cancelPendingTransientWorkerTerminatedError).toHaveBeenCalledTimes(progressEvents.length);
+    for (const progress of progressEvents) {
+      expect(deps.cancelPendingTransientWorkerTerminatedError).toHaveBeenCalledWith(worker.agentId, "runtime_progress");
+      expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, progress);
+    }
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledTimes(progressEvents.length);
+  });
+
+  it.each([
+    ["turn_start", { type: "turn_start" }],
+    ["message_start", { type: "message_start", message: { role: "assistant", content: "" } }]
+  ] satisfies Array<[string, RuntimeSessionEvent]>)("cancels pending transient terminated errors on %s progress", async (_label, progress) => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({ agentId: "worker-start-progress", role: "worker", managerId: "manager-1", status: "streaming" });
+    descriptors.set(worker.agentId, worker);
+
+    await projector.projectEvent({ agentId: worker.agentId, event: progress });
+
+    expect(deps.cancelPendingTransientWorkerTerminatedError).toHaveBeenCalledWith(worker.agentId, "runtime_progress");
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, progress);
+  });
+
+  it("projects an expired bare worker terminated error exactly once without capacity/fallback recovery", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const worker = baseDescriptor({ agentId: "worker-expired", role: "worker", managerId: "manager-1", status: "streaming" });
+    descriptors.set(worker.agentId, worker);
+    const event = assistantEnd("", { stopReason: "error", errorMessage: "terminated" });
+
+    await projector.projectEvent({ agentId: worker.agentId, runtimeToken: 9, event, transientTerminatedExpired: true });
+
+    expect(deps.beginPendingTransientWorkerTerminatedError).not.toHaveBeenCalled();
+    expect(deps.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
+    expect(deps.maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, event);
   });
 
   it("does not suppress normal worker completion during parent recovery", async () => {

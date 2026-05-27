@@ -405,9 +405,15 @@ describe("cloneProjectAgentInfoValue / cloneDescriptor", () => {
       }
     });
 
+    (d as typeof d & { workerLastSelfReportAt?: string; workerLastSelfReportTurnSeq?: number }).workerLastSelfReportAt =
+      "2026-05-27T12:00:00.000Z";
+    (d as typeof d & { workerLastSelfReportAt?: string; workerLastSelfReportTurnSeq?: number }).workerLastSelfReportTurnSeq = 4;
+
     const c = cloneDescriptor(d);
 
     expect(c).not.toHaveProperty("sessionSystemPrompt");
+    expect(c).not.toHaveProperty("workerLastSelfReportAt");
+    expect(c).not.toHaveProperty("workerLastSelfReportTurnSeq");
     expect(c.projectAgent).toMatchObject({ handle: "docs", whenToUse: "Maintain docs.", sourceKind: "repo" });
     expect(c.projectAgent).not.toHaveProperty("systemPrompt");
     expect(c.projectAgent).not.toHaveProperty("source");

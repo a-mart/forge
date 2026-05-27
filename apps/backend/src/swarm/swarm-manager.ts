@@ -6794,6 +6794,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.workerHealthService.removeWorkerFromWatchdogBatchQueues(agentId);
   }
 
+  beginPendingTransientWorkerTerminatedError(
+    agentId: string,
+    event: RuntimeSessionEvent,
+    expire: (event: RuntimeSessionEvent) => void | Promise<void>
+  ): boolean {
+    return this.workerHealthService.beginPendingTransientWorkerTerminatedError(agentId, event, expire);
+  }
+
+  cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "worker_reported" | "clear_state"): void {
+    this.workerHealthService.cancelPendingTransientWorkerTerminatedError(agentId, reason);
+  }
+
+  hasPendingTransientWorkerTerminatedError(agentId: string): boolean {
+    return this.workerHealthService.hasPendingTransientWorkerTerminatedError(agentId);
+  }
+
   get workerWatchdogState(): Map<string, WorkerWatchdogState> {
     return this.workerHealthService.workerWatchdogState;
   }

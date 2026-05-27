@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createWorkerDescriptor } from "../../test-support/index.js";
 import type { PromptCategory } from "../prompt-registry.js";
-import { SwarmWorkerHealthService, type SwarmWorkerHealthServiceOptions } from "../swarm-worker-health-service.js";
+import {
+  SwarmWorkerHealthService,
+  TRANSIENT_WORKER_TERMINATED_GRACE_MS,
+  type SwarmWorkerHealthServiceOptions
+} from "../swarm-worker-health-service.js";
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor, ConversationEntryEvent } from "../types.js";
 
@@ -267,6 +271,183 @@ describe("SwarmWorkerHealthService", () => {
     expect(updated?.consecutiveNotifications).toBe(0);
     expect(updated?.circuitOpen).toBe(false);
     expect(updated?.suppressedUntilMs).toBe(0);
+  });
+
+  it("successful worker self-report records current-turn state and cancels pending transient terminated errors", async () => {
+    vi.useFakeTimers();
+
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const saveStore = vi.fn(async () => {});
+    const expire = vi.fn();
+    const svc = new SwarmWorkerHealthService(baseHealthOptions({ descriptors, saveStore }));
+    const state = svc.getOrCreateWorkerWatchdogState("w1");
+    state.turnSeq = 3;
+    state.pendingReportTurnSeq = 3;
+    svc.beginPendingTransientWorkerTerminatedError(
+      "w1",
+      { type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "terminated" } },
+      expire
+    );
+
+    await svc.handleSuccessfulWorkerReportDispatch("w1", 3);
+    await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
+
+    expect(expire).not.toHaveBeenCalled();
+    expect(svc.hasPendingTransientWorkerTerminatedError("w1")).toBe(false);
+    expect(svc.workerWatchdogState.get("w1")?.reportedThisTurn).toBe(true);
+    expect(saveStore).not.toHaveBeenCalled();
+  });
+
+  it("does not arm a stale transient terminated error after the worker already self-reported this turn", async () => {
+    vi.useFakeTimers();
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const expire = vi.fn();
+    const svc = new SwarmWorkerHealthService(baseHealthOptions({ descriptors }));
+    const state = svc.getOrCreateWorkerWatchdogState("w1");
+    state.turnSeq = 5;
+    state.pendingReportTurnSeq = 5;
+
+    await svc.handleSuccessfulWorkerReportDispatch("w1", 5);
+    const handled = svc.beginPendingTransientWorkerTerminatedError(
+      "w1",
+      { type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "terminated" } },
+      expire
+    );
+    await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
+
+    expect(handled).toBe(true);
+    expect(svc.hasPendingTransientWorkerTerminatedError("w1")).toBe(false);
+    expect(expire).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale bare terminated callbacks after a successful self-report for the same turn", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-27T12:00:00.000Z"));
+
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const saveStore = vi.fn(async () => {});
+    const expire = vi.fn();
+    const svc = new SwarmWorkerHealthService(baseHealthOptions({ descriptors, saveStore }));
+    const state = svc.getOrCreateWorkerWatchdogState("w1");
+    state.turnSeq = 5;
+    state.pendingReportTurnSeq = 5;
+
+    await svc.handleSuccessfulWorkerReportDispatch("w1", 5);
+    const handled = svc.beginPendingTransientWorkerTerminatedError(
+      "w1",
+      { type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "terminated" } },
+      expire
+    );
+    await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
+
+    expect(handled).toBe(true);
+    expect(svc.hasPendingTransientWorkerTerminatedError("w1")).toBe(false);
+    expect(expire).not.toHaveBeenCalled();
+    expect(saveStore).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stale persisted self-report marker suppress a fresh bare terminated callback after watchdog reset", async () => {
+    vi.useFakeTimers();
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    (worker as typeof worker & { workerLastSelfReportAt?: string; workerLastSelfReportTurnSeq?: number }).workerLastSelfReportAt =
+      "2026-05-27T12:00:00.000Z";
+    (worker as typeof worker & { workerLastSelfReportAt?: string; workerLastSelfReportTurnSeq?: number }).workerLastSelfReportTurnSeq = 0;
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const expire = vi.fn();
+    const svc = new SwarmWorkerHealthService(baseHealthOptions({ descriptors }));
+
+    const handled = svc.beginPendingTransientWorkerTerminatedError(
+      "w1",
+      { type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "terminated" } },
+      expire
+    );
+
+    expect(handled).toBe(true);
+    expect(svc.hasPendingTransientWorkerTerminatedError("w1")).toBe(true);
+    await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
+    expect(expire).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers idle finalization while transient terminated error is pending, then expires and reports once", async () => {
+    vi.useFakeTimers();
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "idle" });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const sendMessage = vi.fn();
+    const expire = vi.fn(async () => {});
+    const svc = new SwarmWorkerHealthService(baseHealthOptions({ descriptors, sendMessage }));
+    const state = svc.getOrCreateWorkerWatchdogState("w1");
+    state.hadStreamingThisTurn = true;
+    svc.beginPendingTransientWorkerTerminatedError(
+      "w1",
+      { type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "terminated" } },
+      expire
+    );
+
+    await svc.finalizeWorkerIdleTurn("w1", worker, "agent_end");
+    await vi.advanceTimersByTimeAsync(IDLE_GRACE_MS + BATCH_WINDOW_MS);
+
+    expect(expire).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(svc.workerWatchdogState.get("w1")?.deferredFinalizeTurnSeq).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS - IDLE_GRACE_MS - BATCH_WINDOW_MS + 1);
+    expect(expire).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(IDLE_GRACE_MS + BATCH_WINDOW_MS);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("finalizeWorkerIdleTurn batches multiple workers after grace and batch windows", async () => {
