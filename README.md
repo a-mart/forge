@@ -165,6 +165,7 @@ Agents hang. Models stall. Workers finish their work and forget to report back. 
 - **Idle detection** — if a worker completes a task but doesn't report to the manager, Forge detects the idle state and notifies the manager, which can nudge or re-engage the worker. This path is suppressed while the worker or parent runtime is recovering, so normal completion reporting is not duplicated.
 - **Stall detection** — workers stuck in a streaming state with no progress for five minutes get flagged. The manager is notified and can intervene, unless worker or parent runtime recovery is active.
 - **Auto-kill** — if a stalled worker doesn't recover after a second five-minute window, it's terminated and reported to the manager, again skipped during runtime recovery.
+- **Transient terminated errors** — a bare runtime `errorMessage: "terminated"` waits out a 60-second grace period before failure projection. If the worker resumes progress or self-reports during that window, the transient error is canceled; otherwise it expires through the normal worker error/watchdog path once.
 
 Worker turn failures are projected into the manager conversation as system messages with preserved error context, and duplicate callback or summary reports for the same turn are suppressed.
 

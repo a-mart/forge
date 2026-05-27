@@ -96,7 +96,7 @@ The main panel is a chat window. You type messages to your manager, it responds.
 Two view modes, toggled at the top:
 
 - **Web** (default) — Shows only the messages between you and the manager. Clean, focused.
-- **All** — Shows everything: tool calls, worker spawning, agent-to-agent messages, reasoning traces. Useful when you want to see exactly what's happening under the hood.
+- **All** — Shows internal activity. A **Detailed** toggle can further reveal owned direct-worker tool activity, but it stays off by default and only applies to manager-scoped rows.
 
 Agents can include Mermaid diagrams in their responses using standard markdown code fences (` ```mermaid ... ``` `). These render inline with an interactive toolbar for toggling between diagram and source, copying code, exporting as SVG or PNG, and viewing fullscreen.
 
@@ -444,7 +444,7 @@ Workers are supposed to report back to the manager when they finish. But LLMs ar
 
 Forge detects this. When a worker goes idle without reporting back, the system notifies the session agent: "This worker went idle without sending a message." The session agent can then inspect the worker's output, nudge it, or spin up a replacement. Those idle/stall reports are suppressed while the worker or parent runtime is recovering, so recovery can finish without duplicate watchdog noise.
 
-If a worker turn fails instead of finishing cleanly, that failure can now surface in the transcript as a system message with the error context preserved, so it does not just look like a missing callback.
+If a worker runtime reports a bare \`errorMessage: "terminated"\`, Forge holds it for a 60-second grace period before failure projection. If the worker resumes progress or self-reports during that window, the transient error is canceled. If it does not recover, it expires through the normal worker error/watchdog path once.
 
 ### Stalled Worker Auto-Kill
 

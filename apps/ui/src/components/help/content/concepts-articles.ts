@@ -8,7 +8,7 @@ const conceptsMultiAgent: HelpArticle = {
     'How managers and workers coordinate to handle complex tasks.',
   content: `Forge uses two kinds of agents: **managers** and **workers**. A manager is the agent you talk to in chat. Workers are agents the manager creates to do specific tasks. Forge supports multiple runtime providers, including the native Claude SDK path alongside the Pi-proxied Anthropic path. Claude SDK sessions also auto-compact natively at 80% of the context window, which the SDK handles internally without a session restart.
 
-When you send a message, the manager reads it, decides what needs to happen, and spawns one or more workers. Each worker gets a focused job — edit a file, run a command, research a topic. Workers run in parallel when their tasks are independent. The manager collects their results and responds to you. Watchdog and stall warnings are suppressed while worker or parent runtime recovery is active so duplicate completion reporting does not leak through.
+When you send a message, the manager reads it, decides what needs to happen, and spawns one or more workers. Each worker gets a focused job — edit a file, run a command, research a topic. Workers run in parallel when their tasks are independent. The manager collects their results and responds to you. Watchdog and stall warnings are suppressed while worker or parent runtime recovery is active so duplicate completion reporting does not leak through. A bare runtime \`errorMessage: "terminated"\` waits out a 60-second grace period before failure projection; if the worker resumes progress or self-reports to the manager during that window, the transient error is canceled.
 
 ## What you see
 
@@ -24,7 +24,7 @@ The manager controls the flow. It decides which model each worker uses, what ins
 
 The manager picks a model for each worker based on the task. Quick jobs like file reads get a cheaper, faster model. Complex work like architecture review gets a more capable one. If you have specialists configured, the manager routes work to the right specialist automatically based on what the task needs.
 
-Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step. If a worker turn fails, that failure can surface as a system message with the error context preserved instead of looking like a normal completion.`,
+Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step. If a worker turn fails, that failure can surface as a system message with the error context preserved instead of looking like a normal completion. In the chat transcript, the All view can further reveal owned direct-worker tool activity through a Detailed toggle, but it only applies to manager-scoped rows and resets when you switch views or agents.`,
   keywords: [
     'manager',
     'worker',

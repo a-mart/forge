@@ -26,7 +26,7 @@ To stop a running response, open the **⋮ menu** in the header and choose **Sto
 
 ## Channel views
 
-The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity like tool calls and worker messages, which is useful for debugging.
+The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity. A **Detailed** toggle can further reveal owned direct-worker tool activity for manager-scoped rows, but it stays off by default and resets when you switch views or agents.
 
 Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
 
@@ -258,7 +258,7 @@ Right-click a worker to Stop, Resume, or Delete it.
 
 ## Specialist badges
 
-Workers spawned from a specialist template show a colored badge with the specialist name. This helps you identify which worker was assigned which role.
+Workers spawned from a specialist template show a colored badge with the specialist name. This helps you identify which worker was assigned which role. Tool rows also include actor labels with worker, specialist, and model metadata.
 
 ## Monitoring
 
