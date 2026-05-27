@@ -66,11 +66,17 @@ interface QueuedPrompt {
   message: RuntimeUserMessage;
 }
 
+interface PendingCursorSendTracker {
+  run?: CursorSdkRun;
+  cancelOnResolve: boolean;
+}
+
 interface ActivePromptState {
   token: number;
   message: RuntimeUserMessage;
   run?: CursorSdkRun;
   backgroundScope?: CursorSdkBackgroundScope;
+  pendingSendTracker?: PendingCursorSendTracker;
   cancelled: boolean;
   visibleOutputEmitted: boolean;
   cursorUsage?: CursorSdkUsageTotals;
@@ -261,9 +267,15 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     const active = this.activePrompt;
     if (active) {
       active.cancelled = true;
+      if (active.pendingSendTracker) {
+        active.pendingSendTracker.cancelOnResolve = true;
+      }
       active.backgroundScope?.markCancelled();
       if (active.run) {
         await active.run.cancel().catch(() => undefined);
+      }
+      if (active.pendingSendTracker?.run && active.pendingSendTracker.run !== active.run) {
+        await active.pendingSendTracker.run.cancel().catch(() => undefined);
       }
     } else if (this.promptDispatchPending) {
       this.stoppedPendingDispatch = true;
@@ -371,9 +383,11 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
             return;
           }
 
+          const pendingSendTracker: PendingCursorSendTracker = { cancelOnResolve: false };
+          active.pendingSendTracker = pendingSendTracker;
           const run = await backgroundScope.runWithAttribution(() => this.raceContainedBackgroundFailure(
             backgroundScope,
-            this.sdkAgent.send(preparedPayload.payload, {
+            this.trackPendingSendRun(pendingSendTracker, this.sdkAgent.send(preparedPayload.payload, {
               model: this.model,
               mcpServers: this.mcpServers,
               onDelta: ({ update }) => {
@@ -385,7 +399,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
                   });
                 }
               }
-            })
+            }))
           ));
           active.run = run;
           backgroundScope.update({ sdkAgentId: run.agentId ?? this.sdkAgent.agentId, runId: run.id });
@@ -545,15 +559,35 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     }
   }
 
+  private trackPendingSendRun(tracker: PendingCursorSendTracker, sendPromise: Promise<CursorSdkRun>): Promise<CursorSdkRun> {
+    tracker.run = undefined;
+    return sendPromise.then(async (run) => {
+      tracker.run = run;
+      if (tracker.cancelOnResolve) {
+        await run.cancel().catch(() => undefined);
+      }
+      return run;
+    }, (error) => {
+      tracker.run = undefined;
+      throw error;
+    });
+  }
+
   private async cancelActiveRun(active: ActivePromptState): Promise<void> {
-    if (!active.run) {
-      return;
+    if (active.pendingSendTracker) {
+      active.pendingSendTracker.cancelOnResolve = true;
     }
-    await active.run.cancel().catch(() => undefined);
+    if (active.run) {
+      await active.run.cancel().catch(() => undefined);
+    }
+    if (active.pendingSendTracker?.run && active.pendingSendTracker.run !== active.run) {
+      await active.pendingSendTracker.run.cancel().catch(() => undefined);
+    }
   }
 
   private resetRetryablePromptAttempt(active: ActivePromptState): void {
     active.run = undefined;
+    active.pendingSendTracker = undefined;
     active.cursorUsage = undefined;
     active.usageRecorded = false;
     active.providerStatus = undefined;

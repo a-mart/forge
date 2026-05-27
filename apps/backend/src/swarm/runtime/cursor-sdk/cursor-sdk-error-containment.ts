@@ -13,14 +13,18 @@ type ScopeState = {
   cancelled: boolean;
   completed: boolean;
   closed: boolean;
+  closedAt?: number;
+  reapTimer?: ReturnType<typeof setTimeout>;
   containedFailure?: CursorSdkContainedBackgroundError;
   resolveContainedFailure: (error: CursorSdkContainedBackgroundError) => void;
   containedFailurePromise: Promise<CursorSdkContainedBackgroundError>;
   logDebug?: (message: string, details?: unknown) => void;
 };
 
+const CLOSED_SCOPE_TOMBSTONE_MS = 1_000;
 const scopeStorage = new AsyncLocalStorage<string>();
-const activeScopes = new Map<string, ScopeState>();
+const scopesById = new Map<string, ScopeState>();
+const activeScopeIds = new Set<string>();
 let handledReasons = new WeakSet<object>();
 
 let hooksInstalled = false;
@@ -94,7 +98,8 @@ export function createCursorSdkBackgroundScope(options: {
     logDebug: options.logDebug
   };
 
-  activeScopes.set(id, state);
+  scopesById.set(id, state);
+  activeScopeIds.add(id);
   ensureProcessHooks();
 
   return {
@@ -121,8 +126,21 @@ export function createCursorSdkBackgroundScope(options: {
       state.completed = true;
     },
     close(): void {
+      if (state.closed) {
+        return;
+      }
       state.closed = true;
-      activeScopes.delete(id);
+      state.closedAt = Date.now();
+      activeScopeIds.delete(id);
+      state.reapTimer = setTimeout(() => {
+        if (scopesById.get(id) !== state) {
+          return;
+        }
+        scopesById.delete(id);
+        activeScopeIds.delete(id);
+        maybeRemoveProcessHooks();
+      }, CLOSED_SCOPE_TOMBSTONE_MS);
+      state.reapTimer.unref?.();
       maybeRemoveProcessHooks();
     }
   };
@@ -150,7 +168,13 @@ export function emitCursorSdkBackgroundFailureForTests(reason: unknown): boolean
 
 export function resetCursorSdkErrorContainmentForTests(): void {
   removeProcessHooks();
-  activeScopes.clear();
+  for (const scope of scopesById.values()) {
+    if (scope.reapTimer) {
+      clearTimeout(scope.reapTimer);
+    }
+  }
+  scopesById.clear();
+  activeScopeIds.clear();
   handledReasons = new WeakSet<object>();
 }
 
@@ -164,7 +188,7 @@ function ensureProcessHooks(): void {
 }
 
 function maybeRemoveProcessHooks(): void {
-  if (activeScopes.size > 0) {
+  if (scopesById.size > 0) {
     return;
   }
   removeProcessHooks();
@@ -259,7 +283,7 @@ function tryContain(reason: unknown): boolean {
 function resolveScope(reason: unknown): { scope: ScopeState; attributionMode: AttributionMode } | undefined {
   const attributedScopeId = scopeStorage.getStore();
   if (attributedScopeId) {
-    const attributedScope = activeScopes.get(attributedScopeId);
+    const attributedScope = scopesById.get(attributedScopeId);
     if (attributedScope) {
       return { scope: attributedScope, attributionMode: "als" };
     }
@@ -267,12 +291,15 @@ function resolveScope(reason: unknown): { scope: ScopeState; attributionMode: At
     return undefined;
   }
 
-  if (activeScopes.size === 1) {
-    const [scope] = activeScopes.values();
-    return { scope, attributionMode: "single_active_scope" };
+  if (activeScopeIds.size === 1) {
+    const [scopeId] = activeScopeIds.values();
+    const scope = scopeId ? scopesById.get(scopeId) : undefined;
+    if (scope) {
+      return { scope, attributionMode: "single_active_scope" };
+    }
   }
 
-  logUnmatched(reason, activeScopes.size === 0 ? "no_active_scope" : "ambiguous_active_scopes");
+  logUnmatched(reason, activeScopeIds.size === 0 ? "no_active_scope" : "ambiguous_active_scopes");
   return undefined;
 }
 
@@ -290,7 +317,8 @@ function logUnmatched(reason: unknown, reasonCode: string): void {
   const normalized = normalizeError(reason);
   console.debug("cursor_sdk:background_error_unmatched", {
     reason: reasonCode,
-    activeScopeCount: activeScopes.size,
+    activeScopeCount: activeScopeIds.size,
+    retainedScopeCount: scopesById.size - activeScopeIds.size,
     errorName: normalized.errorName,
     errorCode: normalized.errorCode,
     errorMessage: normalized.message
