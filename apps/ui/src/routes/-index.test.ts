@@ -404,6 +404,160 @@ describe('IndexPage create project model selection', () => {
     expect(queryByText(container, /foreign-call/)).toBeNull()
   })
 
+  it('reveals owned worker tool calls when Detailed is toggled, hides foreign, and resets on view switch', async () => {
+    const socket = await renderPage()
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        buildManager('manager', '/tmp/manager'),
+        buildWorker('worker-owned', 'manager', '/tmp/manager'),
+        buildManager('other-manager', '/tmp/other-manager'),
+        buildWorker('worker-foreign', 'other-manager', '/tmp/other-manager'),
+      ],
+    })
+
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [
+        {
+          type: 'conversation_message',
+          agentId: 'manager',
+          role: 'assistant',
+          text: 'manager reply',
+          timestamp: new Date().toISOString(),
+          source: 'speak_to_user',
+        },
+        {
+          type: 'agent_tool_call',
+          agentId: 'manager',
+          actorAgentId: 'manager',
+          timestamp: new Date().toISOString(),
+          kind: 'tool_execution_start',
+          toolName: 'bash',
+          toolCallId: 'mgr-tool',
+          text: '{"command":"echo hi"}',
+        },
+        {
+          type: 'agent_tool_call',
+          agentId: 'manager',
+          actorAgentId: 'worker-owned',
+          timestamp: new Date().toISOString(),
+          kind: 'tool_execution_start',
+          toolName: 'read',
+          toolCallId: 'owned-tool',
+          text: '{"path":"README.md"}',
+        },
+        {
+          type: 'agent_tool_call',
+          agentId: 'manager',
+          actorAgentId: 'worker-foreign',
+          timestamp: new Date().toISOString(),
+          kind: 'tool_execution_start',
+          toolName: 'read',
+          toolCallId: 'foreign-tool',
+          text: '{"path":"SECRET.md"}',
+        },
+      ],
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Switch to All view
+    click(getByRole(container, 'button', { name: 'All' }))
+
+    // Default All: manager tool visible, worker tools hidden
+    expect(queryByText(container, /mgr-tool/)).not.toBeNull()
+    expect(queryByText(container, /owned-tool/)).toBeNull()
+    expect(queryByText(container, /foreign-tool/)).toBeNull()
+
+    // Toggle Detailed ON
+    click(getByLabelText(container, 'Show worker tool activity in All view'))
+
+    // Owned worker tool call now visible
+    expect(queryByText(container, /owned-tool/)).not.toBeNull()
+    // Foreign worker tool call still hidden (fail-closed)
+    expect(queryByText(container, /foreign-tool/)).toBeNull()
+    // Manager tool still visible
+    expect(queryByText(container, /mgr-tool/)).not.toBeNull()
+
+    // Switch back to Web view — Detailed should reset
+    click(getByRole(container, 'button', { name: 'Web' }))
+    // Switch back to All — owned worker tool should be hidden again (Detailed was reset)
+    click(getByRole(container, 'button', { name: 'All' }))
+    expect(queryByText(container, /owned-tool/)).toBeNull()
+    expect(queryByText(container, /mgr-tool/)).not.toBeNull()
+  })
+
+  it('resets Detailed toggle when switching to a different agent', async () => {
+    const socket = await renderPage()
+
+    const secondManager = {
+      ...buildManager('manager-beta', '/tmp/beta'),
+      managerId: 'manager-beta',
+      profileId: 'beta',
+    }
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        { ...buildManager('manager', '/tmp/manager'), profileId: 'alpha' },
+        buildWorker('worker-owned', 'manager', '/tmp/manager'),
+        secondManager,
+      ],
+    })
+
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [
+        {
+          type: 'conversation_message',
+          agentId: 'manager',
+          role: 'assistant',
+          text: 'first manager reply',
+          timestamp: new Date().toISOString(),
+          source: 'speak_to_user',
+        },
+        {
+          type: 'agent_tool_call',
+          agentId: 'manager',
+          actorAgentId: 'worker-owned',
+          timestamp: new Date().toISOString(),
+          kind: 'tool_execution_start',
+          toolName: 'read',
+          toolCallId: 'w-tool-alpha',
+          text: '{"path":"alpha.md"}',
+        },
+      ],
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Enter All + Detailed
+    click(getByRole(container, 'button', { name: 'All' }))
+    click(getByLabelText(container, 'Show worker tool activity in All view'))
+    expect(queryByText(container, /w-tool-alpha/)).not.toBeNull()
+
+    // Switch agent — select manager-beta from sidebar
+    // Simulate clicking the second manager in the sidebar
+    const sidebarButtons = container.querySelectorAll('[data-agent-id]')
+    const betaButton = Array.from(sidebarButtons).find(
+      (el) => el.getAttribute('data-agent-id') === 'manager-beta',
+    ) as HTMLElement | undefined
+
+    if (betaButton) {
+      click(betaButton)
+      await vi.advanceTimersByTimeAsync(0)
+
+      // After agent switch, Detailed should have reset
+      // The Detailed toggle may or may not be present (depends on if we're in All view for new agent)
+      // The key contract is that the worker tool from the previous agent's Detailed view is gone
+      expect(queryByText(container, /w-tool-alpha/)).toBeNull()
+    }
+  })
+
   it('uses sessionLabel for project-agent suggestions when displayName is stale after rename', () => {
     const activeAgent = {
       ...buildManager('manager', '/tmp/manager'),

@@ -141,6 +141,7 @@ export function BuilderSurface({
   } = useOnboardingState(wsUrl)
 
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
+  const [detailedAllView, setDetailedAllView] = useState(false)
 
   const activeAgentId = useMemo(() => {
     const preferredId = state.targetAgentId ?? state.subscribedAgentId ?? null
@@ -230,6 +231,19 @@ export function BuilderSurface({
   }, [state.unreadCounts, activeAgentId])
 
   const isActiveManager = activeAgent?.role === 'manager'
+
+  // Reset Detailed All when leaving All view
+  useEffect(() => {
+    if (messageSourceView !== 'all') setDetailedAllView(false)
+  }, [messageSourceView])
+
+  // Reset Detailed All when switching active agent/session
+  useEffect(() => {
+    setDetailedAllView(false)
+  }, [activeAgentId])
+
+  // Derive effective detailed state for hook consumption
+  const effectiveDetailedAllView = isActiveManager && messageSourceView === 'all' && detailedAllView
 
   const activeManagerId = useMemo(() => {
     if (activeAgent?.role === 'manager') {
@@ -408,6 +422,7 @@ export function BuilderSurface({
     agents: state.agents,
     activeAgent,
     channelView: messageSourceView,
+    detailedAllView: effectiveDetailedAllView,
   })
 
   const pinnedMessageIds = useMemo(() => {
@@ -1351,6 +1366,8 @@ export function BuilderSurface({
                   activeAgentUpdatedAt: activeAgent?.updatedAt ?? null,
                   channelView: messageSourceView,
                   onChannelViewChange: setMessageSourceView,
+                  detailedAllView: effectiveDetailedAllView,
+                  onDetailedAllViewChange: isActiveManager ? setDetailedAllView : undefined,
                   contextWindowUsage,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
@@ -1418,6 +1435,7 @@ export function BuilderSurface({
                 messageListRef={messageListRef}
                 messageListProps={{
                   messages: visibleMessages,
+                  agents: state.agents,
                   isLoading,
                   wsUrl,
                   activeAgentId,

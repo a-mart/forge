@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { formatElapsed } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
+import type { AgentDisplayMeta } from './agent-display-utils'
 import { formatTimestamp } from './message-row-utils'
 import type {
   ConversationLogEntry,
@@ -266,11 +267,14 @@ function ToolExecutionLogRow({
   entry,
   isActive,
   nowMs,
+  actorDisplay,
 }: {
   entry: ToolExecutionDisplayEntry
   isActive: boolean
   /** Optional shared clock (epoch ms) from parent; avoids per-row timers. */
   nowMs?: number
+  /** Resolved agent display metadata for the actor. */
+  actorDisplay?: AgentDisplayMeta
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const contentId = useId()
@@ -282,7 +286,8 @@ function ToolExecutionLogRow({
     inputRecord,
     displayStatus,
   )
-  const actorLabel = entry.actorAgentId?.trim()
+  const rawActorId = entry.actorAgentId?.trim()
+  const actorLabel = actorDisplay?.primaryLabel ?? rawActorId
 
   const isTimerActive = isActive && displayStatus === 'pending'
   const elapsedLabel = useElapsedTimer(entry.startTimestamp, isTimerActive, nowMs)
@@ -347,7 +352,17 @@ function ToolExecutionLogRow({
 
         <span className="min-w-0 flex-1 break-words">
           {actorLabel ? (
-            <span className="mr-1.5 inline-flex items-center rounded-sm border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium not-italic text-muted-foreground">
+            <span
+              className="mr-1.5 inline-flex items-center gap-1 rounded-sm border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium not-italic text-muted-foreground"
+              title={actorDisplay?.title ?? rawActorId}
+            >
+              {actorDisplay?.specialistColor ? (
+                <span
+                  className="inline-block size-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: actorDisplay.specialistColor }}
+                  aria-hidden="true"
+                />
+              ) : null}
               {actorLabel}
             </span>
           ) : null}
@@ -396,7 +411,8 @@ function ToolExecutionLogRow({
 
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
               <span>{formatTimestamp(entry.timestamp)}</span>
-              {actorLabel ? <span>• {actorLabel}</span> : null}
+              {rawActorId ? <span>• {rawActorId}</span> : null}
+              {actorDisplay?.secondaryLabel ? <span>• {actorDisplay.secondaryLabel}</span> : null}
               {entry.toolName ? <span>• {entry.toolName}</span> : null}
               {entry.toolCallId ? <span>• {entry.toolCallId}</span> : null}
             </div>
@@ -423,12 +439,15 @@ export function ToolLogRow({
   entry,
   isActive = false,
   nowMs,
+  actorDisplay,
 }: {
   type: 'tool_execution' | 'runtime_error_log'
   entry: ToolExecutionDisplayEntry | ConversationLogEntry
   isActive?: boolean
   /** Optional shared clock (epoch ms) from parent; avoids per-row timers. */
   nowMs?: number
+  /** Resolved agent display metadata for the actor. Optional — raw id fallback when absent. */
+  actorDisplay?: AgentDisplayMeta
 }) {
   if (type === 'runtime_error_log') {
     return <RuntimeErrorLog entry={entry as ConversationLogEntry} />
@@ -439,6 +458,7 @@ export function ToolLogRow({
       entry={entry as ToolExecutionDisplayEntry}
       isActive={isActive}
       nowMs={nowMs}
+      actorDisplay={actorDisplay}
     />
   )
 }
