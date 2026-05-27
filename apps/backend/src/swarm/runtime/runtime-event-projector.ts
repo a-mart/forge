@@ -52,6 +52,13 @@ export interface RuntimeEventProjectorDeps {
   consumePendingManualManagerStopNoticeIfApplicable(agentId: string, event: RuntimeSessionEvent): boolean;
   stripManagerAbortErrorFromEvent(event: RuntimeSessionEvent): RuntimeSessionEvent;
   isRuntimeRecoveryActive(agentId: string): boolean;
+  beginPendingTransientWorkerTerminatedError(
+    agentId: string,
+    event: RuntimeSessionEvent,
+    expire: (event: RuntimeSessionEvent) => void | Promise<void>
+  ): boolean;
+  cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "worker_reported" | "clear_state"): void;
+  hasPendingTransientWorkerTerminatedError(agentId: string): boolean;
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;
 }
@@ -60,6 +67,7 @@ export interface RuntimeEventProjectionInput {
   agentId: string;
   runtimeToken?: number;
   event: RuntimeSessionEvent;
+  transientTerminatedExpired?: boolean;
 }
 
 export class RuntimeEventProjector {
@@ -131,15 +139,22 @@ export class RuntimeEventProjector {
   }
 
   shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {
-    return this.deps.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(descriptor.agentId) || this.deps.isRuntimeRecoveryActive(descriptor.agentId);
+    return (
+      this.deps.runtimeRecoveryState.hasRecoveryAbortedWorkerTurn(descriptor.agentId) ||
+      this.deps.isRuntimeRecoveryActive(descriptor.agentId)
+    );
   }
 
   clearRecoveryAbortedWorkerTurn(agentId: string): void {
     this.deps.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId);
   }
 
-  async projectEvent({ agentId, runtimeToken, event }: RuntimeEventProjectionInput): Promise<void> {
+  async projectEvent({ agentId, runtimeToken, event, transientTerminatedExpired = false }: RuntimeEventProjectionInput): Promise<void> {
     const descriptor = this.deps.descriptors.get(agentId);
+    if (descriptor?.role === "worker" && !transientTerminatedExpired && isPositiveWorkerRuntimeProgressEvent(event)) {
+      this.deps.cancelPendingTransientWorkerTerminatedError(agentId, "runtime_progress");
+    }
+
     if (
       descriptor?.role === "worker" &&
       event.type === "message_end" &&
@@ -165,19 +180,30 @@ export class RuntimeEventProjector {
         return;
       }
 
-      this.deps.maybeRecordModelCapacityBlock(agentId, descriptor, {
-        phase: "prompt_start",
-        message: errorText
-      });
+      if (extractRole(event.message) === "assistant" && isBareTerminatedErrorMessage(errorText)) {
+        if (!transientTerminatedExpired) {
+          const handled = this.deps.beginPendingTransientWorkerTerminatedError(agentId, event, (expiredEvent) =>
+            this.projectEvent({ agentId, runtimeToken, event: expiredEvent, transientTerminatedExpired: true })
+          );
+          if (handled) {
+            return;
+          }
+        }
+      } else {
+        this.deps.maybeRecordModelCapacityBlock(agentId, descriptor, {
+          phase: "prompt_start",
+          message: errorText
+        });
 
-      const recoveredWithFallback = await this.deps.maybeRecoverWorkerWithSpecialistFallback(
-        agentId,
-        errorText,
-        "prompt_start",
-        runtimeToken
-      );
-      if (recoveredWithFallback) {
-        return;
+        const recoveredWithFallback = await this.deps.maybeRecoverWorkerWithSpecialistFallback(
+          agentId,
+          errorText,
+          "prompt_start",
+          runtimeToken
+        );
+        if (recoveredWithFallback) {
+          return;
+        }
       }
     }
 
@@ -391,4 +417,37 @@ export class RuntimeEventProjector {
 
 function isIntendedWorkerShutdownStatus(status: AgentDescriptor["status"]): boolean {
   return status === "terminated" || status === "stopped";
+}
+
+function isBareTerminatedErrorMessage(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+
+  return /^terminated\.?$/i.test(message.replace(/\s+/g, " ").trim());
+}
+
+function isPositiveWorkerRuntimeProgressEvent(event: RuntimeSessionEvent): boolean {
+  switch (event.type) {
+    case "turn_start":
+    case "message_start":
+    case "tool_execution_start":
+    case "tool_execution_update":
+    case "tool_execution_end":
+    case "turn_end":
+    case "auto_compaction_start":
+    case "auto_compaction_end":
+    case "auto_retry_start":
+    case "auto_retry_end":
+      return true;
+    case "message_update":
+      return extractRole(event.message) === "assistant" || extractRole(event.message) === "system";
+    case "message_end":
+      return (
+        extractMessageStopReason(event.message) !== "error" &&
+        (extractRole(event.message) === "assistant" || extractRole(event.message) === "system")
+      );
+    default:
+      return false;
+  }
 }

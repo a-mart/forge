@@ -1,5 +1,10 @@
 import type { AgentDescriptor, AgentModelDescriptor, ManagerProfile } from "../../types.js";
 
+type LegacyWorkerSelfReportFields = {
+  workerLastSelfReportAt?: string;
+  workerLastSelfReportTurnSeq?: number;
+};
+
 function cloneContextUsage(descriptor: AgentDescriptor): AgentDescriptor["contextUsage"] {
   return descriptor.contextUsage
     ? {
@@ -47,8 +52,14 @@ export function cloneProjectAgent(
 }
 
 export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): AgentDescriptor {
+  const {
+    workerLastSelfReportAt: _workerLastSelfReportAt,
+    workerLastSelfReportTurnSeq: _workerLastSelfReportTurnSeq,
+    ...descriptorWithoutLegacySelfReportMarker
+  } = descriptor as AgentDescriptor & LegacyWorkerSelfReportFields;
+
   return {
-    ...descriptor,
+    ...descriptorWithoutLegacySelfReportMarker,
     model: {
       provider: descriptor.model.provider,
       modelId: descriptor.model.modelId,
@@ -83,7 +94,10 @@ export function cloneProjectAgentForPublic(projectAgent: AgentDescriptor["projec
 }
 
 export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDescriptor {
-  const { sessionSystemPrompt: _sessionSystemPrompt, ...publicDescriptor } = cloneDescriptorForPersistence(descriptor);
+  const {
+    sessionSystemPrompt: _sessionSystemPrompt,
+    ...publicDescriptor
+  } = cloneDescriptorForPersistence(descriptor);
 
   return {
     ...publicDescriptor,

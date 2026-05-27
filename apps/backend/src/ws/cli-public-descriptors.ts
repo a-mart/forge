@@ -1,7 +1,17 @@
 import type { AgentDescriptor } from "../swarm/types.js";
 
+type LegacyWorkerSelfReportFields = {
+  workerLastSelfReportAt?: string;
+  workerLastSelfReportTurnSeq?: number;
+};
+
 export function toPublicCliAgentDescriptor(agent: AgentDescriptor): AgentDescriptor {
-  const { sessionSystemPrompt: _sessionSystemPrompt, ...withoutPrompt } = agent;
+  const {
+    sessionSystemPrompt: _sessionSystemPrompt,
+    workerLastSelfReportAt: _workerLastSelfReportAt,
+    workerLastSelfReportTurnSeq: _workerLastSelfReportTurnSeq,
+    ...withoutPrompt
+  } = agent as AgentDescriptor & LegacyWorkerSelfReportFields;
   const publicProjectAgent = withoutPrompt.projectAgent
     ? {
         handle: withoutPrompt.projectAgent.handle,

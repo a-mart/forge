@@ -9,6 +9,7 @@ import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import { SwarmRuntimeController, type SwarmRuntimeControllerHost } from "../swarm-runtime-controller.js";
+import { SwarmWorkerHealthService, TRANSIENT_WORKER_TERMINATED_GRACE_MS } from "../swarm-worker-health-service.js";
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { AgentDescriptor, AgentStatus, SwarmConfig } from "../types.js";
 import { TestSwarmManager, bootWithDefaultManager } from "../../test-support/index.js";
@@ -200,10 +201,16 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
       pendingReportTurnSeq: null,
       deferredFinalizeTurnSeq: null,
       hadStreamingThisTurn: false,
-      lastFinalizedTurnSeq: null
+      lastFinalizedTurnSeq: null,
+      pendingTransientTerminatedTurnSeq: null,
+      pendingTransientTerminatedStartedAtMs: null,
+      pendingTransientTerminatedCount: 0
     })),
     clearWatchdogTimer: vi.fn(),
     removeWorkerFromWatchdogBatchQueues: vi.fn(),
+    beginPendingTransientWorkerTerminatedError: vi.fn(() => true),
+    cancelPendingTransientWorkerTerminatedError: vi.fn(),
+    hasPendingTransientWorkerTerminatedError: vi.fn(() => false),
     finalizeWorkerIdleTurn,
     isRuntimeRecoveryActive: vi.fn(() => false),
     incrementSessionCompactionCount: vi.fn(),
@@ -1001,6 +1008,88 @@ describe("SwarmRuntimeController", () => {
     expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
   });
 
+  it("defers bare terminated worker idle finalization across status-idle and agent_end until transient expiry", async () => {
+    vi.useFakeTimers();
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, captureConversationEventFromRuntime } = createRuntimeControllerHarness(config);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-transient-controller",
+      role: "manager",
+      managerId: "mgr-transient-controller",
+      status: "idle"
+    });
+    const worker = baseDescriptor({
+      agentId: "worker-transient-controller",
+      role: "worker",
+      managerId: manager.agentId,
+      status: "streaming"
+    });
+    descriptors.set(manager.agentId, manager);
+    descriptors.set(worker.agentId, worker);
+
+    const sendMessage = vi.fn(async () => ({}));
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes: new Map(),
+      getConversationHistory: () => [],
+      sendMessage,
+      publishToUser: vi.fn(async () => ({})),
+      terminateDescriptor: vi.fn(async () => undefined),
+      saveStore: vi.fn(async () => undefined),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_category, _promptId, _profileId, fallback) => fallback),
+      isRuntimeInContextRecovery: vi.fn(() => false),
+      isRuntimeRecoveryActive: vi.fn(() => false),
+      logDebug: vi.fn()
+    });
+    host.workerWatchdogState = health.workerWatchdogState;
+    host.watchdogTimerTokens = health.watchdogTimerTokens;
+    host.getOrCreateWorkerWatchdogState = vi.fn((agentId: string) => health.getOrCreateWorkerWatchdogState(agentId));
+    host.clearWatchdogTimer = vi.fn((agentId: string) => health.clearWatchdogTimer(agentId));
+    host.removeWorkerFromWatchdogBatchQueues = vi.fn((agentId: string) => health.removeWorkerFromWatchdogBatchQueues(agentId));
+    host.beginPendingTransientWorkerTerminatedError = vi.fn((agentId, event, expire) =>
+      health.beginPendingTransientWorkerTerminatedError(agentId, event, expire)
+    );
+    host.cancelPendingTransientWorkerTerminatedError = vi.fn((agentId, reason) =>
+      health.cancelPendingTransientWorkerTerminatedError(agentId, reason)
+    );
+    host.hasPendingTransientWorkerTerminatedError = vi.fn((agentId) => health.hasPendingTransientWorkerTerminatedError(agentId));
+    host.finalizeWorkerIdleTurn = vi.fn((agentId, descriptor, source) =>
+      health.finalizeWorkerIdleTurn(agentId, descriptor, source)
+    );
+
+    const state = health.getOrCreateWorkerWatchdogState(worker.agentId);
+    state.hadStreamingThisTurn = true;
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: { role: "assistant", stopReason: "error", errorMessage: "terminated" }
+    };
+
+    const controller = new SwarmRuntimeController(host);
+    const token = controller.allocateRuntimeToken(worker.agentId);
+    await controller.handleRuntimeSessionEvent(token, worker.agentId, event);
+    worker.status = "idle";
+    await controller.handleRuntimeStatus(token, worker.agentId, "idle", 0);
+    await controller.handleRuntimeAgentEnd(token, worker.agentId);
+
+    expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(host.finalizeWorkerIdleTurn).toHaveBeenCalledWith(worker.agentId, expect.objectContaining({ agentId: worker.agentId }), "status_idle");
+    expect(host.finalizeWorkerIdleTurn).toHaveBeenCalledWith(worker.agentId, expect.objectContaining({ agentId: worker.agentId }), "agent_end");
+    expect(health.workerWatchdogState.get(worker.agentId)).toEqual(
+      expect.objectContaining({ turnSeq: 0, deferredFinalizeTurnSeq: 0, pendingTransientTerminatedTurnSeq: 0 })
+    );
+
+    await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledWith(worker.agentId, event);
+
+    await vi.advanceTimersByTimeAsync(3_000 + 750);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toContain("worker-transient-controller");
+  });
+
   it("suppresses abort-like worker message_end, status-idle, and agent_end during parent recovery", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
@@ -1239,7 +1328,8 @@ describe("SwarmRuntimeController", () => {
       type: "message_end",
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "old runtime failure" }],
+        content: [{ type: "text", text: "" }],
+        errorMessage: "terminated",
         stopReason: "error"
       }
     };
@@ -1271,6 +1361,7 @@ describe("SwarmRuntimeController", () => {
     expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
     expect(host.maybeRecordModelCapacityBlock).not.toHaveBeenCalled();
     expect(maybeRecoverWorkerWithSpecialistFallback).not.toHaveBeenCalled();
+    expect(host.beginPendingTransientWorkerTerminatedError).not.toHaveBeenCalled();
     expect(dispatchRuntimeError).not.toHaveBeenCalled();
     expect(emitConversationMessage).not.toHaveBeenCalled();
     expect(controller.listRuntimeExtensionSnapshots()).toEqual([]);
@@ -1278,6 +1369,102 @@ describe("SwarmRuntimeController", () => {
     snapshotHandler.handleRuntimeExtensionSnapshot(replacementToken, worker.agentId, freshSnapshot);
 
     expect(controller.listRuntimeExtensionSnapshots()).toEqual([freshSnapshot]);
+  });
+
+  it("defers transient terminated idle finalization through status idle and agent_end until expiry", async () => {
+    vi.useFakeTimers();
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const { host, descriptors, captureConversationEventFromRuntime } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      status: "idle",
+      profileId: "p1"
+    });
+    const worker = baseDescriptor({
+      agentId: "w-transient-controller",
+      role: "worker",
+      managerId: "m1",
+      status: "streaming",
+      profileId: "p1"
+    });
+    descriptors.set(manager.agentId, manager);
+    descriptors.set(worker.agentId, worker);
+
+    const runtimeStub = {
+      getStatus: () => "idle",
+      getPendingCount: () => 0
+    } as SwarmAgentRuntime;
+    controller.runtimes.set(manager.agentId, runtimeStub);
+    controller.runtimes.set(worker.agentId, runtimeStub);
+
+    const sendMessage = vi.fn(async () => ({}));
+    const health = new SwarmWorkerHealthService({
+      descriptors,
+      runtimes: controller.runtimes,
+      now: () => new Date().toISOString(),
+      getConversationHistory: () => [],
+      sendMessage,
+      publishToUser: vi.fn(async () => ({})),
+      terminateDescriptor: vi.fn(async () => {}),
+      saveStore: vi.fn(async () => {}),
+      emitAgentsSnapshot: vi.fn(),
+      resolvePromptWithFallback: vi.fn(async (_category, _id, _profile, fallback) => fallback),
+      isRuntimeInContextRecovery: vi.fn(() => false),
+      isRuntimeRecoveryActive: vi.fn(() => false),
+      logDebug: vi.fn()
+    });
+    host.workerWatchdogState = health.workerWatchdogState;
+    host.workerStallState = health.workerStallState;
+    host.workerActivityState = health.workerActivityState;
+    host.watchdogTimerTokens = health.watchdogTimerTokens;
+    host.getOrCreateWorkerWatchdogState = (agentId) => health.getOrCreateWorkerWatchdogState(agentId);
+    host.clearWatchdogTimer = (agentId) => health.clearWatchdogTimer(agentId);
+    host.removeWorkerFromWatchdogBatchQueues = (agentId) => health.removeWorkerFromWatchdogBatchQueues(agentId);
+    host.beginPendingTransientWorkerTerminatedError = (agentId, event, expire) =>
+      health.beginPendingTransientWorkerTerminatedError(agentId, event, expire);
+    host.cancelPendingTransientWorkerTerminatedError = (agentId, reason) =>
+      health.cancelPendingTransientWorkerTerminatedError(agentId, reason);
+    host.hasPendingTransientWorkerTerminatedError = (agentId) => health.hasPendingTransientWorkerTerminatedError(agentId);
+    host.finalizeWorkerIdleTurn = (agentId, descriptor, source) =>
+      health.finalizeWorkerIdleTurn(agentId, descriptor, source);
+
+    const token = controller.allocateRuntimeToken(worker.agentId);
+    await controller.handleRuntimeSessionEvent(token, worker.agentId, {
+      type: "message_end",
+      message: { role: "assistant", content: "", stopReason: "error", errorMessage: "terminated" }
+    });
+
+    expect(captureConversationEventFromRuntime).not.toHaveBeenCalled();
+    expect(health.hasPendingTransientWorkerTerminatedError(worker.agentId)).toBe(true);
+
+    await controller.handleRuntimeStatus(token, worker.agentId, "idle", 0);
+    await controller.handleRuntimeAgentEnd(token, worker.agentId);
+
+    expect(health.workerWatchdogState.get(worker.agentId)).toEqual(
+      expect.objectContaining({
+        turnSeq: 0,
+        deferredFinalizeTurnSeq: 0,
+        pendingTransientTerminatedTurnSeq: 0
+      })
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(TRANSIENT_WORKER_TERMINATED_GRACE_MS + 1);
+
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(health.workerWatchdogState.get(worker.agentId)).toEqual(
+      expect.objectContaining({
+        turnSeq: 1,
+        pendingTransientTerminatedTurnSeq: null,
+        deferredFinalizeTurnSeq: null
+      })
+    );
   });
 
   it("suppresses runtime callbacks while intentional stop tokens are registered", async () => {

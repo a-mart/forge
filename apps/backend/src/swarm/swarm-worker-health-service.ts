@@ -17,7 +17,7 @@ import {
   trimToMaxChars,
   trimToMaxCharsFromEnd
 } from "./swarm-manager-utils.js";
-import { extractRole } from "./message-utils.js";
+import { extractMessageErrorMessage, extractMessageText, extractRole } from "./message-utils.js";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 
 const IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE = `⚠️ [IDLE WORKER WATCHDOG — BATCHED]
@@ -36,6 +36,7 @@ const STALL_CHECK_INTERVAL_MS = 60_000;
 const STALL_NUDGE_THRESHOLD_MS = 5 * 60_000;
 const STALL_DETAILED_REPORT_INTERVAL_MS = 10 * 60_000;
 const STALL_KILL_AFTER_NUDGE_MS = 25 * 60_000;
+export const TRANSIENT_WORKER_TERMINATED_GRACE_MS = 60_000;
 
 export interface WorkerWatchdogState {
   turnSeq: number;
@@ -44,9 +45,18 @@ export interface WorkerWatchdogState {
   deferredFinalizeTurnSeq: number | null;
   hadStreamingThisTurn: boolean;
   lastFinalizedTurnSeq: number | null;
+  pendingTransientTerminatedTurnSeq: number | null;
+  pendingTransientTerminatedStartedAtMs: number | null;
+  pendingTransientTerminatedCount: number;
   consecutiveNotifications: number;
   suppressedUntilMs: number;
   circuitOpen: boolean;
+}
+
+interface PendingTransientWorkerTerminatedError {
+  event: RuntimeSessionEvent;
+  expire: (event: RuntimeSessionEvent) => void | Promise<void>;
+  token: number;
 }
 
 export interface WatchdogBatchEntry {
@@ -115,6 +125,9 @@ export class SwarmWorkerHealthService {
   readonly watchdogTimerTokens = new Map<string, number>();
   readonly watchdogBatchQueueByManager = new Map<string, Map<string, WatchdogBatchEntry>>();
   readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
+  private readonly pendingTransientWorkerTerminatedErrors = new Map<string, PendingTransientWorkerTerminatedError>();
+  private readonly transientWorkerTerminatedTimers = new Map<string, NodeJS.Timeout>();
+  private readonly transientWorkerTerminatedTimerTokens = new Map<string, number>();
 
   private stallCheckInterval: NodeJS.Timeout | null = null;
   private stallCheckPromise: Promise<void> | null = null;
@@ -247,8 +260,104 @@ export class SwarmWorkerHealthService {
     }
     if (watchdogState) {
       this.workerWatchdogState.set(agentId, watchdogState);
+      this.cancelPendingTransientWorkerTerminatedError(agentId, "worker_reported");
       await this.finalizeDeferredWorkerIdleTurn(agentId, turnSeq);
     }
+  }
+
+  beginPendingTransientWorkerTerminatedError(
+    agentId: string,
+    event: RuntimeSessionEvent,
+    expire: (event: RuntimeSessionEvent) => void | Promise<void>
+  ): boolean {
+    const descriptor = this.options.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      return false;
+    }
+
+    const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
+    if (this.hasWorkerReportedForWatchdogTurn(descriptor, watchdogState.turnSeq)) {
+      this.options.logDebug("worker:transient_terminated:ignore_reported_turn", {
+        agentId,
+        turnSeq: watchdogState.turnSeq,
+        errorMessage: extractRuntimeEventMessageError(event)
+      });
+      return true;
+    }
+    const existing = this.pendingTransientWorkerTerminatedErrors.get(agentId);
+    const token = (this.transientWorkerTerminatedTimerTokens.get(agentId) ?? 0) + 1;
+    this.transientWorkerTerminatedTimerTokens.set(agentId, token);
+
+    watchdogState.pendingTransientTerminatedTurnSeq = existing
+      ? (watchdogState.pendingTransientTerminatedTurnSeq ?? watchdogState.turnSeq)
+      : watchdogState.turnSeq;
+    watchdogState.pendingTransientTerminatedStartedAtMs ??= Date.now();
+    watchdogState.pendingTransientTerminatedCount = (watchdogState.pendingTransientTerminatedCount ?? 0) + 1;
+    this.workerWatchdogState.set(agentId, watchdogState);
+
+    this.pendingTransientWorkerTerminatedErrors.set(agentId, { event, expire, token });
+    this.clearTransientWorkerTerminatedTimer(agentId);
+    const timer = setTimeout(() => {
+      this.expirePendingTransientWorkerTerminatedError(agentId, token).catch((error) => {
+        this.options.logDebug("worker:transient_terminated:expire_error", {
+          agentId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }, TRANSIENT_WORKER_TERMINATED_GRACE_MS);
+    timer.unref();
+    this.transientWorkerTerminatedTimers.set(agentId, timer);
+
+    this.options.logDebug("worker:transient_terminated:pending", {
+      agentId,
+      turnSeq: watchdogState.pendingTransientTerminatedTurnSeq,
+      count: watchdogState.pendingTransientTerminatedCount,
+      errorMessage: extractRuntimeEventMessageError(event)
+    });
+    return true;
+  }
+
+  cancelPendingTransientWorkerTerminatedError(
+    agentId: string,
+    reason: "runtime_progress" | "worker_reported" | "clear_state"
+  ): void {
+    const pending = this.pendingTransientWorkerTerminatedErrors.get(agentId);
+    const watchdogState = this.workerWatchdogState.get(agentId);
+    const stateHasPending =
+      watchdogState?.pendingTransientTerminatedTurnSeq !== null &&
+      watchdogState?.pendingTransientTerminatedTurnSeq !== undefined;
+    if (!pending && !stateHasPending) {
+      return;
+    }
+
+    this.pendingTransientWorkerTerminatedErrors.delete(agentId);
+    this.clearTransientWorkerTerminatedTimer(agentId);
+    this.transientWorkerTerminatedTimerTokens.set(agentId, (this.transientWorkerTerminatedTimerTokens.get(agentId) ?? 0) + 1);
+
+    if (watchdogState) {
+      watchdogState.pendingTransientTerminatedTurnSeq = null;
+      watchdogState.pendingTransientTerminatedStartedAtMs = null;
+      watchdogState.pendingTransientTerminatedCount = 0;
+      this.workerWatchdogState.set(agentId, watchdogState);
+    }
+
+    this.options.logDebug("worker:transient_terminated:cancel", { agentId, reason });
+  }
+
+  hasPendingTransientWorkerTerminatedError(agentId: string): boolean {
+    const watchdogState = this.workerWatchdogState.get(agentId);
+    return (
+      this.pendingTransientWorkerTerminatedErrors.has(agentId) ||
+      (
+        watchdogState?.pendingTransientTerminatedTurnSeq !== null &&
+        watchdogState?.pendingTransientTerminatedTurnSeq !== undefined
+      )
+    );
+  }
+
+  private hasWorkerReportedForWatchdogTurn(descriptor: AgentDescriptor, turnSeq: number): boolean {
+    const watchdogState = this.workerWatchdogState.get(descriptor.agentId);
+    return watchdogState?.turnSeq === turnSeq && watchdogState.reportedThisTurn;
   }
 
   handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): void {
@@ -419,6 +528,9 @@ export class SwarmWorkerHealthService {
       lastFinalizedTurnSeq: null,
       consecutiveNotifications: 0,
       suppressedUntilMs: 0,
+      pendingTransientTerminatedTurnSeq: null,
+      pendingTransientTerminatedStartedAtMs: null,
+      pendingTransientTerminatedCount: 0,
       circuitOpen: false
     };
     this.workerWatchdogState.set(agentId, initialized);
@@ -433,8 +545,17 @@ export class SwarmWorkerHealthService {
     }
   }
 
+  private clearTransientWorkerTerminatedTimer(agentId: string): void {
+    const timer = this.transientWorkerTerminatedTimers.get(agentId);
+    if (timer) {
+      clearTimeout(timer);
+      this.transientWorkerTerminatedTimers.delete(agentId);
+    }
+  }
+
   clearWatchdogState(agentId: string): void {
     this.clearWatchdogTimer(agentId);
+    this.cancelPendingTransientWorkerTerminatedError(agentId, "clear_state");
 
     const watchdogState = this.workerWatchdogState.get(agentId);
     if (watchdogState) {
@@ -443,10 +564,14 @@ export class SwarmWorkerHealthService {
       watchdogState.reportedThisTurn = false;
       watchdogState.hadStreamingThisTurn = false;
       watchdogState.lastFinalizedTurnSeq = null;
+      watchdogState.pendingTransientTerminatedTurnSeq = null;
+      watchdogState.pendingTransientTerminatedStartedAtMs = null;
+      watchdogState.pendingTransientTerminatedCount = 0;
     }
 
     this.workerWatchdogState.delete(agentId);
     this.watchdogTimerTokens.delete(agentId);
+    this.transientWorkerTerminatedTimerTokens.delete(agentId);
     this.removeWorkerFromWatchdogBatchQueues(agentId);
   }
 
@@ -492,8 +617,9 @@ export class SwarmWorkerHealthService {
 
     const reportedThisTurn = watchdogState.reportedThisTurn;
     const hasPendingReport = watchdogState.pendingReportTurnSeq === currentTurnSeq;
+    const hasPendingTransientTerminatedError = watchdogState.pendingTransientTerminatedTurnSeq === currentTurnSeq;
 
-    if (hasPendingReport) {
+    if (hasPendingReport || hasPendingTransientTerminatedError) {
       watchdogState.deferredFinalizeTurnSeq = currentTurnSeq;
       this.workerWatchdogState.set(agentId, watchdogState);
       return;
@@ -545,12 +671,38 @@ export class SwarmWorkerHealthService {
       !watchdogState ||
       watchdogState.turnSeq !== turnSeq ||
       watchdogState.pendingReportTurnSeq !== null ||
+      watchdogState.pendingTransientTerminatedTurnSeq !== null ||
       watchdogState.deferredFinalizeTurnSeq !== turnSeq
     ) {
       return;
     }
 
     await this.finalizeWorkerIdleTurn(agentId, descriptor, "deferred");
+  }
+
+  private async expirePendingTransientWorkerTerminatedError(agentId: string, token: number): Promise<void> {
+    const pending = this.pendingTransientWorkerTerminatedErrors.get(agentId);
+    if (!pending || pending.token !== token || this.transientWorkerTerminatedTimerTokens.get(agentId) !== token) {
+      return;
+    }
+
+    const watchdogState = this.workerWatchdogState.get(agentId);
+    const turnSeq = watchdogState?.pendingTransientTerminatedTurnSeq ?? null;
+    this.pendingTransientWorkerTerminatedErrors.delete(agentId);
+    this.transientWorkerTerminatedTimers.delete(agentId);
+    if (watchdogState) {
+      watchdogState.pendingTransientTerminatedTurnSeq = null;
+      watchdogState.pendingTransientTerminatedStartedAtMs = null;
+      watchdogState.pendingTransientTerminatedCount = 0;
+      this.workerWatchdogState.set(agentId, watchdogState);
+    }
+
+    this.options.logDebug("worker:transient_terminated:expired", { agentId, turnSeq });
+    await pending.expire(pending.event);
+
+    if (turnSeq !== null) {
+      await this.finalizeDeferredWorkerIdleTurn(agentId, turnSeq);
+    }
   }
 
   private trackWorkerStallProgressEvent(agentId: string, event: RuntimeSessionEvent): void {
@@ -1100,7 +1252,12 @@ export class SwarmWorkerHealthService {
     }
 
     const watchdogState = this.workerWatchdogState.get(agentId);
-    if (!watchdogState || watchdogState.turnSeq !== turnSeq || watchdogState.reportedThisTurn) {
+    if (
+      !watchdogState ||
+      watchdogState.turnSeq !== turnSeq ||
+      watchdogState.reportedThisTurn ||
+      watchdogState.pendingTransientTerminatedTurnSeq === turnSeq
+    ) {
       return;
     }
 
@@ -1193,6 +1350,7 @@ export class SwarmWorkerHealthService {
         !watchdogState ||
         watchdogState.turnSeq !== queuedWorker.turnSeq ||
         watchdogState.reportedThisTurn ||
+        watchdogState.pendingTransientTerminatedTurnSeq === queuedWorker.turnSeq ||
         watchdogState.circuitOpen
       ) {
         continue;
@@ -1284,4 +1442,16 @@ export class SwarmWorkerHealthService {
       this.workerWatchdogState.set(workerId, watchdogState);
     }
   }
+}
+
+function extractRuntimeEventMessageError(event: RuntimeSessionEvent): string | undefined {
+  if (
+    event.type !== "message_end" &&
+    event.type !== "message_update" &&
+    event.type !== "message_start"
+  ) {
+    return undefined;
+  }
+
+  return extractMessageErrorMessage(event.message) ?? extractMessageText(event.message);
 }

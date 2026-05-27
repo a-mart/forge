@@ -117,6 +117,13 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogStateLike;
   clearWatchdogTimer(agentId: string): void;
   removeWorkerFromWatchdogBatchQueues(agentId: string): void;
+  beginPendingTransientWorkerTerminatedError(
+    agentId: string,
+    event: RuntimeSessionEvent,
+    expire: (event: RuntimeSessionEvent) => void | Promise<void>
+  ): boolean;
+  cancelPendingTransientWorkerTerminatedError(agentId: string, reason: "runtime_progress" | "worker_reported" | "clear_state"): void;
+  hasPendingTransientWorkerTerminatedError(agentId: string): boolean;
   finalizeWorkerIdleTurn(
     agentId: string,
     descriptor: AgentDescriptor,
@@ -490,6 +497,12 @@ export class SwarmRuntimeController {
           this.host.consumePendingManualManagerStopNoticeIfApplicable(agentId, event),
         stripManagerAbortErrorFromEvent: (event) => this.host.stripManagerAbortErrorFromEvent(event),
         isRuntimeRecoveryActive: (agentId) => this.host.isRuntimeRecoveryActive(agentId),
+        beginPendingTransientWorkerTerminatedError: (agentId, event, expire) =>
+          this.host.beginPendingTransientWorkerTerminatedError(agentId, event, expire),
+        cancelPendingTransientWorkerTerminatedError: (agentId, reason) =>
+          this.host.cancelPendingTransientWorkerTerminatedError(agentId, reason),
+        hasPendingTransientWorkerTerminatedError: (agentId) =>
+          this.host.hasPendingTransientWorkerTerminatedError(agentId),
         queueVersionedToolMutation: (descriptor, mutation) => this.host.queueVersionedToolMutation(descriptor, mutation),
         logDebug: (message, details) => this.logDebug(message, details)
       });
