@@ -175,11 +175,10 @@ describe("buildModelCapacityBlockKey / resolveNextCapacityFallbackModelId", () =
   });
 
   it.each([
-    ["openai-codex", "gpt-5.3-codex-spark", "gpt-5.3-codex"],
-    ["openai-codex", "gpt-5.3-codex", "gpt-5.4"],
-    ["openai-codex", "gpt-5.4", "gpt-5.5"],
-    ["openai-codex", "gpt-5.5", undefined],
-    ["anthropic", "gpt-5.3-codex", undefined],
+    ["openai-codex", "gpt-5.3-codex-spark", "gpt-5.5"],
+    ["openai-codex", "gpt-5.5", "gpt-5.4"],
+    ["openai-codex", "gpt-5.4", undefined],
+    ["anthropic", "gpt-5.5", undefined],
     ["openai-codex", "unknown-model", undefined]
   ])("resolveNextCapacityFallbackModelId(%s, %s) -> %j", (provider, modelId, expected) => {
     expect(resolveNextCapacityFallbackModelId(provider, modelId)).toBe(expected);

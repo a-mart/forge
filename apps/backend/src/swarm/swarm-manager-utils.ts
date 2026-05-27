@@ -59,7 +59,7 @@ const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "error",
   "stopped_on_restart"
 ]);
-const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5.4", "gpt-5.5"];
+const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.3-codex-spark", "gpt-5.5", "gpt-5.4"];
 const MAX_WORKER_COMPLETION_REPORT_CHARS = 4_000;
 const WORKER_COMPLETION_TRUNCATION_SUFFIX = "\n\n[truncated]";
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";

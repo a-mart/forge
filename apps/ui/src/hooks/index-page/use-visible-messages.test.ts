@@ -13,7 +13,7 @@ const manager: AgentDescriptor = {
   cwd: '/tmp/project',
   model: {
     provider: 'openai-codex',
-    modelId: 'gpt-5.3-codex',
+    modelId: 'gpt-5.5',
     thinkingLevel: 'high',
   },
   sessionFile: '/tmp/project/manager.jsonl',

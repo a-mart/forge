@@ -66,9 +66,7 @@ function buildLegacyModelRoutingGuidance(): string {
       .map((family) => `\`${family.familyId}\` (\`${family.defaultModelId}\`)`),
   );
 
-  const codexQuickModelId =
-    selectVariantModelId("pi-codex", (model) => model.displayName.toLowerCase().includes("spark")) ??
-    "gpt-5.3-codex-spark";
+  const codexQuickModelId = getCatalogFamily("pi-codex-spark")?.defaultModelId ?? "gpt-5.3-codex-spark";
   const anthropicQuickModelId =
     selectVariantModelId("pi-opus", (model) => model.displayName.toLowerCase().includes("haiku")) ??
     "claude-haiku-4-5-20251001";

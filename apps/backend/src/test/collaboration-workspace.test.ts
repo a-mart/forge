@@ -90,7 +90,7 @@ describe("collaboration workspace service", () => {
     const defaults = workspaceDefaultsFromConfig({
       defaultModel: {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex",
+        modelId: "gpt-5.5",
         thinkingLevel: "xhigh",
       },
       defaultCwd: "/repo",
@@ -99,7 +99,7 @@ describe("collaboration workspace service", () => {
     expect(hasInitializedWorkspaceDefaults(defaults)).toBe(true);
     expect(requireInitializedWorkspaceDefaults(defaults)).toEqual({
       defaultModelProvider: "openai-codex",
-      defaultModelId: "gpt-5.3-codex",
+      defaultModelId: "gpt-5.5",
       defaultModelThinkingLevel: "xhigh",
       defaultCwd: "/repo",
     });

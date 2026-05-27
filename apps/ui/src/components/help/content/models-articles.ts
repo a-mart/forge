@@ -43,8 +43,8 @@ const modelsProviders: HelpArticle = {
 
 OpenAI offers the GPT-5 model family through the Codex runtime.
 
-- **GPT-5.3 Codex** — The original Codex coding model. Strong at implementation tasks, refactors, and debugging. Supports all reasoning levels from none to max.
-- **GPT-5.4** — The newest and most capable OpenAI model. Better than 5.3 at complex planning, architecture, and multi-step reasoning. Good default for backend work and code review.
+- **GPT-5.5** — The standard full Codex coding model. Strong at implementation tasks, refactors, debugging, planning, architecture, and multi-step reasoning. Supports all reasoning levels from none to max.
+- **GPT-5.4** — Prior full OpenAI coding model. Good for complex planning, architecture, and multi-step reasoning when 5.5 is unavailable or intentionally avoided.
 - **GPT-5.4 Mini** — A smaller, faster variant of 5.4. Good for lightweight tasks like reading files, quick edits, and exploration. Much cheaper than the full model.
 - **GPT-5.4 Nano** — The smallest variant. Very fast and very cheap. Best for simple lookups, grep-style searches, and tasks where speed matters more than depth.
 
@@ -168,7 +168,7 @@ Use these for high-volume or simple tasks where speed matters more than depth.
 
 These work well for everyday development tasks.
 
-- **GPT-5.3 Codex** — The standard coding model. Good balance of speed and quality for implementation work.
+- **GPT-5.5** — The standard full coding model. Good balance of speed and quality for implementation work.
 - **Claude Sonnet 4.5** — Mid-range Anthropic model. The Doc Writer specialist uses this for documentation tasks where full Opus would be wasteful.
 - **Grok 4 Fast** — Quick Grok variant for specialist tasks.
 
@@ -176,7 +176,7 @@ These work well for everyday development tasks.
 
 Reserve these for work where quality matters most.
 
-- **GPT-5.4** — OpenAI's strongest. Best for complex backend work and multi-file refactors. The Backend Engineer specialist defaults to this; Architect now defaults to GPT-5.5.
+- **GPT-5.5** — OpenAI's strongest full coding model. Best for complex backend work and multi-file refactors.
 - **Claude Opus 4.6** — Anthropic's strongest. Best for frontend work, nuanced code review, and tasks that need careful judgment. The Frontend Engineer specialist defaults to this; Planner now defaults to GPT-5.5 with Opus 4.6 as fallback.
 - **Grok 4** — xAI's flagship for specialist use.
 

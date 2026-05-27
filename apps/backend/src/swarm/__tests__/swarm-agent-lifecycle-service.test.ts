@@ -234,7 +234,7 @@ describe("SwarmAgentLifecycleService", () => {
       modelId: "gpt-5.3-codex-spark",
       thinkingLevel: "medium"
     });
-    expect(out.modelId).toBe("gpt-5.3-codex");
+    expect(out.modelId).toBe("gpt-5.5");
   });
 
   it("getOrCreateRuntimeForDescriptor preserves manager runtime attach ordering", async () => {
@@ -1682,7 +1682,7 @@ describe("SwarmAgentLifecycleService", () => {
       color: "#fff",
       enabled: true,
       whenToUse: "test",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       provider: "openai-codex",
       promptBody: "prompt",
       available: true,

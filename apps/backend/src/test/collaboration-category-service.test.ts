@@ -166,7 +166,7 @@ describe("collaboration category service", () => {
     const changedModel = service.updateCategory(created.categoryId, {
       defaultModelId: "pi-codex",
     });
-    expect(changedModel.defaultModelId).toBe("pi-codex");
+    expect(changedModel.defaultModelId).toBe("pi-5.5");
     expect(changedModel.defaultReasoningLevel).toBe(codexDefaultReasoning);
     expect(changedModel.channelCreationDefaults?.model.thinkingLevel).toBe(codexDefaultReasoning);
   });

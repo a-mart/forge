@@ -14,7 +14,7 @@ function manager(agentId: string, overrides: Partial<AgentDescriptor> = {}): Age
     cwd: '/tmp',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'high',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,

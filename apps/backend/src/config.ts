@@ -127,7 +127,7 @@ export function createConfig(): SwarmConfig {
     managerDisplayName: "Manager",
     defaultModel: {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       thinkingLevel: "xhigh"
     },
     defaultCwd,

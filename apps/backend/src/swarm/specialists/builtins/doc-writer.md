@@ -3,9 +3,9 @@ displayName: Doc Writer
 color: "#8b5cf6"
 enabled: true
 whenToUse: Documentation, README updates, release notes, UX copy, technical writing, migration guides, design docs. Not for code implementation, debugging, or code review.
-modelId: claude-sonnet-4-5-20250929
+modelId: gpt-5.5
 TargetSpace: [builder]
-reasoningLevel: medium
+reasoningLevel: low
 fallbackModelId: gpt-5.4-mini
 fallbackReasoningLevel: medium
 builtin: true

@@ -20,7 +20,7 @@ function descriptor(overrides: Partial<AgentDescriptor>): AgentDescriptor {
     cwd: "/tmp",
     model: {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium",
     },
     sessionFile: overrides.sessionFile ?? "/tmp/session.jsonl",

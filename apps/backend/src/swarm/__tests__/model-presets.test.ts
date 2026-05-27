@@ -6,6 +6,7 @@ import {
   normalizePersistedSwarmModelDescriptor,
   normalizeSwarmModelDescriptor,
   parseSwarmModelPreset,
+  resolveModelDescriptorFromPreset,
   resolveRemovedSwarmModelPresetAlias,
 } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
@@ -105,9 +106,42 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-codex", "pi-5.4", "pi-5.5", "pi-opus", "sdk-opus", "sdk-sonnet", "cursor-composer"] as const) {
+    for (const presetId of ["pi-codex-spark", "pi-5.4", "pi-5.5", "pi-opus", "sdk-opus", "sdk-sonnet", "cursor-composer"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
+  });
+
+  it("maps removed full GPT-5.3 Codex descriptors to GPT-5.5 without exposing the legacy pi-codex alias", () => {
+    const presets = getModelPresetInfoList();
+    expect(presets.find((preset) => preset.presetId === "pi-codex")).toBeUndefined();
+    expect(presets.find((preset) => preset.presetId === "pi-5.5")).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      displayName: "GPT-5.5",
+      defaultReasoningLevel: "xhigh",
+    });
+    expect(presets.find((preset) => preset.presetId === "pi-codex-spark")).toMatchObject({
+      provider: "openai-codex",
+      modelId: "gpt-5.3-codex-spark",
+      displayName: "GPT-5.3 Codex Spark",
+      defaultReasoningLevel: "low",
+    });
+    expect(presets.filter((preset) => preset.provider === "openai-codex" && preset.modelId === "gpt-5.5")).toHaveLength(1);
+    expect(normalizePersistedSwarmModelDescriptor({
+      provider: "openai-codex",
+      modelId: "gpt-5.3-codex",
+      thinkingLevel: "high",
+    })).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      thinkingLevel: "high",
+    });
+    expect(resolveModelDescriptorFromPreset("pi-codex")).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      thinkingLevel: "xhigh",
+    });
+    expect(modelCatalogService.isKnownModelId("gpt-5.3-codex", "openai-codex")).toBe(false);
   });
 
   it("maps removed Cursor ACP descriptors and aliases to Cursor SDK Composer", () => {
@@ -146,7 +180,7 @@ describe("model-presets", () => {
   });
 
   it("returns catalog-backed context window metadata", () => {
-    expect(modelCatalogService.getContextWindow("gpt-5.3-codex")).toBe(272_000);
+    expect(modelCatalogService.getContextWindow("gpt-5.5")).toBe(272_000);
     expect(modelCatalogService.getContextWindow("grok-4-fast")).toBe(2_000_000);
     expect(modelCatalogService.getContextWindow("claude-opus-4-6", "claude-sdk")).toBe(1_000_000);
   });

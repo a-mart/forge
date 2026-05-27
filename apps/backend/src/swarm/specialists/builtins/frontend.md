@@ -3,9 +3,9 @@ displayName: Frontend Engineer
 color: "#ec4899"
 enabled: true
 whenToUse: Frontend implementation, UI components, layout, styling, responsive design, accessibility. Not for backend logic, server routes, or data model changes.
-modelId: claude-opus-4-6
+modelId: gpt-5.5
 TargetSpace: [builder]
-reasoningLevel: high
+reasoningLevel: medium
 fallbackModelId: gpt-5.4
 fallbackReasoningLevel: high
 builtin: true

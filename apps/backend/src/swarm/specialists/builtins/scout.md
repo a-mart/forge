@@ -6,7 +6,7 @@ whenToUse: Quick file reads, grep searches, simple edits, fast investigations, l
 modelId: gpt-5.4-mini
 TargetSpace: [builder]
 reasoningLevel: low
-fallbackModelId: claude-haiku-4-5-20251001
+fallbackModelId: gpt-5.5
 fallbackReasoningLevel: low
 builtin: true
 ---

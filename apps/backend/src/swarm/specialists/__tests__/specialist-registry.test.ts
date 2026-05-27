@@ -34,7 +34,7 @@ function makeSpecialistMarkdown(options: {
     "color: '#2563eb'",
     "enabled: true",
     `whenToUse: ${options.whenToUse}`,
-    "modelId: gpt-5.3-codex",
+    "modelId: gpt-5.5",
     "provider: openai",
     "TargetSpace: [builder]",
     ...(options.extraFrontmatter ?? []),
@@ -190,7 +190,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Backend tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "reasoningLevel: high",
         "builtin: true",
         "---",
@@ -208,7 +208,7 @@ describe("specialist-registry", () => {
       color: "#2563eb",
       enabled: true,
       whenToUse: "Backend tasks",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       reasoningLevel: "high",
       builtin: true,
     });
@@ -227,7 +227,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Keep customizations",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "builtin: true",
         "pinned: true",
         "---",
@@ -283,7 +283,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Dual-space tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "TargetSpace: [builder, collaboration]",
         "---",
         "",
@@ -299,7 +299,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Collaboration tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "TargetSpace: collaboration",
         "---",
         "",
@@ -325,7 +325,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Collaboration tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "targetSpace: collaboration",
         "---",
         "",
@@ -341,7 +341,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Canonical tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "TargetSpace: builder",
         "targetSpace: collaboration",
         "---",
@@ -367,7 +367,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Legacy tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Legacy body.",
@@ -455,7 +455,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: General tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Standard body.",
@@ -492,7 +492,7 @@ describe("specialist-registry", () => {
 
     const parsed = await parseSpecialistFile(filePath);
     expect(parsed).not.toBeNull();
-    expect(parsed?.frontmatter.modelId).toBe("gpt-5.3-codex");
+    expect(parsed?.frontmatter.modelId).toBe("gpt-5.5");
   });
 
   it("maps legacy preset-based frontmatter through the effective family default when overrides disable the builtin default", async () => {
@@ -634,7 +634,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Shared backend",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Shared backend body.",
@@ -711,7 +711,7 @@ describe("specialist-registry", () => {
         "color: '#111111'",
         "enabled: true",
         "whenToUse: Builder tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "TargetSpace: builder",
         "---",
         "",
@@ -727,7 +727,7 @@ describe("specialist-registry", () => {
         "color: '#222222'",
         "enabled: true",
         "whenToUse: Collaboration tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "TargetSpace: collaboration",
         "---",
         "",
@@ -743,7 +743,7 @@ describe("specialist-registry", () => {
         "color: '#333333'",
         "enabled: true",
         "whenToUse: Dual tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "TargetSpace: [builder, collaboration]",
         "---",
         "",
@@ -770,7 +770,7 @@ describe("specialist-registry", () => {
         color: "#2563eb",
         enabled: true,
         whenToUse: "Backend work",
-        modelId: "gpt-5.3-codex",
+        modelId: "gpt-5.5",
         provider: "openai-codex",
         reasoningLevel: "high",
         builtin: true,
@@ -788,7 +788,7 @@ describe("specialist-registry", () => {
         color: "#222222",
         enabled: false,
         whenToUse: "Should be omitted (disabled)",
-        modelId: "gpt-5.3-codex",
+        modelId: "gpt-5.5",
         provider: "openai-codex",
         builtin: false,
         pinned: false,
@@ -822,7 +822,7 @@ describe("specialist-registry", () => {
     expect(markdown).toContain("Named specialist workers");
     expect(markdown).toContain("`backend`");
     expect(markdown).toContain("Backend work");
-    expect(markdown).toContain("[openai-codex/gpt-5.3-codex high]");
+    expect(markdown).toContain("[openai-codex/gpt-5.5 high]");
     expect(markdown).not.toContain("`disabled`");
     expect(markdown).not.toContain("`invalid`");
   });
@@ -843,7 +843,7 @@ describe("specialist-registry", () => {
         "color: '#000000'",
         "enabled: false",
         "whenToUse: Legacy",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "builtin: true",
         "pinned: false",
         "---",
@@ -886,7 +886,7 @@ describe("specialist-registry", () => {
     expect(architect).not.toBeNull();
   });
 
-  it("seeds builtin fallback models with cross-vendor matches for OpenAI and Anthropic specialists", async () => {
+  it("seeds builtin fallback models with current Codex specialist defaults", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
 
@@ -898,48 +898,55 @@ describe("specialist-registry", () => {
     expect(byId.get("architect")).toMatchObject({
       provider: "openai-codex",
       modelId: "gpt-5.5",
-      fallbackProvider: "anthropic",
-      fallbackModelId: "claude-opus-4-6",
-      fallbackReasoningLevel: "high",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
+      fallbackReasoningLevel: "medium",
     });
     expect(byId.get("backend")).toMatchObject({
       provider: "openai-codex",
-      fallbackProvider: "anthropic",
-      fallbackModelId: "claude-opus-4-6",
-      fallbackReasoningLevel: "high",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
+      fallbackReasoningLevel: "medium",
     });
     expect(byId.get("code-reviewer")).toMatchObject({
       provider: "openai-codex",
-      fallbackProvider: "anthropic",
-      fallbackModelId: "claude-opus-4-6",
-      fallbackReasoningLevel: "high",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
+      fallbackReasoningLevel: "medium",
     });
     expect(byId.get("researcher")).toMatchObject({
       provider: "openai-codex",
-      fallbackProvider: "anthropic",
-      fallbackModelId: "claude-sonnet-4-5-20250929",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
+      fallbackReasoningLevel: "low",
     });
     expect(byId.get("scout")).toMatchObject({
       provider: "openai-codex",
-      fallbackProvider: "anthropic",
-      fallbackModelId: "claude-haiku-4-5-20251001",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
       fallbackReasoningLevel: "low",
     });
 
     expect(byId.get("code-reviewer-2")).toMatchObject({
-      provider: "anthropic",
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      reasoningLevel: "medium",
       fallbackProvider: "openai-codex",
       fallbackModelId: "gpt-5.4",
       fallbackReasoningLevel: "high",
     });
     expect(byId.get("doc-writer")).toMatchObject({
-      provider: "anthropic",
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      reasoningLevel: "low",
       fallbackProvider: "openai-codex",
       fallbackModelId: "gpt-5.4-mini",
       fallbackReasoningLevel: "medium",
     });
     expect(byId.get("frontend")).toMatchObject({
-      provider: "anthropic",
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      reasoningLevel: "medium",
       fallbackProvider: "openai-codex",
       fallbackModelId: "gpt-5.4",
       fallbackReasoningLevel: "high",
@@ -947,9 +954,9 @@ describe("specialist-registry", () => {
     expect(byId.get("planner")).toMatchObject({
       provider: "openai-codex",
       modelId: "gpt-5.5",
-      fallbackProvider: "anthropic",
-      fallbackModelId: "claude-opus-4-6",
-      fallbackReasoningLevel: "high",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.5",
+      fallbackReasoningLevel: "medium",
     });
 
     expect(byId.get("app-runtime")).toBeUndefined();
@@ -1090,7 +1097,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Backend A",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Backend A body.",
@@ -1119,7 +1126,7 @@ describe("specialist-registry", () => {
 
     expect(rosterA[0]).toMatchObject({
       displayName: "Backend A",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
     });
     expect(rosterB[0]).toMatchObject({
       displayName: "Backend B",
@@ -1144,7 +1151,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Shared backend",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Shared backend body.",
@@ -1194,7 +1201,7 @@ describe("specialist-registry", () => {
         "displayName: Missing Color",
         "enabled: true",
         "whenToUse: Test",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Body text.",
@@ -1217,7 +1224,7 @@ describe("specialist-registry", () => {
         "color: red",
         "enabled: true",
         "whenToUse: Test",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "---",
         "",
         "Body text.",
@@ -1240,7 +1247,7 @@ describe("specialist-registry", () => {
         "color: '#aabbcc'",
         "enabled: true",
         "whenToUse: Test",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "---",
         "",
       ].join("\n"),
@@ -1260,7 +1267,7 @@ describe("specialist-registry", () => {
       color: "#abcdef",
       enabled: true,
       whenToUse: "Custom tasks",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       reasoningLevel: "high",
       promptBody: "Custom prompt body",
     });
@@ -1385,7 +1392,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: General tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "fallbackModelId: nonexistent-model",
         "fallbackReasoningLevel: high",
         "---",
@@ -1414,11 +1421,11 @@ describe("specialist-registry", () => {
         color: "#2563eb",
         enabled: true,
         whenToUse: "Backend work",
-        modelId: "gpt-5.3-codex",
+        modelId: "gpt-5.5",
         provider: "openai-codex",
         reasoningLevel: "high",
-        fallbackModelId: "claude-opus-4-6",
-        fallbackProvider: "anthropic",
+        fallbackModelId: "gpt-5.5",
+        fallbackProvider: "openai-codex",
         fallbackReasoningLevel: "medium",
         builtin: true,
         pinned: false,
@@ -1432,8 +1439,8 @@ describe("specialist-registry", () => {
     ]);
 
     expect(markdown).toContain("`backend`");
-    expect(markdown).toContain("[openai-codex/gpt-5.3-codex high");
-    expect(markdown).toContain("-> fallback anthropic/claude-opus-4-6 medium]");
+    expect(markdown).toContain("[openai-codex/gpt-5.5 high");
+    expect(markdown).toContain("-> fallback openai-codex/gpt-5.5 medium]");
   });
 
   it("adds a web search tag to roster entries when enabled", () => {
@@ -1502,7 +1509,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Builder tasks",
-        "modelId: gpt-5.3-codex",
+        "modelId: gpt-5.5",
         "TargetSpace: builder",
         "---",
         "",
@@ -1557,7 +1564,7 @@ describe("specialist-registry", () => {
       color: "#2563eb",
       enabled: true,
       whenToUse: "Use globally in collaboration.",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       provider: "openai",
       targetSpace: ["collaboration"],
       promptBody: "Global collab prompt.",
@@ -1567,7 +1574,7 @@ describe("specialist-registry", () => {
       color: "#2563eb",
       enabled: true,
       whenToUse: "Not selected.",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       provider: "openai",
       targetSpace: ["collaboration"],
       promptBody: "Unselected prompt.",
@@ -1577,7 +1584,7 @@ describe("specialist-registry", () => {
       color: "#16a34a",
       enabled: true,
       whenToUse: "Use local override.",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       provider: "openai",
       promptBody: "Channel-local prompt.",
     });
@@ -1586,7 +1593,7 @@ describe("specialist-registry", () => {
       color: "#16a34a",
       enabled: true,
       whenToUse: "Use locally.",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       provider: "openai",
       targetSpace: ["builder"],
       promptBody: "Local-only prompt.",
@@ -1618,7 +1625,7 @@ describe("specialist-registry", () => {
       color: "#2563eb",
       enabled: true,
       whenToUse: "Use globally in collaboration.",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       targetSpace: ["collaboration"],
       promptBody: "Global collab prompt.",
     });
@@ -1627,7 +1634,7 @@ describe("specialist-registry", () => {
       color: "#2563eb",
       enabled: true,
       whenToUse: "Use in builder only.",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       targetSpace: ["builder"],
       promptBody: "Builder-only prompt.",
     });
@@ -1650,7 +1657,7 @@ describe("specialist-registry", () => {
       color: "#2563eb",
       enabled: true,
       whenToUse: "Use locally.",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       provider: "openai",
       promptBody: "Local prompt A.",
     });
@@ -1659,7 +1666,7 @@ describe("specialist-registry", () => {
       color: "#2563eb",
       enabled: true,
       whenToUse: "Use locally.",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       provider: "openai",
       promptBody: "Local prompt B.",
     });

@@ -610,7 +610,7 @@ function validSpecialistPayload(): Record<string, unknown> {
     color: "violet",
     enabled: true,
     whenToUse: "Use for release notes",
-    modelId: "gpt-5.3-codex",
+    modelId: "gpt-5.5",
     provider: "openai-codex",
     reasoningLevel: "medium",
     fallbackModelId: "claude-sonnet-4.5",

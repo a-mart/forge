@@ -627,7 +627,7 @@ function createSessionMeta(profileId: string, sessionId: string): SessionMeta {
     label: null,
     model: {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex"
+      modelId: "gpt-5.5"
     },
     createdAt: "2026-03-04T00:00:00.000Z",
     updatedAt: "2026-03-04T00:00:00.000Z",

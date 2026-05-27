@@ -7,7 +7,7 @@ Forge keeps its supported model metadata in one checked-in source of truth:
 That file defines the catalog in three layers:
 
 - **providers**: runtime/provider behavior
-- **families**: manager-facing preset groupings like `pi-codex`
+- **families**: preset groupings like the visible full Codex family `pi-5.5`; legacy aliases such as `pi-codex` remain compatibility-only and are hidden from selector/preset surfaces
 - **models**: concrete model metadata used by runtime and UI
 
 ## Source of truth rules

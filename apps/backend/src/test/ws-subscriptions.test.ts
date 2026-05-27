@@ -30,7 +30,7 @@ function createManagerStub() {
       cwd: '/tmp',
       model: {
         provider: 'openai-codex',
-        modelId: 'gpt-5.3-codex',
+        modelId: 'gpt-5.5',
         thinkingLevel: 'medium',
       },
       sessionFile: '/tmp/manager.jsonl',
@@ -47,7 +47,7 @@ function createManagerStub() {
       cwd: '/tmp',
       model: {
         provider: 'openai-codex',
-        modelId: 'gpt-5.3-codex',
+        modelId: 'gpt-5.5',
         thinkingLevel: 'medium',
       },
       sessionFile: '/tmp/session-1.jsonl',

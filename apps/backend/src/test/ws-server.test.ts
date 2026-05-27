@@ -1568,7 +1568,8 @@ describe('SwarmWebSocketServer', () => {
       }
       const updatedPresetIds = updatedPayload.models.map((model) => model.presetId)
 
-      expect(updatedPresetIds).toContain('pi-codex')
+      expect(updatedPresetIds).toContain('pi-5.5')
+      expect(updatedPresetIds).toContain('pi-codex-spark')
       expect(updatedPresetIds).toContain('pi-5.4')
       expect(updatedPresetIds).toContain('pi-grok')
       expect(updatedPresetIds).not.toContain('codex-app')
@@ -3753,7 +3754,9 @@ describe('SwarmWebSocketServer', () => {
       (event) =>
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
-        event.message.includes('create_manager.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer'),
+        event.message.includes(
+          'create_manager.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer',
+        ),
     )
 
     expect(errorEvent.type).toBe('error')

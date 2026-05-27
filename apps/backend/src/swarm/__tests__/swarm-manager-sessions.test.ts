@@ -943,7 +943,7 @@ describe('SwarmManager', () => {
 
     expect(codexManager.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'xhigh',
     })
     expect(pi54Manager.model).toEqual({
@@ -1020,7 +1020,7 @@ describe('SwarmManager', () => {
 
     expect(created.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'low',
     })
   })
@@ -1038,7 +1038,7 @@ describe('SwarmManager', () => {
 
     expect(created.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'low',
     })
   })
@@ -1055,7 +1055,7 @@ describe('SwarmManager', () => {
 
     expect(created.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'xhigh',
     })
   })
@@ -1071,7 +1071,9 @@ describe('SwarmManager', () => {
         cwd: config.defaultCwd,
         model: 'invalid-model' as any,
       }),
-     ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer')
+     ).rejects.toThrow(
+      'create_manager.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer',
+    )
   })
 
   it('replacement-shuts down idle manager session runtimes after a profile model change and recreates them on the next prompt', async () => {

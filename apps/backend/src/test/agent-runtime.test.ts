@@ -98,7 +98,7 @@ function makeDescriptor(): AgentDescriptor {
     cwd: '/tmp/project',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile: '/tmp/project/worker.jsonl',

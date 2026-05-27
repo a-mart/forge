@@ -12,7 +12,7 @@ export interface Deferred<T> {
 const DEFAULT_TIMESTAMP = '2026-01-01T00:00:00.000Z'
 const DEFAULT_MODEL: AgentModelDescriptor = {
   provider: 'openai-codex',
-  modelId: 'gpt-5.3-codex',
+  modelId: 'gpt-5.5',
   thinkingLevel: 'medium',
 }
 

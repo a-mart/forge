@@ -130,7 +130,7 @@ function descriptor(overrides: Pick<AgentDescriptor, "agentId" | "role" | "manag
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     cwd: "/tmp/project",
-    model: { provider: "openai-codex", modelId: "gpt-5.3-codex", thinkingLevel: "medium" },
+    model: { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "medium" },
     sessionFile: "/tmp/session.jsonl",
   };
 }

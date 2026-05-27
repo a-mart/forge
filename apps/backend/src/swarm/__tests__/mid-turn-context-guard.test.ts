@@ -53,7 +53,7 @@ class FakeSession {
     appendCustomEntry: () => "custom-id"
   };
 
-  readonly model = { provider: "openai-codex", id: "gpt-5.3-codex" };
+  readonly model = { provider: "openai-codex", id: "gpt-5.5" };
   readonly thinkingLevel = "medium";
   readonly state = { messages: [] as Array<{ role?: string; stopReason?: string }> };
   readonly agent = {
@@ -136,7 +136,7 @@ function makeDescriptor(): AgentDescriptor {
     cwd: "/tmp/project",
     model: {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium"
     },
     sessionFile: "/tmp/project/session.jsonl"

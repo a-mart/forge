@@ -17,7 +17,7 @@ function baseDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescript
     sessionFile: overrides.sessionFile ?? "/tmp/session.jsonl",
     model: overrides.model ?? {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium"
     },
     ...overrides

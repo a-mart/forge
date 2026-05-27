@@ -1,25 +1,29 @@
-import type { ModelPresetInfo } from "@forge/protocol";
+import { getSpawnPresetFamilies, type ModelPresetInfo } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "../types.js";
 import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "../types.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 
-export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
+export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-5.5";
 
 const REMOVED_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
-  "codex-app": "pi-codex",
+  "codex-app": "pi-5.5",
   "cursor-acp": "cursor-composer",
 };
 
 const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
-  "openai-codex-app-server": "pi-codex",
+  "openai-codex-app-server": "pi-5.5",
   "cursor-acp": "cursor-composer",
+};
+
+const REMOVED_MODEL_REPLACEMENTS: Record<string, SwarmModelPreset> = {
+  "openai-codex/gpt-5.3-codex": "pi-5.5",
 };
 
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
 const VALID_SWARM_REASONING_LEVEL_VALUES = new Set<string>(SWARM_REASONING_LEVELS);
 
 export function describeSwarmModelPresets(): string {
-  return SWARM_MODEL_PRESETS.join("|");
+  return getSpawnPresetFamilies().map((family) => family.familyId).join("|");
 }
 
 export function describeSwarmReasoningLevels(): string {
@@ -152,7 +156,8 @@ export function normalizePersistedSwarmModelDescriptor(
 
   const provider = descriptor.provider.trim().toLowerCase();
   const modelId = descriptor.modelId.trim().toLowerCase();
-  const replacementPreset = REMOVED_PROVIDER_REPLACEMENTS[provider];
+  const replacementPreset =
+    REMOVED_MODEL_REPLACEMENTS[`${provider}/${modelId}`] ?? REMOVED_PROVIDER_REPLACEMENTS[provider];
   if (!replacementPreset) {
     return {
       provider: descriptor.provider,

@@ -15,7 +15,7 @@ function makeAgent(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     cwd: '/tmp',
-    model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'high' },
+    model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'high' },
     sessionFile: '/tmp/agent-1.jsonl',
     ...overrides,
   }
@@ -30,7 +30,7 @@ function makeProfile(profileId: string, displayName?: string): ManagerProfile {
     profileId,
     displayName: displayName ?? profileId,
     defaultSessionAgentId: profileId,
-    defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'high' },
+    defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'high' },
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   }

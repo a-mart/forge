@@ -25,7 +25,7 @@ function manager(agentId: string, managerId = agentId): AgentDescriptor {
     cwd: '/tmp',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
@@ -44,7 +44,7 @@ function worker(agentId: string, managerId: string): AgentDescriptor {
     cwd: '/tmp',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
@@ -58,7 +58,7 @@ function profile(profileId: string): ManagerProfile {
     defaultSessionAgentId: profileId,
     defaultModel: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     createdAt: '2026-01-01T00:00:00.000Z',

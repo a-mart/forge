@@ -6,8 +6,8 @@ whenToUse: Complex architecture, system design, high-risk multi-file refactors, 
 modelId: gpt-5.5
 TargetSpace: [builder]
 reasoningLevel: xhigh
-fallbackModelId: claude-opus-4-6
-fallbackReasoningLevel: high
+fallbackModelId: gpt-5.5
+fallbackReasoningLevel: medium
 builtin: true
 ---
 You are a worker agent in a swarm.

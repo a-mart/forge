@@ -330,7 +330,7 @@ describe('specialists-api via client', () => {
       color: '#2563eb',
       enabled: true,
       whenToUse: 'Collaboration handoffs',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       provider: 'openai-codex',
       targetSpace: ['collaboration'],
       promptBody: 'Prompt',

@@ -108,7 +108,7 @@ describe("model-overrides", () => {
     await writeModelOverrides(dataDir, {
       version: 1,
       overrides: {
-        "gpt-5.3-codex": {
+        "gpt-5.5": {
           modelSpecificInstructions: "Line one\r\nLine two",
         },
         "claude-opus-4-6": {
@@ -124,7 +124,7 @@ describe("model-overrides", () => {
     await expect(readModelOverrides(dataDir)).resolves.toEqual({
       version: 1,
       overrides: {
-        "gpt-5.3-codex": {
+        "gpt-5.5": {
           modelSpecificInstructions: "Line one\nLine two",
         },
         "claude-opus-4-6": {
@@ -142,7 +142,7 @@ describe("model-overrides", () => {
     await writeModelOverrides(dataDir, {
       version: 1,
       overrides: {
-        "gpt-5.3-codex": {
+        "gpt-5.5": {
           modelSpecificInstructions: "Custom GPT instructions",
         },
         "claude-opus-4-6": {
@@ -164,7 +164,7 @@ describe("model-overrides", () => {
       "Prefer concise, direct answers over essay-style framing.",
     );
     expect(service.getEffectiveModelSpecificInstructions("grok-4")).toBeUndefined();
-    expect(service.getEffectiveModelSpecificInstructions("gpt-5.3-codex")).toBe("Custom GPT instructions");
+    expect(service.getEffectiveModelSpecificInstructions("gpt-5.5")).toBe("Custom GPT instructions");
     expect(service.getEffectiveModelSpecificInstructions("claude-opus-4-6")).toBeUndefined();
   });
 });

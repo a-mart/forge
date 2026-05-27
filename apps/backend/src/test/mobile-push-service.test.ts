@@ -41,7 +41,7 @@ function createManagerDescriptor(
     cwd: '/tmp/project',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
@@ -62,7 +62,7 @@ function createWorkerDescriptor(managerId = 'manager', agentId = 'worker-1'): Ag
     cwd: '/tmp/project',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,

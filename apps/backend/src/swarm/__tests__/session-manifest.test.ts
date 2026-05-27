@@ -20,7 +20,7 @@ import {
 
 const DEFAULT_MODEL = {
   provider: "openai-codex",
-  modelId: "gpt-5.3-codex",
+  modelId: "gpt-5.5",
   thinkingLevel: "xhigh"
 };
 
@@ -43,7 +43,7 @@ describe("session-manifest", () => {
       },
       model: {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex"
+        modelId: "gpt-5.5"
       },
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
@@ -108,7 +108,7 @@ describe("session-manifest", () => {
           label: null,
           model: {
             provider: "openai-codex",
-            modelId: "gpt-5.3-codex"
+            modelId: "gpt-5.5"
           },
           createdAt: "2026-03-01T00:00:00.000Z",
           updatedAt: "2026-03-01T00:00:00.000Z",
@@ -118,7 +118,7 @@ describe("session-manifest", () => {
           workers: [
             {
               id: "legacy-worker",
-              model: "openai-codex/gpt-5.3-codex",
+              model: "openai-codex/gpt-5.5",
               specialistId: null,
               status: "idle",
               createdAt: "2026-03-01T00:00:10.000Z",
@@ -267,7 +267,7 @@ describe("session-manifest", () => {
       },
       model: {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex"
+        modelId: "gpt-5.5"
       },
       createdAt,
       updatedAt,
@@ -277,7 +277,7 @@ describe("session-manifest", () => {
       workers: [
         {
           id: "worker-b",
-          model: "openai-codex/gpt-5.3-codex",
+          model: "openai-codex/gpt-5.5",
           specialistId: null,
           status: "idle",
           createdAt,
@@ -423,7 +423,7 @@ describe("session-manifest", () => {
         workers: [
           {
             id: workerId,
-            model: "openai-codex/gpt-5.3-codex",
+            model: "openai-codex/gpt-5.5",
             specialistId: null,
             specialistAttributionKnown: false,
             status: "idle",
@@ -472,13 +472,13 @@ describe("session-manifest", () => {
       label: "Parity Session",
       model: {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex"
+        modelId: "gpt-5.5"
       },
       cwd: "/tmp/parity-project",
       workers: [
         {
           id: workerId,
-          model: "openai-codex/gpt-5.3-codex",
+          model: "openai-codex/gpt-5.5",
           specialistId: "backend",
           specialistAttributionKnown: false,
           status: "streaming",
@@ -521,7 +521,7 @@ describe("session-manifest", () => {
       label: "Session",
       model: {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex"
+        modelId: "gpt-5.5"
       },
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
@@ -549,7 +549,7 @@ describe("session-manifest", () => {
       sessionId,
       {
         id: "worker-a",
-        model: "openai-codex/gpt-5.3-codex",
+        model: "openai-codex/gpt-5.5",
         status: "streaming",
         specialistId: "planner",
         createdAt: "2026-03-01T00:00:10.000Z",
@@ -602,7 +602,7 @@ describe("session-manifest", () => {
       label: "Session",
       model: {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex"
+        modelId: "gpt-5.5"
       },
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
@@ -612,7 +612,7 @@ describe("session-manifest", () => {
       workers: [
         {
           id: "legacy-worker",
-          model: "openai-codex/gpt-5.3-codex",
+          model: "openai-codex/gpt-5.5",
           specialistId: null,
           status: "idle",
           createdAt: "2026-03-01T00:00:10.000Z",
@@ -676,7 +676,7 @@ describe("session-manifest", () => {
       label: null,
       model: {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex"
+        modelId: "gpt-5.5"
       },
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
@@ -723,7 +723,7 @@ describe("session-manifest", () => {
       label: null,
       model: {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex"
+        modelId: "gpt-5.5"
       },
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",

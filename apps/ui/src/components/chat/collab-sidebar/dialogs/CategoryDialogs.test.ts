@@ -142,7 +142,7 @@ describe('CreateCategoryDialog', () => {
         color: '#2563eb',
         enabled: true,
         whenToUse: 'Backend tasks',
-        modelId: 'gpt-5.3-codex',
+        modelId: 'gpt-5.5',
         provider: 'openai-codex',
         builtin: false,
         pinned: false,

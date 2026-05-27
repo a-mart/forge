@@ -87,7 +87,7 @@ function buildManager(agentId: string, cwd: string) {
     cwd,
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'high',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
@@ -106,7 +106,7 @@ function buildWorker(agentId: string, managerId: string, cwd: string) {
     cwd,
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'high',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
@@ -232,7 +232,7 @@ describe('isCortexDiffViewerSession', () => {
 })
 
 describe('IndexPage create project model selection', () => {
-  it('shows only allowed model presets and defaults to GPT-5.3 Codex', async () => {
+  it('shows only allowed model presets and defaults to GPT-5.5', async () => {
     await renderPage()
 
     click(getAllByRole(container, 'button', { name: 'Add project' })[0])
@@ -242,7 +242,7 @@ describe('IndexPage create project model selection', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     const modelSelect = getByRole(document.body, 'combobox', { name: 'Default Model' })
-    expect(modelSelect.textContent).toContain('GPT-5.3 Codex')
+    expect(modelSelect.textContent).toContain('GPT-5.5')
 
     click(modelSelect as HTMLElement)
 
