@@ -291,6 +291,11 @@ function resolveScope(reason: unknown): { scope: ScopeState; attributionMode: At
     return undefined;
   }
 
+  if (hasRetainedClosedScope()) {
+    logUnmatched(reason, activeScopeIds.size === 0 ? "retained_closed_scope_without_active" : "retained_closed_scope_ambiguous");
+    return undefined;
+  }
+
   if (activeScopeIds.size === 1) {
     const [scopeId] = activeScopeIds.values();
     const scope = scopeId ? scopesById.get(scopeId) : undefined;
@@ -301,6 +306,10 @@ function resolveScope(reason: unknown): { scope: ScopeState; attributionMode: At
 
   logUnmatched(reason, activeScopeIds.size === 0 ? "no_active_scope" : "ambiguous_active_scopes");
   return undefined;
+}
+
+function hasRetainedClosedScope(): boolean {
+  return scopesById.size > activeScopeIds.size;
 }
 
 function preserveFatalUnhandledFailure(reason: unknown): void {

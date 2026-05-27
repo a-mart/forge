@@ -7,6 +7,7 @@ import {
   CursorSdkAgentRuntime,
 } from "../runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
 import {
+  createCursorSdkBackgroundScope,
   emitCursorSdkBackgroundFailureForTests,
   resetCursorSdkErrorContainmentForTests
 } from "../runtime/cursor-sdk/cursor-sdk-error-containment.js";
@@ -661,6 +662,26 @@ describe("CursorSdkAgentRuntime", () => {
       message: "ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN",
       details: expect.objectContaining({ errorName: "ConnectError", errorCode: "ERR_NOT_LOGGED_IN", source: "cursor_sdk_awaited" })
     }));
+  });
+
+  it("does not attribute no-ALS detached auth failures to a newer active scope when a closed tombstone is retained", async () => {
+    const closedScope = createCursorSdkBackgroundScope({
+      agentId: "worker-closed",
+      promptToken: 1,
+      startedAt: "2026-01-01T00:00:00.000Z"
+    });
+    closedScope.close();
+
+    const activeScope = createCursorSdkBackgroundScope({
+      agentId: "worker-active",
+      promptToken: 2,
+      startedAt: "2026-01-01T00:00:01.000Z"
+    });
+
+    expect(emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError())).toBe(false);
+    await expect(closedScope.runWithAttribution(async () => emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError()))).resolves.toBe(true);
+
+    activeScope.close();
   });
 
   it("contains detached background auth/connect failures and projects them through prompt_dispatch without success completion", async () => {
