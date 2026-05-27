@@ -6,8 +6,8 @@ whenToUse: Reviewing collaboration proposals, channel decisions, implementation 
 modelId: gpt-5.4
 TargetSpace: [collaboration]
 reasoningLevel: high
-fallbackModelId: claude-opus-4-6
-fallbackReasoningLevel: high
+fallbackModelId: gpt-5.5
+fallbackReasoningLevel: medium
 builtin: true
 ---
 You are a collaboration review specialist for Forge collaboration channels.

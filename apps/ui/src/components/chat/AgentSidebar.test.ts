@@ -24,7 +24,7 @@ function manager(
     cwd: '/tmp',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'high',
       ...modelOverrides,
     },
@@ -291,7 +291,7 @@ describe('AgentSidebar', () => {
   })
 
   it('renders profile and worker rows for mixed model providers without relying on runtime icons', () => {
-    const mgr = sessionManager('manager-pi', 'manager-pi', { provider: 'openai-codex', modelId: 'gpt-5.3-codex' })
+    const mgr = sessionManager('manager-pi', 'manager-pi', { provider: 'openai-codex', modelId: 'gpt-5.5' })
     const wrkOpus = worker('worker-opus', 'manager-pi', { provider: 'anthropic', modelId: 'claude-opus-4-6' })
     const wrkCodex = worker('worker-codex', 'manager-pi', { provider: 'openai-codex', modelId: 'gpt-5.4' })
 
@@ -362,7 +362,7 @@ describe('AgentSidebar', () => {
       profileId: 'alpha-mgr',
       displayName: 'alpha-mgr',
       defaultSessionAgentId: 'alpha-mgr',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -370,7 +370,7 @@ describe('AgentSidebar', () => {
       profileId: 'beta-mgr',
       displayName: 'beta-mgr',
       defaultSessionAgentId: 'beta-mgr',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-02-01T00:00:00.000Z',
       updatedAt: '2026-02-01T00:00:00.000Z',
     }
@@ -417,7 +417,7 @@ describe('AgentSidebar', () => {
       profileId: 'cortex',
       displayName: 'Cortex',
       defaultSessionAgentId: 'cortex',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt,
       updatedAt,
     }
@@ -455,7 +455,7 @@ describe('AgentSidebar', () => {
       profileId: 'cortex',
       displayName: 'Cortex',
       defaultSessionAgentId: 'cortex',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt,
       updatedAt,
     }
@@ -496,7 +496,7 @@ describe('AgentSidebar', () => {
       profileId: 'cortex',
       displayName: 'Cortex',
       defaultSessionAgentId: 'cortex',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt,
       updatedAt,
     }
@@ -527,7 +527,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -561,7 +561,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -592,7 +592,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -623,7 +623,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -649,7 +649,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -704,7 +704,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -780,7 +780,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -841,7 +841,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -909,7 +909,7 @@ describe('AgentSidebar', () => {
       profileId: 'cortex',
       displayName: 'Cortex',
       defaultSessionAgentId: 'cortex',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt,
       updatedAt,
     }
@@ -938,7 +938,7 @@ describe('AgentSidebar', () => {
       profileId: 'mgr-profile',
       displayName: 'My Project',
       defaultSessionAgentId: 'regular-session',
-      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }

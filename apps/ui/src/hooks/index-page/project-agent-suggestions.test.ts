@@ -17,7 +17,7 @@ function makeManager(
     cwd: '/tmp/project',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'high',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
@@ -41,7 +41,7 @@ function makeWorker(
     cwd: '/tmp/project',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'high',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,

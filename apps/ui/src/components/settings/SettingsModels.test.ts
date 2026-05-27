@@ -130,7 +130,7 @@ describe('SettingsModels', () => {
   it('shows the built-in default instructions when no override exists', async () => {
     await renderSettingsModels({})
     await expandProvider('OpenAI Codex')
-    await expandModel('GPT-5.3 Codex')
+    await expandModel('GPT-5.5')
 
     expect(getByText(container, 'Using built-in default')).toBeTruthy()
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement
@@ -139,12 +139,12 @@ describe('SettingsModels', () => {
 
   it('shows custom override text when present', async () => {
     await renderSettingsModels({
-      'gpt-5.3-codex': {
+      'gpt-5.5': {
         modelSpecificInstructions: 'Custom override text',
       },
     })
     await expandProvider('OpenAI Codex')
-    await expandModel('GPT-5.3 Codex')
+    await expandModel('GPT-5.5')
 
     expect(getByText(container, 'Custom override active')).toBeTruthy()
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement
@@ -169,11 +169,11 @@ describe('SettingsModels', () => {
     modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
 
     await renderSettingsModels({
-      'gpt-5.3-codex': { enabled: false },
+      'gpt-5.5': { enabled: false },
     })
 
     await expandProvider('OpenAI Codex')
-    await expandModel('GPT-5.3 Codex')
+    await expandModel('GPT-5.5')
 
     // Find and click the Enabled switch to trigger a save
     const enabledSwitch = container.querySelector('button[role="switch"]') as HTMLButtonElement
@@ -195,7 +195,7 @@ describe('SettingsModels', () => {
     // Re-fetch resolves with overrides so the button state updates
     modelsApiMock.fetchModelOverrides.mockResolvedValueOnce({
       version: 1,
-      overrides: { 'gpt-5.3-codex': { enabled: true } },
+      overrides: { 'gpt-5.5': { enabled: true } },
       providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
     })
     await flushPromises()
@@ -216,11 +216,11 @@ describe('SettingsModels', () => {
     modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
 
     await renderSettingsModels({
-      'gpt-5.3-codex': { enabled: false },
+      'gpt-5.5': { enabled: false },
     })
 
     await expandProvider('OpenAI Codex')
-    await expandModel('GPT-5.3 Codex')
+    await expandModel('GPT-5.5')
 
     // Trigger an in-flight save
     const enabledSwitch = container.querySelector('button[role="switch"]') as HTMLButtonElement
@@ -257,7 +257,7 @@ describe('SettingsModels', () => {
     resolveSave()
     modelsApiMock.fetchModelOverrides.mockResolvedValueOnce({
       version: 1,
-      overrides: { 'gpt-5.3-codex': { enabled: true } },
+      overrides: { 'gpt-5.5': { enabled: true } },
       providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
     })
     await flushPromises()
@@ -277,11 +277,11 @@ describe('SettingsModels', () => {
     modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
 
     await renderSettingsModels({
-      'gpt-5.3-codex': { enabled: false },
+      'gpt-5.5': { enabled: false },
     })
 
     await expandProvider('OpenAI Codex')
-    await expandModel('GPT-5.3 Codex')
+    await expandModel('GPT-5.5')
 
     // Find the "Reset" button inside the Enabled section — it's the first Reset in the card
     const resetButtons = Array.from(container.querySelectorAll('button')).filter(
@@ -324,11 +324,11 @@ describe('SettingsModels', () => {
     modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
 
     await renderSettingsModels({
-      'gpt-5.3-codex': { managerEnabled: false },
+      'gpt-5.5': { managerEnabled: false },
     })
 
     await expandProvider('OpenAI Codex')
-    await expandModel('GPT-5.3 Codex')
+    await expandModel('GPT-5.5')
 
     // Find the "Reset" button in the Manager agents section
     // The Manager agents section contains the text "Manager agents" — find the enclosing div,
@@ -377,11 +377,11 @@ describe('SettingsModels', () => {
     modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
 
     await renderSettingsModels({
-      'gpt-5.3-codex': { contextWindowCap: 50000 },
+      'gpt-5.5': { contextWindowCap: 50000 },
     })
 
     await expandProvider('OpenAI Codex')
-    await expandModel('GPT-5.3 Codex')
+    await expandModel('GPT-5.5')
 
     // Find the "Reset" button in the Context window cap section
     const allButtons = Array.from(container.querySelectorAll('button'))
@@ -426,7 +426,7 @@ describe('SettingsModels', () => {
       .mockResolvedValueOnce({
         version: 1,
         overrides: {
-          'gpt-5.3-codex': {
+          'gpt-5.5': {
             modelSpecificInstructions: 'Custom override text',
           },
         },
@@ -456,7 +456,7 @@ describe('SettingsModels', () => {
     await expandAllProviderGroups()
 
     await expandProvider('OpenAI Codex')
-    await expandModel('GPT-5.3 Codex')
+    await expandModel('GPT-5.5')
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement
     const section = textarea.parentElement
     if (!section) {
@@ -466,7 +466,7 @@ describe('SettingsModels', () => {
     fireEvent.click(getByText(section, 'Reset'))
 
     await waitFor(() => {
-      expect(modelsApiMock.updateModelOverride).toHaveBeenCalledWith('ws://127.0.0.1:47187', 'gpt-5.3-codex', {
+      expect(modelsApiMock.updateModelOverride).toHaveBeenCalledWith('ws://127.0.0.1:47187', 'gpt-5.5', {
         modelSpecificInstructions: null,
       })
       expect(getByText(container, 'Using built-in default')).toBeTruthy()

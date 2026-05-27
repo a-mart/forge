@@ -6,7 +6,8 @@ whenToUse: General research from indexed web sources, fact-checking against auth
 modelId: gpt-5.4-mini
 TargetSpace: [builder]
 reasoningLevel: medium
-fallbackModelId: claude-sonnet-4-5-20250929
+fallbackModelId: gpt-5.5
+fallbackReasoningLevel: low
 builtin: true
 webSearch: false
 ---

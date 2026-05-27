@@ -12,10 +12,10 @@ describe('fetchModelPresets', () => {
       json: async () => ({
         models: [
           {
-            presetId: 'pi-codex',
-            displayName: 'GPT-5.3 Codex',
+            presetId: 'pi-5.5',
+            displayName: 'GPT-5.5',
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             defaultReasoningLevel: 'xhigh',
             supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
           },
@@ -32,13 +32,13 @@ describe('fetchModelPresets', () => {
     } as Response)
 
     await expect(fetchModelPresets('ws://127.0.0.1:47187')).resolves.toEqual([
-      expect.objectContaining({ presetId: 'pi-codex' }),
+      expect.objectContaining({ presetId: 'pi-5.5' }),
     ])
 
     await expect(
       fetchModelPresets('ws://127.0.0.1:47187', { allowDynamicPresetIds: true }),
     ).resolves.toEqual([
-      expect.objectContaining({ presetId: 'pi-codex' }),
+      expect.objectContaining({ presetId: 'pi-5.5' }),
       expect.objectContaining({ presetId: 'openrouter:anthropic/claude-3.5-sonnet' }),
     ])
   })

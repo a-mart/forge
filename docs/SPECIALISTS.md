@@ -24,9 +24,9 @@ handle: backend-engineer             # Optional — specialist handle (defaults 
 enabled: true                        # Required — whether the manager can use this specialist
 whenToUse: >-                        # Required — guidance for the manager on when to pick this specialist
   Backend/core implementation, TypeScript refactors, debugging server routes
-modelId: gpt-5.3-codex              # Required — the model ID to use
+modelId: gpt-5.5              # Required — the model ID to use
 reasoningLevel: high                 # Optional — defaults to model preset default
-fallbackModelId: claude-sonnet-4-5-20250929  # Optional — model if primary is unavailable (can be cross-provider)
+fallbackModelId: gpt-5.5             # Optional — model if primary is unavailable (can be cross-provider)
 fallbackReasoningLevel: medium       # Optional — reasoning for fallback (defaults to primary)
 pin: true                            # Optional — pin to top of sidebar list
 TargetSpace: builder                 # Optional — builder, collaboration, or [builder, collaboration]
@@ -40,7 +40,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 
 | Model ID | Display Name | Provider | Supported Reasoning Levels |
 |---|---|---|---|
-| `gpt-5.3-codex` | GPT-5.3 Codex | OpenAI Codex | none, low, medium, high, xhigh |
+| `gpt-5.5` | GPT-5.5 | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.4` | GPT-5.4 | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.4-mini` | GPT-5.4 Mini | OpenAI Codex | none, low, medium, high, xhigh |
@@ -90,7 +90,8 @@ enabled: true
 whenToUse: Architecture planning, design docs, implementation sequencing, risk analysis
 modelId: gpt-5.5
 reasoningLevel: high
-fallbackModelId: claude-opus-4-6
+fallbackModelId: gpt-5.5
+fallbackReasoningLevel: medium
 ---
 You are a worker agent in a swarm.
 [...base worker prompt...]
@@ -124,10 +125,10 @@ Each specialist can optionally define a fallback model. If the primary model is 
 
 Only exhausted fallback failures surface upward.
 
-**Built-in specialists intentionally pair across vendors when practical** for resilience: OpenAI-primary builtins generally fall back to Anthropic, and Anthropic-primary builtins generally fall back to OpenAI. Built-in `web-researcher` is an exception to the cross-vendor default only because it uses OpenAI Codex `gpt-5.4-mini` with Brave-backed research guidance and follows normal fallback/model config semantics.
+**Built-in specialists default to OpenAI Codex fallbacks** for current shipped Builder and Collaboration specialists. Built-in `web-researcher` is an exception because it has no fallback by default and follows normal fallback/model config semantics.
 
 
-**Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
+**Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `gpt-5.5`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 
 `cursor-builder` is the built-in Cursor SDK specialist. It targets Composer 2.5, ships disabled by default, and is intended for opt-in implementation work rather than manager sessions.
 

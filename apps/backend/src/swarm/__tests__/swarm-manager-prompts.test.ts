@@ -112,7 +112,7 @@ class FallbackReplaySession {
     appendCustomEntry: () => 'custom-id',
   }
 
-  readonly model = { provider: 'openai-codex', id: 'gpt-5.3-codex' }
+  readonly model = { provider: 'openai-codex', id: 'gpt-5.5' }
   readonly thinkingLevel = 'medium'
   readonly state = { messages: [] as Array<{ role?: string; stopReason?: string }> }
   readonly agent = {

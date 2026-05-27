@@ -20,7 +20,7 @@ function makeDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescript
     cwd: "/tmp/forge-test",
     model: {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium"
     },
     sessionFile: "/tmp/forge-test/session.jsonl",

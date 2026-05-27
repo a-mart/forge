@@ -3,9 +3,9 @@ displayName: Collab Doc Writer
 color: "#8b5cf6"
 enabled: true
 whenToUse: Writing channel-ready documentation, summaries, decision records, release-note handoffs, and polished explanatory copy from collaboration context. Not for code changes.
-modelId: claude-sonnet-4-5-20250929
+modelId: gpt-5.5
 TargetSpace: [collaboration]
-reasoningLevel: medium
+reasoningLevel: low
 fallbackModelId: gpt-5.4-mini
 fallbackReasoningLevel: medium
 builtin: true

@@ -190,7 +190,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     expect(codexWorker.model).toEqual({
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'xhigh',
     })
     expect(pi54Worker.model).toEqual({
@@ -292,7 +292,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
       modelId: 'gpt-5.3-codex-spark',
     })
 
-    expect(rerouted.model.modelId).toBe('gpt-5.3-codex')
+    expect(rerouted.model.modelId).toBe('gpt-5.5')
   })
 
   it('reroutes spawn_agent model from spark to codex when worker message_end stopReason is error', async () => {
@@ -322,7 +322,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
       modelId: 'gpt-5.3-codex-spark',
     })
 
-    expect(rerouted.model.modelId).toBe('gpt-5.3-codex')
+    expect(rerouted.model.modelId).toBe('gpt-5.5')
   })
 
   it('reroutes spawn_agent model from spark to gpt-5.4 when spark and codex are blocked', async () => {
@@ -338,7 +338,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
     const codexWorker = await manager.spawnAgent('manager', {
       agentId: 'Codex Block Source',
       model: 'pi-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
     })
 
     await (manager as any).handleRuntimeError(sparkWorker.agentId, {
@@ -419,7 +419,9 @@ describe("SwarmManager spawn_agent preset routing", () => {
         agentId: 'Invalid Worker',
         model: 'invalid-model' as any,
       }),
-     ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer')
+     ).rejects.toThrow(
+      'spawn_agent.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer',
+      )
   })
 
   it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {

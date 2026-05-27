@@ -4,7 +4,7 @@ import { handleManagerCommand } from "../ws/commands/manager-command-handler.js"
 
 const DEFAULT_MODEL = {
   provider: "openai-codex",
-  modelId: "gpt-5.3-codex",
+  modelId: "gpt-5.5",
   thinkingLevel: "medium",
 } as const;
 

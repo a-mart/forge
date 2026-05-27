@@ -21,7 +21,7 @@ function makeManager(agentId: string, overrides: Partial<AgentDescriptor> = {}):
     cwd: '/tmp',
     workerCount: 0,
     activeWorkerCount: 0,
-    model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+    model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
     sessionFile: `/tmp/${agentId}.jsonl`,
     ...overrides,
   }
@@ -37,7 +37,7 @@ function makeWorker(agentId: string, managerId: string, overrides: Partial<Agent
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     cwd: '/tmp',
-    model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+    model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
     sessionFile: `/tmp/${agentId}.jsonl`,
     ...overrides,
   }

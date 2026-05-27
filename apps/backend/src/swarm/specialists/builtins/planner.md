@@ -6,8 +6,8 @@ whenToUse: Task breakdown, implementation planning, design docs, sequencing, ris
 modelId: gpt-5.5
 TargetSpace: [builder]
 reasoningLevel: high
-fallbackModelId: claude-opus-4-6
-fallbackReasoningLevel: high
+fallbackModelId: gpt-5.5
+fallbackReasoningLevel: medium
 builtin: true
 ---
 You are a worker agent in a swarm.

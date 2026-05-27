@@ -8,7 +8,7 @@ function createProfile(overrides: Partial<ManagerProfile> = {}): ManagerProfile 
     defaultSessionAgentId: overrides.defaultSessionAgentId ?? 'alpha',
     defaultModel: overrides.defaultModel ?? {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     createdAt: overrides.createdAt ?? '2026-04-14T00:00:00.000Z',

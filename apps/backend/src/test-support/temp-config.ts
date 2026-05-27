@@ -9,7 +9,7 @@ import { getAvailablePort } from './network.js'
 
 const DEFAULT_MODEL: AgentModelDescriptor = {
   provider: 'openai-codex',
-  modelId: 'gpt-5.3-codex',
+  modelId: 'gpt-5.5',
   thinkingLevel: 'medium',
 }
 

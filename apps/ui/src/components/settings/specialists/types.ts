@@ -49,7 +49,7 @@ export const SPECIALIST_COLORS = [
 ]
 
 export const DEFAULT_WHEN_TO_USE = 'General-purpose worker for implementation tasks.'
-export const DEFAULT_MODEL_ID = 'gpt-5.3-codex'
+export const DEFAULT_MODEL_ID = 'gpt-5.5'
 export const DEFAULT_REASONING_LEVEL: ManagerReasoningLevel = 'xhigh'
 
 export const REASONING_LEVEL_LABELS: Record<string, string> = {

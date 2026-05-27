@@ -296,7 +296,7 @@ export function createP0HttpRouteManagerDescriptor(rootDir: string, managerId = 
     cwd: rootDir,
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile: join(rootDir, 'sessions', `${managerId}.jsonl`),

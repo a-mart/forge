@@ -31,7 +31,7 @@ function makeDescriptor(sessionFile: string, cwd: string): AgentDescriptor {
     cwd,
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile,
@@ -187,7 +187,7 @@ describe('ConversationProjector session tree continuity', () => {
     expect(fallbackEntry).toBeDefined()
     expect(fallbackEntry?.parentId).toBe(lastPreRestartEntryId)
 
-    reopened.appendModelChange('openai-codex', 'gpt-5.3-codex')
+    reopened.appendModelChange('openai-codex', 'gpt-5.5')
     const branchIds = reopened.getBranch().map((entry) => entry.id)
 
     expect(branchIds).toContain(lastPreRestartEntryId)

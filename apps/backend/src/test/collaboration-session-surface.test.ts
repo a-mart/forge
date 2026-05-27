@@ -36,7 +36,7 @@ function createDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescri
     cwd: overrides.cwd ?? PROJECT_ROOT,
     model: overrides.model ?? {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile: overrides.sessionFile ?? join(PROJECT_ROOT, '.tmp', `${agentId}.jsonl`),

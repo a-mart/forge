@@ -22,7 +22,7 @@ function makeManagerDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentD
     cwd: overrides.cwd ?? '/tmp/project',
     model: overrides.model ?? {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'medium',
     },
     sessionFile: overrides.sessionFile ?? `/tmp/${overrides.agentId}.jsonl`,

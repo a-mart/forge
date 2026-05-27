@@ -6,8 +6,8 @@ whenToUse: Collaboration workspace planning, channel coordination, task breakdow
 modelId: gpt-5.5
 TargetSpace: [collaboration]
 reasoningLevel: high
-fallbackModelId: claude-opus-4-6
-fallbackReasoningLevel: high
+fallbackModelId: gpt-5.5
+fallbackReasoningLevel: medium
 builtin: true
 ---
 You are a collaboration planning specialist for Forge collaboration channels.

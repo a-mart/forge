@@ -93,6 +93,10 @@ export class ModelCatalogService {
 
   getModelPresetInfoList(): ModelPresetInfo[] {
     return Object.values(this.catalog.families).flatMap((family) => {
+      if (!family.visibleInSpawnPreset) {
+        return [];
+      }
+
       const enabledModels = this.getEnabledModelsByFamily(family.familyId);
       const effectiveDefaultModel = this.getEffectiveDefaultModelForFamily(family.familyId);
 
@@ -147,7 +151,7 @@ export class ModelCatalogService {
     return (
       this.resolveModelDescriptorFromFamily(familyId) ?? {
         provider: "openai-codex",
-        modelId: "gpt-5.3-codex",
+        modelId: "gpt-5.5",
         thinkingLevel: "xhigh",
       }
     );
@@ -255,14 +259,14 @@ export class ModelCatalogService {
       return enabledDefaultModel;
     }
 
-    const enabledFamilyModel = familyModels.find((model) => this.isModelEnabled(model.modelId, model.provider));
-    if (enabledFamilyModel) {
-      return enabledFamilyModel;
-    }
-
     const fallbackDefaultModel = getCatalogModel(family.defaultModelId, family.provider);
     if (fallbackDefaultModel && this.isModelEnabled(fallbackDefaultModel.modelId, fallbackDefaultModel.provider)) {
       return fallbackDefaultModel;
+    }
+
+    const enabledFamilyModel = familyModels.find((model) => this.isModelEnabled(model.modelId, model.provider));
+    if (enabledFamilyModel) {
+      return enabledFamilyModel;
     }
 
     return fallbackDefaultModel;

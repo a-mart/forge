@@ -15,7 +15,7 @@ function makeManagerDescriptor(agentId = 'manager', overrides: Partial<AgentDesc
     cwd: '/tmp/swarm',
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.5',
       thinkingLevel: 'xhigh',
     },
     sessionFile: `/tmp/swarm/${agentId}.jsonl`,
@@ -784,7 +784,9 @@ describe('buildSwarmTools', () => {
         undefined,
         undefined as any,
       ),
-    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer')
+    ).rejects.toThrow(
+      'spawn_agent.model must be one of pi-5.5|pi-codex-spark|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-composer',
+    )
   })
 
   it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {

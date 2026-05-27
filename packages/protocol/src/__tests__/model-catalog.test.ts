@@ -24,7 +24,23 @@ const VALID_REASONING_LEVELS = new Set(['none', 'low', 'medium', 'high', 'xhigh'
 const EXPECTED_FAMILIES = {
   'pi-codex': {
     provider: 'openai-codex',
-    defaultModelId: 'gpt-5.3-codex',
+    defaultModelId: 'gpt-5.5',
+    visibleInCreateManager: false,
+    visibleInChangeManager: false,
+    visibleInSpawnPreset: false,
+    visibleInSpecialists: false,
+  },
+  'pi-5.5': {
+    provider: 'openai-codex',
+    defaultModelId: 'gpt-5.5',
+    visibleInCreateManager: true,
+    visibleInChangeManager: true,
+    visibleInSpawnPreset: true,
+    visibleInSpecialists: true,
+  },
+  'pi-codex-spark': {
+    provider: 'openai-codex',
+    defaultModelId: 'gpt-5.3-codex-spark',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -33,14 +49,6 @@ const EXPECTED_FAMILIES = {
   'pi-5.4': {
     provider: 'openai-codex',
     defaultModelId: 'gpt-5.4',
-    visibleInCreateManager: true,
-    visibleInChangeManager: true,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: true,
-  },
-  'pi-5.5': {
-    provider: 'openai-codex',
-    defaultModelId: 'gpt-5.5',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -89,9 +97,9 @@ const EXPECTED_FAMILIES = {
 } as const
 
 const EXPECTED_MODELS = {
-  'gpt-5.3-codex': {
+  'gpt-5.5': {
     provider: 'openai-codex',
-    familyId: 'pi-codex',
+    familyId: 'pi-5.5',
     contextWindow: 272_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
@@ -99,7 +107,7 @@ const EXPECTED_MODELS = {
   },
   'gpt-5.3-codex-spark': {
     provider: 'openai-codex',
-    familyId: 'pi-codex',
+    familyId: 'pi-codex-spark',
     contextWindow: 128_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
@@ -116,14 +124,6 @@ const EXPECTED_MODELS = {
   'gpt-5.4-mini': {
     provider: 'openai-codex',
     familyId: 'pi-5.4',
-    contextWindow: 272_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
-  'gpt-5.5': {
-    provider: 'openai-codex',
-    familyId: 'pi-5.5',
     contextWindow: 272_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
@@ -247,7 +247,8 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(18)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(17)
+    expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
@@ -388,8 +389,8 @@ describe('model-catalog', () => {
   })
 
   it('provides working lookup helpers', () => {
-    expect(getCatalogModel('gpt-5.3-codex')?.displayName).toBe('GPT-5.3 Codex')
-    expect(getCatalogModel(' GPT-5.3-CODEX ')?.displayName).toBe('GPT-5.3 Codex')
+    expect(getCatalogModel('gpt-5.5')?.displayName).toBe('GPT-5.5')
+    expect(getCatalogModel(' GPT-5.3-CODEX ')).toBeUndefined()
     expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4')
     expect(getCatalogProvider('xai')?.projectionScope).toBe('full-upstream-provider')
     expect(getCatalogFamilyForModel('claude-opus-4-6')?.familyId).toBe('pi-opus')
@@ -446,9 +447,9 @@ describe('model-catalog', () => {
 
   it('returns the expected visibility subsets', () => {
     expect(getCreateManagerFamilies().map((family) => family.familyId)).toEqual([
-      'pi-codex',
-      'pi-5.4',
       'pi-5.5',
+      'pi-codex-spark',
+      'pi-5.4',
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',
@@ -456,9 +457,9 @@ describe('model-catalog', () => {
     ])
 
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toEqual([
-      'pi-codex',
-      'pi-5.4',
       'pi-5.5',
+      'pi-codex-spark',
+      'pi-5.4',
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',
@@ -466,9 +467,9 @@ describe('model-catalog', () => {
     ])
 
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toEqual([
-      'pi-codex',
-      'pi-5.4',
       'pi-5.5',
+      'pi-codex-spark',
+      'pi-5.4',
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',
@@ -477,9 +478,9 @@ describe('model-catalog', () => {
     ])
 
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([
-      'pi-codex',
-      'pi-5.4',
       'pi-5.5',
+      'pi-codex-spark',
+      'pi-5.4',
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',

@@ -559,7 +559,7 @@ function createManagerSession(
     cwd: "/tmp",
     model: {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium"
     },
     sessionFile: `/tmp/${sessionId}.jsonl`,
@@ -587,7 +587,7 @@ function createWorker(
     cwd: "/tmp",
     model: {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium"
     },
     sessionFile: `/tmp/${agentId}.jsonl`,

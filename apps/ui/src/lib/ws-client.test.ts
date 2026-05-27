@@ -1080,7 +1080,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'xhigh',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -1189,7 +1189,7 @@ describe('ManagerWsClient', () => {
         cwd: '/tmp/release',
         model: {
           provider: 'openai-codex',
-          modelId: 'gpt-5.3-codex',
+          modelId: 'gpt-5.5',
           thinkingLevel: 'high',
         },
         sessionFile: '/tmp/release-manager.jsonl',
@@ -3432,7 +3432,7 @@ describe('ManagerWsClient', () => {
           profileId: 'alpha',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/alpha.jsonl',
@@ -3449,7 +3449,7 @@ describe('ManagerWsClient', () => {
           profileId: 'alpha',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/alpha--s2.jsonl',
@@ -3466,7 +3466,7 @@ describe('ManagerWsClient', () => {
           profileId: 'alpha',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/alpha--s3.jsonl',
@@ -3483,7 +3483,7 @@ describe('ManagerWsClient', () => {
           profileId: 'beta',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/beta.jsonl',
@@ -3538,7 +3538,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -3554,7 +3554,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp/secondary',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager-2.jsonl',
@@ -3608,7 +3608,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -3665,7 +3665,7 @@ describe('ManagerWsClient', () => {
           activeWorkerCount: 0,
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -3696,7 +3696,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/worker-1.jsonl',
@@ -3745,7 +3745,7 @@ describe('ManagerWsClient', () => {
           activeWorkerCount: 1,
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -3769,7 +3769,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/worker-1.jsonl',
@@ -3785,7 +3785,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/worker-2.jsonl',
@@ -3831,7 +3831,7 @@ describe('ManagerWsClient', () => {
           activeWorkerCount: 1,
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -3857,7 +3857,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/worker-1.jsonl',
@@ -3884,7 +3884,7 @@ describe('ManagerWsClient', () => {
           activeWorkerCount: 1,
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -3910,7 +3910,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/worker-1.jsonl',
@@ -3954,7 +3954,7 @@ describe('ManagerWsClient', () => {
           activeWorkerCount: 0,
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -3979,7 +3979,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/worker-1.jsonl',
@@ -4015,7 +4015,7 @@ describe('ManagerWsClient', () => {
           cwd: '/tmp',
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/worker-1.jsonl',
@@ -4062,7 +4062,7 @@ describe('ManagerWsClient', () => {
           activeWorkerCount: 0,
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -4097,7 +4097,7 @@ describe('ManagerWsClient', () => {
           activeWorkerCount: 1,
           model: {
             provider: 'openai-codex',
-            modelId: 'gpt-5.3-codex',
+            modelId: 'gpt-5.5',
             thinkingLevel: 'medium',
           },
           sessionFile: '/tmp/manager.jsonl',
@@ -4385,7 +4385,7 @@ describe('ManagerWsClient', () => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           cwd: '/tmp',
-          model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+          model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
           sessionFile: '/tmp/session-b.jsonl',
         }],
       })
@@ -4851,7 +4851,7 @@ describe('ManagerWsClient', () => {
       const createPromise = client.createManager({
         name: 'fail-manager',
         cwd: '/tmp',
-        modelSelection: { provider: 'openai-codex', modelId: 'gpt-5.3-codex' },
+        modelSelection: { provider: 'openai-codex', modelId: 'gpt-5.5' },
       })
       const createPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
 
@@ -4874,7 +4874,7 @@ describe('ManagerWsClient', () => {
       const createPromise = client.createManager({
         name: 'fail-manager',
         cwd: '/tmp',
-        modelSelection: { provider: 'openai-codex', modelId: 'gpt-5.3-codex' },
+        modelSelection: { provider: 'openai-codex', modelId: 'gpt-5.5' },
       })
 
       emitServerEvent(socket, {
@@ -5010,7 +5010,7 @@ describe('ManagerWsClient', () => {
             cwd: '/tmp',
             workerCount: 1,
             activeWorkerCount: 0,
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/manager.jsonl',
           },
         ],
@@ -5035,7 +5035,7 @@ describe('ManagerWsClient', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
             cwd: '/tmp',
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/worker-1.jsonl',
           },
         ],
@@ -5073,7 +5073,7 @@ describe('ManagerWsClient', () => {
             cwd: '/tmp',
             workerCount: 1,
             activeWorkerCount: 0,
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/manager.jsonl',
           },
         ],
@@ -5097,7 +5097,7 @@ describe('ManagerWsClient', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
             cwd: '/tmp',
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/worker-1.jsonl',
           },
         ],
@@ -5121,7 +5121,7 @@ describe('ManagerWsClient', () => {
             cwd: '/tmp',
             workerCount: 2,
             activeWorkerCount: 1,
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/manager.jsonl',
           },
         ],
@@ -5146,7 +5146,7 @@ describe('ManagerWsClient', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
             cwd: '/tmp',
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/worker-1.jsonl',
           },
           {
@@ -5158,7 +5158,7 @@ describe('ManagerWsClient', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
             cwd: '/tmp',
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/worker-2.jsonl',
           },
         ],
@@ -5188,7 +5188,7 @@ describe('ManagerWsClient', () => {
             cwd: '/tmp',
             workerCount: 1,
             activeWorkerCount: 0,
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/manager.jsonl',
           },
         ],
@@ -5219,7 +5219,7 @@ describe('ManagerWsClient', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
             cwd: '/tmp',
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/worker-1.jsonl',
           },
         ],
@@ -5286,7 +5286,7 @@ describe('ManagerWsClient', () => {
             cwd: '/tmp',
             workerCount: 1,
             activeWorkerCount: 0,
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/manager.jsonl',
           },
         ],
@@ -5309,7 +5309,7 @@ describe('ManagerWsClient', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
             cwd: '/tmp',
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/worker-1.jsonl',
           },
         ],
@@ -5368,7 +5368,7 @@ describe('ManagerWsClient', () => {
             cwd: '/tmp',
             workerCount: 1,
             activeWorkerCount: 0,
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/manager.jsonl',
           },
         ],
@@ -5391,7 +5391,7 @@ describe('ManagerWsClient', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
             cwd: '/tmp',
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/worker-1.jsonl',
           },
         ],
@@ -5436,7 +5436,7 @@ describe('ManagerWsClient', () => {
             cwd: '/tmp',
             workerCount: 1,
             activeWorkerCount: 0,
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/manager.jsonl',
           },
         ],
@@ -5459,7 +5459,7 @@ describe('ManagerWsClient', () => {
             createdAt: '2026-01-01T00:00:00.000Z',
             updatedAt: '2026-01-01T00:00:00.000Z',
             cwd: '/tmp',
-            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            model: { provider: 'openai-codex', modelId: 'gpt-5.5', thinkingLevel: 'medium' },
             sessionFile: '/tmp/worker-1.jsonl',
           },
         ],

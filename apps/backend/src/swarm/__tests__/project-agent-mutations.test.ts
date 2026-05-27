@@ -22,7 +22,7 @@ function makeDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescript
     cwd: overrides.cwd ?? "/tmp/project",
     model: overrides.model ?? {
       provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
+      modelId: "gpt-5.5",
       thinkingLevel: "medium"
     },
     sessionFile: overrides.sessionFile ?? join("/tmp", `${overrides.agentId}.jsonl`),

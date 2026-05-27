@@ -74,7 +74,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
         agentIdHash: '5c788b3055066dd1',
         role: 'manager',
         status: 'idle',
-        modelId: 'gpt-5.3-codex',
+        modelId: 'gpt-5.5',
         provider: 'openai-codex',
         api: 'openai-codex-responses',
         selectedConfigTransport: 'sse',
