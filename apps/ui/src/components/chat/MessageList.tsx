@@ -13,7 +13,8 @@ import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import { cn } from '@/lib/utils'
-import type { ChoiceAnswer, ConversationEntry, ProjectAgentInfo } from '@forge/protocol'
+import type { AgentDescriptor, ChoiceAnswer, ConversationEntry, ProjectAgentInfo } from '@forge/protocol'
+import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
 import { ChoiceRequestCard } from './message-list/ChoiceRequestCard'
@@ -36,6 +37,8 @@ export type { MessageListSurface } from './message-list/types'
 
 interface MessageListProps {
   messages: ConversationEntry[]
+  /** Agent descriptors for actor label enrichment. Optional — raw ids used when absent. */
+  agents?: AgentDescriptor[]
   isLoading: boolean
   wsUrl?: string
   activeAgentId?: string | null
@@ -291,6 +294,7 @@ function LoadingIndicator({ streamingStartedAt }: { streamingStartedAt?: number 
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(function MessageList({
   messages,
+  agents,
   isLoading,
   wsUrl,
   activeAgentId,
@@ -322,6 +326,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const [showScrollButton, setShowScrollButton] = useState(false)
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
+
+  const agentDisplayMap = useMemo<Map<string, AgentDisplayMeta>>(
+    () => (agents ? buildAgentDisplayMap(agents) : new Map()),
+    [agents],
+  )
 
   // Sidebar perf: attempt to complete `session_switch.click_to_first_transcript_paint_ms`
   // after every commit. The registry refuses completion unless:
@@ -642,6 +651,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                   type={entry.type}
                   entry={entry.entry}
                   isActive={isLoading}
+                  actorDisplay={
+                    entry.type === 'tool_execution' && entry.entry.actorAgentId
+                      ? agentDisplayMap.get(entry.entry.actorAgentId)
+                      : undefined
+                  }
                 />
               </div>
             )

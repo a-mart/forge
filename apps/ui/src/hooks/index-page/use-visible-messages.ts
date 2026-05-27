@@ -60,12 +60,43 @@ function buildManagerScopedAgentIds(agents: AgentDescriptor[], managerId: string
   return scopedAgentIds
 }
 
+/**
+ * Build the set of actor IDs owned by this manager for Detailed All view.
+ * Includes only the manager itself and direct worker children
+ * (`agent.role === 'worker' && agent.managerId === managerId`).
+ * Does not include sibling managers, project/profile peers, or unknown IDs.
+ */
+function buildOwnedActorIds(agents: AgentDescriptor[], managerId: string): Set<string> {
+  const owned = new Set<string>([managerId])
+
+  for (const agent of agents) {
+    if (agent.role === 'worker' && agent.managerId === managerId) {
+      owned.add(agent.agentId)
+    }
+  }
+
+  return owned
+}
+
 function isManagerScopedAllViewEntry(
   entry: ConversationEntry,
   managerId: string,
   scopedAgentIds: ReadonlySet<string>,
+  detailedAllView: boolean,
+  ownedActorIds: ReadonlySet<string>,
 ): boolean {
   if (entry.type === 'agent_tool_call') {
+    // Non-negotiable precondition: entry must belong to this manager's context
+    if (entry.agentId !== managerId) {
+      return false
+    }
+
+    // Default: only manager-owned tool calls
+    // Detailed: manager + owned worker tool calls
+    if (detailedAllView) {
+      return ownedActorIds.has(entry.actorAgentId)
+    }
+
     return entry.actorAgentId === managerId
   }
 
@@ -87,6 +118,8 @@ export interface VisibleMessagesOptions {
   agents: AgentDescriptor[]
   activeAgent: AgentDescriptor | null
   channelView: MessageSourceView
+  /** When true and channelView is 'all' for a manager, reveals owned worker tool calls. */
+  detailedAllView?: boolean
 }
 
 export function deriveVisibleMessages({
@@ -95,21 +128,33 @@ export function deriveVisibleMessages({
   agents,
   activeAgent,
   channelView,
+  detailedAllView = false,
 }: VisibleMessagesOptions): {
   allMessages: ConversationEntry[]
   visibleMessages: ConversationEntry[]
 } {
+  const isManager = activeAgent?.role === 'manager'
   const managerScopedAgentIds =
-    activeAgent?.role === 'manager' ? buildManagerScopedAgentIds(agents, activeAgent.agentId) : null
+    isManager ? buildManagerScopedAgentIds(agents, activeAgent.agentId) : null
+  const ownedActorIds =
+    isManager ? buildOwnedActorIds(agents, activeAgent.agentId) : null
 
   const allMessages = mergeConversationAndActivityMessages(messages, activityMessages)
 
+  const effectiveDetailed = detailedAllView && isManager
+
   const visibleMessages =
     channelView === 'all'
-      ? activeAgent?.role !== 'manager' || !managerScopedAgentIds
+      ? !isManager || !managerScopedAgentIds || !ownedActorIds
         ? allMessages
         : allMessages.filter((entry) =>
-            isManagerScopedAllViewEntry(entry, activeAgent.agentId, managerScopedAgentIds),
+            isManagerScopedAllViewEntry(
+              entry,
+              activeAgent.agentId,
+              managerScopedAgentIds,
+              effectiveDetailed,
+              ownedActorIds,
+            ),
           )
       : messages.filter((entry) => {
           if (entry.type !== 'conversation_message') {
@@ -130,7 +175,7 @@ export function useVisibleMessages(options: VisibleMessagesOptions): {
   allMessages: ConversationEntry[]
   visibleMessages: ConversationEntry[]
 } {
-  const { messages, activityMessages, agents, activeAgent, channelView } = options
+  const { messages, activityMessages, agents, activeAgent, channelView, detailedAllView } = options
 
   return useMemo(
     () =>
@@ -140,7 +185,8 @@ export function useVisibleMessages(options: VisibleMessagesOptions): {
         agents,
         activeAgent,
         channelView,
+        detailedAllView,
       }),
-    [activeAgent, activityMessages, agents, channelView, messages],
+    [activeAgent, activityMessages, agents, channelView, detailedAllView, messages],
   )
 }

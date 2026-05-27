@@ -28,6 +28,41 @@ const worker: AgentDescriptor = {
   sessionFile: '/tmp/project/worker-1.jsonl',
 }
 
+const foreignManager: AgentDescriptor = {
+  ...manager,
+  agentId: 'foreign-manager',
+  displayName: 'Foreign Manager',
+  managerId: 'foreign-manager',
+  sessionFile: '/tmp/project/foreign-manager.jsonl',
+}
+
+const foreignWorker: AgentDescriptor = {
+  ...manager,
+  agentId: 'foreign-worker',
+  displayName: 'Foreign Worker',
+  role: 'worker',
+  managerId: 'foreign-manager',
+  sessionFile: '/tmp/project/foreign-worker.jsonl',
+}
+
+function makeToolCall(
+  agentId: string,
+  actorAgentId: string,
+  toolCallId: string,
+  timestamp = '2026-01-01T00:00:01.000Z',
+): ConversationEntry {
+  return {
+    type: 'agent_tool_call',
+    agentId,
+    actorAgentId,
+    timestamp,
+    kind: 'tool_execution_start',
+    toolName: 'bash',
+    toolCallId,
+    text: '{"command":"echo hi"}',
+  }
+}
+
 describe('deriveVisibleMessages', () => {
   it('preserves all-view merge behavior for manager-scoped timelines', () => {
     const messages: ConversationEntry[] = [
@@ -90,16 +125,7 @@ describe('deriveVisibleMessages', () => {
     ]
 
     const activityMessages: ConversationEntry[] = [
-      {
-        type: 'agent_tool_call',
-        agentId: 'manager',
-        actorAgentId: 'worker-1',
-        timestamp: '2026-01-01T00:00:01.000Z',
-        kind: 'tool_execution_start',
-        toolName: 'bash',
-        toolCallId: 'call-1',
-        text: '{"command":"echo hi"}',
-      },
+      makeToolCall('manager', 'worker-1', 'call-1'),
     ]
 
     const result = deriveVisibleMessages({
@@ -115,6 +141,23 @@ describe('deriveVisibleMessages', () => {
     ])
   })
 
+  it('hides worker tool calls from manager all view when detailedAllView is explicitly false', () => {
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('manager', 'worker-1', 'call-1'),
+    ]
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: false,
+    })
+
+    expect(result.visibleMessages).toEqual([])
+  })
+
   it('shows manager-owned tool calls in manager all view', () => {
     const messages: ConversationEntry[] = [
       {
@@ -128,16 +171,7 @@ describe('deriveVisibleMessages', () => {
     ]
 
     const activityMessages: ConversationEntry[] = [
-      {
-        type: 'agent_tool_call',
-        agentId: 'manager',
-        actorAgentId: 'manager',
-        timestamp: '2026-01-01T00:00:01.000Z',
-        kind: 'tool_execution_start',
-        toolName: 'bash',
-        toolCallId: 'call-2',
-        text: '{"command":"ls"}',
-      },
+      makeToolCall('manager', 'manager', 'call-2'),
     ]
 
     const result = deriveVisibleMessages({
@@ -152,6 +186,139 @@ describe('deriveVisibleMessages', () => {
       'conversation_message',
       'agent_tool_call',
     ])
+  })
+
+  it('shows manager-owned tool calls in both default and detailed all view', () => {
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('manager', 'manager', 'call-mgr'),
+    ]
+
+    const defaultResult = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: false,
+    })
+
+    const detailedResult = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    expect(defaultResult.visibleMessages).toHaveLength(1)
+    expect(detailedResult.visibleMessages).toHaveLength(1)
+    expect(defaultResult.visibleMessages[0]).toEqual(detailedResult.visibleMessages[0])
+  })
+
+  it('shows owned worker tool calls in detailed manager all view', () => {
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('manager', 'worker-1', 'owned-call'),
+    ]
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    expect(result.visibleMessages).toHaveLength(1)
+    expect(result.visibleMessages[0].type).toBe('agent_tool_call')
+  })
+
+  it('hides foreign-entry tool rows even when actor is owned worker (detailed)', () => {
+    // Malformed: entry.agentId = foreignManagerId, but actorAgentId = owned worker
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('foreign-manager', 'worker-1', 'sneaky-call'),
+    ]
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, worker, foreignManager, foreignWorker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    expect(result.visibleMessages).toHaveLength(0)
+  })
+
+  it('hides foreign-actor tool rows even when entry is manager-scoped (detailed)', () => {
+    // entry.agentId = managerId, but actorAgentId = foreign worker
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('manager', 'foreign-worker', 'foreign-actor-call'),
+    ]
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, worker, foreignManager, foreignWorker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    expect(result.visibleMessages).toHaveLength(0)
+  })
+
+  it('does not reveal unknown worker actor ids in detailed manager all view (fail-closed)', () => {
+    // actorAgentId exists but no matching descriptor in agents
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('manager', 'unknown-worker', 'unknown-call'),
+    ]
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    expect(result.visibleMessages).toHaveLength(0)
+  })
+
+  it('does not change worker all view behavior when detailedAllView is true', () => {
+    const messages: ConversationEntry[] = [
+      {
+        type: 'conversation_message',
+        agentId: 'worker-1',
+        role: 'assistant',
+        text: 'after',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        source: 'speak_to_user',
+      },
+    ]
+
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('manager', 'worker-1', 'call-1'),
+    ]
+
+    const result = deriveVisibleMessages({
+      messages,
+      activityMessages,
+      agents: [manager, worker],
+      activeAgent: worker,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    expect(result.allMessages.map((entry) => entry.type)).toEqual([
+      'agent_tool_call',
+      'conversation_message',
+    ])
+    // Worker all view shows everything — detailedAllView has no effect
+    expect(result.visibleMessages).toEqual(result.allMessages)
   })
 
   it('keeps manager-influencing worker auto-reports visible in manager all view', () => {
@@ -199,16 +366,7 @@ describe('deriveVisibleMessages', () => {
     ]
 
     const activityMessages: ConversationEntry[] = [
-      {
-        type: 'agent_tool_call',
-        agentId: 'manager',
-        actorAgentId: 'worker-1',
-        timestamp: '2026-01-01T00:00:01.000Z',
-        kind: 'tool_execution_start',
-        toolName: 'bash',
-        toolCallId: 'call-1',
-        text: '{"command":"echo hi"}',
-      },
+      makeToolCall('manager', 'worker-1', 'call-1'),
     ]
 
     const result = deriveVisibleMessages({
@@ -348,5 +506,63 @@ describe('deriveVisibleMessages', () => {
     })
 
     expect(result.visibleMessages).toEqual(result.allMessages)
+  })
+
+  it('does not include sibling managers in owned actor set', () => {
+    const siblingManager: AgentDescriptor = {
+      ...manager,
+      agentId: 'sibling-manager',
+      managerId: 'sibling-manager',
+    }
+
+    // Tool call from sibling manager's context but with sibling as actor
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('manager', 'sibling-manager', 'sibling-call'),
+    ]
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, worker, siblingManager],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    // Sibling manager is NOT an owned actor (not role=worker with managerId=manager)
+    expect(result.visibleMessages).toHaveLength(0)
+  })
+
+  it('scoped agent messages remain visible in both default and detailed modes', () => {
+    const agentMessage: ConversationEntry = {
+      type: 'agent_message',
+      agentId: 'manager',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      source: 'agent_to_agent',
+      fromAgentId: 'worker-1',
+      toAgentId: 'manager',
+      text: 'worker report',
+    }
+
+    const defaultResult = deriveVisibleMessages({
+      messages: [],
+      activityMessages: [agentMessage],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: false,
+    })
+
+    const detailedResult = deriveVisibleMessages({
+      messages: [],
+      activityMessages: [agentMessage],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    expect(defaultResult.visibleMessages).toHaveLength(1)
+    expect(detailedResult.visibleMessages).toHaveLength(1)
   })
 })
