@@ -530,7 +530,7 @@ Click the **Preview** button (eye icon) to see the complete runtime context a ne
     category: 'settings',
     summary:
       'Create named worker personas with specific models, prompts, and fallback routing.',
-    content: `Specialists are named worker templates that tell the manager which model, reasoning level, and system prompt to use for different kinds of tasks. Instead of a single generic worker, you can have a backend specialist running Codex and a frontend specialist running Opus, each with tailored instructions.
+    content: `Specialists are named worker templates that tell the manager which model, reasoning level, and system prompt to use for different kinds of tasks. Instead of a single generic worker, you can have a backend specialist running Codex and a frontend specialist running GPT-5.5 at medium reasoning, each with tailored instructions.
 
 Forge also ships collaboration-focused builtins such as \`collab-planner\`, \`collab-reviewer\`, \`collab-doc-writer\`, \`collab-scout\`, and \`collab-researcher\` for channel work that needs project-context aware roles.
 

@@ -11,7 +11,7 @@ const modelsOverview: HelpArticle = {
 
 Three things affect the quality and speed of what you get back:
 
-- **The model itself.** GPT-5.4 and Claude Opus 4.6 are the most capable models. Smaller variants like GPT-5.4 Mini or Claude Haiku 4.5 are faster and cheaper but less thorough on complex tasks.
+- **The model itself.** GPT-5.5 and GPT-5.4 are the most capable models. Smaller variants like GPT-5.4 Mini or GPT-5.4 Nano are faster and cheaper but less thorough on complex tasks.
 - **The reasoning level.** Higher reasoning means the model spends more time thinking before answering. This improves accuracy on hard problems but costs more and takes longer.
 - **The task.** A quick file read does not need the same model as a multi-file refactor. Match the model to the work.
 
@@ -131,7 +131,7 @@ When the manager spawns a worker, it picks a specialist based on the task. Each 
 - An optional **fallback model** — used when the primary model is unavailable or rate-limited.
 - A **"when to use" description** — tells the manager which tasks to send to this specialist.
 
-For example, the builtin Backend Engineer uses GPT-5.4 at high reasoning. The Frontend Engineer uses Claude Opus 4.6 at high reasoning. The Architect uses GPT-5.5 with Claude Opus 4.6 as fallback. The Planner uses GPT-5.5 with Claude Opus 4.6 as fallback. The Scout uses GPT-5.4 Mini at low reasoning for quick exploration.
+For example, the builtin Backend Engineer uses GPT-5.4 at high reasoning. The Frontend Engineer uses GPT-5.5 at medium reasoning. The Architect uses GPT-5.5 at medium reasoning. The Planner uses GPT-5.5 at medium reasoning. The Scout uses GPT-5.4 Mini at low reasoning for quick exploration.
 
 ## Fallback behavior
 
@@ -162,14 +162,14 @@ Use these for high-volume or simple tasks where speed matters more than depth.
 
 - **GPT-5.4 Nano** — Fastest, cheapest. Good for file reads, searches, and quick lookups.
 - **GPT-5.4 Mini** — Fast with decent quality. The Scout specialist uses this by default for exploration and information gathering.
-- **Claude Haiku 4.5** — Anthropic's fast option. Good for bulk formatting, simple code generation, and lightweight review.
+- **GPT-5.5 at low reasoning** — A fast, cheaper Codex option for bulk formatting, simple code generation, and lightweight review. Good for doc-heavy and simple specialist work.
 
 ## Balanced
 
 These work well for everyday development tasks.
 
 - **GPT-5.5** — The standard full coding model. Good balance of speed and quality for implementation work.
-- **Claude Sonnet 4.5** — Mid-range Anthropic model. The Doc Writer specialist uses this for documentation tasks where full Opus would be wasteful.
+- **GPT-5.5 at low reasoning** — A practical middle ground for documentation tasks where higher-reasoning models would be wasteful.
 - **Grok 4 Fast** — Quick Grok variant for specialist tasks.
 
 ## Thorough but expensive
@@ -177,7 +177,7 @@ These work well for everyday development tasks.
 Reserve these for work where quality matters most.
 
 - **GPT-5.5** — OpenAI's strongest full coding model. Best for complex backend work and multi-file refactors.
-- **Claude Opus 4.6** — Anthropic's strongest. Best for frontend work, nuanced code review, and tasks that need careful judgment. The Frontend Engineer specialist defaults to this; Planner now defaults to GPT-5.5 with Opus 4.6 as fallback.
+- **GPT-5.5 at medium reasoning** — The strongest Codex default for specialist work. Best for frontend work, nuanced code review, and tasks that need careful judgment.
 - **Grok 4** — xAI's flagship for specialist use.
 
 ## Reasoning level adds cost too
