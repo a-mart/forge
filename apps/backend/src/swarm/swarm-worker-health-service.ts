@@ -640,7 +640,7 @@ export class SwarmWorkerHealthService {
       return;
     }
 
-    const autoReportOutcome = await this.tryAutoReportWorkerCompletion(descriptor);
+    const autoReportOutcome = await this.tryAutoReportWorkerCompletion(descriptor, source);
     if (autoReportOutcome === "sent") {
       this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
       this.clearWatchdogTimer(agentId);
@@ -1134,7 +1134,8 @@ export class SwarmWorkerHealthService {
   }
 
   private async tryAutoReportWorkerCompletion(
-    descriptor: AgentDescriptor
+    descriptor: AgentDescriptor,
+    source: "agent_end" | "status_idle" | "deferred"
   ): Promise<"sent" | "skipped" | "failed"> {
     if (descriptor.role !== "worker") {
       return "skipped";
@@ -1171,10 +1172,11 @@ export class SwarmWorkerHealthService {
       return "skipped";
     }
 
-    if (workerRuntime.getStatus() !== "idle" || workerRuntime.getPendingCount() > 0) {
+    if (source !== "agent_end" && (workerRuntime.getStatus() !== "idle" || workerRuntime.getPendingCount() > 0)) {
       this.options.logDebug("worker:completion_report:skip_worker_runtime_active", {
         workerAgentId: descriptor.agentId,
         managerId,
+        source,
         workerStatus: workerRuntime.getStatus(),
         pendingCount: workerRuntime.getPendingCount()
       });

@@ -85,6 +85,62 @@ describe("SwarmWorkerHealthService", () => {
     expect(svc.watchdogTimers.has("w1")).toBe(false);
   });
 
+  it("auto-reports on agent_end even if the worker runtime has not flipped idle yet", async () => {
+    vi.useFakeTimers();
+
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "streaming"
+    });
+    const worker = createWorkerDescriptor("/p", "m1", { agentId: "w1", status: "streaming" });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [worker.agentId, worker]
+    ]);
+    const managerRuntime = {
+      getStatus: () => "streaming",
+      getPendingCount: () => 0
+    } as SwarmAgentRuntime;
+    const workerRuntime = {
+      getStatus: () => "streaming",
+      getPendingCount: () => 1
+    } as SwarmAgentRuntime;
+    const runtimes = new Map([
+      [manager.agentId, managerRuntime],
+      [worker.agentId, workerRuntime]
+    ]);
+    const sendMessage = vi.fn(async () => ({}));
+    const getConversationHistory = vi.fn(
+      () =>
+        [
+          {
+            type: "conversation_message",
+            agentId: worker.agentId,
+            role: "assistant",
+            text: "Done.",
+            timestamp: "2026-05-28T19:20:37.688Z",
+            source: "system"
+          }
+        ] satisfies ConversationEntryEvent[]
+    );
+
+    const svc = new SwarmWorkerHealthService(
+      baseHealthOptions({ descriptors, runtimes, sendMessage, getConversationHistory })
+    );
+
+    await svc.handleRuntimeStatus("w1", worker as AgentDescriptor & { role: "worker" }, "streaming", 0);
+    await svc.handleRuntimeAgentEnd("w1", worker as AgentDescriptor & { role: "worker" });
+    await vi.advanceTimersByTimeAsync(IDLE_GRACE_MS + BATCH_WINDOW_MS);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toContain("SYSTEM: Worker w1 completed its turn.");
+    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toContain("Last assistant message:\nDone.");
+    expect(svc.watchdogTimers.has("w1")).toBe(false);
+  });
+
   it("checkForStalledWorkers does not nudge while the worker runtime is in context recovery", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-20T12:00:00.000Z"));
