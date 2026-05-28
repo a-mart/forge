@@ -270,7 +270,7 @@ Forge runs three layers on your machine:
 |-------|-------------|
 | **Dashboard UI** (`apps/ui`) | TanStack Start + Vite SPA. Real-time agent monitoring, chat, file browser, settings. |
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
-| **Agents** | Manager and worker agents run through Forge's runtime facade, backed by Pi, Claude SDK, or Cursor SDK depending on the selected model/provider. Cursor SDK exposes Composer 2.5 for manager and specialist selectors. Each worker runs in its own worktree. |
+| **Agents** | Manager and worker agents run through Forge's runtime facade, backed by Pi, Claude SDK, or Cursor SDK depending on the selected model/provider. Cursor SDK exposes Composer 2.5 for manager and specialist selectors, and detached auth/connect failures stay inside the worker runtime so they surface as worker failures instead of crashing the backend or Electron child. Each worker runs in its own worktree. |
 
 Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling. Agents are extensible through both [Forge Extensions](docs/FORGE_EXTENSIONS.md) and Pi's [extension system](docs/PI_EXTENSIONS.md).
 
@@ -294,7 +294,7 @@ The `.env.example` file documents all available options with comments. Key categ
 - **Skill sharing** — anonymous worker origin and disable flag
 - **Agent Runtimes** — OpenAI Codex Responses transport defaults to `sse` for reliability when `FORGE_OPENAI_CODEX_TRANSPORT` is unset, blank, or invalid; `websocket-cached` remains an explicit experimental/canary opt-in via `FORGE_OPENAI_CODEX_TRANSPORT=websocket-cached`, with `websocket` and `auto` also supported. Sanitized transport diagnostics stay opt-in via `FORGE_CODEX_TRANSPORT_DEBUG=1` at `GET /api/debug/codex-transport`.
 
-Provider auth for LLM providers (OpenAI, Anthropic, xAI, Cursor SDK) is configured in the dashboard UI under **Settings → Authentication**, where each row shows the provider label plus an auth-mode badge. OpenAI and Anthropic can use OAuth or API key auth; Claude SDK stays OAuth-only via Claude Code CLI; Cursor SDK uses `CURSOR_API_KEY` and stays specialist-only. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
+Provider auth for LLM providers (OpenAI, Anthropic, xAI, Cursor SDK) is configured in the dashboard UI under **Settings → Authentication**, where each row shows the provider label plus an auth-mode badge. OpenAI and Anthropic can use OAuth or API key auth; Claude SDK stays OAuth-only via Claude Code CLI; Cursor SDK uses `CURSOR_API_KEY` and stays specialist-only. Detached/background Cursor SDK auth or connect errors are contained inside the worker runtime and report as worker failures rather than crashing the backend or Electron child. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full configuration reference.
 

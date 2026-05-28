@@ -138,7 +138,7 @@ If clicking a file link does nothing, check that the editor is installed and tha
 - **Anthropic** — Claude-based workers and managers. Supports either OAuth or API key auth.
 - **OpenAI** — Codex runtime sessions and voice transcription. Supports either OAuth or API key auth.
 - **Claude SDK** — Native Claude Code CLI OAuth path for Claude models. OAuth only.
-- **Cursor SDK** — Native Cursor SDK runtime for Composer 2.5. API key only via \`CURSOR_API_KEY\` for both manager and specialist sessions.
+- **Cursor SDK** — Native Cursor SDK runtime for Composer 2.5. API key only via \`CURSOR_API_KEY\` for both manager and specialist sessions. Auth/connect failures stay inside the worker runtime and surface as worker failures, not app crashes.
 - **xAI** — Grok-based workers.
 
 ## Configuring a provider

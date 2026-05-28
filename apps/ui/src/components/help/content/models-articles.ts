@@ -65,7 +65,7 @@ Claude SDK uses the local Claude Code CLI OAuth session instead of an API key. I
 
 ## Cursor SDK
 
-Cursor SDK uses \`CURSOR_API_KEY\` and exposes Composer 2.5 for specialist workers only. It is native to the Cursor runtime, and usage from Cursor SDK sessions is recorded for stats, token analytics, and telemetry provider inference.
+Cursor SDK uses \`CURSOR_API_KEY\` and exposes Composer 2.5 for specialist workers only. It is native to the Cursor runtime, and usage from Cursor SDK sessions is recorded for stats, token analytics, and telemetry provider inference. Auth/connect failures stay contained in the worker runtime and show up as worker failures, not app crashes.
 
 ## xAI / Grok
 
