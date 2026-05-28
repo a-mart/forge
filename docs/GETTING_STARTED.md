@@ -442,7 +442,7 @@ You can also trigger compaction manually from the three-dot menu (**⋯ → Smar
 
 Workers are supposed to report back to the manager when they finish. But LLMs are probabilistic. Sometimes a worker completes its task and just doesn't send the callback message.
 
-Forge detects this. When a worker goes idle without reporting back, the system notifies the session agent: "This worker went idle without sending a message." The session agent can then inspect the worker's output, nudge it, or spin up a replacement. Those idle/stall reports are suppressed while the worker or parent runtime is recovering, so recovery can finish without duplicate watchdog noise.
+Forge detects this. When a worker finishes its turn, it can auto-report on `agent_end`/turn end even before the runtime flips to idle. The idle watchdog/status-idle path still acts as a fallback and noise-suppression layer for cases that never report cleanly. The session agent can then inspect the worker's output, nudge it, or spin up a replacement. Those idle/stall reports are suppressed while the worker or parent runtime is recovering, so recovery can finish without duplicate watchdog noise.
 
 If a worker runtime reports a bare \`errorMessage: "terminated"\`, Forge holds it for a 60-second grace period before failure projection. If the worker resumes progress or self-reports during that window, the transient error is canceled. If it does not recover, it expires through the normal worker error/watchdog path once.
 
