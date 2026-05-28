@@ -594,7 +594,11 @@ async function validateStagedCursorSdkRuntime(stagedRequire) {
 
   const platformPackageName = getCurrentCursorSdkPlatformPackageName()
   const platformPackageDir = path.join(backendStageNodeModulesDir, ...platformPackageName.split('/'))
-  const requiredBinaries = [path.join('bin', 'rg'), path.join('bin', 'cursorsandbox')]
+  const executableSuffix = process.platform === 'win32' ? '.exe' : ''
+  const requiredBinaries = [
+    path.join('bin', `rg${executableSuffix}`),
+    path.join('bin', `cursorsandbox${executableSuffix}`),
+  ]
   for (const relativePath of requiredBinaries) {
     const binaryPath = path.join(platformPackageDir, relativePath)
     if (!existsSync(binaryPath)) {
