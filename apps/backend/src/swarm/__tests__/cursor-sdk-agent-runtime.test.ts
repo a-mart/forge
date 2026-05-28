@@ -1,11 +1,16 @@
 import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE,
   CursorSdkAgentRuntime,
 } from "../runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
+import {
+  createCursorSdkBackgroundScope,
+  emitCursorSdkBackgroundFailureForTests,
+  resetCursorSdkErrorContainmentForTests
+} from "../runtime/cursor-sdk/cursor-sdk-error-containment.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../../utils/cursor-sdk-usage-records.js";
 import type { CursorSdkAgent, CursorSdkModule, CursorSdkRun, CursorSdkSendOptions } from "../runtime/cursor-sdk/cursor-sdk-loader.js";
 import type { RuntimeUserMessage, SwarmRuntimeCallbacks } from "../runtime-contracts.js";
@@ -81,6 +86,31 @@ function statusMessage(status: string): unknown {
   return { type: "status", status };
 }
 
+function createCursorAuthConnectError(options: {
+  code?: string | number;
+  message?: string;
+} = {}): Error & { code: string | number } {
+  class ConnectError extends Error {
+    code: string | number;
+
+    constructor(message: string, code: string | number) {
+      super(message);
+      this.name = "ConnectError";
+      this.code = code;
+      this.stack = `${this.name}: ${message}\n    at parseConnectResponse (@connectrpc/connect/dist/index.js:1:1)`;
+    }
+  }
+
+  return new ConnectError(
+    options.message ?? "ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN",
+    options.code ?? "ERR_NOT_LOGGED_IN"
+  );
+}
+
+function payloadText(payload: string | { text: string; images?: Array<{ data: string; mimeType: string }> }): string {
+  return typeof payload === "string" ? payload : payload.text;
+}
+
 async function setupRuntime(options: {
   rootDir?: string;
   descriptor?: AgentDescriptor;
@@ -136,6 +166,10 @@ async function waitFor(assertion: () => void | Promise<void>): Promise<void> {
   }
   throw lastError;
 }
+
+afterEach(() => {
+  resetCursorSdkErrorContainmentForTests();
+});
 
 describe("CursorSdkAgentRuntime", () => {
   it("injects Forge prompt context, uses stream as the sole text source, and persists SDK state", async () => {
@@ -341,9 +375,9 @@ describe("CursorSdkAgentRuntime", () => {
 
     await waitFor(() => expect(runtime.getStatus()).toBe("idle"));
     expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
-    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+    await waitFor(() => expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
       expect.objectContaining({ outcome: "cancelled", usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, total: 14 } })
-    ]);
+    ]));
   });
 
   it("retains reported usage when wait later errors", async () => {
@@ -600,7 +634,7 @@ describe("CursorSdkAgentRuntime", () => {
 
     await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalled());
     expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
-      details: { errorName: "RateLimitError", errorCode: "429" }
+      details: expect.objectContaining({ errorName: "RateLimitError", errorCode: "429", source: "cursor_sdk_awaited" })
     }));
   });
 
@@ -626,8 +660,234 @@ describe("CursorSdkAgentRuntime", () => {
     await waitFor(() => expect(runtime.getStatus()).toBe("idle"));
     expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
       message: "ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN",
-      details: { errorName: "ConnectError", errorCode: "ERR_NOT_LOGGED_IN" }
+      details: expect.objectContaining({ errorName: "ConnectError", errorCode: "ERR_NOT_LOGGED_IN", source: "cursor_sdk_awaited" })
     }));
+  });
+
+  it("does not attribute no-ALS detached auth failures to a newer active scope when a closed tombstone is retained", async () => {
+    const closedScope = createCursorSdkBackgroundScope({
+      agentId: "worker-closed",
+      promptToken: 1,
+      startedAt: "2026-01-01T00:00:00.000Z"
+    });
+    closedScope.close();
+
+    const activeScope = createCursorSdkBackgroundScope({
+      agentId: "worker-active",
+      promptToken: 2,
+      startedAt: "2026-01-01T00:00:01.000Z"
+    });
+
+    expect(emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError())).toBe(false);
+    await expect(closedScope.runWithAttribution(async () => emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError()))).resolves.toBe(true);
+
+    activeScope.close();
+  });
+
+  it("contains detached background auth/connect failures and projects them through prompt_dispatch without success completion", async () => {
+    const cancel = vi.fn(async () => undefined);
+    const send = vi.fn(async () => {
+      const backgroundError = createCursorAuthConnectError();
+      queueMicrotask(() => {
+        emitCursorSdkBackgroundFailureForTests(backgroundError);
+      });
+      return createRun({ streamGate: new Promise(() => undefined), cancel });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("first");
+
+    await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+    expect(callbacks.onSessionEvent).not.toHaveBeenCalledWith("worker-1", expect.objectContaining({ type: "message_end" }));
+    expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
+      phase: "prompt_dispatch",
+      message: "ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN",
+      details: expect.objectContaining({
+        source: "cursor_sdk_background",
+        errorName: "ConnectError",
+        errorCode: "ERR_NOT_LOGGED_IN",
+        sdkAgentId: "sdk-agent-1"
+      })
+    }));
+  });
+
+  it("suppresses late post-close detached auth/connect rejections during the tombstone grace window", async () => {
+    const lateError = createCursorAuthConnectError();
+    const lateContainment = deferred<boolean>();
+    const send = vi.fn(async () => ({
+      id: "run-late-detached",
+      agentId: "sdk-agent-1",
+      status: "finished",
+      async *stream() {
+        yield assistantText("ok");
+      },
+      wait: vi.fn(async () => {
+        setTimeout(() => {
+          lateContainment.resolve(emitCursorSdkBackgroundFailureForTests(lateError));
+        }, 10);
+        return { status: "finished" };
+      }),
+      cancel: vi.fn(async () => undefined)
+    }));
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1));
+    await expect(lateContainment.promise).resolves.toBe(true);
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([]);
+  });
+
+  it("retries once before visible output, preserves the first-turn wrapper, and records only the successful usage entry", async () => {
+    const payloads: string[] = [];
+    const firstAttemptError = createCursorAuthConnectError();
+    const send = vi.fn(async (payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      payloads.push(payloadText(payload));
+      if (send.mock.calls.length === 1) {
+        await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 99, outputTokens: 1 } } });
+        queueMicrotask(() => {
+          emitCursorSdkBackgroundFailureForTests(firstAttemptError);
+        });
+        return createRun({ streamGate: new Promise(() => undefined), cancel: vi.fn(async () => undefined) });
+      }
+
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({ id: "run-retry-success", streamItems: [statusMessage("FINISHED"), assistantText("ok")] });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(payloads[0]).toContain("<forge_system_context>");
+    expect(payloads[1]).toBe(payloads[0]);
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+    expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+      expect.objectContaining({
+        sdkRunId: "run-retry-success",
+        outcome: "completed",
+        usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, total: 14 }
+      })
+    ]);
+  });
+
+  it("cancels the eventually resolved first send run when a pre-send background failure triggers retry", async () => {
+    const payloads: string[] = [];
+    const firstAttemptError = createCursorAuthConnectError();
+    const firstSendGate = deferred<CursorSdkRun>();
+    const firstCancel = vi.fn(async () => undefined);
+    const send = vi.fn(async (payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      payloads.push(payloadText(payload));
+      if (send.mock.calls.length === 1) {
+        await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 1, outputTokens: 1 } } });
+        queueMicrotask(() => {
+          emitCursorSdkBackgroundFailureForTests(firstAttemptError);
+        });
+        return firstSendGate.promise;
+      }
+
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({ id: "run-second-attempt", streamItems: [assistantText("ok")] });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1));
+    firstSendGate.resolve(createRun({ id: "run-first-attempt", cancel: firstCancel }));
+
+    await waitFor(() => expect(firstCancel).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(payloads[0]).toContain("<forge_system_context>");
+    expect(payloads[1]).toBe(payloads[0]);
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+  });
+
+  it("does not retry after visible assistant output has emitted", async () => {
+    const backgroundError = createCursorAuthConnectError();
+    const gate = deferred();
+    const send = vi.fn(async () => {
+      setTimeout(() => {
+        emitCursorSdkBackgroundFailureForTests(backgroundError);
+      }, 0);
+      return createRun({ streamGate: gate.promise, streamItems: [assistantText("partial")], cancel: vi.fn(async () => gate.resolve()) });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onSessionEvent).toHaveBeenCalledWith("worker-1", expect.objectContaining({ type: "message_update" })));
+    await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+  });
+
+  it("does not retry after stopInFlight cancels the active attempt", async () => {
+    const gate = deferred();
+    const backgroundError = createCursorAuthConnectError();
+    const cancel = vi.fn(async () => {
+      queueMicrotask(() => {
+        emitCursorSdkBackgroundFailureForTests(backgroundError);
+      });
+      gate.resolve();
+    });
+    const send = vi.fn(async () => createRun({ streamGate: gate.promise, cancel }));
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    await runtime.stopInFlight();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+  });
+
+  it("suppresses duplicate projection when background containment and awaited wait rejection describe the same failure", async () => {
+    const sharedError = createCursorAuthConnectError();
+    const send = vi.fn(async () => ({
+      id: "run-1",
+      agentId: "sdk-agent-1",
+      status: "finished",
+      async *stream() {
+        yield assistantText("ok");
+      },
+      wait: vi.fn(async () => {
+        queueMicrotask(() => {
+          emitCursorSdkBackgroundFailureForTests(sharedError);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        throw sharedError;
+      }),
+      cancel: vi.fn(async () => undefined)
+    }));
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
+    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+  });
+
+  it("does not retry unrelated awaited errors", async () => {
+    class RateLimitError extends Error {
+      code = "429";
+    }
+    const send = vi.fn(async () => {
+      throw new RateLimitError("request failed");
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("rejects Agent.create auth/connect failures to the caller instead of starting a partially constructed runtime", async () => {
