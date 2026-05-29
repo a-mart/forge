@@ -559,6 +559,71 @@ describe('SwarmManager', () => {
     expect(manager.listAgents().find((agent) => agent.agentId === session.agentId)?.status).not.toBe('terminated')
   })
 
+  it('does not drop the current user turn when repo trust is accepted from the prompt mid-turn', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await mkdir(join(config.defaultCwd, '.forge', 'extensions'), { recursive: true })
+    await writeFile(join(config.defaultCwd, '.forge', 'extensions', 'repo.ts'), 'export default () => {}\n', 'utf8')
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
+    const descriptor = manager.getAgent(session.agentId)
+    const runtime = manager.runtimeByAgentId.get(session.agentId)
+    const settingsStore = new ProjectResourceSettingsStore(config.paths.dataDir)
+    const trustKey = await realpath(join(config.defaultCwd, '.forge'))
+    const choiceService = (manager as unknown as {
+      choiceService: { requestUserChoice: (agentId: string, questions: unknown[]) => Promise<Array<{ questionId: string; selectedOptionIds: string[] }>> }
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
+    })
+
+    expect(descriptor?.role).toBe('manager')
+    expect(runtime).toBeDefined()
+
+    if (!descriptor || descriptor.role !== 'manager' || !runtime) {
+      throw new Error('Expected manager session runtime to exist')
+    }
+
+    let releaseSend!: () => void
+    let markSendStarted!: () => void
+    const sendGate = new Promise<void>((resolve) => { releaseSend = resolve })
+    const sendStarted = new Promise<void>((resolve) => { markSendStarted = resolve })
+
+    runtime.onSendMessage = async () => {
+      descriptor.status = 'streaming'
+      descriptor.updatedAt = new Date().toISOString()
+      runtime.busy = true
+      markSendStarted()
+      await sendGate
+      runtime.busy = false
+      descriptor.status = 'idle'
+      descriptor.updatedAt = new Date().toISOString()
+    }
+
+    vi.spyOn(choiceService.choiceService, 'requestUserChoice').mockImplementation(async () => {
+      await sendStarted
+      return [{ questionId: 'repo_executable_trust', selectedOptionIds: ['trust'] }]
+    })
+
+    const firstTurn = manager.handleUserMessage('keep the initial turn alive', { targetAgentId: session.agentId })
+    await sendStarted
+    releaseSend()
+
+    await expect(firstTurn).resolves.toBeUndefined()
+    await vi.waitFor(async () => {
+      expect((await settingsStore.getTrust(trustKey))?.state).toBe('trusted')
+      expect(choiceService.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(session.agentId)).toBe(true)
+    })
+
+    expect(runtime.terminateCalls).toHaveLength(0)
+    expect(runtime.shutdownForReplacementCalls).toHaveLength(0)
+    expect(runtime.recycleCalls).toBe(0)
+
+    await manager.handleUserMessage('next turn picks up trust', { targetAgentId: session.agentId })
+
+    expect(runtime.recycleCalls).toBe(1)
+    expect(manager.runtimeByAgentId.get(session.agentId)).not.toBe(runtime)
+  })
+
   it('creates secondary managers and deletes them with owned worker cascade', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

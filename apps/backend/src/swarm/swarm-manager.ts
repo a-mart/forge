@@ -2250,9 +2250,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         currentResolution.signature === resolution.signature &&
         currentDismissed?.signature !== currentResolution.signature;
       if (!promptStillCurrent) return;
-      if (selected === "trust" || selected === "block") {
-        await settingsStore.setTrust(resolution.trust.key, selected);
-        await this.applyProjectResourceTrustChange(resolution.trust.key);
+      if (selected === "trust") {
+        await settingsStore.setTrust(resolution.trust.key, "trust");
+        await this.markProjectExecutableTrustActivationPending(resolution.trust.key);
+      } else if (selected === "block") {
+        await settingsStore.setTrust(resolution.trust.key, "block");
       } else if (selected === "manage_later") {
         await settingsStore.dismissExecutablePrompt(resolution.trust.key, resolution.signature);
       }
@@ -2268,6 +2270,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async applyProjectResourceWorkspaceChange(workspaceKey: string): Promise<void> {
     await this.applyProjectResourceRuntimeBoundaryChange(async (resolution) => resolution.workspaceKey === workspaceKey);
+  }
+
+  private async markProjectExecutableTrustActivationPending(trustKey: string): Promise<void> {
+    // Trust prompts only appear while repository executable resources are still inactive, so
+    // accepting trust here can be deferred safely until the current runtime reaches an idle
+    // boundary instead of interrupting an in-flight user turn.
+    const settingsStore = new ProjectResourceSettingsStore(this.config.paths.dataDir);
+    const resolver = new ProjectWorkspaceResolver({
+      dataDir: this.config.paths.dataDir,
+      settingsStore
+    });
+
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role !== "manager" || descriptor.collab) continue;
+      const resolution = await resolver.resolve({
+        profileId: descriptor.profileId ?? descriptor.agentId,
+        sessionAgentId: descriptor.agentId,
+        cwd: descriptor.cwd
+      });
+      if (resolution.trust.key !== trustKey) continue;
+      this.runtimeRecoveryState.setPendingManagerRuntimeRecycle(descriptor.agentId, "project_resource_trust_change");
+    }
   }
 
   private async applyProjectResourceRuntimeBoundaryChange(
