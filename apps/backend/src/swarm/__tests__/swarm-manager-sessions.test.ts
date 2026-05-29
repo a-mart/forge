@@ -653,6 +653,75 @@ describe('SwarmManager', () => {
     expect(manager.runtimeProjectExecutableTrustPlanByAgentId.get(sessionAgent.agentId)?.trusted).toBe(true)
   })
 
+  it('keeps deferred trust activation for other workspaces when one workspace changes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const managerA = await bootWithDefaultManager(manager, config)
+    const repoB = await mkdtemp(join(tmpdir(), 'trust-workspace-b-'))
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    execFileSync('git', ['init'], { cwd: repoB, stdio: 'ignore' })
+
+    const managerB = await manager.createManager(managerA.agentId, {
+      name: 'Second Trust Workspace',
+      cwd: repoB,
+    })
+
+    await mkdir(join(config.defaultCwd, '.forge', 'extensions'), { recursive: true })
+    await writeFile(join(config.defaultCwd, '.forge', 'extensions', 'repo-a.ts'), 'export default () => {}\n', 'utf8')
+    await mkdir(join(repoB, '.forge', 'extensions'), { recursive: true })
+    await writeFile(join(repoB, '.forge', 'extensions', 'repo-b.ts'), 'export default () => {}\n', 'utf8')
+
+    const state = manager as unknown as {
+      choiceService: { requestUserChoice: (agentId: string, questions: unknown[]) => Promise<Array<{ questionId: string; selectedOptionIds: string[] }>> }
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
+    }
+    vi.spyOn(state.choiceService, 'requestUserChoice').mockResolvedValue([
+      { questionId: 'repo_executable_trust', selectedOptionIds: ['trust'] },
+    ])
+
+    await (manager as unknown as {
+      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
+    }).maybePromptForProjectExecutableTrust(managerA as AgentDescriptor & { role: 'manager' })
+    await (manager as unknown as {
+      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
+    }).maybePromptForProjectExecutableTrust(managerB as AgentDescriptor & { role: 'manager' })
+
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(managerA.agentId)).toBe(true)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(managerB.agentId)).toBe(true)
+
+    const unaffectedWorkerBefore = await manager.spawnAgent(managerB.agentId, { agentId: 'Unaffected Workspace Worker' })
+    expect(manager.runtimeProjectExecutableTrustPlanByAgentId.get(unaffectedWorkerBefore.agentId)?.trusted).toBe(false)
+
+    const settingsStore = new ProjectResourceSettingsStore(config.paths.dataDir)
+    const resolver = new ProjectWorkspaceResolver({
+      dataDir: config.paths.dataDir,
+      settingsStore,
+    })
+    const workspaceA = await resolver.resolve({
+      profileId: managerA.profileId ?? managerA.agentId,
+      sessionAgentId: managerA.agentId,
+      cwd: managerA.cwd,
+    })
+    const overrideForgeDir = join(config.defaultCwd, 'override-parent', '.forge')
+    await mkdir(join(overrideForgeDir, 'extensions'), { recursive: true })
+    await settingsStore.setOverride(workspaceA.workspaceKey, overrideForgeDir)
+
+    await manager.applyProjectResourceWorkspaceChange(workspaceA.workspaceKey)
+
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(managerA.agentId)).toBe(false)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(managerB.agentId)).toBe(true)
+    expect(manager.listAgents().find((agent) => agent.agentId === unaffectedWorkerBefore.agentId)?.status).toBe('idle')
+
+    const unaffectedWorkerAfter = await manager.spawnAgent(managerB.agentId, { agentId: 'Unaffected Workspace Pending Worker' })
+    expect(manager.runtimeProjectExecutableTrustPlanByAgentId.get(unaffectedWorkerAfter.agentId)?.trusted).toBe(false)
+
+    await manager.handleUserMessage('activate the unaffected workspace trust', { targetAgentId: managerB.agentId })
+
+    expect(manager.runtimeProjectExecutableTrustPlanByAgentId.get(managerB.agentId)?.trusted).toBe(true)
+    expect(manager.listAgents().find((agent) => agent.agentId === unaffectedWorkerBefore.agentId)?.status).toBe('terminated')
+    expect(manager.listAgents().find((agent) => agent.agentId === unaffectedWorkerAfter.agentId)?.status).toBe('terminated')
+  })
+
   it('does not drop the current user turn when repo trust is accepted from the prompt mid-turn', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

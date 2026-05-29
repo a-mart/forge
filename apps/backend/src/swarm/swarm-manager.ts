@@ -1117,6 +1117,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly modelChangeStartupRecoveryCoordinator: ModelChangeStartupRecoveryCoordinator;
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly pendingProjectExecutableTrustPromptsByKey = new Set<string>();
+  // Deferred trust activation state machine:
+  // 1. A prompt answer writes trusted state to disk but keeps the pre-activation plan here.
+  // 2. protectAllRuntimeCreations guards the short window before affected managers are marked,
+  //    so racing runtime creation still sees the old untrusted executable policy.
+  // 3. Once affected managers are marked, only those manager IDs and their workers stay on the
+  //    pre-activation plan until the manager runtime recycle boundary invalidates workers and clears state.
   private readonly deferredProjectExecutableTrustActivationsByKey = new Map<string, {
     trustKey: string;
     preActivationPlan: ProjectExecutableTrustPlan;
@@ -2294,8 +2300,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async applyProjectResourceWorkspaceChange(workspaceKey: string): Promise<void> {
-    this.clearAllDeferredProjectExecutableTrustActivations();
+    const affectedManagerIds = await this.resolveProjectResourceWorkspaceManagerIds(workspaceKey);
     await this.applyProjectResourceRuntimeBoundaryChange(async (resolution) => resolution.workspaceKey === workspaceKey);
+    this.clearDeferredProjectExecutableTrustActivationsForManagers(affectedManagerIds);
   }
 
   private beginDeferredProjectExecutableTrustActivation(
@@ -2339,11 +2346,44 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  private clearAllDeferredProjectExecutableTrustActivations(): void {
-    this.deferredProjectExecutableTrustActivationsByKey.clear();
-    this.pendingProjectExecutableTrustActivationByManagerId.clear();
-    this.pendingProjectExecutableWorkerInvalidationByManagerId.clear();
-    this.forgeExtensionHost.clearAllDeferredProjectExecutableTrustPlans();
+  private clearDeferredProjectExecutableTrustActivationsForManagers(managerIds: Iterable<string>): void {
+    for (const managerId of managerIds) {
+      this.pendingProjectExecutableWorkerInvalidationByManagerId.delete(managerId);
+      this.clearPendingProjectExecutableTrustActivationForManager(managerId);
+      if (this.runtimeRecoveryState.getPendingManagerRuntimeRecycleReason(managerId) === "project_resource_trust_change") {
+        this.runtimeRecoveryState.clearPendingManagerRuntimeRecycle(managerId);
+      }
+    }
+  }
+
+  private async resolveProjectResourceWorkspaceManagerIds(workspaceKey: string): Promise<Set<string>> {
+    const managerIds = new Set<string>();
+    const resolver = new ProjectWorkspaceResolver({
+      dataDir: this.config.paths.dataDir,
+      settingsStore: new ProjectResourceSettingsStore(this.config.paths.dataDir)
+    });
+
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role !== "manager" || descriptor.collab) continue;
+      try {
+        const resolution = await resolver.resolve({
+          profileId: descriptor.profileId ?? descriptor.agentId,
+          sessionAgentId: descriptor.agentId,
+          cwd: descriptor.cwd
+        });
+        if (resolution.workspaceKey === workspaceKey) {
+          managerIds.add(descriptor.agentId);
+        }
+      } catch (error) {
+        this.logDebug("project_resources:workspace_change:resolve_error", {
+          agentId: descriptor.agentId,
+          workspaceKey,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    return managerIds;
   }
 
   private setPendingProjectExecutableTrustActivationForManager(managerId: string, trustKey: string): void {

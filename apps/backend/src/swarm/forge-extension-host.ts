@@ -110,10 +110,6 @@ export class ForgeExtensionHost {
     this.deferredProjectExecutableTrustPlansByKey.delete(trustKey);
   }
 
-  clearAllDeferredProjectExecutableTrustPlans(): void {
-    this.deferredProjectExecutableTrustPlansByKey.clear();
-  }
-
   recordDiagnosticError(error: Omit<ForgeDiagnosticErrorRecord, "timestamp"> & { timestamp?: string }): void {
     this.recentErrors.unshift({
       ...error,
