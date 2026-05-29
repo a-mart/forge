@@ -182,6 +182,12 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
       additionalSkillPaths: []
     })),
     getSwarmContextFiles: vi.fn(async () => []),
+    resolveProjectExecutableTrustPlanForRuntime: vi.fn(async () => ({
+      trusted: false,
+      trustedForgeExtensionDirs: [],
+      trustedPiExtensionDirs: [],
+      trustedPiSettingsPaths: [],
+    })),
     resolveSystemPromptForDescriptor: vi.fn(async () => "prompt"),
     injectWorkerIdentityContext: vi.fn((_d, sp) => sp),
     resolveSpecialistRosterForProfile: vi.fn(async () => []),

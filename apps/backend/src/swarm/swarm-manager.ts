@@ -156,6 +156,11 @@ import { resolveCollaborationSkillRoster } from "./skills/collaboration-skill-re
 import { SwarmChoiceService } from "./swarm-choice-service.js";
 import { SwarmCortexService } from "./swarm-cortex-service.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
+import {
+  buildProjectExecutableTrustPlan,
+  resolveProjectExecutableTrustPlan,
+  type ProjectExecutableTrustPlan
+} from "./project-executable-trust.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import { SwarmPromptService } from "./swarm-prompt-service.js";
 import { SwarmSettingsService } from "./swarm-settings-service.js";
@@ -1112,6 +1117,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly modelChangeStartupRecoveryCoordinator: ModelChangeStartupRecoveryCoordinator;
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly pendingProjectExecutableTrustPromptsByKey = new Set<string>();
+  private readonly deferredProjectExecutableTrustActivationsByKey = new Map<string, {
+    trustKey: string;
+    preActivationPlan: ProjectExecutableTrustPlan;
+    pendingManagerIds: Set<string>;
+    protectAllRuntimeCreations: boolean;
+  }>();
+  private readonly pendingProjectExecutableTrustActivationByManagerId = new Map<string, string>();
+  private readonly pendingProjectExecutableWorkerInvalidationByManagerId = new Map<string, string>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
@@ -2251,8 +2264,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         currentDismissed?.signature !== currentResolution.signature;
       if (!promptStillCurrent) return;
       if (selected === "trust") {
-        await settingsStore.setTrust(resolution.trust.key, "trust");
-        await this.markProjectExecutableTrustActivationPending(resolution.trust.key);
+        const preActivationPlan = buildProjectExecutableTrustPlan({ resolution, cwd: descriptor.cwd });
+        this.beginDeferredProjectExecutableTrustActivation(resolution.trust.key, preActivationPlan);
+        let trustWritten = false;
+        try {
+          await settingsStore.setTrust(resolution.trust.key, "trust");
+          trustWritten = true;
+          await this.markProjectExecutableTrustActivationPending(resolution.trust.key, preActivationPlan);
+        } catch (error) {
+          if (!trustWritten) {
+            this.clearDeferredProjectExecutableTrustActivationForKey(resolution.trust.key);
+          }
+          throw error;
+        }
       } else if (selected === "block") {
         await settingsStore.setTrust(resolution.trust.key, "block");
       } else if (selected === "manage_later") {
@@ -2265,32 +2289,129 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async applyProjectResourceTrustChange(trustKey: string): Promise<void> {
     this.pendingProjectExecutableTrustPromptsByKey.delete(trustKey);
+    this.clearDeferredProjectExecutableTrustActivationForKey(trustKey);
     await this.applyProjectResourceRuntimeBoundaryChange(async (resolution) => resolution.trust.key === trustKey);
   }
 
   async applyProjectResourceWorkspaceChange(workspaceKey: string): Promise<void> {
+    this.clearAllDeferredProjectExecutableTrustActivations();
     await this.applyProjectResourceRuntimeBoundaryChange(async (resolution) => resolution.workspaceKey === workspaceKey);
   }
 
-  private async markProjectExecutableTrustActivationPending(trustKey: string): Promise<void> {
+  private beginDeferredProjectExecutableTrustActivation(
+    trustKey: string,
+    preActivationPlan: ProjectExecutableTrustPlan
+  ): void {
+    const existing = this.deferredProjectExecutableTrustActivationsByKey.get(trustKey);
+    if (existing) {
+      existing.preActivationPlan = preActivationPlan;
+      existing.protectAllRuntimeCreations = true;
+      this.forgeExtensionHost.setDeferredProjectExecutableTrustPlan(trustKey, preActivationPlan);
+      return;
+    }
+
+    this.deferredProjectExecutableTrustActivationsByKey.set(trustKey, {
+      trustKey,
+      preActivationPlan,
+      pendingManagerIds: new Set(),
+      protectAllRuntimeCreations: true
+    });
+    this.forgeExtensionHost.setDeferredProjectExecutableTrustPlan(trustKey, preActivationPlan);
+  }
+
+  private clearDeferredProjectExecutableTrustActivationForKey(trustKey: string): void {
+    this.deferredProjectExecutableTrustActivationsByKey.delete(trustKey);
+    this.forgeExtensionHost.clearDeferredProjectExecutableTrustPlan(trustKey);
+
+    for (const [managerId, pendingTrustKey] of Array.from(this.pendingProjectExecutableTrustActivationByManagerId.entries())) {
+      if (pendingTrustKey === trustKey) {
+        this.pendingProjectExecutableTrustActivationByManagerId.delete(managerId);
+        if (this.runtimeRecoveryState.getPendingManagerRuntimeRecycleReason(managerId) === "project_resource_trust_change") {
+          this.runtimeRecoveryState.clearPendingManagerRuntimeRecycle(managerId);
+        }
+      }
+    }
+
+    for (const [managerId, pendingTrustKey] of Array.from(this.pendingProjectExecutableWorkerInvalidationByManagerId.entries())) {
+      if (pendingTrustKey === trustKey) {
+        this.pendingProjectExecutableWorkerInvalidationByManagerId.delete(managerId);
+      }
+    }
+  }
+
+  private clearAllDeferredProjectExecutableTrustActivations(): void {
+    this.deferredProjectExecutableTrustActivationsByKey.clear();
+    this.pendingProjectExecutableTrustActivationByManagerId.clear();
+    this.pendingProjectExecutableWorkerInvalidationByManagerId.clear();
+    this.forgeExtensionHost.clearAllDeferredProjectExecutableTrustPlans();
+  }
+
+  private setPendingProjectExecutableTrustActivationForManager(managerId: string, trustKey: string): void {
+    this.pendingProjectExecutableTrustActivationByManagerId.set(managerId, trustKey);
+    this.pendingProjectExecutableWorkerInvalidationByManagerId.set(managerId, trustKey);
+    this.deferredProjectExecutableTrustActivationsByKey.get(trustKey)?.pendingManagerIds.add(managerId);
+  }
+
+  private clearPendingProjectExecutableTrustActivationForManager(managerId: string): void {
+    const trustKey = this.pendingProjectExecutableTrustActivationByManagerId.get(managerId);
+    if (!trustKey) return;
+
+    this.pendingProjectExecutableTrustActivationByManagerId.delete(managerId);
+    const activation = this.deferredProjectExecutableTrustActivationsByKey.get(trustKey);
+    activation?.pendingManagerIds.delete(managerId);
+    if (activation && activation.pendingManagerIds.size === 0) {
+      this.deferredProjectExecutableTrustActivationsByKey.delete(trustKey);
+      this.forgeExtensionHost.clearDeferredProjectExecutableTrustPlan(trustKey);
+    }
+  }
+
+  private async markProjectExecutableTrustActivationPending(
+    trustKey: string,
+    preActivationPlan: ProjectExecutableTrustPlan
+  ): Promise<void> {
     // Trust prompts only appear while repository executable resources are still inactive, so
     // accepting trust here can be deferred safely until the current runtime reaches an idle
-    // boundary instead of interrupting an in-flight user turn.
+    // boundary instead of interrupting an in-flight user turn. While pending, new manager/worker
+    // runtime creations continue using the pre-activation executable trust plan.
+    this.beginDeferredProjectExecutableTrustActivation(trustKey, preActivationPlan);
     const settingsStore = new ProjectResourceSettingsStore(this.config.paths.dataDir);
     const resolver = new ProjectWorkspaceResolver({
       dataDir: this.config.paths.dataDir,
       settingsStore
     });
 
+    const activation = this.deferredProjectExecutableTrustActivationsByKey.get(trustKey);
+    if (activation) {
+      activation.protectAllRuntimeCreations = true;
+    }
+
     for (const descriptor of this.descriptors.values()) {
       if (descriptor.role !== "manager" || descriptor.collab) continue;
-      const resolution = await resolver.resolve({
-        profileId: descriptor.profileId ?? descriptor.agentId,
-        sessionAgentId: descriptor.agentId,
-        cwd: descriptor.cwd
-      });
-      if (resolution.trust.key !== trustKey) continue;
-      this.runtimeRecoveryState.setPendingManagerRuntimeRecycle(descriptor.agentId, "project_resource_trust_change");
+      try {
+        const resolution = await resolver.resolve({
+          profileId: descriptor.profileId ?? descriptor.agentId,
+          sessionAgentId: descriptor.agentId,
+          cwd: descriptor.cwd
+        });
+        if (resolution.trust.key !== trustKey) continue;
+        this.runtimeRecoveryState.setPendingManagerRuntimeRecycle(descriptor.agentId, "project_resource_trust_change");
+        this.setPendingProjectExecutableTrustActivationForManager(descriptor.agentId, trustKey);
+      } catch (error) {
+        this.logDebug("project_resources:trust_activation:resolve_error", {
+          agentId: descriptor.agentId,
+          trustKey,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const markedActivation = this.deferredProjectExecutableTrustActivationsByKey.get(trustKey);
+    if (markedActivation) {
+      markedActivation.protectAllRuntimeCreations = false;
+      if (markedActivation.pendingManagerIds.size === 0) {
+        this.deferredProjectExecutableTrustActivationsByKey.delete(trustKey);
+        this.forgeExtensionHost.clearDeferredProjectExecutableTrustPlan(trustKey);
+      }
     }
   }
 
@@ -2732,6 +2853,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async resumeSession(agentId: string): Promise<void> {
     const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions");
     this.assertDescriptorNotEffectivelyArchived(descriptor);
+    await this.applyPendingManagerRuntimeRecycleBeforeRuntimeUse(descriptor as AgentDescriptor & { role: "manager" });
     await this.lifecycleService.resumeSession(agentId);
   }
 
@@ -3249,7 +3371,60 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentId: string,
     reason: ManagerRuntimeRecycleReason
   ): Promise<"recycled" | "deferred" | "none"> {
-    return this.lifecycleService.applyManagerRuntimeRecyclePolicy(agentId, reason);
+    const disposition = await this.lifecycleService.applyManagerRuntimeRecyclePolicy(agentId, reason);
+    if (disposition !== "deferred") {
+      const finalized = await this.finalizePendingProjectExecutableTrustActivationBoundary(agentId);
+      if (finalized) {
+        await this.saveStore();
+        this.emitAgentsSnapshot();
+      }
+    }
+    return disposition;
+  }
+
+  private async applyPendingManagerRuntimeRecycleBeforeRuntimeUse(
+    descriptor: AgentDescriptor & { role: "manager" }
+  ): Promise<void> {
+    if (!this.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(descriptor.agentId)) {
+      return;
+    }
+
+    await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
+  }
+
+  private async finalizePendingProjectExecutableTrustActivationBoundary(agentId: string): Promise<boolean> {
+    const hadPendingActivation = this.pendingProjectExecutableTrustActivationByManagerId.has(agentId);
+    const workersInvalidated = await this.invalidatePendingProjectExecutableTrustWorkers(agentId);
+    if (hadPendingActivation) {
+      this.clearPendingProjectExecutableTrustActivationForManager(agentId);
+    }
+    return hadPendingActivation || workersInvalidated;
+  }
+
+  private async invalidatePendingProjectExecutableTrustWorkers(agentId: string): Promise<boolean> {
+    const trustKey = this.pendingProjectExecutableWorkerInvalidationByManagerId.get(agentId);
+    if (!trustKey) {
+      return false;
+    }
+
+    const workers = Array.from(this.descriptors.values()).filter(
+      (descriptor) => descriptor.role === "worker" && descriptor.managerId === agentId
+    );
+    if (workers.length === 0) {
+      this.pendingProjectExecutableWorkerInvalidationByManagerId.delete(agentId);
+      return false;
+    }
+
+    const workerResults = await Promise.allSettled(
+      workers.map((worker) => this.terminateDescriptor(worker, { abort: true, emitStatus: true }))
+    );
+    this.logProjectTrustPropagationFailures(workers, workerResults, [], []);
+
+    if (workerResults.every((result) => result.status === "fulfilled")) {
+      this.pendingProjectExecutableWorkerInvalidationByManagerId.delete(agentId);
+    }
+
+    return workerResults.some((result) => result.status === "fulfilled");
   }
 
   async previewManagerSystemPrompt(profileId: string): Promise<PromptPreviewResponse> {
@@ -5876,6 +6051,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
     this.assertDescriptorNotEffectivelyArchived(descriptor);
+    if (descriptor.role === "manager") {
+      await this.applyPendingManagerRuntimeRecycleBeforeRuntimeUse(descriptor as AgentDescriptor & { role: "manager" });
+    }
     await this.preflightRepoProjectAgentRuntime(descriptor);
     return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor);
   }
@@ -6437,6 +6615,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options: { abort: boolean; emitStatus: boolean }
   ): Promise<void> {
     await this.lifecycleService.terminateDescriptor(descriptor, options);
+    if (descriptor.role === "manager") {
+      this.clearPendingProjectExecutableTrustActivationForManager(descriptor.agentId);
+      this.pendingProjectExecutableWorkerInvalidationByManagerId.delete(descriptor.agentId);
+    }
   }
 
   protected async getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
@@ -6465,6 +6647,48 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     return this.runtimeController.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
+  }
+
+  protected async resolveProjectExecutableTrustPlanForRuntime(options: {
+    descriptor: AgentDescriptor;
+    sessionDescriptor?: AgentDescriptor;
+  }): Promise<ProjectExecutableTrustPlan> {
+    let plan: ProjectExecutableTrustPlan;
+    try {
+      plan = await resolveProjectExecutableTrustPlan({
+        config: this.config,
+        descriptor: options.descriptor,
+        sessionDescriptor: options.sessionDescriptor
+      });
+    } catch (error) {
+      this.logDebug("project_resources:runtime_trust_plan:error", {
+        agentId: options.descriptor.agentId,
+        role: options.descriptor.role,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return {
+        trusted: false,
+        trustedForgeExtensionDirs: [],
+        trustedPiExtensionDirs: [],
+        trustedPiSettingsPaths: []
+      };
+    }
+
+    const trustKey = plan.resolution?.trust.key;
+    const activation = trustKey
+      ? this.deferredProjectExecutableTrustActivationsByKey.get(trustKey)
+      : undefined;
+    if (!activation) {
+      return plan;
+    }
+
+    const managerId = options.descriptor.role === "manager"
+      ? options.descriptor.agentId
+      : options.sessionDescriptor?.agentId ?? options.descriptor.managerId;
+    const managerHasPendingActivation = this.pendingProjectExecutableTrustActivationByManagerId.get(managerId) === trustKey;
+    return activation.protectAllRuntimeCreations || managerHasPendingActivation
+      ? activation.preActivationPlan
+      : plan;
   }
 
   private allocateRuntimeToken(agentId: string): number {

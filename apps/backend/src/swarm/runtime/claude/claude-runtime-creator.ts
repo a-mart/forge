@@ -3,6 +3,7 @@ import { ClaudeAuthResolver } from "../../claude-auth-resolver.js";
 import { createClaudeMcpToolBridge } from "../../claude-mcp-tool-bridge.js";
 import type { ForgeExtensionHost } from "../../forge-extension-host.js";
 import { modelCatalogService } from "../../model-catalog-service.js";
+import type { ProjectExecutableTrustPlan } from "../../project-executable-trust.js";
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
@@ -31,6 +32,10 @@ interface ClaudeRuntimeCreatorDependencies {
     additionalSkillPaths: string[];
     skillMetadata: SkillMetadata[];
   }>;
+  resolveProjectExecutableTrustPlan: (options: {
+    descriptor: AgentDescriptor;
+    sessionDescriptor?: AgentDescriptor;
+  }) => Promise<ProjectExecutableTrustPlan>;
   buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   callbacks: {
     onStatusChange: (
@@ -57,11 +62,16 @@ export class ClaudeRuntimeCreator {
     creationOptions?: RuntimeCreationOptions;
   }): Promise<SwarmAgentRuntime> {
     const { descriptor, systemPrompt, runtimeToken, sessionDescriptor, creationOptions } = options;
+    const projectExecutableTrustPlan = await this.deps.resolveProjectExecutableTrustPlan({
+      descriptor,
+      sessionDescriptor
+    });
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
       sessionDescriptor,
       runtimeType: "claude",
-      runtimeToken
+      runtimeToken,
+      projectExecutableTrustPlan
     });
     const { swarmTools } = planRuntimeTools({
       host: this.deps.host,

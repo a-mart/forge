@@ -559,6 +559,100 @@ describe('SwarmManager', () => {
     expect(manager.listAgents().find((agent) => agent.agentId === session.agentId)?.status).not.toBe('terminated')
   })
 
+  it('keeps in-flight first manager runtime creation on the pre-acceptance trust policy', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await mkdir(join(config.defaultCwd, '.forge', 'extensions'), { recursive: true })
+    await writeFile(join(config.defaultCwd, '.forge', 'extensions', 'repo.ts'), 'export default () => {}\n', 'utf8')
+    const session = manager.listAgents().find((agent) => agent.role === 'manager' && agent.agentId === 'manager')!
+    const existing = manager.runtimeByAgentId.get(session.agentId)
+    if (existing) {
+      await existing.terminate({ abort: true })
+      ;(manager as unknown as { runtimes: Map<string, unknown> }).runtimes.delete(session.agentId)
+    }
+
+    const settingsStore = new ProjectResourceSettingsStore(config.paths.dataDir)
+    const trustKey = await realpath(join(config.defaultCwd, '.forge'))
+    const choiceService = (manager as unknown as {
+      choiceService: { requestUserChoice: (agentId: string, questions: unknown[]) => Promise<Array<{ questionId: string; selectedOptionIds: string[] }>> }
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
+    })
+
+    let releaseCreation!: () => void
+    let markCreationStarted!: () => void
+    const creationGate = new Promise<void>((resolve) => { releaseCreation = resolve })
+    const creationStarted = new Promise<void>((resolve) => { markCreationStarted = resolve })
+    manager.onCreateRuntime = async ({ descriptor, creationCount }) => {
+      if (descriptor.agentId === session.agentId && creationCount === 2) {
+        markCreationStarted()
+        await creationGate
+      }
+    }
+
+    vi.spyOn(choiceService.choiceService, 'requestUserChoice').mockImplementation(async () => {
+      await creationStarted
+      return [{ questionId: 'repo_executable_trust', selectedOptionIds: ['trust'] }]
+    })
+
+    const firstTurn = manager.handleUserMessage('create runtime while trust is being accepted', { targetAgentId: session.agentId })
+    await creationStarted
+    await vi.waitFor(async () => {
+      expect((await settingsStore.getTrust(trustKey))?.state).toBe('trusted')
+      expect(choiceService.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(session.agentId)).toBe(true)
+    })
+    releaseCreation()
+
+    await expect(firstTurn).resolves.toBeUndefined()
+    expect(manager.runtimeProjectExecutableTrustPlanByAgentId.get(session.agentId)?.trusted).toBe(false)
+
+    await manager.handleUserMessage('next turn may use trusted executables', { targetAgentId: session.agentId })
+    expect(manager.runtimeProjectExecutableTrustPlanByAgentId.get(session.agentId)?.trusted).toBe(true)
+  })
+
+  it('applies pending prompt trust recycle before project-agent delivery uses an idle manager runtime', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Prompt Trust Project Agent' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      handle: 'prompt-trust-agent',
+      whenToUse: 'Use for trust boundary testing',
+      systemPrompt: 'Handle trust boundary test messages.',
+    })
+    await manager.handleUserMessage('Attach project agent runtime before trust prompt', { targetAgentId: sessionAgent.agentId })
+    await mkdir(join(config.defaultCwd, '.forge', 'extensions'), { recursive: true })
+    await writeFile(join(config.defaultCwd, '.forge', 'extensions', 'repo.ts'), 'export default () => {}\n', 'utf8')
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+
+    const targetRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    expect(targetRuntime).toBeDefined()
+
+    const choiceService = (manager as unknown as {
+      choiceService: { requestUserChoice: (agentId: string, questions: unknown[]) => Promise<Array<{ questionId: string; selectedOptionIds: string[] }>> }
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
+    })
+    vi.spyOn(choiceService.choiceService, 'requestUserChoice').mockResolvedValue([
+      { questionId: 'repo_executable_trust', selectedOptionIds: ['trust'] },
+    ])
+
+    await (manager as unknown as {
+      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
+    }).maybePromptForProjectExecutableTrust(sessionAgent as AgentDescriptor & { role: 'manager' })
+
+    expect(choiceService.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
+
+    await manager.sendMessage(rootSession.agentId, sessionAgent.agentId, 'internal delivery after trust')
+
+    expect(targetRuntime?.recycleCalls).toBe(1)
+    const replacementRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    expect(replacementRuntime).toBeDefined()
+    expect(replacementRuntime).not.toBe(targetRuntime)
+    expect(replacementRuntime?.sendCalls.at(-1)?.message).toContain('internal delivery after trust')
+    expect(manager.runtimeProjectExecutableTrustPlanByAgentId.get(sessionAgent.agentId)?.trusted).toBe(true)
+  })
+
   it('does not drop the current user turn when repo trust is accepted from the prompt mid-turn', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -582,6 +676,10 @@ describe('SwarmManager', () => {
     if (!descriptor || descriptor.role !== 'manager' || !runtime) {
       throw new Error('Expected manager session runtime to exist')
     }
+
+    const worker = await manager.spawnAgent(session.agentId, { agentId: 'Prompt Trust Worker' })
+    const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(workerRuntime).toBeDefined()
 
     let releaseSend!: () => void
     let markSendStarted!: () => void
@@ -617,11 +715,20 @@ describe('SwarmManager', () => {
     expect(runtime.terminateCalls).toHaveLength(0)
     expect(runtime.shutdownForReplacementCalls).toHaveLength(0)
     expect(runtime.recycleCalls).toBe(0)
+    expect(manager.listAgents().find((agent) => agent.agentId === worker.agentId)?.status).toBe('idle')
+
+    const workerCreatedWhilePending = await manager.spawnAgent(session.agentId, { agentId: 'Prompt Trust Pending Worker' })
+    const pendingWorkerRuntime = manager.runtimeByAgentId.get(workerCreatedWhilePending.agentId)
+    expect(manager.runtimeProjectExecutableTrustPlanByAgentId.get(workerCreatedWhilePending.agentId)?.trusted).toBe(false)
 
     await manager.handleUserMessage('next turn picks up trust', { targetAgentId: session.agentId })
 
     expect(runtime.recycleCalls).toBe(1)
     expect(manager.runtimeByAgentId.get(session.agentId)).not.toBe(runtime)
+    expect(manager.listAgents().find((agent) => agent.agentId === worker.agentId)?.status).toBe('terminated')
+    expect(manager.listAgents().find((agent) => agent.agentId === workerCreatedWhilePending.agentId)?.status).toBe('terminated')
+    expect(workerRuntime?.terminateCalls).toEqual([expect.objectContaining({ abort: true })])
+    expect(pendingWorkerRuntime?.terminateCalls).toEqual([expect.objectContaining({ abort: true })])
   })
 
   it('creates secondary managers and deletes them with owned worker cascade', async () => {

@@ -8,6 +8,7 @@ import type {
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
 } from '../swarm/runtime-contracts.js'
+import type { ProjectExecutableTrustPlan } from '../swarm/project-executable-trust.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -173,6 +174,7 @@ export class TestSwarmManager extends SwarmManager {
   readonly createdRuntimeIds: string[] = []
   readonly runtimeCreationCountByAgentId = new Map<string, number>()
   readonly runtimeCreationOptionsByAgentId = new Map<string, RuntimeCreationOptions | undefined>()
+  readonly runtimeProjectExecutableTrustPlanByAgentId = new Map<string, ProjectExecutableTrustPlan>()
   readonly systemPromptByAgentId = new Map<string, string>()
   readonly publishedToUserCalls: Array<{
     agentId: string
@@ -229,9 +231,17 @@ export class TestSwarmManager extends SwarmManager {
 
     this.runtimeCreationCountByAgentId.set(descriptor.agentId, creationCount)
     await this.onCreateRuntime?.({ descriptor, runtime, creationCount, runtimeToken })
+    const sessionDescriptor = descriptor.role === 'worker'
+      ? this.getAgentForInternalUse(descriptor.managerId)
+      : descriptor
+    const trustPlan = await this.resolveProjectExecutableTrustPlanForRuntime({
+      descriptor,
+      sessionDescriptor,
+    })
     this.createdRuntimeIds.push(descriptor.agentId)
     this.runtimeByAgentId.set(descriptor.agentId, runtime)
     this.runtimeCreationOptionsByAgentId.set(descriptor.agentId, options)
+    this.runtimeProjectExecutableTrustPlanByAgentId.set(descriptor.agentId, trustPlan)
     this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
 
     return runtime

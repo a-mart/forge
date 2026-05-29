@@ -328,6 +328,12 @@ function createFactory(
       skillMetadata: [],
     })),
     getSwarmContextFiles: async () => [],
+    resolveProjectExecutableTrustPlan: async () => ({
+      trusted: false,
+      trustedForgeExtensionDirs: [],
+      trustedPiExtensionDirs: [],
+      trustedPiSettingsPaths: [],
+    }),
     buildClaudeRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
     buildCursorSdkRuntimeSystemPrompt:
       overrides.buildCursorSdkRuntimeSystemPrompt ?? (async (_descriptor, systemPrompt) => systemPrompt),

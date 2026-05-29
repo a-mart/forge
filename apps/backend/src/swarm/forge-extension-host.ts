@@ -5,7 +5,7 @@ import type {
   ForgeSettingsExtensionsPayload
 } from "@forge/protocol";
 import { getGlobalForgeExtensionsDir, getProfilesDir } from "./data-paths.js";
-import { buildProjectExecutableTrustPlan } from "./project-executable-trust.js";
+import { buildProjectExecutableTrustPlan, type ProjectExecutableTrustPlan } from "./project-executable-trust.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import { discoverForgeExtensions, listForgeProfileIdsOnDisk } from "./forge-extension-discovery.js";
@@ -56,6 +56,7 @@ export class ForgeExtensionHost {
   private readonly version: string;
   private readonly activeRuntimeBindingsByToken = new Map<string, ForgePreparedRuntimeBindings>();
   private readonly runtimeSnapshotsByToken = new Map<string, ForgeRuntimeExtensionSnapshot>();
+  private readonly deferredProjectExecutableTrustPlansByKey = new Map<string, ProjectExecutableTrustPlan>();
   private readonly recentErrors: ForgeDiagnosticErrorRecord[] = [];
   private readonly projectWorkspaceResolver: ProjectWorkspaceResolver;
 
@@ -101,6 +102,18 @@ export class ForgeExtensionHost {
     };
   }
 
+  setDeferredProjectExecutableTrustPlan(trustKey: string, plan: ProjectExecutableTrustPlan): void {
+    this.deferredProjectExecutableTrustPlansByKey.set(trustKey, plan);
+  }
+
+  clearDeferredProjectExecutableTrustPlan(trustKey: string): void {
+    this.deferredProjectExecutableTrustPlansByKey.delete(trustKey);
+  }
+
+  clearAllDeferredProjectExecutableTrustPlans(): void {
+    this.deferredProjectExecutableTrustPlansByKey.clear();
+  }
+
   recordDiagnosticError(error: Omit<ForgeDiagnosticErrorRecord, "timestamp"> & { timestamp?: string }): void {
     this.recentErrors.unshift({
       ...error,
@@ -117,6 +130,7 @@ export class ForgeExtensionHost {
     sessionDescriptor?: AgentDescriptor;
     runtimeType: ForgeRuntimeType;
     runtimeToken: number;
+    projectExecutableTrustPlan?: ProjectExecutableTrustPlan;
   }): Promise<ForgePreparedRuntimeBindings | null> {
     const runtimeContext = {
       agent: this.buildAgentSnapshot(options.descriptor),
@@ -130,7 +144,8 @@ export class ForgeExtensionHost {
     const projectLocalExtensionsDirs = await this.resolveTrustedProjectForgeExtensionDirs({
       profileId: runtimeContext.session.profileId,
       sessionAgentId: runtimeContext.session.sessionAgentId,
-      cwd: runtimeContext.session.cwd
+      cwd: runtimeContext.session.cwd,
+      trustPlan: options.projectExecutableTrustPlan
     });
     const discovered = await discoverForgeExtensions({
       dataDir: this.dataDir,
@@ -749,7 +764,11 @@ export class ForgeExtensionHost {
     profileId?: string;
     sessionAgentId?: string;
     cwd?: string;
+    trustPlan?: ProjectExecutableTrustPlan;
   }): Promise<string[]> {
+    if (options.trustPlan) {
+      return options.trustPlan.trustedForgeExtensionDirs;
+    }
     if (!options.cwd) {
       return [];
     }
@@ -759,7 +778,10 @@ export class ForgeExtensionHost {
         sessionAgentId: options.sessionAgentId ?? options.profileId ?? "settings",
         cwd: options.cwd
       });
-      return buildProjectExecutableTrustPlan({ resolution, cwd: options.cwd }).trustedForgeExtensionDirs;
+      const deferredPlan = resolution.trust.key
+        ? this.deferredProjectExecutableTrustPlansByKey.get(resolution.trust.key)
+        : undefined;
+      return (deferredPlan ?? buildProjectExecutableTrustPlan({ resolution, cwd: options.cwd })).trustedForgeExtensionDirs;
     } catch (error) {
       this.recordDiagnosticError({
         phase: "discover",

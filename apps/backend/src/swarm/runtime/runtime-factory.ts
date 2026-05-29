@@ -2,6 +2,7 @@ import { type AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
+import type { ProjectExecutableTrustPlan } from "../project-executable-trust.js";
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
@@ -39,6 +40,10 @@ interface RuntimeFactoryDependencies {
     skillMetadata: SkillMetadata[];
   }>;
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
+  resolveProjectExecutableTrustPlan: (options: {
+    descriptor: AgentDescriptor;
+    sessionDescriptor?: AgentDescriptor;
+  }) => Promise<ProjectExecutableTrustPlan>;
   buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   buildCursorSdkRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   mergeRuntimeContextFiles: (

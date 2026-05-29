@@ -30,7 +30,7 @@ import {
   buildProjectSafePiProjectSettingsStorage,
   filterUntrustedProjectPiExtensions,
   pathExistsSync,
-  resolveProjectExecutableTrustPlan
+  type ProjectExecutableTrustPlan
 } from "../../project-executable-trust.js";
 import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
@@ -62,6 +62,10 @@ interface PiRuntimeCreatorDependencies {
     skillMetadata: SkillMetadata[];
   }>;
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
+  resolveProjectExecutableTrustPlan: (options: {
+    descriptor: AgentDescriptor;
+    sessionDescriptor?: AgentDescriptor;
+  }) => Promise<ProjectExecutableTrustPlan>;
   mergeRuntimeContextFiles: (
     baseAgentsFiles: Array<{ path: string; content: string }>,
     options: {
@@ -99,11 +103,16 @@ export class PiRuntimeCreator {
     creationOptions?: RuntimeCreationOptions;
   }): Promise<SwarmAgentRuntime> {
     const { descriptor, systemPrompt, runtimeToken, sessionDescriptor, creationOptions } = options;
+    const projectExecutableTrustPlan = await this.deps.resolveProjectExecutableTrustPlan({
+      descriptor,
+      sessionDescriptor
+    });
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
       sessionDescriptor,
       runtimeType: "pi",
-      runtimeToken
+      runtimeToken,
+      projectExecutableTrustPlan
     });
     const { baseSwarmTools, swarmTools } = planRuntimeTools({
       host: this.deps.host,
@@ -114,11 +123,6 @@ export class PiRuntimeCreator {
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
     const pathsPlan = planRuntimeResourcePaths({ config: this.deps.config, descriptor });
     const runtimeAgentDir = pathsPlan.runtimeAgentDir;
-    const projectExecutableTrustPlan = await resolveProjectExecutableTrustPlan({
-      config: this.deps.config,
-      descriptor,
-      sessionDescriptor
-    });
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const promptPlan = planPiRuntimePrompt({
       descriptor,

@@ -1,6 +1,7 @@
 import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import { createForgeBindingToken } from "./forge-extension-types.js";
+import type { ProjectExecutableTrustPlan } from "./project-executable-trust.js";
 import type { CredentialPoolService } from "./credential-pool.js";
 import type { SkillMetadata } from "./skills/skill-metadata-service.js";
 import type {
@@ -87,6 +88,10 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     skillMetadata: SkillMetadata[];
   }>;
   getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>>;
+  resolveProjectExecutableTrustPlanForRuntime(options: {
+    descriptor: AgentDescriptor;
+    sessionDescriptor?: AgentDescriptor;
+  }): Promise<ProjectExecutableTrustPlan>;
   resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string>;
   injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string;
   resolveSpecialistRosterForProfile(profileId: string): Promise<ResolvedSpecialistDefinitionLike[]>;
@@ -204,6 +209,8 @@ export class SwarmRuntimeController {
       },
       getMemoryRuntimeResources: async (descriptor) => this.host.getMemoryRuntimeResources(descriptor),
       getSwarmContextFiles: async (cwd) => this.host.getSwarmContextFiles(cwd),
+      resolveProjectExecutableTrustPlan: async (options) =>
+        this.host.resolveProjectExecutableTrustPlanForRuntime(options),
       buildClaudeRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
         this.host.promptService.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),
       buildCursorSdkRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
