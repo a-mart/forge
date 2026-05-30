@@ -1463,6 +1463,7 @@ export function BuilderSurface({
                   onArtifactClick: handleOpenArtifact,
                   onForkFromMessage: activeAgentId ? handleForkFromMessage : undefined,
                   onPinMessage: isActiveManager && activeAgentId ? handlePinMessage : undefined,
+                  onStopExternalThread: handleStopSession,
                   getVote: feedbackProfileId ? getVote : undefined,
                   hasComment: feedbackProfileId ? hasComment : undefined,
                   onFeedbackVote: feedbackProfileId ? submitVote : undefined,

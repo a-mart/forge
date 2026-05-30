@@ -81,6 +81,8 @@ interface ConversationMessageRowProps {
   onArtifactClick?: (artifact: ArtifactReference) => void
   onForkFromMessage?: (messageId: string) => void
   onPinMessage?: (messageId: string, pinned: boolean) => void
+  onStopExternalThread?: (sidecarAgentId: string) => void
+  canStopExternalThread?: boolean
   feedbackVote?: 'up' | 'down' | null
   feedbackHasComment?: boolean
   onFeedbackVote?: (
@@ -115,6 +117,8 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   onArtifactClick,
   onForkFromMessage,
   onPinMessage,
+  onStopExternalThread,
+  canStopExternalThread,
   feedbackVote,
   feedbackHasComment,
   onFeedbackVote,
@@ -154,11 +158,17 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   }
 
   if (externalThreadContext) {
+    const sidecarAgentId = externalThreadContext.sidecarAgentId?.trim() ?? ''
+    const stopDisabled =
+      !onStopExternalThread || sidecarAgentId.length === 0 || canStopExternalThread !== true
+
     return (
       <ExternalThreadContextCard
         context={externalThreadContext}
         text={normalizedText}
         timestampLabel={timestampLabel}
+        onStop={() => onStopExternalThread?.(sidecarAgentId)}
+        stopDisabled={stopDisabled}
       />
     )
   }

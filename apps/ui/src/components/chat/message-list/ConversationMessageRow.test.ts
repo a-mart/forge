@@ -3,7 +3,7 @@
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationMessageEvent } from '@forge/protocol'
 import { ConversationMessageRow } from './ConversationMessageRow'
 
@@ -56,5 +56,59 @@ describe('ConversationMessageRow', () => {
     expect(container.querySelector('[data-external-thread-status="completed"]')).toBeTruthy()
     expect(container.textContent).toContain('Prompt: Summarize my calendar')
     expect(container.textContent).toContain('Result: You have two meetings today.')
+  })
+
+  it('forwards sidecar agent id to onStopExternalThread when stop is clicked', () => {
+    const onStopExternalThread = vi.fn()
+    const message = {
+      ...buildMessage(),
+      externalThreadContext: {
+        ...buildMessage().externalThreadContext!,
+        status: 'running' as const,
+      },
+    }
+
+    flushSync(() => {
+      root.render(
+        createElement(ConversationMessageRow, {
+          message,
+          onStopExternalThread,
+          canStopExternalThread: true,
+        }),
+      )
+    })
+
+    const stopButton = container.querySelector('button')
+    expect(stopButton?.disabled).toBe(false)
+    stopButton?.click()
+
+    expect(onStopExternalThread).toHaveBeenCalledTimes(1)
+    expect(onStopExternalThread).toHaveBeenCalledWith('manager-1--codex')
+  })
+
+  it('keeps stop disabled on stale historical sent cards', () => {
+    const onStopExternalThread = vi.fn()
+    const message = {
+      ...buildMessage(),
+      externalThreadContext: {
+        ...buildMessage().externalThreadContext!,
+        status: 'sent' as const,
+      },
+    }
+
+    flushSync(() => {
+      root.render(
+        createElement(ConversationMessageRow, {
+          message,
+          onStopExternalThread,
+          canStopExternalThread: false,
+        }),
+      )
+    })
+
+    const stopButton = container.querySelector('button')
+    expect(stopButton?.disabled).toBe(true)
+    stopButton?.click()
+    expect(onStopExternalThread).not.toHaveBeenCalled()
   })
 })

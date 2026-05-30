@@ -3,7 +3,7 @@
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExternalThreadMessageContext } from '@forge/protocol'
 import { ExternalThreadContextCard } from './ExternalThreadContextCard'
 
@@ -36,7 +36,13 @@ function buildContext(
   }
 }
 
-function renderCard(status: ExternalThreadMessageContext['status']) {
+function renderCard(
+  status: ExternalThreadMessageContext['status'],
+  options?: {
+    onStop?: () => void
+    stopDisabled?: boolean
+  },
+) {
   flushSync(() => {
     root.render(
       createElement(ExternalThreadContextCard, {
@@ -46,9 +52,15 @@ function renderCard(status: ExternalThreadMessageContext['status']) {
             ? 'Codex completed: You have two meetings today.'
             : 'Codex is running: Summarize my calendar',
         timestampLabel: status === 'completed' ? '10:30 AM' : undefined,
+        onStop: options?.onStop,
+        stopDisabled: options?.stopDisabled,
       }),
     )
   })
+}
+
+function getStopButton(): HTMLButtonElement | null {
+  return container.querySelector('button')
 }
 
 describe('ExternalThreadContextCard', () => {
@@ -61,10 +73,31 @@ describe('ExternalThreadContextCard', () => {
     expect(container.querySelector('[data-external-thread-status="completed"]')).toBeTruthy()
   })
 
-  it('shows disabled stop control while running', () => {
+  it('shows disabled stop control while running when stop is not wired', () => {
     renderCard('running')
 
     expect(container.textContent).toContain('Stop')
-    expect(container.querySelector('button[disabled]')).toBeTruthy()
+    expect(getStopButton()?.disabled).toBe(true)
+  })
+
+  it('enables stop control while running when handler is wired', () => {
+    renderCard('running', { onStop: vi.fn(), stopDisabled: false })
+
+    expect(getStopButton()?.disabled).toBe(false)
+  })
+
+  it('keeps stop control disabled when explicitly disabled', () => {
+    renderCard('running', { onStop: vi.fn(), stopDisabled: true })
+
+    expect(getStopButton()?.disabled).toBe(true)
+  })
+
+  it('calls onStop when enabled stop button is clicked', () => {
+    const onStop = vi.fn()
+    renderCard('sent', { onStop, stopDisabled: false })
+
+    getStopButton()?.click()
+
+    expect(onStop).toHaveBeenCalledTimes(1)
   })
 })
