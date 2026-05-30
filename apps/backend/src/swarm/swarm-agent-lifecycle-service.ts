@@ -41,6 +41,13 @@ import {
   isCollabSession
 } from "./swarm-manager-utils.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
+import {
+  assertForgeRuntimeEligibleDescriptor,
+  interruptExternalThreadWorkerDescriptor,
+  isExternalThreadDescriptor,
+  shouldPreserveExternalThreadWorkerOnSessionStop,
+  shouldInterruptExternalThreadSidecar,
+} from "./external-thread-compatibility.js";
 
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
@@ -265,6 +272,25 @@ export class SwarmAgentLifecycleService {
     this.options.runtimeRecoveryState.clearRecoveryAbortedWorkerTurn(agentId);
   }
 
+  private async interruptExternalThreadWorker(
+    descriptor: AgentDescriptor,
+    options: { abort: boolean; emitStatus: boolean }
+  ): Promise<void> {
+    this.clearWorkerTeardownState(descriptor.agentId);
+    interruptExternalThreadWorkerDescriptor(descriptor, {
+      abort: options.abort,
+      emitStatus: options.emitStatus,
+      now: this.options.now,
+      emitStatusEvent: (agentId, status, pendingCount) => {
+        this.options.emitStatus(agentId, status, pendingCount);
+      },
+      logDebug: (message, details) => {
+        this.options.logDebug(message, details);
+      },
+    });
+    this.upsertDescriptor(descriptor);
+  }
+
   private invalidateManagerRuntimeBeforeWorkerTeardown(
     agentId: string,
     options?: { allowManualStopMessageEnd?: boolean }
@@ -309,7 +335,7 @@ export class SwarmAgentLifecycleService {
     action: "terminate" | "stopInFlight",
     options?: RuntimeShutdownOptions
   ): Promise<void> {
-    if (descriptor.role !== "worker" || !this.options.runtimes.has(descriptor.agentId)) {
+    if (descriptor.role !== "worker" || isExternalThreadDescriptor(descriptor) || !this.options.runtimes.has(descriptor.agentId)) {
       return;
     }
 
@@ -651,7 +677,8 @@ export class SwarmAgentLifecycleService {
       managerId: manager.agentId
     });
 
-    this.options.emitStatus(targetAgentId, target.status, 0);
+    const refreshedTarget = this.options.descriptors.get(targetAgentId) ?? target;
+    this.options.emitStatus(targetAgentId, refreshedTarget.status, 0);
     this.options.emitAgentsSnapshot();
   }
 
@@ -659,6 +686,19 @@ export class SwarmAgentLifecycleService {
     const descriptor = this.options.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "worker") {
       throw new Error(`Unknown worker agent: ${agentId}`);
+    }
+
+    if (isExternalThreadDescriptor(descriptor)) {
+      if (!shouldInterruptExternalThreadSidecar(descriptor)) {
+        return;
+      }
+
+      await this.interruptExternalThreadWorker(descriptor, { abort: true, emitStatus: true });
+      await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
+      await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+      await this.options.saveStore();
+      this.options.emitAgentsSnapshot();
+      return;
     }
 
     this.clearWorkerTeardownState(agentId);
@@ -682,6 +722,10 @@ export class SwarmAgentLifecycleService {
     const descriptor = this.options.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "worker") {
       throw new Error(`Unknown worker agent: ${agentId}`);
+    }
+
+    if (isExternalThreadDescriptor(descriptor)) {
+      throw new Error(`External-thread sidecar does not use Forge runtime resume: ${agentId}`);
     }
 
     if (this.options.runtimes.has(agentId)) {
@@ -763,6 +807,17 @@ export class SwarmAgentLifecycleService {
       }
 
       if (descriptor.managerId !== targetManagerId) {
+        continue;
+      }
+
+      if (isExternalThreadDescriptor(descriptor)) {
+        if (!shouldInterruptExternalThreadSidecar(descriptor)) {
+          continue;
+        }
+
+        await this.interruptExternalThreadWorker(descriptor, { abort: true, emitStatus: true });
+        await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
+        stoppedWorkerIds.push(descriptor.agentId);
         continue;
       }
 
@@ -1069,10 +1124,16 @@ export class SwarmAgentLifecycleService {
   }
 
   shouldRestoreRuntimeForDescriptor(descriptor: AgentDescriptor): boolean {
+    if (isExternalThreadDescriptor(descriptor)) {
+      return false;
+    }
+
     return descriptor.status === "streaming";
   }
 
   async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
+    assertForgeRuntimeEligibleDescriptor(descriptor, "get or create runtime");
+
     const inFlightCreation = this.getRuntimeCreationPromise(descriptor.agentId);
     if (inFlightCreation) {
       return inFlightCreation;
@@ -1179,6 +1240,7 @@ export class SwarmAgentLifecycleService {
   ): Promise<{ terminatedWorkerIds: string[] }> {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
     const terminatedWorkerIds: string[] = [];
+    const interruptedWorkerIds: string[] = [];
     const runtime = this.options.runtimes.get(agentId);
     const shouldEmitManualStopNotice = (options.manualStopNotice ?? true) && !options.deleteWorkers;
     const shouldAllowManualStopMessageEnd =
@@ -1194,6 +1256,15 @@ export class SwarmAgentLifecycleService {
     });
 
     for (const workerDescriptor of this.options.getWorkersForManager(agentId)) {
+      if (shouldPreserveExternalThreadWorkerOnSessionStop(workerDescriptor, options.deleteWorkers)) {
+        if (shouldInterruptExternalThreadSidecar(workerDescriptor)) {
+          interruptedWorkerIds.push(workerDescriptor.agentId);
+          await this.interruptExternalThreadWorker(workerDescriptor, { abort: true, emitStatus: true });
+          await this.options.updateSessionMetaForWorkerDescriptor(workerDescriptor);
+        }
+        continue;
+      }
+
       terminatedWorkerIds.push(workerDescriptor.agentId);
       await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
       if (options.deleteWorkers) {
@@ -1216,7 +1287,7 @@ export class SwarmAgentLifecycleService {
     if (
       shouldEmitManualStopNotice &&
       !shouldAllowManualStopMessageEnd &&
-      (terminatedWorkerIds.length > 0 || runtime !== undefined)
+      (terminatedWorkerIds.length > 0 || interruptedWorkerIds.length > 0 || runtime !== undefined)
     ) {
       this.options.emitImmediateManualManagerStopNotice(agentId);
     }
@@ -1286,6 +1357,25 @@ export class SwarmAgentLifecycleService {
   ): Promise<void> {
     this.options.cancelAllPendingChoicesForAgent(descriptor.agentId);
 
+    if (isExternalThreadDescriptor(descriptor)) {
+      this.clearWorkerTeardownState(descriptor.agentId);
+      this.clearPendingManagerRuntimeRecycle(descriptor.agentId);
+
+      descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
+      descriptor.contextUsage = undefined;
+      descriptor.streamingStartedAt = undefined;
+      descriptor.updatedAt = this.options.now();
+      this.upsertDescriptor(descriptor);
+
+      await this.options.updateSessionMetaForWorkerDescriptor(descriptor);
+      await this.options.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+
+      if (options.emitStatus) {
+        this.options.emitStatus(descriptor.agentId, descriptor.status, 0);
+      }
+      return;
+    }
+
     if (descriptor.role === "worker") {
       this.clearWorkerTeardownState(descriptor.agentId);
       await this.shutdownWorkerRuntimeWithSuppressedCallbacks(descriptor, "terminate", { abort: options.abort });
@@ -1326,6 +1416,10 @@ export class SwarmAgentLifecycleService {
 
     for (const descriptor of this.options.descriptors.values()) {
       if (descriptor.role !== "worker" || descriptor.profileId !== profileId) {
+        continue;
+      }
+
+      if (isExternalThreadDescriptor(descriptor)) {
         continue;
       }
 

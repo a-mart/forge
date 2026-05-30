@@ -41,6 +41,7 @@ import type {
   MessageSourceContext,
   MessageTargetContext
 } from "./types.js";
+import { validateCodexExternalThreadModelInvariant } from "./external-threads.js";
 
 const VALID_PERSISTED_AGENT_ROLES = new Set(["manager", "worker"]);
 
@@ -422,6 +423,13 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
       normalizedExternalThread = sanitizeExternalThreadInfo(value.externalThread);
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
+    }
+
+    const modelInvariantError = validateCodexExternalThreadModelInvariant(
+      (value as unknown as AgentDescriptor).model
+    );
+    if (modelInvariantError) {
+      return modelInvariantError;
     }
   }
 

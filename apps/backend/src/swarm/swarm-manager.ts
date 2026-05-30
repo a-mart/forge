@@ -326,6 +326,11 @@ import {
   toRuntimeImageAttachments,
   validateAgentDescriptor
 } from "./swarm-manager-utils.js";
+import {
+  isExternalThreadDescriptor,
+  reconcilePersistedExternalThreadSidecarsForBoot,
+  shouldIncludeDescriptorInBootInterruptedToolReconciliation,
+} from "./external-thread-compatibility.js";
 
 export {
   analyzeLatestCortexCloseoutNeed,
@@ -1831,6 +1836,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.normalizeStreamingStatusesForBoot();
+    const reconciledExternalThreadSidecarIds = reconcilePersistedExternalThreadSidecarsForBoot({
+      descriptors: this.descriptors.values(),
+      now: this.now,
+      upsertDescriptor: (descriptor) => {
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+      },
+    });
+    if (reconciledExternalThreadSidecarIds.length > 0) {
+      this.logDebug("boot:reconcile_external_thread_sidecars", {
+        reconciledAgentIds: reconciledExternalThreadSidecarIds,
+      });
+    }
     await this.cortexService.recoverIncompleteReviewRunDispatchesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
 
@@ -6122,7 +6139,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const streamingAgentIds = new Set<string>();
 
     for (const descriptor of this.descriptors.values()) {
-      if (descriptor.status === "streaming") {
+      if (shouldIncludeDescriptorInBootInterruptedToolReconciliation(descriptor)) {
         streamingAgentIds.add(descriptor.agentId);
       }
     }
@@ -6134,7 +6151,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const normalizedAgentIds: string[] = [];
 
     for (const descriptor of this.descriptors.values()) {
-      if (descriptor.status !== "streaming") {
+      if (descriptor.status !== "streaming" || isExternalThreadDescriptor(descriptor)) {
         continue;
       }
 

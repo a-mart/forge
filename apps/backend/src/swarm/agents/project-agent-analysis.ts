@@ -1,6 +1,7 @@
 import { complete, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { normalizeProjectAgentInlineText } from "../project-agents.js";
 import type { ConversationEntryEvent, ConversationMessageEvent } from "../types.js";
+import { shouldExcludeConversationMessageFromModelContext } from "../external-threads.js";
 
 export interface ProjectAgentRecommendations {
   whenToUse: string;
@@ -193,6 +194,7 @@ function buildAnalysisUserPrompt(options: AnalyzeSessionForPromotionOptions): st
 function isTranscriptConversationMessage(entry: ConversationEntryEvent): entry is ConversationMessageEvent {
   return (
     entry.type === "conversation_message" &&
+    !shouldExcludeConversationMessageFromModelContext(entry) &&
     (entry.source === "user_input" || entry.source === "speak_to_user" || entry.source === "project_agent_input")
   );
 }

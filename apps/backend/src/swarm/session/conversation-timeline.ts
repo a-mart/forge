@@ -213,7 +213,8 @@ export async function copySessionHistoryForFork(options: CopySessionHistoryForFo
         continue;
       }
 
-      await targetHandle.write(`${line}\n`);
+      const forkLine = sanitizeForkSessionHistoryLine(line);
+      await targetHandle.write(`${forkLine}\n`);
 
       if (options.fromMessageId && isForkTargetConversationEntryLine(line, options.fromMessageId)) {
         foundForkPoint = true;
@@ -292,6 +293,41 @@ export function parseConversationMessageEntryLine(line: string): { id?: string }
   }
 
   return undefined;
+}
+
+function sanitizeForkSessionHistoryLine(line: string): string {
+  const trimmedLine = line.trim();
+  if (trimmedLine.length === 0) {
+    return line;
+  }
+
+  let parsedEntry: unknown;
+  try {
+    parsedEntry = JSON.parse(trimmedLine);
+  } catch {
+    return line;
+  }
+
+  if (!isRecordLike(parsedEntry) || parsedEntry.type !== "custom") {
+    return line;
+  }
+
+  const data = parsedEntry.data;
+  if (!isRecordLike(data) || data.type !== "conversation_message") {
+    return line;
+  }
+
+  if (data.externalThreadContext === undefined) {
+    return line;
+  }
+
+  const sanitizedData = { ...data };
+  delete sanitizedData.externalThreadContext;
+
+  return JSON.stringify({
+    ...parsedEntry,
+    data: sanitizedData,
+  });
 }
 
 function shouldCopySessionHistoryLineForFork(line: string, omittedCustomTypes: ReadonlySet<string>): boolean {

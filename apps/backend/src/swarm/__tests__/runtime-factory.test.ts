@@ -488,6 +488,28 @@ describe("RuntimeFactory", () => {
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
 
+  it("rejects external-thread sidecar descriptors before runtime provider dispatch", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir, {
+      role: "worker",
+      agentId: "mgr-1--codex",
+      model: {
+        provider: "codex-app-server",
+        modelId: "app-server",
+        thinkingLevel: "none",
+      },
+      externalThread: {
+        type: "codex_app_server",
+        persisted: true,
+        createdByMention: true,
+      },
+    });
+
+    await expect(factory.createRuntimeForDescriptor(descriptor, "prompt")).rejects.toThrow(/external-thread sidecar/);
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+  });
+
   it("strictly filters Pi runtime skills for collaboration descriptors", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });

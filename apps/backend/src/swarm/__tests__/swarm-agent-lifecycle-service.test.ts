@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAgentDescriptor, createWorkerDescriptor } from "../../test-support/index.js";
+import { createAgentDescriptor, createWorkerDescriptor, createCodexExternalThreadWorkerDescriptor } from "../../test-support/index.js";
 import {
   SwarmAgentLifecycleService,
   type SwarmAgentLifecycleServiceOptions
@@ -1714,5 +1714,313 @@ describe("SwarmAgentLifecycleService", () => {
 
     expect(createRuntimeForDescriptor).toHaveBeenCalledTimes(2);
     expect(spawned.model.modelId).toBe("gpt-5.4");
+  });
+
+  it("stopSession preserves Codex external-thread workers with idle status instead of terminated", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "streaming"
+    });
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1", {
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [codex.agentId, codex]
+    ]);
+
+    const runRuntimeShutdown = vi.fn(async () => ({ timedOut: false, runtimeToken: 1 }));
+    const deleteConversationHistory = vi.fn();
+    const updateSessionMetaForWorkerDescriptor = vi.fn(async () => {});
+    const refreshSessionMetaStatsBySessionId = vi.fn(async () => {});
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes: new Map(),
+        runRuntimeShutdown,
+        deleteConversationHistory,
+        updateSessionMetaForWorkerDescriptor,
+        refreshSessionMetaStatsBySessionId,
+        getWorkersForManager: vi.fn(() => [codex])
+      })
+    );
+
+    const { terminatedWorkerIds } = await svc.stopSession("m1");
+    expect(terminatedWorkerIds).toEqual([]);
+    expect(descriptors.has(codex.agentId)).toBe(true);
+    expect(codex.status).toBe("idle");
+    expect(runRuntimeShutdown).not.toHaveBeenCalled();
+    expect(deleteConversationHistory).not.toHaveBeenCalled();
+    expect(updateSessionMetaForWorkerDescriptor).toHaveBeenCalledWith(codex);
+    expect(refreshSessionMetaStatsBySessionId).toHaveBeenCalledWith("m1");
+  });
+
+  it("stopSession reports only deleted Forge workers in terminatedWorkerIds when Codex sidecar is preserved", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const forgeWorker = createWorkerDescriptor("/p", "m1", {
+      agentId: "w1",
+      status: "streaming"
+    });
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1", {
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [forgeWorker.agentId, forgeWorker],
+      [codex.agentId, codex]
+    ]);
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes: new Map([
+          [forgeWorker.agentId, makeRuntimeStub({ descriptor: forgeWorker, getStatus: () => "streaming" })]
+        ]),
+        runRuntimeShutdown: vi.fn(async () => ({ timedOut: false, runtimeToken: 1 })),
+        getWorkersForManager: vi.fn(() => [forgeWorker, codex])
+      })
+    );
+
+    const { terminatedWorkerIds } = await svc.stopSession("m1");
+    expect(terminatedWorkerIds).toEqual(["w1"]);
+    expect(descriptors.has(codex.agentId)).toBe(true);
+    expect(codex.status).toBe("idle");
+    expect(forgeWorker.status).toBe("terminated");
+  });
+
+  it("stopSession emits manual stop notice when only a streaming Codex sidecar is interrupted", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1", {
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [codex.agentId, codex]
+    ]);
+    const emitImmediateManualManagerStopNotice = vi.fn();
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes: new Map(),
+        emitImmediateManualManagerStopNotice,
+        getWorkersForManager: vi.fn(() => [codex])
+      })
+    );
+
+    await svc.stopSession("m1");
+
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledTimes(1);
+    expect(emitImmediateManualManagerStopNotice).toHaveBeenCalledWith("m1");
+    expect(codex.status).toBe("idle");
+  });
+
+  it("stopSession leaves a terminated Codex sidecar terminated instead of resurrecting it to idle", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1", {
+      status: "terminated"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [codex.agentId, codex]
+    ]);
+    const updateSessionMetaForWorkerDescriptor = vi.fn(async () => {});
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes: new Map(),
+        updateSessionMetaForWorkerDescriptor,
+        getWorkersForManager: vi.fn(() => [codex])
+      })
+    );
+
+    const { terminatedWorkerIds } = await svc.stopSession("m1");
+
+    expect(terminatedWorkerIds).toEqual([]);
+    expect(descriptors.has(codex.agentId)).toBe(true);
+    expect(codex.status).toBe("terminated");
+    expect(updateSessionMetaForWorkerDescriptor).not.toHaveBeenCalled();
+  });
+
+  it("stopSession does not emit manual stop notice for an already-idle Codex sidecar", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1", {
+      status: "idle"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [codex.agentId, codex]
+    ]);
+    const emitImmediateManualManagerStopNotice = vi.fn();
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes: new Map(),
+        emitImmediateManualManagerStopNotice,
+        getWorkersForManager: vi.fn(() => [codex])
+      })
+    );
+
+    await svc.stopSession("m1");
+
+    expect(emitImmediateManualManagerStopNotice).not.toHaveBeenCalled();
+    expect(codex.status).toBe("idle");
+  });
+
+  it("stopAllAgents leaves a terminated Codex sidecar terminated and omits it from stoppedWorkerIds", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1", {
+      status: "terminated"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [codex.agentId, codex]
+    ]);
+    const emitImmediateManualManagerStopNotice = vi.fn();
+    const updateSessionMetaForWorkerDescriptor = vi.fn(async () => {});
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes: new Map(),
+        emitImmediateManualManagerStopNotice,
+        updateSessionMetaForWorkerDescriptor,
+        getWorkersForManager: vi.fn(() => [codex])
+      })
+    );
+
+    const result = await svc.stopAllAgents(manager.agentId, manager.agentId);
+
+    expect(result.stoppedWorkerIds).toEqual([]);
+    expect(codex.status).toBe("terminated");
+    expect(emitImmediateManualManagerStopNotice).not.toHaveBeenCalled();
+    expect(updateSessionMetaForWorkerDescriptor).not.toHaveBeenCalled();
+  });
+
+  it("stopAllAgents does not count an already-idle Codex sidecar in stoppedWorkerIds or emit stop notice", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1", {
+      status: "idle"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [codex.agentId, codex]
+    ]);
+    const emitImmediateManualManagerStopNotice = vi.fn();
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes: new Map(),
+        emitImmediateManualManagerStopNotice,
+        getWorkersForManager: vi.fn(() => [codex])
+      })
+    );
+
+    const result = await svc.stopAllAgents(manager.agentId, manager.agentId);
+
+    expect(result.stoppedWorkerIds).toEqual([]);
+    expect(emitImmediateManualManagerStopNotice).not.toHaveBeenCalled();
+    expect(codex.status).toBe("idle");
+  });
+
+  it("killAgent terminates Codex external-thread sidecars without idling them", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m1",
+      role: "manager",
+      managerId: "m1",
+      profileId: "m1",
+      status: "idle"
+    });
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1", {
+      status: "streaming"
+    });
+    const descriptors = new Map([
+      [manager.agentId, manager],
+      [codex.agentId, codex]
+    ]);
+    const emitStatus = vi.fn();
+    const updateSessionMetaForWorkerDescriptor = vi.fn(async () => {});
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        assertManager: () => manager,
+        emitStatus,
+        updateSessionMetaForWorkerDescriptor
+      })
+    );
+
+    await svc.killAgent("m1", codex.agentId);
+
+    expect(descriptors.has(codex.agentId)).toBe(true);
+    expect(codex.status).toBe("terminated");
+    expect(emitStatus).toHaveBeenCalledWith(codex.agentId, "terminated", 0);
+    expect(updateSessionMetaForWorkerDescriptor).toHaveBeenCalledWith(codex);
+  });
+
+  it("getOrCreateRuntimeForDescriptor rejects Codex external-thread sidecars", async () => {
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1");
+    const descriptors = new Map([[codex.agentId, codex]]);
+    const createRuntimeForDescriptor = vi.fn();
+
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        createRuntimeForDescriptor
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(codex)).rejects.toThrow(/external-thread sidecar/);
+    expect(createRuntimeForDescriptor).not.toHaveBeenCalled();
+  });
+
+  it("resumeWorker rejects Codex external-thread sidecars", async () => {
+    const codex = createCodexExternalThreadWorkerDescriptor("/p", "m1");
+    const descriptors = new Map([[codex.agentId, codex]]);
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({ descriptors }));
+
+    await expect(svc.resumeWorker(codex.agentId)).rejects.toThrow(/does not use Forge runtime resume/);
   });
 });

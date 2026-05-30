@@ -90,6 +90,33 @@ export function createWorkerDescriptor(
   })
 }
 
+export function createCodexExternalThreadWorkerDescriptor(
+  rootDir: string,
+  managerId = 'manager',
+  overrides: Partial<AgentDescriptor> = {},
+): AgentDescriptor {
+  const agentId = overrides.agentId ?? `${managerId}--codex`
+  const { externalThread, model, ...rest } = overrides
+
+  return createWorkerDescriptor(rootDir, managerId, {
+    agentId,
+    displayName: 'Codex',
+    model: model ?? {
+      provider: 'codex-app-server',
+      modelId: 'app-server',
+      thinkingLevel: 'none',
+    },
+    externalThread: {
+      type: 'codex_app_server',
+      persisted: true,
+      createdByMention: true,
+      threadId: 'codex-thread-1',
+      ...externalThread,
+    },
+    ...rest,
+  })
+}
+
 export interface AppendSessionConversationMessageOptions {
   role?: ConversationMessageEvent['role']
   source?: ConversationMessageEvent['source']

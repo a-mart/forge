@@ -620,6 +620,27 @@ describe("validateAgentDescriptor", () => {
       )
     ).toMatch(/externalThread\.createdByMention/);
   });
+
+  it("rejects Codex external-thread descriptors with non-invariant model metadata", () => {
+    expect(
+      validateAgentDescriptor(
+        baseDescriptor({
+          role: "worker",
+          agentId: "mgr-1--codex",
+          model: {
+            provider: "openai-codex",
+            modelId: "gpt-5.4",
+            thinkingLevel: "medium"
+          },
+          externalThread: {
+            type: "codex_app_server",
+            persisted: true,
+            createdByMention: true
+          }
+        })
+      )
+    ).toMatch(/codex-app-server/);
+  });
 });
 
 describe("resolveModel", () => {

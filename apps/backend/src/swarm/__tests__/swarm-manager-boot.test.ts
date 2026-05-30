@@ -509,6 +509,82 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('reconciles persisted streaming Codex external-thread sidecars to idle on boot and persists the store', async () => {
+    const config = await makeTempConfig()
+    const createdAt = '2026-05-30T00:00:00.000Z'
+    const codexAgentId = 'manager--codex'
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify({
+        agents: [
+          {
+            agentId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            managerId: 'manager',
+            profileId: 'manager',
+            status: 'idle',
+            createdAt,
+            updatedAt: createdAt,
+            cwd: config.defaultCwd,
+            model: config.defaultModel,
+            sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          },
+          {
+            agentId: codexAgentId,
+            displayName: 'Codex',
+            role: 'worker',
+            managerId: 'manager',
+            profileId: 'manager',
+            status: 'streaming',
+            createdAt,
+            updatedAt: createdAt,
+            cwd: config.defaultCwd,
+            model: {
+              provider: 'codex-app-server',
+              modelId: 'app-server',
+              thinkingLevel: 'none',
+            },
+            sessionFile: join(getWorkersDir(config.paths.dataDir, 'manager', 'manager'), `${codexAgentId}.jsonl`),
+            externalThread: {
+              type: 'codex_app_server',
+              persisted: true,
+              createdByMention: true,
+              threadId: 'codex-thread-1',
+            },
+          },
+        ],
+        profiles: [
+          {
+            profileId: 'manager',
+            displayName: 'Manager',
+            defaultSessionAgentId: 'manager',
+            defaultModel: config.defaultModel,
+            createdAt,
+            updatedAt: createdAt,
+            profileType: 'user',
+          },
+        ],
+      }, null, 2)}\n`,
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(manager.getAgent(codexAgentId)).toMatchObject({
+      agentId: codexAgentId,
+      status: 'idle',
+      externalThread: {
+        type: 'codex_app_server',
+        threadId: 'codex-thread-1',
+      },
+    })
+
+    const storeAfterBoot = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(storeAfterBoot.agents.find((agent) => agent.agentId === codexAgentId)?.status).toBe('idle')
+  })
+
   it('prunes persisted Cortex state on boot when Cortex is disabled', async () => {
     const config = await makeTempConfig()
     config.cortexEnabled = false
