@@ -73,6 +73,37 @@ function createTaskSnapshotEvent(
   }
 }
 
+function createWorkPlanCreatedEvent(
+  agentId: string,
+  id: string,
+  title: string,
+): Extract<ServerEvent, { type: 'work_plan_created' }> {
+  const timestamp = '2026-05-29T12:00:00.000Z'
+  return {
+    type: 'work_plan_created',
+    agentId,
+    id,
+    timestamp,
+    planId: `plan-${id}`,
+    stateRevision: 1,
+    planRevision: 1,
+    plan: {
+      planId: `plan-${id}`,
+      title,
+      status: 'active',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      revision: 1,
+      items: [],
+      itemCount: 0,
+      itemsTruncated: false,
+      warnings: [],
+      warningCount: 0,
+      warningsTruncated: false,
+    },
+  }
+}
+
 async function writeActiveWorkPlanFixture(
   dataDir: string,
   profileId: string,
@@ -373,6 +404,18 @@ describe('SwarmWebSocketServer', () => {
 
     const unreadAfter = workerEvents.filter((event) => event.type === 'unread_notification').length
     expect(unreadAfter).toBe(unreadBefore)
+
+    manager.emit('work_plan_created', createWorkPlanCreatedEvent('manager', 'work-plan-created-web', 'Live web Work Plan'))
+    await waitForEvent(
+      managerEvents,
+      (event) =>
+        event.type === 'work_plan_created' &&
+        event.agentId === 'manager' &&
+        event.id === 'work-plan-created-web' &&
+        event.plan.title === 'Live web Work Plan',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(workerEvents.some((event) => event.type === 'work_plan_created' && event.agentId === 'manager')).toBe(false)
 
     managerClient.close()
     await once(managerClient, 'close')
@@ -2457,6 +2500,14 @@ describe('SwarmWebSocketServer', () => {
     })
     expect(secondaryResult.snapshot.activeWorkPlan?.title).toBe('Secondary CLI live plan')
 
+    await waitForEventAfter(
+      secondary.events,
+      secondaryBaseline,
+      (event) =>
+        event.type === 'work_plan_created' &&
+        event.agentId === secondarySession.agentId &&
+        event.plan.title === 'Secondary CLI live plan',
+    )
     const secondaryLiveEvent = await waitForEventAfter(
       secondary.events,
       secondaryBaseline,
@@ -2476,6 +2527,7 @@ describe('SwarmWebSocketServer', () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(root.events.slice(rootBaseline).some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
+    expect(root.events.slice(rootBaseline).some((event) => event.type === 'work_plan_created')).toBe(false)
 
     const rootSecondBaseline = root.events.length
     const secondarySecondBaseline = secondary.events.length
@@ -2486,6 +2538,14 @@ describe('SwarmWebSocketServer', () => {
     })
     expect(rootResult.snapshot.activeWorkPlan?.title).toBe('Root CLI live plan')
 
+    await waitForEventAfter(
+      root.events,
+      rootSecondBaseline,
+      (event) =>
+        event.type === 'work_plan_created' &&
+        event.agentId === 'manager' &&
+        event.plan.title === 'Root CLI live plan',
+    )
     const rootLiveEvent = await waitForEventAfter(
       root.events,
       rootSecondBaseline,
@@ -2505,6 +2565,7 @@ describe('SwarmWebSocketServer', () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(secondary.events.slice(secondarySecondBaseline).some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
+    expect(secondary.events.slice(secondarySecondBaseline).some((event) => event.type === 'work_plan_created')).toBe(false)
 
     root.client.close()
     await once(root.client, 'close')

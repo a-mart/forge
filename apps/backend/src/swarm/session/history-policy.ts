@@ -116,7 +116,8 @@ function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry:
   return (
     entry.type === "conversation_message" ||
     entry.type === "conversation_log" ||
-    entry.type === "choice_request"
+    entry.type === "choice_request" ||
+    entry.type === "work_plan_created"
   );
 }
 

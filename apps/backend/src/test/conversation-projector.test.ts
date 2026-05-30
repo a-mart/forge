@@ -475,6 +475,61 @@ describe('ConversationProjector session tree continuity', () => {
     expect(inMemoryOnlyUpdate).toHaveLength(1)
   })
 
+  it('keeps stable-id dedupe scoped by entry type when merging disk and in-memory history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-type-dedupe-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed entry to create header' }],
+    } as any)
+
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'work_plan_created',
+      agentId: descriptor.agentId,
+      id: 'shared-stable-id',
+      timestamp: FIXED_NOW,
+      planId: 'plan-1',
+      stateRevision: 1,
+      planRevision: 1,
+      plan: {
+        planId: 'plan-1',
+        title: 'Disk Work Plan receipt',
+        status: 'active',
+        createdAt: FIXED_NOW,
+        updatedAt: FIXED_NOW,
+        revision: 1,
+        items: [],
+        itemCount: 0,
+        itemsTruncated: false,
+        warnings: [],
+        warningCount: 0,
+        warningsTruncated: false,
+      },
+    })
+
+    const inMemoryMessage: ConversationEntryEvent = {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      id: 'shared-stable-id',
+      role: 'assistant',
+      text: 'runtime message with a colliding stable id',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    }
+    const conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>([
+      [descriptor.agentId, [inMemoryMessage]],
+    ])
+    const projector = makeProjector({ descriptor, conversationEntriesByAgentId })
+
+    const history = projector.getConversationHistory(descriptor.agentId)
+
+    expect(history.filter((entry) => entry.type === 'work_plan_created' && entry.id === 'shared-stable-id')).toHaveLength(1)
+    expect(history.filter((entry) => entry.type === 'conversation_message' && entry.id === 'shared-stable-id')).toHaveLength(1)
+  })
+
   it('backfills missing message ids from wrapper entry ids when loading persisted history', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-backfill-'))
     const sessionFile = join(root, 'manager.jsonl')

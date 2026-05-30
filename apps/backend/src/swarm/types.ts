@@ -11,6 +11,7 @@ import {
   type ManagerProfile,
   type ProjectAgentInfo,
   type ProjectAgentMessageContext,
+  type WorkPlanSnapshot,
 } from "@forge/protocol";
 import type { AgentStatus } from "./agent-state-machine.js";
 import type Database from "better-sqlite3";
@@ -324,12 +325,24 @@ export interface AgentToolCallEvent {
   isError?: boolean;
 }
 
+export interface WorkPlanCreatedEvent {
+  type: "work_plan_created";
+  agentId: string;
+  id: string;
+  timestamp: string;
+  planId: string;
+  stateRevision: number;
+  planRevision: number;
+  plan: WorkPlanSnapshot;
+}
+
 export type ConversationEntryEvent =
   | ConversationMessageEvent
   | ConversationLogEvent
   | AgentMessageEvent
   | AgentToolCallEvent
-  | ChoiceRequestEvent;
+  | ChoiceRequestEvent
+  | WorkPlanCreatedEvent;
 
 export interface AgentStatusEvent {
   type: "agent_status";

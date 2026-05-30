@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -21,6 +21,7 @@ import type {
   ServerEvent,
   SessionActiveToolsSnapshotEvent,
   SessionTaskStateSnapshotEvent,
+  WorkPlanCreatedEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
   SessionMemoryMergeResult,
@@ -183,12 +184,12 @@ import {
   toWorkPlanServiceErrorDescriptor,
   WorkPlanService,
   WorkPlanServiceValidationError,
+  type WorkPlanMutationResult,
 } from "./coordination/work-plan-service.js";
 import {
   normalizeTaskToolInput,
   type TaskToolGetInput,
   type TaskToolInput,
-  type TaskToolMutationResult,
   type TaskToolResult,
 } from "./coordination/task-tool.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
@@ -2045,6 +2046,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       const mutationResult = await this.runTaskToolMutation(service, descriptor, normalizedInput);
+      if (normalizedInput.action === "upsert_plan" && !normalizedInput.planId) {
+        this.emitWorkPlanCreated({
+          type: "work_plan_created",
+          agentId: descriptor.agentId,
+          id: randomUUID(),
+          timestamp: mutationResult.workPlan.createdAt,
+          planId: mutationResult.workPlan.planId,
+          stateRevision: mutationResult.stateRevision,
+          planRevision: mutationResult.workPlan.revision,
+          plan: mutationResult.workPlan,
+        });
+      }
       await this.emitSessionTaskStateSnapshotForSession(descriptor.agentId).catch((error) => {
         this.logDebug("coordination:task_snapshot_emit:error", {
           agentId: descriptor.agentId,
@@ -2072,7 +2085,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     service: WorkPlanService,
     descriptor: AgentDescriptor & { role: "manager"; profileId: string },
     input: Exclude<TaskToolInput, TaskToolGetInput>,
-  ): Promise<TaskToolMutationResult> {
+  ): Promise<WorkPlanMutationResult> {
     const actor = {
       agentId: descriptor.agentId,
       role: descriptor.role,
@@ -5347,6 +5360,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitChoiceRequest(event: ChoiceRequestEvent): void {
     this.conversationProjector.emitChoiceRequest(event);
+  }
+
+  private emitWorkPlanCreated(event: WorkPlanCreatedEvent): void {
+    this.conversationProjector.emitWorkPlanCreated(event);
   }
 
   private emitConversationReset(agentId: string, reason: "user_new_command" | "api_reset"): void {

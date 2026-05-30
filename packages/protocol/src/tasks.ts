@@ -62,7 +62,7 @@ export const SESSION_TASK_DIAGNOSTIC_STATES = [
 ] as const
 export type SessionTaskDiagnosticState = (typeof SESSION_TASK_DIAGNOSTIC_STATES)[number]
 
-export const MAX_RECENT_WORK_PLAN_SNAPSHOTS = 5
+export const MAX_RECENT_WORK_PLAN_SNAPSHOTS = 8
 
 export interface WorkPlanBlockerSnapshot {
   reason: string

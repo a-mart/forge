@@ -1,4 +1,4 @@
-import type { AgentDescriptor, AgentStatus, SessionTaskStateSnapshotEvent, WorkPlanItemSnapshot, WorkPlanSnapshot, WorkPlanStatus } from '@forge/protocol'
+import type { AgentDescriptor, AgentStatus, SessionTaskStateSnapshotEvent, WorkPlanItemSnapshot, WorkPlanSnapshot, WorkPlanItemStatus, WorkPlanStatus } from '@forge/protocol'
 
 export const ACTIVE_WORK_VISIBLE_ITEM_LIMIT = 5
 
@@ -13,6 +13,7 @@ const ACTIVE_ITEM_STATUSES = new Set(['active'])
 const UP_NEXT_ITEM_STATUSES = new Set(['up_next'])
 const PROBLEM_ITEM_STATUSES = new Set(['failed', 'unknown'])
 const COMPLETE_ITEM_STATUSES = new Set(['done', 'skipped'])
+const TERMINAL_WORK_PLAN_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'stopped', 'interrupted'])
 
 export function toActiveWorkSnapshotView(
   snapshot: SessionTaskStateSnapshotEvent | null | undefined,
@@ -42,6 +43,38 @@ export function countDoneItems(plan: WorkPlanSnapshotView): number {
 
 export function countAttentionItems(plan: WorkPlanSnapshotView): number {
   return plan.items.filter((item) => item.status === 'blocked' || item.status === 'needs_attention').length
+}
+
+export function isTerminalWorkPlanStatus(status: string | undefined): boolean {
+  return Boolean(status && TERMINAL_WORK_PLAN_STATUSES.has(status))
+}
+
+export function getDisplayItemStatus(planStatus: string | undefined, itemStatus: WorkPlanItemStatus): WorkPlanItemStatus {
+  if (['done', 'skipped', 'failed'].includes(itemStatus)) {
+    return itemStatus
+  }
+  switch (planStatus) {
+    case 'completed':
+      return 'done'
+    case 'completed_with_warnings':
+      return 'unknown'
+    case 'failed':
+      return 'failed'
+    case 'stopped':
+    case 'interrupted':
+      return 'skipped'
+    default:
+      return itemStatus
+  }
+}
+
+export function getWorkPlanProgressLabel(plan: WorkPlanSnapshotView): string | null {
+  const knownTotalItems = plan.itemCount ?? plan.items.length
+  if (knownTotalItems <= 0) return null
+  if (isTerminalWorkPlanStatus(plan.status)) {
+    return plan.status === 'completed' ? 'Finished' : null
+  }
+  return `${countDoneItems(plan)}/${knownTotalItems}`
 }
 
 export function formatPlanStatus(status: WorkPlanStatus): string {

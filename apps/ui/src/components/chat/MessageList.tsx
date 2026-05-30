@@ -27,6 +27,7 @@ import {
   resolveToolExecutionEventActorAgentId,
 } from './message-list/tool-display-utils'
 import { ToolLogRow } from './message-list/ToolLogRow'
+import { WorkPlanCreatedRow } from './message-list/WorkPlanCreatedRow'
 import type {
   ChoiceRequestDisplayEntry,
   ConversationLogEntry,
@@ -116,6 +117,11 @@ type DisplayEntry =
       entry: ChoiceRequestDisplayEntry
     }
   | {
+      type: 'work_plan_created'
+      id: string
+      event: Extract<ConversationEntry, { type: 'work_plan_created' }>
+    }
+  | {
       type: 'runtime_error_log'
       id: string
       entry: ConversationLogEntry
@@ -198,6 +204,15 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
           entry,
         })
       }
+      continue
+    }
+
+    if (message.type === 'work_plan_created') {
+      displayEntries.push({
+        type: 'work_plan_created',
+        id: `work-plan-created-${message.id}`,
+        event: message,
+      })
       continue
     }
 
@@ -661,6 +676,18 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                   className="[content-visibility:auto] [contain-intrinsic-size:auto_84px]"
                 >
                   <AgentMessageRow message={entry.message} />
+                </div>
+              )
+            }
+
+            if (entry.type === 'work_plan_created') {
+              return (
+                <div
+                  key={entry.id}
+                  data-message-id={entry.event.id}
+                  className="[content-visibility:auto] [contain-intrinsic-size:auto_160px]"
+                >
+                  <WorkPlanCreatedRow event={entry.event} agents={agents ?? []} statuses={statuses} />
                 </div>
               )
             }

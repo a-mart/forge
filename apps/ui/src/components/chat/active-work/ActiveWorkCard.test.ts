@@ -79,10 +79,10 @@ function render(snapshot: SessionTaskStateSnapshotEvent, expanded = true) {
 }
 
 describe('ActiveWorkCard', () => {
-  it('toggles the work item pane when the header region is clicked', () => {
+  it('toggles the work item pane when the header button is clicked', () => {
     const { onExpandedChange } = render(makeSnapshot(), false)
 
-    const headerToggle = container.querySelector<HTMLElement>('[role="button"][aria-label="Expand Active Work plan details"]')
+    const headerToggle = container.querySelector<HTMLButtonElement>('button[aria-label="Expand Active Work plan details"]')
     expect(headerToggle).toBeTruthy()
     expect(headerToggle?.getAttribute('aria-expanded')).toBe('false')
     const controlledRegionId = headerToggle?.getAttribute('aria-controls')
@@ -95,15 +95,14 @@ describe('ActiveWorkCard', () => {
     expect(onExpandedChange).toHaveBeenCalledWith(true)
   })
 
-  it('toggles the work item pane from the keyboard when the header region is focused', () => {
+  it('uses a native button for the header toggle', () => {
     const { onExpandedChange } = render(makeSnapshot(), true)
 
-    const headerToggle = container.querySelector<HTMLElement>('[role="button"][aria-label="Collapse Active Work plan details"]')
+    const headerToggle = container.querySelector<HTMLButtonElement>('button[aria-label="Collapse Active Work plan details"]')
     expect(headerToggle).toBeTruthy()
+    expect(headerToggle?.tagName).toBe('BUTTON')
 
-    flushSync(() => {
-      headerToggle?.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
-    })
+    flushSync(() => headerToggle?.click())
 
     expect(onExpandedChange).toHaveBeenCalledWith(false)
   })
@@ -116,7 +115,7 @@ describe('ActiveWorkCard', () => {
       diagnostics: { state: 'unavailable', message: 'State file unavailable' },
     }), true)
 
-    const headerToggle = container.querySelector<HTMLElement>('[role="button"][aria-label="Expand Active Work plan details"]')
+    const headerToggle = container.querySelector<HTMLButtonElement>('button[aria-label="Expand Active Work plan details"]')
     expect(headerToggle).toBeTruthy()
     expect(headerToggle?.getAttribute('aria-expanded')).toBe('false')
     const controlledRegionId = headerToggle?.getAttribute('aria-controls')
@@ -165,7 +164,7 @@ describe('ActiveWorkCard', () => {
     render(snapshot)
 
     expect(container.textContent).toContain('0/7+')
-    expect(container.textContent).toContain('+5 more in plan')
+    expect(container.textContent).toContain('+5 more items not shown')
   })
 
   it('shows warning truncation metadata instead of implying warnings are complete', () => {
@@ -183,10 +182,10 @@ describe('ActiveWorkCard', () => {
     expect(container.textContent).toContain('+2 more warnings not shown')
   })
 
-  it('shows recent-plan truncation metadata for terminal receipts', () => {
+  it('shows retained previous terminal receipts and truncation metadata behind a disclosure', () => {
     const snapshot = makeSnapshot({
       activeWorkPlan: null,
-      recentWorkPlans: [makeRecentPlan(1)],
+      recentWorkPlans: [makeRecentPlan(1), makeRecentPlan(2)],
       recentWorkPlanCount: 4,
       recentWorkPlansTruncated: true,
     })
@@ -194,10 +193,60 @@ describe('ActiveWorkCard', () => {
     render(snapshot)
 
     expect(container.textContent).toContain('Completed plan 1')
-    expect(container.textContent).toContain('+3 previous completed Work Plans hidden')
+    expect(container.textContent).not.toContain('Completed plan 2')
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous completed Work Plan'))
+    expect(disclosure).toBeTruthy()
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('false')
+
+    flushSync(() => disclosure?.click())
+
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.textContent).toContain('Completed plan 2')
+    expect(container.textContent).toContain('Older Work Plans are outside the retained snapshot.')
   })
 
-  it('counts all recent plans as hidden when an active plan is rendered', () => {
+  it('collapses previous-plan disclosure when the session snapshot changes', async () => {
+    const firstSnapshot = makeSnapshot({
+      activeWorkPlan: null,
+      recentWorkPlans: [makeRecentPlan(1), makeRecentPlan(2)],
+      recentWorkPlanCount: 2,
+      recentWorkPlansTruncated: false,
+    })
+    render(firstSnapshot)
+
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous completed Work Plan'))
+    expect(disclosure).toBeTruthy()
+    flushSync(() => disclosure?.click())
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.textContent).toContain('Completed plan 2')
+
+    const nextSnapshot = makeSnapshot({
+      sessionAgentId: 'session-2',
+      activeWorkPlan: null,
+      recentWorkPlans: [makeRecentPlan(10), makeRecentPlan(11)],
+      recentWorkPlanCount: 2,
+      recentWorkPlansTruncated: false,
+    })
+    const onExpandedChange = vi.fn()
+    flushSync(() => {
+      root.render(createElement(ActiveWorkCard, {
+        snapshot: nextSnapshot,
+        agents: [],
+        statuses: {},
+        expanded: true,
+        onExpandedChange,
+      }))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const nextDisclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous completed Work Plan'))
+    expect(nextDisclosure).toBeTruthy()
+    expect(nextDisclosure?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.textContent).toContain('Completed plan 10')
+    expect(container.textContent).not.toContain('Completed plan 11')
+  })
+
+  it('treats all retained recent plans as previous when an active plan is rendered', () => {
     const snapshot = makeSnapshot({
       recentWorkPlans: [1, 2, 3, 4, 5].map(makeRecentPlan),
       recentWorkPlanCount: 8,
@@ -208,10 +257,16 @@ describe('ActiveWorkCard', () => {
 
     expect(container.textContent).toContain('Ship Active Work UI')
     expect(container.textContent).not.toContain('Completed plan 1')
-    expect(container.textContent).toContain('+8 previous completed Work Plans hidden')
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 5 previous completed Work Plans'))
+    expect(disclosure).toBeTruthy()
+
+    flushSync(() => disclosure?.click())
+
+    expect(container.textContent).toContain('Completed plan 1')
+    expect(container.textContent).toContain('Older Work Plans are outside the retained snapshot.')
   })
 
-  it('counts returned-but-not-rendered recent plans when no active plan exists', () => {
+  it('starts previous receipts after the displayed terminal plan when no active plan exists', () => {
     const snapshot = makeSnapshot({
       activeWorkPlan: null,
       recentWorkPlans: [1, 2, 3, 4].map(makeRecentPlan),
@@ -223,7 +278,12 @@ describe('ActiveWorkCard', () => {
 
     expect(container.textContent).toContain('Completed plan 1')
     expect(container.textContent).not.toContain('Completed plan 2')
-    expect(container.textContent).toContain('+3 previous completed Work Plans hidden')
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 3 previous completed Work Plans'))
+    expect(disclosure).toBeTruthy()
+
+    flushSync(() => disclosure?.click())
+
+    expect(container.textContent).toContain('Completed plan 2')
   })
 
   it('renders terminal completed plans as receipts instead of contradictory 0/N progress', () => {

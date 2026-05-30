@@ -815,6 +815,7 @@ class RunWaitTracker {
       case 'agent_tool_call':
       case 'agent_message':
       case 'choice_request':
+      case 'work_plan_created':
         this.markActivity()
     }
   }

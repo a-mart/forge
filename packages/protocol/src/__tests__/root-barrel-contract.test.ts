@@ -31,6 +31,7 @@ import type {
   ServerEvent,
   TerminalDescriptor,
   TerminalMeta,
+  WorkPlanSnapshot,
 } from '../index.js'
 
 type ClientCommandType = ClientCommand['type']
@@ -212,6 +213,21 @@ const terminal = {
   updatedAt: now,
 } satisfies TerminalDescriptor
 
+const workPlan = {
+  planId: 'plan-1',
+  title: 'Plan',
+  status: 'active',
+  createdAt: now,
+  updatedAt: now,
+  revision: 1,
+  items: [],
+  itemCount: 0,
+  itemsTruncated: false,
+  warnings: [],
+  warningCount: 0,
+  warningsTruncated: false,
+} satisfies WorkPlanSnapshot
+
 const channel = {
   channelId: 'channel-1',
   workspaceId: 'workspace-1',
@@ -268,6 +284,16 @@ const serverEventsByLeafModule = [
     channels: [{ ...channel, readState: { channelId: channel.channelId, lastReadMessageSeq: 0, unreadCount: 0 } }],
   },
   { type: 'conversation_message', agentId: agent.agentId, role: 'assistant', text: 'hello', timestamp: now, source: 'speak_to_user' },
+  {
+    type: 'work_plan_created',
+    agentId: agent.agentId,
+    id: 'work-plan-created-1',
+    timestamp: now,
+    planId: workPlan.planId,
+    stateRevision: 1,
+    planRevision: workPlan.revision,
+    plan: workPlan,
+  },
   { type: 'agent_status', agentId: agent.agentId, status: 'idle', pendingCount: 0 },
   { type: 'profiles_snapshot', profiles: [profile] },
   { type: 'unread_notification', agentId: agent.agentId, reason: 'message', sessionAgentId: agent.agentId },
@@ -652,6 +678,7 @@ describe('protocol root barrel contract', () => {
       'cli_request_error',
       'collab_bootstrap',
       'conversation_message',
+      'work_plan_created',
       'agent_status',
       'profiles_snapshot',
       'unread_notification',

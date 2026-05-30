@@ -59,7 +59,7 @@ describe('tasks protocol contracts', () => {
     expect(WORK_PLAN_LIFECYCLE_REASONS).toEqual(['manual_stop', 'archived', 'conversation_cleared'])
     expect(WORK_PLAN_LINK_TYPES).toEqual(['worker'])
     expect(SESSION_TASK_DIAGNOSTIC_STATES).toEqual(['ok', 'defaulted', 'corrupt_recovered', 'unavailable'])
-    expect(MAX_RECENT_WORK_PLAN_SNAPSHOTS).toBe(5)
+    expect(MAX_RECENT_WORK_PLAN_SNAPSHOTS).toBe(8)
   })
 
   it('keeps literal union coverage aligned with the exported constants', () => {

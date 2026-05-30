@@ -8,6 +8,7 @@ import type {
   DeliveryMode,
   MessageSourceContext,
 } from './shared-types.js'
+import type { WorkPlanSnapshot } from './tasks.js'
 
 export interface ProjectAgentMessageContext {
   fromAgentId: string
@@ -98,11 +99,23 @@ export interface ChoiceRequestEvent {
   timestamp: string
 }
 
+export interface WorkPlanCreatedEvent {
+  type: 'work_plan_created'
+  agentId: string
+  id: string
+  timestamp: string
+  planId: string
+  stateRevision: number
+  planRevision: number
+  plan: WorkPlanSnapshot
+}
+
 export type ConversationEntry =
   | ConversationMessageEvent
   | ConversationLogEvent
   | AgentMessageEvent
   | AgentToolCallEvent
   | ChoiceRequestEvent
+  | WorkPlanCreatedEvent
 
 export type ConversationEntryEvent = ConversationEntry

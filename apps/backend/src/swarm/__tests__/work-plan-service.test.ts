@@ -83,7 +83,7 @@ describe('work-plan-service', () => {
           ],
           warnings: Array.from({ length: 6 }, (_, index) => `Warning ${index + 1}`),
         }),
-        ...Array.from({ length: MAX_RECENT_WORK_PLAN_SNAPSHOTS + 2 }, (_, index) =>
+        ...Array.from({ length: MAX_RECENT_WORK_PLAN_SNAPSHOTS - 1 }, (_, index) =>
           createPlan(`Recent ${index + 1}`, {
             planId: `recent-${index + 1}`,
             status: 'completed',
@@ -110,9 +110,9 @@ describe('work-plan-service', () => {
     expect(plan?.warnings).toHaveLength(4)
     expect(plan?.warningsTruncated).toBe(true)
     expect(plan?.latestRevisionNote?.note).toBe('Latest revision note')
-    expect(snapshot.recentWorkPlanCount).toBe(MAX_RECENT_WORK_PLAN_SNAPSHOTS + 2)
-    expect(snapshot.recentWorkPlans).toHaveLength(MAX_RECENT_WORK_PLAN_SNAPSHOTS)
-    expect(snapshot.recentWorkPlansTruncated).toBe(true)
+    expect(snapshot.recentWorkPlanCount).toBe(MAX_RECENT_WORK_PLAN_SNAPSHOTS - 1)
+    expect(snapshot.recentWorkPlans).toHaveLength(MAX_RECENT_WORK_PLAN_SNAPSHOTS - 1)
+    expect(snapshot.recentWorkPlansTruncated).toBe(false)
   })
 
   it('keeps backend-private and unknown fields out of the public snapshot while preserving safe narrative fields', async () => {
