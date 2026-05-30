@@ -37,6 +37,7 @@ import type {
   ConversationEntryEvent,
   ConversationMessageEvent,
   ConversationTextAttachment,
+  ExternalThreadInfo,
   MessageSourceContext,
   MessageTargetContext
 } from "./types.js";
@@ -411,6 +412,19 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     }
   }
 
+  let normalizedExternalThread: ExternalThreadInfo | undefined;
+  if (value.externalThread !== undefined) {
+    if (!isNonEmptyString(value.role) || value.role !== "worker") {
+      return "externalThread is only supported on worker descriptors";
+    }
+
+    try {
+      normalizedExternalThread = sanitizeExternalThreadInfo(value.externalThread);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
   const descriptor = value as unknown as AgentDescriptor;
   const normalizedProjectAgent =
     descriptor.projectAgent && normalizedProjectAgentHandle && descriptor.projectAgent.handle !== normalizedProjectAgentHandle
@@ -431,7 +445,8 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
       thinkingLevel: descriptor.model.thinkingLevel
     },
     ...(value.cli !== undefined ? { cli: normalizedCli } : {}),
-    ...(normalizedProjectAgent !== descriptor.projectAgent ? { projectAgent: normalizedProjectAgent } : {})
+    ...(normalizedProjectAgent !== descriptor.projectAgent ? { projectAgent: normalizedProjectAgent } : {}),
+    ...(normalizedExternalThread !== undefined ? { externalThread: normalizedExternalThread } : {})
   };
 }
 
@@ -449,6 +464,35 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+export function sanitizeExternalThreadInfo(value: unknown): ExternalThreadInfo {
+  if (!isRecord(value)) {
+    throw new Error("externalThread must be an object when provided");
+  }
+
+  if (value.type !== "codex_app_server") {
+    throw new Error('externalThread.type must be "codex_app_server"');
+  }
+
+  if (value.persisted !== true) {
+    throw new Error("externalThread.persisted must be true");
+  }
+
+  if (typeof value.createdByMention !== "boolean") {
+    throw new Error("externalThread.createdByMention must be a boolean");
+  }
+
+  const threadId = normalizeOptionalPersistedString(value.threadId, "externalThread.threadId");
+  const lastTurnId = normalizeOptionalPersistedString(value.lastTurnId, "externalThread.lastTurnId");
+
+  return {
+    type: "codex_app_server",
+    persisted: true,
+    createdByMention: value.createdByMention,
+    ...(threadId !== undefined ? { threadId } : {}),
+    ...(lastTurnId !== undefined ? { lastTurnId } : {})
+  };
 }
 
 export function sanitizeCliSessionMetadata(value: unknown): CliSessionMetadata | undefined {
@@ -497,6 +541,10 @@ function normalizeRequiredCliString(value: unknown, fieldName: string): string {
 }
 
 function normalizeOptionalCliString(value: unknown, fieldName: string): string | undefined {
+  return normalizeOptionalPersistedString(value, fieldName);
+}
+
+function normalizeOptionalPersistedString(value: unknown, fieldName: string): string | undefined {
   if (value === undefined) {
     return undefined;
   }

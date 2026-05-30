@@ -1,4 +1,4 @@
-import type { AgentDescriptor, AgentModelDescriptor, ManagerProfile } from "../../types.js";
+import type { AgentDescriptor, AgentModelDescriptor, ExternalThreadInfo, ManagerProfile } from "../../types.js";
 
 type LegacyWorkerSelfReportFields = {
   workerLastSelfReportAt?: string;
@@ -13,6 +13,16 @@ function cloneContextUsage(descriptor: AgentDescriptor): AgentDescriptor["contex
         percent: descriptor.contextUsage.percent
       }
     : undefined;
+}
+
+export function cloneExternalThread(externalThread: ExternalThreadInfo): ExternalThreadInfo {
+  return {
+    type: externalThread.type,
+    persisted: externalThread.persisted,
+    createdByMention: externalThread.createdByMention,
+    ...(externalThread.threadId !== undefined ? { threadId: externalThread.threadId } : {}),
+    ...(externalThread.lastTurnId !== undefined ? { lastTurnId: externalThread.lastTurnId } : {})
+  };
 }
 
 function cloneCliSessionMetadata(descriptor: AgentDescriptor): AgentDescriptor["cli"] {
@@ -73,6 +83,7 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
     }),
     collab: descriptor.collab ? { ...descriptor.collab } : undefined,
     cli: cloneCliSessionMetadata(descriptor),
+    externalThread: descriptor.externalThread ? cloneExternalThread(descriptor.externalThread) : undefined,
     ...(descriptor.agentCreatorResult !== undefined
       ? {
           agentCreatorResult: {
