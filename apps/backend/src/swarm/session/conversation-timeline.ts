@@ -209,14 +209,14 @@ export async function copySessionHistoryForFork(options: CopySessionHistoryForFo
 
   try {
     for await (const line of sourceHandle.readLines()) {
-      if (!shouldCopySessionHistoryLineForFork(line, omittedCustomTypes)) {
-        continue;
+      const reachedForkPoint =
+        options.fromMessageId !== undefined && isForkTargetConversationEntryLine(line, options.fromMessageId);
+
+      if (shouldCopySessionHistoryLineForFork(line, omittedCustomTypes)) {
+        await targetHandle.write(`${line}\n`);
       }
 
-      const forkLine = sanitizeForkSessionHistoryLine(line);
-      await targetHandle.write(`${forkLine}\n`);
-
-      if (options.fromMessageId && isForkTargetConversationEntryLine(line, options.fromMessageId)) {
+      if (reachedForkPoint) {
         foundForkPoint = true;
         break;
       }
@@ -295,41 +295,6 @@ export function parseConversationMessageEntryLine(line: string): { id?: string }
   return undefined;
 }
 
-function sanitizeForkSessionHistoryLine(line: string): string {
-  const trimmedLine = line.trim();
-  if (trimmedLine.length === 0) {
-    return line;
-  }
-
-  let parsedEntry: unknown;
-  try {
-    parsedEntry = JSON.parse(trimmedLine);
-  } catch {
-    return line;
-  }
-
-  if (!isRecordLike(parsedEntry) || parsedEntry.type !== "custom") {
-    return line;
-  }
-
-  const data = parsedEntry.data;
-  if (!isRecordLike(data) || data.type !== "conversation_message") {
-    return line;
-  }
-
-  if (data.externalThreadContext === undefined) {
-    return line;
-  }
-
-  const sanitizedData = { ...data };
-  delete sanitizedData.externalThreadContext;
-
-  return JSON.stringify({
-    ...parsedEntry,
-    data: sanitizedData,
-  });
-}
-
 function shouldCopySessionHistoryLineForFork(line: string, omittedCustomTypes: ReadonlySet<string>): boolean {
   const trimmedLine = line.trim();
   if (trimmedLine.length === 0) {
@@ -343,11 +308,37 @@ function shouldCopySessionHistoryLineForFork(line: string, omittedCustomTypes: R
     return true;
   }
 
-  return !(
+  if (
     isRecordLike(parsedEntry) &&
     parsedEntry.type === "custom" &&
     typeof parsedEntry.customType === "string" &&
     omittedCustomTypes.has(parsedEntry.customType)
+  ) {
+    return false;
+  }
+
+  return !isForkExcludedCodexParentCardEntry(parsedEntry);
+}
+
+function isForkExcludedCodexParentCardEntry(parsedEntry: unknown): boolean {
+  if (
+    !isRecordLike(parsedEntry) ||
+    parsedEntry.type !== "custom" ||
+    parsedEntry.customType !== CONVERSATION_ENTRY_TYPE
+  ) {
+    return false;
+  }
+
+  const data = parsedEntry.data;
+  if (!isRecordLike(data) || data.type !== "conversation_message" || data.role !== "system") {
+    return false;
+  }
+
+  const externalThreadContext = data.externalThreadContext;
+  return (
+    isRecordLike(externalThreadContext) &&
+    externalThreadContext.type === "codex_app_server" &&
+    externalThreadContext.excludeFromModelContext === true
   );
 }
 

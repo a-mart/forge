@@ -248,7 +248,7 @@ describe("ConversationTimeline", () => {
     expect(copied).toContain("message-1");
   });
 
-  it("strips externalThreadContext from parent Codex cards when copying fork history", async () => {
+  it("drops display-only parent Codex cards when copying fork history", async () => {
     const root = await createTempDir("conversation-timeline-");
     const sourceSessionFile = join(root, "source.jsonl");
     const targetSessionFile = join(root, "target.jsonl");
@@ -286,9 +286,59 @@ describe("ConversationTimeline", () => {
     await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile });
 
     const copied = readFileSync(targetSessionFile, "utf8");
-    expect(copied).toContain("Sent to Codex");
+    expect(copied).not.toContain("Sent to Codex");
     expect(copied).not.toContain("externalThreadContext");
     expect(copied).not.toContain("mgr-1--codex");
+    expect(copied).toContain("message-1");
+  });
+
+  it("treats dropped parent Codex cards as valid partial fork boundaries", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    const codexCard = JSON.stringify({
+      type: "custom",
+      customType: "swarm_conversation_entry",
+      id: "entry-card-1",
+      parentId: "message-1",
+      timestamp: "2026-05-30T00:00:00.000Z",
+      data: {
+        id: "card-message-1",
+        type: "conversation_message",
+        agentId: "mgr-1",
+        role: "system",
+        text: "Sent to Codex",
+        timestamp: "2026-05-30T00:00:00.000Z",
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: "mgr-1--codex",
+          requestId: "req-1",
+          turnCorrelationId: "turn-1",
+          status: "sent",
+          promptPreview: "hello",
+          excludeFromModelContext: true,
+        },
+      },
+    });
+
+    writeFileSync(
+      sourceSessionFile,
+      [
+        buildSessionHeader(root),
+        buildConversationMessageEntry({ wrapperId: "entry-1", dataId: "message-1" }),
+        codexCard,
+        buildConversationMessageEntry({ wrapperId: "entry-2", dataId: "message-2" }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile, fromMessageId: "card-message-1" });
+
+    const copied = readFileSync(targetSessionFile, "utf8");
+    expect(copied).toContain("message-1");
+    expect(copied).not.toContain("Sent to Codex");
+    expect(copied).not.toContain("message-2");
   });
 
   it("copies partial fork history through the matching top-level conversation entry id when data.id is absent", async () => {

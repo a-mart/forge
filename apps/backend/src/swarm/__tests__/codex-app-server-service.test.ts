@@ -367,6 +367,64 @@ describe("CodexAppServerService", () => {
     expect(host.saveStore).toHaveBeenCalled();
   });
 
+  it("persists only thread ids across restart, so in-progress parent cards have no durable active-turn metadata", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const initial = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(initial.host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    const sidecar = await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn(sidecar.agentId, "long task", {
+      parentRouting: {
+        managerAgentId: manager.agentId,
+        emitParentRequestCard: true,
+        sourceContext: { channel: "web" },
+      },
+    });
+
+    expect(service.getRuntimeStateForTest(sidecar.agentId)?.activeTurn).toBeDefined();
+    expect(
+      initial.conversationMessages.some(
+        (message) =>
+          message.agentId === manager.agentId &&
+          message.externalThreadContext?.type === "codex_app_server" &&
+          message.externalThreadContext.status === "sent",
+      ),
+    ).toBe(true);
+    expect(initial.threadAuditBySessionFile.get(sidecar.sessionFile)).toEqual({
+      threadId: "thread-new",
+      persisted: true,
+    });
+
+    service.dispose();
+
+    const restartedSidecar: AgentDescriptor = {
+      ...sidecar,
+      externalThread: {
+        type: "codex_app_server",
+        persisted: true,
+        createdByMention: true,
+      },
+    };
+    const restarted = createFakeHost([manager, restartedSidecar]);
+    restarted.threadFallbackBySessionFile.set(
+      sidecar.sessionFile,
+      initial.threadAuditBySessionFile.get(sidecar.sessionFile)!,
+    );
+    const restartedService = createTestService(restarted.host, {
+      createClient: (handlers) => new FakeCodexAppServerClient(handlers),
+    });
+
+    await expect(restartedService.reconcileSidecarThreadId(restartedSidecar)).resolves.toBe("thread-new");
+    expect(restartedService.getRuntimeStateForTest(sidecar.agentId)).toBeUndefined();
+  });
+
   it("starts persisted thread with ephemeral false when resume fails", async () => {
     const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
     const { host } = createFakeHost([manager]);
