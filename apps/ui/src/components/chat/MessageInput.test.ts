@@ -143,6 +143,7 @@ function renderMessageInput(
     draftKey: string
     slashCommands: SlashCommand[]
     projectAgents: ProjectAgentSuggestion[]
+    enableCodexMention: boolean
     wsUrl: string
   }> = {},
   inputRef?: React.RefObject<MessageInputHandle | null>,
@@ -775,6 +776,69 @@ describe('MessageInput', () => {
       await flush()
 
       expect(container.textContent).toContain('No matching project agents')
+    })
+
+    it('shows synthetic @Codex target at leading position on Builder surface', async () => {
+      renderMessageInput({ enableCodexMention: true })
+      await flush()
+
+      typeInTextarea('@')
+      await flush()
+
+      expect(container.textContent).toContain('@Codex')
+      expect(container.textContent).toContain('Codex app-server')
+    })
+
+    it('hides synthetic @Codex target when mention is not leading', async () => {
+      renderMessageInput({ enableCodexMention: true, projectAgents })
+      await flush()
+
+      typeInTextarea('please @d')
+      await flush()
+
+      expect(container.textContent).not.toContain('@Codex')
+      expect(container.textContent).toContain('@docs')
+    })
+
+    it('does not open an empty mention popup for inline @ when only Codex mention is enabled', async () => {
+      renderMessageInput({ enableCodexMention: true })
+      await flush()
+
+      typeInTextarea('please @')
+      await flush()
+
+      expect(container.textContent).not.toContain('@Codex')
+      expect(container.textContent).not.toContain('No matching mentions')
+    })
+
+    it('does not treat email addresses as mention triggers', async () => {
+      renderMessageInput({ enableCodexMention: true })
+      await flush()
+
+      typeInTextarea('email me at adam@example.com')
+      await flush()
+
+      expect(container.textContent).not.toContain('@Codex')
+      expect(container.textContent).not.toContain('No matching mentions')
+    })
+
+    it('inserts [@Codex] token when Codex mention is selected', async () => {
+      renderMessageInput({ enableCodexMention: true })
+      await flush()
+
+      typeInTextarea('@cod')
+      await flush()
+
+      const codexButton = Array.from(container.querySelectorAll('button')).find((button) =>
+        button.textContent?.includes('@Codex'),
+      )
+      expect(codexButton).toBeTruthy()
+      flushSync(() => {
+        fireEvent.mouseDown(codexButton!)
+      })
+      await flush()
+
+      expect(getTextarea().value).toBe('[@Codex] ')
     })
   })
 })

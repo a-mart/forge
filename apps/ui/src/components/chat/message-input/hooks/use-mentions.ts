@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProjectAgentSuggestion } from '../types'
+import {
+  CODEX_MENTION_HANDLE,
+  CODEX_MENTION_SUGGESTION,
+  type MentionSuggestion,
+  type ProjectAgentSuggestion,
+  toProjectAgentMentionSuggestion,
+} from '../mention-types'
+import { hasComposerMentionTokens, isLeadingMentionPosition } from '../mention-utils'
 
 interface UseMentionsOptions {
   projectAgents?: ProjectAgentSuggestion[]
+  enableCodexMention?: boolean
   input: string
   setInputWithDraft: (value: string) => void
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
@@ -15,16 +23,23 @@ interface UseMentionsReturn {
   mentionSelectedIndex: number
   setMentionSelectedIndex: (index: number) => void
   mentionTokenStart: number
-  filteredMentions: ProjectAgentSuggestion[]
+  filteredMentions: MentionSuggestion[]
   mentionMenuRef: React.RefObject<HTMLDivElement | null>
-  selectMention: (agent: ProjectAgentSuggestion) => void
+  selectMention: (suggestion: MentionSuggestion) => void
   /** Check if the given value should open the mention menu. Returns true if handled. */
   checkMentionTrigger: (value: string) => boolean
   hasMentionTokens: boolean
 }
 
+function codexMentionMatchesFilter(filter: string): boolean {
+  if (!filter) return true
+  const lower = filter.toLowerCase()
+  return CODEX_MENTION_HANDLE.toLowerCase().startsWith(lower)
+}
+
 export function useMentions({
   projectAgents,
+  enableCodexMention = false,
   input,
   setInputWithDraft,
   textareaRef,
@@ -33,22 +48,34 @@ export function useMentions({
   const [mentionFilter, setMentionFilter] = useState('')
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0)
   const [mentionTokenStart, setMentionTokenStart] = useState(-1)
+  const [mentionAtLeadingPosition, setMentionAtLeadingPosition] = useState(false)
   const mentionMenuRef = useRef<HTMLDivElement | null>(null)
 
-  const hasMentionTokens = useMemo(() => /\[@[^\]]+\]/.test(input), [input])
+  const hasMentionTokens = useMemo(() => hasComposerMentionTokens(input), [input])
 
   const filteredMentions = useMemo(() => {
-    if (!projectAgents || projectAgents.length === 0) return []
-    if (!mentionFilter) return projectAgents
-    const lower = mentionFilter.toLowerCase()
-    return projectAgents.filter(
-      (agent) =>
-        agent.handle.toLowerCase().startsWith(lower) ||
-        agent.displayName.toLowerCase().startsWith(lower),
-    )
-  }, [projectAgents, mentionFilter])
+    const suggestions: MentionSuggestion[] = []
 
-  // Close mention menu on outside click
+    if (enableCodexMention && mentionAtLeadingPosition && codexMentionMatchesFilter(mentionFilter)) {
+      suggestions.push(CODEX_MENTION_SUGGESTION)
+    }
+
+    if (projectAgents && projectAgents.length > 0) {
+      const lower = mentionFilter.toLowerCase()
+      const projectMatches = mentionFilter
+        ? projectAgents.filter(
+            (agent) =>
+              agent.handle.toLowerCase().startsWith(lower) ||
+              agent.displayName.toLowerCase().startsWith(lower),
+          )
+        : projectAgents
+
+      suggestions.push(...projectMatches.map(toProjectAgentMentionSuggestion))
+    }
+
+    return suggestions
+  }, [enableCodexMention, mentionAtLeadingPosition, mentionFilter, projectAgents])
+
   useEffect(() => {
     if (!isMentionMenuOpen) return
     const handleClick = (e: MouseEvent) => {
@@ -61,16 +88,18 @@ export function useMentions({
   }, [isMentionMenuOpen])
 
   const selectMention = useCallback(
-    (agent: ProjectAgentSuggestion) => {
+    (suggestion: MentionSuggestion) => {
       const textarea = textareaRef.current
       const cursorPos = textarea?.selectionStart ?? input.length
-      const replacement = `[@${agent.handle}] `
+      const replacement =
+        suggestion.kind === 'codex' ? `[@${CODEX_MENTION_HANDLE}] ` : `[@${suggestion.handle}] `
       const newValue = input.slice(0, mentionTokenStart) + replacement + input.slice(cursorPos)
       setInputWithDraft(newValue)
       setIsMentionMenuOpen(false)
       setMentionFilter('')
       setMentionSelectedIndex(0)
       setMentionTokenStart(-1)
+      setMentionAtLeadingPosition(false)
       const newCursor = mentionTokenStart + replacement.length
       requestAnimationFrame(() => {
         textarea?.focus()
@@ -82,30 +111,45 @@ export function useMentions({
 
   const checkMentionTrigger = useCallback(
     (value: string): boolean => {
-      if (projectAgents && projectAgents.length > 0) {
-        const cursorPos = textareaRef.current?.selectionStart ?? value.length
-        const textBeforeCursor = value.slice(0, cursorPos)
-        const atIdx = textBeforeCursor.lastIndexOf('@')
-        if (atIdx >= 0) {
-          const charBefore = atIdx > 0 ? textBeforeCursor[atIdx - 1] : ' '
-          const tokenAfterAt = textBeforeCursor.slice(atIdx + 1)
-          if (
-            (charBefore === ' ' || charBefore === '\n' || charBefore === '\t' || atIdx === 0) &&
-            !/[\s]/.test(tokenAfterAt) &&
-            tokenAfterAt.length <= 50
-          ) {
-            setMentionFilter(tokenAfterAt)
-            setMentionTokenStart(atIdx)
-            setIsMentionMenuOpen(true)
-            setMentionSelectedIndex(0)
-            return true
+      const hasProjectAgents = !!(projectAgents && projectAgents.length > 0)
+      if (!hasProjectAgents && !enableCodexMention) {
+        setIsMentionMenuOpen(false)
+        return false
+      }
+
+      const cursorPos = textareaRef.current?.selectionStart ?? value.length
+      const textBeforeCursor = value.slice(0, cursorPos)
+      const atIdx = textBeforeCursor.lastIndexOf('@')
+      if (atIdx >= 0) {
+        const charBefore = atIdx > 0 ? textBeforeCursor[atIdx - 1] : ' '
+        const tokenAfterAt = textBeforeCursor.slice(atIdx + 1)
+        if (
+          (charBefore === ' ' || charBefore === '\n' || charBefore === '\t' || atIdx === 0) &&
+          !/[\s]/.test(tokenAfterAt) &&
+          tokenAfterAt.length <= 50
+        ) {
+          const isLeadingPosition = isLeadingMentionPosition(value, atIdx)
+          const canOfferCodexMention = enableCodexMention && isLeadingPosition
+          if (!hasProjectAgents && !canOfferCodexMention) {
+            setIsMentionMenuOpen(false)
+            setMentionAtLeadingPosition(false)
+            return false
           }
+
+          setMentionFilter(tokenAfterAt)
+          setMentionTokenStart(atIdx)
+          setMentionAtLeadingPosition(isLeadingPosition)
+          setIsMentionMenuOpen(true)
+          setMentionSelectedIndex(0)
+          return true
         }
       }
+
       setIsMentionMenuOpen(false)
+      setMentionAtLeadingPosition(false)
       return false
     },
-    [projectAgents, textareaRef],
+    [enableCodexMention, projectAgents, textareaRef],
   )
 
   return {

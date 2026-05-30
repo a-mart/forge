@@ -34,6 +34,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     draftKey,
     slashCommands,
     projectAgents,
+    enableCodexMention = false,
   },
   ref,
 ) {
@@ -116,6 +117,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   // --- Mentions ---
   const mentions = useMentions({
     projectAgents,
+    enableCodexMention,
     input,
     setInputWithDraft,
     textareaRef,
@@ -317,7 +319,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           selectedIndex={mentions.mentionSelectedIndex}
           onSelect={mentions.selectMention}
           onHover={mentions.setMentionSelectedIndex}
-          showEmpty={!!(projectAgents && projectAgents.length > 0 && mentions.filteredMentions.length === 0)}
+          showEmpty={
+            mentions.filteredMentions.length === 0 &&
+            ((projectAgents?.length ?? 0) > 0 || enableCodexMention)
+          }
+          enableCodexMention={enableCodexMention}
         />
       ) : null}
 

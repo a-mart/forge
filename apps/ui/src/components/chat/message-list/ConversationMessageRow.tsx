@@ -7,6 +7,7 @@ import { MessageAttachments } from './MessageAttachments'
 import { MessageFeedback } from './MessageFeedback'
 import { SourceBadge, formatTimestamp } from './message-row-utils'
 import { getAuthorColor, getAuthorInitials } from './collab-author-utils'
+import { ExternalThreadContextCard } from './ExternalThreadContextCard'
 import type { ConversationMessageEntry, MessageListSurface } from './types'
 
 function CopyButton({ text }: { text: string }) {
@@ -124,8 +125,12 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   const normalizedText = message.text.trim()
   const hasText = normalizedText.length > 0 && normalizedText !== '.'
   const attachments = message.attachments ?? []
+  const externalThreadContext =
+    message.role === 'system' && message.externalThreadContext?.type === 'codex_app_server'
+      ? message.externalThreadContext
+      : null
 
-  if (!hasText && attachments.length === 0) {
+  if (!hasText && attachments.length === 0 && !externalThreadContext) {
     return null
   }
 
@@ -144,6 +149,16 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
         message={message}
         timestampLabel={timestampLabel}
         wsUrl={wsUrl}
+      />
+    )
+  }
+
+  if (externalThreadContext) {
+    return (
+      <ExternalThreadContextCard
+        context={externalThreadContext}
+        text={normalizedText}
+        timestampLabel={timestampLabel}
       />
     )
   }
