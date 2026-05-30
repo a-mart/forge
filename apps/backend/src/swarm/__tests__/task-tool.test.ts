@@ -325,15 +325,24 @@ describe('SwarmManager.runTaskTool', () => {
     })
   })
 
-  it('emits live task snapshots after successful task mutations', async () => {
+  it('emits a durable creation row before live task snapshots after successful task mutations', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const snapshots: Array<Record<string, unknown>> = []
+    const creationRows: Array<Record<string, unknown>> = []
+    const liveEventOrder: string[] = []
+    manager.on('work_plan_created', (event: Record<string, unknown>) => {
+      if (event.agentId === 'manager') {
+        creationRows.push(event)
+        liveEventOrder.push('work_plan_created')
+      }
+    })
     manager.on('session_task_state_snapshot', (event: Record<string, unknown>) => {
       if (event.sessionAgentId === 'manager') {
         snapshots.push(event)
+        liveEventOrder.push('session_task_state_snapshot')
       }
     })
 
@@ -342,6 +351,19 @@ describe('SwarmManager.runTaskTool', () => {
       title: 'Emit live snapshot',
       itemsText: '[active] Create plan',
     })
+    expect(created).not.toHaveProperty('workPlan')
+    expect(creationRows).toHaveLength(1)
+    expect(creationRows[0]).toMatchObject({
+      type: 'work_plan_created',
+      agentId: 'manager',
+      planId: created.planId,
+      stateRevision: created.stateRevision,
+      planRevision: created.planRevision,
+      plan: { planId: created.planId, title: 'Emit live snapshot', revision: created.planRevision },
+    })
+    expect(typeof creationRows[0]?.id).toBe('string')
+    expect(manager.getConversationHistory('manager').filter((entry) => entry.type === 'work_plan_created')).toHaveLength(1)
+    expect(liveEventOrder).toEqual(['work_plan_created', 'session_task_state_snapshot'])
     expect(snapshots).toHaveLength(1)
     expect(snapshots[0]).toMatchObject({
       sessionAgentId: 'manager',
@@ -349,16 +371,26 @@ describe('SwarmManager.runTaskTool', () => {
       activeWorkPlan: { title: 'Emit live snapshot' },
     })
 
+    const revised = await manager.runTaskTool('manager', 'tool-live-1b', {
+      action: 'upsert_plan',
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      items: [{ itemId: created.createdItemIds?.[0], title: 'Create plan', status: 'done' }],
+    })
+    expect(creationRows).toHaveLength(1)
+    expect(snapshots).toHaveLength(2)
+
     const worker = await manager.spawnAgent('manager', { agentId: 'live-linked-worker' })
     const linked = await manager.runTaskTool('manager', 'tool-live-2', {
       action: 'link',
-      expectedStateRevision: created.stateRevision,
+      expectedStateRevision: revised.stateRevision,
       planId: created.planId,
       itemId: created.createdItemIds?.[0],
       link: { type: 'worker', agentId: worker.agentId },
     })
-    expect(snapshots).toHaveLength(2)
-    expect(snapshots[1]).toMatchObject({
+    expect(creationRows).toHaveLength(1)
+    expect(snapshots).toHaveLength(3)
+    expect(snapshots[2]).toMatchObject({
       sessionAgentId: 'manager',
       revision: linked.stateRevision,
       activeWorkPlan: { items: [{ workerLinks: [{ agentId: worker.agentId }] }] },
@@ -371,8 +403,9 @@ describe('SwarmManager.runTaskTool', () => {
       status: 'completed',
       finalSummary: 'Done',
     })
-    expect(snapshots).toHaveLength(3)
-    expect(snapshots[2]).toMatchObject({
+    expect(creationRows).toHaveLength(1)
+    expect(snapshots).toHaveLength(4)
+    expect(snapshots[3]).toMatchObject({
       sessionAgentId: 'manager',
       revision: finished.stateRevision,
       activeWorkPlan: null,

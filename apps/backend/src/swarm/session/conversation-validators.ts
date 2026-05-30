@@ -1,3 +1,14 @@
+import {
+  WORK_PLAN_ITEM_RESULT_STATUSES,
+  WORK_PLAN_ITEM_STATUSES,
+  WORK_PLAN_LIFECYCLE_REASONS,
+  WORK_PLAN_MODES,
+  WORK_PLAN_STATUSES,
+  type WorkPlanCreatedEvent,
+  type WorkPlanItemSnapshot,
+  type WorkPlanSnapshot,
+  type WorkPlanWorkerLinkSnapshot
+} from "@forge/protocol";
 import type {
   AgentMessageEvent,
   AgentToolCallEvent,
@@ -21,7 +32,8 @@ export function isConversationEntryEvent(value: unknown): value is ConversationE
     isConversationLogEvent(value) ||
     isAgentMessageEvent(value) ||
     isAgentToolCallEvent(value) ||
-    isChoiceRequestEvent(value)
+    isChoiceRequestEvent(value) ||
+    isWorkPlanCreatedEvent(value)
   );
 }
 
@@ -351,6 +363,124 @@ function isChoiceRequestEvent(value: unknown): value is ChoiceRequestEvent {
   if (typeof maybe.timestamp !== "string") return false;
   if (maybe.status === "answered" && !Array.isArray(maybe.answers)) return false;
   return true;
+}
+
+function isWorkPlanCreatedEvent(value: unknown): value is WorkPlanCreatedEvent {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as Partial<WorkPlanCreatedEvent>;
+  if (maybe.type !== "work_plan_created") return false;
+  if (!isNonEmptyString(maybe.agentId)) return false;
+  if (!isNonEmptyString(maybe.id)) return false;
+  if (!isNonEmptyString(maybe.timestamp)) return false;
+  if (!isNonEmptyString(maybe.planId)) return false;
+  if (!isNonNegativeInteger(maybe.stateRevision)) return false;
+  if (!isNonNegativeInteger(maybe.planRevision)) return false;
+  if (!isWorkPlanSnapshot(maybe.plan)) return false;
+  if (maybe.plan.planId !== maybe.planId) return false;
+  if (maybe.plan.revision !== maybe.planRevision) return false;
+
+  return true;
+}
+
+function isWorkPlanSnapshot(value: unknown): value is WorkPlanSnapshot {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as Partial<WorkPlanSnapshot>;
+  if (!isNonEmptyString(maybe.planId)) return false;
+  if (typeof maybe.title !== "string") return false;
+  if (maybe.goal !== undefined && typeof maybe.goal !== "string") return false;
+  if (maybe.mode !== undefined && !isStringInSet(maybe.mode, WORK_PLAN_MODES)) return false;
+  if (!isStringInSet(maybe.status, WORK_PLAN_STATUSES)) return false;
+  if (!isNonEmptyString(maybe.createdAt)) return false;
+  if (!isNonEmptyString(maybe.updatedAt)) return false;
+  if (maybe.completedAt !== undefined && !isNonEmptyString(maybe.completedAt)) return false;
+  if (!isNonNegativeInteger(maybe.revision)) return false;
+  if (!Array.isArray(maybe.items)) return false;
+  if (!isNonNegativeInteger(maybe.itemCount)) return false;
+  if (typeof maybe.itemsTruncated !== "boolean") return false;
+  if (!maybe.items.every(isWorkPlanItemSnapshot)) return false;
+  if (maybe.latestRevisionNote !== undefined && !isWorkPlanRevisionNoteSnapshot(maybe.latestRevisionNote)) return false;
+  if (!Array.isArray(maybe.warnings) || !maybe.warnings.every((warning) => typeof warning === "string")) return false;
+  if (!isNonNegativeInteger(maybe.warningCount)) return false;
+  if (typeof maybe.warningsTruncated !== "boolean") return false;
+  if (maybe.finalSummary !== undefined && typeof maybe.finalSummary !== "string") return false;
+  if (maybe.lifecycle !== undefined && !isWorkPlanLifecycleSnapshot(maybe.lifecycle)) return false;
+
+  return true;
+}
+
+function isWorkPlanItemSnapshot(value: unknown): value is WorkPlanItemSnapshot {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as Partial<WorkPlanItemSnapshot>;
+  if (!isNonEmptyString(maybe.itemId)) return false;
+  if (typeof maybe.title !== "string") return false;
+  if (maybe.phase !== undefined && typeof maybe.phase !== "string") return false;
+  if (!isStringInSet(maybe.status, WORK_PLAN_ITEM_STATUSES)) return false;
+  if (maybe.note !== undefined && typeof maybe.note !== "string") return false;
+  if (maybe.blocker !== undefined && !isWorkPlanBlockerSnapshot(maybe.blocker)) return false;
+  if (maybe.result !== undefined && !isWorkPlanItemResultSnapshot(maybe.result)) return false;
+  if (!Array.isArray(maybe.workerLinks) || !maybe.workerLinks.every(isWorkPlanWorkerLinkSnapshot)) return false;
+  if (!isNonNegativeInteger(maybe.workerLinkCount)) return false;
+  if (typeof maybe.workerLinksTruncated !== "boolean") return false;
+
+  return true;
+}
+
+function isWorkPlanBlockerSnapshot(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as { reason?: unknown; needsUser?: unknown };
+  if (typeof maybe.reason !== "string") return false;
+  if (maybe.needsUser !== undefined && typeof maybe.needsUser !== "boolean") return false;
+  return true;
+}
+
+function isWorkPlanItemResultSnapshot(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as { summary?: unknown; status?: unknown };
+  return typeof maybe.summary === "string" && isStringInSet(maybe.status, WORK_PLAN_ITEM_RESULT_STATUSES);
+}
+
+function isWorkPlanWorkerLinkSnapshot(value: unknown): value is WorkPlanWorkerLinkSnapshot {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as Partial<WorkPlanWorkerLinkSnapshot>;
+  if (maybe.type !== "worker") return false;
+  if (!isNonEmptyString(maybe.linkId)) return false;
+  if (!isNonEmptyString(maybe.agentId)) return false;
+  if (maybe.label !== undefined && typeof maybe.label !== "string") return false;
+  if (maybe.specialistId !== undefined && typeof maybe.specialistId !== "string") return false;
+  if (!isNonEmptyString(maybe.linkedAt)) return false;
+  return true;
+}
+
+function isWorkPlanRevisionNoteSnapshot(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as { revision?: unknown; note?: unknown; createdAt?: unknown };
+  return isNonNegativeInteger(maybe.revision) && typeof maybe.note === "string" && isNonEmptyString(maybe.createdAt);
+}
+
+function isWorkPlanLifecycleSnapshot(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as { reason?: unknown; changedAt?: unknown };
+  return isStringInSet(maybe.reason, WORK_PLAN_LIFECYCLE_REASONS) && isNonEmptyString(maybe.changedAt);
+}
+
+function isStringInSet<const Values extends readonly string[]>(value: unknown, values: Values): value is Values[number] {
+  return typeof value === "string" && (values as readonly string[]).includes(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function isAgentToolCallEvent(value: unknown): value is AgentToolCallEvent {

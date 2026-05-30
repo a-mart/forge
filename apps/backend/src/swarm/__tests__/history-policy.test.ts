@@ -69,6 +69,32 @@ function choice(id: string): ConversationEntryEvent {
   };
 }
 
+function workPlanCreated(id: string): ConversationEntryEvent {
+  return {
+    type: "work_plan_created",
+    agentId: "manager-1",
+    id,
+    timestamp: FIXED_NOW,
+    planId: `plan-${id}`,
+    stateRevision: 1,
+    planRevision: 1,
+    plan: {
+      planId: `plan-${id}`,
+      title: `Plan ${id}`,
+      status: "active",
+      createdAt: FIXED_NOW,
+      updatedAt: FIXED_NOW,
+      revision: 1,
+      items: [],
+      itemCount: 0,
+      itemsTruncated: false,
+      warnings: [],
+      warningCount: 0,
+      warningsTruncated: false
+    }
+  };
+}
+
 function ids(entries: ConversationEntryEvent[]): string[] {
   return entries.map((entry) => {
     if (entry.type === "conversation_message") {
@@ -76,6 +102,9 @@ function ids(entries: ConversationEntryEvent[]): string[] {
     }
     if (entry.type === "choice_request") {
       return entry.choiceId;
+    }
+    if (entry.type === "work_plan_created") {
+      return entry.id;
     }
     return entry.text;
   });
@@ -90,6 +119,7 @@ describe("history policy", () => {
     expect(shouldPersistConversationEntry(message("assistant"))).toBe(true);
     expect(shouldPersistConversationEntry(agentActivity("activity"))).toBe(true);
     expect(shouldPersistConversationEntry(choice("choice"))).toBe(true);
+    expect(shouldPersistConversationEntry(workPlanCreated("work-plan-1"))).toBe(true);
   });
 
   it("identifies protected web and CLI transcript entries", () => {
@@ -147,6 +177,7 @@ describe("history policy", () => {
       message("message-1"),
       tool("activity-2", "tool_execution_start"),
       choice("choice-1"),
+      workPlanCreated("work-plan-created-1"),
       agentActivity("activity-3"),
       message("message-2"),
       tool("activity-4", "tool_execution_end")
@@ -154,14 +185,15 @@ describe("history policy", () => {
 
     const selection = selectBootstrapConversationHistory({
       fullHistory: history,
-      isWithinBudget: (messages) => messages.length <= 5
+      isWithinBudget: (messages) => messages.length <= 6
     });
 
     expect(selection.trimmed).toBe(true);
-    expect(selection.requestedHistoryLength).toBe(7);
+    expect(selection.requestedHistoryLength).toBe(8);
     expect(ids(selection.history)).toEqual([
       "message-1",
       "choice-1",
+      "work-plan-created-1",
       "activity-3",
       "message-2",
       "activity-4"
@@ -173,6 +205,7 @@ describe("history policy", () => {
       message("message-1"),
       agentActivity("activity-1"),
       message("message-2"),
+      workPlanCreated("work-plan-created-1"),
       choice("choice-1"),
       message("message-3")
     ];

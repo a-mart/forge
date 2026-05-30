@@ -811,7 +811,7 @@ function safeJson(value: unknown): string {
 }
 
 function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {
-  if (entry.type !== "conversation_message") {
+  if (entry.type !== "conversation_message" && entry.type !== "work_plan_created") {
     return undefined;
   }
 
@@ -831,7 +831,7 @@ function extractPersistedConversationEntryIdentity(
 
   const entryId = extractConversationEntryEventId(entry);
   if (entryId) {
-    return { key: `conversation_message:${entryId}` };
+    return { key: `${entry.type}:${entryId}` };
   }
 
   return { key: `entry:${safeJson(entry)}` };

@@ -190,6 +190,12 @@ export class SwarmWebSocketServer {
     }
   };
 
+  private readonly onWorkPlanCreated = (event: ServerEvent): void => {
+    if (event.type !== "work_plan_created") return;
+    this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
+  };
+
   private readonly onConversationReset = (event: ServerEvent): void => {
     if (event.type !== "conversation_reset") return;
     this.wsHandler.broadcastToSubscribed(event);
@@ -595,6 +601,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("agent_message", this.onAgentMessage);
     this.swarmManager.on("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.on("choice_request", this.onChoiceRequest);
+    this.swarmManager.on("work_plan_created", this.onWorkPlanCreated);
     this.swarmManager.on("conversation_reset", this.onConversationReset);
     this.swarmManager.on("message_pinned", this.onMessagePinned);
     this.swarmManager.on("agent_status", this.onAgentStatus);
@@ -652,6 +659,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("agent_message", this.onAgentMessage);
     this.swarmManager.off("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.off("choice_request", this.onChoiceRequest);
+    this.swarmManager.off("work_plan_created", this.onWorkPlanCreated);
     this.swarmManager.off("conversation_reset", this.onConversationReset);
     this.swarmManager.off("message_pinned", this.onMessagePinned);
     this.swarmManager.off("agent_status", this.onAgentStatus);

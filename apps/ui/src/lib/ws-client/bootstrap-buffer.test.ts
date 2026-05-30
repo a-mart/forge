@@ -366,6 +366,42 @@ describe('BootstrapBuffer', () => {
     expect(buffer.active).toBe(false)
   })
 
+  it('force-flushes on work_plan_created for target', () => {
+    const { buffer, patches } = setup()
+    buffer.begin('session-b')
+
+    buffer.handleEvent({ type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' } as ServerEvent)
+
+    const timestamp = new Date().toISOString()
+    const consumed = buffer.handleEvent({
+      type: 'work_plan_created',
+      agentId: 'session-b',
+      id: 'work-plan-created-1',
+      timestamp,
+      planId: 'plan-1',
+      stateRevision: 1,
+      planRevision: 1,
+      plan: {
+        planId: 'plan-1',
+        title: 'Live plan',
+        status: 'active',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        revision: 1,
+        items: [],
+        itemCount: 0,
+        itemsTruncated: false,
+        warnings: [],
+        warningCount: 0,
+        warningsTruncated: false,
+      },
+    } as ServerEvent)
+
+    expect(consumed).toBe(false)
+    expect(patches).toHaveLength(1)
+    expect(buffer.active).toBe(false)
+  })
+
   it('force-flushes on agent_tool_call for target', () => {
     const { buffer, patches } = setup()
     buffer.begin('session-b')
@@ -466,6 +502,42 @@ describe('BootstrapBuffer', () => {
     } as ServerEvent)
 
     // Not consumed, not force-flushed
+    expect(consumed).toBe(false)
+    expect(patches).toHaveLength(0)
+    expect(buffer.active).toBe(true)
+  })
+
+  it('does not force-flush on work_plan_created for a different agent', () => {
+    const { buffer, patches } = setup()
+    buffer.begin('session-b')
+
+    buffer.handleEvent({ type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' } as ServerEvent)
+
+    const timestamp = new Date().toISOString()
+    const consumed = buffer.handleEvent({
+      type: 'work_plan_created',
+      agentId: 'other-session',
+      id: 'work-plan-created-other',
+      timestamp,
+      planId: 'plan-other',
+      stateRevision: 1,
+      planRevision: 1,
+      plan: {
+        planId: 'plan-other',
+        title: 'Other plan',
+        status: 'active',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        revision: 1,
+        items: [],
+        itemCount: 0,
+        itemsTruncated: false,
+        warnings: [],
+        warningCount: 0,
+        warningsTruncated: false,
+      },
+    } as ServerEvent)
+
     expect(consumed).toBe(false)
     expect(patches).toHaveLength(0)
     expect(buffer.active).toBe(true)

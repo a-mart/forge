@@ -31,6 +31,7 @@ export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string>
   'agent_message',
   'agent_tool_call',
   'choice_request',
+  'work_plan_created',
 ])
 
 export function handleConversationEvent(
@@ -48,7 +49,8 @@ export function handleConversationEvent(
       return true
 
     case 'conversation_message':
-    case 'conversation_log': {
+    case 'conversation_log':
+    case 'work_plan_created': {
       if (event.agentId !== context.state.targetAgentId) {
         return true
       }

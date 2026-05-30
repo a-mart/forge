@@ -11,7 +11,7 @@ import type {
 
 export type ConversationHistoryEntry = Extract<
   ConversationEntry,
-  { type: 'conversation_message' | 'conversation_log' | 'choice_request' }
+  { type: 'conversation_message' | 'conversation_log' | 'choice_request' | 'work_plan_created' }
 >
 export type AgentActivityEntry = Extract<
   ConversationEntry,
