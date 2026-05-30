@@ -96,6 +96,24 @@ export type AgentLifecycleStopSessionOptions = {
 
 export type ManagerRuntimeRecycleReason = RuntimeManagerRuntimeRecycleReason;
 
+/**
+ * Stop-path hook for preserved external-thread sidecars.
+ *
+ * Intended for stop/interrupt semantics only (for example, binding to
+ * CodexAppServerService.interruptTurn when that real service is available).
+ */
+export type ExternalThreadStopInterruptCallback = (agentId: string) => Promise<void>;
+
+/**
+ * Terminate/delete cleanup hook for external-thread sidecars.
+ *
+ * This is deliberately distinct from stop/interrupt. Integration must NOT bind
+ * this to interruptTurn(); kill/delete should keep terminated/delete semantics
+ * while later real service work provides a cleanup-only method that releases any
+ * shared busy-state bookkeeping.
+ */
+export type ExternalThreadTerminateCleanupCallback = (agentId: string) => Promise<void>;
+
 export interface SwarmAgentLifecycleServiceOptions {
   dataDir: string;
   descriptors: Map<string, AgentDescriptor>;
@@ -216,6 +234,8 @@ export interface SwarmAgentLifecycleServiceOptions {
     }
   ) => Promise<void>;
   transitionSessionWorkPlansForManualStop: (descriptor: ProvisionedSessionDescriptor) => Promise<void>;
+  interruptExternalThreadSidecarTurn?: ExternalThreadStopInterruptCallback;
+  terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
   sendMessage: (
     fromAgentId: string,
     targetAgentId: string,
@@ -277,6 +297,22 @@ export class SwarmAgentLifecycleService {
     options: { abort: boolean; emitStatus: boolean }
   ): Promise<void> {
     this.clearWorkerTeardownState(descriptor.agentId);
+
+    const interruptSidecarTurn = this.options.interruptExternalThreadSidecarTurn;
+    if (interruptSidecarTurn) {
+      try {
+        await interruptSidecarTurn(descriptor.agentId);
+        if (descriptor.status !== "streaming") {
+          return;
+        }
+      } catch (error) {
+        this.options.logDebug("external_thread:interrupt_service_failed", {
+          agentId: descriptor.agentId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     interruptExternalThreadWorkerDescriptor(descriptor, {
       abort: options.abort,
       emitStatus: options.emitStatus,
@@ -289,6 +325,27 @@ export class SwarmAgentLifecycleService {
       },
     });
     this.upsertDescriptor(descriptor);
+  }
+
+  private async cleanupExternalThreadWorkerForTermination(descriptor: AgentDescriptor): Promise<void> {
+    this.clearWorkerTeardownState(descriptor.agentId);
+
+    const terminateSidecarTurn = this.options.terminateExternalThreadSidecarTurn;
+    if (!terminateSidecarTurn) {
+      return;
+    }
+
+    // Cleanup-only seam for kill/delete. Do not treat this as a stop/interrupt
+    // path; callers still project the descriptor to terminated immediately after.
+
+    try {
+      await terminateSidecarTurn(descriptor.agentId);
+    } catch (error) {
+      this.options.logDebug("external_thread:terminate_service_failed", {
+        agentId: descriptor.agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private invalidateManagerRuntimeBeforeWorkerTeardown(
@@ -1358,7 +1415,7 @@ export class SwarmAgentLifecycleService {
     this.options.cancelAllPendingChoicesForAgent(descriptor.agentId);
 
     if (isExternalThreadDescriptor(descriptor)) {
-      this.clearWorkerTeardownState(descriptor.agentId);
+      await this.cleanupExternalThreadWorkerForTermination(descriptor);
       this.clearPendingManagerRuntimeRecycle(descriptor.agentId);
 
       descriptor.status = transitionAgentStatus(descriptor.status, "terminated");

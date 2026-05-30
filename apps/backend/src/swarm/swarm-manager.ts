@@ -168,6 +168,8 @@ import { SwarmSettingsService } from "./swarm-settings-service.js";
 import {
   SwarmAgentLifecycleService,
   type AgentLifecycleStopSessionOptions,
+  type ExternalThreadStopInterruptCallback,
+  type ExternalThreadTerminateCleanupCallback,
   type ManagerRuntimeRecycleReason
 } from "./swarm-agent-lifecycle-service.js";
 import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
@@ -1125,6 +1127,19 @@ interface DescriptorStoreAdapter {
   deleteProfileInLiveMaps: (profileId: string) => boolean;
 }
 
+type SwarmManagerOptions = {
+  now?: () => string;
+  versioningService?: VersioningMutationSink;
+  /** Stop-only seam for preserved sidecars; safe future binding target: interruptTurn(). */
+  interruptExternalThreadSidecarTurn?: ExternalThreadStopInterruptCallback;
+  /**
+   * Kill/delete cleanup-only seam.
+   * Intentionally distinct from stop interrupts: do not bind this to interruptTurn().
+   * Phase 4+ integration should provide a separate cleanup method here later.
+   */
+  terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
+};
+
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
@@ -1196,7 +1211,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly versioningService: VersioningMutationSink | undefined;
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
 
-  constructor(config: SwarmConfig, options?: { now?: () => string; versioningService?: VersioningMutationSink }) {
+  constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
 
     this.defaultModelPreset =
@@ -1619,6 +1634,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       transitionSessionWorkPlansForManualStop: async (descriptor) => {
         await this.transitionSessionWorkPlansForLifecycle(descriptor, "manual_stop");
       },
+      interruptExternalThreadSidecarTurn: options?.interruptExternalThreadSidecarTurn,
+      terminateExternalThreadSidecarTurn: options?.terminateExternalThreadSidecarTurn,
       sendMessage: (fromAgentId, targetAgentId, message, delivery, options) =>
         this.sendMessage(fromAgentId, targetAgentId, message, delivery, options),
       sendManagerBootstrapMessage: (managerId) => this.sendManagerBootstrapMessage(managerId),
