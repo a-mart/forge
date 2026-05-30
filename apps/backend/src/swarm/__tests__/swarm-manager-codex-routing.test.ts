@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
@@ -18,6 +18,9 @@ import { TestSwarmManager, bootWithDefaultManager } from "../../test-support/ind
 import { createTempConfig } from "../../test-support/temp-config.js";
 
 class FakeCodexAppServerClient implements CodexAppServerClientPort {
+  turnCounter = 0;
+  lastTurnId = "";
+  autoCompleteTurn = true;
   readonly requests: Array<{ method: string; params?: unknown }> = [];
 
   constructor(readonly handlers: CodexAppServerClientHandlers) {}
@@ -37,14 +40,14 @@ class FakeCodexAppServerClient implements CodexAppServerClientPort {
     }
 
     if (method === "turn/start") {
-      const turnId = "turn-1";
-      queueMicrotask(async () => {
-        await this.handlers.onNotification?.("item/completed", {
-          turn: { id: turnId },
-          item: { type: "agentMessage", text: "Codex says hi" },
+      this.turnCounter += 1;
+      const turnId = `turn-${this.turnCounter}`;
+      this.lastTurnId = turnId;
+      if (this.autoCompleteTurn) {
+        queueMicrotask(async () => {
+          await this.completeTurn(turnId);
         });
-        await this.handlers.onNotification?.("turn/completed", { turn: { id: turnId } });
-      });
+      }
       return { turn: { id: turnId } } as T;
     }
 
@@ -61,6 +64,14 @@ class FakeCodexAppServerClient implements CodexAppServerClientPort {
 
   isDisposed(): boolean {
     return false;
+  }
+
+  async completeTurn(turnId = this.lastTurnId, text = "Codex says hi"): Promise<void> {
+    await this.handlers.onNotification?.("item/completed", {
+      turn: { id: turnId },
+      item: { type: "agentMessage", text },
+    });
+    await this.handlers.onNotification?.("turn/completed", { turn: { id: turnId } });
   }
 }
 
@@ -689,6 +700,78 @@ describe("SwarmManager Codex mention routing", () => {
     expect(threadRequest?.params).toMatchObject({ cwd: resolvedCwd });
     expect(turnRequest?.params).toMatchObject({ cwd: resolvedCwd });
     expect(manager.getAgent("manager--codex")?.cwd).toBe(resolvedCwd);
+  });
+
+  it("persists idle sidecar state after a busy follow-up completes so the next @Codex turn uses the updated cwd", async () => {
+    const { config } = await createTempConfig();
+    const { manager, getFakeClient } = createCodexEnabledTestManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex seed sidecar", {
+      sourceContext: { channel: "web" },
+    });
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent("manager--codex")?.status).toBe("idle");
+    });
+
+    const fakeClient = getFakeClient()!;
+    fakeClient.requests.length = 0;
+    fakeClient.autoCompleteTurn = false;
+
+    await manager.handleUserMessage("follow up without mention", {
+      targetAgentId: "manager--codex",
+      sourceContext: { channel: "web" },
+    });
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent("manager--codex")?.status).toBe("streaming");
+    });
+
+    const nextCwd = join(config.defaultCwd, "updated-cwd-after-busy-followup");
+    await mkdir(nextCwd, { recursive: true });
+    await manager.updateManagerCwd("manager", nextCwd);
+    const resolvedCwd = manager.getAgent("manager")!.cwd;
+
+    await expect(
+      manager.handleUserMessage("@Codex after cwd change", {
+        sourceContext: { channel: "web" },
+      }),
+    ).rejects.toThrow(/Codex is busy/);
+
+    expect(manager.getAgent("manager--codex")?.cwd).toBe(resolvedCwd);
+
+    await fakeClient.completeTurn(undefined, "follow up complete");
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent("manager--codex")?.status).toBe("idle");
+    });
+
+    await vi.waitFor(async () => {
+      const store = JSON.parse(await readFile(config.paths.agentsStoreFile, "utf8")) as {
+        agents: Array<{ agentId: string; status?: string; cwd?: string }>;
+      };
+      const persistedSidecar = store.agents.find((agent) => agent.agentId === "manager--codex");
+      expect(persistedSidecar).toMatchObject({ status: "idle", cwd: resolvedCwd });
+    });
+
+    fakeClient.autoCompleteTurn = true;
+    fakeClient.requests.length = 0;
+
+    await manager.handleUserMessage("@Codex after completion", {
+      sourceContext: { channel: "web" },
+    });
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent("manager--codex")?.status).toBe("idle");
+    });
+
+    const threadRequest = fakeClient.requests.find(
+      (request) => request.method === "thread/start" || request.method === "thread/resume",
+    );
+    const turnRequest = fakeClient.requests.find((request) => request.method === "turn/start");
+    expect(threadRequest?.params).toMatchObject({ cwd: resolvedCwd });
+    expect(turnRequest?.params).toMatchObject({ cwd: resolvedCwd });
   });
 });
 

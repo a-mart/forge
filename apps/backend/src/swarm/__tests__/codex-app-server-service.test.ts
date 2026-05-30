@@ -469,6 +469,43 @@ describe("CodexAppServerService", () => {
     });
   });
 
+  it("persists synced cwd for an existing idle sidecar even when another sidecar keeps Codex globally busy", async () => {
+    const managerA = createManagerDescriptor("/tmp/project-a", { agentId: "mgr-a", profileId: "profile-a" });
+    const managerB = createManagerDescriptor("/tmp/project-b-old", { agentId: "mgr-b", profileId: "profile-b" });
+    const { host, descriptors } = createFakeHost([managerA, managerB]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(managerA);
+    await service.getOrCreateSidecarDescriptor(managerB);
+    await service.sendTextTurn("mgr-a--codex", "running");
+
+    const saveStoreSpy = host.saveStore as unknown as ReturnType<typeof vi.fn>;
+    saveStoreSpy.mockClear();
+
+    managerB.cwd = "/tmp/project-b-new";
+    descriptors.set(managerB.agentId, managerB);
+
+    const sidecarB = await service.getOrCreateSidecarDescriptor(managerB);
+    await expect(service.sendTextTurn("mgr-b--codex", "blocked")).rejects.toBeInstanceOf(
+      CodexSidecarBusyError,
+    );
+
+    expect(sidecarB.cwd).toBe("/tmp/project-b-new");
+    expect(descriptors.get("mgr-b--codex")?.cwd).toBe("/tmp/project-b-new");
+    expect(saveStoreSpy).toHaveBeenCalledTimes(1);
+    expect(service.getRuntimeStateForTest("mgr-b--codex")?.activeTurn).toBeUndefined();
+
+    fakeClient!.autoCompleteTurn = true;
+    await fakeClient!.completeTurn();
+  });
+
   it("cleanupSidecarTurnStateForTermination clears global busy state without stop semantics", async () => {
     const managerA = createManagerDescriptor("/tmp/project-a", { agentId: "mgr-a", profileId: "profile-a" });
     const managerB = createManagerDescriptor("/tmp/project-b", { agentId: "mgr-b", profileId: "profile-b" });

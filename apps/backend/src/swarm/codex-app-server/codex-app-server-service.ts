@@ -85,7 +85,10 @@ export class CodexAppServerService {
           `Codex sidecar ${existing.agentId} is ${existing.status} and cannot be reused. Recreate the sidecar before sending another Codex message.`,
         );
       }
-      this.syncSidecarCwdFromManager(existing);
+      if (this.syncSidecarCwdFromManager(existing)) {
+        this.host.emitAgentsSnapshot();
+        await this.persistDescriptorUpdate(existing, "sync_cwd_from_manager");
+      }
       return existing;
     }
 
@@ -312,6 +315,7 @@ export class CodexAppServerService {
       descriptor.updatedAt = this.host.now();
       this.host.upsertDescriptor(descriptor);
       this.host.emitStatus(sidecarAgentId, "idle", 0);
+      await this.persistDescriptorUpdate(descriptor, "interrupt_idle");
       return;
     }
 
@@ -348,7 +352,7 @@ export class CodexAppServerService {
         }
       }
     } finally {
-      this.clearActiveTurn(sidecarAgentId, "Codex turn stopped.");
+      await this.clearActiveTurn(sidecarAgentId, "Codex turn stopped.");
     }
   }
 
@@ -373,15 +377,16 @@ export class CodexAppServerService {
     return this.sidecarRuntimeByAgentId.get(sidecarAgentId);
   }
 
-  private syncSidecarCwdFromManager(descriptor: AgentDescriptor): void {
+  private syncSidecarCwdFromManager(descriptor: AgentDescriptor): boolean {
     const manager = this.host.getDescriptor(descriptor.managerId);
     if (!manager?.cwd || descriptor.cwd === manager.cwd) {
-      return;
+      return false;
     }
 
     descriptor.cwd = manager.cwd;
     descriptor.updatedAt = this.host.now();
     this.host.upsertDescriptor(descriptor);
+    return true;
   }
 
   private clearActiveTurnForTerminationCleanup(sidecarAgentId: string): void {
@@ -522,7 +527,7 @@ export class CodexAppServerService {
     }
 
     const message = error instanceof Error ? error.message : String(error);
-    this.clearActiveTurn(sidecarAgentId, `Codex turn failed: ${message}`, "error");
+    void this.clearActiveTurn(sidecarAgentId, `Codex turn failed: ${message}`, "error");
   }
 
   private async handleSharedNotification(method: string, params?: unknown): Promise<void> {
@@ -557,18 +562,18 @@ export class CodexAppServerService {
         onTurnStarted: (turnId) => {
           activeTurn.turnId = turnId;
         },
-        onTurnCompleted: () => {
-          this.scheduleActiveTurnFinalization(sidecarAgentId);
+        onTurnCompleted: async () => {
+          await this.scheduleActiveTurnFinalization(sidecarAgentId);
         },
         onAgentMessageDelta: (delta) => {
           activeTurn.assistantText += delta;
         },
-        onAgentMessageCompleted: (text) => {
+        onAgentMessageCompleted: async (text) => {
           activeTurn.agentMessageItemCompleted = true;
           activeTurn.assistantText = text;
           if (activeTurn.turnCompletedPending) {
             this.cancelCompletionGrace(activeTurn);
-            this.finalizeActiveTurn(sidecarAgentId);
+            await this.finalizeActiveTurn(sidecarAgentId);
           }
         },
       },
@@ -582,7 +587,7 @@ export class CodexAppServerService {
 
     const activeSidecarAgentId = this.getGlobalActiveSidecarAgentId();
     if (activeSidecarAgentId) {
-      this.clearActiveTurn(
+      void this.clearActiveTurn(
         activeSidecarAgentId,
         `Codex app-server exited: ${error.message}`,
         "error",
@@ -592,7 +597,7 @@ export class CodexAppServerService {
     this.resetSharedClient();
   }
 
-  private scheduleActiveTurnFinalization(sidecarAgentId: string): void {
+  private async scheduleActiveTurnFinalization(sidecarAgentId: string): Promise<void> {
     const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
     const activeTurn = runtime?.activeTurn;
     if (!activeTurn || activeTurn.suppressed) {
@@ -605,7 +610,7 @@ export class CodexAppServerService {
     runtime.openCompletionGraceToken = activeTurn.turnEpoch;
 
     if (activeTurn.agentMessageItemCompleted) {
-      this.finalizeActiveTurn(sidecarAgentId);
+      await this.finalizeActiveTurn(sidecarAgentId);
       return;
     }
 
@@ -615,7 +620,7 @@ export class CodexAppServerService {
 
     activeTurn.completionGraceTimer = setTimeout(() => {
       activeTurn.completionGraceTimer = undefined;
-      this.finalizeActiveTurn(sidecarAgentId);
+      void this.finalizeActiveTurn(sidecarAgentId);
     }, this.turnCompletionGraceMs);
   }
 
@@ -628,7 +633,7 @@ export class CodexAppServerService {
     activeTurn.completionGraceTimer = undefined;
   }
 
-  private finalizeActiveTurn(sidecarAgentId: string): void {
+  private async finalizeActiveTurn(sidecarAgentId: string): Promise<void> {
     const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
     const activeTurn = runtime?.activeTurn;
     if (!activeTurn || activeTurn.suppressed || !activeTurn.turnCompletedPending) {
@@ -645,7 +650,7 @@ export class CodexAppServerService {
       this.emitAssistantMessageIfNeeded(sidecarAgentId, activeTurn.assistantText);
     }
 
-    this.clearActiveTurn(sidecarAgentId);
+    await this.clearActiveTurn(sidecarAgentId);
   }
 
   private emitAssistantMessageIfNeeded(sidecarAgentId: string, text: string): void {
@@ -666,11 +671,11 @@ export class CodexAppServerService {
     });
   }
 
-  private clearActiveTurn(
+  private async clearActiveTurn(
     sidecarAgentId: string,
     systemMessage?: string,
     descriptorStatus: "idle" | "error" = "idle",
-  ): void {
+  ): Promise<void> {
     const descriptor = this.host.getDescriptor(sidecarAgentId);
     const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
     const activeTurn = runtime?.activeTurn;
@@ -708,6 +713,22 @@ export class CodexAppServerService {
       this.host.upsertDescriptor(descriptor);
       this.host.emitStatus(sidecarAgentId, descriptorStatus, 0);
       this.host.emitAgentsSnapshot();
+      await this.persistDescriptorUpdate(descriptor, descriptorStatus === "error" ? "turn_error" : "turn_cleared");
+    }
+  }
+
+  private async persistDescriptorUpdate(
+    descriptor: AgentDescriptor,
+    reason: string,
+  ): Promise<void> {
+    try {
+      await this.host.saveStore();
+    } catch (error) {
+      this.host.logDebug("Failed to persist Codex sidecar descriptor update", {
+        sidecarAgentId: descriptor.agentId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

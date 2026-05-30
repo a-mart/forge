@@ -10,11 +10,11 @@ export interface CodexNotificationDispatchContext {
 }
 
 export interface CodexNotificationDispatchCallbacks {
-  onTurnStarted(turnId: string): void;
-  onTurnCompleted(): void;
-  onAgentMessageDelta(delta: string): void;
-  onAgentMessageCompleted(text: string): void;
-  onProcessExit?(error: Error): void;
+  onTurnStarted(turnId: string): void | Promise<void>;
+  onTurnCompleted(): void | Promise<void>;
+  onAgentMessageDelta(delta: string): void | Promise<void>;
+  onAgentMessageCompleted(text: string): void | Promise<void>;
+  onProcessExit?(error: Error): void | Promise<void>;
 }
 
 export type CodexTurnlessItemNotificationMethod = "item/agentMessage/delta" | "item/completed";
@@ -115,7 +115,7 @@ export async function dispatchCodexAppServerNotification(
         return;
       }
 
-      callbacks.onTurnStarted(turnId);
+      await callbacks.onTurnStarted(turnId);
       return;
     }
 
@@ -124,7 +124,7 @@ export async function dispatchCodexAppServerNotification(
         return;
       }
 
-      callbacks.onTurnCompleted();
+      await callbacks.onTurnCompleted();
       return;
     }
 
@@ -146,7 +146,7 @@ export async function dispatchCodexAppServerNotification(
 
       const delta = parseAgentMessageDelta(params);
       if (delta) {
-        callbacks.onAgentMessageDelta(delta);
+        await callbacks.onAgentMessageDelta(delta);
       }
       break;
     }
@@ -171,7 +171,7 @@ export async function dispatchCodexAppServerNotification(
       if (item?.type === "agentMessage") {
         const text = parseAgentMessageText(params);
         if (text) {
-          callbacks.onAgentMessageCompleted(text);
+          await callbacks.onAgentMessageCompleted(text);
         }
       }
       break;
