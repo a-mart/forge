@@ -74,16 +74,18 @@ export function getHeaderSummary(snapshot: SessionTaskStateSnapshotEvent | null 
     return null
   }
 
+  if (plan.status === 'completed') return 'Completed'
+  if (plan.status === 'completed_with_warnings') return 'Completed with warnings'
+  if (plan.status === 'failed') return 'Failed · review needed'
+  if (plan.status === 'stopped') return 'Stopped · partial progress preserved'
+  if (plan.status === 'interrupted') return 'Interrupted · historical'
+
   const attentionCount = countAttentionItems(plan)
   if (attentionCount > 0 || plan.status === 'blocked' || plan.status === 'needs_attention') {
     const hasBlockedItem = plan.items.some((item) => item.status === 'blocked')
     const attentionLabel = plan.status === 'blocked' || hasBlockedItem ? 'Blocked' : 'Needs attention'
     return `${attentionLabel} · ${attentionCount || 1} needs review`
   }
-  if (plan.status === 'stopped') return 'Stopped · partial progress preserved'
-  if (plan.status === 'interrupted') return 'Interrupted · historical'
-  if (plan.status === 'completed_with_warnings') return 'Completed with warnings'
-  if (plan.status === 'failed') return 'Failed · review needed'
 
   const done = countDoneItems(plan)
   const total = plan.itemCount

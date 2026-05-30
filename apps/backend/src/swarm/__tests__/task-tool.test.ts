@@ -272,6 +272,59 @@ describe('SwarmManager.runTaskTool', () => {
     })
   })
 
+  it('finishing a provider-facing plan closes open items but preserves explicit failed/unknown evidence', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.runTaskTool('manager', 'tool-provider-finish-1', {
+      action: 'upsert_plan',
+      title: 'Provider-facing finish closeout',
+      itemsText: '[active] Investigate backend\n[todo] Summarize outcome',
+    })
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'provider-finish-worker' })
+    const linked = await manager.runTaskTool('manager', 'tool-provider-finish-2', {
+      action: 'link',
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      itemId: created.createdItemIds?.[0],
+      link: { type: 'worker', agentId: worker.agentId },
+    })
+
+    const revised = await manager.runTaskTool('manager', 'tool-provider-finish-2b', {
+      action: 'upsert_plan',
+      expectedStateRevision: linked.stateRevision,
+      planId: created.planId,
+      items: [
+        { itemId: created.createdItemIds?.[0], title: 'Investigate backend', status: 'active' },
+        { itemId: created.createdItemIds?.[1], title: 'Summarize outcome', status: 'todo' },
+        { title: 'Known failure', status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
+        { title: 'Unknown outcome', status: 'unknown', note: 'Worker ended without report' },
+      ],
+    })
+
+    const finished = await manager.runTaskTool('manager', 'tool-provider-finish-3', {
+      action: 'finish_plan',
+      expectedStateRevision: revised.stateRevision,
+      planId: created.planId,
+      status: 'completed',
+      finalSummary: 'Done',
+    })
+
+    expect(finished.snapshot.activeWorkPlan).toBeNull()
+    expect(finished.snapshot.recentWorkPlans[0]).toMatchObject({
+      planId: created.planId,
+      status: 'completed',
+      items: [
+        { status: 'done', workerLinks: [{ agentId: worker.agentId }] },
+        { status: 'done' },
+        { status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
+        { status: 'unknown', note: 'Worker ended without report' },
+      ],
+    })
+  })
+
   it('emits live task snapshots after successful task mutations', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

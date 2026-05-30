@@ -274,6 +274,99 @@ describe('work-plan-service', () => {
     })
   })
 
+  it('auto-closes open items on successful finish, preserves linked worker evidence, and keeps explicit failed/unknown item evidence', async () => {
+    const dataDir = await createDataDir()
+    const sameSessionWorker = createWorker('worker-1', { managerId: SESSION_ID, specialistId: 'backend' })
+    const { service } = createHarness(dataDir, { agents: [sameSessionWorker] })
+    const actor = managerActor()
+
+    const created = await service.upsertPlan(actor, {
+      title: 'Finish closes progress',
+      items: [
+        { title: 'Investigate backend', status: 'active' },
+        { title: 'Summarize follow-up', status: 'todo' },
+        { title: 'Known failure', status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
+        { title: 'Unknown outcome', status: 'unknown', note: 'Worker ended without report' },
+      ],
+    })
+
+    const linked = await service.link(actor, {
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      itemId: created.workPlan.items[0]!.itemId,
+      link: { type: 'worker', agentId: sameSessionWorker.agentId },
+    })
+
+    await expect(
+      service.finishPlan(actor, {
+        expectedStateRevision: 0,
+        planId: created.planId,
+        status: 'completed',
+        finalSummary: 'Should fail CAS',
+      }),
+    ).rejects.toBeInstanceOf(SessionCoordinationStateRevisionConflictError)
+
+    const finished = await service.finishPlan(actor, {
+      expectedStateRevision: linked.stateRevision,
+      planId: created.planId,
+      status: 'completed',
+      finalSummary: 'Work completed.',
+    })
+
+    expect(finished.snapshot.activeWorkPlan).toBeNull()
+    expect(finished.snapshot.recentWorkPlans[0]).toMatchObject({
+      planId: created.planId,
+      status: 'completed',
+      finalSummary: 'Work completed.',
+      items: [
+        {
+          status: 'done',
+          workerLinks: [{ agentId: sameSessionWorker.agentId, label: sameSessionWorker.displayName, specialistId: 'backend' }],
+        },
+        { status: 'done' },
+        { status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
+        { status: 'unknown', note: 'Worker ended without report' },
+      ],
+    })
+  })
+
+  it('maps blocked items to skipped for completed_with_warnings while preserving skipped and failed items', async () => {
+    const dataDir = await createDataDir()
+    const { service } = createHarness(dataDir)
+    const actor = managerActor()
+
+    const created = await service.upsertPlan(actor, {
+      title: 'Warning closeout',
+      items: [
+        { title: 'Blocked item', status: 'blocked', blocker: { reason: 'Need review' } },
+        { title: 'Skipped item', status: 'skipped' },
+        { title: 'Failed item', status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
+        { title: 'Active item', status: 'active' },
+      ],
+    })
+
+    const finished = await service.finishPlan(actor, {
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      status: 'completed_with_warnings',
+      finalSummary: 'Completed with caveats.',
+      warnings: ['One follow-up remains.'],
+    })
+
+    expect(finished.snapshot.recentWorkPlans[0]?.items.map((item) => item.status)).toEqual([
+      'skipped',
+      'skipped',
+      'failed',
+      'done',
+    ])
+    expect(finished.snapshot.recentWorkPlans[0]?.items[0]).toMatchObject({
+      blocker: { reason: 'Need review' },
+    })
+    expect(finished.snapshot.recentWorkPlans[0]?.items[2]).toMatchObject({
+      result: { summary: 'Probe failed', status: 'failed' },
+    })
+  })
+
   it('treats omitted planId as create-only and rejects when an active plan already exists', async () => {
     const dataDir = await createDataDir()
     const { service } = createHarness(dataDir)

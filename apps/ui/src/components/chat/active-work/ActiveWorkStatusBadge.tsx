@@ -6,7 +6,9 @@ import { formatPlanStatus } from './active-work-utils'
 
 type Status = WorkPlanStatus | WorkPlanItemStatus | 'unavailable'
 
-function statusLabel(status: Status): string {
+function statusLabel(status: Status, scope: 'plan' | 'item'): string {
+  if (scope === 'item' && status === 'active') return 'In progress'
+
   switch (status) {
     case 'todo': return 'Todo'
     case 'up_next': return 'Up next'
@@ -50,11 +52,19 @@ function StatusIcon({ status }: { status: Status }) {
   return <CircleDot className="size-3" aria-hidden="true" />
 }
 
-export function ActiveWorkStatusBadge({ status, className }: { status: Status; className?: string }) {
+export function ActiveWorkStatusBadge({
+  status,
+  className,
+  scope = 'plan',
+}: {
+  status: Status
+  className?: string
+  scope?: 'plan' | 'item'
+}) {
   return (
     <Badge variant="outline" className={cn('h-5 gap-1 px-1.5 text-[10px] font-medium', statusTone(status), className)}>
       <StatusIcon status={status} />
-      <span>{statusLabel(status)}</span>
+      <span>{statusLabel(status, scope)}</span>
     </Badge>
   )
 }

@@ -46,7 +46,7 @@ export function ActiveWorkItemDetails({ item, agents, statuses }: ActiveWorkItem
   return (
     <div className="mt-2 rounded-md border border-border/60 bg-background/60 p-3 text-xs" role="region" aria-label={`${item.title} details`}>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <ActiveWorkStatusBadge status={item.status} />
+        <ActiveWorkStatusBadge status={item.status} scope="item" />
         {item.phase ? <span className="text-muted-foreground">Phase: {item.phase}</span> : null}
       </div>
 

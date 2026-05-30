@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, ClipboardList } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
-import type { AgentDescriptor, AgentStatus, SessionTaskStateSnapshotEvent } from '@forge/protocol'
+import type { AgentDescriptor, AgentStatus, SessionTaskStateSnapshotEvent, WorkPlanItemStatus } from '@forge/protocol'
 import { ActiveWorkItemDetails } from './ActiveWorkItemDetails'
 import { ActiveWorkStatusBadge } from './ActiveWorkStatusBadge'
 import {
@@ -16,6 +16,25 @@ import {
   sortWorkPlanItems,
   toActiveWorkSnapshotView,
 } from './active-work-utils'
+
+function getDisplayItemStatus(planStatus: string | undefined, itemStatus: WorkPlanItemStatus): WorkPlanItemStatus {
+  if (['done', 'skipped', 'failed'].includes(itemStatus)) {
+    return itemStatus
+  }
+  switch (planStatus) {
+    case 'completed':
+      return 'done'
+    case 'completed_with_warnings':
+      return 'unknown'
+    case 'failed':
+      return 'failed'
+    case 'stopped':
+    case 'interrupted':
+      return 'skipped'
+    default:
+      return itemStatus
+  }
+}
 
 interface ActiveWorkCardProps {
   snapshot?: SessionTaskStateSnapshotEvent | null
@@ -60,7 +79,14 @@ export function ActiveWorkCard({
   const knownTotalItems = plan?.itemCount ?? sortedItems.length
   const hiddenItemCount = Math.max(0, knownTotalItems - visibleItems.length)
   const selectedItem = visibleItems.find((item) => item.itemId === selectedItemId) ?? null
-  const progressLabel = plan && knownTotalItems > 0 ? `${countDoneItems(plan)}/${knownTotalItems}` : null
+  const isTerminalPlan = plan ? ['completed', 'completed_with_warnings', 'failed', 'stopped', 'interrupted'].includes(plan.status) : false
+  const progressLabel = plan && knownTotalItems > 0
+    ? isTerminalPlan
+      ? plan.status === 'completed'
+        ? 'Finished'
+        : null
+      : `${countDoneItems(plan)}/${knownTotalItems}`
+    : null
   const knownWarningCount = plan?.warningCount ?? plan?.warnings.length ?? 0
   const hiddenWarningCount = plan ? Math.max(0, knownWarningCount - plan.warnings.length) : 0
   const knownRecentPlanCount = snapshotView?.recentWorkPlanCount ?? snapshotView?.recentWorkPlans.length ?? 0
@@ -148,7 +174,7 @@ export function ActiveWorkCard({
                         </div>
                       ) : null}
                     </div>
-                    <ActiveWorkStatusBadge status={item.status} className="shrink-0" />
+                    <ActiveWorkStatusBadge status={getDisplayItemStatus(plan.status, item.status)} className="shrink-0" scope="item" />
                   </div>
                 </button>
               )
@@ -159,7 +185,13 @@ export function ActiveWorkCard({
               +{hiddenItemCount} more{plan.itemsTruncated ? ' in plan' : ''}
             </Button>
           ) : null}
-          {selectedItem ? <ActiveWorkItemDetails item={selectedItem} agents={agents} statuses={statuses} /> : null}
+          {selectedItem ? (
+            <ActiveWorkItemDetails
+              item={{ ...selectedItem, status: getDisplayItemStatus(plan.status, selectedItem.status) }}
+              agents={agents}
+              statuses={statuses}
+            />
+          ) : null}
           {plan.finalSummary || knownWarningCount > 0 || hiddenRecentPlanCount > 0 ? (
             <div className="mt-3 rounded-md border border-border/60 bg-background/60 p-3 text-xs">
               {plan.finalSummary ? <p className="whitespace-pre-wrap text-muted-foreground">{plan.finalSummary}</p> : null}
@@ -180,7 +212,7 @@ export function ActiveWorkCard({
               ) : null}
               {hiddenRecentPlanCount > 0 || snapshotView?.recentWorkPlansTruncated ? (
                 <p className="mt-2 text-muted-foreground">
-                  +{hiddenRecentPlanCount || Math.max(1, knownRecentPlanCount)} more recent Work Plan{(hiddenRecentPlanCount || knownRecentPlanCount) === 1 ? '' : 's'} not shown
+                  +{hiddenRecentPlanCount || Math.max(1, knownRecentPlanCount)} previous completed Work Plan{(hiddenRecentPlanCount || knownRecentPlanCount) === 1 ? '' : 's'} hidden
                 </p>
               ) : null}
             </div>

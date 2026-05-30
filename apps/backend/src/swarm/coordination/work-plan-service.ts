@@ -336,6 +336,7 @@ export class WorkPlanService {
       }
 
       const timestamp = this.now().toISOString()
+      plan.items = closeItemsForTerminalPlan(plan.items, input.status, timestamp)
       plan.status = input.status
       plan.finalSummary = input.finalSummary
       plan.warnings = input.warnings ? [...input.warnings] : [...plan.warnings]
@@ -612,6 +613,46 @@ function assertSingleNonTerminalPlan(state: SessionCoordinationState): void {
   if (findNonTerminalWorkPlanRecords(state).length > 1) {
     throw new WorkPlanActiveInvariantError()
   }
+}
+
+function closeItemsForTerminalPlan(
+  items: WorkPlanItem[],
+  planStatus: WorkPlanTerminalStatus,
+  timestamp: string,
+): WorkPlanItem[] {
+  return items.map((item) => {
+    const nextStatus = resolveTerminalItemStatus(item.status, planStatus)
+    if (nextStatus === item.status) {
+      return item
+    }
+
+    return {
+      ...item,
+      status: nextStatus,
+      updatedAt: timestamp,
+    }
+  })
+}
+
+function resolveTerminalItemStatus(
+  itemStatus: WorkPlanItemStatus,
+  planStatus: WorkPlanTerminalStatus,
+): WorkPlanItemStatus {
+  if (planStatus === 'completed') {
+    if (itemStatus === 'done' || itemStatus === 'skipped' || itemStatus === 'failed' || itemStatus === 'unknown') {
+      return itemStatus
+    }
+    return 'done'
+  }
+
+  if (planStatus === 'completed_with_warnings') {
+    if (itemStatus === 'done' || itemStatus === 'skipped' || itemStatus === 'failed' || itemStatus === 'unknown') {
+      return itemStatus
+    }
+    return itemStatus === 'active' ? 'done' : 'skipped'
+  }
+
+  return itemStatus
 }
 
 function appendMutationProvenance(plan: WorkPlanRecord, entry: WorkPlanRecord['mutationProvenance'][number]): void {

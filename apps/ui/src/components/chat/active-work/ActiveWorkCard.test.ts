@@ -134,7 +134,7 @@ describe('ActiveWorkCard', () => {
     render(snapshot)
 
     expect(container.textContent).toContain('Completed plan 1')
-    expect(container.textContent).toContain('+3 more recent Work Plans not shown')
+    expect(container.textContent).toContain('+3 previous completed Work Plans hidden')
   })
 
   it('counts all recent plans as hidden when an active plan is rendered', () => {
@@ -148,7 +148,7 @@ describe('ActiveWorkCard', () => {
 
     expect(container.textContent).toContain('Ship Active Work UI')
     expect(container.textContent).not.toContain('Completed plan 1')
-    expect(container.textContent).toContain('+8 more recent Work Plans not shown')
+    expect(container.textContent).toContain('+8 previous completed Work Plans hidden')
   })
 
   it('counts returned-but-not-rendered recent plans when no active plan exists', () => {
@@ -163,7 +163,44 @@ describe('ActiveWorkCard', () => {
 
     expect(container.textContent).toContain('Completed plan 1')
     expect(container.textContent).not.toContain('Completed plan 2')
-    expect(container.textContent).toContain('+3 more recent Work Plans not shown')
+    expect(container.textContent).toContain('+3 previous completed Work Plans hidden')
+  })
+
+  it('renders terminal completed plans as receipts instead of contradictory 0/N progress', () => {
+    const snapshot = makeSnapshot()
+    snapshot.activeWorkPlan = {
+      ...snapshot.activeWorkPlan!,
+      status: 'completed',
+      finalSummary: 'Finished the requested work.',
+      completedAt: '2026-05-29T00:10:00Z',
+    }
+
+    render(snapshot)
+
+    expect(container.textContent).toContain('Completed')
+    expect(container.textContent).toContain('Finished')
+    expect(container.textContent).not.toContain('Completed · 0/2')
+    expect(container.textContent).not.toContain('0/2')
+    expect(container.textContent).not.toContain('In progress')
+    expect(container.textContent).not.toContain('Todo')
+    expect(container.textContent).toContain('Done')
+    expect(getHeaderSummary(snapshot)).toBe('Completed')
+  })
+
+  it('does not render live active/todo badges inside terminal plans', () => {
+    for (const status of ['completed_with_warnings', 'failed', 'stopped', 'interrupted'] as const) {
+      const snapshot = makeSnapshot()
+      snapshot.activeWorkPlan = {
+        ...snapshot.activeWorkPlan!,
+        status,
+        completedAt: '2026-05-29T00:10:00Z',
+      }
+
+      render(snapshot)
+
+      expect(container.textContent).not.toContain('In progress')
+      expect(container.textContent).not.toContain('Todo')
+    }
   })
 
   it('formats attention header summaries', () => {
