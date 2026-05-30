@@ -142,6 +142,8 @@ export function BuilderSurface({
 
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
   const [detailedAllView, setDetailedAllView] = useState(false)
+  const [activeWorkExpanded, setActiveWorkExpanded] = useState(false)
+  const [activeWorkFocusNonce, setActiveWorkFocusNonce] = useState(0)
 
   const activeAgentId = useMemo(() => {
     const preferredId = state.targetAgentId ?? state.subscribedAgentId ?? null
@@ -237,9 +239,10 @@ export function BuilderSurface({
     if (messageSourceView !== 'all') setDetailedAllView(false)
   }, [messageSourceView])
 
-  // Reset Detailed All when switching active agent/session
+  // Reset local chat chrome when switching active agent/session
   useEffect(() => {
     setDetailedAllView(false)
+    setActiveWorkExpanded(false)
   }, [activeAgentId])
 
   // Derive effective detailed state for hook consumption
@@ -269,6 +272,13 @@ export function BuilderSurface({
       (agent) => agent.role === 'manager' && agent.agentId === activeManagerId,
     ) ?? null
   }, [activeManagerId, state.agents])
+
+  const activeWorkSnapshot =
+    activeAgent?.role === 'manager' &&
+    activeManagerId &&
+    state.taskSnapshotLoadingSessionId !== activeManagerId
+      ? state.taskSnapshots[activeManagerId] ?? null
+      : null
 
   const terminalSessionAgentId = useMemo(() => {
     if (!activeAgent) {
@@ -1369,6 +1379,14 @@ export function BuilderSurface({
                   detailedAllView: effectiveDetailedAllView,
                   onDetailedAllViewChange: isActiveManager ? setDetailedAllView : undefined,
                   contextWindowUsage,
+                  activeWorkSnapshot,
+                  activeWorkExpanded,
+                  onToggleActiveWork: activeWorkSnapshot
+                    ? () => setActiveWorkExpanded((previous) => !previous)
+                    : undefined,
+                  onFocusActiveWork: activeWorkSnapshot
+                    ? () => setActiveWorkFocusNonce((previous) => previous + 1)
+                    : undefined,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
                   compactInProgress: isCompactingManager,
@@ -1453,6 +1471,11 @@ export function BuilderSurface({
                   onChoiceSubmit: handleChoiceSubmit,
                   onChoiceCancel: handleChoiceCancel,
                   pendingChoiceIds: state.pendingChoiceIds,
+                  activeWorkSnapshot,
+                  activeWorkExpanded,
+                  onActiveWorkExpandedChange: setActiveWorkExpanded,
+                  activeWorkFocusNonce,
+                  statuses: state.statuses,
                   streamingStartedAt:
                     activeAgentStatus === 'streaming'
                       ? state.statuses[activeAgentId ?? '']?.streamingStartedAt

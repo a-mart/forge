@@ -83,6 +83,8 @@ export type AgentLifecycleStopSessionOptions = {
   emitSnapshots: boolean;
   emitStatus?: boolean;
   deleteWorkers?: boolean;
+  manualStopNotice?: boolean;
+  taskLifecycle?: "manual_stop" | "none";
 };
 
 export type ManagerRuntimeRecycleReason = RuntimeManagerRuntimeRecycleReason;
@@ -206,6 +208,7 @@ export interface SwarmAgentLifecycleServiceOptions {
       setPinnedContentOptions?: SetPinnedContentOptions;
     }
   ) => Promise<void>;
+  transitionSessionWorkPlansForManualStop: (descriptor: ProvisionedSessionDescriptor) => Promise<void>;
   sendMessage: (
     fromAgentId: string,
     targetAgentId: string,
@@ -798,6 +801,8 @@ export class SwarmAgentLifecycleService {
       managerStopped = true;
     }
 
+    await this.options.transitionSessionWorkPlansForManualStop(target as ProvisionedSessionDescriptor);
+
     if (!shouldAllowManualStopMessageEnd && (stoppedWorkerIds.length > 0 || managerRuntime !== undefined)) {
       this.options.emitImmediateManualManagerStopNotice(target.agentId);
     }
@@ -1175,9 +1180,10 @@ export class SwarmAgentLifecycleService {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
     const terminatedWorkerIds: string[] = [];
     const runtime = this.options.runtimes.get(agentId);
+    const shouldEmitManualStopNotice = (options.manualStopNotice ?? true) && !options.deleteWorkers;
     const shouldAllowManualStopMessageEnd =
+      shouldEmitManualStopNotice &&
       runtime !== undefined &&
-      !options.deleteWorkers &&
       (descriptor.status === "streaming" || runtime.getStatus() === "streaming");
     if (shouldAllowManualStopMessageEnd) {
       this.options.markPendingManualManagerStopNotice(agentId);
@@ -1203,8 +1209,12 @@ export class SwarmAgentLifecycleService {
     await this.shutdownLatestManagerRuntime(descriptor, "terminate", invalidatedManagerRuntime);
     this.clearPendingManagerRuntimeRecycle(agentId);
 
+    if (options.taskLifecycle !== "none" && !options.deleteWorkers) {
+      await this.options.transitionSessionWorkPlansForManualStop(descriptor);
+    }
+
     if (
-      !options.deleteWorkers &&
+      shouldEmitManualStopNotice &&
       !shouldAllowManualStopMessageEnd &&
       (terminatedWorkerIds.length > 0 || runtime !== undefined)
     ) {

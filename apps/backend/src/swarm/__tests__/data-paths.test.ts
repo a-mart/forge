@@ -48,6 +48,7 @@ import {
   getSessionFeedbackPath,
   getSessionMemoryPath,
   getSessionMetaPath,
+  getSessionTasksPath,
   getSessionsDir,
   getCommonKnowledgePath,
   getCortexAutoReviewSettingsPath,
@@ -137,6 +138,9 @@ describe("data-paths", () => {
     );
     expect(getSessionMetaPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "meta.json")
+    );
+    expect(getSessionTasksPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "tasks.json")
     );
 
     expect(getWorkersDir(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(

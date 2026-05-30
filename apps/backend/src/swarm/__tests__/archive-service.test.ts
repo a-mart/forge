@@ -45,7 +45,7 @@ function createHarness(input?: {
 }) {
   const profiles = new Map((input?.profiles ?? [profile()]).map((item) => [item.profileId, item]));
   const sessions = new Map((input?.sessions ?? [session()]).map((item) => [item.agentId, item]));
-  const stopSession = vi.fn(async (agentId: string) => {
+  const stopSessionForArchive = vi.fn(async (agentId: string) => {
     if (input?.stopMutatesUpdatedAt) {
       const current = sessions.get(agentId);
       if (current) {
@@ -57,6 +57,7 @@ function createHarness(input?: {
     }
     return { terminatedWorkerIds: [`${agentId}-worker`] };
   });
+  const transitionSessionWorkPlansForArchive = vi.fn(async () => undefined);
   const onProfileArchiveStopError = vi.fn();
   const hydrateSessionLastUsed = vi.fn(input?.hydrateSessionLastUsed ?? (async () => undefined));
   const hydrateProfileLastUsed = vi.fn(input?.hydrateProfileLastUsed ?? (async () => undefined));
@@ -79,18 +80,28 @@ function createHarness(input?: {
       profiles.set(profileId, next);
       return next;
     }),
-    stopSession,
+    stopSessionForArchive,
+    transitionSessionWorkPlansForArchive,
     hydrateSessionLastUsed,
     hydrateProfileLastUsed,
     onProfileArchiveStopError,
   });
 
-  return { service, profiles, sessions, stopSession, hydrateSessionLastUsed, hydrateProfileLastUsed, onProfileArchiveStopError };
+  return {
+    service,
+    profiles,
+    sessions,
+    stopSessionForArchive,
+    transitionSessionWorkPlansForArchive,
+    hydrateSessionLastUsed,
+    hydrateProfileLastUsed,
+    onProfileArchiveStopError,
+  };
 }
 
 describe("archive service", () => {
   it("archives a non-default session by setting archivedAt and stopping the live runtime", async () => {
-    const { service, sessions, stopSession } = createHarness({
+    const { service, sessions, stopSessionForArchive } = createHarness({
       sessions: [session({ agentId: "session-secondary" })],
     });
 
@@ -101,7 +112,7 @@ describe("archive service", () => {
       terminatedWorkerIds: ["session-secondary-worker"],
     });
     expect(sessions.get("session-secondary")?.archivedAt).toBe(now);
-    expect(stopSession).toHaveBeenCalledWith("session-secondary");
+    expect(stopSessionForArchive).toHaveBeenCalledWith("session-secondary");
   });
 
   it("preserves direct-session pre-archive recency when stopping mutates updatedAt", async () => {
@@ -177,7 +188,7 @@ describe("archive service", () => {
   });
 
   it("archives a profile by setting only the profile flag and stopping live sessions", async () => {
-    const { service, profiles, sessions, stopSession } = createHarness({
+    const { service, profiles, sessions, stopSessionForArchive } = createHarness({
       sessions: [
         session({ agentId: "session-default", status: "idle" }),
         session({ agentId: "session-secondary", status: "streaming" }),
@@ -194,9 +205,9 @@ describe("archive service", () => {
     expect(profiles.get("profile-1")?.archivedAt).toBe(now);
     expect(sessions.get("session-default")?.archivedAt).toBeUndefined();
     expect(sessions.get("session-secondary")?.archivedAt).toBeUndefined();
-    expect(stopSession).toHaveBeenCalledTimes(2);
-    expect(stopSession).toHaveBeenCalledWith("session-default");
-    expect(stopSession).toHaveBeenCalledWith("session-secondary");
+    expect(stopSessionForArchive).toHaveBeenCalledTimes(2);
+    expect(stopSessionForArchive).toHaveBeenCalledWith("session-default");
+    expect(stopSessionForArchive).toHaveBeenCalledWith("session-secondary");
   });
 
   it("hydrates profile child session last-used metadata before archiving", async () => {
@@ -221,7 +232,7 @@ describe("archive service", () => {
   });
 
   it("keeps a committed profile archive successful when one child session fails to stop", async () => {
-    const { service, profiles, stopSession, onProfileArchiveStopError } = createHarness({
+    const { service, profiles, stopSessionForArchive, onProfileArchiveStopError } = createHarness({
       sessions: [
         session({ agentId: "session-default", status: "idle" }),
         session({ agentId: "session-fails", status: "streaming" }),
@@ -236,10 +247,10 @@ describe("archive service", () => {
       terminatedWorkerIds: ["session-default-worker", "session-later-worker"],
     });
     expect(profiles.get("profile-1")?.archivedAt).toBe(now);
-    expect(stopSession).toHaveBeenCalledTimes(3);
-    expect(stopSession).toHaveBeenNthCalledWith(1, "session-default");
-    expect(stopSession).toHaveBeenNthCalledWith(2, "session-fails");
-    expect(stopSession).toHaveBeenNthCalledWith(3, "session-later");
+    expect(stopSessionForArchive).toHaveBeenCalledTimes(3);
+    expect(stopSessionForArchive).toHaveBeenNthCalledWith(1, "session-default");
+    expect(stopSessionForArchive).toHaveBeenNthCalledWith(2, "session-fails");
+    expect(stopSessionForArchive).toHaveBeenNthCalledWith(3, "session-later");
     expect(onProfileArchiveStopError).toHaveBeenCalledTimes(1);
     expect(onProfileArchiveStopError).toHaveBeenCalledWith("session-fails", expect.any(Error));
   });
@@ -249,7 +260,7 @@ describe("archive service", () => {
     const sessions = new Map([
       ["session-default", session({ agentId: "session-default", status: "streaming" })],
     ]);
-    const stopSession = vi.fn(async () => {
+    const stopSessionForArchive = vi.fn(async () => {
       expect(profiles.get("profile-1")?.archivedAt).toBe(now);
       return { terminatedWorkerIds: [] };
     });
@@ -272,11 +283,12 @@ describe("archive service", () => {
         profiles.set(profileId, next);
         return next;
       }),
-      stopSession,
+      stopSessionForArchive,
+      transitionSessionWorkPlansForArchive: vi.fn(async () => undefined),
     });
 
     await service.archiveProfile("profile-1");
-    expect(stopSession).toHaveBeenCalledTimes(1);
+    expect(stopSessionForArchive).toHaveBeenCalledTimes(1);
   });
 
   it("preserves pre-archive session recency when stopping sessions mutates updatedAt", async () => {

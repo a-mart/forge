@@ -59,7 +59,8 @@ export interface ArchiveServiceDeps {
     profileId: string,
     patch: Partial<ManagerProfile> | ((profile: ManagerProfile) => ManagerProfile),
   ) => Promise<ManagerProfile>;
-  stopSession: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
+  stopSessionForArchive: (agentId: string) => Promise<{ terminatedWorkerIds: string[] }>;
+  transitionSessionWorkPlansForArchive: (session: AgentDescriptor) => Promise<void>;
   hydrateSessionLastUsed?: (agentId: string) => Promise<void>;
   hydrateProfileLastUsed?: (profileId: string) => Promise<void>;
   onProfileArchiveStopError?: (agentId: string, error: unknown) => void;
@@ -93,6 +94,7 @@ export class ArchiveService {
       archivedAt,
       updatedAt: preStopUpdatedAt,
     }));
+    await this.deps.transitionSessionWorkPlansForArchive(updated);
 
     return {
       agentId: updated.agentId,
@@ -155,6 +157,10 @@ export class ArchiveService {
       }
     }
 
+    for (const session of sessions) {
+      await this.deps.transitionSessionWorkPlansForArchive(session);
+    }
+
     return {
       profileId: updated.profileId,
       archivedAt,
@@ -208,7 +214,7 @@ export class ArchiveService {
       return [];
     }
 
-    const result = await this.deps.stopSession(session.agentId);
+    const result = await this.deps.stopSessionForArchive(session.agentId);
     return result.terminatedWorkerIds;
   }
 }

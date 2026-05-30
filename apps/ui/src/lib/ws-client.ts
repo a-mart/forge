@@ -259,6 +259,7 @@ export class ManagerWsClient {
       messages: [],
       activityMessages: [],
       pendingChoiceIds: new Set(),
+      taskSnapshotLoadingSessionId: trimmed,
       ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),
       lastError: null,
       unreadCounts: nextUnread,

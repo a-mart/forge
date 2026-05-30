@@ -4,6 +4,7 @@ import { getSpawnPresetFamilies } from "@forge/protocol";
 import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { ChoiceRequestCancelledError } from "./swarm-manager.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
+import { buildTaskTool } from "./coordination/task-tool.js";
 import {
   type AgentDescriptor,
   type MessageChannel,
@@ -580,10 +581,9 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           throw error;
         }
       },
-    }
+    },
+    buildTaskTool(host, descriptor)
   ];
-
-
 
   return [...shared, ...managerOnly];
 }

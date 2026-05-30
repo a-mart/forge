@@ -81,7 +81,7 @@ describe('BootstrapBuffer', () => {
   // Coalescing / effective state
   // ---------------------------------------------------------------------------
 
-  it('coalesces all 4 bootstrap events into a single state update', () => {
+  it('coalesces bootstrap events including task snapshots into a single state update', () => {
     const { buffer, patches } = setup()
     buffer.begin('session-b')
 
@@ -95,6 +95,16 @@ describe('BootstrapBuffer', () => {
         ],
       },
       { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: ['choice-1'] },
+      {
+        type: 'session_task_state_snapshot',
+        sessionAgentId: 'session-b',
+        profileId: 'profile-1',
+        revision: 3,
+        activeWorkPlan: null,
+        recentWorkPlans: [],
+        recentWorkPlanCount: 0,
+        recentWorkPlansTruncated: false,
+      },
       { type: 'unread_counts_snapshot', counts: { 'session-c': 3 } },
     ]
 
@@ -107,6 +117,7 @@ describe('BootstrapBuffer', () => {
     expect(patches[0].subscribedAgentId).toBe('session-b')
     expect(patches[0].messages).toHaveLength(1)
     expect(patches[0].pendingChoiceIds?.has('choice-1')).toBe(true)
+    expect(patches[0].taskSnapshots?.['session-b']?.revision).toBe(3)
     expect(patches[0].unreadCounts).toEqual({ 'session-c': 3 })
   })
 
@@ -177,6 +188,26 @@ describe('BootstrapBuffer', () => {
 
     expect(patches).toHaveLength(1)
     expect(patches[0].pendingChoiceIds).toBeUndefined()
+  })
+
+  it('ignores task snapshots for wrong session during bootstrap', () => {
+    const { buffer, patches } = setup()
+    buffer.begin('session-b')
+
+    buffer.handleEvent({
+      type: 'session_task_state_snapshot',
+      sessionAgentId: 'wrong-session',
+      profileId: 'profile-1',
+      revision: 1,
+      activeWorkPlan: null,
+      recentWorkPlans: [],
+      recentWorkPlanCount: 0,
+      recentWorkPlansTruncated: false,
+    } as ServerEvent)
+    buffer.handleEvent({ type: 'unread_counts_snapshot', counts: {} } as ServerEvent)
+
+    expect(patches).toHaveLength(1)
+    expect(patches[0].taskSnapshots).toBeUndefined()
   })
 
   // ---------------------------------------------------------------------------

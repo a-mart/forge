@@ -17,6 +17,20 @@ const NOOP_PERF_RECORDER: SidebarPerfRecorder = {
   readRecentSlowEvents: () => [],
 }
 
+function createTaskSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'session_task_state_snapshot' }> {
+  return {
+    type: 'session_task_state_snapshot',
+    sessionAgentId,
+    profileId: 'manager',
+    revision: 0,
+    activeWorkPlan: null,
+    recentWorkPlans: [],
+    recentWorkPlanCount: 0,
+    recentWorkPlansTruncated: false,
+    diagnostics: { state: 'defaulted' },
+  }
+}
+
 class FakeBootstrapSwarmManager {
   constructor(
     private readonly agents: AgentDescriptor[],
@@ -65,6 +79,10 @@ class FakeBootstrapSwarmManager {
 
   getPendingChoiceIdsForSession(): [] {
     return []
+  }
+
+  async getSessionTaskStateSnapshot(sessionAgentId: string): Promise<Extract<ServerEvent, { type: 'session_task_state_snapshot' }>> {
+    return createTaskSnapshotEvent(sessionAgentId)
   }
 }
 
@@ -140,7 +158,7 @@ function createBroadcastHarness(profiles: ManagerProfile[]): {
 }
 
 describe('Builder visibility filtering', () => {
-  it('includes Cortex while hiding collaboration/system entries from Builder bootstrap snapshots', () => {
+  it('includes Cortex while hiding collaboration/system entries from Builder bootstrap snapshots', async () => {
     const userProfile = createProfile({ profileId: 'manager' })
     const cortexProfile = createProfile({ profileId: 'cortex', profileType: 'system' })
     const collaborationProfile = createProfile({ profileId: '_collaboration', profileType: 'system' })
@@ -174,7 +192,7 @@ describe('Builder visibility filtering', () => {
     })
     const sentEvents: ServerEvent[] = []
 
-    sendSubscriptionBootstrap({
+    await sendSubscriptionBootstrap({
       socket: {} as WebSocket,
       targetAgentId: builderManager.agentId,
       swarmManager: new FakeBootstrapSwarmManager(
@@ -187,9 +205,11 @@ describe('Builder visibility filtering', () => {
       perf: NOOP_PERF_RECORDER,
       send: (_socket, event) => {
         sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
       },
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
     })
 
     const agentsSnapshot = sentEvents.find((event) => event.type === 'agents_snapshot')

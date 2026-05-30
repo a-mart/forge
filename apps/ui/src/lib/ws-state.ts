@@ -4,6 +4,7 @@ import type {
   AgentStatus,
   ConversationEntry,
   ManagerProfile,
+  SessionTaskStateSnapshotEvent,
   TelegramStatusEvent,
   TerminalDescriptor,
 } from '@forge/protocol'
@@ -35,6 +36,9 @@ export interface ManagerWsState {
   unreadCounts: Record<string, number>
   terminals: TerminalDescriptor[]
   terminalSessionScopeId: string | null
+  taskSnapshots: Record<string, SessionTaskStateSnapshotEvent>
+  /** Session whose cached task snapshot is suppressed until a fresh bootstrap/live snapshot arrives. */
+  taskSnapshotLoadingSessionId: string | null
   hasReceivedAgentsSnapshot: boolean
   /** Monotonically increasing counter bumped on prompt-related WS events */
   promptChangeKey: number
@@ -62,6 +66,8 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     unreadCounts: {},
     terminals: [],
     terminalSessionScopeId: null,
+    taskSnapshots: {},
+    taskSnapshotLoadingSessionId: null,
     hasReceivedAgentsSnapshot: false,
     promptChangeKey: 0,
     specialistChangeKey: 0,

@@ -15,9 +15,10 @@ import { ContextWindowIndicator } from '@/components/chat/ContextWindowIndicator
 import { PinNavigator } from '@/components/chat/PinNavigator'
 import { SystemPromptDialog } from '@/components/chat/message-list/SystemPromptDialog'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
+import { ActiveWorkHeaderIndicator } from '@/components/chat/active-work'
 import { cn } from '@/lib/utils'
 import { formatElapsed } from '@/lib/format-utils'
-import type { AgentStatus, AgentSessionPurpose } from '@forge/protocol'
+import type { AgentStatus, AgentSessionPurpose, SessionTaskStateSnapshotEvent } from '@forge/protocol'
 
 export type MessageSourceView = 'web' | 'all'
 
@@ -42,6 +43,10 @@ interface ChatHeaderProps {
   /** Callback to toggle Detailed All mode. Present only for manager sessions. */
   onDetailedAllViewChange?: (value: boolean) => void
   contextWindowUsage: { mode: 'known'; usedTokens: number; contextWindow: number } | { mode: 'updating'; contextWindow: number } | null
+  activeWorkSnapshot?: SessionTaskStateSnapshotEvent | null
+  activeWorkExpanded?: boolean
+  onToggleActiveWork?: () => void
+  onFocusActiveWork?: () => void
   compactionCount?: number
   showCompact: boolean
   compactInProgress: boolean
@@ -151,6 +156,10 @@ export function ChatHeader({
   detailedAllView = false,
   onDetailedAllViewChange,
   contextWindowUsage,
+  activeWorkSnapshot,
+  activeWorkExpanded = false,
+  onToggleActiveWork,
+  onFocusActiveWork,
   compactionCount,
   showCompact,
   compactInProgress,
@@ -403,6 +412,15 @@ export function ChatHeader({
               contextWindow={contextWindowUsage.contextWindow}
               compactionCount={compactionCount}
               isUpdating={contextWindowUsage.mode === 'updating'}
+            />
+          ) : null}
+
+          {onToggleActiveWork ? (
+            <ActiveWorkHeaderIndicator
+              snapshot={activeWorkSnapshot}
+              expanded={activeWorkExpanded}
+              onToggle={onToggleActiveWork}
+              onFocus={onFocusActiveWork}
             />
           ) : null}
         </div>

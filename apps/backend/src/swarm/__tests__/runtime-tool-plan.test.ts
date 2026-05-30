@@ -29,6 +29,19 @@ function createHost(): SwarmToolHost {
       targetContext: { channel: "web" },
     }),
     requestUserChoice: async () => [],
+    runTaskTool: async () => ({
+      action: "get",
+      stateRevision: 0,
+      snapshot: {
+        sessionAgentId: "manager-1",
+        profileId: "profile-1",
+        revision: 0,
+        activeWorkPlan: null,
+        recentWorkPlans: [],
+        recentWorkPlanCount: 0,
+        recentWorkPlansTruncated: false,
+      },
+    }),
   } as SwarmToolHost;
 }
 
@@ -134,6 +147,7 @@ describe("runtime tool plan", () => {
       "kill_agent",
       "speak_to_user",
       "present_choices",
+      "task",
     ]);
   });
 
@@ -165,6 +179,7 @@ describe("runtime tool plan", () => {
 
     expect(names).not.toContain("list_agents");
     expect(names).not.toContain("kill_agent");
+    expect(names).not.toContain("task");
     expect(names).toContain("spawn_agent");
   });
 

@@ -45,7 +45,7 @@ export class CliHeadlessSubscriptions {
     return this.subscriptions.get(socket);
   }
 
-  subscribe(socket: WebSocket, command: CliSubscribeHeadlessCommand): void {
+  async subscribe(socket: WebSocket, command: CliSubscribeHeadlessCommand): Promise<void> {
     const targetAgent = this.resolveSubscriptionTarget(command);
     if (!targetAgent) {
       this.send(socket, {
@@ -61,6 +61,7 @@ export class CliHeadlessSubscriptions {
 
     this.subscriptions.set(socket, targetAgent.agentId);
     this.send(socket, this.buildHeadlessReady(command, targetAgent));
+    this.send(socket, await this.swarmManager.getSessionTaskStateSnapshot(targetAgent.agentId));
   }
 
   broadcast(event: ServerEvent): void {
@@ -180,6 +181,7 @@ export class CliHeadlessSubscriptions {
     switch (event.type) {
       case "session_workers_snapshot":
       case "session_active_tools_snapshot":
+      case "session_task_state_snapshot":
       case "cli_pending_choices_snapshot":
         return event.sessionAgentId === sessionAgentId;
 

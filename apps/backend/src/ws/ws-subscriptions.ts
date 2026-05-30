@@ -263,7 +263,7 @@ export class WsSubscriptions {
       }
     }
 
-    this.sendSubscriptionBootstrap(socket, targetAgentId, messageCount);
+    await this.sendSubscriptionBootstrap(socket, targetAgentId, messageCount);
   }
 
   resolveSubscribedAgentId(socket: WebSocket): string | undefined {
@@ -283,7 +283,7 @@ export class WsSubscriptions {
 
     this.subscriptions.set(socket, fallbackAgentId);
     this.resetDeliveredSnapshotVersions(socket);
-    this.sendSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
+    this.queueSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
 
     return fallbackAgentId;
   }
@@ -298,6 +298,11 @@ export class WsSubscriptions {
     }
 
     return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+  }
+
+  resolveTaskSnapshotSessionAgentId(subscribedAgentId: string): string | undefined {
+    const descriptor = this.swarmManager.getAgent(subscribedAgentId);
+    return descriptor?.role === "manager" ? descriptor.agentId : undefined;
   }
 
   resolveTerminalScopeAgentId(subscribedAgentId: string): string | undefined {
@@ -353,20 +358,20 @@ export class WsSubscriptions {
       }
 
       this.subscriptions.set(socket, fallbackAgentId);
-      this.sendSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
+      this.queueSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
     }
   }
 
-  private sendSubscriptionBootstrap(
+  private async sendSubscriptionBootstrap(
     socket: WebSocket,
     targetAgentId: string,
     requestedMessageCount?: number,
-  ): void {
+  ): Promise<void> {
     const currentAgentsSnapshotVersion = this.swarmManager.getAgentsSnapshotVersion();
     const currentProfilesSnapshotVersion = this.swarmManager.getProfilesSnapshotVersion();
     const deliveredVersions = this.deliveredSnapshotVersions.get(socket);
 
-    const result = sendSubscriptionBootstrap({
+    const result = await sendSubscriptionBootstrap({
       socket,
       targetAgentId,
       requestedMessageCount,
@@ -379,6 +384,7 @@ export class WsSubscriptions {
       send: this.send,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
+      resolveTaskSnapshotSessionAgentId: (agentId) => this.resolveTaskSnapshotSessionAgentId(agentId),
       includeAgentsSnapshot: deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion,
       includeProfilesSnapshot: deliveredVersions?.profilesSnapshotVersion !== currentProfilesSnapshotVersion,
     });
@@ -389,6 +395,20 @@ export class WsSubscriptions {
     if (result.profilesSnapshotSent) {
       this.setDeliveredSnapshotVersion(socket, "profilesSnapshotVersion", currentProfilesSnapshotVersion);
     }
+  }
+
+  private queueSubscriptionBootstrap(
+    socket: WebSocket,
+    targetAgentId: string,
+    requestedMessageCount?: number,
+  ): void {
+    void this.sendSubscriptionBootstrap(socket, targetAgentId, requestedMessageCount).catch((error) => {
+      console.warn("[swarm] ws:subscription_bootstrap_failed", {
+        targetAgentId,
+        requestedMessageCount: requestedMessageCount ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private resetDeliveredSnapshotVersions(socket: WebSocket): void {

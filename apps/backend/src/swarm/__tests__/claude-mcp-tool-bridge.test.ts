@@ -15,6 +15,7 @@ import { createClaudeMcpToolBridge } from "../claude-mcp-tool-bridge.js";
 import { ChoiceRequestCancelledError } from "../swarm-manager.js";
 import { buildSwarmTools, type SwarmToolHost } from "../swarm-tools.js";
 import type { AgentDescriptor, MessageSourceContext } from "../types.js";
+import { normalizeTaskToolInput, type TaskToolResult } from "../coordination/task-tool.js";
 
 interface RegisteredTool {
   name: string;
@@ -76,6 +77,19 @@ function createMockHost(overrides: Partial<SwarmToolHost> = {}): SwarmToolHost {
       targetContext: defaultPublishContext
     })),
     requestUserChoice: vi.fn(async () => []),
+    runTaskTool: vi.fn(async () => ({
+      action: "get",
+      stateRevision: 0,
+      snapshot: {
+        sessionAgentId: "manager-1",
+        profileId: "profile-1",
+        revision: 0,
+        activeWorkPlan: null,
+        recentWorkPlans: [],
+        recentWorkPlanCount: 0,
+        recentWorkPlansTruncated: false
+      }
+    } satisfies TaskToolResult)),
     createAndPromoteProjectAgent: vi.fn(async () => ({
       agentId: "new-agent-1",
       handle: "new-handle"
@@ -187,7 +201,8 @@ describe("claude-mcp-tool-bridge", () => {
       "spawn_agent",
       "kill_agent",
       "speak_to_user",
-      "present_choices"
+      "present_choices",
+      "task"
     ]);
     expect(bridge.allowedTools).toEqual([
       "mcp__forge-swarm__list_agents",
@@ -195,7 +210,8 @@ describe("claude-mcp-tool-bridge", () => {
       "mcp__forge-swarm__spawn_agent",
       "mcp__forge-swarm__kill_agent",
       "mcp__forge-swarm__speak_to_user",
-      "mcp__forge-swarm__present_choices"
+      "mcp__forge-swarm__present_choices",
+      "mcp__forge-swarm__task"
     ]);
   });
 
@@ -357,12 +373,91 @@ describe("claude-mcp-tool-bridge", () => {
       }).success
     ).toBe(true);
     expect(
+      getRegisteredTool(registeredTools, "task").shape.safeParse({
+        action: "upsert_plan",
+        title: "Backend-fed smoke",
+        itemsText: "[active] Create plan"
+      }).success
+    ).toBe(true);
+    expect(
+      getRegisteredTool(registeredTools, "task").shape.safeParse({
+        action: "upsert_plan",
+        title: "Backend-fed smoke",
+        items: [{ title: "Create plan", status: "active" }]
+      }).success
+    ).toBe(false);
+    expect(
+      getRegisteredTool(registeredTools, "task").shape.safeParse({
+        action: "upsert_plan",
+        title: "Backend-fed smoke",
+        items: '[{"title":"Create plan","status":"active"}]'
+      }).success
+    ).toBe(false);
+    expect(
+      getRegisteredTool(registeredTools, "task").shape.safeParse({
+        action: "link",
+        planId: "plan-1",
+        itemId: "item-1",
+        link: { type: "worker", agentId: "worker-1" }
+      }).success
+    ).toBe(true);
+    expect(
+      getRegisteredTool(registeredTools, "task").shape.safeParse({
+        action: "finish_plan",
+        planId: "plan-1",
+        status: "completed",
+        finalSummary: "Done"
+      }).success
+    ).toBe(true);
+    expect(
       getRegisteredTool(registeredTools, "create_project_agent").shape.safeParse({
         sessionName: "Releases",
         whenToUse: "Use for release notes",
         systemPrompt: "You write release notes."
       }).success
     ).toBe(true);
+  });
+
+  it("normalizes provider-facing task itemsText through the Claude MCP bridge before host dispatch", async () => {
+    const manager = createMockDescriptor();
+    const runTaskTool = vi.fn(async (_agentId: string, _toolCallId: string, input: unknown) => ({
+      action: "upsert_plan",
+      stateRevision: 1,
+      planId: "plan-1",
+      planRevision: 1,
+      snapshot: {
+        sessionAgentId: manager.agentId,
+        profileId: "profile-1",
+        revision: 1,
+        activeWorkPlan: null,
+        recentWorkPlans: [],
+        recentWorkPlanCount: 0,
+        recentWorkPlansTruncated: false
+      },
+      normalizedInput: normalizeTaskToolInput(input)
+    } satisfies TaskToolResult & { normalizedInput: unknown }));
+    const host = createMockHost({ runTaskTool });
+    const { registeredTools } = await buildBridge(buildSwarmTools(host, manager));
+
+    await invokeTool(registeredTools, "task", {
+      action: "upsert_plan",
+      title: "Backend-fed smoke",
+      itemsText: "[active] Create plan"
+    });
+
+    expect(runTaskTool).toHaveBeenCalledTimes(1);
+    expect(runTaskTool).toHaveBeenCalledWith(
+      manager.agentId,
+      expect.any(String),
+      expect.objectContaining({
+        action: "upsert_plan",
+        title: "Backend-fed smoke",
+        itemsText: "[active] Create plan"
+      })
+    );
+    const forwardedArgs = runTaskTool.mock.calls[0]?.[2] as { items?: unknown; itemsText?: unknown };
+    expect(forwardedArgs.items).toBeUndefined();
+    expect(forwardedArgs.itemsText).toBe("[active] Create plan");
   });
 
   it("dispatches list_agents and returns JSON content", async () => {
