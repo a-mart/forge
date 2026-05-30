@@ -194,13 +194,29 @@ function getDesktopSidebar(): HTMLElement {
 }
 
 describe('AgentSidebar', () => {
-  it('opens Archive from the sidebar entry', () => {
+  it('opens Archive from the sidebar entry when archived items exist', () => {
     const onOpenArchive = vi.fn()
-    renderSidebar({ agents: [sessionManager('manager-alpha', 'manager-alpha')], onOpenArchive })
+    const defaultSession = sessionManager('manager-alpha', 'manager-alpha')
+    const archivedSession = {
+      ...sessionManager('manager-alpha--archived', 'manager-alpha'),
+      archivedAt: '2026-01-02T00:00:00.000Z',
+    }
+    renderSidebar({
+      agents: [defaultSession, archivedSession],
+      profiles: [profileFor(defaultSession)],
+      onOpenArchive,
+    })
 
     click(getByRole(getDesktopSidebar(), 'button', { name: 'Archive' }))
 
     expect(onOpenArchive).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the Archive sidebar entry when no archived items exist', () => {
+    const onOpenArchive = vi.fn()
+    renderSidebar({ agents: [sessionManager('manager-alpha', 'manager-alpha')], onOpenArchive })
+
+    expect(queryByText(getDesktopSidebar(), 'Archive')).toBeNull()
   })
 
   it('shows archive actions and disables direct archive for the default session with explanatory copy', async () => {

@@ -18,7 +18,11 @@ import {
   sortableKeyboardCoordinates,
   arrayMove,
 } from '@dnd-kit/sortable'
-import { buildProfileTreeRows } from '@/lib/agent-hierarchy'
+import {
+  buildProfileTreeRows,
+  getArchivedProfileRows,
+  getDirectlyArchivedSessionRows,
+} from '@/lib/agent-hierarchy'
 import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
 import { useProviderUsage } from '@/hooks/use-provider-usage'
 import { toggleMute, getMutedAgents, setMutedAgents, MUTE_CHANGE_EVENT } from '@/lib/notification-service'
@@ -106,6 +110,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onCreateAgentCreator,
 }: AgentSidebarProps) {
   const treeRows = useMemo(() => buildProfileTreeRows(agents, profiles), [agents, profiles])
+  const hasArchivedItems = useMemo(() => (
+    getArchivedProfileRows(agents, profiles).length > 0
+    || getDirectlyArchivedSessionRows(agents, profiles).length > 0
+  ), [agents, profiles])
   const hasCortexProfile = useMemo(() => profiles.some((profile) => profile.profileId === 'cortex'), [profiles])
 
   // DnD sensors
@@ -540,7 +548,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       </div>
 
       <div
-        className="flex-1 overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80"
+        className="flex flex-1 flex-col overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80"
         style={{
           scrollbarWidth: 'thin',
           scrollbarColor: 'var(--sidebar-border) transparent',
@@ -660,9 +668,9 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           )
         })()}
 
-        {/* Archive button at the bottom of the scrollable content */}
-        {onOpenArchive ? (
-          <div className="mt-4 border-t border-sidebar-border px-0 pt-1.5">
+        {/* Archive button pinned to the bottom of the scrollable content when space allows */}
+        {onOpenArchive && hasArchivedItems ? (
+          <div className="mt-auto border-t border-sidebar-border px-0 pt-1.5">
             <button
               type="button"
               onClick={onOpenArchive}
