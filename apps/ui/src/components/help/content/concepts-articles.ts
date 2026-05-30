@@ -39,6 +39,39 @@ Workers can use tools â€” reading files, running shell commands, making edits â€
   contextKeys: ['chat.workers', 'chat.main'],
 }
 
+
+const conceptsActiveWorkPlans: HelpArticle = {
+  id: 'concepts-active-work-plans',
+  title: 'Active Work Plans',
+  category: 'concepts',
+  summary:
+    'Durable session-scoped plans for substantial manager-led work.',
+  content: `Active Work Plans are manager-owned coordination state for a single chat session. They are useful when work has several phases, multiple workers, review gates, blockers, or handoff risk across pauses, stops, compaction, restart, or model changes.
+
+## What they show
+
+When a plan exists, Forge shows an Active Work card in chat with the current plan, item status, and linked worker evidence. The chat header also shows an Active Work indicator that can collapse or expand the card. Collapsing changes only the view; the plan remains saved with that session.
+
+## What they are not
+
+A Work Plan is descriptive progress state, not a workflow runner. The manager still leads the work through normal chat, worker delegation, choices, validation, and final synthesis. Quick answers and routine one-step tasks usually do not need a plan.
+
+## Persistence
+
+Active Work state is stored with the session, so it follows that session rather than the whole project. Other sessions in the same profile have their own plans or no plan at all.`,
+  keywords: [
+    'active work',
+    'work plan',
+    'task plan',
+    'plan',
+    'coordination',
+    'session',
+    'progress',
+  ],
+  relatedIds: ['concepts-multi-agent', 'concepts-sessions', 'chat-overview'],
+  contextKeys: ['chat.main'],
+}
+
 const conceptsMemory: HelpArticle = {
   id: 'concepts-memory',
   title: 'Memory System',
@@ -309,6 +342,7 @@ Right-click a project agent and choose "Demote to Regular Session" to convert it
 
 export const conceptsArticles: HelpArticle[] = [
   conceptsMultiAgent,
+  conceptsActiveWorkPlans,
   conceptsMemory,
   conceptsPromptResolution,
   conceptsSpecialists,

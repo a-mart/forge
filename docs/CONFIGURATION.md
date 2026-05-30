@@ -135,6 +135,7 @@ All persistent state lives in a single data directory:
 │       ├── meta.json          # Session metadata
 │       ├── feedback.jsonl     # User feedback
 │       ├── pinned-messages.json  # Pin state (up to 10 message IDs)
+│       ├── tasks.json         # Active Work Plans state
 │       ├── context/
 │       │   └── prompt.md      # Collaboration channel additional instructions
 │       ├── reference/         # Collaboration channel reference docs

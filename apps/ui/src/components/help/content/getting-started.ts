@@ -75,7 +75,7 @@ The manager reads your message, plans the work, and spawns workers as needed. Yo
 
 ## Watch workers run
 
-Active workers show up as green pills below the chat header. Click any pill to peek at what that worker is doing. The manager streams status updates into the chat as workers report progress.
+Active workers show up as green pills below the chat header. Click any pill to peek at what that worker is doing. For larger efforts, the manager may also show an Active Work card with a session-scoped plan; use the header indicator to collapse or expand it. The manager streams status updates into the chat as workers report progress.
 
 Workers run independently. You can keep talking to the manager, start a new task, or close the tab entirely. Workers continue in the background and the manager tracks everything.
 
@@ -102,6 +102,7 @@ Once you're comfortable with sessions, you can promote them to **project agents*
       'getting-started-configuration',
       'chat-overview',
       'concepts-multi-agent',
+      'concepts-active-work-plans',
       'concepts-project-agents',
     ],
     contextKeys: ['chat.main', 'chat.sidebar'],

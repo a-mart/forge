@@ -34,10 +34,14 @@ Mermaid code blocks also render inline as interactive diagrams, with controls to
 
 The ring icon next to the channel toggle shows how full the context window is. While a runtime is live, the live runtime status is authoritative for that meter. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.
 
+## Active Work
+
+For substantial manager-led work, Forge can show an **Active Work** card above the conversation. It is scoped to the current session and shows the manager's plan, item status, and linked worker evidence. The matching header indicator toggles the card open or closed and is wired for keyboard and screen-reader access. Collapsing the card only changes the view; the saved plan stays with the session.
+
 ## Header controls
 
 The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count badge opens the pinned-message navigator/popover, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted.`,
-    keywords: ['chat', 'streaming', 'stop', 'status', 'channel', 'context window', 'overview'],
+    keywords: ['chat', 'streaming', 'stop', 'status', 'channel', 'context window', 'overview', 'active work', 'work plan'],
     relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction'],
     contextKeys: ['chat.main'],
   },
@@ -160,7 +164,7 @@ On smaller screens, the sidebar is hidden by default. Tap the hamburger menu in 
     title: 'Session Management',
     category: 'chat',
     summary: 'Creating, switching, renaming, and deleting sessions.',
-    content: `Sessions are individual conversations within a profile. Each session has its own chat history and session memory, but shares the profile's settings and core memory. If a session previously showed truncated history, Forge now rebuilds the cached replay from canonical disk history on first load, especially for async project-agent deliveries.
+    content: `Sessions are individual conversations within a profile. Each session has its own chat history and session memory, but shares the profile's settings and core memory. If a session previously showed truncated history, Forge now rebuilds the cached replay from canonical disk history on first load, especially for async project-agent deliveries. Active Work Plans are also session-scoped, so switching sessions switches the visible plan along with the conversation.
 
 ## Create a session
 

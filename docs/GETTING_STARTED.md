@@ -218,6 +218,12 @@ Either way, the forked session keeps the source session's model state, including
 
 Click any session in the sidebar to switch to it. Your manager tracks state independently per session, so you can bounce between "fix-auth-bug," "dark-mode-feature," and "api-docs-update" without losing your place.
 
+### Active Work Plans
+
+For substantial multi-step work, the manager may keep an Active Work Plan for the current session. It appears as an Active Work card in chat with the plan, item status, and linked worker evidence. The chat header also shows an Active Work indicator when a plan exists; use it to collapse or expand the card without deleting or changing the plan.
+
+Work Plans are session-scoped coordination state, not an automated workflow runner. They help you recover progress after pauses, stops, compaction, restarts, or model changes while the manager continues to lead the work through normal chat and worker delegation.
+
 ### Archive and Restore
 
 You can archive a session or an entire project from the sidebar, but archived items are read-only and unavailable for chat, model, CWD, project-agent reference edits, or terminal use until restored. The default Main session in a project cannot be archived directly. Archiving a project only marks the project as archived; it does not recursively stamp every session, but the whole project becomes operationally unavailable until restored. Archiving a project stops live sessions under that profile, clears active tool snapshots, and suspends running profile terminals so they can resume on restore. Session archives do not delete terminal data. Archive entries are sorted by last user-message activity and show the last-used date.
@@ -621,6 +627,7 @@ No database. Everything is files (JSON, JSONL, and Markdown):
     │   └── reference/             # Per-agent reference documents
     └── sessions/<sessionId>/
         ├── session.jsonl          # Conversation history (the source of truth)
+        ├── tasks.json             # Active Work Plans state
         ├── meta.json              # Session metadata
         ├── memory.md              # Session working memory
         └── workers/               # Individual worker logs
