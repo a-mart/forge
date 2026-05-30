@@ -6,6 +6,7 @@ import {
   shouldIncludeDescriptorInBootInterruptedToolReconciliation,
   shouldPreserveExternalThreadWorkerOnSessionStop,
   shouldInterruptExternalThreadSidecar,
+  shouldReportWorkerAsTerminatedOnSessionStop,
   isActiveExternalThreadSidecar,
 } from "../external-thread-compatibility.js";
 import { createCodexExternalThreadWorkerDescriptor, createWorkerDescriptor } from "../../test-support/fixtures.js";
@@ -55,6 +56,10 @@ describe("external-thread compatibility policy", () => {
     expect(shouldPreserveExternalThreadWorkerOnSessionStop(codex, false)).toBe(true);
     expect(shouldPreserveExternalThreadWorkerOnSessionStop(codex, undefined)).toBe(true);
     expect(shouldPreserveExternalThreadWorkerOnSessionStop(codex, true)).toBe(false);
+    expect(shouldReportWorkerAsTerminatedOnSessionStop(codex, false)).toBe(false);
+    expect(shouldReportWorkerAsTerminatedOnSessionStop(createWorkerDescriptor("/tmp", "mgr-1"), false)).toBe(
+      true,
+    );
   });
 
   it("excludes external-thread sidecars from boot interrupted-tool reconciliation inputs", () => {
