@@ -1146,11 +1146,7 @@ type SwarmManagerOptions = {
   codexAppServerServiceOptions?: CodexAppServerServiceOptions;
   /** Stop-only seam for preserved sidecars; defaults to CodexAppServerService.interruptTurn(). */
   interruptExternalThreadSidecarTurn?: ExternalThreadStopInterruptCallback;
-  /**
-   * Kill/delete cleanup-only seam.
-   * Intentionally distinct from stop interrupts: do not bind this to interruptTurn().
-   * Unwired until a dedicated Codex cleanup service method exists.
-   */
+  /** Kill/delete cleanup-only seam. Distinct from stop interrupts; defaults to Codex cleanup. */
   terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
 };
 
@@ -1658,7 +1654,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       interruptExternalThreadSidecarTurn:
         options?.interruptExternalThreadSidecarTurn ??
         ((agentId) => this.codexAppServerService.interruptTurn(agentId)),
-      terminateExternalThreadSidecarTurn: options?.terminateExternalThreadSidecarTurn,
+      terminateExternalThreadSidecarTurn:
+        options?.terminateExternalThreadSidecarTurn ??
+        ((agentId) => this.codexAppServerService.cleanupSidecarTurnStateForTermination(agentId)),
       sendMessage: (fromAgentId, targetAgentId, message, delivery, options) =>
         this.sendMessage(fromAgentId, targetAgentId, message, delivery, options),
       sendManagerBootstrapMessage: (managerId) => this.sendManagerBootstrapMessage(managerId),

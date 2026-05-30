@@ -4,7 +4,7 @@ import {
   CODEX_APP_SERVER_EXTERNAL_THREAD_MODEL,
   isExternalThreadDescriptor,
   validateCodexExternalThreadModelInvariant,
-} from "../external-threads.js";
+} from "../external-thread-compatibility.js";
 import { createCodexAppServerClient } from "./codex-app-server-client.js";
 import { dispatchCodexAppServerNotification } from "./codex-app-server-events.js";
 import {
@@ -85,6 +85,7 @@ export class CodexAppServerService {
           `Codex sidecar ${existing.agentId} is ${existing.status} and cannot be reused. Recreate the sidecar before sending another Codex message.`,
         );
       }
+      this.syncSidecarCwdFromManager(existing);
       return existing;
     }
 
@@ -162,6 +163,7 @@ export class CodexAppServerService {
 
   async createOrResumeThread(sidecarAgentId: string): Promise<string> {
     const descriptor = this.requireSidecarDescriptor(sidecarAgentId);
+    this.syncSidecarCwdFromManager(descriptor);
     const existingThreadId = await this.reconcileSidecarThreadId(descriptor);
     const client = await this.ensureSharedClient();
 
@@ -296,6 +298,10 @@ export class CodexAppServerService {
     }
   }
 
+  async cleanupSidecarTurnStateForTermination(sidecarAgentId: string): Promise<void> {
+    this.clearActiveTurnForTerminationCleanup(sidecarAgentId);
+  }
+
   async interruptTurn(sidecarAgentId: string): Promise<void> {
     const descriptor = this.requireSidecarDescriptor(sidecarAgentId);
     const runtime = this.getOrCreateRuntime(sidecarAgentId);
@@ -365,6 +371,39 @@ export class CodexAppServerService {
 
   getRuntimeStateForTest(sidecarAgentId: string): CodexSidecarRuntimeState | undefined {
     return this.sidecarRuntimeByAgentId.get(sidecarAgentId);
+  }
+
+  private syncSidecarCwdFromManager(descriptor: AgentDescriptor): void {
+    const manager = this.host.getDescriptor(descriptor.managerId);
+    if (!manager?.cwd || descriptor.cwd === manager.cwd) {
+      return;
+    }
+
+    descriptor.cwd = manager.cwd;
+    descriptor.updatedAt = this.host.now();
+    this.host.upsertDescriptor(descriptor);
+  }
+
+  private clearActiveTurnForTerminationCleanup(sidecarAgentId: string): void {
+    const descriptor = this.host.getDescriptor(sidecarAgentId);
+    const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
+    const activeTurn = runtime?.activeTurn;
+    if (!activeTurn) {
+      return;
+    }
+
+    this.emitParentTurnCompletionIfNeeded(
+      sidecarAgentId,
+      activeTurn,
+      descriptor,
+      undefined,
+      "idle",
+      "stopped",
+    );
+
+    this.cancelCompletionGrace(activeTurn);
+    runtime.openCompletionGraceToken = 0;
+    runtime.activeTurn = undefined;
   }
 
   private requireSidecarDescriptor(sidecarAgentId: string): AgentDescriptor {
@@ -738,6 +777,7 @@ export class CodexAppServerService {
     descriptor: AgentDescriptor | undefined,
     systemMessage: string | undefined,
     descriptorStatus: "idle" | "error",
+    parentStatusOverride?: "completed" | "stopped" | "error",
   ): void {
     const parentTurnContext = activeTurn?.parentTurnContext;
     if (!parentTurnContext || !parentTurnContext.sendAccepted || parentTurnContext.parentCompletionEmitted) {
@@ -746,11 +786,13 @@ export class CodexAppServerService {
 
     parentTurnContext.parentCompletionEmitted = true;
 
-    let status: "completed" | "stopped" | "error" = "completed";
-    if (descriptorStatus === "error") {
-      status = "error";
-    } else if (systemMessage?.includes("stopped")) {
-      status = "stopped";
+    let status: "completed" | "stopped" | "error" = parentStatusOverride ?? "completed";
+    if (!parentStatusOverride) {
+      if (descriptorStatus === "error") {
+        status = "error";
+      } else if (systemMessage?.includes("stopped")) {
+        status = "stopped";
+      }
     }
 
     const resultPreview =

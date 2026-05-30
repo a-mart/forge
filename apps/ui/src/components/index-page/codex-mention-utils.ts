@@ -1,7 +1,15 @@
 import type { AgentDescriptor } from '@forge/protocol'
 
 export function shouldEnableCodexMention(
-  activeAgent: Pick<AgentDescriptor, 'role'> | null | undefined,
+  activeAgent: Pick<AgentDescriptor, 'role' | 'sessionSurface' | 'collab'> | null | undefined,
 ): boolean {
-  return activeAgent?.role === 'manager'
+  if (activeAgent?.role !== 'manager') {
+    return false
+  }
+
+  if (activeAgent.sessionSurface === 'collab' || activeAgent.collab) {
+    return false
+  }
+
+  return true
 }

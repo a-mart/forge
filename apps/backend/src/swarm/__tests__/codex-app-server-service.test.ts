@@ -441,6 +441,89 @@ describe("CodexAppServerService", () => {
     expect(threadAuditBySessionFile.get(sidecar.sessionFile)?.threadId).toBe("thread-new");
   });
 
+  it("syncs sidecar cwd from manager before thread resume and turn start", async () => {
+    const manager = createManagerDescriptor("/tmp/old", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, descriptors } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        return fakeClient;
+      },
+    });
+
+    const sidecar = await service.getOrCreateSidecarDescriptor(manager);
+    expect(sidecar.cwd).toBe("/tmp/old");
+
+    manager.cwd = "/tmp/new";
+    descriptors.set(manager.agentId, manager);
+
+    await service.sendTextTurn("mgr-1--codex", "hello");
+
+    expect(descriptors.get("mgr-1--codex")?.cwd).toBe("/tmp/new");
+    expect(fakeClient?.requests.find((request) => request.method === "thread/start")?.params).toMatchObject({
+      cwd: "/tmp/new",
+    });
+    expect(fakeClient?.requests.find((request) => request.method === "turn/start")?.params).toMatchObject({
+      cwd: "/tmp/new",
+    });
+  });
+
+  it("cleanupSidecarTurnStateForTermination clears global busy state without stop semantics", async () => {
+    const managerA = createManagerDescriptor("/tmp/project-a", { agentId: "mgr-a", profileId: "profile-a" });
+    const managerB = createManagerDescriptor("/tmp/project-b", { agentId: "mgr-b", profileId: "profile-b" });
+    const { host, conversationEntries, conversationMessages, statusEvents } = createFakeHost([managerA, managerB]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(managerA);
+    await service.getOrCreateSidecarDescriptor(managerB);
+    await service.sendTextTurn("mgr-a--codex", "running", {
+      parentRouting: {
+        managerAgentId: "mgr-a",
+        emitParentRequestCard: true,
+        sourceContext: { channel: "web" },
+      },
+    });
+
+    const entriesBeforeCleanup = conversationEntries.length;
+    const statusEventsBeforeCleanup = statusEvents.length;
+    const parentCardsBeforeCleanup = conversationMessages.filter(
+      (message) =>
+        message.agentId === "mgr-a" &&
+        message.externalThreadContext?.type === "codex_app_server",
+    );
+    expect(parentCardsBeforeCleanup.some((message) => message.externalThreadContext?.status === "sent")).toBe(true);
+    expect(parentCardsBeforeCleanup.some((message) => message.externalThreadContext?.status === "stopped")).toBe(false);
+
+    await service.cleanupSidecarTurnStateForTermination("mgr-a--codex");
+
+    expect(fakeClient?.requests.some((request) => request.method === "turn/interrupt")).toBe(false);
+    expect(service.getRuntimeStateForTest("mgr-a--codex")?.activeTurn).toBeUndefined();
+    expect(conversationEntries.length).toBe(entriesBeforeCleanup);
+    expect(statusEvents.length).toBe(statusEventsBeforeCleanup);
+    expect(conversationEntries.some((entry) => entry.type === "conversation_message" && entry.text === "Codex turn stopped.")).toBe(
+      false,
+    );
+    expect(
+      conversationMessages.some(
+        (message) =>
+          message.agentId === "mgr-a" &&
+          message.externalThreadContext?.type === "codex_app_server" &&
+          message.externalThreadContext?.status === "stopped",
+      ),
+    ).toBe(true);
+
+    await service.sendTextTurn("mgr-b--codex", "after cleanup");
+    expect(service.getRuntimeStateForTest("mgr-b--codex")?.activeTurn?.turnId).toBe("turn-2");
+  });
+
   it("interruptTurn calls turn/interrupt and clears active turn", async () => {
     const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
     const { host, conversationEntries } = createFakeHost([manager]);

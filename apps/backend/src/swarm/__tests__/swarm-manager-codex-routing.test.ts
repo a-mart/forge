@@ -6,6 +6,7 @@ import type {
   CodexAppServerClientHandlers,
   CodexAppServerClientPort,
 } from "../codex-app-server/types.js";
+import { CodexAppServerService } from "../codex-app-server/codex-app-server-service.js";
 import { buildModelChangeRecoveryContext } from "../runtime/model-change-recovery-context.js";
 import { shouldExcludeConversationMessageFromModelContext } from "../external-threads.js";
 import {
@@ -17,13 +18,22 @@ import { TestSwarmManager, bootWithDefaultManager } from "../../test-support/ind
 import { createTempConfig } from "../../test-support/temp-config.js";
 
 class FakeCodexAppServerClient implements CodexAppServerClientPort {
+  readonly requests: Array<{ method: string; params?: unknown }> = [];
+
   constructor(readonly handlers: CodexAppServerClientHandlers) {}
 
   async connect(): Promise<void> {}
 
-  async request<T>(method: string): Promise<T> {
+  async request<T>(method: string, params?: unknown): Promise<T> {
+    this.requests.push({ method, params });
+
     if (method === "thread/start") {
       return { thread: { id: "thread-test" } } as T;
+    }
+
+    if (method === "thread/resume") {
+      const threadId = (params as { threadId?: string } | undefined)?.threadId;
+      return { thread: { id: threadId ?? "thread-test" } } as T;
     }
 
     if (method === "turn/start") {
@@ -56,14 +66,22 @@ class FakeCodexAppServerClient implements CodexAppServerClientPort {
 
 class BusyCodexAppServerClient implements CodexAppServerClientPort {
   turnCounter = 0;
+  readonly requests: Array<{ method: string; params?: unknown }> = [];
 
   constructor(readonly handlers: CodexAppServerClientHandlers) {}
 
   async connect(): Promise<void> {}
 
-  async request<T>(method: string): Promise<T> {
+  async request<T>(method: string, params?: unknown): Promise<T> {
+    this.requests.push({ method, params });
+
     if (method === "thread/start") {
       return { thread: { id: "thread-busy" } } as T;
+    }
+
+    if (method === "thread/resume") {
+      const threadId = (params as { threadId?: string } | undefined)?.threadId;
+      return { thread: { id: threadId ?? "thread-busy" } } as T;
     }
 
     if (method === "turn/start") {
@@ -111,22 +129,37 @@ class FailingConnectCodexAppServerClient implements CodexAppServerClientPort {
   }
 }
 
+
 function createCodexEnabledTestManager(config: Awaited<ReturnType<typeof createTempConfig>>["config"]) {
-  return new TestSwarmManager(config, {
+  let fakeClient: FakeCodexAppServerClient | undefined;
+  const manager = new TestSwarmManager(config, {
     codexAppServerServiceOptions: {
       turnCompletionGraceMs: 25,
-      createClient: (handlers) => new FakeCodexAppServerClient(handlers),
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        return fakeClient;
+      },
     },
   });
+  return { manager, getFakeClient: () => fakeClient };
+}
+
+function createCodexEnabledManagerOnly(config: Awaited<ReturnType<typeof createTempConfig>>["config"]) {
+  return createCodexEnabledTestManager(config).manager;
 }
 
 function createBusyCodexTestManager(config: Awaited<ReturnType<typeof createTempConfig>>["config"]) {
-  return new TestSwarmManager(config, {
+  let busyClient: BusyCodexAppServerClient | undefined;
+  const manager = new TestSwarmManager(config, {
     codexAppServerServiceOptions: {
       turnCompletionGraceMs: 25,
-      createClient: (handlers) => new BusyCodexAppServerClient(handlers),
+      createClient: (handlers) => {
+        busyClient = new BusyCodexAppServerClient(handlers);
+        return busyClient;
+      },
     },
   });
+  return { manager, getBusyClient: () => busyClient };
 }
 
 function createFailingConnectCodexTestManager(config: Awaited<ReturnType<typeof createTempConfig>>["config"]) {
@@ -157,7 +190,7 @@ function createRecoveringConnectCodexTestManager(config: Awaited<ReturnType<type
 describe("SwarmManager Codex mention routing", () => {
   it("routes leading Builder/web @Codex without dispatching to manager runtime", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex summarize my calendar", {
@@ -176,7 +209,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("routes direct selected Codex sidecar sends without creating a worker runtime", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex first question", {
@@ -202,7 +235,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("does not bump manager recency when Codex rejects a busy send", async () => {
     const { config } = await createTempConfig();
-    const manager = createBusyCodexTestManager(config);
+    const { manager } = createBusyCodexTestManager(config);
     await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex first question", {
@@ -275,7 +308,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("rejects direct sends to a terminated selected Codex sidecar", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex first question", {
@@ -299,7 +332,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("rejects fresh @Codex after the sidecar was terminated instead of resurrecting it", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex first question", {
@@ -324,7 +357,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("rejects unroutable direct sends to a selected Codex sidecar before appending history", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex first question", {
@@ -349,7 +382,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("skips repo project-agent preflight when a leading @Codex message is diverted to Codex", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     const preflightSpy = vi
@@ -371,7 +404,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("rejects leading @Codex routing when a legacy project agent already owns the codex handle", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> };
@@ -406,7 +439,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("persists parent cards with manager-owned agentId and model-context exclusion", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex hello", {
@@ -439,7 +472,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("schedules repo-root executable trust prompt when manager message is diverted to Codex", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await mkdir(join(config.defaultCwd, ".forge", "extensions"), { recursive: true });
@@ -464,7 +497,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("schedules repo-root executable trust prompt for direct selected Codex sidecar sends", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex create sidecar first", {
@@ -498,7 +531,7 @@ describe("SwarmManager Codex mention routing", () => {
 
   it("rejects empty @Codex and attachment routes before persistence", async () => {
     const { config } = await createTempConfig();
-    const manager = createCodexEnabledTestManager(config);
+    const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
     await expect(
@@ -515,6 +548,147 @@ describe("SwarmManager Codex mention routing", () => {
     ).rejects.toThrow(/text-only/);
 
     expect(manager.listAgents().some((descriptor) => descriptor.agentId === "manager--codex")).toBe(false);
+  });
+
+  it("clears global Codex busy state when an active sidecar is killed without injected cleanup hooks", async () => {
+    const { config } = await createTempConfig();
+    const { manager } = createBusyCodexTestManager(config);
+    await bootWithDefaultManager(manager, config);
+    const { sessionAgent: secondManager } = await manager.createSession("manager", { label: "Second" });
+
+    await manager.handleUserMessage("@Codex blocking turn", {
+      sourceContext: { channel: "web" },
+    });
+
+    expect(manager.getAgent("manager--codex")?.status).toBe("streaming");
+    const codexService = (manager as unknown as { codexAppServerService: CodexAppServerService }).codexAppServerService;
+    expect(codexService.getRuntimeStateForTest("manager--codex")?.activeTurn).toBeDefined();
+
+    await manager.killAgent("manager", "manager--codex");
+
+    expect(manager.getAgent("manager--codex")?.status).toBe("terminated");
+    expect(codexService.getRuntimeStateForTest("manager--codex")?.activeTurn).toBeUndefined();
+
+    await manager.handleUserMessage("@Codex from second manager", {
+      targetAgentId: secondManager.agentId,
+      sourceContext: { channel: "web" },
+    });
+
+    const secondSidecarId = `${secondManager.agentId}--codex`;
+    expect(manager.getAgent(secondSidecarId)).toBeDefined();
+    expect(codexService.getRuntimeStateForTest(secondSidecarId)?.activeTurn).toBeDefined();
+  });
+
+  it("resolves pending parent Codex request card when an active sidecar is killed mid-turn", async () => {
+    const { config } = await createTempConfig();
+    const { manager } = createBusyCodexTestManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex blocking turn", {
+      sourceContext: { channel: "web" },
+    });
+
+    const cardsBeforeKill = manager
+      .getConversationHistory("manager")
+      .filter(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.externalThreadContext?.type === "codex_app_server",
+      );
+    expect(cardsBeforeKill.some((entry) => entry.externalThreadContext?.status === "sent")).toBe(true);
+    expect(cardsBeforeKill.some((entry) => entry.externalThreadContext?.status === "stopped")).toBe(false);
+
+    await manager.killAgent("manager", "manager--codex");
+
+    const cardsAfterKill = manager
+      .getConversationHistory("manager")
+      .filter(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.externalThreadContext?.type === "codex_app_server",
+      );
+    expect(cardsAfterKill.some((entry) => entry.externalThreadContext?.status === "sent")).toBe(true);
+    expect(cardsAfterKill.some((entry) => entry.externalThreadContext?.status === "stopped")).toBe(true);
+    expect(
+      manager
+        .getConversationHistory("manager--codex")
+        .some((entry) => entry.type === "conversation_message" && entry.text === "Codex turn stopped."),
+    ).toBe(false);
+  });
+
+  it("uses updated manager cwd for Codex direct sends after updateManagerCwd", async () => {
+    const { config } = await createTempConfig();
+    const { manager, getFakeClient } = createCodexEnabledTestManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const nextCwd = join(config.defaultCwd, "updated-cwd-direct");
+    await mkdir(nextCwd, { recursive: true });
+
+    await manager.handleUserMessage("@Codex first question", {
+      sourceContext: { channel: "web" },
+    });
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent("manager--codex")?.status).toBe("idle");
+    });
+
+    await manager.updateManagerCwd("manager", nextCwd);
+    const resolvedCwd = manager.getAgent("manager")!.cwd;
+    getFakeClient()!.requests.length = 0;
+
+    await manager.handleUserMessage("follow up after cwd change", {
+      targetAgentId: "manager--codex",
+      sourceContext: { channel: "web" },
+    });
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent("manager--codex")?.status).toBe("idle");
+    });
+
+    const threadRequest = getFakeClient()!.requests.find(
+      (request) => request.method === "thread/start" || request.method === "thread/resume",
+    );
+    const turnRequest = getFakeClient()!.requests.find((request) => request.method === "turn/start");
+    expect(threadRequest?.params).toMatchObject({ cwd: resolvedCwd });
+    expect(turnRequest?.params).toMatchObject({ cwd: resolvedCwd });
+    expect(manager.getAgent("manager--codex")?.cwd).toBe(resolvedCwd);
+  });
+
+  it("uses updated manager cwd for fresh @Codex sends after updateManagerCwd", async () => {
+    const { config } = await createTempConfig();
+    const { manager, getFakeClient } = createCodexEnabledTestManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const nextCwd = join(config.defaultCwd, "updated-cwd-fresh");
+    await mkdir(nextCwd, { recursive: true });
+
+    await manager.handleUserMessage("@Codex seed sidecar", {
+      sourceContext: { channel: "web" },
+    });
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent("manager--codex")?.status).toBe("idle");
+    });
+
+    await manager.updateManagerCwd("manager", nextCwd);
+    const resolvedCwd = manager.getAgent("manager")!.cwd;
+    getFakeClient()!.requests.length = 0;
+
+    await manager.handleUserMessage("@Codex after cwd change", {
+      sourceContext: { channel: "web" },
+    });
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent("manager--codex")?.status).toBe("idle");
+    });
+
+    const threadRequest = getFakeClient()!.requests.find(
+      (request) => request.method === "thread/start" || request.method === "thread/resume",
+    );
+    const turnRequest = getFakeClient()!.requests.find((request) => request.method === "turn/start");
+    expect(threadRequest?.params).toMatchObject({ cwd: resolvedCwd });
+    expect(turnRequest?.params).toMatchObject({ cwd: resolvedCwd });
+    expect(manager.getAgent("manager--codex")?.cwd).toBe(resolvedCwd);
   });
 });
 
