@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, ClipboardList } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -54,6 +54,7 @@ export function ActiveWorkCard({
   focusNonce,
 }: ActiveWorkCardProps) {
   const cardRef = useRef<HTMLDivElement | null>(null)
+  const detailsId = useId()
   const snapshotView = toActiveWorkSnapshotView(snapshot)
   const plan = snapshotView ? getDisplayPlan(snapshotView) : null
   const sortedItems = useMemo(() => (plan ? sortWorkPlanItems(plan.items) : []), [plan])
@@ -100,6 +101,13 @@ export function ActiveWorkCard({
   const diagnostic = snapshot?.diagnostics?.state === 'corrupt_recovered' || snapshot?.diagnostics?.state === 'unavailable'
     ? snapshot.diagnostics
     : null
+  const detailsExpanded = expanded && Boolean(plan)
+  const toggleExpanded = () => onExpandedChange(!expanded)
+  const handleHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    toggleExpanded()
+  }
 
   return (
     <section
@@ -112,7 +120,16 @@ export function ActiveWorkCard({
       aria-label="Active Work plan"
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="flex min-w-0 gap-2">
+        <div
+          role="button"
+          tabIndex={0}
+          className="-m-1 flex min-w-0 flex-1 cursor-pointer gap-2 rounded-md p-1 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={toggleExpanded}
+          onKeyDown={handleHeaderKeyDown}
+          aria-expanded={detailsExpanded}
+          aria-controls={detailsId}
+          aria-label={detailsExpanded ? 'Collapse Active Work plan details' : 'Expand Active Work plan details'}
+        >
           <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
             <ClipboardList className="size-4" aria-hidden="true" />
           </div>
@@ -139,18 +156,20 @@ export function ActiveWorkCard({
           variant="ghost"
           size="sm"
           className="h-7 shrink-0 gap-1 px-2 text-xs"
-          onClick={() => onExpandedChange(!expanded)}
-          aria-expanded={expanded}
-          aria-label={expanded ? 'Collapse Active Work plan' : 'Expand Active Work plan'}
+          onClick={toggleExpanded}
+          aria-expanded={detailsExpanded}
+          aria-controls={detailsId}
+          aria-label={detailsExpanded ? 'Collapse Active Work plan' : 'Expand Active Work plan'}
         >
-          {expanded ? <ChevronDown className="size-3.5" aria-hidden="true" /> : <ChevronRight className="size-3.5" aria-hidden="true" />}
-          {expanded ? 'Hide' : 'Show'}
+          {detailsExpanded ? <ChevronDown className="size-3.5" aria-hidden="true" /> : <ChevronRight className="size-3.5" aria-hidden="true" />}
+          {detailsExpanded ? 'Hide' : 'Show'}
         </Button>
       </div>
 
-      {expanded && plan ? (
-        <div className="mt-3">
-          <Separator className="mb-2" />
+      <div id={detailsId} hidden={!detailsExpanded} className={cn(detailsExpanded ? 'mt-3' : 'hidden')}>
+        {plan ? (
+          <>
+            <Separator className="mb-2" />
           <div className="space-y-1.5">
             {visibleItems.map((item) => {
               const selected = selectedItemId === item.itemId
@@ -192,33 +211,34 @@ export function ActiveWorkCard({
               statuses={statuses}
             />
           ) : null}
-          {plan.finalSummary || knownWarningCount > 0 || hiddenRecentPlanCount > 0 ? (
-            <div className="mt-3 rounded-md border border-border/60 bg-background/60 p-3 text-xs">
-              {plan.finalSummary ? <p className="whitespace-pre-wrap text-muted-foreground">{plan.finalSummary}</p> : null}
-              {knownWarningCount > 0 ? (
-                <div className={plan.finalSummary ? 'mt-2' : undefined}>
-                  <div className="font-medium text-amber-200">Warnings</div>
-                  {plan.warnings.length > 0 ? (
-                    <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-200">
-                      {plan.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
-                    </ul>
-                  ) : null}
-                  {hiddenWarningCount > 0 || plan.warningsTruncated ? (
-                    <p className="mt-1 text-amber-200/80">
-                      +{hiddenWarningCount || Math.max(1, knownWarningCount)} more warning{(hiddenWarningCount || knownWarningCount) === 1 ? '' : 's'} not shown
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {hiddenRecentPlanCount > 0 || snapshotView?.recentWorkPlansTruncated ? (
-                <p className="mt-2 text-muted-foreground">
-                  +{hiddenRecentPlanCount || Math.max(1, knownRecentPlanCount)} previous completed Work Plan{(hiddenRecentPlanCount || knownRecentPlanCount) === 1 ? '' : 's'} hidden
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+            {plan.finalSummary || knownWarningCount > 0 || hiddenRecentPlanCount > 0 ? (
+              <div className="mt-3 rounded-md border border-border/60 bg-background/60 p-3 text-xs">
+                {plan.finalSummary ? <p className="whitespace-pre-wrap text-muted-foreground">{plan.finalSummary}</p> : null}
+                {knownWarningCount > 0 ? (
+                  <div className={plan.finalSummary ? 'mt-2' : undefined}>
+                    <div className="font-medium text-amber-200">Warnings</div>
+                    {plan.warnings.length > 0 ? (
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-200">
+                        {plan.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
+                      </ul>
+                    ) : null}
+                    {hiddenWarningCount > 0 || plan.warningsTruncated ? (
+                      <p className="mt-1 text-amber-200/80">
+                        +{hiddenWarningCount || Math.max(1, knownWarningCount)} more warning{(hiddenWarningCount || knownWarningCount) === 1 ? '' : 's'} not shown
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {hiddenRecentPlanCount > 0 || snapshotView?.recentWorkPlansTruncated ? (
+                  <p className="mt-2 text-muted-foreground">
+                    +{hiddenRecentPlanCount || Math.max(1, knownRecentPlanCount)} previous completed Work Plan{(hiddenRecentPlanCount || knownRecentPlanCount) === 1 ? '' : 's'} hidden
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </div>
     </section>
   )
 }

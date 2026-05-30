@@ -79,6 +79,66 @@ function render(snapshot: SessionTaskStateSnapshotEvent, expanded = true) {
 }
 
 describe('ActiveWorkCard', () => {
+  it('toggles the work item pane when the header region is clicked', () => {
+    const { onExpandedChange } = render(makeSnapshot(), false)
+
+    const headerToggle = container.querySelector<HTMLElement>('[role="button"][aria-label="Expand Active Work plan details"]')
+    expect(headerToggle).toBeTruthy()
+    expect(headerToggle?.getAttribute('aria-expanded')).toBe('false')
+    const controlledRegionId = headerToggle?.getAttribute('aria-controls')
+    expect(controlledRegionId).toBeTruthy()
+    expect(document.getElementById(controlledRegionId!)).toBeTruthy()
+    expect(document.getElementById(controlledRegionId!)?.hidden).toBe(true)
+
+    flushSync(() => headerToggle?.click())
+
+    expect(onExpandedChange).toHaveBeenCalledWith(true)
+  })
+
+  it('toggles the work item pane from the keyboard when the header region is focused', () => {
+    const { onExpandedChange } = render(makeSnapshot(), true)
+
+    const headerToggle = container.querySelector<HTMLElement>('[role="button"][aria-label="Collapse Active Work plan details"]')
+    expect(headerToggle).toBeTruthy()
+
+    flushSync(() => {
+      headerToggle?.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    })
+
+    expect(onExpandedChange).toHaveBeenCalledWith(false)
+  })
+
+  it('keeps aria-controls valid for diagnostics-only cards without a plan pane', () => {
+    render(makeSnapshot({
+      activeWorkPlan: null,
+      recentWorkPlans: [],
+      recentWorkPlanCount: 0,
+      diagnostics: { state: 'unavailable', message: 'State file unavailable' },
+    }), true)
+
+    const headerToggle = container.querySelector<HTMLElement>('[role="button"][aria-label="Expand Active Work plan details"]')
+    expect(headerToggle).toBeTruthy()
+    expect(headerToggle?.getAttribute('aria-expanded')).toBe('false')
+    const controlledRegionId = headerToggle?.getAttribute('aria-controls')
+    expect(controlledRegionId).toBeTruthy()
+    expect(document.getElementById(controlledRegionId!)).toBeTruthy()
+    expect(document.getElementById(controlledRegionId!)?.hidden).toBe(true)
+    expect(container.textContent).toContain('Active Work unavailable')
+    expect(container.textContent).toContain('State file unavailable')
+  })
+
+  it('preserves the Hide control as a separate collapse toggle', () => {
+    const { onExpandedChange } = render(makeSnapshot(), true)
+
+    const hideButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Hide'))
+    expect(hideButton).toBeTruthy()
+    expect(hideButton?.getAttribute('aria-expanded')).toBe('true')
+
+    flushSync(() => hideButton?.click())
+
+    expect(onExpandedChange).toHaveBeenCalledWith(false)
+  })
+
   it('renders blocked state and unavailable worker details without raw ids as the primary label', () => {
     render(makeSnapshot())
 
