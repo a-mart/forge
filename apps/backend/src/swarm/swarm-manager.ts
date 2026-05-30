@@ -115,7 +115,10 @@ import {
   type ProjectAgentRecommendations
 } from "./project-agent-analysis.js";
 import { deleteProjectAgentRecord } from "./project-agent-storage.js";
-import { deliverProjectAgentMessage } from "./project-agents.js";
+import {
+  deliverProjectAgentMessage,
+  isReservedProjectAgentHandle,
+} from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
 import { ForgeExtensionHost } from "./forge-extension-host.js";
 import type { VersioningCommitEvent as ForgeVersioningCommitEvent } from "./forge-extension-types.js";
@@ -331,6 +334,15 @@ import {
   reconcilePersistedExternalThreadSidecarsForBoot,
   shouldIncludeDescriptorInBootInterruptedToolReconciliation,
 } from "./external-thread-compatibility.js";
+import { CodexAppServerService } from "./codex-app-server/codex-app-server-service.js";
+import {
+  isBuilderWebCodexRoutingSurface,
+  parseLeadingCodexMention,
+} from "./codex-app-server/codex-mention-router.js";
+import { createCodexSidecarHostAdapter } from "./codex-app-server/codex-sidecar-host-adapter.js";
+import { truncateCodexPreview } from "./codex-app-server/codex-sidecar-parent-cards.js";
+import type { CodexAppServerServiceOptions } from "./codex-app-server/types.js";
+import { CodexSidecarBusyError } from "./codex-app-server/types.js";
 
 export {
   analyzeLatestCortexCloseoutNeed,
@@ -1187,6 +1199,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly archiveService: ArchiveService;
   private readonly projectAgentService: SwarmProjectAgentService;
   readonly promptRegistry: PromptRegistry;
+  private readonly codexAppServerService: CodexAppServerService;
 
   private integrationContextProvider: ((profileId: string) => string) | undefined;
   private terminalArchiveHooks: {
@@ -1196,7 +1209,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly versioningService: VersioningMutationSink | undefined;
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
 
-  constructor(config: SwarmConfig, options?: { now?: () => string; versioningService?: VersioningMutationSink }) {
+  constructor(
+    config: SwarmConfig,
+    options?: {
+      now?: () => string;
+      versioningService?: VersioningMutationSink;
+      codexAppServerService?: CodexAppServerService;
+      codexAppServerServiceOptions?: CodexAppServerServiceOptions;
+    },
+  ) {
     super();
 
     this.defaultModelPreset =
@@ -1333,6 +1354,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       perf: this.sidebarPerfRecorder,
       getPinnedMessageIds: (agentId) => this.pinnedMessageIdsBySessionAgentId.get(agentId)
     });
+    this.codexAppServerService =
+      options?.codexAppServerService ??
+      new CodexAppServerService(this.createCodexSidecarHost(), {
+        dataDir: this.config.paths.dataDir,
+        ...options?.codexAppServerServiceOptions,
+      });
     this.skillMetadataService = new SkillMetadataService({
       config: this.config
     });
@@ -4882,6 +4909,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
     const target = this.resolveUserMessageTarget(options?.targetAgentId);
+
+    if (await this.maybeRouteCodexUserMessage(target, trimmed, attachments, sourceContext)) {
+      return;
+    }
+
     await this.preflightRepoProjectAgentRuntime(target);
 
     if (target.role === "manager" && attachments.length === 0) {
@@ -4944,10 +4976,167 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.assertDescriptorNotEffectivelyArchived(target);
     if (isNonRunningAgentStatus(target.status)) {
-      throw new Error(`Target agent is not running: ${resolvedTargetAgentId}`);
+      const recoverableCodexRetry = isExternalThreadDescriptor(target) && target.status === "error";
+      if (!recoverableCodexRetry) {
+        throw new Error(`Target agent is not running: ${resolvedTargetAgentId}`);
+      }
     }
 
     return target;
+  }
+
+  isExternalThreadSidecarDescriptor(descriptor: AgentDescriptor): boolean {
+    return isExternalThreadDescriptor(descriptor);
+  }
+
+  private createCodexSidecarHost() {
+    return createCodexSidecarHostAdapter({
+      now: () => this.now(),
+      logDebug: (message, details) => this.logDebug(message, details),
+      getDescriptor: (agentId) => this.descriptors.get(agentId),
+      upsertDescriptor: (descriptor) => {
+        this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
+      },
+      saveStore: () => this.saveStore(),
+      ensureSessionFileParentDirectory: async (sessionFile) => {
+        await mkdir(dirname(sessionFile), { recursive: true });
+      },
+      appendConversationEntry: (_agentId, entry) => {
+        if (entry.type !== "conversation_message") {
+          this.logDebug("codex_sidecar:unsupported_append_entry", { entryType: entry.type });
+          return;
+        }
+
+        this.emitConversationMessage(entry);
+      },
+      emitConversationMessage: (event) => this.emitConversationMessage(event),
+      emitAgentMessage: (event) => this.emitAgentMessage(event),
+      emitAgentToolCall: (event) => this.conversationProjector.emitAgentToolCall(event),
+      emitStatus: (agentId, status, pendingCount) => {
+        this.emitStatus(agentId, status, pendingCount);
+      },
+      emitAgentsSnapshot: () => {
+        this.emitAgentsSnapshot();
+      },
+      emitProfilesSnapshot: () => {
+        this.emitProfilesSnapshot();
+      },
+      listWorkersForSession: (sessionAgentId) => this.getWorkersForManager(sessionAgentId),
+    });
+  }
+
+  private async maybeRouteCodexUserMessage(
+    target: AgentDescriptor,
+    trimmed: string,
+    attachments: ConversationAttachment[],
+    sourceContext: MessageSourceContext,
+  ): Promise<boolean> {
+    if (isExternalThreadDescriptor(target)) {
+      const manager = this.descriptors.get(target.managerId);
+      if (!manager || manager.role !== "manager") {
+        throw new Error(`Codex sidecar ${target.agentId} is missing its parent manager session.`);
+      }
+      if (!isBuilderWebCodexRoutingSurface(sourceContext, manager)) {
+        throw new Error("Selected Codex sidecar only accepts direct sends from Builder web sessions.");
+      }
+
+      if (attachments.length > 0) {
+        throw new Error("Codex sidecar messages support text only in this version.");
+      }
+
+      if (!trimmed) {
+        throw new Error("Codex sidecar message text must not be empty.");
+      }
+
+      this.scheduleProjectExecutableTrustPrompt(manager as AgentDescriptor & { role: "manager" });
+
+      await this.routeCodexSidecarUserMessage(manager, target, trimmed, sourceContext, {
+        emitParentRequestCard: false,
+      });
+      return true;
+    }
+
+    if (target.role !== "manager") {
+      return false;
+    }
+
+    if (!isBuilderWebCodexRoutingSurface(sourceContext, target)) {
+      return false;
+    }
+
+    const mentionRoute = parseLeadingCodexMention(trimmed);
+    if (!mentionRoute.routed) {
+      return false;
+    }
+
+    this.assertCodexMentionRoutingAvailable(target as AgentDescriptor & { role: "manager"; profileId: string });
+
+    if (attachments.length > 0) {
+      throw new Error("Codex @mention routing supports text-only messages in this version.");
+    }
+
+    if (!mentionRoute.strippedText) {
+      throw new Error("Add a message after @Codex to send it to Codex app-server.");
+    }
+
+    this.scheduleProjectExecutableTrustPrompt(target as AgentDescriptor & { role: "manager" });
+
+    const sidecar = await this.codexAppServerService.getOrCreateSidecarDescriptor(target);
+    await this.routeCodexSidecarUserMessage(target, sidecar, mentionRoute.strippedText, sourceContext, {
+      emitParentRequestCard: true,
+    });
+    return true;
+  }
+
+  private assertCodexMentionRoutingAvailable(manager: AgentDescriptor & { role: "manager"; profileId: string }): void {
+    const conflictingProjectAgent = this.getSessionsForProfile(manager.profileId).find(
+      (descriptor) =>
+        typeof descriptor.projectAgent?.handle === "string" &&
+        isReservedProjectAgentHandle(descriptor.projectAgent.handle),
+    );
+    if (!conflictingProjectAgent) {
+      return;
+    }
+
+    throw new Error(
+      'Codex @mention routing is unavailable because project agent handle "codex" is already in use in this profile. Rename that project agent and try again.',
+    );
+  }
+
+  private async routeCodexSidecarUserMessage(
+    manager: AgentDescriptor,
+    sidecar: AgentDescriptor,
+    text: string,
+    sourceContext: MessageSourceContext,
+    options: { emitParentRequestCard: boolean },
+  ): Promise<void> {
+    this.logDebug("codex_sidecar:user_message_route", {
+      managerAgentId: manager.agentId,
+      sidecarAgentId: sidecar.agentId,
+      sourceContext,
+      emitParentRequestCard: options.emitParentRequestCard,
+      textPreview: previewForLog(text),
+    });
+
+    try {
+      await this.codexAppServerService.sendTextTurn(sidecar.agentId, text, {
+        promptPreview: truncateCodexPreview(text),
+        parentRouting: {
+          managerAgentId: manager.agentId,
+          emitParentRequestCard: options.emitParentRequestCard,
+          sourceContext,
+        },
+      });
+      const routedAt = this.now();
+      this.markSessionActivity(manager.agentId, routedAt);
+      this.markSessionUserMessageActivity(manager.agentId, routedAt);
+    } catch (error) {
+      if (error instanceof CodexSidecarBusyError) {
+        throw new Error("Codex is busy with an active turn. Stop the current turn or wait for it to finish.");
+      }
+
+      throw error;
+    }
   }
 
   private async appendConversationUserMessageInternal(
@@ -5047,6 +5236,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
 
     if (target.role !== "manager") {
+      if (isExternalThreadDescriptor(target)) {
+        throw new Error("Codex sidecar messages must route through the Codex sidecar path.");
+      }
+
       const requestedDelivery = delivery ?? "auto";
       let receipt: SendMessageReceipt;
       try {

@@ -11,7 +11,7 @@ import {
   type RepoProjectAgentInventoryItem,
   type RepoProjectAgentInventorySection
 } from "@forge/protocol";
-import { normalizeProjectAgentHandle } from "./agents/project-agent-registry.js";
+import { normalizeProjectAgentHandle, isReservedProjectAgentHandle } from "./agents/project-agent-registry.js";
 import { sanitizePathSegment } from "./data-paths.js";
 import { normalizePersistedSwarmModelDescriptor } from "./model-presets.js";
 
@@ -229,6 +229,12 @@ function validateConfig(config: RepoProjectAgentDefinitionConfig, problems: Proj
     problems.push({ code: "handle_required", message: "config.json handle must be non-empty after sanitization.", path: "config.json" });
   } else if (config.handle !== normalizeProjectAgentHandle(config.handle)) {
     problems.push({ code: "handle_unsanitized", message: "config.json handle must already be sanitized.", path: "config.json" });
+  } else if (isReservedProjectAgentHandle(config.handle)) {
+    problems.push({
+      code: "handle_reserved",
+      message: 'config.json handle "codex" is reserved for Codex @mention routing.',
+      path: "config.json",
+    });
   }
   if (typeof config.whenToUse !== "string" || normalizeInlineText(config.whenToUse).length === 0) {
     problems.push({ code: "when_to_use_required", message: "config.json whenToUse must be non-empty.", path: "config.json" });

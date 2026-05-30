@@ -12,6 +12,7 @@ import {
   parseThreadIdFromThreadResult,
   parseTurnIdFromTurnResult,
 } from "./codex-sidecar-ids.js";
+import { truncateCodexPreview } from "./codex-sidecar-parent-cards.js";
 import type {
   CodexAppServerClientPort,
   CodexAppServerProbeResult,
@@ -79,6 +80,11 @@ export class CodexAppServerService {
 
     const existing = this.findSidecarForManager(manager.agentId);
     if (existing) {
+      if (existing.status === "terminated" || existing.status === "stopped") {
+        throw new Error(
+          `Codex sidecar ${existing.agentId} is ${existing.status} and cannot be reused. Recreate the sidecar before sending another Codex message.`,
+        );
+      }
       return existing;
     }
 
@@ -209,9 +215,11 @@ export class CodexAppServerService {
 
     const descriptor = this.requireSidecarDescriptor(sidecarAgentId);
     const runtime = this.getOrCreateRuntime(sidecarAgentId);
-    const correlationId = options.correlationId ?? randomUUID();
-
     runtime.turnEpoch += 1;
+
+    const correlationId = options.correlationId ?? randomUUID();
+    const requestId = options.requestId ?? randomUUID();
+    const promptPreview = options.promptPreview ?? truncateCodexPreview(trimmed);
 
     runtime.activeTurn = {
       turnId: "",
@@ -223,6 +231,18 @@ export class CodexAppServerService {
       suppressed: false,
       turnEpoch: runtime.turnEpoch,
       graceItemAcceptOpen: false,
+      parentTurnContext: options.parentRouting
+        ? {
+            managerAgentId: options.parentRouting.managerAgentId,
+            requestId,
+            turnCorrelationId: correlationId,
+            promptPreview,
+            emitParentRequestCard: options.parentRouting.emitParentRequestCard,
+            sourceContext: options.parentRouting.sourceContext,
+            sendAccepted: false,
+            parentCompletionEmitted: false,
+          }
+        : undefined,
     };
 
     try {
@@ -264,6 +284,10 @@ export class CodexAppServerService {
       descriptor.updatedAt = this.host.now();
       this.host.upsertDescriptor(descriptor);
       await this.host.saveStore();
+
+      if (runtime.activeTurn) {
+        this.emitParentTurnAcceptedArtifacts(sidecarAgentId, runtime.activeTurn, trimmed);
+      }
 
       return { turnId, correlationId };
     } catch (error) {
@@ -610,6 +634,15 @@ export class CodexAppServerService {
   ): void {
     const descriptor = this.host.getDescriptor(sidecarAgentId);
     const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
+    const activeTurn = runtime?.activeTurn;
+
+    this.emitParentTurnCompletionIfNeeded(
+      sidecarAgentId,
+      activeTurn,
+      descriptor,
+      systemMessage,
+      descriptorStatus,
+    );
 
     if (systemMessage) {
       this.host.appendConversationEntry(sidecarAgentId, {
@@ -658,12 +691,83 @@ export class CodexAppServerService {
     };
 
     if (this.host.writeSidecarThreadStateAudit) {
-      await this.host.writeSidecarThreadStateAudit(descriptor.sessionFile, auditState);
+      await this.host.writeSidecarThreadStateAudit(descriptor.sessionFile, auditState, descriptor.cwd);
       this.host.logDebug("Persisted Codex sidecar thread audit entry", {
         customType: CODEX_THREAD_STATE_CUSTOM_TYPE,
         sidecarAgentId: descriptor.agentId,
         threadId,
       });
     }
+  }
+
+  private emitParentTurnAcceptedArtifacts(
+    sidecarAgentId: string,
+    activeTurn: CodexSidecarActiveTurn,
+    text: string,
+  ): void {
+    const parentTurnContext = activeTurn.parentTurnContext;
+    if (!parentTurnContext || parentTurnContext.sendAccepted) {
+      return;
+    }
+
+    parentTurnContext.sendAccepted = true;
+
+    if (parentTurnContext.emitParentRequestCard) {
+      this.host.emitParentExternalThreadCard?.({
+        managerAgentId: parentTurnContext.managerAgentId,
+        sidecarAgentId,
+        requestId: parentTurnContext.requestId,
+        turnCorrelationId: parentTurnContext.turnCorrelationId,
+        promptPreview: parentTurnContext.promptPreview,
+        status: "sent",
+        sourceContext: parentTurnContext.sourceContext,
+      });
+    }
+
+    this.host.emitParentUserToCodexAgentMessage?.({
+      managerAgentId: parentTurnContext.managerAgentId,
+      sidecarAgentId,
+      text,
+      sourceContext: parentTurnContext.sourceContext,
+    });
+  }
+
+  private emitParentTurnCompletionIfNeeded(
+    sidecarAgentId: string,
+    activeTurn: CodexSidecarActiveTurn | undefined,
+    descriptor: AgentDescriptor | undefined,
+    systemMessage: string | undefined,
+    descriptorStatus: "idle" | "error",
+  ): void {
+    const parentTurnContext = activeTurn?.parentTurnContext;
+    if (!parentTurnContext || !parentTurnContext.sendAccepted || parentTurnContext.parentCompletionEmitted) {
+      return;
+    }
+
+    parentTurnContext.parentCompletionEmitted = true;
+
+    let status: "completed" | "stopped" | "error" = "completed";
+    if (descriptorStatus === "error") {
+      status = "error";
+    } else if (systemMessage?.includes("stopped")) {
+      status = "stopped";
+    }
+
+    const resultPreview =
+      status === "completed"
+        ? activeTurn?.assistantText || systemMessage
+        : systemMessage ?? activeTurn?.assistantText;
+
+    this.host.emitParentExternalThreadCard?.({
+      managerAgentId: parentTurnContext.managerAgentId,
+      sidecarAgentId,
+      requestId: parentTurnContext.requestId,
+      turnCorrelationId: parentTurnContext.turnCorrelationId,
+      promptPreview: parentTurnContext.promptPreview,
+      resultPreview: resultPreview ? truncateCodexPreview(resultPreview) : undefined,
+      threadId: descriptor?.externalThread?.threadId,
+      status,
+      sourceContext: parentTurnContext.sourceContext,
+    });
   }
 }

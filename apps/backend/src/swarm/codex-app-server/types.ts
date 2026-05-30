@@ -5,6 +5,7 @@ import type {
   ConversationMessageEvent,
   AgentMessageEvent,
   AgentToolCallEvent,
+  MessageSourceContext,
 } from "../types.js";
 
 export const CODEX_SIDECAR_AGENT_ID_SUFFIX = "--codex";
@@ -34,7 +35,42 @@ export interface CodexSidecarHost {
   emitProfilesSnapshot(): void;
   listWorkersForSession(sessionAgentId: string): AgentDescriptor[];
   readSidecarThreadStateFallback?(sessionFile: string): CodexSidecarPersistedThreadState | undefined;
-  writeSidecarThreadStateAudit?(sessionFile: string, state: CodexSidecarPersistedThreadState): Promise<void>;
+  writeSidecarThreadStateAudit?(
+    sessionFile: string,
+    state: CodexSidecarPersistedThreadState,
+    cwd: string,
+  ): Promise<void>;
+  emitParentExternalThreadCard?(params: CodexSidecarParentTurnNotification): void;
+  emitParentUserToCodexAgentMessage?(params: {
+    managerAgentId: string;
+    sidecarAgentId: string;
+    text: string;
+    sourceContext?: MessageSourceContext;
+    attachmentCount?: number;
+  }): void;
+}
+
+export interface CodexSidecarParentTurnNotification {
+  managerAgentId: string;
+  sidecarAgentId: string;
+  requestId: string;
+  turnCorrelationId: string;
+  promptPreview?: string;
+  resultPreview?: string;
+  threadId?: string;
+  status: "sent" | "running" | "completed" | "stopped" | "error";
+  sourceContext?: MessageSourceContext;
+}
+
+export interface CodexSidecarParentTurnContext {
+  managerAgentId: string;
+  requestId: string;
+  turnCorrelationId: string;
+  promptPreview?: string;
+  emitParentRequestCard: boolean;
+  sourceContext?: MessageSourceContext;
+  sendAccepted: boolean;
+  parentCompletionEmitted: boolean;
 }
 
 export interface CodexAppServerClientHandlers {
@@ -80,6 +116,7 @@ export interface CodexSidecarActiveTurn {
   completionGraceToken?: number;
   graceItemAcceptOpen?: boolean;
   completionGraceTimer?: ReturnType<typeof setTimeout>;
+  parentTurnContext?: CodexSidecarParentTurnContext;
 }
 
 export interface CodexSidecarRuntimeState {
@@ -124,4 +161,9 @@ export interface CodexSendTextTurnOptions {
   correlationId?: string;
   requestId?: string;
   promptPreview?: string;
+  parentRouting?: {
+    managerAgentId: string;
+    emitParentRequestCard: boolean;
+    sourceContext?: MessageSourceContext;
+  };
 }

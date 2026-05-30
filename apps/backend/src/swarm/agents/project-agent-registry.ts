@@ -75,6 +75,16 @@ export function normalizeProjectAgentHandle(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+export const RESERVED_PROJECT_AGENT_HANDLE = "codex";
+
+export function isReservedProjectAgentHandle(handle: string): boolean {
+  return normalizeProjectAgentHandle(handle) === RESERVED_PROJECT_AGENT_HANDLE;
+}
+
+export function getReservedProjectAgentHandleError(handle: string): string {
+  return `Project agent handle "${handle}" is reserved for Codex @mention routing. Choose a different handle and try again.`;
+}
+
 export function getProjectAgentHandleCollisionError(handle: string): string {
   return `Project agent handle "${handle}" is already in use in this profile. Choose a different handle and try again.`;
 }

@@ -243,9 +243,30 @@ function createFakeHost(initialDescriptors: AgentDescriptor[] = []): {
         (descriptor) => descriptor.managerId === sessionAgentId && descriptor.role === "worker",
       ),
     readSidecarThreadStateFallback: (sessionFile) => threadFallbackBySessionFile.get(sessionFile),
-    writeSidecarThreadStateAudit: async (sessionFile, state) => {
+    writeSidecarThreadStateAudit: async (sessionFile, state, _cwd) => {
       threadAuditBySessionFile.set(sessionFile, state);
     },
+    emitParentExternalThreadCard: (params) => {
+      conversationMessages.push({
+        type: "conversation_message",
+        agentId: params.managerAgentId,
+        role: "system",
+        text: params.status,
+        timestamp: "2026-05-30T12:00:00.000Z",
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: params.sidecarAgentId,
+          requestId: params.requestId,
+          turnCorrelationId: params.turnCorrelationId,
+          promptPreview: params.promptPreview,
+          resultPreview: params.resultPreview,
+          status: params.status,
+          excludeFromModelContext: true,
+        },
+      });
+    },
+    emitParentUserToCodexAgentMessage: vi.fn(),
   };
 
   return {
@@ -504,6 +525,40 @@ describe("CodexAppServerService", () => {
     fakeClients[0]!.failMethods.delete("thread/start");
     await service.sendTextTurn("mgr-1--codex", "hello again");
     expect(descriptors.get("mgr-1--codex")?.status).toBe("streaming");
+  });
+
+  it("does not emit parent manager artifacts before send acceptance when thread/start fails", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationMessages } = createFakeHost([manager]);
+    const fakeClients: FakeCodexAppServerClient[] = [];
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        const client = new FakeCodexAppServerClient(handlers);
+        fakeClients.push(client);
+        return client;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.probe();
+    fakeClients[0]!.failMethods.add("thread/start");
+
+    await expect(
+      service.sendTextTurn("mgr-1--codex", "hello", {
+        parentRouting: {
+          managerAgentId: "mgr-1",
+          emitParentRequestCard: true,
+          sourceContext: { channel: "web" },
+        },
+      }),
+    ).rejects.toThrow(/JSON-RPC request timed out: thread\/start/);
+
+    expect(
+      conversationMessages.filter(
+        (message) => message.agentId === "mgr-1" && message.externalThreadContext?.type === "codex_app_server",
+      ),
+    ).toHaveLength(0);
+    expect(host.emitParentUserToCodexAgentMessage).not.toHaveBeenCalled();
   });
 
   it("clears active turn and marks error when turn/start fails", async () => {
@@ -816,5 +871,44 @@ describe("CodexAppServerService", () => {
 
     expect(conversationMessages.length).toBe(messagesBeforeDispose);
     expect(service.getRuntimeStateForTest("mgr-1--codex")).toBeUndefined();
+  });
+
+  it("emits append-only parent request and completion cards with manager-owned agentId", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationMessages } = createFakeHost([manager]);
+    const service = createTestService(host, {
+      createClient: (handlers) => new FakeCodexAppServerClient(handlers),
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "say hello", {
+      parentRouting: {
+        managerAgentId: "mgr-1",
+        emitParentRequestCard: true,
+        sourceContext: { channel: "web" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        conversationMessages.filter(
+          (message) =>
+            message.agentId === "mgr-1" && message.externalThreadContext?.type === "codex_app_server",
+        ).length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+
+    const parentCards = conversationMessages.filter(
+      (message) => message.agentId === "mgr-1" && message.externalThreadContext?.type === "codex_app_server",
+    );
+    expect(parentCards.map((message) => message.externalThreadContext?.status)).toEqual(
+      expect.arrayContaining(["sent", "completed"]),
+    );
+    expect(host.emitParentUserToCodexAgentMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        managerAgentId: "mgr-1",
+        sidecarAgentId: "mgr-1--codex",
+      }),
+    );
   });
 });
