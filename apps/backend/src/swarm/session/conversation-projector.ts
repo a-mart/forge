@@ -510,15 +510,15 @@ export class ConversationProjector {
       return diskEntries;
     }
 
-    const inMemoryEntryIdCounts = new Map<string, number>();
-    // Non-message entries can be missing stable ids, so we dedupe with a serialized fingerprint.
+    const inMemoryEntryStableKeyCounts = new Map<string, number>();
+    // Entries without stable keys are deduped with a serialized fingerprint.
     // This assumes those entry fields stay stable between in-memory capture and disk round-trip.
     const inMemoryEntryFingerprintCounts = new Map<string, number>();
 
     for (const inMemoryEntry of inMemoryEntries) {
-      const entryId = extractConversationEntryEventId(inMemoryEntry);
-      if (entryId) {
-        inMemoryEntryIdCounts.set(entryId, (inMemoryEntryIdCounts.get(entryId) ?? 0) + 1);
+      const stableKey = extractConversationEntryStableDedupeKey(inMemoryEntry);
+      if (stableKey) {
+        inMemoryEntryStableKeyCounts.set(stableKey, (inMemoryEntryStableKeyCounts.get(stableKey) ?? 0) + 1);
         continue;
       }
 
@@ -528,9 +528,9 @@ export class ConversationProjector {
 
     const mergedEntries: ConversationEntryEvent[] = [];
     for (const diskEntry of diskEntries) {
-      const entryId = extractConversationEntryEventId(diskEntry);
-      if (entryId) {
-        if (decrementCounter(inMemoryEntryIdCounts, entryId)) {
+      const stableKey = extractConversationEntryStableDedupeKey(diskEntry);
+      if (stableKey) {
+        if (decrementCounter(inMemoryEntryStableKeyCounts, stableKey)) {
           continue;
         }
 
@@ -586,7 +586,7 @@ export class ConversationProjector {
   }
 }
 
-function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {
+function extractConversationEntryStableDedupeKey(entry: ConversationEntryEvent): string | undefined {
   if (entry.type !== "conversation_message" && entry.type !== "work_plan_created") {
     return undefined;
   }
@@ -595,7 +595,7 @@ function extractConversationEntryEventId(entry: ConversationEntryEvent): string 
     return undefined;
   }
 
-  return entry.id;
+  return `${entry.type}:${entry.id}`;
 }
 
 function decrementCounter(counter: Map<string, number>, key: string): boolean {

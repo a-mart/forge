@@ -205,6 +205,47 @@ describe('ActiveWorkCard', () => {
     expect(container.textContent).toContain('Older Work Plans are outside the retained snapshot.')
   })
 
+  it('collapses previous-plan disclosure when the session snapshot changes', async () => {
+    const firstSnapshot = makeSnapshot({
+      activeWorkPlan: null,
+      recentWorkPlans: [makeRecentPlan(1), makeRecentPlan(2)],
+      recentWorkPlanCount: 2,
+      recentWorkPlansTruncated: false,
+    })
+    render(firstSnapshot)
+
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous completed Work Plan'))
+    expect(disclosure).toBeTruthy()
+    flushSync(() => disclosure?.click())
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.textContent).toContain('Completed plan 2')
+
+    const nextSnapshot = makeSnapshot({
+      sessionAgentId: 'session-2',
+      activeWorkPlan: null,
+      recentWorkPlans: [makeRecentPlan(10), makeRecentPlan(11)],
+      recentWorkPlanCount: 2,
+      recentWorkPlansTruncated: false,
+    })
+    const onExpandedChange = vi.fn()
+    flushSync(() => {
+      root.render(createElement(ActiveWorkCard, {
+        snapshot: nextSnapshot,
+        agents: [],
+        statuses: {},
+        expanded: true,
+        onExpandedChange,
+      }))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const nextDisclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous completed Work Plan'))
+    expect(nextDisclosure).toBeTruthy()
+    expect(nextDisclosure?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.textContent).toContain('Completed plan 10')
+    expect(container.textContent).not.toContain('Completed plan 11')
+  })
+
   it('treats all retained recent plans as previous when an active plan is rendered', () => {
     const snapshot = makeSnapshot({
       recentWorkPlans: [1, 2, 3, 4, 5].map(makeRecentPlan),

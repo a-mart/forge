@@ -93,7 +93,9 @@ describe("conversation validators", () => {
 
   it("rejects malformed work_plan_created top-level identity and revision fields", () => {
     expect(isConversationEntryEvent(makeWorkPlanCreated({ id: "" }))).toBe(false);
+    expect(isConversationEntryEvent(makeWorkPlanCreated({ id: "   " }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ planId: "" }))).toBe(false);
+    expect(isConversationEntryEvent(makeWorkPlanCreated({ timestamp: "   " }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ timestamp: 123 }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ stateRevision: -1 }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ planRevision: Number.NaN }))).toBe(false);
@@ -103,6 +105,8 @@ describe("conversation validators", () => {
 
   it("rejects malformed nested Work Plan snapshots before replay", () => {
     const basePlan = makeWorkPlanCreated().plan as Record<string, unknown>;
+    expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, planId: "   " } }))).toBe(false);
+    expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, updatedAt: "   " } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, status: "running" } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, itemsTruncated: "no" } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, warningCount: -1 } }))).toBe(false);
@@ -114,12 +118,14 @@ describe("conversation validators", () => {
   it("rejects malformed nested Work Plan item and worker-link snapshots", () => {
     const basePlan = makeWorkPlanCreated().plan as Record<string, unknown>;
     const [baseItem] = basePlan.items as Record<string, unknown>[];
+    expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, itemId: "   " }] } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, status: "later" }] } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, workerLinkCount: Number.POSITIVE_INFINITY }] } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, workerLinksTruncated: "no" }] } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, blocker: { reason: "bad", needsUser: "yes" } }] } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, result: { summary: "bad", status: "partial-ish" } }] } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, workerLinks: [{ type: "worker", linkId: "", agentId: "worker", linkedAt: FIXED_NOW }] }] } }))).toBe(false);
+    expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, workerLinks: [{ type: "worker", linkId: "link", agentId: "   ", linkedAt: FIXED_NOW }] }] } }))).toBe(false);
     expect(isConversationEntryEvent(makeWorkPlanCreated({ plan: { ...basePlan, items: [{ ...baseItem, workerLinks: [{ type: "artifact", linkId: "link", agentId: "worker", linkedAt: FIXED_NOW }] }] } }))).toBe(false);
   });
 });

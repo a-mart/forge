@@ -476,7 +476,7 @@ function isStringInSet<const Values extends readonly string[]>(value: unknown, v
 }
 
 function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function isNonNegativeInteger(value: unknown): value is number {

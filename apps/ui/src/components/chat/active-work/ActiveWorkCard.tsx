@@ -101,6 +101,10 @@ export function ActiveWorkCard({
   const [showPreviousPlans, setShowPreviousPlans] = useState(false)
 
   useEffect(() => {
+    setShowPreviousPlans(false)
+  }, [snapshotView?.sessionAgentId, plan?.planId])
+
+  useEffect(() => {
     if (focusNonce && cardRef.current) {
       cardRef.current.focus()
       cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
