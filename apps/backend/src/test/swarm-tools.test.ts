@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { buildSwarmTools, type SwarmToolHost } from '../swarm/swarm-tools.js'
 import type { AgentDescriptor, SendMessageReceipt, SpawnAgentInput } from '../swarm/types.js'
 
@@ -72,6 +72,21 @@ function makeHost(spawnImpl: (callerAgentId: string, input: SpawnAgentInput) => 
     async requestUserChoice() {
       return []
     },
+    async runTaskTool() {
+      return {
+        action: 'get',
+        stateRevision: 0,
+        snapshot: {
+          sessionAgentId: 'manager',
+          profileId: 'profile-1',
+          revision: 0,
+          activeWorkPlan: null,
+          recentWorkPlans: [],
+          recentWorkPlanCount: 0,
+          recentWorkPlansTruncated: false,
+        },
+      }
+    },
   }
 }
 
@@ -100,6 +115,21 @@ function makeHostWithAgents(
     },
     async requestUserChoice() {
       return []
+    },
+    async runTaskTool() {
+      return {
+        action: 'get',
+        stateRevision: 0,
+        snapshot: {
+          sessionAgentId: 'manager',
+          profileId: 'profile-1',
+          revision: 0,
+          activeWorkPlan: null,
+          recentWorkPlans: [],
+          recentWorkPlanCount: 0,
+          recentWorkPlansTruncated: false,
+        },
+      }
     },
   }
 }
@@ -835,6 +865,19 @@ describe('buildSwarmTools', () => {
         }
       },
       requestUserChoice: async () => [],
+      runTaskTool: async () => ({
+        action: 'get',
+        stateRevision: 0,
+        snapshot: {
+          sessionAgentId: 'manager',
+          profileId: 'profile-1',
+          revision: 0,
+          activeWorkPlan: null,
+          recentWorkPlans: [],
+          recentWorkPlanCount: 0,
+          recentWorkPlansTruncated: false,
+        },
+      }),
     }
 
     const tools = buildSwarmTools(host, makeManagerDescriptor())
@@ -871,5 +914,48 @@ describe('buildSwarmTools', () => {
     })
   })
 
+  it('delegates the task tool to host.runTaskTool and returns structured details', async () => {
+    const runTaskTool = vi.fn(async () => ({
+      action: 'get' as const,
+      stateRevision: 7,
+      snapshot: {
+        sessionAgentId: 'manager',
+        profileId: 'profile-1',
+        revision: 7,
+        activeWorkPlan: null,
+        recentWorkPlans: [],
+        recentWorkPlanCount: 0,
+        recentWorkPlansTruncated: false,
+      },
+    }))
+
+    const host: SwarmToolHost = {
+      listAgents: () => [makeManagerDescriptor()],
+      getWorkerActivity: () => undefined,
+      spawnAgent: async () => makeWorkerDescriptor('worker'),
+      killAgent: async () => {},
+      sendMessage: async () => ({
+        targetAgentId: 'worker',
+        deliveryId: 'delivery-1',
+        acceptedMode: 'prompt',
+      }),
+      publishToUser: async () => ({ targetContext: { channel: 'web' } }),
+      requestUserChoice: async () => [],
+      runTaskTool,
+    }
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const taskTool = tools.find((tool) => tool.name === 'task')
+    expect(taskTool).toBeDefined()
+
+    const result = await taskTool!.execute('tool-call', { action: 'get' }, undefined, undefined, undefined as any)
+
+    expect(runTaskTool).toHaveBeenCalledWith('manager', 'tool-call', { action: 'get' })
+    expect(result.details).toMatchObject({
+      action: 'get',
+      stateRevision: 7,
+      snapshot: { revision: 7 },
+    })
+  })
 
 })

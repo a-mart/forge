@@ -16,8 +16,22 @@ function createPerfStub(): SidebarPerfRecorder {
   }
 }
 
+function createTaskSnapshotEvent(agentId: string): Extract<ServerEvent, { type: 'session_task_state_snapshot' }> {
+  return {
+    type: 'session_task_state_snapshot',
+    sessionAgentId: agentId,
+    profileId: 'profile-1',
+    revision: 0,
+    activeWorkPlan: null,
+    recentWorkPlans: [],
+    recentWorkPlanCount: 0,
+    recentWorkPlansTruncated: false,
+    diagnostics: { state: 'defaulted' },
+  }
+}
+
 describe('sendSubscriptionBootstrap', () => {
-  it('records sidebar.bootstrap once with diagnostics from the current history load', () => {
+  it('records sidebar.bootstrap once with diagnostics from the current history load', async () => {
     const perf = createPerfStub()
     const send = vi.fn((_: unknown, event: ServerEvent) => Buffer.byteLength(JSON.stringify(event), 'utf8'))
     const historyResult = {
@@ -70,9 +84,10 @@ describe('sendSubscriptionBootstrap', () => {
       listProfiles: () => [],
       getConversationHistoryWithDiagnostics: vi.fn(() => historyResult),
       getPendingChoiceIdsForSession: vi.fn(() => ['choice-1']),
+      getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
     } as any
 
-    const result = sendSubscriptionBootstrap({
+    const result = await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
       swarmManager,
@@ -83,6 +98,7 @@ describe('sendSubscriptionBootstrap', () => {
       send,
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
     })
 
     const recordDuration = vi.mocked(perf.recordDuration)
@@ -104,14 +120,14 @@ describe('sendSubscriptionBootstrap', () => {
       snapshotSkipped: false,
     })
     expect(bootstrapOptions?.fields).not.toHaveProperty('agentId')
-    expect(send).toHaveBeenCalledTimes(6)
+    expect(send).toHaveBeenCalledTimes(7)
     expect(result).toEqual({
       agentsSnapshotSent: true,
       profilesSnapshotSent: true,
     })
   })
 
-  it('prioritizes visible transcript entries for oversized bootstrap history and records matching metrics', () => {
+  it('prioritizes visible transcript entries for oversized bootstrap history and records matching metrics', async () => {
     const perf = createPerfStub()
     const send = vi.fn((_: unknown, event: ServerEvent) => Buffer.byteLength(JSON.stringify(event), 'utf8'))
     const bigText = 'x'.repeat(20_000)
@@ -171,9 +187,10 @@ describe('sendSubscriptionBootstrap', () => {
         },
       })),
       getPendingChoiceIdsForSession: vi.fn(() => []),
+      getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
     } as any
 
-    sendSubscriptionBootstrap({
+    await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
       swarmManager,
@@ -184,6 +201,7 @@ describe('sendSubscriptionBootstrap', () => {
       send,
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
     })
 
     const conversationHistoryEvent = send.mock.calls
@@ -208,7 +226,7 @@ describe('sendSubscriptionBootstrap', () => {
     })
   })
 
-  it('records skipped snapshot metrics when connection-scoped snapshots are omitted', () => {
+  it('records skipped snapshot metrics when connection-scoped snapshots are omitted', async () => {
     const perf = createPerfStub()
     const send = vi.fn((_: unknown, event: ServerEvent) => Buffer.byteLength(JSON.stringify(event), 'utf8'))
     const swarmManager = {
@@ -233,9 +251,10 @@ describe('sendSubscriptionBootstrap', () => {
         },
       })),
       getPendingChoiceIdsForSession: vi.fn(() => []),
+      getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
     } as any
 
-    const result = sendSubscriptionBootstrap({
+    const result = await sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
       swarmManager,
@@ -246,6 +265,7 @@ describe('sendSubscriptionBootstrap', () => {
       send,
       resolveTerminalScopeAgentId: () => undefined,
       resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
       includeAgentsSnapshot: false,
       includeProfilesSnapshot: false,
     })
@@ -263,10 +283,129 @@ describe('sendSubscriptionBootstrap', () => {
       profilesSnapshotBuildMs: 0,
       profilesSnapshotPayloadBytes: 0,
     })
-    expect(send).toHaveBeenCalledTimes(4)
+    expect(send).toHaveBeenCalledTimes(5)
     expect(result).toEqual({
       agentsSnapshotSent: false,
       profilesSnapshotSent: false,
     })
+  })
+
+  it('sends session_task_state_snapshot after pending choices and before terminals', async () => {
+    const sentEvents: ServerEvent[] = []
+    await sendSubscriptionBootstrap({
+      socket: {} as any,
+      targetAgentId: 'manager-1',
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryWithDiagnostics: () => ({
+          history: [],
+          diagnostics: {
+            cacheState: 'hit' as const,
+            historySource: 'cache_hit' as const,
+            coldLoad: false,
+            fsReadOps: 0,
+            fsReadBytes: 0,
+            sessionFileBytes: 0,
+            cacheFileBytes: 0,
+            persistedEntryCount: 0,
+            cachedEntryCount: 0,
+            sessionSummaryBytesScanned: 0,
+            cacheReadMs: 0,
+            sessionSummaryReadMs: 0,
+            detail: undefined,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => ['choice-1'],
+        getSessionTaskStateSnapshot: async (agentId: string) => ({
+          ...createTaskSnapshotEvent(agentId),
+          revision: 7,
+        }),
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+    })
+
+    expect(sentEvents.map((event) => event.type)).toEqual([
+      'ready',
+      'agents_snapshot',
+      'profiles_snapshot',
+      'conversation_history',
+      'pending_choices_snapshot',
+      'session_task_state_snapshot',
+      'terminals_snapshot',
+    ])
+    expect(sentEvents[5]).toMatchObject({
+      type: 'session_task_state_snapshot',
+      sessionAgentId: 'manager-1',
+      revision: 7,
+      activeWorkPlan: null,
+      recentWorkPlans: [],
+      diagnostics: { state: 'defaulted' },
+    })
+  })
+
+  it('skips session_task_state_snapshot for non-session bootstrap targets', async () => {
+    const sentEvents: ServerEvent[] = []
+    const getSessionTaskStateSnapshot = vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId))
+
+    await sendSubscriptionBootstrap({
+      socket: {} as any,
+      targetAgentId: '__bootstrap_manager__',
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryWithDiagnostics: () => ({
+          history: [],
+          diagnostics: {
+            cacheState: 'hit' as const,
+            historySource: 'cache_hit' as const,
+            coldLoad: false,
+            fsReadOps: 0,
+            fsReadBytes: 0,
+            sessionFileBytes: 0,
+            cacheFileBytes: 0,
+            persistedEntryCount: 0,
+            cachedEntryCount: 0,
+            sessionSummaryBytesScanned: 0,
+            cacheReadMs: 0,
+            sessionSummaryReadMs: 0,
+            detail: undefined,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => [],
+        getSessionTaskStateSnapshot,
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: () => undefined,
+    })
+
+    expect(getSessionTaskStateSnapshot).not.toHaveBeenCalled()
+    expect(sentEvents.map((event) => event.type)).toEqual([
+      'ready',
+      'agents_snapshot',
+      'profiles_snapshot',
+      'conversation_history',
+      'pending_choices_snapshot',
+      'terminals_snapshot',
+    ])
   })
 })

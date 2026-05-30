@@ -166,7 +166,8 @@ function buildObjectSchema(schema: JsonObject): z.ZodTypeAny {
     shape[propertyName] = required.has(propertyName) ? converted : converted.optional();
   }
 
-  return z.object(shape);
+  const objectSchema = z.object(shape);
+  return schema.additionalProperties === false ? objectSchema.strict() : objectSchema;
 }
 
 function buildStringSchema(schema: JsonObject): z.ZodTypeAny {

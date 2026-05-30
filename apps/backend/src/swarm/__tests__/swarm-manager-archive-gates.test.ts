@@ -19,13 +19,23 @@ class StopFailureSwarmManager extends TestSwarmManager {
   readonly stopSessionCalls: string[] = []
   failAgentId?: string
 
-  override async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
-    this.stopSessionCalls.push(agentId)
-    if (agentId === this.failAgentId) {
-      expect(this.listProfiles().find((profile) => profile.profileId === 'manager')?.archivedAt).toBeTruthy()
-      throw new Error('synthetic stop failure')
+  constructor(config: SwarmConfig) {
+    super(config)
+
+    const originalStopSessionInternal = (this as unknown as {
+      stopSessionInternal: (agentId: string, options: unknown) => Promise<{ terminatedWorkerIds: string[] }>
+    }).stopSessionInternal.bind(this)
+
+    ;(this as unknown as {
+      stopSessionInternal: (agentId: string, options: unknown) => Promise<{ terminatedWorkerIds: string[] }>
+    }).stopSessionInternal = async (agentId: string, options: unknown) => {
+      this.stopSessionCalls.push(agentId)
+      if (agentId === this.failAgentId) {
+        expect(this.listProfiles().find((profile) => profile.profileId === 'manager')?.archivedAt).toBeTruthy()
+        throw new Error('synthetic stop failure')
+      }
+      return originalStopSessionInternal(agentId, options)
     }
-    return super.stopSession(agentId)
   }
 }
 

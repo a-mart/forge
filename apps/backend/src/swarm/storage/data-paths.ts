@@ -149,6 +149,10 @@ export function getSessionMetaPath(dataDir: string, profileId: string, sessionAg
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "meta.json");
 }
 
+export function getSessionTasksPath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "tasks.json");
+}
+
 export function getSessionContextDir(dataDir: string, profileId: string, sessionAgentId: string): string {
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "context");
 }

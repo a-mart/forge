@@ -89,9 +89,15 @@ export interface SwarmSessionServiceOptions {
     descriptor: ProvisionedSessionDescriptor,
     entry: { from: string; to: string; renamedAt: string }
   ) => Promise<void>;
+  clearSessionWorkPlans: (descriptor: ProvisionedSessionDescriptor) => Promise<void>;
   copySessionHistoryForFork: (
     sourceSessionFile: string,
     targetSessionFile: string,
+    fromMessageId?: string
+  ) => Promise<void>;
+  copySessionWorkPlansForFork: (
+    sourceDescriptor: ProvisionedSessionDescriptor,
+    forkedDescriptor: ProvisionedSessionDescriptor,
     fromMessageId?: string
   ) => Promise<void>;
   copyPinnedMessagesForFork: (
@@ -293,6 +299,7 @@ export class SwarmSessionService {
     });
 
     this.options.resetConversationHistory(agentId);
+    await this.options.clearSessionWorkPlans(descriptor);
 
     const runtime = this.options.runtimes.get(agentId);
     if (runtime?.runtimeType === "claude") {
@@ -376,6 +383,11 @@ export class SwarmSessionService {
         await this.options.copySessionHistoryForFork(
           sourceDescriptor.sessionFile,
           forkedDescriptor.sessionFile,
+          normalizedFromMessageId
+        );
+        await this.options.copySessionWorkPlansForFork(
+          sourceDescriptor,
+          forkedDescriptor,
           normalizedFromMessageId
         );
         await this.options.copyPinnedMessagesForFork(sourceDescriptor, forkedDescriptor);

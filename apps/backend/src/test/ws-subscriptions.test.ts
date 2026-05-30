@@ -13,6 +13,20 @@ function createPerfStub(): SidebarPerfRecorder {
   }
 }
 
+function createTaskSnapshotEvent(sessionAgentId: string): Extract<ServerEvent, { type: 'session_task_state_snapshot' }> {
+  return {
+    type: 'session_task_state_snapshot',
+    sessionAgentId,
+    profileId: 'profile-1',
+    revision: 0,
+    activeWorkPlan: null,
+    recentWorkPlans: [],
+    recentWorkPlanCount: 0,
+    recentWorkPlansTruncated: false,
+    diagnostics: { state: 'defaulted' },
+  }
+}
+
 function createManagerStub() {
   let agentsSnapshotVersion = 0
   let profilesSnapshotVersion = 0
@@ -82,6 +96,7 @@ function createManagerStub() {
       },
     }),
     getPendingChoiceIdsForSession: () => [],
+    getSessionTaskStateSnapshot: async (sessionAgentId: string) => createTaskSnapshotEvent(sessionAgentId),
     getAgentsSnapshotVersion: () => agentsSnapshotVersion,
     getProfilesSnapshotVersion: () => profilesSnapshotVersion,
     bumpAgentsSnapshotVersion: () => {
@@ -130,6 +145,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'profiles_snapshot',
       'conversation_history',
       'pending_choices_snapshot',
+      'session_task_state_snapshot',
       'terminals_snapshot',
     ])
 
@@ -140,6 +156,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'ready',
       'conversation_history',
       'pending_choices_snapshot',
+      'session_task_state_snapshot',
       'terminals_snapshot',
     ])
   })
@@ -213,6 +230,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'ready',
       'conversation_history',
       'pending_choices_snapshot',
+      'session_task_state_snapshot',
       'terminals_snapshot',
     ])
   })
@@ -300,5 +318,101 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
     expect(getEventTypes(sentEvents)).toContain('ready')
     expect(getEventTypes(sentEvents)).toContain('agents_snapshot')
     expect(getEventTypes(sentEvents)).toContain('profiles_snapshot')
+  })
+
+  it('skips session_task_state_snapshot for bootstrap placeholder and worker subscriptions', async () => {
+    const bootstrapSocket = createSocket()
+    const workerSocket = createSocket()
+    const bootstrapEvents: ServerEvent[] = []
+    const workerEvents: ServerEvent[] = []
+    const getSessionTaskStateSnapshot = vi.fn(async (sessionAgentId: string) => createTaskSnapshotEvent(sessionAgentId))
+    const manager = {
+      getConfig: () => ({}),
+      getAgent: (agentId: string) => {
+        if (agentId === 'worker-1') {
+          return {
+            agentId: 'worker-1',
+            displayName: 'Worker 1',
+            role: 'worker',
+            managerId: 'manager',
+            status: 'idle',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp',
+            model: {
+              provider: 'openai-codex',
+              modelId: 'gpt-5.5',
+              thinkingLevel: 'medium',
+            },
+            sessionFile: '/tmp/worker-1.jsonl',
+          }
+        }
+        return undefined
+      },
+      listAgents: () => [],
+      listBootstrapAgents: () => [],
+      listProfiles: () => [],
+      getConversationHistoryWithDiagnostics: () => ({
+        history: [],
+        diagnostics: {
+          cacheState: 'miss' as const,
+          historySource: 'session_file' as const,
+          coldLoad: false,
+          fsReadOps: 0,
+          fsReadBytes: 0,
+          sessionFileBytes: 0,
+          cacheFileBytes: 0,
+          persistedEntryCount: 0,
+          cachedEntryCount: 0,
+          sessionSummaryBytesScanned: 0,
+          cacheReadMs: 0,
+          sessionSummaryReadMs: 0,
+          detail: undefined,
+        },
+      }),
+      getPendingChoiceIdsForSession: () => [],
+      getSessionTaskStateSnapshot,
+      getAgentsSnapshotVersion: () => 0,
+      getProfilesSnapshotVersion: () => 0,
+    }
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (socket, event) => {
+        if (socket === bootstrapSocket) {
+          bootstrapEvents.push(event)
+        }
+        if (socket === workerSocket) {
+          workerEvents.push(event)
+        }
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([bootstrapSocket, workerSocket]) }) as any,
+    })
+
+    await subscriptions.handleSubscribe(bootstrapSocket)
+    await subscriptions.handleSubscribe(workerSocket, 'worker-1')
+
+    expect(getSessionTaskStateSnapshot).not.toHaveBeenCalled()
+    expect(getEventTypes(bootstrapEvents)).toEqual([
+      'ready',
+      'agents_snapshot',
+      'profiles_snapshot',
+      'conversation_history',
+      'pending_choices_snapshot',
+      'terminals_snapshot',
+    ])
+    expect(getEventTypes(workerEvents)).toEqual([
+      'ready',
+      'agents_snapshot',
+      'profiles_snapshot',
+      'conversation_history',
+      'pending_choices_snapshot',
+      'terminals_snapshot',
+    ])
   })
 })

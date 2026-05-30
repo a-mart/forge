@@ -90,6 +90,9 @@ import type {
   SessionStoppedEvent,
 } from './session-events.js'
 import type {
+  SessionTaskStateSnapshotEvent,
+} from './tasks.js'
+import type {
   TerminalClosedEvent,
   TerminalCreatedEvent,
   TerminalsSnapshotEvent,
@@ -116,6 +119,7 @@ export * from './directory-events.js'
 export * from './notification-events.js'
 export * from './integration-events.js'
 export * from './config-events.js'
+export * from './tasks.js'
 export * from './transport-events.js'
 
 export type ServerEvent =
@@ -145,6 +149,7 @@ export type ServerEvent =
   | ConversationResetEvent
   | ConversationHistoryEvent
   | PendingChoicesSnapshotEvent
+  | SessionTaskStateSnapshotEvent
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent

@@ -13,13 +13,14 @@ import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import { cn } from '@/lib/utils'
-import type { AgentDescriptor, ChoiceAnswer, ConversationEntry, ProjectAgentInfo } from '@forge/protocol'
+import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ProjectAgentInfo, SessionTaskStateSnapshotEvent } from '@forge/protocol'
 import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
 import { ChoiceRequestCard } from './message-list/ChoiceRequestCard'
 import { ConversationMessageRow } from './message-list/ConversationMessageRow'
 import { EmptyState } from './message-list/EmptyState'
+import { ActiveWorkCard, hasActiveWork } from './active-work'
 import {
   hydrateToolDisplayEntry,
   isToolExecutionEvent,
@@ -77,6 +78,11 @@ interface MessageListProps {
   onChoiceCancel?: (agentId: string, choiceId: string) => void
   pendingChoiceIds: Set<string>
   streamingStartedAt?: number
+  activeWorkSnapshot?: SessionTaskStateSnapshotEvent | null
+  activeWorkExpanded?: boolean
+  onActiveWorkExpandedChange?: (expanded: boolean) => void
+  activeWorkFocusNonce?: number
+  statuses?: Record<string, { status: AgentStatus }>
 }
 
 export interface MessageListHandle {
@@ -315,6 +321,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onChoiceCancel,
   pendingChoiceIds,
   streamingStartedAt,
+  activeWorkSnapshot,
+  activeWorkExpanded = false,
+  onActiveWorkExpandedChange,
+  activeWorkFocusNonce,
+  statuses = {},
 }, ref) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -531,7 +542,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     previousEntryCountRef.current = nextEntryCount
   }, [activeAgentId, displayEntries, isLoading, scrollToBottom])
 
-  if (displayEntries.length === 0 && !isLoading) {
+  const showActiveWorkCard = hasActiveWork(activeWorkSnapshot)
+
+  if (displayEntries.length === 0 && !isLoading && !showActiveWorkCard) {
     return (
       <EmptyState
         activeAgentId={activeAgentId}
@@ -559,6 +572,16 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
         )}
       >
         <div className="space-y-2 p-2 md:p-3">
+          {showActiveWorkCard ? (
+            <ActiveWorkCard
+              snapshot={activeWorkSnapshot}
+              agents={agents ?? []}
+              statuses={statuses}
+              expanded={activeWorkExpanded}
+              onExpandedChange={onActiveWorkExpandedChange ?? (() => undefined)}
+              focusNonce={activeWorkFocusNonce}
+            />
+          ) : null}
           {displayEntries.map((entry) => {
             if (entry.type === 'conversation_message') {
               const isAssistant = entry.message.role === 'assistant'

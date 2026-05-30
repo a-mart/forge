@@ -70,7 +70,7 @@ export class CliWsHandler {
 
     try {
       if (command.type === "subscribe_headless") {
-        this.subscriptions.subscribe(socket, command);
+        await this.subscriptions.subscribe(socket, command);
         return;
       }
 

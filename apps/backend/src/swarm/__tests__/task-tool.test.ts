@@ -1,0 +1,734 @@
+import { mkdir, readFile } from 'node:fs/promises'
+import { Value } from '@sinclair/typebox/value'
+import { describe, expect, it, vi } from 'vitest'
+import { buildTaskTool, normalizeTaskToolInput, taskToolSchema, type TaskToolResult } from '../coordination/task-tool.js'
+import { WorkPlanImmutableError, WorkPlanItemResolutionError, WorkPlanNotFoundError } from '../coordination/work-plan-service.js'
+import { WorkPlanLinkValidationError } from '../coordination/work-plan-link-validation.js'
+import { ARCHIVED_PROJECT_OPERATION_MESSAGE } from '../archive/archive-resolver.js'
+import { getSessionTasksPath } from '../storage/data-paths.js'
+import type { AgentDescriptor, SwarmConfig } from '../types.js'
+import type { SwarmToolHost } from '../swarm-tool-host.js'
+import type { RuntimeCreationOptions, SwarmAgentRuntime } from '../runtime-contracts.js'
+import { FakeRuntime, TestSwarmManager as TestSwarmManagerBase, bootWithDefaultManager, makeTempConfig as buildTempConfig } from '../../test-support/index.js'
+
+class TestSwarmManager extends TestSwarmManagerBase {
+  protected override async createRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    systemPrompt: string,
+    runtimeToken?: number,
+    options?: RuntimeCreationOptions,
+  ): Promise<SwarmAgentRuntime> {
+    const runtime = await super.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options)
+    ;(runtime as FakeRuntime).terminateMutatesDescriptorStatus = false
+    return runtime
+  }
+}
+
+async function makeTempConfig(port = 8894): Promise<SwarmConfig> {
+  return buildTempConfig({
+    prefix: 'task-tool-',
+    port,
+    omitSharedAuthFile: true,
+    omitSharedSecretsFile: true,
+    skipRepoMemorySkillPlaceholder: true,
+  })
+}
+
+describe('task tool schema', () => {
+  it('accepts the four supported actions with itemsText and rejects unsupported provider-facing fields', () => {
+    expect(Value.Check(taskToolSchema, { action: 'get' })).toBe(true)
+    expect(Value.Check(taskToolSchema, {
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] One item',
+    })).toBe(true)
+    expect(Value.Check(taskToolSchema, {
+      action: 'link',
+      planId: 'plan-1',
+      itemId: 'item-1',
+      link: { type: 'worker', agentId: 'worker-1' },
+    })).toBe(true)
+    expect(Value.Check(taskToolSchema, {
+      action: 'finish_plan',
+      planId: 'plan-1',
+      status: 'completed_with_warnings',
+      finalSummary: 'Done',
+      warnings: ['Needs follow-up'],
+    })).toBe(true)
+
+    expect(Value.Check(taskToolSchema, {
+      action: 'upsert_plan',
+      title: 'Plan title',
+      items: [{ title: 'One item', status: 'active' }],
+    })).toBe(false)
+    expect(Value.Check(taskToolSchema, {
+      action: 'link',
+      planId: 'plan-1',
+      link: { type: 'worker', agentId: 'worker-1' },
+      note: 'not allowed',
+    })).toBe(false)
+    expect(Value.Check(taskToolSchema, {
+      action: 'finish_plan',
+      planId: 'plan-1',
+      status: 'completed',
+      finalSummary: 'Done',
+      warnings: [],
+    })).toBe(false)
+  })
+
+  it('documents create-time itemsText as the only provider-facing item-entry shape', () => {
+    const tool = buildTaskTool({ runTaskTool: vi.fn() } as unknown as SwarmToolHost, {
+      agentId: 'manager',
+    } as AgentDescriptor)
+
+    expect(tool.description).toContain('Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only')
+    expect(tool.description).toContain('Do not send nested item arrays')
+
+    const schema = taskToolSchema as {
+      description?: string
+      properties?: Record<string, { description?: string }>
+    }
+
+    expect(schema.description).toContain('it does not expose structured `items` arrays')
+    expect(schema.properties?.itemsText?.description).toContain('one item per line')
+    expect(schema.properties?.status?.description).toContain('Shared status field')
+    expect(schema.properties).not.toHaveProperty('items')
+  })
+
+  it('normalizes itemsText into bounded item objects and tolerates empty artifact items fields', () => {
+    expect(normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[done] Create plan\n- [active] Observe snapshot\nPlain fallback item',
+    })).toMatchObject({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      items: [
+        { title: 'Create plan', status: 'done' },
+        { title: 'Observe snapshot', status: 'active' },
+        { title: 'Plain fallback item', status: 'todo' },
+      ],
+    })
+    expect(normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] Create plan',
+      items: [],
+    })).toMatchObject({
+      items: [{ title: 'Create plan', status: 'active' }],
+    })
+    expect(normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] Create plan',
+      items: null,
+    })).toMatchObject({
+      items: [{ title: 'Create plan', status: 'active' }],
+    })
+
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      planId: 'plan-1',
+      itemsText: '[active] Attempt update',
+    })).toThrow('itemsText is only allowed when creating a new plan')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      items: [{ title: 'One item' }],
+      itemsText: '[active] Mixed source',
+    })).toThrow('accepts either items or itemsText, not both')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[{"title":"Bad json"}]',
+    })).toThrow('itemsText must be plain one-item-per-line text, not JSON')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] {"title":"Bad json"}',
+    })).toThrow('line 1 cannot contain JSON-like item text')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '- [{"title":"Bad json"}]',
+    })).toThrow('line 1 cannot contain JSON-like item text')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] legit {"title":"bad"}',
+    })).toThrow('line 1 cannot contain JSON-like item text')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] legit [{"title":"bad"}]',
+    })).toThrow('line 1 cannot contain JSON-like item text')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] legit [1,2]',
+    })).toThrow('line 1 cannot contain JSON-like item text')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] legit [true]',
+    })).toThrow('line 1 cannot contain JSON-like item text')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] legit [null]',
+    })).toThrow('line 1 cannot contain JSON-like item text')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[later] Unsupported status',
+    })).toThrow('uses unknown item status')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] https://example.com',
+    })).toThrow('itemsText cannot contain JSON, links, or reference syntax')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: Array.from({ length: 26 }, (_, index) => `[todo] Item ${index + 1}`).join('\n'),
+    })).toThrow('must contain at most 25 non-empty lines')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: 'x'.repeat(6000),
+    })).toThrow('itemsText must be at most')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      items: '[{"title":"Bad json"}]',
+    })).toThrow('no longer accepts items as a string')
+  })
+
+  it('delegates raw provider params to host.runTaskTool', async () => {
+    const runTaskTool = vi.fn(async () => ({
+      action: 'get',
+      stateRevision: 3,
+      snapshot: {
+        sessionAgentId: 'manager',
+        profileId: 'profile-1',
+        revision: 3,
+        activeWorkPlan: null,
+        recentWorkPlans: [],
+        recentWorkPlanCount: 0,
+        recentWorkPlansTruncated: false,
+      },
+    } satisfies TaskToolResult))
+
+    const host = { runTaskTool } as unknown as SwarmToolHost
+    const descriptor = { agentId: 'manager' } as AgentDescriptor
+    const tool = buildTaskTool(host, descriptor)
+
+    const result = await tool.execute('tool-1', { action: 'get' }, undefined, undefined, undefined as any)
+    await tool.execute('tool-2', {
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] Create plan',
+    }, undefined, undefined, undefined as any)
+
+    expect(runTaskTool).toHaveBeenNthCalledWith(1, 'manager', 'tool-1', { action: 'get' })
+    expect(runTaskTool).toHaveBeenNthCalledWith(2, 'manager', 'tool-2', {
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[active] Create plan',
+    })
+    expect(result.details).toMatchObject({ action: 'get', stateRevision: 3 })
+  })
+})
+
+describe('SwarmManager.runTaskTool', () => {
+  it('is manager-only and rejects worker callers directly', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const worker = await manager.spawnAgent('manager', { agentId: 'task-worker' })
+
+    await expect(
+      manager.runTaskTool(worker.agentId, 'tool-1', { action: 'get' }),
+    ).rejects.toThrow('task is only available to manager sessions.')
+  })
+
+  it('creates a plan through buildTaskTool.execute without tripping mixed items/itemsText normalization', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const descriptor = manager.getAgent('manager')!
+    const tool = buildTaskTool(manager as unknown as SwarmToolHost, descriptor)
+    const result = await tool.execute('tool-build-execute', {
+      action: 'upsert_plan',
+      title: 'Build tool execute path',
+      itemsText: '[active] Create plan through execute',
+    }, undefined, undefined, undefined as any)
+
+    expect(result.details).toMatchObject({
+      action: 'upsert_plan',
+      snapshot: { activeWorkPlan: { title: 'Build tool execute path' } },
+    })
+  })
+
+  it('finishing a provider-facing plan closes open items but preserves explicit failed/unknown evidence', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.runTaskTool('manager', 'tool-provider-finish-1', {
+      action: 'upsert_plan',
+      title: 'Provider-facing finish closeout',
+      itemsText: '[active] Investigate backend\n[todo] Summarize outcome',
+    })
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'provider-finish-worker' })
+    const linked = await manager.runTaskTool('manager', 'tool-provider-finish-2', {
+      action: 'link',
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      itemId: created.createdItemIds?.[0],
+      link: { type: 'worker', agentId: worker.agentId },
+    })
+
+    const revised = await manager.runTaskTool('manager', 'tool-provider-finish-2b', {
+      action: 'upsert_plan',
+      expectedStateRevision: linked.stateRevision,
+      planId: created.planId,
+      items: [
+        { itemId: created.createdItemIds?.[0], title: 'Investigate backend', status: 'active' },
+        { itemId: created.createdItemIds?.[1], title: 'Summarize outcome', status: 'todo' },
+        { title: 'Known failure', status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
+        { title: 'Unknown outcome', status: 'unknown', note: 'Worker ended without report' },
+      ],
+    })
+
+    const finished = await manager.runTaskTool('manager', 'tool-provider-finish-3', {
+      action: 'finish_plan',
+      expectedStateRevision: revised.stateRevision,
+      planId: created.planId,
+      status: 'completed',
+      finalSummary: 'Done',
+    })
+
+    expect(finished.snapshot.activeWorkPlan).toBeNull()
+    expect(finished.snapshot.recentWorkPlans[0]).toMatchObject({
+      planId: created.planId,
+      status: 'completed',
+      items: [
+        { status: 'done', workerLinks: [{ agentId: worker.agentId }] },
+        { status: 'done' },
+        { status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
+        { status: 'unknown', note: 'Worker ended without report' },
+      ],
+    })
+  })
+
+  it('emits live task snapshots after successful task mutations', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const snapshots: Array<Record<string, unknown>> = []
+    manager.on('session_task_state_snapshot', (event: Record<string, unknown>) => {
+      if (event.sessionAgentId === 'manager') {
+        snapshots.push(event)
+      }
+    })
+
+    const created = await manager.runTaskTool('manager', 'tool-live-1', {
+      action: 'upsert_plan',
+      title: 'Emit live snapshot',
+      itemsText: '[active] Create plan',
+    })
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0]).toMatchObject({
+      sessionAgentId: 'manager',
+      revision: created.stateRevision,
+      activeWorkPlan: { title: 'Emit live snapshot' },
+    })
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'live-linked-worker' })
+    const linked = await manager.runTaskTool('manager', 'tool-live-2', {
+      action: 'link',
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      itemId: created.createdItemIds?.[0],
+      link: { type: 'worker', agentId: worker.agentId },
+    })
+    expect(snapshots).toHaveLength(2)
+    expect(snapshots[1]).toMatchObject({
+      sessionAgentId: 'manager',
+      revision: linked.stateRevision,
+      activeWorkPlan: { items: [{ workerLinks: [{ agentId: worker.agentId }] }] },
+    })
+
+    const finished = await manager.runTaskTool('manager', 'tool-live-3', {
+      action: 'finish_plan',
+      expectedStateRevision: linked.stateRevision,
+      planId: created.planId,
+      status: 'completed',
+      finalSummary: 'Done',
+    })
+    expect(snapshots).toHaveLength(3)
+    expect(snapshots[2]).toMatchObject({
+      sessionAgentId: 'manager',
+      revision: finished.stateRevision,
+      activeWorkPlan: null,
+    })
+  })
+
+  it('creates, gets, links, finishes, and CAS-protects the current session work plan', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.runTaskTool('manager', 'tool-1', {
+      action: 'upsert_plan',
+      title: 'Implement WP4',
+      itemsText: '[active] Build task tool',
+      revisionNote: 'Created plan',
+    })
+
+    expect(created).toMatchObject({
+      action: 'upsert_plan',
+      stateRevision: 1,
+      planRevision: 1,
+      snapshot: { revision: 1 },
+    })
+    expect(created.createdItemIds).toHaveLength(1)
+
+    const fetched = await manager.runTaskTool('manager', 'tool-2', { action: 'get' })
+    expect(fetched).toMatchObject({ action: 'get', stateRevision: 1, snapshot: { activeWorkPlan: { title: 'Implement WP4' } } })
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'linked-worker' })
+    const linked = await manager.runTaskTool('manager', 'tool-3', {
+      action: 'link',
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      itemId: created.createdItemIds?.[0],
+      link: { type: 'worker', agentId: worker.agentId },
+    })
+
+    expect(linked).toMatchObject({
+      action: 'link',
+      stateRevision: 2,
+      linkedItemId: created.createdItemIds?.[0],
+      snapshot: { activeWorkPlan: { items: [{ workerLinks: [{ agentId: worker.agentId }] }] } },
+    })
+
+    const revised = await manager.runTaskTool('manager', 'tool-4', {
+      action: 'upsert_plan',
+      expectedStateRevision: linked.stateRevision,
+      planId: created.planId,
+      items: [{ itemId: created.createdItemIds?.[0], title: 'Build task tool', status: 'done' }],
+      revisionNote: 'Preserve linked worker evidence',
+    })
+
+    expect(revised).toMatchObject({
+      action: 'upsert_plan',
+      stateRevision: 3,
+      snapshot: { activeWorkPlan: { items: [{ workerLinks: [{ agentId: worker.agentId }], status: 'done' }] } },
+    })
+
+    await expect(
+      manager.runTaskTool('manager', 'tool-5', {
+        action: 'upsert_plan',
+        expectedStateRevision: revised.stateRevision,
+        planId: created.planId,
+        itemsText: '[done] Attempt unsafe rewrite',
+      }),
+    ).rejects.toThrow('itemsText is only allowed when creating a new plan')
+
+    await expect(
+      manager.runTaskTool('manager', 'tool-6', {
+        action: 'upsert_plan',
+        expectedStateRevision: 0,
+        planId: created.planId,
+        title: 'Conflicting update',
+      }),
+    ).rejects.toThrow('Active Work changed since your last snapshot. Call `task.get` to refresh, then retry with the latest `stateRevision`.')
+
+    const finished = await manager.runTaskTool('manager', 'tool-7', {
+      action: 'finish_plan',
+      expectedStateRevision: revised.stateRevision,
+      planId: created.planId,
+      status: 'completed',
+      finalSummary: 'Done',
+    })
+
+    expect(finished).toMatchObject({
+      action: 'finish_plan',
+      stateRevision: 4,
+      planId: created.planId,
+      planRevision: 4,
+    })
+  })
+
+  it('rejects archived and non-running manager task mutations before mutating task state', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.runTaskTool('manager', 'tool-gate-1', {
+      action: 'upsert_plan',
+      title: 'Gate task mutations',
+      itemsText: '[active] Preserve state',
+    })
+    const tasksPath = getSessionTasksPath(config.paths.dataDir, 'manager', 'manager')
+    const before = await readFile(tasksPath, 'utf8')
+
+    const profiles = (manager as unknown as { profiles: Map<string, { archivedAt?: string }> }).profiles
+    profiles.get('manager')!.archivedAt = '2026-05-30T00:00:00.000Z'
+    await expect(
+      manager.runTaskTool('manager', 'tool-gate-2', {
+        action: 'finish_plan',
+        planId: created.planId,
+        status: 'completed',
+        finalSummary: 'Should be blocked',
+      }),
+    ).rejects.toThrow(ARCHIVED_PROJECT_OPERATION_MESSAGE)
+    expect(await readFile(tasksPath, 'utf8')).toBe(before)
+
+    profiles.get('manager')!.archivedAt = undefined
+    const descriptors = (manager as unknown as { descriptors: Map<string, AgentDescriptor> }).descriptors
+    descriptors.get('manager')!.status = 'stopped'
+    await expect(
+      manager.runTaskTool('manager', 'tool-gate-3', {
+        action: 'finish_plan',
+        planId: created.planId,
+        status: 'completed',
+        finalSummary: 'Should still be blocked',
+      }),
+    ).rejects.toThrow('Manager is not running: manager')
+    expect(await readFile(tasksPath, 'utf8')).toBe(before)
+  })
+
+  it('maps store-unavailable failures to the safe generic tool error', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Unavailable Task Session' })
+
+    await mkdir(getSessionTasksPath(config.paths.dataDir, 'manager', sessionAgent.agentId), { recursive: true })
+
+    await expect(
+      manager.runTaskTool(sessionAgent.agentId, 'tool-1', { action: 'get' }),
+    ).rejects.toThrow(
+      'Active Work is temporarily unavailable because Forge could not safely read or preserve the saved task state. No changes were applied.',
+    )
+  })
+
+  it('rejects Cortex sessions directly at the host seam', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const rootDescriptor = manager.getAgent('manager')!
+    const { sessionAgent } = await manager.createSessionFromBaseDescriptor(
+      'manager',
+      {
+        model: rootDescriptor.model,
+        cwd: rootDescriptor.cwd,
+        archetypeId: 'cortex',
+      },
+      { label: 'Cortex Task Session' },
+    )
+
+    await expect(
+      manager.runTaskTool(sessionAgent.agentId, 'tool-cortex', { action: 'get' }),
+    ).rejects.toThrow('task is not available for Cortex sessions.')
+  })
+
+  it('maps validation errors for invalid expectedStateRevision values and warnings rules', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.runTaskTool('manager', 'tool-1', {
+        action: 'upsert_plan',
+        expectedStateRevision: -1 as never,
+        title: 'Invalid revision',
+        items: [{ title: 'One item' }],
+      } as never),
+    ).rejects.toThrow('expectedStateRevision must be a non-negative integer')
+
+    await expect(
+      manager.runTaskTool('manager', 'tool-2', {
+        action: 'upsert_plan',
+        expectedStateRevision: 1.5 as never,
+        title: 'Invalid revision',
+        items: [{ title: 'One item' }],
+      } as never),
+    ).rejects.toThrow('expectedStateRevision must be a non-negative integer')
+
+    await expect(
+      manager.runTaskTool('manager', 'tool-3', {
+        action: 'upsert_plan',
+        title: 'Mixed source',
+        items: [{ title: 'One item' }],
+        itemsText: '[todo] One item',
+      } as never),
+    ).rejects.toThrow('accepts either items or itemsText, not both')
+
+    const created = await manager.runTaskTool('manager', 'tool-4', {
+      action: 'upsert_plan',
+      title: 'Warnings required',
+      items: [{ title: 'One item' }],
+    })
+
+    await expect(
+      manager.runTaskTool('manager', 'tool-5', {
+        action: 'finish_plan',
+        expectedStateRevision: created.stateRevision,
+        planId: created.planId,
+        status: 'completed_with_warnings',
+        finalSummary: 'Done',
+      }),
+    ).rejects.toThrow('warnings must include at least one entry when status is completed_with_warnings')
+  })
+
+  it('sanitizes unexpected read-path failures instead of leaking raw OS text or absolute paths', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const unsafeMessage = 'EACCES: permission denied, open /private/tmp/active-work/tasks.json'
+    ;(manager as unknown as {
+      createWorkPlanServiceForDescriptor: () => { get: () => Promise<never> }
+    }).createWorkPlanServiceForDescriptor = () => ({
+      get: async () => {
+        throw new Error(unsafeMessage)
+      },
+    })
+
+    const error = await manager.runTaskTool('manager', 'tool-read-unknown', { action: 'get' }).catch((cause) => cause)
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('Active Work failed unexpectedly. No changes were applied.')
+    expect((error as Error).message).not.toContain('EACCES')
+    expect((error as Error).message).not.toContain('/private/tmp/active-work/tasks.json')
+  })
+
+  it('sanitizes unexpected mutation-path failures instead of leaking raw OS text or absolute paths', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const unsafeMessage = 'ENOSPC: failed to rename /var/folders/tmp/tasks.json'
+    ;(manager as unknown as {
+      createWorkPlanServiceForDescriptor: () => { upsertPlan: () => Promise<never> }
+    }).createWorkPlanServiceForDescriptor = () => ({
+      upsertPlan: async () => {
+        throw new Error(unsafeMessage)
+      },
+    })
+
+    const error = await manager.runTaskTool('manager', 'tool-write-unknown', {
+      action: 'upsert_plan',
+      title: 'Should fail safely',
+      items: [{ title: 'One item' }],
+    }).catch((cause) => cause)
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('Active Work failed unexpectedly. No changes were applied.')
+    expect((error as Error).message).not.toContain('ENOSPC')
+    expect((error as Error).message).not.toContain('/var/folders/tmp/tasks.json')
+  })
+
+  it('sanitizes reflected planId and worker agentId values in task-tool error mapping', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const unsafePlanId = 'https://example.invalid/plans/private?token=abc'
+    const unsafeTerminalPlanId = '/Users/adam/private/tasks.json'
+    const unsafeWorkerAgentId = 'file:///private/tmp/not-a-session-worker'
+    const unsafeItemId = 'https://example.invalid/items/private?token=abc'
+
+    ;(manager as unknown as {
+      createWorkPlanServiceForDescriptor: () => {
+        upsertPlan: (actor: unknown, input: { planId?: string }) => Promise<never>
+        finishPlan: (actor: unknown, input: { planId: string }) => Promise<never>
+        link: (actor: unknown, input: { link: { agentId: string }; itemId?: string }) => Promise<never>
+      }
+    }).createWorkPlanServiceForDescriptor = () => ({
+      upsertPlan: async (_actor, input) => {
+        throw new WorkPlanNotFoundError(input.planId ?? unsafePlanId)
+      },
+      finishPlan: async (_actor, input) => {
+        throw new WorkPlanImmutableError(input.planId)
+      },
+      link: async (_actor, input) => {
+        if (input.itemId === unsafeItemId) {
+          throw new WorkPlanItemResolutionError(`Unknown work plan item: ${input.itemId}`)
+        }
+        throw new WorkPlanLinkValidationError(`Worker ${input.link.agentId} does not belong to this manager session.`)
+      },
+    })
+
+    const notFoundError = await manager.runTaskTool('manager', 'tool-not-found', {
+      action: 'upsert_plan',
+      planId: unsafePlanId,
+      title: 'Existing title',
+      items: [{ title: 'One item' }],
+    }).catch((cause) => cause)
+    expect(notFoundError).toBeInstanceOf(Error)
+    expect((notFoundError as Error).message).toBe('The requested work plan no longer exists. Call `task.get` to refresh before retrying.')
+    expect((notFoundError as Error).message).not.toContain(unsafePlanId)
+
+    const immutableError = await manager.runTaskTool('manager', 'tool-immutable', {
+      action: 'finish_plan',
+      planId: unsafeTerminalPlanId,
+      status: 'completed',
+      finalSummary: 'Done',
+    }).catch((cause) => cause)
+    expect(immutableError).toBeInstanceOf(Error)
+    expect((immutableError as Error).message).toBe('This work plan is already terminal and cannot be modified.')
+    expect((immutableError as Error).message).not.toContain(unsafeTerminalPlanId)
+
+    const itemResolutionError = await manager.runTaskTool('manager', 'tool-item-resolution', {
+      action: 'link',
+      planId: 'plan-1',
+      itemId: unsafeItemId,
+      link: { type: 'worker', agentId: 'worker-1' },
+    }).catch((cause) => cause)
+    expect(itemResolutionError).toBeInstanceOf(Error)
+    expect((itemResolutionError as Error).message).toBe('The requested work plan item could not be resolved. Call `task.get` to refresh before retrying.')
+    expect((itemResolutionError as Error).message).not.toContain(unsafeItemId)
+
+    const invalidLinkError = await manager.runTaskTool('manager', 'tool-invalid-link', {
+      action: 'link',
+      planId: 'plan-1',
+      itemId: 'item-1',
+      link: { type: 'worker', agentId: unsafeWorkerAgentId },
+    }).catch((cause) => cause)
+    expect(invalidLinkError).toBeInstanceOf(Error)
+    expect((invalidLinkError as Error).message).toBe('Worker links must target an existing worker owned by this manager session.')
+    expect((invalidLinkError as Error).message).not.toContain(unsafeWorkerAgentId)
+  })
+
+  it('rejects non-worker link refs without introducing workflow semantics', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.runTaskTool('manager', 'tool-1', {
+      action: 'upsert_plan',
+      title: 'Link only workers',
+      items: [{ title: 'One item' }],
+    })
+
+    await expect(
+      manager.runTaskTool('manager', 'tool-2', {
+        action: 'link',
+        expectedStateRevision: created.stateRevision,
+        planId: created.planId,
+        itemId: created.createdItemIds?.[0],
+        link: { type: 'artifact' as never, artifactId: 'artifact-1' } as never,
+      }),
+    ).rejects.toThrow('Only worker links are supported in Active Work v1.')
+  })
+})

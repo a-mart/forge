@@ -153,6 +153,9 @@ export class BootstrapBuffer {
     if (event.type === 'conversation_history' || event.type === 'pending_choices_snapshot') {
       return event.agentId === targetAgentId
     }
+    if (event.type === 'session_task_state_snapshot') {
+      return event.sessionAgentId === targetAgentId
+    }
     // unread_counts_snapshot is global — always accepted.
     return true
   }

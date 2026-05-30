@@ -8,6 +8,7 @@ import type {
   SendMessageReceipt,
   SpawnAgentInput
 } from "./types.js";
+import type { TaskToolInput, TaskToolResult } from "./coordination/task-tool.js";
 
 export interface SwarmToolHost {
   listAgents(): AgentDescriptor[];
@@ -57,4 +58,9 @@ export interface SwarmToolHost {
     agentId: string,
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]>;
+  runTaskTool(
+    callerAgentId: string,
+    toolCallId: string,
+    input: TaskToolInput,
+  ): Promise<TaskToolResult>;
 }

@@ -168,6 +168,8 @@ function baseLifecycleOptions(
         return true;
       }),
     syncPinnedContentForManagerRuntime: overrides.syncPinnedContentForManagerRuntime ?? vi.fn(async () => {}),
+    transitionSessionWorkPlansForManualStop:
+      overrides.transitionSessionWorkPlansForManualStop ?? vi.fn(async () => {}),
     sendMessage: overrides.sendMessage ?? vi.fn(async () => ({ delivered: true } as never)),
     sendManagerBootstrapMessage: overrides.sendManagerBootstrapMessage ?? vi.fn(async () => {}),
     materializeSortOrder: overrides.materializeSortOrder ?? vi.fn(),

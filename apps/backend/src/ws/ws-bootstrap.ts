@@ -49,7 +49,7 @@ export function normalizeSubscribeMessageCount(messageCount: number | undefined)
   return rounded;
 }
 
-export function sendSubscriptionBootstrap(options: {
+export async function sendSubscriptionBootstrap(options: {
   socket: WebSocket;
   targetAgentId: string;
   requestedMessageCount?: number;
@@ -62,9 +62,10 @@ export function sendSubscriptionBootstrap(options: {
   send: (socket: WebSocket, event: ServerEvent) => number | null;
   resolveTerminalScopeAgentId: (subscribedAgentId: string) => string | undefined;
   resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
+  resolveTaskSnapshotSessionAgentId: (subscribedAgentId: string) => string | undefined;
   includeAgentsSnapshot?: boolean;
   includeProfilesSnapshot?: boolean;
-}): SubscriptionBootstrapSendResult {
+}): Promise<SubscriptionBootstrapSendResult> {
   const {
     socket,
     targetAgentId,
@@ -78,6 +79,7 @@ export function sendSubscriptionBootstrap(options: {
     send,
     resolveTerminalScopeAgentId,
     resolveManagerContextAgentId,
+    resolveTaskSnapshotSessionAgentId,
     includeAgentsSnapshot = true,
     includeProfilesSnapshot = true,
   } = options;
@@ -212,6 +214,28 @@ export function sendSubscriptionBootstrap(options: {
     choiceIds: pendingChoiceIds,
   });
   metricFields.pendingChoicesMs = performance.now() - pendingChoicesStartedAtMs;
+
+  const taskSnapshotSessionAgentId = resolveTaskSnapshotSessionAgentId(targetAgentId);
+  metricFields.taskSnapshotSessionAgentId = taskSnapshotSessionAgentId ?? null;
+  if (taskSnapshotSessionAgentId) {
+    const taskSnapshotStartedAtMs = performance.now();
+    const taskSnapshotBuildStartedAtMs = performance.now();
+    const taskSnapshot = await swarmManager.getSessionTaskStateSnapshot(taskSnapshotSessionAgentId);
+    metricFields.taskSnapshotBuildMs = performance.now() - taskSnapshotBuildStartedAtMs;
+    metricFields.taskSnapshotRevision = taskSnapshot.revision;
+    metricFields.taskSnapshotDiagnosticsState = taskSnapshot.diagnostics?.state ?? null;
+    metricFields.taskSnapshotRecentWorkPlanCount = taskSnapshot.recentWorkPlanCount;
+    sendMeasured("taskSnapshot", taskSnapshot);
+    metricFields.taskSnapshotMs = performance.now() - taskSnapshotStartedAtMs;
+  } else {
+    metricFields.taskSnapshotBuildMs = 0;
+    metricFields.taskSnapshotSendMs = 0;
+    metricFields.taskSnapshotPayloadBytes = 0;
+    metricFields.taskSnapshotRevision = null;
+    metricFields.taskSnapshotDiagnosticsState = null;
+    metricFields.taskSnapshotRecentWorkPlanCount = 0;
+    metricFields.taskSnapshotMs = 0;
+  }
 
   const terminalsSnapshotStartedAtMs = performance.now();
   const effectiveTerminalSessionId = resolveTerminalScopeAgentId(targetAgentId) ?? targetAgentId;

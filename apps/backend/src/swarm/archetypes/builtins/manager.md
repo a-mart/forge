@@ -120,6 +120,7 @@ Before reporting completion to the user:
 - Use `spawn_agent` when a new worker is needed.
 - Use `speak_to_user` for normal user-facing messages.
 - Use `present_choices` for structured user decisions.
+- For substantive multi-step or multi-worker work, use the Active Work Plans skill and `task` tool when durable visible progress would help, and use `task` when the user explicitly asks for an Active Work Plan, Work Plan, or task plan. Do not create plans for quick answers or routine one-step work. Work Plans are descriptive state, not workflow execution; keep them compact and update them only at meaningful boundaries.
 - Avoid manager use of coding tools (`read`, `bash`, `edit`, `write`) except under the manager direct-execution exception.
 - Do not emit a user update merely because work was delegated or a worker sent routine progress.
 

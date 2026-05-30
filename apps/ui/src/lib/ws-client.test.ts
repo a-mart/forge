@@ -226,6 +226,65 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('suppresses cached task snapshots on session switch until a fresh snapshot arrives', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    const staleTaskSnapshot = {
+      type: 'session_task_state_snapshot',
+      sessionAgentId: 'session-b',
+      profileId: 'profile-1',
+      revision: 1,
+      activeWorkPlan: {
+        planId: 'plan-1',
+        title: 'Stale cached plan',
+        status: 'active',
+        createdAt: '2026-05-29T00:00:00Z',
+        updatedAt: '2026-05-29T00:01:00Z',
+        revision: 1,
+        items: [],
+        itemCount: 0,
+        itemsTruncated: false,
+        warnings: [],
+        warningCount: 0,
+        warningsTruncated: false,
+      },
+      recentWorkPlans: [],
+      recentWorkPlanCount: 0,
+      recentWorkPlansTruncated: false,
+    }
+
+    client.subscribeToAgent('session-b')
+    emitServerEvent(socket, staleTaskSnapshot)
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+    expect(client.getState().taskSnapshots['session-b']?.revision).toBe(1)
+    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
+
+    client.subscribeToAgent('session-a')
+    expect(client.getState().taskSnapshotLoadingSessionId).toBe('session-a')
+
+    client.subscribeToAgent('session-b')
+    expect(client.getState().taskSnapshots['session-b']?.activeWorkPlan?.title).toBe('Stale cached plan')
+    expect(client.getState().taskSnapshotLoadingSessionId).toBe('session-b')
+
+    emitServerEvent(socket, {
+      ...staleTaskSnapshot,
+      revision: 2,
+      activeWorkPlan: null,
+    })
+    emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+    expect(client.getState().taskSnapshots['session-b']?.revision).toBe(2)
+    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
+
+    client.destroy()
+  })
+
   it('tracks pending choice ids from live events and bootstrap snapshots', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
