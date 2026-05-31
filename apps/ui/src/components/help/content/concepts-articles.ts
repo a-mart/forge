@@ -62,7 +62,9 @@ Active Work state is stored with the session, so it follows that session rather 
 
 ## History and receipts
 
-When a manager creates a plan, Forge records a read-only **Work Plan created** receipt in the session timeline. Those receipts stay in canonical session history and are protected from normal in-memory/cache trimming, but very old entries can still be omitted from byte-budgeted bootstrap payloads. The Active Work card also keeps a bounded list of recent previous Work Plans for terminal plans that remain in the live snapshot.`,
+When a manager creates a plan, Forge records a durable \`work_plan_created\` receipt in the session timeline. Those receipts stay in canonical session history and are protected from normal in-memory/cache trimming, but very old entries can still be omitted from byte-budgeted bootstrap payloads. The Active Work card can also expand a bounded list of recent previous Work Plans for terminal plans that remain in the live snapshot.
+
+Receipts are view-only: you can review past plan snapshots in chat history, but you cannot edit or reopen them as active plans.`,
   keywords: [
     'active work',
     'work plan',

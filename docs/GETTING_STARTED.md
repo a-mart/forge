@@ -220,9 +220,9 @@ Click any session in the sidebar to switch to it. Your manager tracks state inde
 
 ### Active Work Plans
 
-For substantial multi-step work, the manager may keep an Active Work Plan for the current session. It appears as an Active Work card in chat with the plan, item status, and linked worker evidence. The chat header also shows an Active Work indicator when a plan exists; use it to collapse or expand the card without deleting or changing the plan.
+For substantial multi-step work, the manager may keep an Active Work Plan for the current session. It appears as an Active Work card in chat with the plan, item status, and linked worker evidence. The chat header also shows an Active Work indicator when a plan exists; use it to collapse or expand the card without deleting or changing the plan. Creating a plan writes a durable `work_plan_created` receipt into chat history, and the Active Work card's overflow can expand completed prior plans as read-only receipts.
 
-Work Plans are session-scoped coordination state, not an automated workflow runner. They help you recover progress after pauses, stops, compaction, restarts, or model changes while the manager continues to lead the work through normal chat and worker delegation.
+Work Plans are session-scoped coordination state, not an automated workflow runner. They help you recover progress after pauses, stops, compaction, restarts, or model changes while the manager continues to lead the work through normal chat and worker delegation. Past receipts are view-only; they are not editable or reopenable as live plans.
 
 ### Archive and Restore
 
