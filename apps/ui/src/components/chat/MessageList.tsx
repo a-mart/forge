@@ -13,7 +13,7 @@ import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
 import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import { cn } from '@/lib/utils'
-import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ProjectAgentInfo, SessionTaskStateSnapshotEvent } from '@forge/protocol'
+import type { AgentDescriptor, AgentStatus, ChoiceAnswer, ConversationEntry, ProjectAgentInfo, SessionTaskStateSnapshotEvent, WorkPlanSnapshot } from '@forge/protocol'
 import { type AgentDisplayMeta, buildAgentDisplayMap } from './message-list/agent-display-utils'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
@@ -95,6 +95,15 @@ export interface MessageListHandle {
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 100
+
+function findLatestWorkPlanSnapshot(
+  snapshot: SessionTaskStateSnapshotEvent | null | undefined,
+  planId: string,
+): WorkPlanSnapshot | null {
+  if (!snapshot) return null
+  if (snapshot.activeWorkPlan?.planId === planId) return snapshot.activeWorkPlan
+  return snapshot.recentWorkPlans.find((plan) => plan.planId === planId) ?? null
+}
 
 type DisplayEntry =
   | {
@@ -694,6 +703,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                     event={entry.event}
                     agents={agents ?? []}
                     statuses={statuses}
+                    latestPlan={findLatestWorkPlanSnapshot(activeWorkSnapshot, entry.event.planId)}
                     onNavigateToWorker={onNavigateToWorker}
                   />
                 </div>

@@ -91,7 +91,7 @@ function render(messages: ConversationEntry[], extraProps: Record<string, unknow
   })
 }
 
-function makeActiveWorkSnapshot(): SessionTaskStateSnapshotEvent {
+function makeActiveWorkSnapshot(overrides: Partial<SessionTaskStateSnapshotEvent> = {}): SessionTaskStateSnapshotEvent {
   return {
     type: 'session_task_state_snapshot',
     sessionAgentId: 'session-1',
@@ -121,6 +121,7 @@ function makeActiveWorkSnapshot(): SessionTaskStateSnapshotEvent {
     recentWorkPlans: [],
     recentWorkPlanCount: 0,
     recentWorkPlansTruncated: false,
+    ...overrides,
   }
 }
 
@@ -141,6 +142,64 @@ describe('MessageList work_plan_created rows', () => {
     expect(rowIndex).toBeGreaterThan(beforeIndex)
     expect(afterIndex).toBeGreaterThan(rowIndex)
     expect(container.querySelector('[data-message-id="work-plan-created-1"]')).toBeTruthy()
+  })
+
+  it('hydrates timeline receipts from matching latest task snapshot state', () => {
+    render([makeWorkPlanCreated()], {
+      activeWorkSnapshot: makeActiveWorkSnapshot({
+        activeWorkPlan: {
+          ...makeActiveWorkSnapshot().activeWorkPlan!,
+          title: 'Timeline plan',
+          status: 'completed',
+          revision: 3,
+          finalSummary: 'The plan is now complete.',
+          items: [{
+            ...makeActiveWorkSnapshot().activeWorkPlan!.items[0],
+            title: 'Completed timeline item',
+            status: 'done',
+          }],
+        },
+      }),
+    })
+
+    const receiptRow = container.querySelector('[data-message-id="work-plan-created-1"]')
+    expect(receiptRow).toBeTruthy()
+    expect(receiptRow!.textContent).toContain('Work Plan created: Timeline plan')
+    expect(receiptRow!.textContent).toContain('Completed')
+    expect(receiptRow!.textContent).not.toContain('Timeline item')
+
+    const receiptToggle = receiptRow!.querySelector<HTMLButtonElement>('button[aria-label^="Expand Work Plan created"]')
+    flushSync(() => receiptToggle?.click())
+
+    expect(receiptRow!.textContent).toContain('Completed timeline item')
+    expect(receiptRow!.textContent).toContain('The plan is now complete.')
+    expect(receiptRow!.textContent).toContain('Done')
+    expect(receiptRow!.textContent).not.toContain('Todo')
+    expect(receiptRow!.textContent).not.toContain('In progress')
+  })
+
+  it('falls back to the creation snapshot when no matching latest task state exists', () => {
+    render([makeWorkPlanCreated()], {
+      activeWorkSnapshot: makeActiveWorkSnapshot({
+        activeWorkPlan: {
+          ...makeActiveWorkSnapshot().activeWorkPlan!,
+          planId: 'other-plan',
+          title: 'Different live plan',
+          status: 'completed',
+        },
+      }),
+    })
+
+    const receiptRow = container.querySelector('[data-message-id="work-plan-created-1"]')
+    expect(receiptRow).toBeTruthy()
+    expect(receiptRow!.textContent).toContain('Work Plan created: Timeline plan')
+    expect(receiptRow!.textContent).toContain('Active Work')
+
+    const receiptToggle = receiptRow!.querySelector<HTMLButtonElement>('button[aria-label^="Expand Work Plan created"]')
+    flushSync(() => receiptToggle?.click())
+
+    expect(receiptRow!.textContent).toContain('Timeline item')
+    expect(receiptRow!.textContent).toContain('Todo')
   })
 
   it('forwards onNavigateToWorker to timeline receipts', () => {

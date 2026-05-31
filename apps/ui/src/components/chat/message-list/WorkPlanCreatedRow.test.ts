@@ -115,6 +115,41 @@ describe('WorkPlanCreatedRow', () => {
     expect(container.textContent).not.toContain('In progress')
   })
 
+  it('hydrates the receipt display from the latest matching plan when provided', () => {
+    const event = makeEvent()
+    flushSync(() => {
+      root.render(createElement(WorkPlanCreatedRow, {
+        event,
+        agents: [],
+        statuses: {},
+        latestPlan: {
+          ...event.plan,
+          status: 'completed',
+          revision: 4,
+          updatedAt: '2026-05-30T00:10:00.000Z',
+          finalSummary: 'Finished after the receipt was created.',
+          items: [{
+            ...event.plan.items[0],
+            title: 'Completed item',
+            status: 'done',
+          }],
+        },
+      }))
+    })
+
+    expect(container.textContent).toContain('Work Plan created: Historical receipt plan')
+    expect(container.textContent).toContain('Completed')
+    expect(container.textContent).not.toContain('Initial item')
+
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label^="Expand Work Plan created"]')
+    flushSync(() => toggle?.click())
+
+    expect(container.textContent).toContain('Completed item')
+    expect(container.textContent).toContain('Finished after the receipt was created.')
+    expect(container.textContent).toContain('Done')
+    expect(container.textContent).not.toContain('In progress')
+  })
+
   it('navigates to same-session worker chips from historical receipts', () => {
     const onNavigateToWorker = vi.fn()
     flushSync(() => {

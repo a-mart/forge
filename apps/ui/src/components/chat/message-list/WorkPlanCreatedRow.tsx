@@ -1,7 +1,7 @@
 import { useId, useState } from 'react'
 import { ChevronDown, ChevronRight, ClipboardList } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { AgentDescriptor, AgentStatus, WorkPlanCreatedEvent } from '@forge/protocol'
+import type { AgentDescriptor, AgentStatus, WorkPlanCreatedEvent, WorkPlanSnapshot } from '@forge/protocol'
 import { ActiveWorkStatusBadge, WorkPlanReceipt } from '../active-work'
 import { formatPlanStatus } from '../active-work/active-work-utils'
 
@@ -9,6 +9,7 @@ interface WorkPlanCreatedRowProps {
   event: WorkPlanCreatedEvent
   agents: AgentDescriptor[]
   statuses: Record<string, { status: AgentStatus }>
+  latestPlan?: WorkPlanSnapshot | null
   onNavigateToWorker?: (agentId: string) => void
 }
 
@@ -16,13 +17,14 @@ function formatItemCount(count: number): string {
   return `${count} item${count === 1 ? '' : 's'}`
 }
 
-export function WorkPlanCreatedRow({ event, agents, statuses, onNavigateToWorker }: WorkPlanCreatedRowProps) {
+export function WorkPlanCreatedRow({ event, agents, statuses, latestPlan, onNavigateToWorker }: WorkPlanCreatedRowProps) {
   const [expanded, setExpanded] = useState(false)
   const reactId = useId()
   const contentId = `${reactId}-work-plan-created-${event.id}`
-  const itemCount = event.plan.itemCount ?? event.plan.items.length
+  const displayPlan = latestPlan ?? event.plan
+  const itemCount = displayPlan.itemCount ?? displayPlan.items.length
   const metadata = [
-    event.plan.mode ? `${event.plan.mode} mode` : null,
+    displayPlan.mode ? `${displayPlan.mode} mode` : null,
     formatItemCount(itemCount),
   ].filter(Boolean).join(' · ')
 
@@ -46,15 +48,15 @@ export function WorkPlanCreatedRow({ event, agents, statuses, onNavigateToWorker
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 flex-wrap items-center gap-2">
               <span className="font-medium text-foreground">Work Plan created: {event.plan.title}</span>
-              <ActiveWorkStatusBadge status={event.plan.status} />
+              <ActiveWorkStatusBadge status={displayPlan.status} />
             </span>
             <span className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>{formatPlanStatus(event.plan.status)}</span>
+              <span>{formatPlanStatus(displayPlan.status)}</span>
               {metadata ? <span aria-hidden="true">·</span> : null}
               {metadata ? <span>{metadata}</span> : null}
-              {event.plan.itemsTruncated ? <span>shown items truncated</span> : null}
+              {displayPlan.itemsTruncated ? <span>shown items truncated</span> : null}
             </span>
-            {event.plan.goal ? <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">{event.plan.goal}</span> : null}
+            {displayPlan.goal ? <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">{displayPlan.goal}</span> : null}
           </span>
           <span className="mt-1 shrink-0 text-muted-foreground">
             {expanded ? <ChevronDown className="size-4" aria-hidden="true" /> : <ChevronRight className="size-4" aria-hidden="true" />}
@@ -63,7 +65,7 @@ export function WorkPlanCreatedRow({ event, agents, statuses, onNavigateToWorker
         <div id={contentId} hidden={!expanded} className={expanded ? 'border-t border-border/60 p-3' : 'hidden'}>
           {expanded ? (
             <WorkPlanReceipt
-              plan={event.plan}
+              plan={displayPlan}
               agents={agents}
               statuses={statuses}
               sessionAgentId={event.agentId}
