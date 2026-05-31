@@ -585,6 +585,156 @@ describe('SwarmManager', () => {
     expect(storeAfterBoot.agents.find((agent) => agent.agentId === codexAgentId)?.status).toBe('idle')
   })
 
+  it('closes stale Codex detail starts and clears sidecar cache on boot', async () => {
+    const config = await makeTempConfig()
+    const createdAt = '2026-05-30T00:00:00.000Z'
+    const managerSessionFile = join(config.paths.sessionsDir, 'manager.jsonl')
+    const codexAgentId = 'manager--codex'
+    const codexSessionFile = join(getWorkersDir(config.paths.dataDir, 'manager', 'manager'), `${codexAgentId}.jsonl`)
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify({
+        agents: [
+          {
+            agentId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            managerId: 'manager',
+            profileId: 'manager',
+            status: 'idle',
+            createdAt,
+            updatedAt: createdAt,
+            cwd: config.defaultCwd,
+            model: config.defaultModel,
+            sessionFile: managerSessionFile,
+          },
+          {
+            agentId: codexAgentId,
+            displayName: 'Codex',
+            role: 'worker',
+            managerId: 'manager',
+            profileId: 'manager',
+            status: 'streaming',
+            createdAt,
+            updatedAt: createdAt,
+            cwd: config.defaultCwd,
+            model: {
+              provider: 'codex-app-server',
+              modelId: 'app-server',
+              thinkingLevel: 'none',
+            },
+            sessionFile: codexSessionFile,
+            externalThread: {
+              type: 'codex_app_server',
+              persisted: true,
+              createdByMention: true,
+              threadId: 'codex-thread-1',
+            },
+          },
+        ],
+        profiles: [
+          {
+            profileId: 'manager',
+            displayName: 'Manager',
+            defaultSessionAgentId: 'manager',
+            defaultModel: config.defaultModel,
+            createdAt,
+            updatedAt: createdAt,
+            profileType: 'user',
+          },
+        ],
+      }, null, 2)}\n`,
+      'utf8',
+    )
+
+    const managerSession = SessionManager.open(managerSessionFile)
+    managerSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed' }],
+    } as any)
+    managerSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'agent_tool_call',
+      agentId: 'manager',
+      actorAgentId: codexAgentId,
+      timestamp: '2026-05-30T00:00:01.000Z',
+      kind: 'tool_execution_start',
+      toolName: 'codex_command',
+      toolCallId: 'cmd-1',
+      text: '{"command":"echo hi"}',
+    })
+
+    await mkdir(dirname(codexSessionFile), { recursive: true })
+    const sidecarSession = SessionManager.open(codexSessionFile)
+    sidecarSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed' }],
+    } as any)
+
+    const sidecarSessionStat = await stat(codexSessionFile)
+    const sidecarCacheFile = getConversationHistoryCacheFilePath(codexSessionFile)
+    await writeFile(
+      sidecarCacheFile,
+      `${JSON.stringify({
+        type: 'swarm_conversation_cache_meta',
+        version: 3,
+        persistedEntryCount: 0,
+        cachedPersistedEntryCount: 0,
+        firstPersistedEntryKey: null,
+        lastPersistedEntryKey: null,
+        canonicalStat: {
+          size: sidecarSessionStat.size,
+          mtimeMs: sidecarSessionStat.mtimeMs,
+        },
+      })}\n${JSON.stringify({
+        type: 'conversation_log',
+        agentId: codexAgentId,
+        timestamp: '2026-05-30T00:00:02.000Z',
+        source: 'runtime_log',
+        kind: 'tool_execution_start',
+        toolName: 'codex_command',
+        toolCallId: 'cmd-1',
+        text: '{"command":"echo hi"}',
+      })}\n`,
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const managerHistory = manager.getConversationHistory('manager')
+    const codexToolRows = managerHistory.filter(
+      (entry) => entry.type === 'agent_tool_call' && entry.actorAgentId === codexAgentId && entry.toolCallId === 'cmd-1',
+    )
+    expect(codexToolRows).toEqual([
+      expect.objectContaining({
+        type: 'agent_tool_call',
+        kind: 'tool_execution_start',
+        toolName: 'codex_command',
+        toolCallId: 'cmd-1',
+      }),
+      expect.objectContaining({
+        type: 'agent_tool_call',
+        kind: 'tool_execution_end',
+        toolName: 'codex_command',
+        toolCallId: 'cmd-1',
+        isError: false,
+        text: expect.stringContaining('"status":"cancelled"'),
+      }),
+    ])
+
+    const sidecarHistory = manager.getConversationHistory(codexAgentId)
+    expect(
+      sidecarHistory.some(
+        (entry) =>
+          entry.type === 'conversation_log' &&
+          entry.kind === 'tool_execution_start' &&
+          entry.toolCallId === 'cmd-1',
+      ),
+    ).toBe(false)
+    await expect(stat(sidecarCacheFile)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('prunes persisted Cortex state on boot when Cortex is disabled', async () => {
     const config = await makeTempConfig()
     config.cortexEnabled = false

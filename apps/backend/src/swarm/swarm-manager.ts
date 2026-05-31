@@ -342,6 +342,7 @@ import {
   isBuilderWebCodexRoutingSurface,
   parseLeadingCodexMention,
 } from "./codex-app-server/codex-mention-router.js";
+import { reconcilePersistedCodexDetailStateForBoot } from "./codex-app-server/codex-detail-boot-reconciliation.js";
 import { createCodexSidecarHostAdapter } from "./codex-app-server/codex-sidecar-host-adapter.js";
 import { truncateCodexPreview } from "./codex-app-server/codex-sidecar-parent-cards.js";
 import type { CodexAppServerServiceOptions } from "./codex-app-server/types.js";
@@ -1873,6 +1874,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       interruptedActorAgentIds: interruptedStreamingAgentIds,
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details)
+    });
+    reconcilePersistedCodexDetailStateForBoot({
+      descriptors: this.descriptors,
+      now: this.now,
+      logDebug: (message, details) => this.logDebug(message, details),
     });
     this.normalizeStreamingStatusesForBoot();
     const reconciledExternalThreadSidecarIds = reconcilePersistedExternalThreadSidecarsForBoot({
