@@ -57,7 +57,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 - The table above shows models currently available in the Forge catalog. Some models listed in upstream Pi releases may not yet be curated into Forge.
 - For the authoritative, up-to-date model list with availability status, see **Settings → Models** in the UI.
 - xAI models require `XAI_API_KEY` to be configured (see Settings → Authentication).
-- Cursor SDK models are specialist-only. The built-in `cursor-builder` specialist targets Composer 2.5, ships disabled by default, manager selectors do not offer Cursor SDK models, and auth/connect failures stay contained inside the worker runtime. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
+- Cursor SDK models are specialist-only. The built-in `cursor-builder` specialist targets Composer 2.5, ships disabled by default, manager selectors do not offer Cursor SDK models, and runtime containment is provider-local and fail-closed: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is captured from turn-ended deltas into session custom entries, then included in stats/token analytics/telemetry provider inference and omitted from forks.
 - To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 
 ## System Prompt
@@ -130,7 +130,7 @@ Only exhausted fallback failures surface upward.
 
 **Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `gpt-5.5`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 
-`cursor-builder` is the built-in Cursor SDK specialist. It targets Composer 2.5, ships disabled by default, and is intended for opt-in implementation work rather than manager sessions; runtime auth/connect failures are contained inside the worker.
+`cursor-builder` is the built-in Cursor SDK specialist. It targets Composer 2.5, ships disabled by default, and is intended for opt-in implementation work rather than manager sessions; runtime containment is provider-local and fail-closed, with one pre-output retry only for attributed transient transport or throttle failures.
 
 ### Resolution Order
 

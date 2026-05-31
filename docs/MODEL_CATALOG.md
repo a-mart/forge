@@ -35,7 +35,7 @@ Forge owns model metadata end-to-end:
 
 ## Cursor SDK provider
 
-`cursor-sdk` is a native specialist-only provider backed by `@cursor/sdk`. The curated model is `composer-2.5` (Composer 2.5), and it is visible only in specialist selectors. Manager create/change/override selectors intentionally hide or reject Cursor SDK models. Usage is recorded in session custom entries and rolls up into dashboard stats, token analytics, and telemetry provider inference.
+`cursor-sdk` is a native specialist-only provider backed by `@cursor/sdk`. The curated model is `composer-2.5` (Composer 2.5), and it is visible only in specialist selectors. Manager create/change/override selectors intentionally hide or reject Cursor SDK models. Runtime containment is provider-local and fail-closed with a Cursor/ConnectRPC/HTTP2 classifier: attributed transient transport or throttle failures may retry once before output, auth/permission/cancel/user-state failures are projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage is recorded in session custom entries and rolls up into dashboard stats, token analytics, and telemetry provider inference.
 
 ## Override semantics
 
