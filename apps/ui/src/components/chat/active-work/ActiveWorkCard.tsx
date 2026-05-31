@@ -23,15 +23,24 @@ interface ActiveWorkCardProps {
   expanded: boolean
   onExpandedChange: (expanded: boolean) => void
   focusNonce?: number
+  onNavigateToWorker?: (agentId: string) => void
 }
 
 interface CollapsibleWorkPlanReceiptProps {
   plan: WorkPlanSnapshotView
   agents: AgentDescriptor[]
   statuses: Record<string, { status: AgentStatus }>
+  sessionAgentId?: string
+  onNavigateToWorker?: (agentId: string) => void
 }
 
-function CollapsibleWorkPlanReceipt({ plan, agents, statuses }: CollapsibleWorkPlanReceiptProps) {
+function CollapsibleWorkPlanReceipt({
+  plan,
+  agents,
+  statuses,
+  sessionAgentId,
+  onNavigateToWorker,
+}: CollapsibleWorkPlanReceiptProps) {
   const [expanded, setExpanded] = useState(false)
   const contentId = useId()
   const progressLabel = getWorkPlanProgressLabel(plan)
@@ -67,7 +76,15 @@ function CollapsibleWorkPlanReceipt({ plan, agents, statuses }: CollapsibleWorkP
         </span>
       </button>
       <div id={contentId} hidden={!expanded} className={expanded ? 'border-t border-border/50 p-2' : 'hidden'}>
-        {expanded ? <WorkPlanReceipt plan={plan} agents={agents} statuses={statuses} /> : null}
+        {expanded ? (
+          <WorkPlanReceipt
+            plan={plan}
+            agents={agents}
+            statuses={statuses}
+            sessionAgentId={sessionAgentId}
+            onNavigateToWorker={onNavigateToWorker}
+          />
+        ) : null}
       </div>
     </div>
   )
@@ -91,6 +108,7 @@ export function ActiveWorkCard({
   expanded,
   onExpandedChange,
   focusNonce,
+  onNavigateToWorker,
 }: ActiveWorkCardProps) {
   const cardRef = useRef<HTMLDivElement | null>(null)
   const detailsId = useId()
@@ -186,7 +204,13 @@ export function ActiveWorkCard({
         {plan ? (
           <>
             <Separator className="mb-2" />
-            <WorkPlanReceipt plan={plan} agents={agents} statuses={statuses} />
+            <WorkPlanReceipt
+              plan={plan}
+              agents={agents}
+              statuses={statuses}
+              sessionAgentId={snapshotView?.sessionAgentId}
+              onNavigateToWorker={onNavigateToWorker}
+            />
             {previousPlans.length > 0 ? (
               <div className="mt-3 border-t border-border/60 pt-3">
                 <button
@@ -198,8 +222,8 @@ export function ActiveWorkCard({
                 >
                   {showPreviousPlans ? <ChevronDown className="size-3.5" aria-hidden="true" /> : <ChevronRight className="size-3.5" aria-hidden="true" />}
                   {showPreviousPlans
-                    ? 'Hide previous completed Work Plans'
-                    : `Show ${previousPlans.length} previous completed Work Plan${previousPlans.length === 1 ? '' : 's'}`}
+                    ? 'Hide previous Work Plans'
+                    : `Show ${previousPlans.length} previous Work Plan${previousPlans.length === 1 ? '' : 's'}`}
                 </button>
                 <div id={previousPlansId} hidden={!showPreviousPlans} className={showPreviousPlans ? 'mt-2 space-y-2' : 'hidden'}>
                   {showPreviousPlans ? (
@@ -210,6 +234,8 @@ export function ActiveWorkCard({
                           plan={previousPlan}
                           agents={agents}
                           statuses={statuses}
+                          sessionAgentId={snapshotView?.sessionAgentId}
+                          onNavigateToWorker={onNavigateToWorker}
                         />
                       ))}
                       {snapshotView?.recentWorkPlansTruncated ? (

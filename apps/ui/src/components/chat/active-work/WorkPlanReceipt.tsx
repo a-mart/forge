@@ -17,6 +17,8 @@ interface WorkPlanReceiptProps {
   statuses: Record<string, { status: AgentStatus }>
   className?: string
   itemLimit?: number
+  sessionAgentId?: string
+  onNavigateToWorker?: (agentId: string) => void
 }
 
 export function WorkPlanReceipt({
@@ -25,6 +27,8 @@ export function WorkPlanReceipt({
   statuses,
   className,
   itemLimit = ACTIVE_WORK_VISIBLE_ITEM_LIMIT,
+  sessionAgentId,
+  onNavigateToWorker,
 }: WorkPlanReceiptProps) {
   const sortedItems = useMemo(() => sortWorkPlanItems(plan.items), [plan])
   const [showAllItems, setShowAllItems] = useState(false)
@@ -94,6 +98,8 @@ export function WorkPlanReceipt({
           item={{ ...selectedItem, status: getDisplayItemStatus(plan.status, selectedItem.status) }}
           agents={agents}
           statuses={statuses}
+          sessionAgentId={sessionAgentId}
+          onNavigateToWorker={onNavigateToWorker}
         />
       ) : null}
 

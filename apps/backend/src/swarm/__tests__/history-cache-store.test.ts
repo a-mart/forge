@@ -246,6 +246,27 @@ describe("HistoryCacheStore", () => {
     expect(existsSync(cacheFile)).toBe(false);
   });
 
+  it("treats cache metadata version 2 as stale after bumping to version 3", async () => {
+    const root = await createTempDir("history-cache-store-");
+    const sessionFile = join(root, "session.jsonl");
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
+    const store = makeStore();
+    const history = [makeMessage("m1")];
+    writeSession(sessionFile, history, root);
+
+    const metadata = store.buildMetadata(history, 1, store.readSessionFileCanonicalStat(sessionFile));
+    writeFileSync(
+      cacheFile,
+      `${JSON.stringify({ ...metadata, version: 2 })}\n${JSON.stringify(history[0])}\n`,
+      "utf8"
+    );
+
+    expect(store.loadConversationHistoryCacheHeader(sessionFile)).toMatchObject({
+      cacheState: "legacy_rebuild",
+      metadata: null
+    });
+  });
+
   it("tracks the persisted-entry cursor separately from cache files", async () => {
     const root = await createTempDir("history-cache-store-");
     const sessionFile = join(root, "session.jsonl");

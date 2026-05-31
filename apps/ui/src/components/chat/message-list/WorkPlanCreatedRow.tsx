@@ -9,13 +9,14 @@ interface WorkPlanCreatedRowProps {
   event: WorkPlanCreatedEvent
   agents: AgentDescriptor[]
   statuses: Record<string, { status: AgentStatus }>
+  onNavigateToWorker?: (agentId: string) => void
 }
 
 function formatItemCount(count: number): string {
   return `${count} item${count === 1 ? '' : 's'}`
 }
 
-export function WorkPlanCreatedRow({ event, agents, statuses }: WorkPlanCreatedRowProps) {
+export function WorkPlanCreatedRow({ event, agents, statuses, onNavigateToWorker }: WorkPlanCreatedRowProps) {
   const [expanded, setExpanded] = useState(false)
   const reactId = useId()
   const contentId = `${reactId}-work-plan-created-${event.id}`
@@ -60,7 +61,15 @@ export function WorkPlanCreatedRow({ event, agents, statuses }: WorkPlanCreatedR
           </span>
         </button>
         <div id={contentId} hidden={!expanded} className={expanded ? 'border-t border-border/60 p-3' : 'hidden'}>
-          {expanded ? <WorkPlanReceipt plan={event.plan} agents={agents} statuses={statuses} /> : null}
+          {expanded ? (
+            <WorkPlanReceipt
+              plan={event.plan}
+              agents={agents}
+              statuses={statuses}
+              sessionAgentId={event.agentId}
+              onNavigateToWorker={onNavigateToWorker}
+            />
+          ) : null}
         </div>
       </div>
     </div>

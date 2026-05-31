@@ -2074,6 +2074,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         planRevision: mutationResult.planRevision,
         snapshot: mutationResult.snapshot,
         ...(mutationResult.createdItemIds ? { createdItemIds: mutationResult.createdItemIds } : {}),
+        ...(mutationResult.updatedItemId ? { updatedItemId: mutationResult.updatedItemId } : {}),
         ...(mutationResult.linkedItemId ? { linkedItemId: mutationResult.linkedItemId } : {}),
       };
     } catch (error) {
@@ -2096,6 +2097,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     switch (input.action) {
       case "upsert_plan":
         return service.upsertPlan(actor, input);
+      case "update_item_status":
+        return service.updateItemStatus(actor, input);
       case "link":
         return service.link(actor, input);
       case "finish_plan":

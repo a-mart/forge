@@ -57,7 +57,7 @@ export const INTERNAL_WORK_PLAN_LIFECYCLE_REASONS = [
 ] as const satisfies readonly WorkPlanLifecycleReason[];
 export const INTERNAL_WORK_PLAN_LINK_TYPES = ["worker"] as const satisfies readonly WorkPlanLinkType[];
 
-export const WORK_PLAN_MUTATION_ACTIONS = ["upsert_plan", "link", "finish_plan", "system"] as const;
+export const WORK_PLAN_MUTATION_ACTIONS = ["upsert_plan", "update_item_status", "link", "finish_plan", "system"] as const;
 export type WorkPlanMutationAction = (typeof WORK_PLAN_MUTATION_ACTIONS)[number];
 
 export const MAX_WORK_PLANS_PER_SESSION = 8;

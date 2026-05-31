@@ -74,6 +74,7 @@ Use the manager-only `task` tool when available. It records descriptive coordina
 
 - `get`: recover the current plan state before continuing after a pause, compaction, restart, model switch, or uncertainty.
 - `upsert_plan`: create a new active plan with `itemsText`, one short item per line, plus top-level title/goal/mode/status fields. Keep revision notes short.
+- `update_item_status`: mark one item's status after worker evidence without rewriting the item list.
 - `link`: attach a relevant worker to the plan or item as evidence.
 - `finish_plan`: close the plan honestly as completed, completed with warnings, failed, stopped, or interrupted.
 
@@ -86,8 +87,9 @@ Tool-call reliability rules:
 - For model-generated plan creation, use `itemsText` with one item per line, preferably `[status] title`.
 - `itemsText` is create-only. Do not use `itemsText` when revising an existing plan's item list.
 - Do not send `items`, `planText`, JSON strings, markdown task syntax, or nested item arrays from normal provider-facing tool calls.
+- Use `update_item_status` for meaningful item progress or completion after worker evidence. Do not rewrite the full item list through `upsert_plan`.
 - Do not put JSON, links, URLs, file paths, or reference syntax in `itemsText`.
-- If the plan already exists, use `get`, `link`, or `finish_plan`; do not attempt item-list rewrites from the manager prompt.
+- If the plan already exists, use `get`, `update_item_status`, `link`, or `finish_plan`; do not attempt item-list rewrites from the manager prompt.
 - Do not add fields that are not in the examples or schema.
 
 `task.get` and successful mutations return `stateRevision` plus a bounded `snapshot`. Successful mutations also return `planId`, `planRevision`, and sometimes `createdItemIds` or `linkedItemId`. Prefer passing the latest `stateRevision` as `expectedStateRevision` when linking or finishing an existing plan. If a conflict occurs, call `task.get`, review the latest state, then retry with the latest revision.
@@ -121,6 +123,18 @@ Link a worker after spawning it:
 }
 ```
 
+Mark one item done after reviewing worker evidence:
+
+```json
+{
+  "action": "update_item_status",
+  "planId": "<planId>",
+  "itemId": "<itemId>",
+  "expectedStateRevision": 4,
+  "status": "done"
+}
+```
+
 Finish honestly:
 
 ```json
@@ -134,7 +148,7 @@ Finish honestly:
 }
 ```
 
-These examples are illustrative, not exhaustive schema documentation. The provider-facing shape is intentionally small: one top-level `action`, exact action names, `itemsText` only for create-time item lists, worker-only `link`, and terminal `finish_plan`.
+These examples are illustrative, not exhaustive schema documentation. The provider-facing shape is intentionally small: one top-level `action`, exact action names, `itemsText` only for create-time item lists, status-only `update_item_status`, worker-only `link`, and terminal `finish_plan`.
 
 ## Reflecting worker results
 
@@ -142,8 +156,9 @@ When you spawn a worker for planned work, link the worker to the relevant item. 
 
 1. Read the result and decide whether it actually satisfies the planned work.
 2. Do not infer success from worker process state alone.
-3. Update top-level plan state only when the overall status, scope, or risk materially changes.
-4. Keep detailed findings in the worker transcript or final synthesis, then use `finish_plan` with an honest terminal state when the plan is done, stopped, failed, or completed with warnings.
+3. Update item status with `update_item_status` when an item materially progresses or completes.
+4. Update top-level plan state only when the overall status, scope, or risk materially changes.
+5. Keep detailed findings in the worker transcript or final synthesis, then use `finish_plan` with an honest terminal state when the plan is done, stopped, failed, or completed with warnings.
 
 If a worker fails, stalls, is stopped, or ends without a usable report, do not greenwash it. Reflect the uncertainty in top-level status, the final summary, or warnings instead of pretending every item succeeded.
 

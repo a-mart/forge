@@ -12,6 +12,7 @@ import type { AgentDescriptor } from '../types.js'
 import {
   MAX_WORK_PLAN_MUTATION_PROVENANCE,
   MAX_WORK_PLAN_REVISION_NOTES,
+  INTERNAL_WORK_PLAN_ITEM_STATUSES,
   SessionCoordinationStateValidationError,
   createEmptySessionCoordinationState,
   type SessionCoordinationState,
@@ -39,7 +40,7 @@ import {
   projectWorkPlanSnapshot,
 } from './work-plan-snapshot.js'
 
-export const WORK_PLAN_SERVICE_ACTIONS = ['get', 'upsert_plan', 'link', 'finish_plan'] as const
+export const WORK_PLAN_SERVICE_ACTIONS = ['get', 'upsert_plan', 'update_item_status', 'link', 'finish_plan'] as const
 export type WorkPlanServiceAction = (typeof WORK_PLAN_SERVICE_ACTIONS)[number]
 
 export const WORK_PLAN_SERVICE_ERROR_CODES = [
@@ -99,6 +100,13 @@ export interface WorkPlanFinishInput {
   warnings?: string[]
 }
 
+export interface WorkPlanUpdateItemStatusInput {
+  expectedStateRevision?: number
+  planId: string
+  itemId: string
+  status: WorkPlanItemStatus
+}
+
 export interface WorkPlanMutationResult {
   action: Exclude<WorkPlanServiceAction, 'get'>
   snapshot: SessionTaskStateSnapshot
@@ -108,6 +116,7 @@ export interface WorkPlanMutationResult {
   planRevision: number
   workPlan: WorkPlanSnapshot
   createdItemIds?: string[]
+  updatedItemId?: string
   linkedItemId?: string
 }
 
@@ -354,6 +363,49 @@ export class WorkPlanService {
     return this.toMutationResult('finish_plan', mutation, input.planId)
   }
 
+  async updateItemStatus(actor: WorkPlanActorContext, input: WorkPlanUpdateItemStatusInput): Promise<WorkPlanMutationResult> {
+    this.assertActorCanAccessSession(actor)
+
+    if (!INTERNAL_WORK_PLAN_ITEM_STATUSES.includes(input.status)) {
+      throw new WorkPlanServiceValidationError(
+        `Work Plan item status must be one of: ${INTERNAL_WORK_PLAN_ITEM_STATUSES.join(', ')}.`,
+      )
+    }
+
+    let updatedItemId: string | undefined
+    const mutation = await this.store.update((current) => {
+      const nextState = cloneState(current)
+      const plan = findWorkPlanRecordById(nextState, input.planId)
+      if (!plan) {
+        throw new WorkPlanNotFoundError(input.planId)
+      }
+      if (!NON_TERMINAL_PLAN_STATUSES.has(plan.status as WorkPlanMutableStatus)) {
+        throw new WorkPlanImmutableError(plan.planId)
+      }
+
+      const item = plan.items.find((candidate) => candidate.itemId === input.itemId)
+      if (!item) {
+        throw new WorkPlanItemResolutionError(`Work Plan item not found: ${input.itemId}`)
+      }
+
+      const timestamp = this.now().toISOString()
+      item.status = input.status
+      item.updatedAt = timestamp
+      updatedItemId = item.itemId
+      plan.revision += 1
+      plan.updatedAt = timestamp
+      appendMutationProvenance(plan, {
+        action: 'update_item_status',
+        actorAgentId: actor.agentId,
+        mutatedAt: timestamp,
+      })
+      assertSingleNonTerminalPlan(nextState)
+      return nextState
+    }, { expectedStateRevision: input.expectedStateRevision })
+
+    return this.toMutationResult('update_item_status', mutation, input.planId, { updatedItemId })
+  }
+
   private buildCreatedPlan(
     input: WorkPlanUpsertInput,
     actor: WorkPlanActorContext,
@@ -473,7 +525,7 @@ export class WorkPlanService {
     action: Exclude<WorkPlanServiceAction, 'get'>,
     mutation: SessionCoordinationStoreLoadResult & { previousRevision: number },
     planId: string | undefined,
-    extras: { createdItemIds?: string[]; linkedItemId?: string } = {},
+    extras: { createdItemIds?: string[]; updatedItemId?: string; linkedItemId?: string } = {},
   ): WorkPlanMutationResult {
     if (!planId) {
       throw new WorkPlanServiceValidationError('Expected a mutated Work Plan id.')
@@ -496,6 +548,7 @@ export class WorkPlanService {
       planRevision: workPlan.revision,
       workPlan,
       ...(extras.createdItemIds && extras.createdItemIds.length > 0 ? { createdItemIds: extras.createdItemIds } : {}),
+      ...(extras.updatedItemId ? { updatedItemId: extras.updatedItemId } : {}),
       ...(extras.linkedItemId ? { linkedItemId: extras.linkedItemId } : {}),
     }
   }

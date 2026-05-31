@@ -13,7 +13,7 @@ import { MAX_CONVERSATION_HISTORY, shouldPersistConversationEntry } from "./hist
 const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
 const CONVERSATION_CACHE_META_TYPE = "swarm_conversation_cache_meta";
-const CONVERSATION_CACHE_VERSION = 2;
+const CONVERSATION_CACHE_VERSION = 3;
 
 interface HistoryCacheStoreOptions {
   logDebug: (message: string, details?: unknown) => void;

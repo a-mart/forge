@@ -148,9 +148,35 @@ describe('ActiveWorkCard', () => {
     expect(activeItemButton).toBeTruthy()
     flushSync(() => activeItemButton?.click())
 
-    expect(container.textContent).toContain('Frontend worker')
+    expect(container.textContent).toContain('Worker unavailable')
     expect(container.textContent).toContain('unavailable')
     expect(container.textContent).not.toContain('worker-1 · unavailable')
+  })
+
+  it('calls onNavigateToWorker for same-session worker chips and keeps stale links static', () => {
+    const onNavigateToWorker = vi.fn()
+    const snapshot = makeSnapshot()
+    flushSync(() => {
+      root.render(createElement(ActiveWorkCard, {
+        snapshot,
+        agents: [
+          { agentId: 'worker-1', displayName: 'Frontend worker', role: 'worker', managerId: 'session-1', status: 'idle' } as never,
+          { agentId: 'stale-worker', displayName: 'Other session worker', role: 'worker', managerId: 'other-session', status: 'idle' } as never,
+        ],
+        statuses: { 'worker-1': { status: 'idle' } },
+        expanded: true,
+        onExpandedChange: vi.fn(),
+        onNavigateToWorker,
+      }))
+    })
+
+    const activeItemButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Active item'))
+    flushSync(() => activeItemButton?.click())
+
+    const workerButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.getAttribute('aria-label')?.includes('Frontend worker'))
+    expect(workerButton).toBeTruthy()
+    flushSync(() => workerButton?.click())
+    expect(onNavigateToWorker).toHaveBeenCalledWith('worker-1')
   })
 
   it('uses optional count metadata to avoid implying bounded arrays are complete', () => {
@@ -194,7 +220,7 @@ describe('ActiveWorkCard', () => {
 
     expect(container.textContent).toContain('Completed plan 1')
     expect(container.textContent).not.toContain('Completed plan 2')
-    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous completed Work Plan'))
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous Work Plan'))
     expect(disclosure).toBeTruthy()
     expect(disclosure?.getAttribute('aria-expanded')).toBe('false')
 
@@ -214,7 +240,7 @@ describe('ActiveWorkCard', () => {
     })
     render(firstSnapshot)
 
-    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous completed Work Plan'))
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous Work Plan'))
     expect(disclosure).toBeTruthy()
     flushSync(() => disclosure?.click())
     expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
@@ -239,7 +265,7 @@ describe('ActiveWorkCard', () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    const nextDisclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous completed Work Plan'))
+    const nextDisclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 1 previous Work Plan'))
     expect(nextDisclosure).toBeTruthy()
     expect(nextDisclosure?.getAttribute('aria-expanded')).toBe('false')
     expect(container.textContent).toContain('Completed plan 10')
@@ -257,7 +283,7 @@ describe('ActiveWorkCard', () => {
 
     expect(container.textContent).toContain('Ship Active Work UI')
     expect(container.textContent).not.toContain('Completed plan 1')
-    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 5 previous completed Work Plans'))
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 5 previous Work Plans'))
     expect(disclosure).toBeTruthy()
 
     flushSync(() => disclosure?.click())
@@ -278,7 +304,7 @@ describe('ActiveWorkCard', () => {
 
     expect(container.textContent).toContain('Completed plan 1')
     expect(container.textContent).not.toContain('Completed plan 2')
-    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 3 previous completed Work Plans'))
+    const disclosure = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Show 3 previous Work Plans'))
     expect(disclosure).toBeTruthy()
 
     flushSync(() => disclosure?.click())

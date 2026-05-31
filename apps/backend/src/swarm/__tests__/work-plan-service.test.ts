@@ -330,6 +330,110 @@ describe('work-plan-service', () => {
     })
   })
 
+  it('updates one item status without replacing other items or linked worker evidence', async () => {
+    const dataDir = await createDataDir()
+    const sameSessionWorker = createWorker('worker-1', { managerId: SESSION_ID, specialistId: 'backend' })
+    const { service } = createHarness(dataDir, { agents: [sameSessionWorker] })
+    const actor = managerActor()
+
+    const created = await service.upsertPlan(actor, {
+      title: 'Status-only update',
+      items: [
+        { title: 'Investigate backend', status: 'active' },
+        { title: 'Summarize outcome', status: 'todo' },
+      ],
+    })
+
+    const linked = await service.link(actor, {
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      itemId: created.workPlan.items[0]!.itemId,
+      link: { type: 'worker', agentId: sameSessionWorker.agentId },
+    })
+
+    const updated = await service.updateItemStatus(actor, {
+      expectedStateRevision: linked.stateRevision,
+      planId: created.planId,
+      itemId: created.workPlan.items[0]!.itemId,
+      status: 'done',
+    })
+
+    expect(updated).toMatchObject({
+      action: 'update_item_status',
+      stateRevision: 3,
+      previousStateRevision: 2,
+      planRevision: 3,
+      updatedItemId: created.workPlan.items[0]!.itemId,
+    })
+    expect(updated.workPlan.items).toMatchObject([
+      {
+        itemId: created.workPlan.items[0]!.itemId,
+        title: 'Investigate backend',
+        status: 'done',
+        workerLinks: [{ agentId: sameSessionWorker.agentId }],
+      },
+      {
+        itemId: created.workPlan.items[1]!.itemId,
+        title: 'Summarize outcome',
+        status: 'todo',
+      },
+    ])
+  })
+
+  it('rejects updateItemStatus for missing items, terminal plans, stale revisions, and invalid statuses', async () => {
+    const dataDir = await createDataDir()
+    const { service } = createHarness(dataDir)
+    const actor = managerActor()
+
+    const created = await service.upsertPlan(actor, {
+      title: 'Immutable status update',
+      items: [{ title: 'Only item', status: 'active' }],
+    })
+
+    await expect(
+      service.updateItemStatus(actor, {
+        expectedStateRevision: created.stateRevision,
+        planId: created.planId,
+        itemId: 'missing-item',
+        status: 'done',
+      }),
+    ).rejects.toBeInstanceOf(WorkPlanItemResolutionError)
+
+    await expect(
+      service.updateItemStatus(actor, {
+        expectedStateRevision: 0,
+        planId: created.planId,
+        itemId: created.workPlan.items[0]!.itemId,
+        status: 'done',
+      }),
+    ).rejects.toBeInstanceOf(SessionCoordinationStateRevisionConflictError)
+
+    await expect(
+      service.updateItemStatus(actor, {
+        expectedStateRevision: created.stateRevision,
+        planId: created.planId,
+        itemId: created.workPlan.items[0]!.itemId,
+        status: 'completed' as never,
+      }),
+    ).rejects.toBeInstanceOf(WorkPlanServiceValidationError)
+
+    const finished = await service.finishPlan(actor, {
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      status: 'completed',
+      finalSummary: 'Done',
+    })
+
+    await expect(
+      service.updateItemStatus(actor, {
+        expectedStateRevision: finished.stateRevision,
+        planId: created.planId,
+        itemId: created.workPlan.items[0]!.itemId,
+        status: 'done',
+      }),
+    ).rejects.toBeInstanceOf(WorkPlanImmutableError)
+  })
+
   it('maps blocked items to skipped for completed_with_warnings while preserving skipped and failed items', async () => {
     const dataDir = await createDataDir()
     const { service } = createHarness(dataDir)

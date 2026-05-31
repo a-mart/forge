@@ -4,14 +4,12 @@ import {
   WORK_PLAN_ITEM_STATUSES,
   WORK_PLAN_MODES,
   WORK_PLAN_MUTABLE_STATUSES,
-  WORK_PLAN_STATUSES,
   WORK_PLAN_TERMINAL_STATUSES,
   type SessionTaskStateSnapshot,
   type WorkPlanItemStatus,
   type WorkPlanMode,
   type WorkPlanMutableStatus,
   type WorkPlanTerminalStatus,
-  type WorkPlanStatus,
 } from '@forge/protocol'
 import type { SwarmToolHost } from '../swarm-tool-host.js'
 import type { AgentDescriptor } from '../types.js'
@@ -23,7 +21,7 @@ import { WorkPlanServiceValidationError } from './work-plan-service.js'
 
 export const TASK_TOOL_NAME = 'task'
 
-const TASK_TOOL_ACTIONS = ['get', 'upsert_plan', 'link', 'finish_plan'] as const
+const TASK_TOOL_ACTIONS = ['get', 'upsert_plan', 'update_item_status', 'link', 'finish_plan'] as const
 const ITEMS_TEXT_LINE_PATTERN = /^(?:(?:[-*]|\d+\.)\s*)?(?:\[(?<status>[a-z_]+)\]\s*)?(?<title>.+)$/iu
 const JSON_LIKE_ITEMS_TEXT_PATTERN = /^\s*(?:\[(?:\s*[\[{"])|\{)/u
 const JSON_LIKE_ITEMS_TEXT_TITLE_PATTERN = /^\s*(?:\[(?:\s*[\[{"])|\{)/u
@@ -34,6 +32,7 @@ const MAX_TASK_TOOL_ITEMS_TEXT_LENGTH = MAX_WORK_PLAN_ITEMS * (MAX_WORK_PLAN_TIT
 export type TaskToolInput =
   | TaskToolGetInput
   | TaskToolUpsertPlanInput
+  | TaskToolUpdateItemStatusInput
   | TaskToolLinkInput
   | TaskToolFinishPlanInput
 
@@ -65,9 +64,18 @@ export interface TaskToolUpsertPlanInput {
   goal?: string
   mode?: WorkPlanMode
   status?: WorkPlanMutableStatus
+  /** Internal normalized items derived from create-time `itemsText`. Not accepted from provider tool calls. */
   items?: TaskToolUpsertPlanItemInput[]
   itemsText?: string
   revisionNote?: string
+}
+
+export interface TaskToolUpdateItemStatusInput {
+  action: 'update_item_status'
+  expectedStateRevision?: number
+  planId: string
+  itemId: string
+  status: WorkPlanItemStatus
 }
 
 export interface TaskToolLinkInput {
@@ -101,12 +109,13 @@ export interface TaskToolGetResult {
 }
 
 export interface TaskToolMutationResult {
-  action: 'upsert_plan' | 'link' | 'finish_plan'
+  action: 'upsert_plan' | 'update_item_status' | 'link' | 'finish_plan'
   stateRevision: number
   planId: string
   planRevision: number
   snapshot: SessionTaskStateSnapshot
   createdItemIds?: string[]
+  updatedItemId?: string
   linkedItemId?: string
 }
 
@@ -115,7 +124,7 @@ export function buildTaskTool(host: SwarmToolHost, descriptor: AgentDescriptor):
     name: TASK_TOOL_NAME,
     label: 'Task',
     description:
-      'Manage the current session\'s Active Work plan. Manager-only. Call exactly one action: `get`, `upsert_plan`, `link`, or `finish_plan`. Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only: one item per line like `[active] Investigate logs`. Use `link` for worker evidence and `finish_plan` for the final outcome. Do not send nested item arrays or stringified JSON arrays from model-generated tool calls.',
+      'Manage the current session\'s Active Work plan. Manager-only. Call exactly one action: `get`, `upsert_plan`, `update_item_status`, `link`, or `finish_plan`. Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only: one item per line like `[active] Investigate logs`. Use `update_item_status` for status-only item progress after create. Use `link` for worker evidence and `finish_plan` for the final outcome. Do not send nested item arrays or stringified JSON arrays from model-generated tool calls.',
     parameters: taskToolSchema,
     async execute(toolCallId, params) {
       const result = await host.runTaskTool(descriptor.agentId, toolCallId, params as TaskToolInput)
@@ -136,7 +145,6 @@ function literalUnion<const T extends readonly string[]>(values: T) {
   return Type.Union(values.map((value) => Type.Literal(value)))
 }
 
-const taskActionSchema = literalUnion(TASK_TOOL_ACTIONS)
 const expectedStateRevisionSchema = Type.Optional(
   Type.Integer({
     minimum: 0,
@@ -145,9 +153,11 @@ const expectedStateRevisionSchema = Type.Optional(
   }),
 )
 const workPlanModeSchema = literalUnion(WORK_PLAN_MODES)
-const workPlanStatusSchema = literalUnion(WORK_PLAN_STATUSES)
+const workPlanMutableStatusSchema = literalUnion(WORK_PLAN_MUTABLE_STATUSES)
+const workPlanTerminalStatusSchema = literalUnion(WORK_PLAN_TERMINAL_STATUSES)
+const workPlanItemStatusSchema = literalUnion(WORK_PLAN_ITEM_STATUSES)
 
-const taskToolLinkSchema = Type.Object(
+const taskToolWorkerLinkSchema = Type.Object(
   {
     type: Type.Literal('worker', {
       description: 'Only worker links are supported in Active Work v1.',
@@ -164,15 +174,22 @@ const taskToolLinkSchema = Type.Object(
   },
 )
 
-export const taskToolSchema = Type.Object(
+const taskToolGetSchema = Type.Object(
   {
-    action: Type.Unsafe<(typeof TASK_TOOL_ACTIONS)[number]>({
-      ...taskActionSchema,
-      description: 'Exactly one action: get, upsert_plan, link, or finish_plan.',
-    }),
+    action: Type.Literal('get'),
+  },
+  {
+    additionalProperties: false,
+    description: 'Read the current session Active Work snapshot.',
+  },
+)
+
+const taskToolUpsertPlanSchema = Type.Object(
+  {
+    action: Type.Literal('upsert_plan'),
     expectedStateRevision: expectedStateRevisionSchema,
     planId: Type.Optional(
-      Type.String({ minLength: 1, description: 'Existing plan id for upsert_plan, link, or finish_plan.' }),
+      Type.String({ minLength: 1, description: 'Existing plan id for upsert_plan updates.' }),
     ),
     title: Type.Optional(Type.String({ minLength: 1, description: 'Short plan title for upsert_plan.' })),
     goal: Type.Optional(Type.String({ minLength: 1, description: 'User-visible goal for upsert_plan.' })),
@@ -183,10 +200,9 @@ export const taskToolSchema = Type.Object(
       }),
     ),
     status: Type.Optional(
-      Type.Unsafe<WorkPlanStatus>({
-        ...workPlanStatusSchema,
-        description:
-          'Shared status field. For upsert_plan use active, blocked, or needs_attention. For finish_plan use completed, completed_with_warnings, failed, stopped, or interrupted.',
+      Type.Unsafe<WorkPlanMutableStatus>({
+        ...workPlanMutableStatusSchema,
+        description: `Mutable plan status for upsert_plan only. One of: ${WORK_PLAN_MUTABLE_STATUSES.join(', ')}.`,
       }),
     ),
     itemsText: Type.Optional(
@@ -196,19 +212,6 @@ export const taskToolSchema = Type.Object(
           'For upsert_plan create only. Multiline plain text with one item per line. Preferred format is `[status] title`, for example `[done] Create plan` or `[active] Observe backend-fed UI snapshot`. Optional list prefixes like `- ` or `1. ` are allowed. If no `[status]` prefix is present, the item defaults to `todo`. Do not send JSON, links, or reference syntax here.',
       }),
     ),
-    itemId: Type.Optional(
-      Type.String({ minLength: 1, description: 'Optional item id for link. Required when the plan has multiple items.' }),
-    ),
-    link: Type.Optional(taskToolLinkSchema),
-    finalSummary: Type.Optional(
-      Type.String({ minLength: 1, description: 'Short final outcome summary for finish_plan.' }),
-    ),
-    warnings: Type.Optional(
-      Type.Array(Type.String({ minLength: 1 }), {
-        minItems: 1,
-        description: 'Optional warnings for finish_plan. Required when status is completed_with_warnings.',
-      }),
-    ),
     revisionNote: Type.Optional(
       Type.String({ minLength: 1, description: 'Optional short note describing what changed in this upsert.' }),
     ),
@@ -216,7 +219,77 @@ export const taskToolSchema = Type.Object(
   {
     additionalProperties: false,
     description:
-      'Arguments for the manager-only task tool. Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText`; it does not expose structured `items` arrays. Example: {"action":"upsert_plan","title":"Investigate bug","itemsText":"[active] Trace failure\\n[todo] Patch shared state"}.',
+      'Create or update a Work Plan. Provider-facing upsert_plan uses create-time itemsText only; it does not accept structured item arrays.',
+  },
+)
+
+const taskToolUpdateItemStatusSchema = Type.Object(
+  {
+    action: Type.Literal('update_item_status'),
+    expectedStateRevision: expectedStateRevisionSchema,
+    planId: Type.String({ minLength: 1, description: 'Existing plan id for the item status update.' }),
+    itemId: Type.String({ minLength: 1, description: 'Existing item id from create-time createdItemIds or task.get.' }),
+    status: Type.Unsafe<WorkPlanItemStatus>({
+      ...workPlanItemStatusSchema,
+      description: `Item status for update_item_status only. One of: ${WORK_PLAN_ITEM_STATUSES.join(', ')}.`,
+    }),
+  },
+  {
+    additionalProperties: false,
+    description: 'Status-only item update. Does not change title, notes, blockers, results, or worker links.',
+  },
+)
+
+const taskToolLinkActionSchema = Type.Object(
+  {
+    action: Type.Literal('link'),
+    expectedStateRevision: expectedStateRevisionSchema,
+    planId: Type.String({ minLength: 1, description: 'Existing plan id for link.' }),
+    itemId: Type.Optional(
+      Type.String({ minLength: 1, description: 'Optional item id for link. Required when the plan has multiple items.' }),
+    ),
+    link: taskToolWorkerLinkSchema,
+  },
+  {
+    additionalProperties: false,
+    description: 'Attach a worker link as evidence on a plan item.',
+  },
+)
+
+const taskToolFinishPlanSchema = Type.Object(
+  {
+    action: Type.Literal('finish_plan'),
+    expectedStateRevision: expectedStateRevisionSchema,
+    planId: Type.String({ minLength: 1, description: 'Existing plan id for finish_plan.' }),
+    status: Type.Unsafe<WorkPlanTerminalStatus>({
+      ...workPlanTerminalStatusSchema,
+      description: `Terminal plan status for finish_plan only. One of: ${WORK_PLAN_TERMINAL_STATUSES.join(', ')}.`,
+    }),
+    finalSummary: Type.String({ minLength: 1, description: 'Short final outcome summary for finish_plan.' }),
+    warnings: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        minItems: 1,
+        description: 'Optional warnings for finish_plan. Required when status is completed_with_warnings.',
+      }),
+    ),
+  },
+  {
+    additionalProperties: false,
+    description: 'Terminalize the current Work Plan with a final summary and optional warnings.',
+  },
+)
+
+export const taskToolSchema = Type.Union(
+  [
+    taskToolGetSchema,
+    taskToolUpsertPlanSchema,
+    taskToolUpdateItemStatusSchema,
+    taskToolLinkActionSchema,
+    taskToolFinishPlanSchema,
+  ],
+  {
+    description:
+      'Arguments for the manager-only task tool. Provider-facing upsert_plan supports top-level plan fields plus create-time itemsText; it does not expose structured items arrays. Example: {"action":"upsert_plan","title":"Investigate bug","itemsText":"[active] Trace failure\\n[todo] Patch shared state"}.',
   },
 )
 
@@ -236,6 +309,8 @@ export function normalizeTaskToolInput(input: unknown): TaskToolInput {
       return { action: 'get' }
     case 'upsert_plan':
       return normalizeUpsertPlanInput(raw)
+    case 'update_item_status':
+      return normalizeUpdateItemStatusInput(raw)
     case 'link':
       return normalizeLinkInput(raw)
     case 'finish_plan':
@@ -259,16 +334,15 @@ function normalizeUpsertPlanInput(raw: Record<string, unknown>): TaskToolUpsertP
 
   const itemsValue = raw.items === null ? undefined : raw.items
   const itemsText = normalizeOptionalString(raw.itemsText)
-  if (typeof itemsValue === 'string') {
+  if (itemsValue !== undefined) {
+    if (typeof itemsValue === 'string') {
+      throw new WorkPlanServiceValidationError(
+        'task.upsert_plan no longer accepts items as a string. Use itemsText with one item per line, for example `[active] Investigate logs`.',
+      )
+    }
     throw new WorkPlanServiceValidationError(
-      'task.upsert_plan no longer accepts items as a string. Use itemsText with one item per line, for example `[active] Investigate logs`.',
+      'task.upsert_plan no longer accepts structured items arrays. Use create-time itemsText or task.update_item_status for item status changes.',
     )
-  }
-  if (itemsValue !== undefined && !Array.isArray(itemsValue)) {
-    throw new WorkPlanServiceValidationError('task.upsert_plan items must be an array when used by internal callers.')
-  }
-  if (Array.isArray(itemsValue) && itemsValue.length > 0 && itemsText !== undefined) {
-    throw new WorkPlanServiceValidationError('task.upsert_plan accepts either items or itemsText, not both.')
   }
   if (itemsText !== undefined && itemsText.length > MAX_TASK_TOOL_ITEMS_TEXT_LENGTH) {
     throw new WorkPlanServiceValidationError(
@@ -301,6 +375,31 @@ function normalizeUpsertPlanInput(raw: Record<string, unknown>): TaskToolUpsertP
       : (itemsValue as TaskToolUpsertPlanItemInput[] | undefined),
     ...(itemsText !== undefined ? { itemsText } : {}),
     revisionNote: normalizeOptionalString(raw.revisionNote),
+  }
+}
+
+function normalizeUpdateItemStatusInput(raw: Record<string, unknown>): TaskToolUpdateItemStatusInput {
+  assertAllowedFields(raw, 'update_item_status', [
+    'action',
+    'expectedStateRevision',
+    'planId',
+    'itemId',
+    'status',
+  ])
+
+  const status = raw.status
+  if (!WORK_PLAN_ITEM_STATUSES.includes(status as WorkPlanItemStatus)) {
+    throw new WorkPlanServiceValidationError(
+      `For task.update_item_status, status must be one of: ${WORK_PLAN_ITEM_STATUSES.join(', ')}.`,
+    )
+  }
+
+  return {
+    action: 'update_item_status',
+    expectedStateRevision: normalizeOptionalNonNegativeInteger(raw.expectedStateRevision, 'expectedStateRevision'),
+    planId: normalizeRequiredString(raw.planId, 'planId'),
+    itemId: normalizeRequiredString(raw.itemId, 'itemId'),
+    status: status as WorkPlanItemStatus,
   }
 }
 

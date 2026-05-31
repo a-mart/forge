@@ -147,7 +147,7 @@ async function buildCacheMetadata(
 ): Promise<Record<string, unknown>> {
   return {
     type: 'swarm_conversation_cache_meta',
-    version: 2,
+    version: 3,
     persistedEntryCount: overrides.persistedEntryCount ?? 0,
     cachedPersistedEntryCount: overrides.cachedPersistedEntryCount ?? 0,
     firstPersistedEntryKey: overrides.firstPersistedEntryKey ?? null,
@@ -829,7 +829,7 @@ describe('ConversationProjector session tree continuity', () => {
     expect(result.diagnostics.sessionSummaryBytesScanned).toBeGreaterThan(0)
   })
 
-  it('rebuilds a legacy sidecar without a fingerprint and rewrites it in the v2 format', async () => {
+  it('rebuilds a legacy sidecar without a fingerprint and rewrites it in the v3 format', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-legacy-sidecar-'))
     const sessionFile = join(root, 'manager.jsonl')
     const descriptor = makeDescriptor(sessionFile, root)
@@ -883,9 +883,9 @@ describe('ConversationProjector session tree continuity', () => {
     })
 
     const rewrittenCacheText = await waitForFileText(cacheFile, {
-      matches: (text) => text.includes('"version":2') && text.includes('"canonicalStat"'),
+      matches: (text) => text.includes('"version":3') && text.includes('"canonicalStat"'),
     })
-    expect(rewrittenCacheText).toContain('"version":2')
+    expect(rewrittenCacheText).toContain('"version":3')
     expect(rewrittenCacheText).toContain('"canonicalStat"')
   })
 
@@ -1172,7 +1172,7 @@ describe('ConversationProjector session tree continuity', () => {
     await writeCacheLines(shapeCacheFile, [
       {
         type: 'swarm_conversation_cache_meta',
-        version: 2,
+        version: 3,
         persistedEntryCount: '1',
         cachedPersistedEntryCount: 1,
         firstPersistedEntryKey: null,

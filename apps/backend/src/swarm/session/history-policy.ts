@@ -14,6 +14,14 @@ export function shouldPersistConversationEntry(entry: ConversationEntryEvent): b
   return true;
 }
 
+export function isProtectedTranscriptEntry(entry: ConversationEntryEvent): boolean {
+  if (entry.type === "work_plan_created") {
+    return true;
+  }
+
+  return isProtectedWebTranscriptEntry(entry);
+}
+
 export function isProtectedWebTranscriptEntry(entry: ConversationEntryEvent): boolean {
   if (entry.type !== "conversation_message") {
     return false;
@@ -43,7 +51,7 @@ export function trimConversationHistory(entries: ConversationEntryEvent[]): void
       break;
     }
 
-    if (!isProtectedWebTranscriptEntry(entries[index])) {
+    if (!isProtectedTranscriptEntry(entries[index])) {
       removableIndexes.push(index);
     }
   }

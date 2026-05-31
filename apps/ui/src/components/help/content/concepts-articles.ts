@@ -58,7 +58,11 @@ A Work Plan is descriptive progress state, not a workflow runner. The manager st
 
 ## Persistence
 
-Active Work state is stored with the session, so it follows that session rather than the whole project. Other sessions in the same profile have their own plans or no plan at all.`,
+Active Work state is stored with the session, so it follows that session rather than the whole project. Other sessions in the same profile have their own plans or no plan at all.
+
+## History and receipts
+
+When a manager creates a plan, Forge records a read-only **Work Plan created** receipt in the session timeline. Those receipts stay in canonical session history and are protected from normal in-memory/cache trimming, but very old entries can still be omitted from byte-budgeted bootstrap payloads. The Active Work card also keeps a bounded list of recent previous Work Plans for terminal plans that remain in the live snapshot.`,
   keywords: [
     'active work',
     'work plan',

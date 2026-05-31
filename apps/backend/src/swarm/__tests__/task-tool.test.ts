@@ -35,12 +35,18 @@ async function makeTempConfig(port = 8894): Promise<SwarmConfig> {
 }
 
 describe('task tool schema', () => {
-  it('accepts the four supported actions with itemsText and rejects unsupported provider-facing fields', () => {
+  it('accepts the five supported actions with itemsText and rejects unsupported provider-facing fields', () => {
     expect(Value.Check(taskToolSchema, { action: 'get' })).toBe(true)
     expect(Value.Check(taskToolSchema, {
       action: 'upsert_plan',
       title: 'Plan title',
       itemsText: '[active] One item',
+    })).toBe(true)
+    expect(Value.Check(taskToolSchema, {
+      action: 'update_item_status',
+      planId: 'plan-1',
+      itemId: 'item-1',
+      status: 'done',
     })).toBe(true)
     expect(Value.Check(taskToolSchema, {
       action: 'link',
@@ -56,10 +62,39 @@ describe('task tool schema', () => {
       warnings: ['Needs follow-up'],
     })).toBe(true)
 
+    expect(Value.Check(taskToolSchema, { action: 'get', expectedStateRevision: 0 })).toBe(false)
+    expect(Value.Check(taskToolSchema, {
+      action: 'link',
+      planId: 'plan-1',
+      link: { type: 'worker', agentId: 'worker-1' },
+      finalSummary: 'not allowed',
+    })).toBe(false)
+    expect(Value.Check(taskToolSchema, {
+      action: 'finish_plan',
+      planId: 'plan-1',
+      status: 'done',
+      finalSummary: 'Done',
+    })).toBe(false)
+    expect(Value.Check(taskToolSchema, {
+      action: 'upsert_plan',
+      planId: 'plan-1',
+      status: 'done',
+    })).toBe(false)
+    expect(Value.Check(taskToolSchema, {
+      action: 'update_item_status',
+      planId: 'plan-1',
+      itemId: 'item-1',
+      status: 'completed',
+    })).toBe(false)
     expect(Value.Check(taskToolSchema, {
       action: 'upsert_plan',
       title: 'Plan title',
       items: [{ title: 'One item', status: 'active' }],
+    })).toBe(false)
+    expect(Value.Check(taskToolSchema, {
+      action: 'upsert_plan',
+      title: 'Plan title',
+      items: [],
     })).toBe(false)
     expect(Value.Check(taskToolSchema, {
       action: 'link',
@@ -82,41 +117,33 @@ describe('task tool schema', () => {
     } as AgentDescriptor)
 
     expect(tool.description).toContain('Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only')
+    expect(tool.description).toContain('update_item_status')
     expect(tool.description).toContain('Do not send nested item arrays')
-
-    const schema = taskToolSchema as {
-      description?: string
-      properties?: Record<string, { description?: string }>
-    }
-
-    expect(schema.description).toContain('it does not expose structured `items` arrays')
-    expect(schema.properties?.itemsText?.description).toContain('one item per line')
-    expect(schema.properties?.status?.description).toContain('Shared status field')
-    expect(schema.properties).not.toHaveProperty('items')
+    expect((taskToolSchema as { description?: string }).description).toContain('does not expose structured items arrays')
   })
 
   it('normalizes itemsText into bounded item objects and tolerates empty artifact items fields', () => {
     expect(normalizeTaskToolInput({
       action: 'upsert_plan',
       title: 'Plan title',
-      itemsText: '[done] Create plan\n- [active] Observe snapshot\nPlain fallback item',
+      itemsText: '[active] Create plan',
     })).toMatchObject({
       action: 'upsert_plan',
       title: 'Plan title',
-      items: [
-        { title: 'Create plan', status: 'done' },
-        { title: 'Observe snapshot', status: 'active' },
-        { title: 'Plain fallback item', status: 'todo' },
-      ],
+      items: [{ title: 'Create plan', status: 'active' }],
+      itemsText: '[active] Create plan',
     })
-    expect(normalizeTaskToolInput({
+    expect(() => normalizeTaskToolInput({
       action: 'upsert_plan',
       title: 'Plan title',
       itemsText: '[active] Create plan',
       items: [],
-    })).toMatchObject({
-      items: [{ title: 'Create plan', status: 'active' }],
-    })
+    })).toThrow('no longer accepts structured items arrays')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      items: [{ title: 'One item' }],
+    })).toThrow('no longer accepts structured items arrays')
     expect(normalizeTaskToolInput({
       action: 'upsert_plan',
       title: 'Plan title',
@@ -137,7 +164,7 @@ describe('task tool schema', () => {
       title: 'Plan title',
       items: [{ title: 'One item' }],
       itemsText: '[active] Mixed source',
-    })).toThrow('accepts either items or itemsText, not both')
+    })).toThrow('no longer accepts structured items arrays')
     expect(() => normalizeTaskToolInput({
       action: 'upsert_plan',
       title: 'Plan title',
@@ -203,6 +230,43 @@ describe('task tool schema', () => {
       title: 'Plan title',
       items: '[{"title":"Bad json"}]',
     })).toThrow('no longer accepts items as a string')
+  })
+
+  it('normalizes update_item_status and rejects invalid item statuses', () => {
+    expect(normalizeTaskToolInput({
+      action: 'update_item_status',
+      planId: 'plan-1',
+      itemId: 'item-1',
+      status: 'done',
+    })).toEqual({
+      action: 'update_item_status',
+      planId: 'plan-1',
+      itemId: 'item-1',
+      status: 'done',
+    })
+
+    expect(() => normalizeTaskToolInput({
+      action: 'update_item_status',
+      planId: 'plan-1',
+      itemId: 'item-1',
+      status: 'completed',
+    })).toThrow('For task.update_item_status, status must be one of:')
+  })
+
+  it('normalizes multi-line itemsText into bounded item objects', () => {
+    expect(normalizeTaskToolInput({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      itemsText: '[done] Create plan\n- [active] Observe snapshot\nPlain fallback item',
+    })).toMatchObject({
+      action: 'upsert_plan',
+      title: 'Plan title',
+      items: [
+        { title: 'Create plan', status: 'done' },
+        { title: 'Observe snapshot', status: 'active' },
+        { title: 'Plain fallback item', status: 'todo' },
+      ],
+    })
   })
 
   it('delegates raw provider params to host.runTaskTool', async () => {
@@ -280,7 +344,7 @@ describe('SwarmManager.runTaskTool', () => {
     const created = await manager.runTaskTool('manager', 'tool-provider-finish-1', {
       action: 'upsert_plan',
       title: 'Provider-facing finish closeout',
-      itemsText: '[active] Investigate backend\n[todo] Summarize outcome',
+      itemsText: '[active] Investigate backend\n[todo] Summarize outcome\n[failed] Known failure\n[unknown] Unknown outcome',
     })
 
     const worker = await manager.spawnAgent('manager', { agentId: 'provider-finish-worker' })
@@ -292,21 +356,9 @@ describe('SwarmManager.runTaskTool', () => {
       link: { type: 'worker', agentId: worker.agentId },
     })
 
-    const revised = await manager.runTaskTool('manager', 'tool-provider-finish-2b', {
-      action: 'upsert_plan',
-      expectedStateRevision: linked.stateRevision,
-      planId: created.planId,
-      items: [
-        { itemId: created.createdItemIds?.[0], title: 'Investigate backend', status: 'active' },
-        { itemId: created.createdItemIds?.[1], title: 'Summarize outcome', status: 'todo' },
-        { title: 'Known failure', status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
-        { title: 'Unknown outcome', status: 'unknown', note: 'Worker ended without report' },
-      ],
-    })
-
     const finished = await manager.runTaskTool('manager', 'tool-provider-finish-3', {
       action: 'finish_plan',
-      expectedStateRevision: revised.stateRevision,
+      expectedStateRevision: linked.stateRevision,
       planId: created.planId,
       status: 'completed',
       finalSummary: 'Done',
@@ -319,8 +371,8 @@ describe('SwarmManager.runTaskTool', () => {
       items: [
         { status: 'done', workerLinks: [{ agentId: worker.agentId }] },
         { status: 'done' },
-        { status: 'failed', result: { summary: 'Probe failed', status: 'failed' } },
-        { status: 'unknown', note: 'Worker ended without report' },
+        { status: 'failed' },
+        { status: 'unknown' },
       ],
     })
   })
@@ -372,10 +424,15 @@ describe('SwarmManager.runTaskTool', () => {
     })
 
     const revised = await manager.runTaskTool('manager', 'tool-live-1b', {
-      action: 'upsert_plan',
+      action: 'update_item_status',
       expectedStateRevision: created.stateRevision,
       planId: created.planId,
-      items: [{ itemId: created.createdItemIds?.[0], title: 'Create plan', status: 'done' }],
+      itemId: created.createdItemIds?.[0]!,
+      status: 'done',
+    })
+    expect(revised).toMatchObject({
+      action: 'update_item_status',
+      updatedItemId: created.createdItemIds?.[0],
     })
     expect(creationRows).toHaveLength(1)
     expect(snapshots).toHaveLength(2)
@@ -452,16 +509,17 @@ describe('SwarmManager.runTaskTool', () => {
     })
 
     const revised = await manager.runTaskTool('manager', 'tool-4', {
-      action: 'upsert_plan',
+      action: 'update_item_status',
       expectedStateRevision: linked.stateRevision,
       planId: created.planId,
-      items: [{ itemId: created.createdItemIds?.[0], title: 'Build task tool', status: 'done' }],
-      revisionNote: 'Preserve linked worker evidence',
+      itemId: created.createdItemIds?.[0]!,
+      status: 'done',
     })
 
     expect(revised).toMatchObject({
-      action: 'upsert_plan',
+      action: 'update_item_status',
       stateRevision: 3,
+      updatedItemId: created.createdItemIds?.[0],
       snapshot: { activeWorkPlan: { items: [{ workerLinks: [{ agentId: worker.agentId }], status: 'done' }] } },
     })
 
@@ -584,7 +642,7 @@ describe('SwarmManager.runTaskTool', () => {
         action: 'upsert_plan',
         expectedStateRevision: -1 as never,
         title: 'Invalid revision',
-        items: [{ title: 'One item' }],
+        itemsText: '[todo] One item',
       } as never),
     ).rejects.toThrow('expectedStateRevision must be a non-negative integer')
 
@@ -593,7 +651,7 @@ describe('SwarmManager.runTaskTool', () => {
         action: 'upsert_plan',
         expectedStateRevision: 1.5 as never,
         title: 'Invalid revision',
-        items: [{ title: 'One item' }],
+        itemsText: '[todo] One item',
       } as never),
     ).rejects.toThrow('expectedStateRevision must be a non-negative integer')
 
@@ -604,12 +662,12 @@ describe('SwarmManager.runTaskTool', () => {
         items: [{ title: 'One item' }],
         itemsText: '[todo] One item',
       } as never),
-    ).rejects.toThrow('accepts either items or itemsText, not both')
+    ).rejects.toThrow('no longer accepts structured items arrays')
 
     const created = await manager.runTaskTool('manager', 'tool-4', {
       action: 'upsert_plan',
       title: 'Warnings required',
-      items: [{ title: 'One item' }],
+      itemsText: '[todo] One item',
     })
 
     await expect(
@@ -662,7 +720,7 @@ describe('SwarmManager.runTaskTool', () => {
     const error = await manager.runTaskTool('manager', 'tool-write-unknown', {
       action: 'upsert_plan',
       title: 'Should fail safely',
-      items: [{ title: 'One item' }],
+      itemsText: '[todo] One item',
     }).catch((cause) => cause)
 
     expect(error).toBeInstanceOf(Error)
@@ -706,7 +764,6 @@ describe('SwarmManager.runTaskTool', () => {
       action: 'upsert_plan',
       planId: unsafePlanId,
       title: 'Existing title',
-      items: [{ title: 'One item' }],
     }).catch((cause) => cause)
     expect(notFoundError).toBeInstanceOf(Error)
     expect((notFoundError as Error).message).toBe('The requested work plan no longer exists. Call `task.get` to refresh before retrying.')
@@ -751,7 +808,7 @@ describe('SwarmManager.runTaskTool', () => {
     const created = await manager.runTaskTool('manager', 'tool-1', {
       action: 'upsert_plan',
       title: 'Link only workers',
-      items: [{ title: 'One item' }],
+      itemsText: '[todo] One item',
     })
 
     await expect(

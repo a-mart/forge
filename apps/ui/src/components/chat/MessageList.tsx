@@ -84,6 +84,7 @@ interface MessageListProps {
   onActiveWorkExpandedChange?: (expanded: boolean) => void
   activeWorkFocusNonce?: number
   statuses?: Record<string, { status: AgentStatus }>
+  onNavigateToWorker?: (agentId: string) => void
 }
 
 export interface MessageListHandle {
@@ -341,6 +342,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onActiveWorkExpandedChange,
   activeWorkFocusNonce,
   statuses = {},
+  onNavigateToWorker,
 }, ref) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -595,6 +597,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               expanded={activeWorkExpanded}
               onExpandedChange={onActiveWorkExpandedChange ?? (() => undefined)}
               focusNonce={activeWorkFocusNonce}
+              onNavigateToWorker={onNavigateToWorker}
             />
           ) : null}
           {displayEntries.map((entry) => {
@@ -687,7 +690,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                   data-message-id={entry.event.id}
                   className="[content-visibility:auto] [contain-intrinsic-size:auto_160px]"
                 >
-                  <WorkPlanCreatedRow event={entry.event} agents={agents ?? []} statuses={statuses} />
+                  <WorkPlanCreatedRow
+                    event={entry.event}
+                    agents={agents ?? []}
+                    statuses={statuses}
+                    onNavigateToWorker={onNavigateToWorker}
+                  />
                 </div>
               )
             }

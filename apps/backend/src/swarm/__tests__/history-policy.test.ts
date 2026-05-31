@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_CONVERSATION_HISTORY,
+  isProtectedTranscriptEntry,
   isProtectedWebTranscriptEntry,
   selectBootstrapConversationHistory,
   shouldPersistConversationEntry,
@@ -136,6 +137,27 @@ describe("history policy", () => {
     }))).toBe(false);
     expect(isProtectedWebTranscriptEntry(message("system"))).toBe(false);
     expect(isProtectedWebTranscriptEntry(agentActivity("activity"))).toBe(false);
+    expect(isProtectedTranscriptEntry(workPlanCreated("work-plan-protected"))).toBe(true);
+  });
+
+  it("preserves work_plan_created receipts ahead of removable activity and system entries during overflow trim", () => {
+    const overflow = 3;
+    const entries: ConversationEntryEvent[] = [
+      workPlanCreated("receipt-1"),
+      agentActivity("remove-1"),
+      tool("remove-2", "tool_execution_start"),
+      message("remove-3", { source: "system" }),
+      ...Array.from({ length: MAX_CONVERSATION_HISTORY - 1 }, (_, index) => message(`tail-${index}`, { source: "user_input" }))
+    ];
+
+    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY + overflow);
+    trimConversationHistory(entries);
+
+    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY);
+    expect(ids(entries)[0]).toBe("receipt-1");
+    expect(ids(entries)).not.toContain("remove-1");
+    expect(ids(entries)).not.toContain("remove-2");
+    expect(ids(entries)).not.toContain("remove-3");
   });
 
   it("trims oldest removable entries while preserving protected web transcript entries", () => {

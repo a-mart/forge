@@ -147,3 +147,33 @@ export function resolveWorkerLabel(agentId: string, label: string | undefined, a
 export function resolveWorkerStatus(agentId: string, statuses: Record<string, { status: AgentStatus }>, agents: AgentDescriptor[]): AgentStatus | 'unavailable' {
   return statuses[agentId]?.status ?? agents.find((candidate) => candidate.agentId === agentId)?.status ?? 'unavailable'
 }
+
+export function isActionableWorkerLink(
+  agentId: string,
+  sessionAgentId: string | undefined,
+  agents: AgentDescriptor[],
+): boolean {
+  if (!sessionAgentId) {
+    return false
+  }
+
+  const agent = agents.find((candidate) => candidate.agentId === agentId)
+  if (!agent || agent.role !== 'worker' || agent.managerId !== sessionAgentId || agent.archivedAt) {
+    return false
+  }
+
+  return true
+}
+
+export function resolveWorkerChipLabel(
+  agentId: string,
+  label: string | undefined,
+  sessionAgentId: string | undefined,
+  agents: AgentDescriptor[],
+): string {
+  if (!isActionableWorkerLink(agentId, sessionAgentId, agents)) {
+    return 'Worker unavailable'
+  }
+
+  return resolveWorkerLabel(agentId, label, agents)
+}

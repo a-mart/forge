@@ -3,7 +3,7 @@
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkPlanCreatedEvent } from '@forge/protocol'
 import { WorkPlanCreatedRow } from './WorkPlanCreatedRow'
 
@@ -42,7 +42,20 @@ function makeEvent(overrides: Partial<WorkPlanCreatedEvent> = {}): WorkPlanCreat
       updatedAt: now,
       revision: 1,
       items: [
-        { itemId: 'item-1', title: 'Initial item', status: 'active', workerLinks: [], workerLinkCount: 0, workerLinksTruncated: false },
+        {
+          itemId: 'item-1',
+          title: 'Initial item',
+          status: 'active',
+          workerLinks: [{
+            type: 'worker',
+            linkId: 'link-1',
+            agentId: 'worker-1',
+            label: 'Frontend worker',
+            linkedAt: now,
+          }],
+          workerLinkCount: 1,
+          workerLinksTruncated: false,
+        },
       ],
       itemCount: 1,
       itemsTruncated: false,
@@ -100,5 +113,71 @@ describe('WorkPlanCreatedRow', () => {
     expect(container.textContent).toContain('Done at creation time.')
     expect(container.textContent).toContain('Done')
     expect(container.textContent).not.toContain('In progress')
+  })
+
+  it('navigates to same-session worker chips from historical receipts', () => {
+    const onNavigateToWorker = vi.fn()
+    flushSync(() => {
+      root.render(createElement(WorkPlanCreatedRow, {
+        event: makeEvent(),
+        agents: [
+          { agentId: 'worker-1', displayName: 'Frontend worker', role: 'worker', managerId: 'session-1', status: 'idle' } as never,
+        ],
+        statuses: { 'worker-1': { status: 'idle' } },
+        onNavigateToWorker,
+      }))
+    })
+
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label^="Expand Work Plan created"]')
+    flushSync(() => toggle?.click())
+
+    const itemButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Initial item'))
+    flushSync(() => itemButton?.click())
+
+    const workerButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.getAttribute('aria-label')?.includes('Frontend worker'))
+    expect(workerButton).toBeTruthy()
+    flushSync(() => workerButton?.click())
+    expect(onNavigateToWorker).toHaveBeenCalledWith('worker-1')
+  })
+
+  it('keeps cross-session receipt worker links static', () => {
+    flushSync(() => {
+      root.render(createElement(WorkPlanCreatedRow, {
+        event: makeEvent({
+          plan: {
+            ...makeEvent().plan,
+            items: [{
+              itemId: 'item-1',
+              title: 'Initial item',
+              status: 'active',
+              workerLinks: [{
+                type: 'worker',
+                linkId: 'link-stale',
+                agentId: 'cross-session-worker',
+                label: 'Cross session worker',
+                linkedAt: now,
+              }],
+              workerLinkCount: 1,
+              workerLinksTruncated: false,
+            }],
+          },
+        }),
+        agents: [
+          { agentId: 'cross-session-worker', displayName: 'Cross session worker', role: 'worker', managerId: 'other-session', status: 'idle' } as never,
+        ],
+        statuses: {},
+        onNavigateToWorker: vi.fn(),
+      }))
+    })
+
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label^="Expand Work Plan created"]')
+    flushSync(() => toggle?.click())
+
+    const itemButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Initial item'))
+    expect(itemButton).toBeTruthy()
+    flushSync(() => itemButton?.click())
+
+    expect(container.textContent).toContain('Worker unavailable')
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.getAttribute('aria-label')?.includes('Cross session worker'))).toBeUndefined()
   })
 })
