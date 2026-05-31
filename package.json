@@ -42,6 +42,7 @@
     "quality:full": "node scripts/local-quality.mjs --tier full",
     "quality:report": "node scripts/local-quality.mjs --tier report",
     "help:validate": "node scripts/validate-help-content.mjs --strict",
+    "help:validate:migration": "node scripts/validate-help-content.mjs --strict --fidelity",
     "help:baseline": "node scripts/snapshot-help-content-baseline.mjs",
     "postinstall": "node scripts/fix-node-pty-spawn-helper-permissions.mjs"
   },

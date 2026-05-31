@@ -270,13 +270,16 @@ When adding or editing help content:
 
 1. Edit the `.md` body directly; do not put Markdown bodies in TS template literals.
 2. Update the matching metadata entry and `?raw` import in the owning `*-articles.ts` module.
-3. Run `pnpm help:validate` (strict mode; requires a provenance-safe `.internal/help-content-baseline.json` captured from unmigrated TS sources before migration — do not regenerate from migrated sources).
-4. Run UI typecheck and, for help-content changes, `pnpm quality:changed` or `pnpm quality:quick` (the local quality runner routes help-content paths to strict validation).
+3. Run `pnpm help:validate` (permanent structural checks only; no baseline file required).
+4. Run UI typecheck and, for help-content changes, `pnpm quality:changed` or `pnpm quality:quick` (the local quality runner routes help-content paths to `pnpm help:validate`).
+
+**Migration-only fidelity:** To compare against a one-time pre-migration baseline (handoff/review only), use `pnpm help:validate:migration` with a provenance-safe `.internal/help-content-baseline.json` captured from unmigrated TS via `pnpm help:baseline`. Do not regenerate that baseline from migrated sources, and do not require it for normal authoring.
 
 ### Validation
 
 ```bash
-pnpm help:validate                                        # Strict help article graph + baseline fidelity checks
+pnpm help:validate                                        # Permanent strict help structural checks (no baseline)
+pnpm help:validate:migration                              # One-time migration fidelity vs provenance-safe baseline
 pnpm quality:quick                                        # Fast changed-file validation with a local JSON report
 pnpm quality:changed                                      # Conservative path-aware validation before merge/push
 pnpm quality:full                                         # Full local validation, including build

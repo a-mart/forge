@@ -3,14 +3,18 @@
  * Static help-content validator. Parses TS sources from disk only — does not
  * import app modules or run through Vite/HMR.
  *
- * Modes:
- * - mixed (default): modules with any .md?raw import must use raw imports for all bodies
- * - strict: every article module must use raw imports (no template-literal bodies)
+ * Permanent validation (`pnpm help:validate`, `--strict`):
+ * - Every article uses a raw Markdown import (no template-literal bodies)
+ * - Import paths, referenced bodies, graph/metadata/tooltip integrity, Markdown hygiene
+ * - Does not require `.internal/help-content-baseline.json`
  *
- * Markdown hygiene:
- * - Unreferenced Markdown files under content/articles/ are hard errors (not warnings).
- * - Terminal pilot fidelity checks require a provenance-safe baseline captured from
- *   unmigrated TS template literals (see pnpm help:baseline).
+ * Migration fidelity (`pnpm help:validate:migration`, `--strict --fidelity`):
+ * - Compares current articles against a provenance-safe pre-migration baseline
+ * - Requires baseline from unmigrated TS template literals (see pnpm help:baseline)
+ * - Optional `--baseline <path>` (default: .internal/help-content-baseline.json)
+ *
+ * Legacy mixed mode (`--mixed` or no mode flag): partial migration tolerance; not used
+ * by package scripts or local quality.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -54,7 +58,26 @@ const CAPTURE_POLICY_UNMIGRATED = 'unmigrated_ts_template_literals_only'
 const CAPTURE_POLICY_MIGRATED = 'includes_migrated_raw_md_imports'
 
 const args = process.argv.slice(2)
-const mode = args.includes('--strict') ? 'strict' : 'mixed'
+const runFidelity = args.includes('--fidelity')
+const mode = args.includes('--mixed')
+  ? 'mixed'
+  : args.includes('--strict') || runFidelity
+    ? 'strict'
+    : 'mixed'
+
+const defaultBaselinePath = path.join(REPO_ROOT, '.internal/help-content-baseline.json')
+let fidelityBaselinePath = defaultBaselinePath
+const baselineFlagIndex = args.indexOf('--baseline')
+if (baselineFlagIndex !== -1) {
+  const baselineArg = args[baselineFlagIndex + 1]
+  if (!baselineArg || baselineArg.startsWith('--')) {
+    console.error('ERROR: --baseline requires a file path')
+    process.exit(1)
+  }
+  fidelityBaselinePath = path.isAbsolute(baselineArg)
+    ? baselineArg
+    : path.resolve(REPO_ROOT, baselineArg)
+}
 
 const errors = []
 const warnings = []
@@ -273,6 +296,14 @@ function validateModuleShape(filePath, moduleData) {
 
     if (!article.category || !VALID_CATEGORIES.has(article.category)) {
       fail(`${relativePath}: ${article.id} has invalid category "${article.category}"`)
+    }
+
+    if (!article.title) {
+      fail(`${relativePath}: ${article.id} must have a title`)
+    }
+
+    if (!article.summary) {
+      fail(`${relativePath}: ${article.id} must have a summary`)
     }
 
     if (!article.keywords?.length) {
@@ -505,16 +536,11 @@ function compareFidelityMetadata(articleId, baselineMetadata, currentMetadata) {
   }
 }
 
-function compareArticleFidelity(allArticles) {
-  const baselinePath = path.join(REPO_ROOT, '.internal/help-content-baseline.json')
+function compareArticleFidelity(allArticles, baselinePath) {
   if (!fs.existsSync(baselinePath)) {
-    if (mode === 'strict') {
-      fail(
-        'Fidelity: .internal/help-content-baseline.json is required in strict mode; capture provenance-safe baseline with `pnpm help:baseline` before validation',
-      )
-    } else {
-      warn('Skipping fidelity check: .internal/help-content-baseline.json not found')
-    }
+    fail(
+      `Fidelity: baseline file not found at ${path.relative(REPO_ROOT, baselinePath)}; capture provenance-safe baseline with pnpm help:baseline before migration fidelity validation`,
+    )
     return
   }
 
@@ -655,7 +681,9 @@ function main() {
     validateMarkdownFile(mdPath, referencedMdPaths)
   }
 
-  compareArticleFidelity(allArticles)
+  if (runFidelity) {
+    compareArticleFidelity(allArticles, fidelityBaselinePath)
+  }
 
   for (const message of warnings) {
     console.warn(`WARN: ${message}`)
@@ -665,12 +693,16 @@ function main() {
     for (const message of errors) {
       console.error(`ERROR: ${message}`)
     }
-    console.error(`\nHelp content validation failed (${errors.length} error(s), mode=${mode}).`)
+    const scope = runFidelity ? 'structural+fidelity' : 'structural'
+    console.error(
+      `\nHelp content validation failed (${errors.length} error(s), mode=${mode}, scope=${scope}).`,
+    )
     process.exit(1)
   }
 
+  const scope = runFidelity ? 'structural+fidelity' : 'structural'
   console.log(
-    `Help content validation passed (${articleIds.size} articles, mode=${mode}).`,
+    `Help content validation passed (${articleIds.size} articles, mode=${mode}, scope=${scope}).`,
   )
 }
 
