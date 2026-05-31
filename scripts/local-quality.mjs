@@ -91,6 +91,7 @@ const HELP_VALIDATE_TRIGGER_PATTERNS = [
   /^apps\/ui\/src\/components\/help\/content\//u,
   /^apps\/ui\/src\/components\/help\/help-registry\.ts$/u,
   /^apps\/ui\/src\/components\/help\/help-types\.ts$/u,
+  /^scripts\/local-quality\.mjs$/u,
   /^scripts\/validate-help-content\.mjs$/u,
   /^scripts\/snapshot-help-content-baseline\.mjs$/u,
 ];
