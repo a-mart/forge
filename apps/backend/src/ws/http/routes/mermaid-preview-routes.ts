@@ -18,10 +18,11 @@ const STATIC_ASSET_VENDORED_ROOT = resolve(STATIC_ASSET_ROOT, "assets");
 function resolveMermaidPreviewStaticRoot(): string {
   const candidateRoots = [
     resolve(process.cwd(), "apps", "backend", "static", "mermaid-preview"),
+    resolve(process.cwd(), "static", "mermaid-preview"),
     process.env.FORGE_RESOURCES_DIR?.trim()
       ? resolve(process.env.FORGE_RESOURCES_DIR.trim(), "apps", "backend", "static", "mermaid-preview")
       : null,
-    resolve(dirname(fileURLToPath(import.meta.url)), "../../../static/mermaid-preview"),
+    resolve(dirname(fileURLToPath(import.meta.url)), "../../../../static/mermaid-preview"),
   ];
 
   for (const candidateRoot of candidateRoots) {
@@ -30,7 +31,7 @@ function resolveMermaidPreviewStaticRoot(): string {
     }
   }
 
-  return resolve(dirname(fileURLToPath(import.meta.url)), "../../../static/mermaid-preview");
+  return resolve(dirname(fileURLToPath(import.meta.url)), "../../../../static/mermaid-preview");
 }
 
 export function createMermaidPreviewRoutes(): HttpRoute[] {
