@@ -67,6 +67,7 @@ describe("Cursor SDK containment child process behavior", () => {
     "fatal-generic-network-error",
     "fatal-code16-unauth-no-provenance",
     "fatal-connect-unknown-provenance",
+    "fatal-connect-app-unavailable",
     "fatal-plain-text-refused-stream",
     "fatal-cursor-stack-unavailable",
     "fatal-cursor-stack-unauthenticated",

@@ -302,12 +302,23 @@ describe("Cursor SDK error containment classifier", () => {
 
   it("still allows bracket parsing when real Connect provenance exists", () => {
     const decision = classifyBackground(
-      createConnectError({ code: 14, message: "ConnectError: [unavailable] upstream unavailable", stackHint: "app.js" }),
+      createConnectError({ code: 14, message: "ConnectError: [unavailable] upstream unavailable" }),
       { attributionMode: "als" }
     );
     expect(decision.bucket).toBe("retryable_transport");
     expect(decision.contain).toBe(true);
     expect(decision.evidence.connectRpcProvenance).toBe(true);
+  });
+
+  it("keeps bare ConnectError name plus app stack fail-closed without real Connect provenance", () => {
+    const decision = classifyBackground(
+      createConnectError({ code: 14, message: "ConnectError: [unavailable] upstream unavailable", stackHint: "app.js" }),
+      { attributionMode: "als" }
+    );
+    expect(decision.bucket).toBe("non_cursor");
+    expect(decision.contain).toBe(false);
+    expect(decision.fatal).toBe(true);
+    expect(decision.evidence.connectRpcProvenance).toBe(false);
   });
 
   it("only retries exact Cursor 429, not generic 429 text", () => {

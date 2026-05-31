@@ -688,7 +688,7 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
     || chain.some((entry) => typeof entry.code === "string" && (/^ERR_HTTP2_/i.test(entry.code) || /^NGHTTP2_/i.test(entry.code)))
     || /node:internal\/http2|internal\/http2/i.test(stackAndStructuredText);
   const cursorSdkProvenance = cursorModuleHintMatched;
-  const connectRpcProvenance = connectModuleHintMatched || providerErrorNames.includes("ConnectError");
+  const connectRpcProvenance = connectModuleHintMatched;
   const http2Provenance = http2HintMatched;
   const providerProvenance = cursorSdkProvenance || connectRpcProvenance;
   const hasRetryableProviderSignal = chain.some((entry) => entry.isRetryable === true);
@@ -865,7 +865,7 @@ function collectHttp2ResetCodes(chain: NormalizedErrorEntry[], combinedText: str
 
 function pickConnectCode(chain: NormalizedErrorEntry[], combinedText: string, allowTextFallback: boolean): string | number | undefined {
   for (const entry of chain) {
-    if (entry.name === "ConnectError" || /connecterror/i.test(entry.message) || /@connectrpc|connectrpc/i.test(`${entry.message}\n${entry.stack ?? ""}`)) {
+    if (/@connectrpc|connectrpc/i.test(`${entry.message}\n${entry.stack ?? ""}`)) {
       const normalized = normalizeScalarCode(entry.code);
       if (normalized !== undefined) {
         return normalized;
@@ -952,7 +952,7 @@ function resolveFailureFamily(options: {
   connectModuleHintMatched: boolean;
   http2HintMatched: boolean;
 }): CursorSdkFailureFamily {
-  if (options.connectCodeName !== undefined || options.providerErrorNames.includes("ConnectError") || options.connectModuleHintMatched) {
+  if (options.connectCodeName !== undefined || options.connectModuleHintMatched) {
     return "connectrpc";
   }
   if (options.nodeCodes.includes("ERR_HTTP2_STREAM_ERROR") || options.h2ResetCodes.length > 0 || options.http2HintMatched) {

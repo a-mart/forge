@@ -348,6 +348,19 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "fatal-connect-app-unavailable": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createConnectError({ code: 14, message: "ConnectError: [unavailable] upstream unavailable", stackHint: "app.js" }));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
     case "fatal-plain-text-refused-stream": {
       const scope = createCursorSdkBackgroundScope({
         agentId: "worker-1",
