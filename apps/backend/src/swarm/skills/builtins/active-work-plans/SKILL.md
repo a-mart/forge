@@ -9,6 +9,8 @@ Use this skill when a visible Work Plan would make substantial manager-led work 
 
 Do not create a Work Plan as a ritual first step. Unless the user explicitly asks for one or the task is clearly substantial/recoverability-sensitive, investigate the request first and decide from evidence whether durable tracking is useful. Be especially conservative when the reported bug involves Work Plan UI itself; avoid adding noisy plan state that could obscure the user's actual repro.
 
+Creating or updating a Work Plan is not meaningful execution progress by itself. When the next step is clear, pair plan creation with immediate real work in the same turn: spawn or steer the worker, inspect evidence through the appropriate route, ask a required choice, or otherwise continue execution. Never let a plan card be the only visible action after telling the user you will investigate, patch, validate, or otherwise begin work.
+
 Quick, standard, and deep are sizing guides for how compact the plan should be, not required process stages. Use the smallest mode that preserves visibility and handoff.
 
 ## Trigger check
@@ -37,6 +39,7 @@ If you are unsure, prefer no plan for small work and a compact plan for substant
 ## Core rules
 
 - Keep the plan concise. Use short phases and item labels.
+- Treat the plan as coordination state only; it does not satisfy any investigation, implementation, validation, or handoff item until real evidence or worker output exists.
 - Track user-relevant outcomes, not every action.
 - Link relevant workers as evidence. In v1, `task.link` supports worker links only.
 - In provider-facing v1, treat item labels and item statuses as create-time structure plus worker links. Reflect later evidence through worker links and an honest final summary, status, and warnings.
@@ -80,7 +83,7 @@ Use the manager-only `task` tool when available. It records descriptive coordina
 - `link`: attach a relevant worker to the plan or item as evidence.
 - `finish_plan`: close the plan honestly as completed, completed with warnings, failed, stopped, or interrupted.
 
-Use these actions at meaningful boundaries only: plan creation, worker launch/linking, recovery with `get`, stop/interruption, and final synthesis.
+Use these actions at meaningful boundaries only: plan creation paired with immediate execution/delegation, worker launch/linking, recovery with `get`, stop/interruption, and final synthesis.
 
 Tool-call reliability rules:
 
@@ -166,7 +169,7 @@ If a worker fails, stalls, is stopped, or ends without a usable report, do not g
 
 ## User-facing status updates
 
-Use plan updates to keep the UI current. Do not narrate every plan update in chat, and do not send chat updates merely to say that routine plan state changed.
+Use plan updates to keep the UI current. Do not narrate every plan update in chat, and do not send chat updates merely to say that routine plan state changed. If the only thing you have done is create or update the plan, keep going rather than treating that as a status update.
 
 Send a concise user-facing update only when it is useful:
 
