@@ -3,9 +3,14 @@ import { devtools } from '@tanstack/devtools-vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
+import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import { nitro } from 'nitro/vite'
+
+const uiRootDir = fileURLToPath(new URL('.', import.meta.url))
+const uiSourceDir = resolve(uiRootDir, 'src')
+const protocolSourceEntry = resolve(uiRootDir, '../../packages/protocol/src/index.ts')
 
 function parseBooleanFlag(value: string | undefined): boolean {
   if (!value) {
@@ -54,7 +59,8 @@ const config = defineConfig(({ mode }) => {
     },
     resolve: {
       alias: {
-        '@': fileURLToPath(new URL('./src', import.meta.url)),
+        '@': uiSourceDir,
+        '@forge/protocol': protocolSourceEntry,
       },
     },
     plugins: [

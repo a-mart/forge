@@ -1,10 +1,16 @@
+import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vitest/config'
+
+const uiRootDir = fileURLToPath(new URL('.', import.meta.url))
+const uiSourceDir = resolve(uiRootDir, 'src')
+const protocolSourceEntry = resolve(uiRootDir, '../../packages/protocol/src/index.ts')
 
 export default defineConfig({
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@': uiSourceDir,
+      '@forge/protocol': protocolSourceEntry,
     },
   },
   test: {
