@@ -173,4 +173,6 @@ describe('getProjectAgentSuggestions', () => {
     expect(suggestions).toHaveLength(2)
     expect(suggestions.map((s) => s.handle)).toEqual(['docs', 'releases'])
   })
+
+  it.todo('includes external shared project agents from server-projected directory snapshots')
 })

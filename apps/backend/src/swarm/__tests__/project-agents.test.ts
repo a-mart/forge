@@ -282,6 +282,38 @@ describe('project-agents helpers', () => {
     ).rejects.toThrow(/not promoted to a project agent/)
   })
 
+  it('rejects cross-profile manager-to-project-agent delivery', async () => {
+    const sender = makeManagerDescriptor({
+      agentId: 'sender-manager',
+      profileId: 'target-profile',
+      sessionLabel: 'Target Manager',
+    })
+    const target = makeManagerDescriptor({
+      agentId: 'source-project-agent',
+      profileId: 'source-profile',
+      sessionLabel: 'Documentation',
+      projectAgent: { handle: 'documentation', whenToUse: 'Maintains docs' },
+    })
+
+    await expect(
+      deliverProjectAgentMessage(
+        {
+          now: () => '2026-01-02T03:04:05.000Z',
+          getOrCreateRuntimeForDescriptor: async () => {
+            throw new Error('should not be called')
+          },
+          rateLimitBuckets: new Map(),
+        },
+        {
+          sender,
+          target,
+          message: 'hello from another project',
+          delivery: 'auto',
+        },
+      ),
+    ).rejects.toThrow(/only allowed between manager sessions in the same profile/i)
+  })
+
   it('does not emit a transcript entry or mark activity when runtime creation fails', async () => {
     const sender = makeManagerDescriptor({
       agentId: 'manager',
