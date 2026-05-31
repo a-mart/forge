@@ -35,7 +35,10 @@ async function makeTempConfig(port = 8894): Promise<SwarmConfig> {
 }
 
 describe('task tool schema', () => {
-  it('accepts the five supported actions with itemsText and rejects unsupported provider-facing fields', () => {
+  it('keeps provider-facing parameters as a root object schema', () => {
+    expect((taskToolSchema as { type?: string }).type).toBe('object')
+    expect((taskToolSchema as { anyOf?: unknown }).anyOf).toBeUndefined()
+
     expect(Value.Check(taskToolSchema, { action: 'get' })).toBe(true)
     expect(Value.Check(taskToolSchema, {
       action: 'upsert_plan',
@@ -62,29 +65,12 @@ describe('task tool schema', () => {
       warnings: ['Needs follow-up'],
     })).toBe(true)
 
-    expect(Value.Check(taskToolSchema, { action: 'get', expectedStateRevision: 0 })).toBe(false)
-    expect(Value.Check(taskToolSchema, {
-      action: 'link',
-      planId: 'plan-1',
-      link: { type: 'worker', agentId: 'worker-1' },
-      finalSummary: 'not allowed',
-    })).toBe(false)
-    expect(Value.Check(taskToolSchema, {
-      action: 'finish_plan',
-      planId: 'plan-1',
-      status: 'done',
-      finalSummary: 'Done',
-    })).toBe(false)
+    expect(Value.Check(taskToolSchema, { action: 'unknown' })).toBe(false)
+    expect(Value.Check(taskToolSchema, { action: 'get', expectedStateRevision: -1 })).toBe(false)
     expect(Value.Check(taskToolSchema, {
       action: 'upsert_plan',
-      planId: 'plan-1',
-      status: 'done',
-    })).toBe(false)
-    expect(Value.Check(taskToolSchema, {
-      action: 'update_item_status',
-      planId: 'plan-1',
-      itemId: 'item-1',
-      status: 'completed',
+      title: 'Plan title',
+      status: 'not-a-status',
     })).toBe(false)
     expect(Value.Check(taskToolSchema, {
       action: 'upsert_plan',
@@ -109,6 +95,29 @@ describe('task tool schema', () => {
       finalSummary: 'Done',
       warnings: [],
     })).toBe(false)
+  })
+
+  it('normalization enforces action-specific fields beyond the provider-safe schema', () => {
+    expect(() => normalizeTaskToolInput({ action: 'get', expectedStateRevision: 0 })).toThrow(
+      'task.get does not accept expectedStateRevision',
+    )
+    expect(() => normalizeTaskToolInput({
+      action: 'link',
+      planId: 'plan-1',
+      link: { type: 'worker', agentId: 'worker-1' },
+      finalSummary: 'not allowed',
+    })).toThrow('task.link does not accept finalSummary')
+    expect(() => normalizeTaskToolInput({
+      action: 'finish_plan',
+      planId: 'plan-1',
+      status: 'done',
+      finalSummary: 'Done',
+    })).toThrow('For task.finish_plan, status must be one of:')
+    expect(() => normalizeTaskToolInput({
+      action: 'upsert_plan',
+      planId: 'plan-1',
+      status: 'done',
+    })).toThrow('For task.upsert_plan, status must be one of:')
   })
 
   it('documents create-time itemsText as the only provider-facing item-entry shape', () => {
