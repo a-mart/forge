@@ -64,12 +64,15 @@ import type {
 } from './profile-events.js'
 import type {
   ProjectAgentConfigEvent,
+  ProjectAgentExternalDirectoryEvent,
   ProjectAgentRecommendationsErrorEvent,
   ProjectAgentRecommendationsEvent,
   ProjectAgentReferenceDeletedEvent,
   ProjectAgentReferenceEvent,
   ProjectAgentReferencesEvent,
   ProjectAgentReferenceSavedEvent,
+  ProjectAgentSharingEvent,
+  ProjectAgentSharingUpdatedEvent,
   SessionProjectAgentUpdatedEvent,
 } from './project-agent-events.js'
 import type {
@@ -182,6 +185,9 @@ export type ServerEvent =
   | ProjectAgentReferenceEvent
   | ProjectAgentReferenceSavedEvent
   | ProjectAgentReferenceDeletedEvent
+  | ProjectAgentSharingEvent
+  | ProjectAgentSharingUpdatedEvent
+  | ProjectAgentExternalDirectoryEvent
   | ProfileRenamedEvent
   | ProfileArchivedEvent
   | ProfileRestoredEvent

@@ -367,6 +367,10 @@ export function getCortexAutoReviewSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "cortex-auto-review.json");
 }
 
+export function getProjectAgentSharingStorePath(dataDir: string): string {
+  return join(getSharedStateDir(dataDir), "project-agent-shares.json");
+}
+
 export function getSharedMobileDevicesPath(dataDir: string): string {
   return join(getSharedStateDir(dataDir), "mobile-devices.json");
 }

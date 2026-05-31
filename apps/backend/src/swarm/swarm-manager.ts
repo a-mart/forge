@@ -175,6 +175,7 @@ import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
+import { ProjectAgentSharingService } from "./project-agent-sharing-service.js";
 import {
   copySessionWorkPlansForFork,
   transitionSessionWorkPlansForLifecycle,
@@ -1182,6 +1183,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly archiveLastUsedHydrator: ArchiveLastUsedHydrator;
   private readonly archiveService: ArchiveService;
   private readonly projectAgentService: SwarmProjectAgentService;
+  private readonly projectAgentSharingService: ProjectAgentSharingService;
   readonly promptRegistry: PromptRegistry;
 
   private integrationContextProvider: ((profileId: string) => string) | undefined;
@@ -1773,6 +1775,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       notifyProjectAgentsChanged: (profileId) => this.notifyProjectAgentsChanged(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
     });
+    this.projectAgentSharingService = new ProjectAgentSharingService({
+      dataDir: this.config.paths.dataDir,
+      now: this.now,
+      getProfiles: () => this.listProfiles(),
+      getDescriptor: (agentId) => this.descriptors.get(agentId),
+      getDescriptors: () => this.descriptors.values(),
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
     this.setMaxListeners(SWARM_MANAGER_MAX_EVENT_LISTENERS);
   }
 
@@ -1842,6 +1852,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       descriptors: this.descriptors,
       profiles: this.profiles
     }).reconcileAllProfiles();
+
+    await this.projectAgentSharingService.reconcile();
 
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
@@ -3717,6 +3729,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }> {
     this.getRequiredBuilderSessionDescriptor(agentId, "inspect Builder project-agent settings");
     return this.projectAgentService.getProjectAgentConfig(agentId);
+  }
+
+  async getProjectAgentSharing(agentId: string) {
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "manage project-agent sharing");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
+    if (!descriptor.projectAgent) {
+      throw new Error("Session is not a project agent");
+    }
+    return this.projectAgentSharingService.getSharingSnapshot(agentId);
+  }
+
+  async setProjectAgentSharing(agentId: string, targetProfileIds: readonly string[]) {
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "manage project-agent sharing");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
+    if (!descriptor.projectAgent) {
+      throw new Error("Session is not a project agent");
+    }
+    return this.projectAgentSharingService.replaceSharingTargets(agentId, targetProfileIds);
+  }
+
+  async getProjectAgentExternalDirectory(profileId: string) {
+    const profile = this.profiles.get(profileId);
+    if (profile && isSystemProfile(profile)) {
+      throw new Error("Cannot load external project agents for system-managed profiles");
+    }
+    return this.projectAgentSharingService.getExternalDirectoryEntries(profileId);
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {

@@ -83,6 +83,37 @@ export function handleProjectAgentEvent(
       }
       return true
 
+    case 'project_agent_sharing':
+      if (event.requestId) {
+        context.requestTracker.resolve('get_project_agent_sharing', event.requestId, {
+          agentId: event.agentId,
+          grants: event.grants,
+          eligibleTargets: event.eligibleTargets,
+        })
+      }
+      return true
+
+    case 'project_agent_sharing_updated':
+      if (event.requestId) {
+        context.requestTracker.resolve('set_project_agent_sharing', event.requestId, {
+          agentId: event.agentId,
+          grants: event.grants,
+          eligibleTargets: event.eligibleTargets,
+          addedTargetProfileIds: event.addedTargetProfileIds,
+          removedTargetProfileIds: event.removedTargetProfileIds,
+        })
+      }
+      return true
+
+    case 'project_agent_external_directory':
+      if (event.requestId) {
+        context.requestTracker.resolve('get_project_agent_external_directory', event.requestId, {
+          profileId: event.profileId,
+          entries: event.entries,
+        })
+      }
+      return true
+
     default:
       return false
   }

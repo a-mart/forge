@@ -140,6 +140,9 @@ describe('ManagerWsClient', () => {
       'set_project_agent_reference',
       'delete_project_agent_reference',
       'request_project_agent_recommendations',
+      'get_project_agent_sharing',
+      'set_project_agent_sharing',
+      'get_project_agent_external_directory',
     ])
     expect(contractTypeSet.size).toBe(contractTypes.length)
     expect(WS_REQUEST_TYPES.every((type) => contractTypeSet.has(type))).toBe(true)

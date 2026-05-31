@@ -1,5 +1,14 @@
 import type { WsRequestTracker } from '../ws-request-tracker'
-import type { AgentDescriptor, PersistedProjectAgentConfig, ProjectAgentConfigSourceSnapshot, ProjectAgentInfo, SessionMemoryMergeResult } from '@forge/protocol'
+import type {
+  AgentDescriptor,
+  PersistedProjectAgentConfig,
+  ProjectAgentConfigSourceSnapshot,
+  ProjectAgentExternalDirectoryEntry,
+  ProjectAgentInfo,
+  ProjectAgentShareEligibleTarget,
+  ProjectAgentShareGrantInfo,
+  SessionMemoryMergeResult,
+} from '@forge/protocol'
 import type { ManagerWsState } from '../ws-state'
 
 export interface DirectoriesListedResult {
@@ -51,6 +60,22 @@ export type ProjectAgentRecommendationsResult = {
   systemPrompt: string
 }
 
+export type ProjectAgentSharingResult = {
+  agentId: string
+  grants: ProjectAgentShareGrantInfo[]
+  eligibleTargets: ProjectAgentShareEligibleTarget[]
+}
+
+export type ProjectAgentSharingUpdatedResult = ProjectAgentSharingResult & {
+  addedTargetProfileIds: string[]
+  removedTargetProfileIds: string[]
+}
+
+export type ProjectAgentExternalDirectoryResult = {
+  profileId: string
+  entries: ProjectAgentExternalDirectoryEntry[]
+}
+
 export type WsRequestResultMap = {
   create_manager: AgentDescriptor
   delete_manager: { managerId: string }
@@ -81,6 +106,9 @@ export type WsRequestResultMap = {
   set_project_agent_reference: ProjectAgentReferenceSavedResult
   delete_project_agent_reference: ProjectAgentReferenceDeletedResult
   request_project_agent_recommendations: ProjectAgentRecommendationsResult
+  get_project_agent_sharing: ProjectAgentSharingResult
+  set_project_agent_sharing: ProjectAgentSharingUpdatedResult
+  get_project_agent_external_directory: ProjectAgentExternalDirectoryResult
   get_session_workers: SessionWorkersResult
   list_directories: DirectoriesListedResult
   validate_directory: DirectoryValidationResult

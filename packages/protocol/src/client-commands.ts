@@ -126,6 +126,21 @@ export type ClientCommand =
       requestId?: string
     }
   | {
+      type: 'get_project_agent_sharing'
+      agentId: string
+      requestId?: string
+    }
+  | {
+      type: 'set_project_agent_sharing'
+      agentId: string
+      targetProfileIds: string[]
+      requestId?: string
+    }
+  | {
+      type: 'get_project_agent_external_directory'
+      requestId?: string
+    }
+  | {
       type: 'fork_session'
       sourceAgentId: string
       label?: string

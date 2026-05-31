@@ -5,6 +5,16 @@ import type {
   ProjectAgentSourceStatus,
 } from './shared-types.js'
 
+export type {
+  ProjectAgentExternalDirectoryEntry,
+  ProjectAgentExternalDirectoryEvent,
+  ProjectAgentShareEligibleTarget,
+  ProjectAgentShareGrantInfo,
+  ProjectAgentSharingEvent,
+  ProjectAgentSharingSnapshot,
+  ProjectAgentSharingUpdatedEvent,
+} from './project-agent-sharing.js'
+
 export interface SessionProjectAgentUpdatedEvent {
   type: 'session_project_agent_updated'
   agentId: string

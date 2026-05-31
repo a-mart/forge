@@ -220,5 +220,64 @@ export function parseProjectAgentCommand(maybe: ClientCommandCandidate): ParsedC
     });
   }
 
+  if (maybe.type === "get_project_agent_sharing") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return fail("get_project_agent_sharing.agentId must be a non-empty string");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("get_project_agent_sharing.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "get_project_agent_sharing",
+      agentId: agentId.trim(),
+      requestId
+    });
+  }
+
+  if (maybe.type === "set_project_agent_sharing") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const targetProfileIds = (maybe as { targetProfileIds?: unknown }).targetProfileIds;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return fail("set_project_agent_sharing.agentId must be a non-empty string");
+    }
+    if (!Array.isArray(targetProfileIds)) {
+      return fail("set_project_agent_sharing.targetProfileIds must be an array");
+    }
+    for (const targetProfileId of targetProfileIds) {
+      if (typeof targetProfileId !== "string" || targetProfileId.trim().length === 0) {
+        return fail("set_project_agent_sharing.targetProfileIds must contain non-empty strings");
+      }
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("set_project_agent_sharing.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "set_project_agent_sharing",
+      agentId: agentId.trim(),
+      targetProfileIds: targetProfileIds.map((targetProfileId) => targetProfileId.trim()),
+      requestId
+    });
+  }
+
+  if (maybe.type === "get_project_agent_external_directory") {
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("get_project_agent_external_directory.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "get_project_agent_external_directory",
+      requestId
+    });
+  }
+
   return undefined;
 }

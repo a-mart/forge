@@ -47,6 +47,9 @@ const GET_PROJECT_AGENT_REFERENCE_CONTRACT = getWsRequestContract('get_project_a
 const SET_PROJECT_AGENT_REFERENCE_CONTRACT = getWsRequestContract('set_project_agent_reference')
 const DELETE_PROJECT_AGENT_REFERENCE_CONTRACT = getWsRequestContract('delete_project_agent_reference')
 const REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT = getWsRequestContract('request_project_agent_recommendations')
+const GET_PROJECT_AGENT_SHARING_CONTRACT = getWsRequestContract('get_project_agent_sharing')
+const SET_PROJECT_AGENT_SHARING_CONTRACT = getWsRequestContract('set_project_agent_sharing')
+const GET_PROJECT_AGENT_EXTERNAL_DIRECTORY_CONTRACT = getWsRequestContract('get_project_agent_external_directory')
 const STOP_SESSION_CONTRACT = getWsRequestContract('stop_session')
 const RESUME_SESSION_CONTRACT = getWsRequestContract('resume_session')
 const DELETE_SESSION_CONTRACT = getWsRequestContract('delete_session')
@@ -72,6 +75,9 @@ const LEGACY_POSITION_CONTRACT_TYPES = new Set<string>([
   SET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
   DELETE_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
   REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT.commandType,
+  GET_PROJECT_AGENT_SHARING_CONTRACT.commandType,
+  SET_PROJECT_AGENT_SHARING_CONTRACT.commandType,
+  GET_PROJECT_AGENT_EXTERNAL_DIRECTORY_CONTRACT.commandType,
   STOP_SESSION_CONTRACT.commandType,
   RESUME_SESSION_CONTRACT.commandType,
   DELETE_SESSION_CONTRACT.commandType,
@@ -163,6 +169,18 @@ const REQUEST_PROJECT_AGENT_RECOMMENDATIONS_ERROR_HINTS = REQUEST_PROJECT_AGENT_
   requestType: REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT.commandType,
   codeFragment,
 }))
+const GET_PROJECT_AGENT_SHARING_ERROR_HINTS = GET_PROJECT_AGENT_SHARING_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: GET_PROJECT_AGENT_SHARING_CONTRACT.commandType,
+  codeFragment,
+}))
+const SET_PROJECT_AGENT_SHARING_ERROR_HINTS = SET_PROJECT_AGENT_SHARING_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: SET_PROJECT_AGENT_SHARING_CONTRACT.commandType,
+  codeFragment,
+}))
+const GET_PROJECT_AGENT_EXTERNAL_DIRECTORY_ERROR_HINTS = GET_PROJECT_AGENT_EXTERNAL_DIRECTORY_CONTRACT.errorCodeFragments.map((codeFragment) => ({
+  requestType: GET_PROJECT_AGENT_EXTERNAL_DIRECTORY_CONTRACT.commandType,
+  codeFragment,
+}))
 const STOP_SESSION_ERROR_HINTS = STOP_SESSION_CONTRACT.errorCodeFragments.map((codeFragment) => ({
   requestType: STOP_SESSION_CONTRACT.commandType,
   codeFragment,
@@ -201,6 +219,9 @@ export const WS_REQUEST_TYPES: WsRequestType[] = uniqueRequestTypes([
   SET_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
   DELETE_PROJECT_AGENT_REFERENCE_CONTRACT.commandType,
   REQUEST_PROJECT_AGENT_RECOMMENDATIONS_CONTRACT.commandType,
+  GET_PROJECT_AGENT_SHARING_CONTRACT.commandType,
+  SET_PROJECT_AGENT_SHARING_CONTRACT.commandType,
+  GET_PROJECT_AGENT_EXTERNAL_DIRECTORY_CONTRACT.commandType,
   ...NON_LEGACY_POSITION_CONTRACTS.map((contract) => contract.commandType),
 ])
 
@@ -229,6 +250,9 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = uniqueErrorHints([
   ...DELETE_PROJECT_AGENT_REFERENCE_ERROR_HINTS,
   ...GET_PROJECT_AGENT_REFERENCE_ERROR_HINTS,
   ...REQUEST_PROJECT_AGENT_RECOMMENDATIONS_ERROR_HINTS,
+  ...GET_PROJECT_AGENT_SHARING_ERROR_HINTS,
+  ...SET_PROJECT_AGENT_SHARING_ERROR_HINTS,
+  ...GET_PROJECT_AGENT_EXTERNAL_DIRECTORY_ERROR_HINTS,
   ...NON_LEGACY_POSITION_CONTRACTS.flatMap((contract) =>
     contract.errorCodeFragments.map((codeFragment) => ({ requestType: contract.commandType, codeFragment })),
   ),
