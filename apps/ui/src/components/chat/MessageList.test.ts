@@ -4,7 +4,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ConversationEntry } from '@forge/protocol'
+import type { ConversationEntry, SessionTaskStateSnapshotEvent } from '@forge/protocol'
 import { MessageList } from './MessageList'
 
 let root: Root
@@ -54,7 +54,20 @@ function makeWorkPlanCreated(): Extract<ConversationEntry, { type: 'work_plan_cr
       createdAt: now,
       updatedAt: now,
       revision: 1,
-      items: [{ itemId: 'item-1', title: 'Timeline item', status: 'todo', workerLinks: [], workerLinkCount: 0, workerLinksTruncated: false }],
+      items: [{
+        itemId: 'item-1',
+        title: 'Timeline item',
+        status: 'todo',
+        workerLinks: [{
+          type: 'worker',
+          linkId: 'link-1',
+          agentId: 'worker-1',
+          label: 'Frontend worker',
+          linkedAt: now,
+        }],
+        workerLinkCount: 1,
+        workerLinksTruncated: false,
+      }],
       itemCount: 1,
       itemsTruncated: false,
       warnings: [],
@@ -64,7 +77,7 @@ function makeWorkPlanCreated(): Extract<ConversationEntry, { type: 'work_plan_cr
   }
 }
 
-function render(messages: ConversationEntry[]) {
+function render(messages: ConversationEntry[], extraProps: Record<string, unknown> = {}) {
   flushSync(() => {
     root.render(createElement(MessageList, {
       messages,
@@ -73,8 +86,42 @@ function render(messages: ConversationEntry[]) {
       pendingChoiceIds: new Set<string>(),
       agents: [],
       statuses: {},
+      ...extraProps,
     }))
   })
+}
+
+function makeActiveWorkSnapshot(): SessionTaskStateSnapshotEvent {
+  return {
+    type: 'session_task_state_snapshot',
+    sessionAgentId: 'session-1',
+    profileId: 'profile-1',
+    revision: 1,
+    activeWorkPlan: {
+      planId: 'plan-1',
+      title: 'Live plan',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      revision: 1,
+      items: [{
+        itemId: 'item-1',
+        title: 'Live item',
+        status: 'active',
+        workerLinks: [{ type: 'worker', linkId: 'link-1', agentId: 'worker-1', label: 'Frontend worker', linkedAt: now }],
+        workerLinkCount: 1,
+        workerLinksTruncated: false,
+      }],
+      itemCount: 1,
+      itemsTruncated: false,
+      warnings: [],
+      warningCount: 0,
+      warningsTruncated: false,
+    },
+    recentWorkPlans: [],
+    recentWorkPlanCount: 0,
+    recentWorkPlansTruncated: false,
+  }
 }
 
 describe('MessageList work_plan_created rows', () => {
@@ -94,5 +141,56 @@ describe('MessageList work_plan_created rows', () => {
     expect(rowIndex).toBeGreaterThan(beforeIndex)
     expect(afterIndex).toBeGreaterThan(rowIndex)
     expect(container.querySelector('[data-message-id="work-plan-created-1"]')).toBeTruthy()
+  })
+
+  it('forwards onNavigateToWorker to timeline receipts', () => {
+    const onNavigateToWorker = vi.fn()
+    render([makeWorkPlanCreated()], {
+      onNavigateToWorker,
+      agents: [
+        { agentId: 'worker-1', displayName: 'Frontend worker', role: 'worker', managerId: 'session-1', status: 'idle' } as never,
+      ],
+      statuses: { 'worker-1': { status: 'idle' } },
+    })
+
+    const receiptRow = container.querySelector('[data-message-id="work-plan-created-1"]')
+    expect(receiptRow).toBeTruthy()
+
+    const receiptToggle = receiptRow!.querySelector<HTMLButtonElement>('button[aria-label^="Expand Work Plan created"]')
+    flushSync(() => receiptToggle?.click())
+
+    const receiptItemButton = Array.from(receiptRow!.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Timeline item'))
+    expect(receiptItemButton).toBeTruthy()
+    flushSync(() => receiptItemButton?.click())
+
+    const receiptWorkerButton = Array.from(receiptRow!.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.getAttribute('aria-label')?.includes('Frontend worker'))
+    expect(receiptWorkerButton).toBeTruthy()
+    flushSync(() => receiptWorkerButton?.click())
+    expect(onNavigateToWorker).toHaveBeenCalledWith('worker-1')
+  })
+
+  it('forwards onNavigateToWorker to the Active Work card', () => {
+    const onNavigateToWorker = vi.fn()
+    render([], {
+      onNavigateToWorker,
+      agents: [
+        { agentId: 'worker-1', displayName: 'Frontend worker', role: 'worker', managerId: 'session-1', status: 'idle' } as never,
+      ],
+      statuses: { 'worker-1': { status: 'idle' } },
+      activeWorkSnapshot: makeActiveWorkSnapshot(),
+      activeWorkExpanded: true,
+    })
+
+    const activeWorkSection = container.querySelector('[aria-label="Active Work plan"]')
+    expect(activeWorkSection).toBeTruthy()
+
+    const liveItemButton = Array.from(activeWorkSection!.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Live item'))
+    expect(liveItemButton).toBeTruthy()
+    flushSync(() => liveItemButton?.click())
+
+    const liveWorkerButton = Array.from(activeWorkSection!.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.getAttribute('aria-label')?.includes('Frontend worker'))
+    expect(liveWorkerButton).toBeTruthy()
+    flushSync(() => liveWorkerButton?.click())
+    expect(onNavigateToWorker).toHaveBeenCalledWith('worker-1')
   })
 })

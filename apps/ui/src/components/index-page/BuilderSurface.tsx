@@ -1476,6 +1476,7 @@ export function BuilderSurface({
                   onActiveWorkExpandedChange: setActiveWorkExpanded,
                   activeWorkFocusNonce,
                   statuses: state.statuses,
+                  onNavigateToWorker: isActiveManager ? handleSelectAgent : undefined,
                   streamingStartedAt:
                     activeAgentStatus === 'streaming'
                       ? state.statuses[activeAgentId ?? '']?.streamingStartedAt
