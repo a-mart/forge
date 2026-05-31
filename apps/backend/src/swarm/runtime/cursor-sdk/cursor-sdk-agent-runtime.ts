@@ -826,6 +826,24 @@ function extractCursorSdkErrorDetails(
   if (decision.evidence.connectCodeName) {
     details.connectCodeName = decision.evidence.connectCodeName;
   }
+  if (decision.evidence.classificationDetail) {
+    details.classificationDetail = decision.evidence.classificationDetail;
+  }
+  if (decision.evidence.messageSnippet) {
+    details.messageSnippet = decision.evidence.messageSnippet;
+  }
+  if (decision.evidence.cursorSdkProvenance !== undefined) {
+    details.cursorSdkProvenance = decision.evidence.cursorSdkProvenance;
+  }
+  if (decision.evidence.connectRpcProvenance !== undefined) {
+    details.connectRpcProvenance = decision.evidence.connectRpcProvenance;
+  }
+  if (decision.evidence.http2Provenance !== undefined) {
+    details.http2Provenance = decision.evidence.http2Provenance;
+  }
+  if (decision.evidence.providerProvenance !== undefined) {
+    details.providerProvenance = decision.evidence.providerProvenance;
+  }
   if (decision.evidence.nodeCodes && decision.evidence.nodeCodes.length > 0) {
     details.nodeCodes = decision.evidence.nodeCodes;
   }

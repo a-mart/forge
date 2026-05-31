@@ -89,7 +89,7 @@ export type CursorSdkFailureBucket =
 export interface CursorSdkFailureEvidence {
   errorName?: string;
   errorCode?: string | number;
-  message?: string;
+  messageSnippet?: string;
   connectCode?: string | number;
   connectCodeName?: string;
   providerErrorNames?: string[];
@@ -100,6 +100,11 @@ export interface CursorSdkFailureEvidence {
   cursorModuleHintMatched?: boolean;
   connectModuleHintMatched?: boolean;
   http2HintMatched?: boolean;
+  cursorSdkProvenance?: boolean;
+  connectRpcProvenance?: boolean;
+  http2Provenance?: boolean;
+  providerProvenance?: boolean;
+  classificationDetail?: string;
   attributionMode?: AttributionMode;
   activeScopeCount?: number;
   retainedClosedScopeCount?: number;
@@ -269,7 +274,7 @@ export function classifyCursorSdkFailure(
   const evidence: CursorSdkFailureEvidence = {
     errorName: facts.errorName,
     errorCode: facts.errorCode,
-    message: facts.message,
+    messageSnippet: facts.messageSnippet,
     connectCode: facts.connectCode,
     connectCodeName: facts.connectCodeName,
     providerErrorNames: facts.providerErrorNames,
@@ -280,6 +285,11 @@ export function classifyCursorSdkFailure(
     cursorModuleHintMatched: facts.cursorModuleHintMatched,
     connectModuleHintMatched: facts.connectModuleHintMatched,
     http2HintMatched: facts.http2HintMatched,
+    cursorSdkProvenance: facts.cursorSdkProvenance,
+    connectRpcProvenance: facts.connectRpcProvenance,
+    http2Provenance: facts.http2Provenance,
+    providerProvenance: facts.providerProvenance,
+    classificationDetail: facts.classificationDetail,
     attributionMode: context.attributionMode,
     activeScopeCount: context.activeScopeCount,
     retainedClosedScopeCount: context.retainedClosedScopeCount,
@@ -573,7 +583,7 @@ function classifyCursorSdkFailureBase(
       contain: true,
       retryPreOutput: false,
       fatal: false,
-      reason: "Cursor background failure matched an exact transient transport/throttle signature",
+      reason: "Cursor background failure matched an exact transient transport/throttle signature with strong Cursor/Connect provenance",
       evidence
     };
   }
@@ -585,7 +595,7 @@ function classifyCursorSdkFailureBase(
       contain: true,
       retryPreOutput: false,
       fatal: false,
-      reason: "Cursor background failure matched an auth/permission signature",
+      reason: "Cursor background failure matched an auth/permission signature with strong Cursor/Connect provenance",
       evidence
     };
   }
@@ -597,7 +607,7 @@ function classifyCursorSdkFailureBase(
       contain: true,
       retryPreOutput: false,
       fatal: false,
-      reason: "Cursor background failure matched a cancel/abort/stream-destroyed signature",
+      reason: "Cursor background failure matched a cancel/abort/stream-destroyed signature with strong Cursor/Connect provenance",
       evidence
     };
   }
@@ -609,19 +619,19 @@ function classifyCursorSdkFailureBase(
       contain: true,
       retryPreOutput: false,
       fatal: false,
-      reason: "Cursor background failure matched an AgentBusy or user-state conflict signature",
+      reason: "Cursor background failure matched an AgentBusy or user-state conflict signature with strong Cursor/Connect provenance",
       evidence
     };
   }
 
-  if (facts.explicitInternalStream) {
+  if (facts.exactInternalStream) {
     return {
       family: facts.family,
       bucket: "internal_stream",
       contain: true,
       retryPreOutput: false,
       fatal: false,
-      reason: "Cursor background failure had concrete ConnectRPC/HTTP2 evidence but did not match a narrower retryable class",
+      reason: "Cursor background failure matched an exact documented internal-stream signature",
       evidence
     };
   }
@@ -632,7 +642,7 @@ function classifyCursorSdkFailureBase(
     contain: false,
     retryPreOutput: false,
     fatal: true,
-    reason: "Process-level failure did not match the strict Cursor/connectrpc/http2 taxonomy",
+    reason: "Process-level failure did not match the strict Cursor/connectrpc/http2 taxonomy with required provenance",
     evidence
   };
 }
@@ -674,74 +684,139 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
   const httpStatusCodes = uniqueNumbers(chain.flatMap((entry) => typeof entry.statusCode === "number" ? [entry.statusCode] : []));
   const cursorModuleHintMatched = /@cursor\/sdk|cursor sdk/i.test(combinedText);
   const connectModuleHintMatched = /@connectrpc|connectrpc/i.test(combinedText);
-  const hasStructuredHttp2Evidence = chain.some((entry) => entry.rstCode !== undefined)
+  const http2HintMatched = chain.some((entry) => entry.rstCode !== undefined)
     || chain.some((entry) => typeof entry.code === "string" && (/^ERR_HTTP2_/i.test(entry.code) || /^NGHTTP2_/i.test(entry.code)))
     || /node:internal\/http2|internal\/http2/i.test(stackAndStructuredText);
-  const hasStructuredConnectEvidence = chain.some((entry) => entry.name === "ConnectError")
-    || connectModuleHintMatched
-    || chain.some((entry) => isStructuredConnectCode(entry.code));
-  const hasStructuredCursorEvidence = providerErrorNames.some((name) => CURSOR_PROVIDER_ERROR_NAMES.has(name)) || cursorModuleHintMatched;
+  const cursorSdkProvenance = cursorModuleHintMatched;
+  const connectRpcProvenance = connectModuleHintMatched;
+  const http2Provenance = http2HintMatched;
+  const providerProvenance = cursorSdkProvenance || connectRpcProvenance;
   const hasRetryableProviderSignal = chain.some((entry) => entry.isRetryable === true);
-  const hasTransportProvenance = cursorModuleHintMatched || connectModuleHintMatched || hasStructuredHttp2Evidence || hasStructuredConnectEvidence;
-  const http2HintMatched = hasStructuredHttp2Evidence;
-  const moduleHintMatched = cursorModuleHintMatched || connectModuleHintMatched || http2HintMatched;
-  const allowTextFallback = hasStructuredConnectEvidence || hasStructuredCursorEvidence || hasStructuredHttp2Evidence;
+  const allowTextFallback = providerProvenance;
   const h2ResetCodes = collectHttp2ResetCodes(chain, combinedText, allowTextFallback);
   const connectCode = pickConnectCode(chain, combinedText, allowTextFallback);
   const connectCodeName = normalizeConnectCodeName(connectCode);
-  const family = resolveFailureFamily({ providerErrorNames, connectCodeName, nodeCodes, h2ResetCodes, cursorModuleHintMatched, connectModuleHintMatched, http2HintMatched });
-  const exactCursor429 = providerErrorNames.includes("RateLimitError")
+  const family = resolveFailureFamily({
+    providerErrorNames,
+    connectCodeName,
+    nodeCodes,
+    h2ResetCodes,
+    cursorModuleHintMatched,
+    connectModuleHintMatched,
+    http2HintMatched
+  });
+  const exactCursor429 = providerProvenance
+    && providerErrorNames.includes("RateLimitError")
     && (httpStatusCodes.includes(429) || chain.some((entry) => entry.code === 429 || entry.code === "429"))
-    && hasRetryableProviderSignal
-    && hasTransportProvenance;
-  const retryableTransport = connectCodeName !== undefined && TRANSIENT_CONNECT_CODE_NAMES.has(connectCodeName)
-    || (providerErrorNames.includes("NetworkError") && (hasTransportProvenance || hasRetryableProviderSignal))
-    || h2ResetCodes.some((code) => RETRYABLE_HTTP2_RESET_CODES.has(code))
+    && hasRetryableProviderSignal;
+  const retryableTransport = (connectCodeName !== undefined && TRANSIENT_CONNECT_CODE_NAMES.has(connectCodeName) && providerProvenance)
+    || (providerErrorNames.includes("NetworkError") && providerProvenance)
+    || (providerProvenance && http2Provenance && h2ResetCodes.some((code) => RETRYABLE_HTTP2_RESET_CODES.has(code)))
     || exactCursor429;
-  const authOrPermission = connectCodeName !== undefined && AUTH_CONNECT_CODE_NAMES.has(connectCodeName)
-    || providerErrorNames.includes("AuthenticationError");
-  const cancelAbortOrDestroyed = connectCodeName !== undefined && CANCEL_CONNECT_CODE_NAMES.has(connectCodeName)
-    || ((providerErrorNames.includes("AbortError")
+  const authOrPermission = (connectCodeName !== undefined && AUTH_CONNECT_CODE_NAMES.has(connectCodeName) && providerProvenance)
+    || (providerErrorNames.includes("AuthenticationError") && providerProvenance);
+  const cancelAbortOrDestroyed = (connectCodeName !== undefined && CANCEL_CONNECT_CODE_NAMES.has(connectCodeName) && providerProvenance)
+    || (((providerErrorNames.includes("AbortError")
       || nodeCodes.includes("ABORT_ERR")
       || nodeCodes.includes("ERR_STREAM_DESTROYED")
-      || /stream destroyed|stream is destroyed|abort(ed)?|cancel(l)?ed/i.test(combinedText))
-      && hasTransportProvenance);
-  const agentBusyOrUserStateConflict = providerErrorNames.includes("AgentBusyError")
+      || /stream destroyed|stream is destroyed|abort(ed)?|cancel(l)?ed/i.test(combinedText)))
+      && providerProvenance);
+  const agentBusyOrUserStateConflict = providerProvenance && (
+    providerErrorNames.includes("AgentBusyError")
     || providerErrorNames.includes("IntegrationNotConnectedError")
-    || (moduleHintMatched && /agent busy|already.*active run|integration not connected/i.test(combinedText));
-  const protocolOrConfig = providerErrorNames.includes("ConfigurationError")
-    || providerErrorNames.some((name) => PROGRAMMER_ERROR_NAMES.has(name))
-    || nodeCodes.some((code) => PROTOCOL_OR_CONFIG_NODE_CODES.has(code))
-    || (moduleHintMatched && /unexpected token|failed to parse|invalid response|schema|shape mismatch|serialization/i.test(combinedText));
-  const explicitInternalStream = (family === "connectrpc" || family === "http2")
-    && !retryableTransport
-    && !authOrPermission
-    && !cancelAbortOrDestroyed
-    && !agentBusyOrUserStateConflict
-    && !protocolOrConfig;
+    || /agent busy|already.*active run|integration not connected/i.test(combinedText)
+  );
+  const protocolOrConfig = (providerProvenance || http2Provenance)
+    && (
+      (providerErrorNames.includes("ConfigurationError") && providerProvenance)
+      || providerErrorNames.some((name) => PROGRAMMER_ERROR_NAMES.has(name))
+      || nodeCodes.some((code) => PROTOCOL_OR_CONFIG_NODE_CODES.has(code))
+      || /unexpected token|failed to parse|invalid response|schema|shape mismatch|serialization/i.test(combinedText)
+    );
+  const exactInternalStream = false;
+  const messageSnippet = sanitizeMessageSnippet(primary.message);
+  const classificationDetail = resolveClassificationDetail({
+    family,
+    connectCodeName,
+    providerErrorNames,
+    nodeCodes,
+    h2ResetCodes,
+    httpStatusCodes,
+    exactCursor429
+  });
 
   return {
     family,
     errorName: primary.name,
     errorCode: normalizeScalarCode(primary.code),
-    message: primary.message,
+    messageSnippet,
     connectCode,
     connectCodeName,
     providerErrorNames,
     nodeCodes,
     h2ResetCodes,
     httpStatusCodes,
-    moduleHintMatched,
+    moduleHintMatched: cursorModuleHintMatched || connectModuleHintMatched || http2HintMatched,
     cursorModuleHintMatched,
     connectModuleHintMatched,
     http2HintMatched,
+    cursorSdkProvenance,
+    connectRpcProvenance,
+    http2Provenance,
+    providerProvenance,
+    classificationDetail,
     retryableTransport,
     authOrPermission,
     cancelAbortOrDestroyed,
     agentBusyOrUserStateConflict,
     protocolOrConfig,
-    explicitInternalStream
+    exactInternalStream
   };
+}
+
+function resolveClassificationDetail(options: {
+  family: CursorSdkFailureFamily;
+  connectCodeName?: string;
+  providerErrorNames: string[];
+  nodeCodes: string[];
+  h2ResetCodes: string[];
+  httpStatusCodes: number[];
+  exactCursor429: boolean;
+}): string {
+  if (options.connectCodeName) {
+    return `connect:${options.connectCodeName}`;
+  }
+  if (options.exactCursor429) {
+    return "provider:RateLimitError:429";
+  }
+  const providerErrorName = options.providerErrorNames[0];
+  if (providerErrorName) {
+    return `provider:${providerErrorName}`;
+  }
+  const h2ResetCode = options.h2ResetCodes[0];
+  if (h2ResetCode) {
+    return `http2:${h2ResetCode}`;
+  }
+  const nodeCode = options.nodeCodes[0];
+  if (nodeCode) {
+    return `node:${nodeCode}`;
+  }
+  const httpStatusCode = options.httpStatusCodes[0];
+  if (httpStatusCode !== undefined) {
+    return `http_status:${httpStatusCode}`;
+  }
+  return `family:${options.family}`;
+}
+
+function sanitizeMessageSnippet(message: string | undefined): string | undefined {
+  if (typeof message !== "string") {
+    return undefined;
+  }
+  const normalized = message.replace(/\s+/g, " ").trim();
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return normalized.slice(0, 160);
 }
 
 function collectErrorChain(error: unknown): NormalizedErrorEntry[] {
@@ -910,16 +985,21 @@ function logFatalPathIfCursorLooking(decision: CursorSdkFailureDecision): void {
     reason: decision.evidence.attributionFailureReason ?? decision.bucket,
     family: decision.family,
     bucket: decision.bucket,
+    classificationDetail: decision.evidence.classificationDetail,
     activeScopeCount: decision.evidence.activeScopeCount,
     retainedClosedScopeCount: decision.evidence.retainedClosedScopeCount,
     errorName: decision.evidence.errorName,
     errorCode: decision.evidence.errorCode,
-    errorMessage: decision.evidence.message,
+    messageSnippet: decision.evidence.messageSnippet,
     connectCode: decision.evidence.connectCode,
     connectCodeName: decision.evidence.connectCodeName,
     nodeCodes: decision.evidence.nodeCodes,
     h2ResetCodes: decision.evidence.h2ResetCodes,
-    providerErrorNames: decision.evidence.providerErrorNames
+    providerErrorNames: decision.evidence.providerErrorNames,
+    cursorSdkProvenance: decision.evidence.cursorSdkProvenance,
+    connectRpcProvenance: decision.evidence.connectRpcProvenance,
+    http2Provenance: decision.evidence.http2Provenance,
+    providerProvenance: decision.evidence.providerProvenance
   });
 }
 
@@ -935,6 +1015,7 @@ function buildContainedDebugDetails(decision: CursorSdkFailureDecision): Record<
     family: decision.family,
     bucket: decision.bucket,
     reason: decision.reason,
+    classificationDetail: decision.evidence.classificationDetail,
     agentId: decision.evidence.agentId,
     promptToken: decision.evidence.promptToken,
     runId: decision.evidence.runId,
@@ -942,13 +1023,17 @@ function buildContainedDebugDetails(decision: CursorSdkFailureDecision): Record<
     source: "cursor_sdk_background",
     errorName: decision.evidence.errorName,
     errorCode: decision.evidence.errorCode,
-    errorMessage: decision.evidence.message,
+    messageSnippet: decision.evidence.messageSnippet,
     attributionMode: decision.evidence.attributionMode,
     connectCode: decision.evidence.connectCode,
     connectCodeName: decision.evidence.connectCodeName,
     nodeCodes: decision.evidence.nodeCodes,
     h2ResetCodes: decision.evidence.h2ResetCodes,
     providerErrorNames: decision.evidence.providerErrorNames,
+    cursorSdkProvenance: decision.evidence.cursorSdkProvenance,
+    connectRpcProvenance: decision.evidence.connectRpcProvenance,
+    http2Provenance: decision.evidence.http2Provenance,
+    providerProvenance: decision.evidence.providerProvenance,
     ...(state ? { state } : {})
   };
 }
@@ -1067,23 +1152,6 @@ function normalizeSymbolLikeToken(value: string): string {
   return value.trim().replace(/[\s-]+/g, "_").toUpperCase();
 }
 
-function isStructuredConnectCode(code: string | number | undefined): boolean {
-  if (typeof code === "number") {
-    return code === 1 || code === 7 || code === 8 || code === 14 || code === 16;
-  }
-  if (typeof code !== "string") {
-    return false;
-  }
-
-  const normalized = normalizeSymbolLikeToken(code);
-  return normalized === "ERR_NOT_LOGGED_IN"
-    || normalized === "ERROR_NOT_LOGGED_IN"
-    || normalized === "UNAUTHENTICATED"
-    || normalized === "PERMISSION_DENIED"
-    || normalized === "UNAVAILABLE"
-    || normalized === "RESOURCE_EXHAUSTED";
-}
-
 function stringifyCode(value: string | number | undefined): string {
   return value === undefined ? "" : String(value);
 }
@@ -1114,7 +1182,7 @@ type CursorSdkFailureFacts = {
   family: CursorSdkFailureFamily;
   errorName?: string;
   errorCode?: string | number;
-  message?: string;
+  messageSnippet?: string;
   connectCode?: string | number;
   connectCodeName?: string;
   providerErrorNames: string[];
@@ -1125,10 +1193,15 @@ type CursorSdkFailureFacts = {
   cursorModuleHintMatched: boolean;
   connectModuleHintMatched: boolean;
   http2HintMatched: boolean;
+  cursorSdkProvenance: boolean;
+  connectRpcProvenance: boolean;
+  http2Provenance: boolean;
+  providerProvenance: boolean;
+  classificationDetail: string;
   retryableTransport: boolean;
   authOrPermission: boolean;
   cancelAbortOrDestroyed: boolean;
   agentBusyOrUserStateConflict: boolean;
   protocolOrConfig: boolean;
-  explicitInternalStream: boolean;
+  exactInternalStream: boolean;
 };

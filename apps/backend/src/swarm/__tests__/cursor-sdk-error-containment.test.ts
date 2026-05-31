@@ -88,11 +88,27 @@ function createAbortError(options: { stackHint?: string; code?: string } = {}): 
   return error;
 }
 
-function createAgentBusyError(): Error {
+function createAgentBusyError(options: { stackHint?: string } = {}): Error {
   class AgentBusyError extends Error {}
   const error = new AgentBusyError("agent busy");
   error.name = "AgentBusyError";
-  error.stack = `AgentBusyError: ${error.message}\n    at run (@cursor/sdk/dist/index.js:1:1)`;
+  error.stack = `AgentBusyError: ${error.message}\n    at run (${options.stackHint ?? "@cursor/sdk/dist/index.js"}:1:1)`;
+  return error;
+}
+
+function createAuthenticationError(options: {
+  stackHint?: string;
+  code?: string | number;
+  message?: string;
+} = {}): Error & { code?: string | number } {
+  class AuthenticationError extends Error {
+    code?: string | number;
+  }
+
+  const error = new AuthenticationError(options.message ?? "not logged in");
+  error.name = "AuthenticationError";
+  error.code = options.code;
+  error.stack = `AuthenticationError: ${error.message}\n    at run (${options.stackHint ?? "@cursor/sdk/dist/index.js"}:1:1)`;
   return error;
 }
 
@@ -213,11 +229,6 @@ describe("Cursor SDK error containment classifier", () => {
       name: "AgentBusy contains without retry",
       error: createAgentBusyError(),
       expected: { family: "cursor_sdk", bucket: "agent_busy_state", retryPreOutput: false, fatal: false }
-    },
-    {
-      name: "bare HTTP2 wrapper is contain-only and never retryable",
-      error: createHttp2StreamError(),
-      expected: { family: "http2", bucket: "internal_stream", retryPreOutput: false, fatal: false }
     }
   ])("$name", ({ error, expected }) => {
     const decision = classifyAwaited(error);
@@ -263,12 +274,24 @@ describe("Cursor SDK error containment classifier", () => {
   it.each([
     { rstCode: "NGHTTP2_REFUSED_STREAM", expectedBucket: "retryable_transport" },
     { rstCode: "GOAWAY_SESSION", expectedBucket: "retryable_transport" },
-    { rstCode: "NGHTTP2_ENHANCE_YOUR_CALM", expectedBucket: "retryable_transport" },
-    { rstCode: undefined, expectedBucket: "internal_stream" }
+    { rstCode: "NGHTTP2_ENHANCE_YOUR_CALM", expectedBucket: "retryable_transport" }
   ])("inspects HTTP2 wrapper reset code %s", ({ rstCode, expectedBucket }) => {
     const decision = classifyAwaited(createHttp2StreamError({ rstCode }));
     expect(decision.bucket).toBe(expectedBucket);
-    expect(decision.retryPreOutput).toBe(expectedBucket === "retryable_transport");
+    expect(decision.retryPreOutput).toBe(true);
+    expect(decision.evidence.classificationDetail).toBe(`http2:${rstCode}`);
+    expect(decision.evidence.cursorSdkProvenance).toBe(true);
+    expect(decision.evidence.http2Provenance).toBe(true);
+    expect(decision.evidence.providerProvenance).toBe(true);
+  });
+
+  it("exposes normalized classification detail and provenance for Connect auth", () => {
+    const decision = classifyAwaited(createConnectError());
+    expect(decision.bucket).toBe("auth_permission");
+    expect(decision.evidence.classificationDetail).toBe("connect:UNAUTHENTICATED");
+    expect(decision.evidence.connectRpcProvenance).toBe(true);
+    expect(decision.evidence.providerProvenance).toBe(true);
+    expect(decision.evidence.messageSnippet).toContain("ConnectError:");
   });
 
   it("only retries exact Cursor 429, not generic 429 text", () => {
@@ -315,6 +338,7 @@ describe("Cursor SDK error containment classifier", () => {
     expect(decision.bucket).toBe("non_cursor");
     expect(decision.contain).toBe(false);
     expect(decision.fatal).toBe(true);
+    expect(decision.evidence.classificationDetail).toBe("family:cursor_sdk");
   });
 
   it("keeps generic cursor-looking rate limits fatal unless explicitly retryable", () => {
@@ -325,16 +349,43 @@ describe("Cursor SDK error containment classifier", () => {
     expect(decision.fatal).toBe(true);
   });
 
-  it("keeps name-only NetworkError and AbortError failures fatal without provider transport evidence", () => {
-    const networkDecision = classifyBackground(createNetworkError({ stackHint: "app.js" }), { attributionMode: "als" });
-    expect(networkDecision.bucket).toBe("non_cursor");
-    expect(networkDecision.contain).toBe(false);
-    expect(networkDecision.fatal).toBe(true);
+  it.each([
+    createNetworkError({ stackHint: "app.js" }),
+    createAbortError({ stackHint: "app.js" }),
+    createAuthenticationError({ stackHint: "app.js" }),
+    createAgentBusyError({ stackHint: "app.js" }),
+    Object.assign(new Error("[unauthenticated] detached app error"), { code: 16 })
+  ])("keeps provider-name/code token matches fatal without Cursor/Connect provenance for %p", (error) => {
+    const decision = classifyBackground(error, { attributionMode: "als" });
+    expect(decision.bucket).toBe("non_cursor");
+    expect(decision.contain).toBe(false);
+    expect(decision.fatal).toBe(true);
+  });
 
-    const abortDecision = classifyBackground(createAbortError({ stackHint: "app.js" }), { attributionMode: "als" });
-    expect(abortDecision.bucket).toBe("non_cursor");
-    expect(abortDecision.contain).toBe(false);
-    expect(abortDecision.fatal).toBe(true);
+  it.each([
+    createHttp2StreamError({ rstCode: "NGHTTP2_REFUSED_STREAM", stackHint: "app.js" }),
+    createHttp2StreamError({ rstCode: "NGHTTP2_ENHANCE_YOUR_CALM", stackHint: "app.js" }),
+    createHttp2StreamError({ rstCode: "NGHTTP2_PROTOCOL_ERROR", stackHint: "app.js" })
+  ])("keeps structured HTTP2 failures fatal without Cursor/Connect provenance for %p", (error) => {
+    const decision = classifyBackground(error, { attributionMode: "als" });
+    expect(decision.family).toBe("http2");
+    expect(decision.bucket).toBe("non_cursor");
+    expect(decision.contain).toBe(false);
+    expect(decision.fatal).toBe(true);
+    expect(decision.evidence.http2Provenance).toBe(true);
+    expect(decision.evidence.providerProvenance).toBe(false);
+  });
+
+  it.each([
+    createHttp2StreamError(),
+    createHttp2StreamError({ rstCode: "NGHTTP2_PROTOCOL_ERROR" }),
+    createConnectError({ code: 2, message: "ConnectError: [unknown] weird failure" }),
+    createConnectError({ code: 16, message: "ConnectError: [unauthenticated] detached app error", stackHint: "app.js" })
+  ])("keeps residual ConnectRPC/HTTP2 unknowns fatal by default for %p", (error) => {
+    const decision = classifyBackground(error, { attributionMode: "als" });
+    expect(decision.bucket).toBe("non_cursor");
+    expect(decision.contain).toBe(false);
+    expect(decision.fatal).toBe(true);
   });
 
   it("fails closed for unattributed and ambiguous background matches", () => {

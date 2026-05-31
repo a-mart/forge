@@ -7,6 +7,7 @@ import {
 function createConnectError(options: {
   code?: string | number;
   message?: string;
+  stackHint?: string;
   cause?: unknown;
 } = {}): Error & { code?: string | number; cause?: unknown } {
   class ConnectError extends Error {
@@ -17,7 +18,7 @@ function createConnectError(options: {
   const error = new ConnectError(options.message ?? "ConnectError: [unauthenticated] ERR_NOT_LOGGED_IN");
   error.name = "ConnectError";
   error.code = options.code ?? "ERR_NOT_LOGGED_IN";
-  error.stack = `ConnectError: ${error.message}\n    at parseConnectResponse (@connectrpc/connect/dist/index.js:1:1)`;
+  error.stack = `ConnectError: ${error.message}\n    at parseConnectResponse (${options.stackHint ?? "@connectrpc/connect/dist/index.js"}:1:1)`;
   if (options.cause !== undefined) {
     error.cause = options.cause;
   }
@@ -26,11 +27,12 @@ function createConnectError(options: {
 
 function createHttp2StreamError(options: {
   rstCode?: string;
+  stackHint?: string;
   cause?: unknown;
 } = {}): Error & { code?: string; rstCode?: string; cause?: unknown } {
   const error = new Error("stream failed") as Error & { code?: string; rstCode?: string; cause?: unknown };
   error.code = "ERR_HTTP2_STREAM_ERROR";
-  error.stack = "Error: stream failed\n    at streamRequest (@cursor/sdk/dist/index.js:1:1)";
+  error.stack = `Error: stream failed\n    at streamRequest (${options.stackHint ?? "@cursor/sdk/dist/index.js"}:1:1)`;
   if (options.rstCode !== undefined) {
     error.rstCode = options.rstCode;
   }
@@ -51,6 +53,30 @@ function createConfigurationError(): Error {
 function createGenericCursorStackError(): Error {
   const error = new Error("cursor sdk bug exploded");
   error.stack = "Error: cursor sdk bug exploded\n    at run (@cursor/sdk/dist/index.js:1:1)";
+  return error;
+}
+
+function createAuthenticationError(stackHint = "app.js"): Error {
+  class AuthenticationError extends Error {}
+  const error = new AuthenticationError("not logged in");
+  error.name = "AuthenticationError";
+  error.stack = `AuthenticationError: ${error.message}\n    at run (${stackHint}:1:1)`;
+  return error;
+}
+
+function createAgentBusyError(stackHint = "app.js"): Error {
+  class AgentBusyError extends Error {}
+  const error = new AgentBusyError("agent busy");
+  error.name = "AgentBusyError";
+  error.stack = `AgentBusyError: ${error.message}\n    at run (${stackHint}:1:1)`;
+  return error;
+}
+
+function createNetworkError(stackHint = "app.js"): Error {
+  class NetworkError extends Error {}
+  const error = new NetworkError("network unavailable");
+  error.name = "NetworkError";
+  error.stack = `NetworkError: ${error.message}\n    at run (${stackHint}:1:1)`;
   return error;
 }
 
@@ -219,6 +245,97 @@ async function main(): Promise<void> {
         startedAt: "2026-01-01T00:00:00.000Z"
       });
       await emitInsideScope(scope, createGenericCursorStackError());
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-h2-app-refused-stream": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createHttp2StreamError({ rstCode: "NGHTTP2_REFUSED_STREAM", stackHint: "app.js" }));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-h2-app-protocol-error": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createHttp2StreamError({ rstCode: "NGHTTP2_PROTOCOL_ERROR", stackHint: "app.js" }));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-generic-authentication-error": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createAuthenticationError());
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-generic-agent-busy": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createAgentBusyError());
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-generic-network-error": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createNetworkError());
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-code16-unauth-no-provenance": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, Object.assign(new Error("[unauthenticated] detached app error"), { code: 16 }));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-connect-unknown-provenance": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createConnectError({ code: 2, message: "ConnectError: [unknown] weird failure" }));
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);

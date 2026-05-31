@@ -721,6 +721,9 @@ describe("CursorSdkAgentRuntime", () => {
         errorName: "ConnectError",
         errorCode: "ERR_NOT_LOGGED_IN",
         cursorFailureBucket: "auth_permission",
+        classificationDetail: "connect:UNAUTHENTICATED",
+        connectRpcProvenance: true,
+        providerProvenance: true,
         retryPreOutput: false,
         sdkAgentId: "sdk-agent-1"
       })
@@ -861,6 +864,10 @@ describe("CursorSdkAgentRuntime", () => {
       details: expect.objectContaining({
         source: "cursor_sdk_background",
         cursorFailureBucket: "retryable_transport",
+        classificationDetail: "http2:NGHTTP2_REFUSED_STREAM",
+        cursorSdkProvenance: true,
+        http2Provenance: true,
+        providerProvenance: true,
         retryPreOutput: false,
         h2ResetCodes: expect.arrayContaining(["NGHTTP2_REFUSED_STREAM"])
       })
