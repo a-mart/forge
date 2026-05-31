@@ -203,6 +203,36 @@ describe('work-plan-service', () => {
     expect(plan?.latestRevisionNote?.note).toBe(REDACTED_WORK_PLAN_TEXT)
   })
 
+  it('keeps ordinary work-plan narrative visible when it mentions transcript scrolling or prompt/process issues', async () => {
+    const dataDir = await createDataDir()
+    const { service, store } = createHarness(dataDir)
+
+    await store.replace({
+      ...createEmptySessionCoordinationState(),
+      workPlans: [
+        createPlan('Fix Active Work header popover behavior', {
+          items: [
+            createItem('item-1', {
+              title: 'Implement header popover fix without transcript scroll',
+              status: 'done',
+            }),
+            createItem('item-2', {
+              title: 'Update Active Work guidance for prompt/process behavior',
+              status: 'done',
+            }),
+          ],
+          finalSummary: 'Fixed the Active Work header pill behavior and the underlying prompt/process issue. The header pill now opens an anchored popover without transcript scrolling.',
+        }),
+      ],
+    })
+
+    const plan = (await service.loadSnapshot()).activeWorkPlan
+    expect(plan).not.toBeNull()
+    expect(plan?.items[0]?.title).toBe('Implement header popover fix without transcript scroll')
+    expect(plan?.items[1]?.title).toBe('Update Active Work guidance for prompt/process behavior')
+    expect(plan?.finalSummary).toBe('Fixed the Active Work header pill behavior and the underlying prompt/process issue. The header pill now opens an anchored popover without transcript scrolling.')
+  })
+
   it('rejects non-manager callers at the service boundary', async () => {
     const dataDir = await createDataDir()
     const { service } = createHarness(dataDir)
