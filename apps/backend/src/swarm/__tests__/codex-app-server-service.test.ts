@@ -619,6 +619,45 @@ describe("CodexAppServerService", () => {
     expect(service.getRuntimeStateForTest("mgr-b--codex")?.activeTurn?.turnId).toBe("turn-2");
   });
 
+  it("ignores stale cross-sidecar turnless A and still accepts legitimate attributed B after termination cleanup", async () => {
+    const managerA = createManagerDescriptor("/tmp/project-a", { agentId: "mgr-a", profileId: "profile-a" });
+    const managerB = createManagerDescriptor("/tmp/project-b", { agentId: "mgr-b", profileId: "profile-b" });
+    const { host, conversationMessages } = createFakeHost([managerA, managerB]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(managerA);
+    await service.getOrCreateSidecarDescriptor(managerB);
+    await service.sendTextTurn("mgr-a--codex", "turn A");
+    await service.cleanupSidecarTurnStateForTermination("mgr-a--codex");
+
+    await service.sendTextTurn("mgr-b--codex", "turn B");
+    await fakeClient!.handlers.onNotification?.("turn/started", { turn: { id: "turn-2" } });
+    await fakeClient!.emitTurnCompletedOnly("turn-2");
+
+    const messagesBeforeStale = conversationMessages.length;
+    await fakeClient!.emitTurnlessItemCompleted("stale final from cleaned-up A");
+
+    expect(conversationMessages.length).toBe(messagesBeforeStale);
+    expect(conversationMessages.some((message) => message.text.includes("stale final from cleaned-up A"))).toBe(
+      false,
+    );
+    expect(service.getRuntimeStateForTest("mgr-b--codex")?.activeTurn?.turnCompletedPending).toBe(
+      true,
+    );
+
+    await fakeClient!.emitDelayedAgentMessageCompletion("B real final", "turn-2");
+    await flushTurnCompletionGrace();
+    expect(conversationMessages.some((message) => message.text === "B real final")).toBe(true);
+    expect(service.getRuntimeStateForTest("mgr-b--codex")?.activeTurn).toBeUndefined();
+  });
+
   it("interruptTurn calls turn/interrupt and clears active turn", async () => {
     const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
     const { host, conversationEntries } = createFakeHost([manager]);
@@ -641,6 +680,48 @@ describe("CodexAppServerService", () => {
     expect(conversationEntries.some((entry) => entry.type === "conversation_message" && entry.text === "Codex turn stopped.")).toBe(
       true,
     );
+  });
+
+  it("ignores stale turnless A and still accepts legitimate attributed B after interrupt", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationEntries, conversationMessages } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "turn A");
+    await service.interruptTurn("mgr-1--codex");
+
+    await service.sendTextTurn("mgr-1--codex", "turn B");
+    await fakeClient!.handlers.onNotification?.("turn/started", { turn: { id: "turn-2" } });
+    await fakeClient!.emitTurnCompletedOnly("turn-2");
+
+    const messagesBeforeStale = conversationMessages.length;
+    await fakeClient!.emitTurnlessItemCompleted("stale final from interrupted A");
+
+    expect(conversationMessages.length).toBe(messagesBeforeStale);
+    expect(conversationMessages.some((message) => message.text.includes("stale final from interrupted A"))).toBe(
+      false,
+    );
+    expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn?.turnCompletedPending).toBe(
+      true,
+    );
+
+    await fakeClient!.emitDelayedAgentMessageCompletion("B real final", "turn-2");
+    await flushTurnCompletionGrace();
+    expect(conversationMessages.some((message) => message.text === "B real final")).toBe(true);
+    expect(
+      conversationEntries.some(
+        (entry) => entry.type === "conversation_message" && entry.text.includes("ambiguous turnless output"),
+      ),
+    ).toBe(false);
+    expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
   });
 
   it("marks active sidecar error and appends system message when shared client exits", async () => {
@@ -857,6 +938,107 @@ describe("CodexAppServerService", () => {
     expect(conversationMessages.some((message) => message.text === "Final answer")).toBe(true);
   });
 
+  it("hydrates assistant text from turn/completed items when item/completed is missing", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationMessages } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "hello", {
+      parentRouting: {
+        managerAgentId: "mgr-1",
+        emitParentRequestCard: true,
+        sourceContext: { channel: "web" },
+      },
+    });
+
+    await fakeClient!.handlers.onNotification?.("turn/completed", {
+      turn: {
+        id: "turn-1",
+        status: "completed",
+        items: [{ type: "agentMessage", id: "item-1", text: "Final from turn payload" }],
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
+    });
+
+    expect(
+      conversationMessages.some(
+        (message) => message.agentId === "mgr-1--codex" && message.text === "Final from turn payload",
+      ),
+    ).toBe(true);
+    expect(
+      conversationMessages.some(
+        (message) =>
+          message.agentId === "mgr-1" &&
+          message.externalThreadContext?.status === "completed" &&
+          message.externalThreadContext.resultPreview === "Final from turn payload",
+      ),
+    ).toBe(true);
+  });
+
+  it("surfaces failed turn/completed payloads as error cards instead of blank completions", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationEntries, conversationMessages } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "hello", {
+      parentRouting: {
+        managerAgentId: "mgr-1",
+        emitParentRequestCard: true,
+        sourceContext: { channel: "web" },
+      },
+    });
+
+    await fakeClient!.handlers.onNotification?.("turn/completed", {
+      turn: {
+        id: "turn-1",
+        status: "failed",
+        items: [],
+        error: { message: "Connection refused" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
+    });
+
+    expect(
+      conversationEntries.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.agentId === "mgr-1--codex" &&
+          entry.role === "system" &&
+          entry.text === "Codex turn failed: Connection refused",
+      ),
+    ).toBe(true);
+    expect(
+      conversationMessages.some(
+        (message) =>
+          message.agentId === "mgr-1" &&
+          message.externalThreadContext?.status === "error" &&
+          message.externalThreadContext.resultPreview === "Codex turn failed: Connection refused",
+      ),
+    ).toBe(true);
+  });
+
   it("disposes failed shared client when connect fails and retries on next use", async () => {
     const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
     const { host } = createFakeHost([manager]);
@@ -984,9 +1166,9 @@ describe("CodexAppServerService", () => {
     expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn?.assistantText).toBe("");
   });
 
-  it("ignores stale turnless A item/completed during B completion grace", async () => {
+  it("attributed current-turn completion still wins over quarantined guarded text during B completion grace", async () => {
     const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
-    const { host, conversationMessages } = createFakeHost([manager]);
+    const { host, conversationEntries, conversationMessages } = createFakeHost([manager]);
     let fakeClient: FakeCodexAppServerClient | undefined;
     const service = createTestService(host, {
       createClient: (handlers) => {
@@ -1001,7 +1183,6 @@ describe("CodexAppServerService", () => {
     await fakeClient!.handlers.onNotification?.("turn/started", { turn: { id: "turn-1" } });
     await fakeClient!.emitTurnCompletedOnly("turn-1");
     await flushTurnCompletionGrace();
-    expect(service.getRuntimeStateForTest("mgr-1--codex")?.turnlessItemCompletedBurned).toBe(true);
 
     await service.sendTextTurn("mgr-1--codex", "turn B");
     await fakeClient!.handlers.onNotification?.("turn/started", { turn: { id: "turn-2" } });
@@ -1017,10 +1198,151 @@ describe("CodexAppServerService", () => {
     expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn?.turnCompletedPending).toBe(
       true,
     );
-    expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn?.assistantText).toBe("");
 
     await fakeClient!.emitDelayedAgentMessageCompletion("B real final", "turn-2");
     expect(conversationMessages.some((message) => message.text === "B real final")).toBe(true);
+    expect(
+      conversationEntries.some(
+        (entry) => entry.type === "conversation_message" && entry.text.includes("ambiguous turnless output"),
+      ),
+    ).toBe(false);
+    expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
+  });
+
+  it("accepts legitimate attributed B after summary-only turn A finalized from turn/completed payload", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationMessages } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "turn A");
+    await fakeClient!.handlers.onNotification?.("turn/completed", {
+      turn: {
+        id: "turn-1",
+        status: "completed",
+        items: [{ type: "agentMessage", content: "A from summary" }],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
+    });
+
+    await service.sendTextTurn("mgr-1--codex", "turn B");
+    await fakeClient!.handlers.onNotification?.("turn/started", { turn: { id: "turn-2" } });
+    await fakeClient!.emitTurnCompletedOnly("turn-2");
+
+    expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn?.turnCompletedPending).toBe(
+      true,
+    );
+
+    await fakeClient!.emitDelayedAgentMessageCompletion("B real final", "turn-2");
+    await flushTurnCompletionGrace();
+    expect(conversationMessages.some((message) => message.text === "B real final")).toBe(true);
+    expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
+  });
+
+  it("drops guarded stale turnless completion text and emits an explicit ambiguity result", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationEntries, conversationMessages } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "turn A");
+    await service.interruptTurn("mgr-1--codex");
+
+    await service.sendTextTurn("mgr-1--codex", "turn B", {
+      parentRouting: {
+        managerAgentId: "mgr-1",
+        emitParentRequestCard: true,
+        sourceContext: { channel: "web" },
+      },
+    });
+    await fakeClient!.handlers.onNotification?.("turn/started", { turn: { id: "turn-2" } });
+    await fakeClient!.emitTurnCompletedOnly("turn-2");
+
+    await fakeClient!.emitTurnlessItemCompleted("stale final from A only");
+    await flushTurnCompletionGrace();
+
+    expect(conversationMessages.some((message) => message.text === "stale final from A only")).toBe(false);
+    expect(
+      conversationEntries.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.text.includes("ambiguous turnless output") &&
+          entry.text.includes("Result not shown"),
+      ),
+    ).toBe(true);
+    expect(
+      conversationMessages.some(
+        (message) =>
+          message.externalThreadContext?.status === "error" &&
+          message.externalThreadContext.resultPreview?.includes("ambiguous turnless output") === true,
+      ),
+    ).toBe(true);
+    expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
+  });
+
+  it("turnless-only guarded current-turn output resolves to explicit ambiguity instead of a blank completion", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationEntries, conversationMessages } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "turn A");
+    await service.interruptTurn("mgr-1--codex");
+
+    await service.sendTextTurn("mgr-1--codex", "turn B", {
+      parentRouting: {
+        managerAgentId: "mgr-1",
+        emitParentRequestCard: true,
+        sourceContext: { channel: "web" },
+      },
+    });
+    await fakeClient!.handlers.onNotification?.("turn/started", { turn: { id: "turn-2" } });
+    await fakeClient!.emitTurnCompletedOnly("turn-2");
+
+    await fakeClient!.emitTurnlessItemCompleted("legit but unattributed current-turn output");
+    await flushTurnCompletionGrace();
+
+    expect(
+      conversationMessages.some((message) => message.text === "legit but unattributed current-turn output"),
+    ).toBe(false);
+    expect(
+      conversationEntries.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.text.includes("ambiguous turnless output") &&
+          entry.text.includes("Result not shown"),
+      ),
+    ).toBe(true);
+    expect(
+      conversationMessages.some(
+        (message) =>
+          message.externalThreadContext?.status === "error" &&
+          message.externalThreadContext.resultPreview?.includes("ambiguous turnless output") === true,
+      ),
+    ).toBe(true);
     expect(service.getRuntimeStateForTest("mgr-1--codex")?.activeTurn).toBeUndefined();
   });
 

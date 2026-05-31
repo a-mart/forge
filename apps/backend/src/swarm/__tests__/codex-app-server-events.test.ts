@@ -23,7 +23,6 @@ describe("codex app-server notification dispatch", () => {
     managerAgentId: "mgr",
     activeTurn,
     openCompletionGraceToken: 1,
-    turnlessItemCompletedBurned: false,
   };
 
   it("ignores notifications for suppressed or mismatched turns", () => {
@@ -33,12 +32,12 @@ describe("codex app-server notification dispatch", () => {
     expect(shouldIgnoreCodexNotification(activeTurn, "turn-1")).toBe(false);
   });
 
-  it("only accepts turnless item/completed for the open completion grace token when not burned", () => {
+  it("only accepts turnless item/completed for the open completion grace token", () => {
     expect(
-      shouldAcceptTurnlessItemNotification(activeTurn, 1, false, "item/agentMessage/delta"),
+      shouldAcceptTurnlessItemNotification(activeTurn, 1, "item/agentMessage/delta"),
     ).toBe(false);
     expect(
-      shouldAcceptTurnlessItemNotification(activeTurn, 1, false, "item/completed"),
+      shouldAcceptTurnlessItemNotification(activeTurn, 1, "item/completed"),
     ).toBe(false);
     expect(
       shouldAcceptTurnlessItemNotification(
@@ -49,7 +48,6 @@ describe("codex app-server notification dispatch", () => {
           completionGraceToken: 1,
         },
         1,
-        false,
         "item/completed",
       ),
     ).toBe(true);
@@ -62,7 +60,6 @@ describe("codex app-server notification dispatch", () => {
           completionGraceToken: 1,
         },
         2,
-        false,
         "item/completed",
       ),
     ).toBe(false);
@@ -75,10 +72,9 @@ describe("codex app-server notification dispatch", () => {
           completionGraceToken: 2,
         },
         2,
-        true,
         "item/completed",
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("accumulates assistant deltas and completes turn", async () => {
@@ -143,6 +139,39 @@ describe("codex app-server notification dispatch", () => {
 
     expect(finalText).toBe("Hi there");
     expect(completed).toBe(true);
+  });
+
+  it("hydrates turn/completed summaries from turn payload agentMessage content and failure info", async () => {
+    const summaries: Array<{ assistantText?: string; status?: string; errorMessage?: string }> = [];
+
+    await dispatchCodexAppServerNotification(
+      "turn/completed",
+      {
+        turn: {
+          id: "turn-1",
+          status: "failed",
+          items: [{ type: "agentMessage", content: "Final from turn payload" }],
+          error: { message: "Connection refused" },
+        },
+      },
+      dispatchContext,
+      {
+        onTurnStarted: () => undefined,
+        onTurnCompleted: (summary) => {
+          summaries.push(summary);
+        },
+        onAgentMessageDelta: () => undefined,
+        onAgentMessageCompleted: () => undefined,
+      },
+    );
+
+    expect(summaries).toEqual([
+      {
+        assistantText: "Final from turn payload",
+        status: "failed",
+        errorMessage: "Connection refused",
+      },
+    ]);
   });
 
   it("drops stale turnless deltas", async () => {

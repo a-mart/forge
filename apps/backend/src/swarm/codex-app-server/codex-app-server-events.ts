@@ -6,38 +6,51 @@ export interface CodexNotificationDispatchContext {
   managerAgentId: string;
   activeTurn?: CodexSidecarActiveTurn;
   openCompletionGraceToken: number;
-  turnlessItemCompletedBurned: boolean;
+}
+
+export interface CodexTurnCompletedSummary {
+  assistantText?: string;
+  status?: "completed" | "interrupted" | "failed" | "inProgress";
+  errorMessage?: string;
 }
 
 export interface CodexNotificationDispatchCallbacks {
   onTurnStarted(turnId: string): void | Promise<void>;
-  onTurnCompleted(): void | Promise<void>;
+  onTurnCompleted(summary: CodexTurnCompletedSummary): void | Promise<void>;
   onAgentMessageDelta(delta: string): void | Promise<void>;
-  onAgentMessageCompleted(text: string): void | Promise<void>;
+  onAgentMessageCompleted(text: string, context: { turnless: boolean }): void | Promise<void>;
   onProcessExit?(error: Error): void | Promise<void>;
 }
 
 export type CodexTurnlessItemNotificationMethod = "item/agentMessage/delta" | "item/completed";
+
+function parseAgentMessageTextFromItem(item: unknown): string | undefined {
+  if (!item || typeof item !== "object") {
+    return undefined;
+  }
+
+  const candidate = item as { type?: unknown; text?: unknown; content?: unknown };
+  if (candidate.type !== undefined && candidate.type !== "agentMessage") {
+    return undefined;
+  }
+
+  if (typeof candidate.text === "string") {
+    return candidate.text;
+  }
+
+  if (typeof candidate.content === "string") {
+    return candidate.content;
+  }
+
+  return undefined;
+}
 
 function parseAgentMessageText(params: unknown): string | undefined {
   if (!params || typeof params !== "object") {
     return undefined;
   }
 
-  const item = (params as { item?: { text?: unknown; content?: unknown } }).item;
-  if (!item || typeof item !== "object") {
-    return undefined;
-  }
-
-  if (typeof item.text === "string") {
-    return item.text;
-  }
-
-  if (typeof item.content === "string") {
-    return item.content;
-  }
-
-  return undefined;
+  return parseAgentMessageTextFromItem((params as { item?: unknown }).item);
 }
 
 function parseAgentMessageDelta(params: unknown): string {
@@ -47,6 +60,56 @@ function parseAgentMessageDelta(params: unknown): string {
 
   const delta = (params as { delta?: unknown }).delta;
   return typeof delta === "string" ? delta : "";
+}
+
+function parseTurnCompletedSummary(params: unknown): CodexTurnCompletedSummary {
+  if (!params || typeof params !== "object") {
+    return {};
+  }
+
+  const turn = (params as {
+    turn?: {
+      status?: unknown;
+      items?: unknown;
+      error?: { message?: unknown } | null;
+    };
+  }).turn;
+  if (!turn || typeof turn !== "object") {
+    return {};
+  }
+
+  const status =
+    turn.status === "completed" ||
+    turn.status === "interrupted" ||
+    turn.status === "failed" ||
+    turn.status === "inProgress"
+      ? turn.status
+      : undefined;
+
+  let assistantText: string | undefined;
+  if (Array.isArray(turn.items)) {
+    for (const item of turn.items) {
+      const parsed = parseAgentMessageTextFromItem(item);
+      if (!parsed) {
+        continue;
+      }
+      const trimmed = parsed.trim();
+      if (trimmed) {
+        assistantText = trimmed;
+      }
+    }
+  }
+
+  const errorMessage =
+    turn.error && typeof turn.error === "object" && typeof turn.error.message === "string"
+      ? turn.error.message.trim() || undefined
+      : undefined;
+
+  return {
+    assistantText,
+    status,
+    errorMessage,
+  };
 }
 
 export function shouldIgnoreCodexNotification(
@@ -71,10 +134,9 @@ export function shouldIgnoreCodexNotification(
 export function shouldAcceptTurnlessItemNotification(
   activeTurn: CodexSidecarActiveTurn | undefined,
   openCompletionGraceToken: number,
-  turnlessItemCompletedBurned: boolean,
   method: CodexTurnlessItemNotificationMethod,
 ): boolean {
-  if (!activeTurn || activeTurn.suppressed || turnlessItemCompletedBurned) {
+  if (!activeTurn || activeTurn.suppressed) {
     return false;
   }
 
@@ -124,7 +186,7 @@ export async function dispatchCodexAppServerNotification(
         return;
       }
 
-      await callbacks.onTurnCompleted();
+      await callbacks.onTurnCompleted(parseTurnCompletedSummary(params));
       return;
     }
 
@@ -137,7 +199,6 @@ export async function dispatchCodexAppServerNotification(
         !shouldAcceptTurnlessItemNotification(
           activeTurn,
           context.openCompletionGraceToken,
-          context.turnlessItemCompletedBurned,
           method,
         )
       ) {
@@ -160,7 +221,6 @@ export async function dispatchCodexAppServerNotification(
         !shouldAcceptTurnlessItemNotification(
           activeTurn,
           context.openCompletionGraceToken,
-          context.turnlessItemCompletedBurned,
           method,
         )
       ) {
@@ -171,7 +231,7 @@ export async function dispatchCodexAppServerNotification(
       if (item?.type === "agentMessage") {
         const text = parseAgentMessageText(params);
         if (text) {
-          await callbacks.onAgentMessageCompleted(text);
+          await callbacks.onAgentMessageCompleted(text, { turnless: !notificationTurnId });
         }
       }
       break;

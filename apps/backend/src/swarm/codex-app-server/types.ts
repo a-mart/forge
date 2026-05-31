@@ -112,6 +112,12 @@ export interface CodexSidecarActiveTurn {
   turnEpoch: number;
   turnCompletedPending?: boolean;
   agentMessageItemCompleted?: boolean;
+  agentMessageCompletionSource?: "item_completed" | "turn_completed_summary";
+  deferTurnlessCompletionUntilGraceExpires?: boolean;
+  guardedTurnlessCompletionText?: string;
+  completionSystemMessage?: string;
+  completionDescriptorStatus?: "idle" | "error";
+  completionParentStatusOverride?: "completed" | "stopped" | "error";
   /** Token issued when this turn entered completion grace; gates turnless item/completed. */
   completionGraceToken?: number;
   graceItemAcceptOpen?: boolean;
@@ -125,8 +131,6 @@ export interface CodexSidecarRuntimeState {
   turnEpoch: number;
   /** Grace token for the turn currently in completion grace, if any. */
   openCompletionGraceToken: number;
-  /** Once true, turnless item/completed is disabled after grace expired without attribution. */
-  turnlessItemCompletedBurned: boolean;
 }
 
 export class CodexSidecarBusyError extends Error {

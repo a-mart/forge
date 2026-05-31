@@ -35,6 +35,7 @@ export class CodexAppServerService {
   private sharedClient: CodexAppServerClientPort | undefined;
   private clientStartPromise: Promise<CodexAppServerClientPort> | undefined;
   private readonly sidecarRuntimeByAgentId = new Map<string, CodexSidecarRuntimeState>();
+  private pendingPriorTurnlessInvalidationGeneration = 0;
   private readonly developerInstructions: string;
   private readonly turnCompletionGraceMs: number;
 
@@ -235,6 +236,8 @@ export class CodexAppServerService {
       assistantMessageEmitted: false,
       suppressed: false,
       turnEpoch: runtime.turnEpoch,
+      deferTurnlessCompletionUntilGraceExpires: false,
+      guardedTurnlessCompletionText: undefined,
       graceItemAcceptOpen: false,
       parentTurnContext: options.parentRouting
         ? {
@@ -352,7 +355,7 @@ export class CodexAppServerService {
         }
       }
     } finally {
-      await this.clearActiveTurn(sidecarAgentId, "Codex turn stopped.");
+      await this.clearActiveTurn(sidecarAgentId, "Codex turn stopped.", "idle", undefined, true);
     }
   }
 
@@ -366,6 +369,7 @@ export class CodexAppServerService {
     this.sharedClient?.dispose();
     this.sharedClient = undefined;
     this.clientStartPromise = undefined;
+    this.pendingPriorTurnlessInvalidationGeneration = 0;
     this.sidecarRuntimeByAgentId.clear();
   }
 
@@ -406,6 +410,7 @@ export class CodexAppServerService {
       "stopped",
     );
 
+    this.markPendingPriorTurnlessInvalidation(activeTurn);
     this.cancelCompletionGrace(activeTurn);
     runtime.openCompletionGraceToken = 0;
     runtime.activeTurn = undefined;
@@ -448,7 +453,6 @@ export class CodexAppServerService {
     const created: CodexSidecarRuntimeState = {
       turnEpoch: 0,
       openCompletionGraceToken: 0,
-      turnlessItemCompletedBurned: false,
     };
     this.sidecarRuntimeByAgentId.set(sidecarAgentId, created);
     return created;
@@ -527,7 +531,7 @@ export class CodexAppServerService {
     }
 
     const message = error instanceof Error ? error.message : String(error);
-    void this.clearActiveTurn(sidecarAgentId, `Codex turn failed: ${message}`, "error");
+    void this.clearActiveTurn(sidecarAgentId, `Codex turn failed: ${message}`, "error", undefined, true);
   }
 
   private async handleSharedNotification(method: string, params?: unknown): Promise<void> {
@@ -556,20 +560,44 @@ export class CodexAppServerService {
         managerAgentId: descriptor.managerId,
         activeTurn,
         openCompletionGraceToken: runtime?.openCompletionGraceToken ?? 0,
-        turnlessItemCompletedBurned: runtime?.turnlessItemCompletedBurned ?? false,
       },
       {
         onTurnStarted: (turnId) => {
           activeTurn.turnId = turnId;
         },
-        onTurnCompleted: async () => {
+        onTurnCompleted: async (summary) => {
+          if (summary.assistantText) {
+            activeTurn.agentMessageItemCompleted = true;
+            activeTurn.agentMessageCompletionSource = "turn_completed_summary";
+            activeTurn.guardedTurnlessCompletionText = undefined;
+            activeTurn.assistantText = summary.assistantText;
+          }
+
+          if (summary.status === "failed") {
+            activeTurn.completionSystemMessage = summary.errorMessage
+              ? `Codex turn failed: ${summary.errorMessage}`
+              : "Codex turn failed.";
+            activeTurn.completionDescriptorStatus = "error";
+            activeTurn.completionParentStatusOverride = "error";
+          } else if (summary.status === "interrupted") {
+            activeTurn.completionSystemMessage = "Codex turn stopped.";
+            activeTurn.completionParentStatusOverride = "stopped";
+          }
+
           await this.scheduleActiveTurnFinalization(sidecarAgentId);
         },
         onAgentMessageDelta: (delta) => {
           activeTurn.assistantText += delta;
         },
-        onAgentMessageCompleted: async (text) => {
+        onAgentMessageCompleted: async (text, notificationContext) => {
+          if (notificationContext.turnless && activeTurn.deferTurnlessCompletionUntilGraceExpires) {
+            activeTurn.guardedTurnlessCompletionText = text;
+            return;
+          }
+
           activeTurn.agentMessageItemCompleted = true;
+          activeTurn.agentMessageCompletionSource = "item_completed";
+          activeTurn.guardedTurnlessCompletionText = undefined;
           activeTurn.assistantText = text;
           if (activeTurn.turnCompletedPending) {
             this.cancelCompletionGrace(activeTurn);
@@ -591,6 +619,8 @@ export class CodexAppServerService {
         activeSidecarAgentId,
         `Codex app-server exited: ${error.message}`,
         "error",
+        undefined,
+        true,
       );
     }
 
@@ -607,9 +637,12 @@ export class CodexAppServerService {
     activeTurn.turnCompletedPending = true;
     activeTurn.graceItemAcceptOpen = true;
     activeTurn.completionGraceToken = activeTurn.turnEpoch;
+    activeTurn.deferTurnlessCompletionUntilGraceExpires =
+      this.pendingPriorTurnlessInvalidationGeneration > 0;
     runtime.openCompletionGraceToken = activeTurn.turnEpoch;
+    this.pendingPriorTurnlessInvalidationGeneration = 0;
 
-    if (activeTurn.agentMessageItemCompleted) {
+    if (activeTurn.agentMessageItemCompleted || activeTurn.completionSystemMessage) {
       await this.finalizeActiveTurn(sidecarAgentId);
       return;
     }
@@ -642,15 +675,29 @@ export class CodexAppServerService {
 
     this.cancelCompletionGrace(activeTurn);
 
-    if (!activeTurn.agentMessageItemCompleted && runtime) {
-      runtime.turnlessItemCompletedBurned = true;
+    if (
+      !activeTurn.assistantText &&
+      !activeTurn.completionSystemMessage &&
+      activeTurn.guardedTurnlessCompletionText
+    ) {
+      activeTurn.completionSystemMessage =
+        "Codex returned only ambiguous turnless output after a prior interruption or recovery. Result not shown to avoid misattributing stale text.";
+      activeTurn.completionDescriptorStatus = "error";
+      activeTurn.completionParentStatusOverride = "error";
     }
+
+    this.markPendingPriorTurnlessInvalidation(activeTurn);
 
     if (activeTurn.assistantText) {
       this.emitAssistantMessageIfNeeded(sidecarAgentId, activeTurn.assistantText);
     }
 
-    await this.clearActiveTurn(sidecarAgentId);
+    await this.clearActiveTurn(
+      sidecarAgentId,
+      activeTurn.completionSystemMessage,
+      activeTurn.completionDescriptorStatus ?? "idle",
+      activeTurn.completionParentStatusOverride,
+    );
   }
 
   private emitAssistantMessageIfNeeded(sidecarAgentId: string, text: string): void {
@@ -671,10 +718,23 @@ export class CodexAppServerService {
     });
   }
 
+  private markPendingPriorTurnlessInvalidation(
+    activeTurn: CodexSidecarActiveTurn | undefined,
+  ): void {
+    if (
+      activeTurn &&
+      (!activeTurn.agentMessageItemCompleted || activeTurn.agentMessageCompletionSource !== "item_completed")
+    ) {
+      this.pendingPriorTurnlessInvalidationGeneration += 1;
+    }
+  }
+
   private async clearActiveTurn(
     sidecarAgentId: string,
     systemMessage?: string,
     descriptorStatus: "idle" | "error" = "idle",
+    parentStatusOverride?: "completed" | "stopped" | "error",
+    forcePriorTurnlessInvalidation = false,
   ): Promise<void> {
     const descriptor = this.host.getDescriptor(sidecarAgentId);
     const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
@@ -686,6 +746,7 @@ export class CodexAppServerService {
       descriptor,
       systemMessage,
       descriptorStatus,
+      parentStatusOverride,
     );
 
     if (systemMessage) {
@@ -697,6 +758,10 @@ export class CodexAppServerService {
         timestamp: this.host.now(),
         source: "system",
       });
+    }
+
+    if (forcePriorTurnlessInvalidation) {
+      this.markPendingPriorTurnlessInvalidation(activeTurn);
     }
 
     if (runtime?.activeTurn) {
