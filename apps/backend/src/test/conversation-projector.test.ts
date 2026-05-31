@@ -403,6 +403,75 @@ describe('ConversationProjector session tree continuity', () => {
     expect(readPersistedToolCalls()).toEqual([])
   })
 
+  it('does not resurrect Codex stream detail agent_tool_call rows from disk cache on cold load', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-codex-cache-cold-load-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const codexSidecar: AgentDescriptor = {
+      ...makeDescriptor(join(root, 'codex.jsonl'), root),
+      agentId: 'manager--codex',
+      role: 'worker',
+      managerId: 'manager',
+      status: 'streaming',
+      externalThread: {
+        type: 'codex_app_server',
+        persisted: true,
+        createdByMention: true,
+      },
+    }
+    const projector = makeProjector({ descriptor })
+
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      id: 'seed-message',
+      role: 'assistant',
+      text: 'durable seed message',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+    projector.emitAgentToolCall({
+      type: 'agent_tool_call',
+      agentId: descriptor.agentId,
+      actorAgentId: codexSidecar.agentId,
+      timestamp: FIXED_NOW,
+      kind: 'tool_execution_start',
+      toolName: 'codex_command',
+      toolCallId: 'cmd-1',
+      text: '{"command":"echo hi"}',
+    })
+
+    const liveHistory = projector.getConversationHistory(descriptor.agentId)
+    expect(
+      liveHistory.some(
+        (entry) =>
+          entry.type === 'agent_tool_call' &&
+          entry.toolName === 'codex_command' &&
+          entry.kind === 'tool_execution_start',
+      ),
+    ).toBe(true)
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    const cacheText = await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('durable seed message'),
+    })
+    expect(cacheText).not.toContain('"toolName":"codex_command"')
+
+    const reloadedProjector = makeProjector({ descriptor })
+    const reloadedHistory = reloadedProjector.getConversationHistory(descriptor.agentId)
+
+    expect(
+      reloadedHistory.some(
+        (entry) => entry.type === 'agent_tool_call' && entry.toolName === 'codex_command',
+      ),
+    ).toBe(false)
+    expect(
+      reloadedHistory.some(
+        (entry) => entry.type === 'conversation_message' && entry.text === 'durable seed message',
+      ),
+    ).toBe(true)
+  })
+
   it('loads the full persisted history before appending a cold post-boot conversation entry', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-cold-cache-'))
     const sessionFile = join(root, 'manager.jsonl')

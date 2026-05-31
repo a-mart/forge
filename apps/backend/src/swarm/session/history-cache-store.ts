@@ -8,7 +8,11 @@ import { mergeDiagnosticDetails } from "./conversation-diagnostics.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { CONVERSATION_ENTRY_TYPE, extractSessionEntryId, hasValidSessionHeader } from "./conversation-timeline.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
-import { MAX_CONVERSATION_HISTORY, shouldPersistConversationEntry } from "./history-policy.js";
+import {
+  MAX_CONVERSATION_HISTORY,
+  shouldPersistConversationEntry,
+  shouldWriteConversationHistoryCacheEntry
+} from "./history-policy.js";
 
 const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
@@ -324,7 +328,7 @@ export class HistoryCacheStore {
           continue;
         }
 
-        if (isConversationEntryEvent(parsed)) {
+        if (isConversationEntryEvent(parsed) && shouldWriteConversationHistoryCacheEntry(parsed)) {
           entries.push(parsed);
         }
       }
@@ -778,9 +782,10 @@ export class HistoryCacheStore {
       await mkdir(dirname(cacheFile), { recursive: true });
       const resolvedMetadata =
         metadata ?? buildConversationHistoryCacheMetadata(history, 0, this.readSessionFileCanonicalStat(queuedSnapshot.sessionFile));
+      const cacheEntries = history.filter(shouldWriteConversationHistoryCacheEntry);
       const serializedHistory = `${[
         JSON.stringify(resolvedMetadata),
-        ...history.map((entry) => JSON.stringify(entry))
+        ...cacheEntries.map((entry) => JSON.stringify(entry))
       ].join("\n")}\n`;
       await writeFile(cacheFile, serializedHistory, "utf8");
     }

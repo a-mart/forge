@@ -23,6 +23,14 @@ export function shouldPersistConversationEntry(entry: ConversationEntryEvent): b
   return true;
 }
 
+export function shouldWriteConversationHistoryCacheEntry(entry: ConversationEntryEvent): boolean {
+  if (entry.type === "agent_tool_call" && isCodexStreamDetailToolName(entry.toolName)) {
+    return false;
+  }
+
+  return true;
+}
+
 export function isProtectedTranscriptEntry(entry: ConversationEntryEvent): boolean {
   if (entry.type === "work_plan_created") {
     return true;
