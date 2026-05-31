@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
-type AttributionMode = "als" | "single_active_scope" | "retry_lineage_tombstone";
+type AttributionMode = "als" | "single_active_scope";
 
 type BackgroundAttributionFailureReason =
   | "als_scope_missing"
@@ -525,19 +525,8 @@ function resolveScopeAttribution(): {
   const activeScopes = [...activeScopeIds]
     .map((scopeId) => scopesById.get(scopeId))
     .filter((scope): scope is ScopeState => scope !== undefined);
-  const retainedClosedScopes = [...scopesById.values()].filter((scope) => scope.closed);
 
   if (retainedClosedScopeCount > 0) {
-    const retryLineageTombstone = resolveRetryLineageTombstone(activeScopes, retainedClosedScopes);
-    if (retryLineageTombstone) {
-      return {
-        scope: retryLineageTombstone,
-        attributionMode: "retry_lineage_tombstone",
-        activeScopeCount,
-        retainedClosedScopeCount
-      };
-    }
-
     return {
       activeScopeCount,
       retainedClosedScopeCount,
@@ -559,26 +548,6 @@ function resolveScopeAttribution(): {
     retainedClosedScopeCount,
     reason: activeScopeCount === 0 ? "no_active_scope" : "ambiguous_active_scopes"
   };
-}
-
-function resolveRetryLineageTombstone(activeScopes: ScopeState[], retainedClosedScopes: ScopeState[]): ScopeState | undefined {
-  if (activeScopes.length !== 1 || retainedClosedScopes.length === 0) {
-    return undefined;
-  }
-
-  const activeScope = activeScopes[0];
-  const samePromptTombstones = retainedClosedScopes.filter((scope) =>
-    scope.agentId === activeScope.agentId
-    && scope.promptToken === activeScope.promptToken
-    && scope.attemptIndex < activeScope.attemptIndex
-  );
-  if (samePromptTombstones.length === 0 || samePromptTombstones.length !== retainedClosedScopes.length) {
-    return undefined;
-  }
-
-  return samePromptTombstones
-    .slice()
-    .sort((left, right) => (right.attemptIndex - left.attemptIndex) || ((right.closedAt ?? 0) - (left.closedAt ?? 0)))[0];
 }
 
 function classifyCursorSdkFailureBase(
@@ -645,14 +614,14 @@ function classifyCursorSdkFailureBase(
     };
   }
 
-  if (facts.cursorLike) {
+  if (facts.explicitInternalStream) {
     return {
       family: facts.family,
       bucket: "internal_stream",
       contain: true,
       retryPreOutput: false,
       fatal: false,
-      reason: "Cursor-looking background failure was attributed but did not match a narrower retryable class",
+      reason: "Cursor background failure had concrete ConnectRPC/HTTP2 evidence but did not match a narrower retryable class",
       evidence
     };
   }
@@ -712,6 +681,8 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
     || connectModuleHintMatched
     || chain.some((entry) => isStructuredConnectCode(entry.code));
   const hasStructuredCursorEvidence = providerErrorNames.some((name) => CURSOR_PROVIDER_ERROR_NAMES.has(name)) || cursorModuleHintMatched;
+  const hasRetryableProviderSignal = chain.some((entry) => entry.isRetryable === true);
+  const hasTransportProvenance = cursorModuleHintMatched || connectModuleHintMatched || hasStructuredHttp2Evidence || hasStructuredConnectEvidence;
   const http2HintMatched = hasStructuredHttp2Evidence;
   const moduleHintMatched = cursorModuleHintMatched || connectModuleHintMatched || http2HintMatched;
   const allowTextFallback = hasStructuredConnectEvidence || hasStructuredCursorEvidence || hasStructuredHttp2Evidence;
@@ -721,18 +692,20 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
   const family = resolveFailureFamily({ providerErrorNames, connectCodeName, nodeCodes, h2ResetCodes, cursorModuleHintMatched, connectModuleHintMatched, http2HintMatched });
   const exactCursor429 = providerErrorNames.includes("RateLimitError")
     && (httpStatusCodes.includes(429) || chain.some((entry) => entry.code === 429 || entry.code === "429"))
-    && (cursorModuleHintMatched || connectModuleHintMatched || http2HintMatched);
+    && hasRetryableProviderSignal
+    && hasTransportProvenance;
   const retryableTransport = connectCodeName !== undefined && TRANSIENT_CONNECT_CODE_NAMES.has(connectCodeName)
-    || providerErrorNames.includes("NetworkError")
+    || (providerErrorNames.includes("NetworkError") && (hasTransportProvenance || hasRetryableProviderSignal))
     || h2ResetCodes.some((code) => RETRYABLE_HTTP2_RESET_CODES.has(code))
     || exactCursor429;
   const authOrPermission = connectCodeName !== undefined && AUTH_CONNECT_CODE_NAMES.has(connectCodeName)
     || providerErrorNames.includes("AuthenticationError");
   const cancelAbortOrDestroyed = connectCodeName !== undefined && CANCEL_CONNECT_CODE_NAMES.has(connectCodeName)
-    || providerErrorNames.includes("AbortError")
-    || nodeCodes.includes("ABORT_ERR")
-    || nodeCodes.includes("ERR_STREAM_DESTROYED")
-    || (moduleHintMatched && /stream destroyed|stream is destroyed|abort(ed)?|cancel(l)?ed/i.test(combinedText));
+    || ((providerErrorNames.includes("AbortError")
+      || nodeCodes.includes("ABORT_ERR")
+      || nodeCodes.includes("ERR_STREAM_DESTROYED")
+      || /stream destroyed|stream is destroyed|abort(ed)?|cancel(l)?ed/i.test(combinedText))
+      && hasTransportProvenance);
   const agentBusyOrUserStateConflict = providerErrorNames.includes("AgentBusyError")
     || providerErrorNames.includes("IntegrationNotConnectedError")
     || (moduleHintMatched && /agent busy|already.*active run|integration not connected/i.test(combinedText));
@@ -740,14 +713,12 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
     || providerErrorNames.some((name) => PROGRAMMER_ERROR_NAMES.has(name))
     || nodeCodes.some((code) => PROTOCOL_OR_CONFIG_NODE_CODES.has(code))
     || (moduleHintMatched && /unexpected token|failed to parse|invalid response|schema|shape mismatch|serialization/i.test(combinedText));
-  const cursorLike = providerErrorNames.some((name) => CURSOR_PROVIDER_ERROR_NAMES.has(name))
-    || connectCodeName !== undefined
-    || connectModuleHintMatched
-    || cursorModuleHintMatched
-    || http2HintMatched
-    || h2ResetCodes.length > 0
-    || exactCursor429
-    || nodeCodes.includes("ERR_HTTP2_STREAM_ERROR");
+  const explicitInternalStream = (family === "connectrpc" || family === "http2")
+    && !retryableTransport
+    && !authOrPermission
+    && !cancelAbortOrDestroyed
+    && !agentBusyOrUserStateConflict
+    && !protocolOrConfig;
 
   return {
     family,
@@ -769,7 +740,7 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
     cancelAbortOrDestroyed,
     agentBusyOrUserStateConflict,
     protocolOrConfig,
-    cursorLike
+    explicitInternalStream
   };
 }
 
@@ -1022,7 +993,8 @@ function normalizeErrorEntry(error: unknown): NormalizedErrorEntry {
       stack: error.stack,
       code: readCode(error),
       rstCode: readRstCode(error),
-      statusCode: readStatusCode(error)
+      statusCode: readStatusCode(error),
+      isRetryable: readIsRetryable(error)
     };
   }
 
@@ -1034,6 +1006,7 @@ function normalizeErrorEntry(error: unknown): NormalizedErrorEntry {
       code?: unknown;
       rstCode?: unknown;
       statusCode?: unknown;
+      isRetryable?: unknown;
     };
     const name = typeof candidate.name === "string" && candidate.name.trim().length > 0 ? candidate.name.trim() : undefined;
     const message = typeof candidate.message === "string"
@@ -1045,7 +1018,8 @@ function normalizeErrorEntry(error: unknown): NormalizedErrorEntry {
       stack: typeof candidate.stack === "string" ? candidate.stack : undefined,
       code: normalizeScalarCode(candidate.code),
       rstCode: normalizeScalarCode(candidate.rstCode),
-      statusCode: typeof candidate.statusCode === "number" && Number.isFinite(candidate.statusCode) ? candidate.statusCode : undefined
+      statusCode: typeof candidate.statusCode === "number" && Number.isFinite(candidate.statusCode) ? candidate.statusCode : undefined,
+      isRetryable: typeof candidate.isRetryable === "boolean" ? candidate.isRetryable : undefined
     };
   }
 
@@ -1065,6 +1039,11 @@ function readRstCode(error: Error): string | number | undefined {
 function readStatusCode(error: Error): number | undefined {
   const statusCode = (error as { statusCode?: unknown }).statusCode;
   return typeof statusCode === "number" && Number.isFinite(statusCode) ? statusCode : undefined;
+}
+
+function readIsRetryable(error: Error): boolean | undefined {
+  const isRetryable = (error as { isRetryable?: unknown }).isRetryable;
+  return typeof isRetryable === "boolean" ? isRetryable : undefined;
 }
 
 function normalizeScalarCode(code: unknown): string | number | undefined {
@@ -1102,11 +1081,7 @@ function isStructuredConnectCode(code: string | number | undefined): boolean {
     || normalized === "UNAUTHENTICATED"
     || normalized === "PERMISSION_DENIED"
     || normalized === "UNAVAILABLE"
-    || normalized === "RESOURCE_EXHAUSTED"
-    || normalized === "CANCELLED"
-    || normalized === "CANCELED"
-    || normalized === "ABORT_ERR"
-    || normalized === "ABORTED";
+    || normalized === "RESOURCE_EXHAUSTED";
 }
 
 function stringifyCode(value: string | number | undefined): string {
@@ -1132,6 +1107,7 @@ type NormalizedErrorEntry = {
   code?: string | number;
   rstCode?: string | number;
   statusCode?: number;
+  isRetryable?: boolean;
 };
 
 type CursorSdkFailureFacts = {
@@ -1154,5 +1130,5 @@ type CursorSdkFailureFacts = {
   cancelAbortOrDestroyed: boolean;
   agentBusyOrUserStateConflict: boolean;
   protocolOrConfig: boolean;
-  cursorLike: boolean;
+  explicitInternalStream: boolean;
 };

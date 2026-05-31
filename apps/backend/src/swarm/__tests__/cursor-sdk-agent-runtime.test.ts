@@ -789,19 +789,13 @@ describe("CursorSdkAgentRuntime", () => {
     ]);
   });
 
-  it("suppresses a no-ALS late detached failure from attempt 1 while retry attempt 2 is active", async () => {
-    const payloads: string[] = [];
-    const lateContainment = deferred<boolean>();
+  it("does not swallow a no-ALS late detached failure from attempt 1 while retry attempt 2 is active", async () => {
     const retryGate = deferred();
     const send = vi.fn(async (payload: string | { text: string }, options?: CursorSdkSendOptions) => {
-      payloads.push(payloadText(payload));
       if (send.mock.calls.length === 1) {
         queueMicrotask(() => {
           emitCursorSdkBackgroundFailureForTests(createCursorRetryableStreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" }));
         });
-        setTimeout(() => {
-          lateContainment.resolve(emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError()));
-        }, 10);
         return createRun({ streamGate: new Promise(() => undefined), cancel: vi.fn(async () => undefined) });
       }
 
@@ -812,12 +806,9 @@ describe("CursorSdkAgentRuntime", () => {
 
     await runtime.sendMessage("hello");
     await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
-    await expect(lateContainment.promise).resolves.toBe(true);
+    expect(emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError())).toBe(false);
     retryGate.resolve();
-
     await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1));
-    expect(payloads[0]).toContain("<forge_system_context>");
-    expect(payloads[1]).toBe(payloads[0]);
     expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
   });
 

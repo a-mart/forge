@@ -48,6 +48,12 @@ function createConfigurationError(): Error {
   return error;
 }
 
+function createGenericCursorStackError(): Error {
+  const error = new Error("cursor sdk bug exploded");
+  error.stack = "Error: cursor sdk bug exploded\n    at run (@cursor/sdk/dist/index.js:1:1)";
+  return error;
+}
+
 async function emitInsideScope(scope: ReturnType<typeof createCursorSdkBackgroundScope>, error: unknown): Promise<void> {
   await scope.runWithAttribution(async () => {
     queueMicrotask(() => {
@@ -165,6 +171,29 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "fatal-retry-lineage-tombstone-ambiguous": {
+      const closedScope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 7,
+        attemptIndex: 0,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      closedScope.close();
+      createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 7,
+        attemptIndex: 1,
+        startedAt: "2026-01-01T00:00:01.000Z"
+      });
+      queueMicrotask(() => {
+        Promise.reject(createConnectError({ code: 14, message: "ConnectError: [unavailable] upstream unavailable" }));
+      });
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
     case "fatal-generic-stream": {
       const scope = createCursorSdkBackgroundScope({
         agentId: "worker-1",
@@ -177,6 +206,19 @@ async function main(): Promise<void> {
         });
         await delay(0);
       });
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-generic-cursor-stack": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createGenericCursorStackError());
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);

@@ -52,36 +52,39 @@ function createRateLimitError(options: {
   stackHint?: string;
   statusCode?: number;
   code?: string | number;
-} = {}): Error & { code?: string | number; statusCode?: number } {
+  isRetryable?: boolean;
+} = {}): Error & { code?: string | number; statusCode?: number; isRetryable?: boolean } {
   class RateLimitError extends Error {
     code?: string | number;
     statusCode?: number;
+    isRetryable?: boolean;
   }
 
   const error = new RateLimitError("cursor rate limited");
   error.name = "RateLimitError";
   error.code = options.code ?? "429";
   error.statusCode = options.statusCode ?? 429;
+  error.isRetryable = options.isRetryable;
   error.stack = `RateLimitError: ${error.message}\n    at run (${options.stackHint ?? "@cursor/sdk/dist/index.js"}:1:1)`;
   return error;
 }
 
-function createNetworkError(): Error {
+function createNetworkError(options: { stackHint?: string } = {}): Error {
   class NetworkError extends Error {}
   const error = new NetworkError("network unavailable");
   error.name = "NetworkError";
-  error.stack = `NetworkError: ${error.message}\n    at run (@cursor/sdk/dist/index.js:1:1)`;
+  error.stack = `NetworkError: ${error.message}\n    at run (${options.stackHint ?? "@cursor/sdk/dist/index.js"}:1:1)`;
   return error;
 }
 
-function createAbortError(): Error & { code?: string } {
+function createAbortError(options: { stackHint?: string; code?: string } = {}): Error & { code?: string } {
   class AbortError extends Error {
-    code = "ABORT_ERR";
+    code = options.code ?? "ABORT_ERR";
   }
 
   const error = new AbortError("stream aborted");
   error.name = "AbortError";
-  error.stack = `AbortError: ${error.message}\n    at run (@cursor/sdk/dist/index.js:1:1)`;
+  error.stack = `AbortError: ${error.message}\n    at run (${options.stackHint ?? "@cursor/sdk/dist/index.js"}:1:1)`;
   return error;
 }
 
@@ -98,6 +101,12 @@ function createConfigurationError(): Error {
   const error = new ConfigurationError("invalid sdk config");
   error.name = "ConfigurationError";
   error.stack = `ConfigurationError: ${error.message}\n    at run (@cursor/sdk/dist/index.js:1:1)`;
+  return error;
+}
+
+function createGenericCursorStackError(): Error {
+  const error = new Error("cursor sdk bug exploded");
+  error.stack = `Error: ${error.message}\n    at run (@cursor/sdk/dist/index.js:1:1)`;
   return error;
 }
 
@@ -263,7 +272,7 @@ describe("Cursor SDK error containment classifier", () => {
   });
 
   it("only retries exact Cursor 429, not generic 429 text", () => {
-    const exactDecision = classifyAwaited(createRateLimitError());
+    const exactDecision = classifyAwaited(createRateLimitError({ isRetryable: true }));
     const genericDecision = classifyAwaited(Object.assign(new Error("rate limited"), { code: 429 }));
 
     expect(exactDecision.bucket).toBe("retryable_transport");
@@ -298,6 +307,34 @@ describe("Cursor SDK error containment classifier", () => {
     expect(genericResourceDecision.bucket).toBe("non_cursor");
     expect(genericResourceDecision.contain).toBe(false);
     expect(genericResourceDecision.fatal).toBe(true);
+  });
+
+  it("keeps generic cursor-looking residual failures fatal in background mode", () => {
+    const decision = classifyBackground(createGenericCursorStackError(), { attributionMode: "als" });
+    expect(decision.family).toBe("cursor_sdk");
+    expect(decision.bucket).toBe("non_cursor");
+    expect(decision.contain).toBe(false);
+    expect(decision.fatal).toBe(true);
+  });
+
+  it("keeps generic cursor-looking rate limits fatal unless explicitly retryable", () => {
+    const decision = classifyBackground(createRateLimitError(), { attributionMode: "als" });
+    expect(decision.family).toBe("cursor_sdk");
+    expect(decision.bucket).toBe("non_cursor");
+    expect(decision.contain).toBe(false);
+    expect(decision.fatal).toBe(true);
+  });
+
+  it("keeps name-only NetworkError and AbortError failures fatal without provider transport evidence", () => {
+    const networkDecision = classifyBackground(createNetworkError({ stackHint: "app.js" }), { attributionMode: "als" });
+    expect(networkDecision.bucket).toBe("non_cursor");
+    expect(networkDecision.contain).toBe(false);
+    expect(networkDecision.fatal).toBe(true);
+
+    const abortDecision = classifyBackground(createAbortError({ stackHint: "app.js" }), { attributionMode: "als" });
+    expect(abortDecision.bucket).toBe("non_cursor");
+    expect(abortDecision.contain).toBe(false);
+    expect(abortDecision.fatal).toBe(true);
   });
 
   it("fails closed for unattributed and ambiguous background matches", () => {
@@ -402,14 +439,17 @@ describe("Cursor SDK error containment attribution", () => {
     scopeTwo.close();
   });
 
-  it("suppresses no-ALS late failures from a superseded retry scope while the retry scope is active", async () => {
-    const firstAttemptScope = createCursorSdkBackgroundScope({
+  it.each([
+    createConnectError(),
+    createHttp2StreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" })
+  ])("fails closed for retry-lineage no-ALS tombstone ambiguity with %p", async (error) => {
+    const closedScope = createCursorSdkBackgroundScope({
       agentId: "worker-1",
       promptToken: 7,
       attemptIndex: 0,
       startedAt: "2026-01-01T00:00:00.000Z"
     });
-    firstAttemptScope.close();
+    closedScope.close();
 
     const retryScope = createCursorSdkBackgroundScope({
       agentId: "worker-1",
@@ -418,11 +458,7 @@ describe("Cursor SDK error containment attribution", () => {
       startedAt: "2026-01-01T00:00:01.000Z"
     });
 
-    expect(emitCursorSdkBackgroundFailureForTests(createConnectError())).toBe(true);
-    await expect(Promise.race([
-      retryScope.waitForContainedFailure().then(() => "contained"),
-      new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 20))
-    ])).resolves.toBe("timeout");
+    expect(emitCursorSdkBackgroundFailureForTests(error)).toBe(false);
     retryScope.close();
   });
 
