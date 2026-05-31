@@ -54,6 +54,7 @@ export function ActiveWorkHeaderIndicator({
         sideOffset={8}
         className="p-0"
         style={{ width: 'min(34rem, calc(100vw - 1rem))' }}
+        aria-label="Active Work plan details"
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-border/60 p-3">

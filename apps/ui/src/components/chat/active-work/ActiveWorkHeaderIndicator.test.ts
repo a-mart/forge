@@ -81,6 +81,7 @@ describe('ActiveWorkHeaderIndicator', () => {
     act(() => trigger?.click())
 
     expect(trigger?.getAttribute('aria-expanded')).toBe('true')
+    expect(document.body.querySelector('[data-slot="popover-content"]')?.getAttribute('aria-label')).toBe('Active Work plan details')
     expect(document.body.textContent).toContain('Completed header plan')
     expect(document.body.textContent).toContain('Keep scroll position stable')
     expect(scrollIntoView).not.toHaveBeenCalled()
