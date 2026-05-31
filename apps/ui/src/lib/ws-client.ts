@@ -786,7 +786,11 @@ export class ManagerWsClient {
       return
     }
 
-    if (handleProjectAgentEvent(event, { requestTracker: this.requestDispatcher.tracker })) {
+    if (handleProjectAgentEvent(event, {
+      state: this.state,
+      updateState: (patch) => this.updateState(patch),
+      requestTracker: this.requestDispatcher.tracker,
+    })) {
       return
     }
 

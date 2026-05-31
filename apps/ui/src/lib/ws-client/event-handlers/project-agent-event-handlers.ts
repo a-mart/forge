@@ -7,6 +7,7 @@ export function handleProjectAgentEvent(
 ): boolean {
   switch (event.type) {
     case 'session_project_agent_updated':
+      context.updateState({ promptChangeKey: context.state.promptChangeKey + 1 })
       if (event.requestId) {
         context.requestTracker.resolve('set_session_project_agent', event.requestId, {
           agentId: event.agentId,
@@ -94,6 +95,7 @@ export function handleProjectAgentEvent(
       return true
 
     case 'project_agent_sharing_updated':
+      context.updateState({ promptChangeKey: context.state.promptChangeKey + 1 })
       if (event.requestId) {
         context.requestTracker.resolve('set_project_agent_sharing', event.requestId, {
           agentId: event.agentId,

@@ -58,6 +58,14 @@ export interface ReplaceSharingTargetsResult {
   removedTargetProfileIds: string[];
 }
 
+export interface ExternalProjectAgentDeliveryAuthorization {
+  grantId: string;
+  mode: "grant" | "contact_reply";
+  sourceAgentId: string;
+  sourceProfileId: string;
+  targetProfileId: string;
+}
+
 export function sanitizeProjectAgentPromptMetadata(
   value: string,
   options: { maxLength: number },
@@ -395,7 +403,54 @@ export class ProjectAgentSharingService {
     }
 
     const profiles = new Map(this.deps.getProfiles().map((profile) => [profile.profileId, profile]));
-    return this.toExternalDirectoryEntry(grant, profiles) !== null;
+    return this.isGrantActive(grant, profiles);
+  }
+
+  async authorizeExternalDelivery(options: {
+    senderAgentId: string;
+    senderProfileId: string;
+    targetAgentId: string;
+  }): Promise<ExternalProjectAgentDeliveryAuthorization | null> {
+    await this.ensureLoaded();
+    const profiles = new Map(this.deps.getProfiles().map((profile) => [profile.profileId, profile]));
+
+    const directGrant = this.findGrant(options.targetAgentId, options.senderProfileId);
+    if (directGrant && this.isGrantActive(directGrant, profiles)) {
+      return {
+        grantId: directGrant.grantId,
+        mode: "grant",
+        sourceAgentId: directGrant.sourceAgentId,
+        sourceProfileId: directGrant.sourceProfileId,
+        targetProfileId: directGrant.targetProfileId,
+      };
+    }
+
+    const replyContact = this.store!.contacts.find((contact) => {
+      if (contact.targetSessionAgentId !== options.targetAgentId) {
+        return false;
+      }
+
+      const grant = this.store!.grants.find((candidate) => candidate.grantId === contact.grantId);
+      return grant?.sourceAgentId === options.senderAgentId;
+    });
+    if (!replyContact) {
+      return null;
+    }
+
+    const replyGrant = this.store!.grants.find(
+      (grant) => grant.grantId === replyContact.grantId && grant.sourceAgentId === options.senderAgentId,
+    );
+    if (!replyGrant || replyGrant.sourceProfileId !== options.senderProfileId || !this.isGrantActive(replyGrant, profiles)) {
+      return null;
+    }
+
+    return {
+      grantId: replyGrant.grantId,
+      mode: "contact_reply",
+      sourceAgentId: replyGrant.sourceAgentId,
+      sourceProfileId: replyGrant.sourceProfileId,
+      targetProfileId: replyGrant.targetProfileId,
+    };
   }
 
   async recordExternalContact(
@@ -475,13 +530,8 @@ export class ProjectAgentSharingService {
   ): ProjectAgentExternalDirectoryEntry | null {
     const sourceDescriptor = this.deps.getDescriptor(grant.sourceAgentId);
     const sourceProfile = profiles.get(grant.sourceProfileId);
-    const targetProfile = profiles.get(grant.targetProfileId);
 
-    if (
-      !isLiveProjectAgentDescriptor(sourceDescriptor) ||
-      isSourceArchived(sourceDescriptor, sourceProfile) ||
-      isProfileArchived(targetProfile)
-    ) {
+    if (!this.isGrantActive(grant, profiles) || !isLiveProjectAgentDescriptor(sourceDescriptor)) {
       return null;
     }
 
@@ -501,6 +551,18 @@ export class ProjectAgentSharingService {
       }),
       origin: "external",
     };
+  }
+
+  private isGrantActive(grant: ProjectAgentShareGrant, profiles: Map<string, ManagerProfile>): boolean {
+    const sourceDescriptor = this.deps.getDescriptor(grant.sourceAgentId);
+    const sourceProfile = profiles.get(grant.sourceProfileId);
+    const targetProfile = profiles.get(grant.targetProfileId);
+
+    return !(
+      !isLiveProjectAgentDescriptor(sourceDescriptor) ||
+      isSourceArchived(sourceDescriptor, sourceProfile) ||
+      isProfileArchived(targetProfile)
+    );
   }
 
   private listExternalAliasesForTarget(targetProfileId: string, excludeSourceAgentId?: string): string[] {

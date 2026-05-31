@@ -156,6 +156,8 @@ export interface ManagerWsSessionEventContext {
 }
 
 export interface ManagerWsProjectAgentEventContext {
+  state: ManagerWsState
+  updateState: (patch: Partial<ManagerWsState>) => void
   requestTracker: RequestTrackerAdapter
 }
 

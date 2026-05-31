@@ -321,7 +321,7 @@ export function BuilderSurface({
     return () => {
       cancelled = true
     }
-  }, [activeAgent?.agentId, activeAgent?.role, clientRef, state.connected])
+  }, [activeAgent?.agentId, activeAgent?.role, clientRef, state.connected, state.promptChangeKey])
 
   // Project agents for @mention autocomplete — only when the active agent is a manager session
   const projectAgentSuggestions = useMemo(

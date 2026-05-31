@@ -180,6 +180,11 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
     const projectAgentSenderName = isProjectAgentMessage
       ? message.projectAgentContext?.fromDisplayName
       : undefined
+    const projectAgentSenderLabel = isProjectAgentMessage
+      ? message.projectAgentContext?.external && message.projectAgentContext.fromProjectName
+        ? `${message.projectAgentContext.fromDisplayName} · ${message.projectAgentContext.fromProjectName}`
+        : projectAgentSenderName
+      : undefined
     return (
       <div className="flex justify-end">
         <div
@@ -210,16 +215,16 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               </p>
             ) : null}
           </div>
-          {timestampLabel || sourceContext || onForkFromMessage || canPin || projectAgentSenderName ? (
+          {timestampLabel || sourceContext || onForkFromMessage || canPin || projectAgentSenderLabel ? (
             <div className="mt-1 flex items-center justify-end gap-1.5">
-              {projectAgentSenderName ? (
+              {projectAgentSenderLabel ? (
                 <span className={cn(
                   'inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none',
                   isProjectAgentMessage
                     ? 'border-white/30 bg-white/10 text-white/90'
                     : 'border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground/90',
                 )}>
-                  {projectAgentSenderName}
+                  {projectAgentSenderLabel}
                 </span>
               ) : (
                 <SourceBadge sourceContext={sourceContext} isUser />

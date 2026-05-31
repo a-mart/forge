@@ -341,33 +341,54 @@ describe("SwarmManager project-agent regressions", () => {
     expect(docsRuntime?.sendCalls.map((call) => call.message)).toEqual([
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
-        fromDisplayName: "manager"
+        fromDisplayName: "manager",
+        external: false,
+        fromProfileId: "manager",
+        fromProjectName: "manager"
       })}\n\nnote-1`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
-        fromDisplayName: "manager"
+        fromDisplayName: "manager",
+        external: false,
+        fromProfileId: "manager",
+        fromProjectName: "manager"
       })}\n\nnote-3`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
-        fromDisplayName: "manager"
+        fromDisplayName: "manager",
+        external: false,
+        fromProfileId: "manager",
+        fromProjectName: "manager"
       })}\n\nnote-5`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: secondSender.agentId,
-        fromDisplayName: "Ops"
+        fromDisplayName: "Ops",
+        external: false,
+        fromProfileId: "manager",
+        fromProjectName: "manager"
       })}\n\nops-follow-up`
     ]);
     expect(qaRuntime?.sendCalls.map((call) => call.message)).toEqual([
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
-        fromDisplayName: "manager"
+        fromDisplayName: "manager",
+        external: false,
+        fromProfileId: "manager",
+        fromProjectName: "manager"
       })}\n\nnote-2`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
-        fromDisplayName: "manager"
+        fromDisplayName: "manager",
+        external: false,
+        fromProfileId: "manager",
+        fromProjectName: "manager"
       })}\n\nnote-4`,
       `[projectAgentContext] ${JSON.stringify({
         fromAgentId: "manager",
-        fromDisplayName: "manager"
+        fromDisplayName: "manager",
+        external: false,
+        fromProfileId: "manager",
+        fromProjectName: "manager"
       })}\n\nnote-6`
     ]);
   });

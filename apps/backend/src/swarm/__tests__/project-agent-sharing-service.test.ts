@@ -290,8 +290,27 @@ describe("ProjectAgentSharingService", () => {
 
     await expect(service.hasActiveExternalAccess("docs--s1", "mobile")).resolves.toBe(true);
     await expect(service.hasActiveExternalAccess("docs--s1", "web")).resolves.toBe(false);
+    await expect(service.authorizeExternalDelivery({
+      senderAgentId: "mobile-session-1",
+      senderProfileId: "mobile",
+      targetAgentId: "docs--s1",
+    })).resolves.toMatchObject({
+      mode: "grant",
+      sourceAgentId: "docs--s1",
+      sourceProfileId: "forge",
+      targetProfileId: "mobile",
+    });
 
     await service.recordExternalContact("docs--s1", "mobile", "mobile-session-1");
+    await expect(service.authorizeExternalDelivery({
+      senderAgentId: "mobile-session-1",
+      senderProfileId: "mobile",
+      targetAgentId: "docs--s1",
+    })).resolves.toMatchObject({
+      mode: "grant",
+      sourceAgentId: "docs--s1",
+      targetProfileId: "mobile",
+    });
     const raw = JSON.parse(await readFile(getProjectAgentSharingStorePath(dataDir), "utf8")) as {
       contacts: Array<{ targetSessionAgentId: string; targetProfileId: string }>;
     };
@@ -300,6 +319,34 @@ describe("ProjectAgentSharingService", () => {
       targetSessionAgentId: "mobile-session-1",
       targetProfileId: "mobile",
     });
+  });
+
+  it("authorizes direct contact replies back to the originating external session", async () => {
+    const source = makeProjectAgent("docs--s1", "forge", "documentation");
+    const { service } = await createService({
+      profiles: [makeProfile("forge", { displayName: "Forge" }), makeProfile("mobile")],
+      descriptors: [source],
+    });
+
+    await service.replaceSharingTargets("docs--s1", ["mobile"]);
+    await service.recordExternalContact("docs--s1", "mobile", "mobile-session-1");
+
+    await expect(service.authorizeExternalDelivery({
+      senderAgentId: "docs--s1",
+      senderProfileId: "forge",
+      targetAgentId: "mobile-session-1",
+    })).resolves.toMatchObject({
+      mode: "contact_reply",
+      sourceAgentId: "docs--s1",
+      sourceProfileId: "forge",
+      targetProfileId: "mobile",
+    });
+
+    await expect(service.authorizeExternalDelivery({
+      senderAgentId: "docs--s1",
+      senderProfileId: "forge",
+      targetAgentId: "other-mobile-session",
+    })).resolves.toBeNull();
   });
 
   it("source-owned sharing snapshot includes grant topology but external directory does not", async () => {

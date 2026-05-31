@@ -13,6 +13,9 @@ import type { WorkPlanSnapshot } from './tasks.js'
 export interface ProjectAgentMessageContext {
   fromAgentId: string
   fromDisplayName: string
+  external?: boolean
+  fromProfileId?: string
+  fromProjectName?: string
 }
 
 export interface ConversationMessageEvent {

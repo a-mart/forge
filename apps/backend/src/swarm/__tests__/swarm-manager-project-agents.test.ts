@@ -1286,40 +1286,27 @@ describe('SwarmManager', () => {
       },
     ]
     const createdRuntimeCountBeforeSend = manager.createdRuntimeIds.length
-    const receipt = await manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto', {
-      attachments,
-    })
+    const existingSendCallCount = manager.runtimeByAgentId.get(sessionAgent.agentId)?.sendCalls.length ?? 0
 
-    expect(receipt.targetAgentId).toBe(sessionAgent.agentId)
-    expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforeSend + 1)
+    await expect(manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto', {
+      attachments,
+    })).rejects.toThrow(/do not support attachments/i)
+
+    expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforeSend)
 
     const recreatedRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
-    expect(recreatedRuntime?.sendCalls.at(-1)?.message).toBe(
-      `[projectAgentContext] ${JSON.stringify({
-        fromAgentId: 'manager',
-        fromDisplayName: 'manager',
-      })}\n\nPlease draft release notes.`,
-    )
+    expect(recreatedRuntime?.sendCalls.length ?? 0).toBe(existingSendCallCount)
 
     const targetHistory = manager.getConversationHistory(sessionAgent.agentId)
-    const projectAgentMessage = targetHistory.find(
-      (entry) =>
-        entry.type === 'conversation_message' &&
-        entry.source === 'project_agent_input' &&
-        entry.role === 'user' &&
-        entry.text === 'Please draft release notes.',
-    )
-
-    expect(projectAgentMessage).toBeDefined()
-    expect(projectAgentMessage?.type).toBe('conversation_message')
-    if (projectAgentMessage?.type === 'conversation_message') {
-      expect(projectAgentMessage.sourceContext).toBeUndefined()
-      expect(projectAgentMessage.attachments).toBeUndefined()
-      expect(projectAgentMessage.projectAgentContext).toEqual({
-        fromAgentId: 'manager',
-        fromDisplayName: 'manager',
-      })
-    }
+    expect(
+      targetHistory.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'project_agent_input' &&
+          entry.role === 'user' &&
+          entry.text === 'Please draft release notes.',
+      ),
+    ).toBe(false)
 
     expect(targetHistory.some((entry) => entry.type === 'agent_message')).toBe(false)
 
@@ -1333,7 +1320,7 @@ describe('SwarmManager', () => {
           entry.toAgentId === sessionAgent.agentId &&
           entry.text === 'Please draft release notes.',
       ),
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('does not append target transcript or mark activity when project-agent runtime send fails', async () => {
