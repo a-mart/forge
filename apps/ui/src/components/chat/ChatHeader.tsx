@@ -18,7 +18,7 @@ import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { ActiveWorkHeaderIndicator } from '@/components/chat/active-work'
 import { cn } from '@/lib/utils'
 import { formatElapsed } from '@/lib/format-utils'
-import type { AgentStatus, AgentSessionPurpose, SessionTaskStateSnapshotEvent } from '@forge/protocol'
+import type { AgentDescriptor, AgentStatus, AgentSessionPurpose, SessionTaskStateSnapshotEvent } from '@forge/protocol'
 
 export type MessageSourceView = 'web' | 'all'
 
@@ -44,9 +44,9 @@ interface ChatHeaderProps {
   onDetailedAllViewChange?: (value: boolean) => void
   contextWindowUsage: { mode: 'known'; usedTokens: number; contextWindow: number } | { mode: 'updating'; contextWindow: number } | null
   activeWorkSnapshot?: SessionTaskStateSnapshotEvent | null
-  activeWorkExpanded?: boolean
-  onToggleActiveWork?: () => void
-  onFocusActiveWork?: () => void
+  activeWorkAgents?: AgentDescriptor[]
+  activeWorkStatuses?: Record<string, { status: AgentStatus }>
+  onNavigateToActiveWorkWorker?: (agentId: string) => void
   compactionCount?: number
   showCompact: boolean
   compactInProgress: boolean
@@ -157,9 +157,9 @@ export function ChatHeader({
   onDetailedAllViewChange,
   contextWindowUsage,
   activeWorkSnapshot,
-  activeWorkExpanded = false,
-  onToggleActiveWork,
-  onFocusActiveWork,
+  activeWorkAgents = [],
+  activeWorkStatuses = {},
+  onNavigateToActiveWorkWorker,
   compactionCount,
   showCompact,
   compactInProgress,
@@ -415,12 +415,12 @@ export function ChatHeader({
             />
           ) : null}
 
-          {onToggleActiveWork ? (
+          {activeWorkSnapshot ? (
             <ActiveWorkHeaderIndicator
               snapshot={activeWorkSnapshot}
-              expanded={activeWorkExpanded}
-              onToggle={onToggleActiveWork}
-              onFocus={onFocusActiveWork}
+              agents={activeWorkAgents}
+              statuses={activeWorkStatuses}
+              onNavigateToWorker={onNavigateToActiveWorkWorker}
             />
           ) : null}
         </div>

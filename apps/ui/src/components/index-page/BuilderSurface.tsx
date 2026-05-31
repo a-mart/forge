@@ -143,7 +143,6 @@ export function BuilderSurface({
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
   const [detailedAllView, setDetailedAllView] = useState(false)
   const [activeWorkExpanded, setActiveWorkExpanded] = useState(false)
-  const [activeWorkFocusNonce, setActiveWorkFocusNonce] = useState(0)
 
   const activeAgentId = useMemo(() => {
     const preferredId = state.targetAgentId ?? state.subscribedAgentId ?? null
@@ -1380,13 +1379,9 @@ export function BuilderSurface({
                   onDetailedAllViewChange: isActiveManager ? setDetailedAllView : undefined,
                   contextWindowUsage,
                   activeWorkSnapshot,
-                  activeWorkExpanded,
-                  onToggleActiveWork: activeWorkSnapshot
-                    ? () => setActiveWorkExpanded((previous) => !previous)
-                    : undefined,
-                  onFocusActiveWork: activeWorkSnapshot
-                    ? () => setActiveWorkFocusNonce((previous) => previous + 1)
-                    : undefined,
+                  activeWorkAgents: state.agents,
+                  activeWorkStatuses: state.statuses,
+                  onNavigateToActiveWorkWorker: isActiveManager ? handleSelectAgent : undefined,
                   compactionCount: activeAgent?.compactionCount,
                   showCompact: isActiveManager,
                   compactInProgress: isCompactingManager,
@@ -1474,7 +1469,6 @@ export function BuilderSurface({
                   activeWorkSnapshot,
                   activeWorkExpanded,
                   onActiveWorkExpandedChange: setActiveWorkExpanded,
-                  activeWorkFocusNonce,
                   statuses: state.statuses,
                   onNavigateToWorker: isActiveManager ? handleSelectAgent : undefined,
                   streamingStartedAt:

@@ -7,6 +7,8 @@ description: Use when substantial manager-led work needs durable visible progres
 
 Use this skill when a visible Work Plan would make substantial manager-led work easier to follow or recover. A Work Plan is descriptive coordination state, not a workflow runner. Execution stays manager-led through normal Forge tools: spawn workers, ask choices, inspect evidence, validate, and synthesize the final answer.
 
+Do not create a Work Plan as a ritual first step. Unless the user explicitly asks for one or the task is clearly substantial/recoverability-sensitive, investigate the request first and decide from evidence whether durable tracking is useful. Be especially conservative when the reported bug involves Work Plan UI itself; avoid adding noisy plan state that could obscure the user's actual repro.
+
 Quick, standard, and deep are sizing guides for how compact the plan should be, not required process stages. Use the smallest mode that preserves visibility and handoff.
 
 ## Trigger check
