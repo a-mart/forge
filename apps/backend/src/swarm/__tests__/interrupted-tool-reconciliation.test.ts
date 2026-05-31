@@ -136,7 +136,7 @@ describe("reconcileInterruptedToolCallsForBoot", () => {
   });
 
   it("does not leave persisted Codex stream detail tool starts for boot reconciliation when history policy skips persistence", async () => {
-    const { manager, append } = await createFixture();
+    const { manager } = await createFixture();
     const codexSidecar = descriptor({
       agentId: "manager--codex",
       role: "worker",
