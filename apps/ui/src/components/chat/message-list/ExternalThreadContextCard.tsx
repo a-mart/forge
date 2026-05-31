@@ -23,6 +23,8 @@ export interface ExternalThreadContextCardProps {
   context: ExternalThreadMessageContext
   text: string
   timestampLabel?: string
+  /** When omitted, falls back to in-progress card statuses for standalone usage. */
+  showStop?: boolean
   /** Optional stop handler once backend routing is wired. */
   onStop?: () => void
   stopDisabled?: boolean
@@ -33,12 +35,15 @@ export function ExternalThreadContextCard({
   context,
   text,
   timestampLabel,
+  showStop: showStopProp,
   onStop,
   stopDisabled = true,
   stopDisabledReason = 'Codex stop control activates once sidecar routing is connected.',
 }: ExternalThreadContextCardProps) {
   const normalizedText = text.trim()
-  const showStop = context.status === 'running' || context.status === 'sent'
+  const showStop =
+    showStopProp ??
+    (context.status === 'running' || context.status === 'sent')
 
   return (
     <div

@@ -2,6 +2,18 @@ import { cn } from '@/lib/utils'
 import { inferModelPreset } from '@/lib/model-preset'
 import type { AgentDescriptor } from '@forge/protocol'
 
+export function CodexExternalThreadIcon({ className }: { className?: string }) {
+  return (
+    <img
+      src="/agents/codex-logo.svg"
+      alt=""
+      aria-hidden="true"
+      data-external-thread-icon="codex_app_server"
+      className={cn('size-3 shrink-0 object-contain dark:invert', className)}
+    />
+  )
+}
+
 export function SessionStatusDot({ running, isCli }: { running: boolean; isCli?: boolean }) {
   return (
     <span

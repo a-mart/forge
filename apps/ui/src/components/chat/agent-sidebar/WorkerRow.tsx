@@ -4,7 +4,8 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { SpecialistBadge } from '../SpecialistBadge'
 import { cn } from '@/lib/utils'
-import { HighlightedText } from './shared'
+import { isCodexExternalThread } from '@/lib/external-threads'
+import { CodexExternalThreadIcon, HighlightedText } from './shared'
 import type { WorkerRowProps } from './types'
 
 export const WorkerRow = React.memo(function WorkerRow({
@@ -27,6 +28,7 @@ export const WorkerRow = React.memo(function WorkerRow({
   const isActive = statusValue === 'streaming'
   const isRunning = statusValue === 'streaming' || statusValue === 'idle'
   const isStopped = statusValue === 'terminated' || statusValue === 'stopped'
+  const isCodexWorker = isCodexExternalThread(agent)
 
   return (
     <ContextMenu>
@@ -54,6 +56,7 @@ export const WorkerRow = React.memo(function WorkerRow({
                     )}
                     aria-label={isActive ? 'Active' : 'Idle'}
                   />
+                  {isCodexWorker ? <CodexExternalThreadIcon /> : null}
                   <span className="min-w-0 flex-1 truncate text-sm leading-5">
                     {highlightQuery ? <HighlightedText text={name} query={highlightQuery} /> : name}
                   </span>

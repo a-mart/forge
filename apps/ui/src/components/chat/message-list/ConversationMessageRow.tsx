@@ -167,6 +167,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
         context={externalThreadContext}
         text={normalizedText}
         timestampLabel={timestampLabel}
+        showStop={canStopExternalThread === true}
         onStop={() => onStopExternalThread?.(sidecarAgentId)}
         stopDisabled={stopDisabled}
       />

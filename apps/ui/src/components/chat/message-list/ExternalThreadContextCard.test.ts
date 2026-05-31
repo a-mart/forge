@@ -39,6 +39,7 @@ function buildContext(
 function renderCard(
   status: ExternalThreadMessageContext['status'],
   options?: {
+    showStop?: boolean
     onStop?: () => void
     stopDisabled?: boolean
   },
@@ -52,6 +53,7 @@ function renderCard(
             ? 'Codex completed: You have two meetings today.'
             : 'Codex is running: Summarize my calendar',
         timestampLabel: status === 'completed' ? '10:30 AM' : undefined,
+        showStop: options?.showStop,
         onStop: options?.onStop,
         stopDisabled: options?.stopDisabled,
       }),
@@ -74,30 +76,42 @@ describe('ExternalThreadContextCard', () => {
   })
 
   it('shows disabled stop control while running when stop is not wired', () => {
-    renderCard('running')
+    renderCard('running', { showStop: true })
 
     expect(container.textContent).toContain('Stop')
     expect(getStopButton()?.disabled).toBe(true)
   })
 
   it('enables stop control while running when handler is wired', () => {
-    renderCard('running', { onStop: vi.fn(), stopDisabled: false })
+    renderCard('running', { showStop: true, onStop: vi.fn(), stopDisabled: false })
 
     expect(getStopButton()?.disabled).toBe(false)
   })
 
   it('keeps stop control disabled when explicitly disabled', () => {
-    renderCard('running', { onStop: vi.fn(), stopDisabled: true })
+    renderCard('running', { showStop: true, onStop: vi.fn(), stopDisabled: true })
 
     expect(getStopButton()?.disabled).toBe(true)
   })
 
   it('calls onStop when enabled stop button is clicked', () => {
     const onStop = vi.fn()
-    renderCard('sent', { onStop, stopDisabled: false })
+    renderCard('sent', { showStop: true, onStop, stopDisabled: false })
 
     getStopButton()?.click()
 
     expect(onStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides stop control on historical sent cards when showStop is false', () => {
+    renderCard('sent', { showStop: false, onStop: vi.fn(), stopDisabled: false })
+
+    expect(getStopButton()).toBeNull()
+  })
+
+  it('hides stop control on completed cards', () => {
+    renderCard('completed', { showStop: false, onStop: vi.fn(), stopDisabled: false })
+
+    expect(getStopButton()).toBeNull()
   })
 })

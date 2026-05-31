@@ -86,7 +86,7 @@ describe('ConversationMessageRow', () => {
     expect(onStopExternalThread).toHaveBeenCalledWith('manager-1--codex')
   })
 
-  it('keeps stop disabled on stale historical sent cards', () => {
+  it('keeps stop hidden on stale historical sent cards', () => {
     const onStopExternalThread = vi.fn()
     const message = {
       ...buildMessage(),
@@ -106,9 +106,6 @@ describe('ConversationMessageRow', () => {
       )
     })
 
-    const stopButton = container.querySelector('button')
-    expect(stopButton?.disabled).toBe(true)
-    stopButton?.click()
-    expect(onStopExternalThread).not.toHaveBeenCalled()
+    expect(container.querySelector('button')).toBeNull()
   })
 })
