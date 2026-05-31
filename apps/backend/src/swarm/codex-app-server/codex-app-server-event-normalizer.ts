@@ -148,6 +148,15 @@ export function resolveCodexDetailToolName(itemType: string): string {
   }
 }
 
+export function isCodexStreamDetailToolName(toolName: string | undefined): boolean {
+  return (
+    toolName === CODEX_DETAIL_TOOL_COMMAND ||
+    toolName === CODEX_DETAIL_TOOL_MCP ||
+    toolName === CODEX_DETAIL_TOOL_FILE ||
+    toolName === CODEX_DETAIL_TOOL_PLAN
+  );
+}
+
 export function resolveCodexDetailDisplayKind(itemType: string): CodexDetailDisplayKind {
   switch (itemType) {
     case "commandExecution":

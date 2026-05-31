@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { ConversationProjector } from '../swarm/conversation-projector.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
+import { reconcileInterruptedToolCallsForBoot } from '../swarm/interrupted-tool-reconciliation.js'
 import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from '../swarm/session-file-guard.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 import type { AgentDescriptor, ConversationEntryEvent } from '../swarm/types.js'
@@ -339,6 +340,67 @@ describe('ConversationProjector session tree continuity', () => {
         (entry) => entry.type === 'conversation_message' && entry.text === 'durable transcript entry',
       ),
     ).toBe(true)
+  })
+
+  it('keeps Codex stream detail agent_tool_call rows live/cache-only so boot reconcile leaves no persisted open tools', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-codex-persistence-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const codexSidecar: AgentDescriptor = {
+      ...makeDescriptor(join(root, 'codex.jsonl'), root),
+      agentId: 'manager--codex',
+      role: 'worker',
+      managerId: 'manager',
+      status: 'streaming',
+      externalThread: {
+        type: 'codex_app_server',
+        persisted: true,
+        createdByMention: true,
+      },
+    }
+    const projector = makeProjector({ descriptor })
+
+    projector.emitAgentToolCall({
+      type: 'agent_tool_call',
+      agentId: descriptor.agentId,
+      actorAgentId: codexSidecar.agentId,
+      timestamp: FIXED_NOW,
+      kind: 'tool_execution_start',
+      toolName: 'codex_command',
+      toolCallId: 'cmd-1',
+      text: '{"command":"echo hi"}',
+    })
+
+    const history = projector.getConversationHistory(descriptor.agentId)
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'agent_tool_call' &&
+          entry.toolName === 'codex_command' &&
+          entry.kind === 'tool_execution_start',
+      ),
+    ).toBe(true)
+
+    const readPersistedToolCalls = () =>
+      SessionManager.open(sessionFile)
+        .getEntries()
+        .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')
+        .map((entry: any) => entry.data)
+        .filter((entry: any) => entry?.type === 'agent_tool_call')
+
+    expect(readPersistedToolCalls()).toEqual([])
+
+    const reconcileResult = reconcileInterruptedToolCallsForBoot({
+      descriptors: new Map([
+        [descriptor.agentId, descriptor],
+        [codexSidecar.agentId, codexSidecar],
+      ]),
+      interruptedActorAgentIds: new Set([descriptor.agentId]),
+      now: () => FIXED_NOW,
+    })
+
+    expect(reconcileResult).toEqual({ reconciledToolCalls: 0, deliveryWarnings: 0 })
+    expect(readPersistedToolCalls()).toEqual([])
   })
 
   it('loads the full persisted history before appending a cold post-boot conversation entry', async () => {

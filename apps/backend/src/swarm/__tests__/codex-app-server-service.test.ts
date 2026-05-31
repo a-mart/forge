@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CodexAppServerService } from "../codex-app-server/codex-app-server-service.js";
 import { CodexSidecarBusyError } from "../codex-app-server/types.js";
+import { shouldPersistConversationEntry } from "../session/history-policy.js";
 import type {
   CodexAppServerClientHandlers,
   CodexAppServerClientPort,
@@ -1471,6 +1472,7 @@ describe("CodexAppServerService", () => {
     expect(conversationLogs.every((row) => row.toolCallId === "cmd-1")).toBe(true);
     expect(agentToolCalls.some((row) => row.actorAgentId === "mgr-1--codex")).toBe(true);
     expect(agentToolCalls.every((row) => row.agentId === "mgr-1")).toBe(true);
+    expect(agentToolCalls.every((row) => !shouldPersistConversationEntry(row))).toBe(true);
     expect(conversationEntries.some((entry) => entry.type === "conversation_log")).toBe(false);
   });
 

@@ -1,4 +1,5 @@
 import type { ConversationEntryEvent } from "../types.js";
+import { isCodexStreamDetailToolName } from "../codex-app-server/codex-app-server-event-normalizer.js";
 
 export const MAX_CONVERSATION_HISTORY = 2000;
 
@@ -8,7 +9,15 @@ export function shouldPersistConversationEntry(entry: ConversationEntryEvent): b
   }
 
   if (entry.type === "agent_tool_call") {
-    return entry.kind !== "tool_execution_update";
+    if (entry.kind === "tool_execution_update") {
+      return false;
+    }
+
+    if (isCodexStreamDetailToolName(entry.toolName)) {
+      return false;
+    }
+
+    return true;
   }
 
   return true;

@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentDescriptor, AgentToolCallEvent, ConversationEntryEvent } from "../types.js";
 import { ConversationTimeline, CONVERSATION_ENTRY_TYPE } from "../session/conversation-timeline.js";
 import { reconcileInterruptedToolCallsForBoot } from "../interrupted-tool-reconciliation.js";
+import { shouldPersistConversationEntry } from "../session/history-policy.js";
 
 const NOW = "2026-05-14T00:00:00.000Z";
 
@@ -61,7 +63,17 @@ interface RawCustomEntry {
 }
 
 async function readRawCustomEntries(sessionFile: string): Promise<RawCustomEntry[]> {
+  try {
+    await access(sessionFile);
+  } catch {
+    return [];
+  }
+
   const text = await readFile(sessionFile, "utf8");
+  if (text.trim().length === 0) {
+    return [];
+  }
+
   return text
     .trim()
     .split("\n")
@@ -121,6 +133,45 @@ describe("reconcileInterruptedToolCallsForBoot", () => {
     expect(result).toEqual({ reconciledToolCalls: 0, deliveryWarnings: 0 });
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe("tool_execution_start");
+  });
+
+  it("does not leave persisted Codex stream detail tool starts for boot reconciliation when history policy skips persistence", async () => {
+    const { manager, append } = await createFixture();
+    const codexSidecar = descriptor({
+      agentId: "manager--codex",
+      role: "worker",
+      managerId: "manager",
+      status: "streaming",
+      sessionFile: join(manager.sessionFile, "../codex.jsonl"),
+      model: {
+        provider: "codex-app-server",
+        modelId: "app-server",
+        thinkingLevel: "none",
+      },
+      externalThread: {
+        type: "codex_app_server",
+        persisted: true,
+        createdByMention: true,
+      },
+    } as Partial<AgentDescriptor>);
+
+    const codexStart = tool({
+      actorAgentId: codexSidecar.agentId,
+      toolCallId: "codex-open-tool",
+      toolName: "codex_command",
+      text: '{"command":"echo hi"}',
+    });
+    expect(shouldPersistConversationEntry(codexStart)).toBe(false);
+
+    const result = reconcileInterruptedToolCallsForBoot({
+      descriptors: new Map([[manager.agentId, manager], [codexSidecar.agentId, codexSidecar]]),
+      interruptedActorAgentIds: new Set([manager.agentId]),
+      now: () => NOW,
+    });
+
+    const entries = await readConversationEntries(manager.sessionFile);
+    expect(result).toEqual({ reconciledToolCalls: 0, deliveryWarnings: 0 });
+    expect(entries).toHaveLength(0);
   });
 
   it("appends a synthetic error end for an unmatched tool start from an interrupted streaming actor", async () => {
