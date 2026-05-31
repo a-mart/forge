@@ -15,6 +15,7 @@ pnpm quality:report
 - `quality:changed` runs conservative workspace-level lint, typecheck, and tests for affected areas.
 - `quality:full` runs the repo gate: lint, knip, tests, all workspace typechecks (including Electron), and build.
 - `quality:report` prints the latest `.forge/quality/latest.json` report.
+- Help-content edits are routed to `pnpm help:validate`; `pnpm help:validate:migration` is reserved for one-time migration baseline fidelity checks, not normal authoring.
 
 By default reports are written to `.forge/quality/latest.json`, which is ignored by git. Use `--no-write` for smoke checks that should not create artifacts, or `--output <path>` to write somewhere else.
 
