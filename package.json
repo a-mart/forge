@@ -41,6 +41,9 @@
     "quality:changed": "node scripts/local-quality.mjs --tier changed",
     "quality:full": "node scripts/local-quality.mjs --tier full",
     "quality:report": "node scripts/local-quality.mjs --tier report",
+    "help:validate": "node scripts/validate-help-content.mjs --strict",
+    "help:validate:migration": "node scripts/validate-help-content.mjs --strict --fidelity",
+    "help:baseline": "node scripts/snapshot-help-content-baseline.mjs",
     "postinstall": "node scripts/fix-node-pty-spawn-helper-permissions.mjs"
   },
   "pnpm": {
@@ -78,6 +81,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "knip": "^6.3.1",
+    "typescript": "^5.9.2",
     "typescript-eslint": "^8.58.1",
     "vitest": "^3.2.4",
     "wait-on": "^8.0.5"

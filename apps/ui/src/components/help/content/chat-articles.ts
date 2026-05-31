@@ -1,51 +1,37 @@
 import type { HelpArticle } from '../help-types'
 
+import chatArtifactsContent from './articles/chat/chat-artifacts.md?raw'
+import chatAttachmentsContent from './articles/chat/chat-attachments.md?raw'
+import chatCompactionContent from './articles/chat/chat-compaction.md?raw'
+import chatFeedbackContent from './articles/chat/chat-feedback.md?raw'
+import chatForkSessionContent from './articles/chat/chat-fork-session.md?raw'
+import chatOverviewContent from './articles/chat/chat-overview.md?raw'
+import chatProfilesContent from './articles/chat/chat-profiles.md?raw'
+import chatProjectAgentsContent from './articles/chat/chat-project-agents.md?raw'
+import chatSendingContent from './articles/chat/chat-sending.md?raw'
+import chatSessionsContent from './articles/chat/chat-sessions.md?raw'
+import chatSidebarContent from './articles/chat/chat-sidebar.md?raw'
+import chatSystemPromptContent from './articles/chat/chat-system-prompt.md?raw'
+import chatWorkersContent from './articles/chat/chat-workers.md?raw'
+
 export const chatArticles: HelpArticle[] = [
   {
     id: 'chat-overview',
     title: 'Chat Interface',
     category: 'chat',
     summary: 'How the chat interface works, including streaming responses and stopping agents.',
-    content: `The chat interface is where you interact with Forge's manager agents. You send a message, the manager reads it, and it starts streaming a response in real time.
-
-## Layout
-
-The main view has three parts:
-
-- **Sidebar** (left) for navigating managers, profiles, and sessions.
-- **Message area** (center) showing the conversation transcript.
-- **Panels** (right/bottom) for artifacts, terminals, and file browsing.
-
-## Streaming and status
-
-While a manager is responding, you'll see a green status dot in the header and the text "Streaming." The message appears incrementally as it's generated.
-
-## Stopping a response
-
-To stop a running response, open the **⋮ menu** in the header and choose **Stop All**. This terminates the manager and any active workers.
-
-## Channel views
-
-The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity. A **Detailed** toggle can further reveal owned direct-worker tool activity for manager-scoped rows, but it stays off by default and resets when you switch views or agents.
-
-Builder web also supports Codex app-server sidecars. Start a message with @Codex or [@Codex] to send text to an external Codex thread instead of the manager. Codex sidecars show as worker-like external-thread cards and persist by default. Select the Codex sidecar and send a direct text follow-up to continue that same sidecar thread. This is Builder web only, text-only, excludes Collaboration, allows one active Codex turn globally, requires the Codex CLI app-server, and does not add direct MCP support in Forge.
-
-Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
-
-## Context window
-
-The ring icon next to the channel toggle shows how full the context window is. While a runtime is live, the live runtime status is authoritative for that meter. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.
-
-## Active Work
-
-For substantial manager-led work, Forge can show an **Active Work** card above the conversation. It is scoped to the current session and shows the manager's plan, item status, and linked worker evidence. Linked worker chips open that worker's transcript when the worker still belongs to the same session. Expandable **Work Plan created** rows in the timeline show the durable \`work_plan_created\` receipt snapshot, and the card can disclose a bounded list of previous Work Plans when more than one terminal plan is retained.
-
-The matching header indicator toggles the card open or closed and is wired for keyboard and screen-reader access. Collapsing the card only changes the view; the saved plan stays with the session.
-
-## Header controls
-
-The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count badge opens the pinned-message navigator/popover, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted.`,
-    keywords: ['chat', 'streaming', 'stop', 'status', 'channel', 'context window', 'overview', 'active work', 'work plan'],
+    content: chatOverviewContent,
+    keywords: [
+      'chat',
+      'streaming',
+      'stop',
+      'status',
+      'channel',
+      'context window',
+      'overview',
+      'active work',
+      'work plan',
+    ],
     relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction'],
     contextKeys: ['chat.main'],
   },
@@ -54,39 +40,18 @@ The chat header also gives you access to the terminal panel, file browser, diff 
     title: 'Sending Messages',
     category: 'chat',
     summary: 'How to send messages, keyboard shortcuts, formatting mode, and slash commands.',
-    content: `Type in the text area at the bottom and press **Enter** to send. That's the default quick-send mode.
-
-## Two input modes
-
-Forge has two input modes, toggled with the **Aa** button (or \`Shift+Cmd+X\` / \`Shift+Ctrl+X\`):
-
-- **Quick-send mode** (default): Enter sends the message. Shift+Enter adds a new line.
-- **Format mode**: Enter adds a new line. Cmd+Enter (Ctrl+Enter on Windows/Linux) sends. A formatting toolbar appears with bullet and numbered list buttons.
-
-Your mode preference is saved across sessions.
-
-## Slash commands
-
-Type \`/\` to open a command picker. Slash commands are shortcuts that expand into predefined prompts. You can create custom ones in Settings > Slash Commands.
-
-Arrow keys navigate the list. Enter or Tab selects a command.
-
-## Drafts
-
-If you switch sessions with unsent text, Forge saves it as a draft. When you switch back, the draft is restored. Drafts also survive page refreshes.
-
-## Voice input
-
-Click the microphone button to record a voice message. Forge transcribes it and inserts the text into the input area. Recording stops automatically after the time limit. Requires an OpenAI API key configured in Settings > Authentication.
-
-## Sending while streaming
-
-You can send follow-up messages while the agent is still responding. The input field stays active during streaming so you can queue up additional instructions or corrections.
-
-## Sending to Codex
-
-In Builder web, a leading @Codex or [@Codex] routes the message text to a Codex app-server sidecar thread. Use it for text-only handoff to an external Codex app-server thread. Attachments are not sent, Collaboration channels do not support it, and Forge allows only one active Codex turn at a time. If you select the Codex sidecar, a direct follow-up continues that selected sidecar thread.`,
-    keywords: ['send', 'enter', 'format', 'slash', 'command', 'draft', 'voice', 'microphone', 'keyboard'],
+    content: chatSendingContent,
+    keywords: [
+      'send',
+      'enter',
+      'format',
+      'slash',
+      'command',
+      'draft',
+      'voice',
+      'microphone',
+      'keyboard',
+    ],
     relatedIds: ['chat-overview', 'chat-attachments'],
     contextKeys: ['chat.main'],
   },
@@ -95,34 +60,18 @@ In Builder web, a leading @Codex or [@Codex] routes the message text to a Codex 
     title: 'Attachments',
     category: 'chat',
     summary: 'How to attach files and images to messages.',
-    content: `You can attach files to your messages before sending. Forge supports images, text files, and binary files.
-
-## How to attach
-
-- Click the **paperclip** button in the input area and pick files.
-- **Paste** an image from your clipboard directly into the text area.
-- **Drag and drop** files onto the input area.
-
-Attached files appear as chips above the text area. Click the X on any chip to remove it before sending.
-
-## What gets sent
-
-- **Images** (PNG, JPG, GIF, WebP) are sent as image attachments the agent can see.
-- **Text files** are sent as text content with the filename attached.
-- **Binary files** are sent as base64-encoded data.
-
-## Per-session attachment drafts
-
-Like text drafts, attachments are saved when you switch sessions and restored when you return. They also persist across page refreshes.
-
-## Limits
-
-Very large files may exceed the attachment size budget. If an upload fails or is too large, the chip won't appear. Stick to reasonably sized files for best results.
-
-## Supported formats
-
-Forge categorizes files automatically. Common image formats are recognized and shown as visual attachments. Text-based files (source code, configs, markdown) are read and sent as text content. Everything else is treated as binary data.`,
-    keywords: ['attach', 'file', 'image', 'paste', 'clipboard', 'drag', 'drop', 'upload', 'paperclip'],
+    content: chatAttachmentsContent,
+    keywords: [
+      'attach',
+      'file',
+      'image',
+      'paste',
+      'clipboard',
+      'drag',
+      'drop',
+      'upload',
+      'paperclip',
+    ],
     relatedIds: ['chat-sending', 'chat-artifacts'],
     contextKeys: ['chat.main'],
   },
@@ -131,40 +80,24 @@ Forge categorizes files automatically. Common image formats are recognized and s
     title: 'Sidebar Navigation',
     category: 'chat',
     summary: 'How to use the sidebar to navigate managers, sessions, and workers.',
-    content: `The sidebar on the left is your main navigation for everything in Forge. It shows your managers (profiles) and their sessions in a tree structure. The Builder/Collab toggle lives in the sidebar header, and when collaboration is enabled the New Project action moves next to session search. Collaboration channels are backed by sessions and can carry per-channel instructions and reference docs. The Collab sidebar lists all configured collaboration backend connections, and the active connection controls the detail view and full channel/history subscription. Use the Builder Archive view from the sidebar to review archived projects and directly archived sessions. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them when needed. The Archive view is separate from the active session list. Cortex is also shown here as a pinned sidebar entry, while other system profiles and collaboration-surface sessions remain hidden from the Builder sidebar/profile lists.
-
-## Structure
-
-Each **profile** is a collapsible group. Inside each profile are its **sessions**. Inside each session, you can expand to see active **workers**. Click any item to switch to it.
-
-Project agents appear pinned at the top of each profile section with a badge, above regular sessions. Session pinning in the sidebar is separate from message pinning inside a conversation.
-
-## Search
-
-The search bar at the top filters sessions and workers by name. Prefix shortcuts:
-
-- \`s:\` searches only session names.
-- \`w:\` searches only worker names.
-
-## Profile actions
-
-Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Default Model, Change Working Directory, Mark All as Read, Mute/Unmute All Sessions, Archive Project, or Delete Manager. Changing the default model updates only sessions that still inherit the project default; sessions with an explicit session override are not affected. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path. Archiving a project marks only the profile as archived, not each session individually, but the whole project becomes read-only and unusable until restored.
-
-You can also drag profiles to reorder them. The **+** button on a profile header creates a new session.
-
-## Session actions
-
-Right-click any session to access: Copy Path, Rename, Fork, Override Session Model, Use Project Default, Stop, Resume, Archive, Restore, Mark as Unread, Mute/Unmute, or Delete. The Main (default) session in each profile cannot be deleted or archived directly. Muting a session suppresses notification sounds while keeping the unread badge visible. Override Session Model opens a one-screen dialog for picking a concrete model, and Use Project Default clears the override so the session inherits the project default again. Every session, including the root session, can override the project default model or revert to inheriting it. Archived sessions are read-only and unavailable for chat, model, CWD, project-agent reference edits, and terminal use until restored. Archive entries are sorted by last user-message activity and show the last-used date. Restore can open the restored target immediately when requested.
-
-## Workers
-
-Sessions with active workers show a numbered badge. Expand the session to see individual workers with their status dots and specialist badges. Right-click a worker to stop, resume, or delete it.
-
-## Mobile
-
-On smaller screens, the sidebar is hidden by default. Tap the hamburger menu in the header to open it. An unread badge shows on the menu button when there are unread messages.`,
-    keywords: ['sidebar', 'navigation', 'search', 'profile', 'session', 'worker', 'tree', 'mobile', 'hamburger'],
-    relatedIds: ['chat-sessions', 'chat-profiles', 'chat-workers', 'chat-project-agents'],
+    content: chatSidebarContent,
+    keywords: [
+      'sidebar',
+      'navigation',
+      'search',
+      'profile',
+      'session',
+      'worker',
+      'tree',
+      'mobile',
+      'hamburger',
+    ],
+    relatedIds: [
+      'chat-sessions',
+      'chat-profiles',
+      'chat-workers',
+      'chat-project-agents',
+    ],
     contextKeys: ['chat.sidebar'],
   },
   {
@@ -172,34 +105,18 @@ On smaller screens, the sidebar is hidden by default. Tap the hamburger menu in 
     title: 'Session Management',
     category: 'chat',
     summary: 'Creating, switching, renaming, and deleting sessions.',
-    content: `Sessions are individual conversations within a profile. Each session has its own chat history and session memory, but shares the profile's settings and core memory. If a session previously showed truncated history, Forge now rebuilds the cached replay from canonical disk history on first load, especially for async project-agent deliveries. Active Work Plans are also session-scoped, so switching sessions switches the visible plan along with the conversation.
-
-## Create a session
-
-Click the **+** button on a profile header in the sidebar, or right-click the profile and choose **New Session**. You can give it a name or let Forge auto-generate one.
-
-## Switch sessions
-
-Click any session in the sidebar to switch to it. Your context, history, and any attached draft are restored.
-
-## Rename a session
-
-Right-click the session and choose **Rename**. This changes the display name only. The underlying session ID stays the same.
-
-## Stop and resume
-
-Right-click a session and choose **Stop** to pause it. A stopped session keeps its history but won't respond to new messages until you **Resume** it.
-
-## Delete a session
-
-Right-click and choose **Delete**. This permanently removes the session's history and memory. You'll be asked to confirm. The default "Main" session in each profile cannot be deleted.
-
-If you delete the session you're currently viewing, Forge routes you to the most recent session in the same profile.
-
-## Clear conversation
-
-To start fresh without creating a new session, open the **⋮ menu** in the chat header and choose **Clear conversation**. This resets the active session in place, keeping the same session identity.`,
-    keywords: ['session', 'create', 'switch', 'rename', 'delete', 'stop', 'resume', 'clear', 'new'],
+    content: chatSessionsContent,
+    keywords: [
+      'session',
+      'create',
+      'switch',
+      'rename',
+      'delete',
+      'stop',
+      'resume',
+      'clear',
+      'new',
+    ],
     relatedIds: ['chat-sidebar', 'chat-profiles', 'chat-fork-session'],
     contextKeys: ['chat.sidebar'],
   },
@@ -208,40 +125,17 @@ To start fresh without creating a new session, open the **⋮ menu** in the chat
     title: 'Profiles',
     category: 'chat',
     summary: 'What profiles are and what they control.',
-    content: `A profile is the set of settings, memory, and resources that a manager uses. When you create a new project in Forge, you're creating a profile.
-
-## What a profile controls
-
-- **Model and reasoning level** for the manager agent.
-- **System prompt** (archetype and custom prompts).
-- **Core memory** shared across all sessions in the profile.
-- **Specialists** and their configuration.
-- **Skills** and environment variables.
-- **Reference documents** attached to the profile.
-- **Integrations** like Telegram.
-
-## Sessions and profiles
-
-Each profile can have multiple sessions. Sessions inherit all config from the profile but maintain their own conversation history and session memory. Think of it as: the profile is the "who," and sessions are individual conversations.
-
-By default, sessions use the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Sessions that still inherit the profile default pick up future default changes automatically. Use "Use Project Default" on a session to revert it to inherited state, and the override action is available from the session context menu alongside the other session-management actions.
-
-## Rename a profile
-
-Right-click the profile header in the sidebar and choose **Rename**. This only changes the display name. The profile ID and data directory stay the same.
-
-## Change default model
-
-Right-click the profile and choose **Change Default Model** to update the default model preset and reasoning level. Sessions still using the project default are updated automatically. Sessions with a model override are not affected. Changes take effect on the next message or session resume.
-
-## Reorder profiles
-
-Drag profile headers in the sidebar to rearrange them. The order is saved automatically.
-
-## Deleting a profile
-
-Right-click the profile header and choose **Delete Manager**. This removes the profile and all its sessions, history, and memory permanently. The Cortex profile cannot be deleted.`,
-    keywords: ['profile', 'manager', 'settings', 'memory', 'model', 'config', 'rename', 'reorder'],
+    content: chatProfilesContent,
+    keywords: [
+      'profile',
+      'manager',
+      'settings',
+      'memory',
+      'model',
+      'config',
+      'rename',
+      'reorder',
+    ],
     relatedIds: ['chat-sessions', 'chat-sidebar'],
     contextKeys: ['chat.sidebar'],
   },
@@ -250,32 +144,17 @@ Right-click the profile header and choose **Delete Manager**. This removes the p
     title: 'Worker Agents',
     category: 'chat',
     summary: 'How worker pills, quick look, and worker monitoring work.',
-    content: `Workers are agents that the manager spawns to handle tasks. They appear in two places: the pill bar above the message area, and nested under sessions in the sidebar. Failed worker turns appear in the transcript as system error messages with the last error context preserved, and the same turn will not produce duplicate end reports.
-
-## Worker pill bar
-
-When workers are actively streaming, green pills appear in a bar above the chat input. Each pill shows the worker's name and a live elapsed timer.
-
-**Hover** a pill to see the worker's model, reasoning level, and latest tool call.
-
-**Click** a pill to open a quick-look popover with recent activity, including tool calls and messages. From there you can click "View full conversation" to navigate to that worker's transcript.
-
-Pills fade out when a worker finishes and disappear after a short delay.
-
-## Workers in the sidebar
-
-Expand a session in the sidebar to see its workers listed underneath. Each worker shows a status dot (green = active, gray = idle) and an optional specialist badge.
-
-Right-click a worker to Stop, Resume, or Delete it.
-
-## Specialist badges
-
-Workers spawned from a specialist template show a colored badge with the specialist name. This helps you identify which worker was assigned which role. Tool rows also include actor labels with worker, specialist, and model metadata.
-
-## Monitoring
-
-The session row itself shows a numbered amber ring when workers are actively streaming, telling you at a glance how many are running. Hover the session in the sidebar for model and reasoning details.`,
-    keywords: ['worker', 'pill', 'quick look', 'specialist', 'badge', 'streaming', 'monitoring', 'activity'],
+    content: chatWorkersContent,
+    keywords: [
+      'worker',
+      'pill',
+      'quick look',
+      'specialist',
+      'badge',
+      'streaming',
+      'monitoring',
+      'activity',
+    ],
     relatedIds: ['chat-overview', 'chat-sidebar'],
     contextKeys: ['chat.workers'],
   },
@@ -284,38 +163,18 @@ The session row itself shows a numbered amber ring when workers are actively str
     title: 'Artifact Panel',
     category: 'chat',
     summary: 'How to view files and artifacts generated during a conversation.',
-    content: `The artifact panel is a slide-out viewer for files that agents create or reference during a conversation. It opens on the right side without blocking chat interaction. You can still type and send messages while a file is open.
-
-## Opening the panel
-
-Click a file reference in a chat message, or toggle the panel with the **sidebar icon** in the header (the rightmost icon). For Cortex sessions, this button opens the Cortex dashboard instead.
-
-## What it shows
-
-The panel loads the file content from the agent's working directory and displays it based on file type:
-
-- **Markdown files** (.md, .mdx) render with full formatting, including Mermaid diagrams.
-- **Images** (PNG, JPG, GIF, WebP, SVG) display inline.
-- **Code and text files** show syntax-highlighted source.
-
-The header shows the file name, full path, and an "Open in Editor" link. In the desktop app, a "Show in folder" button also appears.
-
-## Opening in your editor
-
-Click "Open in [Editor]" in the panel header to open the file directly in your preferred editor. Set your editor (VS Code, VS Code Insiders, or Cursor) in Settings > General.
-
-## Revealing in the file system
-
-In the desktop app, click "Show in folder" to reveal the file in Finder (macOS) or File Explorer (Windows). This is useful when you want to see the file's location or work with it outside the editor.
-
-## Navigating between files
-
-Click any file reference in the conversation to switch the panel to that file. Links within markdown documents also work, so you can follow references between files.
-
-## Closing
-
-Press **Esc** or click the X button. The panel slides away and returns you to the full chat view.`,
-    keywords: ['artifact', 'file', 'panel', 'viewer', 'preview', 'editor', 'markdown', 'code', 'image'],
+    content: chatArtifactsContent,
+    keywords: [
+      'artifact',
+      'file',
+      'panel',
+      'viewer',
+      'preview',
+      'editor',
+      'markdown',
+      'code',
+      'image',
+    ],
     relatedIds: ['chat-overview', 'chat-attachments'],
     contextKeys: ['chat.artifacts'],
   },
@@ -324,39 +183,16 @@ Press **Esc** or click the X button. The panel slides away and returns you to th
     title: 'Forking Sessions',
     category: 'chat',
     summary: 'How to fork a session, including partial forks from a specific message.',
-    content: `Forking creates a copy of a session so you can take the conversation in a different direction without losing the original.
-
-## How to fork
-
-Right-click a session in the sidebar and choose **Fork**. A dialog opens where you can give the fork a name (optional, Forge auto-generates one if you leave it blank).
-
-## Full fork
-
-By default, forking copies the entire conversation history into a new session and preserves the source session's model state, including whether it was inheriting the profile default or using an explicit override.
-
-## Partial fork
-
-You can also fork from a specific message. When triggered from a message context, the fork dialog shows which message it will fork from. Only messages up to that point are copied. Everything after is left behind.
-
-The forked session's memory header records where the fork happened, so the boundary with the parent session is explicit.
-
-## What gets copied
-
-- **Conversation history** (all messages, or up to the selected message for partial forks).
-- A fresh **session memory** is created with a fork header noting the parent session.
-
-## What does not get copied
-
-- The original session is unchanged. Forking is non-destructive.
-- Session memory content from the parent is not carried over. The new session starts with its own empty memory (plus the fork header).
-- Cursor SDK runtime state and usage records are not copied, so forks do not leak SDK resume state or double-count usage.
-- Historical Codex sidecar display cards are not copied.
-- Workers from the parent session are not duplicated.
-
-## When to use it
-
-Fork when you want to try an alternative approach, preserve a checkpoint before a risky change, or branch a conversation into two tracks.`,
-    keywords: ['fork', 'branch', 'copy', 'partial', 'duplicate', 'checkpoint', 'split'],
+    content: chatForkSessionContent,
+    keywords: [
+      'fork',
+      'branch',
+      'copy',
+      'partial',
+      'duplicate',
+      'checkpoint',
+      'split',
+    ],
     relatedIds: ['chat-sessions', 'chat-sidebar'],
     contextKeys: ['chat.fork'],
   },
@@ -365,32 +201,16 @@ Fork when you want to try an alternative approach, preserve a checkpoint before 
     title: 'System Prompt Viewer',
     category: 'chat',
     summary: 'How to inspect the full runtime system prompt for the current session.',
-    content: `The system prompt viewer shows you the complete prompt that the agent is actually using at runtime. This is the full context the model sees before your messages.
-
-## How to open it
-
-Switch to the **All** channel view using the toggle in the chat header. A scroll icon button appears to the left of the channel toggle. Click it to open the system prompt dialog.
-
-The viewer is only available in "All" mode because it shows runtime internals.
-
-## What's included
-
-The system prompt includes more than what you see in the prompt editor in Settings. The full runtime prompt typically contains:
-
-- The **base system prompt** (from the archetype or custom prompt template).
-- **Memory context** (profile core memory and session memory).
-- **AGENTS.md** guidance loaded from the working directory.
-- **Loaded skills** and their instructions.
-- Any **custom instructions** like pinned message content.
-
-## Copy and refresh
-
-Click the **copy** button in the header to copy the full prompt to your clipboard. The prompt is fetched fresh each time you open the dialog, so it reflects the current state.
-
-## When it's not available
-
-Agents created before system prompt persistence was added won't have a stored prompt. The dialog will show a message explaining this.`,
-    keywords: ['system prompt', 'runtime', 'context', 'viewer', 'inspect', 'bootstrap', 'memory'],
+    content: chatSystemPromptContent,
+    keywords: [
+      'system prompt',
+      'runtime',
+      'context',
+      'viewer',
+      'inspect',
+      'bootstrap',
+      'memory',
+    ],
     relatedIds: ['chat-overview', 'chat-compaction'],
     contextKeys: ['chat.system-prompt'],
   },
@@ -399,35 +219,17 @@ Agents created before system prompt persistence was added won't have a stored pr
     title: 'Context Compaction',
     category: 'chat',
     summary: 'What context compaction is, when to use it, and the difference between modes.',
-    content: `As a conversation grows, it uses more of the model's context window. Compaction reduces the token count by summarizing older messages so you can keep going without hitting the limit.
-
-## When to compact
-
-Watch the context window indicator in the header (the ring icon). When it turns amber or red, you're running low. Compaction is also triggered automatically when the context gets critically full.
-
-## How to compact
-
-Open the **⋮ menu** in the chat header. You'll see two options:
-
-- **Compact context** — a fast, mechanical summary that trims older messages.
-- **Smart compact** — uses an AI pass to produce a more intelligent summary that preserves important context and nuance. Takes longer but keeps more useful information.
-
-If you run Smart compact manually while a Pi-backed manager is already idle, it stays idle afterward. If the manager is active, interrupted, or waiting on dispatch, it resumes after compaction.
-
-## Auto-compaction
-
-When the context window fills up during an active conversation, Forge triggers compaction automatically. You'll see a spinning indicator on the ⋮ menu button while it runs. This prevents the agent from failing mid-response due to context limits.
-
-Claude SDK sessions use the SDK's native auto-compaction at 80% of the context window, and the SDK handles it internally without restarting the session.
-
-## Pinned messages
-
-If you've pinned messages (shown by the pin count in the header), their content is preserved through all compaction types, including smart compaction and automatic compaction. You can pin up to 10 messages per session. Pinned content is injected into the agent's custom instructions so it survives every compaction mode.
-
-## After compaction
-
-Your older messages are replaced with a summary. Recent messages stay intact. The context window indicator should reflect the live runtime state rather than stale pre-compaction descriptor usage. You can continue the conversation normally.`,
-    keywords: ['compact', 'compaction', 'context', 'token', 'summary', 'smart compact', 'auto', 'pin'],
+    content: chatCompactionContent,
+    keywords: [
+      'compact',
+      'compaction',
+      'context',
+      'token',
+      'summary',
+      'smart compact',
+      'auto',
+      'pin',
+    ],
     relatedIds: ['chat-overview', 'chat-system-prompt'],
     contextKeys: ['chat.compaction'],
   },
@@ -436,31 +238,17 @@ Your older messages are replaced with a summary. Recent messages stay intact. Th
     title: 'Message Feedback',
     category: 'chat',
     summary: 'How to rate messages and sessions with thumbs up/down and comments.',
-    content: `Forge lets you rate both individual messages and entire sessions. Feedback is stored locally and helps you track what's working well and what isn't.
-
-## Message feedback
-
-Hover over any agent message to see thumbs up and thumbs down buttons.
-
-- **Thumbs up**: Click once to upvote. Click again to open a detail panel where you can select reason codes (like "Accuracy," "Great Outcome," "Instruction Following") and add an optional comment.
-- **Thumbs down**: Click to open a reason picker immediately. Select what went wrong (like "Verbosity," "Over-Engineered," "Poor Outcome") and optionally add a comment. Submit to record the downvote.
-
-## Session feedback
-
-Session-level feedback appears in the chat header, next to the status indicator. It works the same way as message feedback but applies to the session as a whole.
-
-## Comments
-
-The speech bubble button lets you add a standalone comment without voting. If a comment already exists (shown by a filled icon), you can update or remove it.
-
-## Reason codes
-
-Reason codes are quick labels that categorize what was good or bad. Available codes differ for upvotes and downvotes. You can select multiple.
-
-## Where feedback goes
-
-Feedback is saved to the session's feedback file on disk. It's local to your Forge instance.`,
-    keywords: ['feedback', 'rating', 'thumbs', 'upvote', 'downvote', 'comment', 'reason', 'vote'],
+    content: chatFeedbackContent,
+    keywords: [
+      'feedback',
+      'rating',
+      'thumbs',
+      'upvote',
+      'downvote',
+      'comment',
+      'reason',
+      'vote',
+    ],
     relatedIds: ['chat-overview'],
     contextKeys: ['chat.main'],
   },
@@ -469,71 +257,7 @@ Feedback is saved to the session's feedback file on disk. It's local to your For
     title: 'Creating and Using Project Agents',
     category: 'chat',
     summary: 'How to create project agents, message them, and manage their settings.',
-    content: `Project agents are specialized sessions with persistent identities that other sessions can discover and message. Use them for cross-session coordination on recurring tasks like documentation, releases, or domain-specific work. Each project agent has its own storage directory with a dedicated \`prompt.md\` file and optional per-agent reference documents.
-
-## Two ways to create
-
-### Agent Creator wizard
-
-Right-click a profile header in the sidebar and choose **Create Project Agent**. This opens a new session with the Agent Architect archetype.
-
-The wizard flow:
-
-1. **Repo exploration** — The Agent Architect scans your repository to understand its structure and existing agents.
-2. **Interview** — You're asked 2-3 focused questions about the new agent's role and scope.
-3. **Proposal** — The architect drafts a configuration including handle, "when to use" blurb, and role instructions for the \`systemPrompt\` field. The resulting agent is stored in a dedicated per-handle directory under \`profiles/<profileId>/project-agents/<handle>/\`.
-4. **Creation** — After you approve, the agent is atomically created and promoted to a project agent.
-
-The wizard session shows a violet Sparkles icon in the sidebar. Once the agent is created, the wizard session auto-hides but remains accessible via "View Creation History" on the created agent's context menu.
-
-### Manual promotion
-
-Right-click any existing session and choose **Promote to Project Agent**. A settings drawer opens where you fill in:
-
-- **Handle** — A unique identifier like \`@releases\` or \`@docs\`. Must be unique within the profile and cannot change after promotion.
-- **When to use** — A description that tells other sessions when to message this agent.
-- **Role instructions** (optional) — Custom instructions tailored to the agent's role, stored in the agent's \`prompt.md\` file and layered with Forge's Project Agent base prompt.
-- **Reference docs** — Optional markdown documents scoped to this agent and injected into its prompt context. Add them from Project Agent Settings by entering a filename and content, or importing a \`.md\` / \`.txt\` file.
-
-Click **Generate recommendations** to have AI suggest both the "when to use" text and role instructions based on the session's conversation history. You can edit the suggestions before saving.
-
-## Using project agents
-
-Project agents appear pinned at the top of their profile section in the sidebar with a badge. Click one to open its conversation. Sessions created by a project agent can show a subtle \`Created by @handle\` label in the sidebar.
-
-To message a project agent from another session, mention its handle in your message (the composer offers autocomplete when you type \`@\`). Autocomplete includes local agents in the current profile and shared agents explicitly granted from another profile; shared agents are labeled separately so you can tell them apart. The manager interprets your intent and uses the \`send_message_to_agent\` tool to deliver the message asynchronously. If a project agent created the session, it can keep messaging that session through the same routing path.
-
-Messages to project agents are fire-and-forget — there's no reply threading. If the receiving session is idle, Forge wakes it up to handle the incoming work. Project Agent sends reject attachments, so send text instructions and references instead of attached files.
-
-## Sharing project agents
-
-Project Agent sharing is source-owned. Open the source agent's settings to grant or remove access for another profile. A target profile can discover a shared agent only after that grant exists, through its external/shared-agent directory and @mention autocomplete.
-
-Shared/external turns are constrained. They do not inherit source-only capabilities from target sessions, and Forge sanitizes shared-agent metadata and prompt rendering before showing it outside the source profile.
-
-## Managing project agents
-
-Right-click a project agent to access:
-
-- **Settings** — Edit the "when to use" text and role instructions, add reference docs, manage sharing grants, and manage the agent's files. You can regenerate recommendations here too. Sharing changes refresh affected runtime prompts so source and target sessions pick up the updated directory. The settings drawer is resizable from its left edge and confirms before discarding unsaved changes.
-- **View Creation History** — Opens the Agent Architect session that created this agent (if it was created via the wizard).
-- **Demote to Regular Session** — Converts the project agent back to a normal session. The handle and discovery metadata are removed, but the conversation history is preserved.
-- Other standard session actions like Rename, Fork, Stop, Delete.
-
-## Wizard sessions
-
-Agent Creator sessions have special behavior:
-
-- They cannot be promoted to project agents themselves.
-- They cannot be forked.
-- They auto-hide from the sidebar after successful creation (but are not deleted).
-- Each creation attempt must use a fresh wizard session — reusing an old Agent Architect conversation is not supported.
-
-## Handles and discovery
-
-Handles must be unique within a profile and are immutable after promotion. If you try to promote a session with a handle that already exists, you'll see an error. Rename the existing project agent or choose a different handle.
-
-The "when to use" blurb is injected into the prompt context of sibling manager sessions and explicitly granted target profiles (but not workers). Local and shared agent directory prompt caps are separate, so adding shared agents does not consume the local project-agent directory budget. This is how managers learn about available project agents and when to message them.`,
+    content: chatProjectAgentsContent,
     keywords: [
       'project agent',
       'create',
