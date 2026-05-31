@@ -272,6 +272,17 @@ describe("Cursor SDK error containment classifier", () => {
     expect(genericDecision.retryPreOutput).toBe(false);
   });
 
+  it.each([
+    new Error("ordinary error mentioning REFUSED_STREAM"),
+    new Error("ordinary error [unavailable]"),
+    new Error("NGHTTP2_ENHANCE_YOUR_CALM")
+  ])("keeps plain text provider tokens fail-closed for %p", (error) => {
+    const decision = classifyBackground(error, { attributionMode: "als" });
+    expect(decision.bucket).toBe("non_cursor");
+    expect(decision.contain).toBe(false);
+    expect(decision.fatal).toBe(true);
+  });
+
   it("keeps protocol/config and generic text failures fatal in background mode", () => {
     const configurationDecision = classifyBackground(createConfigurationError(), { attributionMode: "als" });
     expect(configurationDecision.bucket).toBe("protocol_config");
@@ -391,20 +402,46 @@ describe("Cursor SDK error containment attribution", () => {
     scopeTwo.close();
   });
 
+  it("suppresses no-ALS late failures from a superseded retry scope while the retry scope is active", async () => {
+    const firstAttemptScope = createCursorSdkBackgroundScope({
+      agentId: "worker-1",
+      promptToken: 7,
+      attemptIndex: 0,
+      startedAt: "2026-01-01T00:00:00.000Z"
+    });
+    firstAttemptScope.close();
+
+    const retryScope = createCursorSdkBackgroundScope({
+      agentId: "worker-1",
+      promptToken: 7,
+      attemptIndex: 1,
+      startedAt: "2026-01-01T00:00:01.000Z"
+    });
+
+    expect(emitCursorSdkBackgroundFailureForTests(createConnectError())).toBe(true);
+    await expect(Promise.race([
+      retryScope.waitForContainedFailure().then(() => "contained"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 20))
+    ])).resolves.toBe("timeout");
+    retryScope.close();
+  });
+
   it.each([
     createConnectError(),
     createHttp2StreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" })
-  ])("fails closed for no-ALS tombstone ambiguity with %p", async (error) => {
+  ])("fails closed for unrelated no-ALS tombstone ambiguity with %p", async (error) => {
     const closedScope = createCursorSdkBackgroundScope({
-      agentId: "worker-closed",
+      agentId: "worker-1",
       promptToken: 1,
+      attemptIndex: 0,
       startedAt: "2026-01-01T00:00:00.000Z"
     });
     closedScope.close();
 
     const activeScope = createCursorSdkBackgroundScope({
-      agentId: "worker-active",
+      agentId: "worker-1",
       promptToken: 2,
+      attemptIndex: 0,
       startedAt: "2026-01-01T00:00:01.000Z"
     });
 

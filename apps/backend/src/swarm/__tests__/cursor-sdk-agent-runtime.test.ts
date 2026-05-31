@@ -789,6 +789,38 @@ describe("CursorSdkAgentRuntime", () => {
     ]);
   });
 
+  it("suppresses a no-ALS late detached failure from attempt 1 while retry attempt 2 is active", async () => {
+    const payloads: string[] = [];
+    const lateContainment = deferred<boolean>();
+    const retryGate = deferred();
+    const send = vi.fn(async (payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      payloads.push(payloadText(payload));
+      if (send.mock.calls.length === 1) {
+        queueMicrotask(() => {
+          emitCursorSdkBackgroundFailureForTests(createCursorRetryableStreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" }));
+        });
+        setTimeout(() => {
+          lateContainment.resolve(emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError()));
+        }, 10);
+        return createRun({ streamGate: new Promise(() => undefined), cancel: vi.fn(async () => undefined) });
+      }
+
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({ id: "run-retry-same-lineage", streamGate: retryGate.promise, streamItems: [assistantText("ok")] });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await expect(lateContainment.promise).resolves.toBe(true);
+    retryGate.resolve();
+
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1));
+    expect(payloads[0]).toContain("<forge_system_context>");
+    expect(payloads[1]).toBe(payloads[0]);
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+  });
+
   it("cancels the eventually resolved first send run when a pre-send background failure triggers retry", async () => {
     const payloads: string[] = [];
     const firstAttemptError = createCursorRetryableStreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" });

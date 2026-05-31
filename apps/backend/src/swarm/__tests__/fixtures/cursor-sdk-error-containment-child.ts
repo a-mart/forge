@@ -1,7 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import {
   createCursorSdkBackgroundScope,
-  emitCursorSdkBackgroundFailureForTests,
   resetCursorSdkErrorContainmentForTests
 } from "../../runtime/cursor-sdk/cursor-sdk-error-containment.js";
 
@@ -112,6 +111,7 @@ async function main(): Promise<void> {
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);
+      return;
     }
 
     case "fatal-no-scope": {
@@ -121,6 +121,7 @@ async function main(): Promise<void> {
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);
+      return;
     }
 
     case "fatal-multi-active": {
@@ -140,6 +141,7 @@ async function main(): Promise<void> {
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);
+      return;
     }
 
     case "fatal-tombstone-ambiguous": {
@@ -160,6 +162,7 @@ async function main(): Promise<void> {
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);
+      return;
     }
 
     case "fatal-generic-stream": {
@@ -177,6 +180,46 @@ async function main(): Promise<void> {
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);
+      return;
+    }
+
+    case "fatal-plain-text-refused-stream": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, new Error("ordinary error mentioning REFUSED_STREAM"));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-plain-text-unavailable": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, new Error("ordinary error [unavailable]"));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-plain-text-enhance-your-calm": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, new Error("NGHTTP2_ENHANCE_YOUR_CALM"));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
     }
 
     case "fatal-ordinary-uncaught": {
@@ -191,6 +234,7 @@ async function main(): Promise<void> {
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);
+      return;
     }
 
     default:

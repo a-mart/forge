@@ -376,6 +376,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
         const backgroundScope = createCursorSdkBackgroundScope({
           agentId: this.descriptor.agentId,
           promptToken: token,
+          attemptIndex,
           startedAt: this.now(),
           sdkAgentId: this.sdkAgent.agentId,
           logDebug: (scopeMessage, details) => this.logDebug(scopeMessage, details)

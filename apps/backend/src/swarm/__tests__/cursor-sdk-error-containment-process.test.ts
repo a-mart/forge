@@ -58,6 +58,9 @@ describe("Cursor SDK containment child process behavior", () => {
     "fatal-multi-active",
     "fatal-tombstone-ambiguous",
     "fatal-generic-stream",
+    "fatal-plain-text-refused-stream",
+    "fatal-plain-text-unavailable",
+    "fatal-plain-text-enhance-your-calm",
     "fatal-ordinary-uncaught"
   ])("fails closed for %s", async (scenario) => {
     const result = await runScenario(scenario);

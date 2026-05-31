@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
-type AttributionMode = "als" | "single_active_scope";
+type AttributionMode = "als" | "single_active_scope" | "retry_lineage_tombstone";
 
 type BackgroundAttributionFailureReason =
   | "als_scope_missing"
@@ -14,6 +14,7 @@ type ScopeState = {
   id: string;
   agentId: string;
   promptToken: number;
+  attemptIndex: number;
   sdkAgentId?: string;
   runId?: string;
   startedAt: string;
@@ -187,6 +188,7 @@ export class CursorSdkContainedBackgroundError extends Error {
 export function createCursorSdkBackgroundScope(options: {
   agentId: string;
   promptToken: number;
+  attemptIndex?: number;
   startedAt: string;
   sdkAgentId?: string;
   logDebug?: (message: string, details?: unknown) => void;
@@ -200,6 +202,7 @@ export function createCursorSdkBackgroundScope(options: {
     id,
     agentId: options.agentId,
     promptToken: options.promptToken,
+    attemptIndex: options.attemptIndex ?? 0,
     sdkAgentId: options.sdkAgentId,
     startedAt: options.startedAt,
     cancelled: false,
@@ -519,7 +522,22 @@ function resolveScopeAttribution(): {
     };
   }
 
+  const activeScopes = [...activeScopeIds]
+    .map((scopeId) => scopesById.get(scopeId))
+    .filter((scope): scope is ScopeState => scope !== undefined);
+  const retainedClosedScopes = [...scopesById.values()].filter((scope) => scope.closed);
+
   if (retainedClosedScopeCount > 0) {
+    const retryLineageTombstone = resolveRetryLineageTombstone(activeScopes, retainedClosedScopes);
+    if (retryLineageTombstone) {
+      return {
+        scope: retryLineageTombstone,
+        attributionMode: "retry_lineage_tombstone",
+        activeScopeCount,
+        retainedClosedScopeCount
+      };
+    }
+
     return {
       activeScopeCount,
       retainedClosedScopeCount,
@@ -527,17 +545,13 @@ function resolveScopeAttribution(): {
     };
   }
 
-  if (activeScopeCount === 1) {
-    const [scopeId] = activeScopeIds.values();
-    const scope = scopeId ? scopesById.get(scopeId) : undefined;
-    if (scope) {
-      return {
-        scope,
-        attributionMode: "single_active_scope",
-        activeScopeCount,
-        retainedClosedScopeCount
-      };
-    }
+  if (activeScopes.length === 1) {
+    return {
+      scope: activeScopes[0],
+      attributionMode: "single_active_scope",
+      activeScopeCount,
+      retainedClosedScopeCount
+    };
   }
 
   return {
@@ -545,6 +559,26 @@ function resolveScopeAttribution(): {
     retainedClosedScopeCount,
     reason: activeScopeCount === 0 ? "no_active_scope" : "ambiguous_active_scopes"
   };
+}
+
+function resolveRetryLineageTombstone(activeScopes: ScopeState[], retainedClosedScopes: ScopeState[]): ScopeState | undefined {
+  if (activeScopes.length !== 1 || retainedClosedScopes.length === 0) {
+    return undefined;
+  }
+
+  const activeScope = activeScopes[0];
+  const samePromptTombstones = retainedClosedScopes.filter((scope) =>
+    scope.agentId === activeScope.agentId
+    && scope.promptToken === activeScope.promptToken
+    && scope.attemptIndex < activeScope.attemptIndex
+  );
+  if (samePromptTombstones.length === 0 || samePromptTombstones.length !== retainedClosedScopes.length) {
+    return undefined;
+  }
+
+  return samePromptTombstones
+    .slice()
+    .sort((left, right) => (right.attemptIndex - left.attemptIndex) || ((right.closedAt ?? 0) - (left.closedAt ?? 0)))[0];
 }
 
 function classifyCursorSdkFailureBase(
@@ -655,6 +689,10 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
     .flatMap((entry) => [entry.name ?? "", entry.message, entry.stack ?? "", stringifyCode(entry.code), stringifyCode(entry.rstCode)])
     .filter((value) => value.length > 0)
     .join("\n");
+  const stackAndStructuredText = chain
+    .flatMap((entry) => [entry.stack ?? "", stringifyCode(entry.code), stringifyCode(entry.rstCode)])
+    .filter((value) => value.length > 0)
+    .join("\n");
 
   const providerErrorNames = uniqueStrings(chain.map((entry) => entry.name).filter((value): value is string => typeof value === "string" && value.length > 0));
   const nodeCodes = uniqueStrings(chain.flatMap((entry) => {
@@ -665,13 +703,21 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
     return values.filter((value) => value.startsWith("ERR_") || value === "ABORT_ERR");
   }));
   const httpStatusCodes = uniqueNumbers(chain.flatMap((entry) => typeof entry.statusCode === "number" ? [entry.statusCode] : []));
-  const h2ResetCodes = collectHttp2ResetCodes(chain, combinedText);
   const cursorModuleHintMatched = /@cursor\/sdk|cursor sdk/i.test(combinedText);
   const connectModuleHintMatched = /@connectrpc|connectrpc/i.test(combinedText);
-  const http2HintMatched = /ERR_HTTP2_STREAM_ERROR|NGHTTP2_|http2/i.test(combinedText) || h2ResetCodes.length > 0;
+  const hasStructuredHttp2Evidence = chain.some((entry) => entry.rstCode !== undefined)
+    || chain.some((entry) => typeof entry.code === "string" && (/^ERR_HTTP2_/i.test(entry.code) || /^NGHTTP2_/i.test(entry.code)))
+    || /node:internal\/http2|internal\/http2/i.test(stackAndStructuredText);
+  const hasStructuredConnectEvidence = chain.some((entry) => entry.name === "ConnectError")
+    || connectModuleHintMatched
+    || chain.some((entry) => isStructuredConnectCode(entry.code));
+  const hasStructuredCursorEvidence = providerErrorNames.some((name) => CURSOR_PROVIDER_ERROR_NAMES.has(name)) || cursorModuleHintMatched;
+  const http2HintMatched = hasStructuredHttp2Evidence;
   const moduleHintMatched = cursorModuleHintMatched || connectModuleHintMatched || http2HintMatched;
-  const connectCode = pickConnectCode(chain, combinedText);
-  const connectCodeName = normalizeConnectCodeName(connectCode, combinedText);
+  const allowTextFallback = hasStructuredConnectEvidence || hasStructuredCursorEvidence || hasStructuredHttp2Evidence;
+  const h2ResetCodes = collectHttp2ResetCodes(chain, combinedText, allowTextFallback);
+  const connectCode = pickConnectCode(chain, combinedText, allowTextFallback);
+  const connectCodeName = normalizeConnectCodeName(connectCode);
   const family = resolveFailureFamily({ providerErrorNames, connectCodeName, nodeCodes, h2ResetCodes, cursorModuleHintMatched, connectModuleHintMatched, http2HintMatched });
   const exactCursor429 = providerErrorNames.includes("RateLimitError")
     && (httpStatusCodes.includes(429) || chain.some((entry) => entry.code === 429 || entry.code === "429"))
@@ -751,7 +797,7 @@ function collectErrorChain(error: unknown): NormalizedErrorEntry[] {
   return entries;
 }
 
-function collectHttp2ResetCodes(chain: NormalizedErrorEntry[], combinedText: string): string[] {
+function collectHttp2ResetCodes(chain: NormalizedErrorEntry[], combinedText: string, allowTextFallback: boolean): string[] {
   const codes = chain.flatMap((entry) => {
     const values: string[] = [];
     if (typeof entry.rstCode === "string" && entry.rstCode.trim().length > 0) {
@@ -762,13 +808,15 @@ function collectHttp2ResetCodes(chain: NormalizedErrorEntry[], combinedText: str
     }
     return values;
   });
-  for (const match of combinedText.matchAll(/NGHTTP2_[A-Z_]+|REFUSED_STREAM|GOAWAY_SESSION|ENHANCE_YOUR_CALM/gi)) {
-    codes.push(normalizeSymbolLikeToken(match[0]));
+  if (allowTextFallback) {
+    for (const match of combinedText.matchAll(/NGHTTP2_[A-Z_]+|REFUSED_STREAM|GOAWAY_SESSION|ENHANCE_YOUR_CALM/gi)) {
+      codes.push(normalizeSymbolLikeToken(match[0]));
+    }
   }
   return uniqueStrings(codes);
 }
 
-function pickConnectCode(chain: NormalizedErrorEntry[], combinedText: string): string | number | undefined {
+function pickConnectCode(chain: NormalizedErrorEntry[], combinedText: string, allowTextFallback: boolean): string | number | undefined {
   for (const entry of chain) {
     if (entry.name === "ConnectError" || /connecterror/i.test(entry.message) || /@connectrpc|connectrpc/i.test(`${entry.message}\n${entry.stack ?? ""}`)) {
       const normalized = normalizeScalarCode(entry.code);
@@ -776,6 +824,10 @@ function pickConnectCode(chain: NormalizedErrorEntry[], combinedText: string): s
         return normalized;
       }
     }
+  }
+
+  if (!allowTextFallback) {
+    return undefined;
   }
 
   if (/ERROR_NOT_LOGGED_IN|ERR_NOT_LOGGED_IN/i.test(combinedText)) {
@@ -796,7 +848,7 @@ function pickConnectCode(chain: NormalizedErrorEntry[], combinedText: string): s
   return undefined;
 }
 
-function normalizeConnectCodeName(code: string | number | undefined, combinedText: string): string | undefined {
+function normalizeConnectCodeName(code: string | number | undefined): string | undefined {
   if (typeof code === "number") {
     switch (code) {
       case 1:
@@ -841,9 +893,6 @@ function normalizeConnectCodeName(code: string | number | undefined, combinedTex
     return "ABORTED";
   }
 
-  if (/\[unauthenticated\]/i.test(combinedText)) {
-    return "UNAUTHENTICATED";
-  }
   return undefined;
 }
 
@@ -1037,6 +1086,27 @@ function normalizeThrowable(reason: unknown): Error {
 
 function normalizeSymbolLikeToken(value: string): string {
   return value.trim().replace(/[\s-]+/g, "_").toUpperCase();
+}
+
+function isStructuredConnectCode(code: string | number | undefined): boolean {
+  if (typeof code === "number") {
+    return code === 1 || code === 7 || code === 8 || code === 14 || code === 16;
+  }
+  if (typeof code !== "string") {
+    return false;
+  }
+
+  const normalized = normalizeSymbolLikeToken(code);
+  return normalized === "ERR_NOT_LOGGED_IN"
+    || normalized === "ERROR_NOT_LOGGED_IN"
+    || normalized === "UNAUTHENTICATED"
+    || normalized === "PERMISSION_DENIED"
+    || normalized === "UNAVAILABLE"
+    || normalized === "RESOURCE_EXHAUSTED"
+    || normalized === "CANCELLED"
+    || normalized === "CANCELED"
+    || normalized === "ABORT_ERR"
+    || normalized === "ABORTED";
 }
 
 function stringifyCode(value: string | number | undefined): string {
