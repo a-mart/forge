@@ -542,6 +542,34 @@ export function buildRequestProjectAgentRecommendationsCommand(
   }
 }
 
+export function buildGetProjectAgentSharingCommand(agentId: string, requestId: string): ClientCommand {
+  return {
+    type: 'get_project_agent_sharing',
+    agentId: requireTrimmedValue(agentId, 'Agent id is required.'),
+    requestId,
+  }
+}
+
+export function buildSetProjectAgentSharingCommand(
+  agentId: string,
+  targetProfileIds: string[],
+  requestId: string,
+): ClientCommand {
+  return {
+    type: 'set_project_agent_sharing',
+    agentId: requireTrimmedValue(agentId, 'Agent id is required.'),
+    targetProfileIds,
+    requestId,
+  }
+}
+
+export function buildGetProjectAgentExternalDirectoryCommand(requestId: string): ClientCommand {
+  return {
+    type: 'get_project_agent_external_directory',
+    requestId,
+  }
+}
+
 export function buildMergeSessionMemoryCommand(agentId: string, requestId: string): ClientCommand {
   return {
     type: 'merge_session_memory',

@@ -250,6 +250,160 @@ describe("SwarmManager project-agent sendMessage routing", () => {
     ).toEqual([]);
   });
 
+  it("routes shared cross-profile sends through the project-agent delivery path", async () => {
+    const config = await makeTempConfig(8898);
+    const manager = new TestSwarmManager(config);
+
+    const sender = await bootWithDefaultManager(manager, config);
+    const target = await manager.createManager(sender.agentId, {
+      name: "beta",
+      cwd: config.defaultCwd
+    });
+
+    await manager.setSessionProjectAgent(target.agentId, {
+      whenToUse: "Draft release notes"
+    });
+    await manager.setProjectAgentSharing(target.agentId, [sender.profileId ?? sender.agentId]);
+
+    const receipt = await manager.sendMessage(sender.agentId, target.agentId, "Shared cross-profile ping", "auto");
+    const targetRuntime = manager.runtimeByAgentId.get(target.agentId);
+
+    expect(receipt).toMatchObject({
+      targetAgentId: target.agentId,
+      acceptedMode: "prompt"
+    });
+    expect(targetRuntime?.sendCalls[0]).toEqual({
+      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager","external":true,"fromProfileId":"manager","fromProjectName":"manager"}\n\nShared cross-profile ping`,
+      delivery: "auto"
+    });
+
+    const targetHistory = manager.getConversationHistory(target.agentId);
+    expect(
+      targetHistory.find(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.source === "project_agent_input" &&
+          entry.text === "Shared cross-profile ping"
+      )
+    ).toMatchObject({
+      type: "conversation_message",
+      source: "project_agent_input",
+      text: "Shared cross-profile ping",
+      projectAgentContext: {
+        fromAgentId: sender.agentId,
+        fromDisplayName: "manager",
+        external: true,
+        fromProfileId: sender.profileId ?? sender.agentId,
+        fromProjectName: sender.profileId ?? sender.agentId,
+      }
+    });
+  });
+
+  it("allows a contacted shared project agent to reply directly back to the originating external session and suppresses other turn actions", async () => {
+    const config = await makeTempConfig(8898);
+    const manager = new TestSwarmManager(config);
+
+    const sender = await bootWithDefaultManager(manager, config);
+    const target = await manager.createManager(sender.agentId, {
+      name: "beta",
+      cwd: config.defaultCwd
+    });
+    const other = await manager.createManager(sender.agentId, {
+      name: "gamma",
+      cwd: config.defaultCwd
+    });
+
+    await manager.setSessionProjectAgent(target.agentId, {
+      whenToUse: "Draft release notes"
+    });
+    await manager.setProjectAgentSharing(target.agentId, [sender.profileId ?? sender.agentId]);
+
+    await manager.sendMessage(sender.agentId, target.agentId, "Shared cross-profile ping", "auto");
+    await manager.handleRuntimeSessionEvent(target.agentId, {
+      type: "message_start",
+      message: { role: "user", content: "Shared cross-profile ping" }
+    });
+
+    await expect(manager.publishToUser(target.agentId, "Should stay internal")).rejects.toThrow(/disabled for this turn/i);
+    await expect(manager.sendMessage(target.agentId, other.agentId, "Fan out elsewhere", "auto")).rejects.toThrow(/direct reply back/i);
+
+    const replyReceipt = await manager.sendMessage(target.agentId, sender.agentId, "Reply back", "auto");
+    const senderRuntime = manager.runtimeByAgentId.get(sender.agentId);
+    expect(replyReceipt).toMatchObject({
+      targetAgentId: sender.agentId,
+      acceptedMode: "prompt"
+    });
+    expect(senderRuntime?.sendCalls.at(-1)).toEqual({
+      message: `[projectAgentContext] {"fromAgentId":"beta","fromDisplayName":"beta","external":true,"fromProfileId":"beta","fromProjectName":"beta"}\n\nReply back`,
+      delivery: "auto"
+    });
+
+    const senderHistory = manager.getConversationHistory(sender.agentId);
+    expect(
+      senderHistory.find(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.source === "project_agent_input" &&
+          entry.text === "Reply back"
+      )
+    ).toMatchObject({
+      type: "conversation_message",
+      source: "project_agent_input",
+      text: "Reply back",
+      projectAgentContext: {
+        fromAgentId: target.agentId,
+        fromDisplayName: "beta",
+        external: true,
+        fromProfileId: target.profileId ?? target.agentId,
+        fromProjectName: target.profileId ?? target.agentId,
+      }
+    });
+
+    await manager.handleRuntimeSessionEvent(target.agentId, {
+      type: "turn_end",
+      toolResults: []
+    });
+    await expect(manager.publishToUser(target.agentId, "Allowed after the external turn ends")).resolves.toMatchObject({
+      targetContext: { channel: "web" }
+    });
+  });
+
+  it("rejects project-agent attachments before runtime delivery or transcript side effects", async () => {
+    const config = await makeTempConfig(8898);
+    const manager = new TestSwarmManager(config);
+
+    const sender = await bootWithDefaultManager(manager, config);
+    const target = await manager.createManager(sender.agentId, {
+      name: "beta",
+      cwd: config.defaultCwd
+    });
+
+    await manager.setSessionProjectAgent(target.agentId, {
+      whenToUse: "Draft release notes"
+    });
+    await manager.setProjectAgentSharing(target.agentId, [sender.profileId ?? sender.agentId]);
+
+    const initialRuntimeSendCalls = manager.runtimeByAgentId.get(target.agentId)?.sendCalls.length ?? 0;
+
+    await expect(manager.sendMessage(sender.agentId, target.agentId, "Shared ping", "auto", {
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          text: "secret",
+          fileName: "secret.txt"
+        }
+      ]
+    })).rejects.toThrow(/do not support attachments/i);
+
+    expect(manager.runtimeByAgentId.get(target.agentId)?.sendCalls.length ?? 0).toBe(initialRuntimeSendCalls);
+    expect(
+      manager.getConversationHistory(target.agentId).some(
+        (entry) => entry.type === "conversation_message" && entry.source === "project_agent_input"
+      )
+    ).toBe(false);
+  });
+
   it("preserves dormant same-profile project-agent history when an async message lands before lazy load", async () => {
     const config = await makeTempConfig(8898);
     const firstBoot = new TestSwarmManager(config);
@@ -284,7 +438,7 @@ describe("SwarmManager project-agent sendMessage routing", () => {
 
     const secondBootTargetRuntime = secondBoot.runtimeByAgentId.get(target.agentId);
     expect(secondBootTargetRuntime?.sendCalls[0]).toEqual({
-      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager"}\n\nNeed a release summary`,
+      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager","external":false,"fromProfileId":"manager","fromProjectName":"manager"}\n\nNeed a release summary`,
       delivery: "auto"
     });
 
@@ -316,7 +470,10 @@ describe("SwarmManager project-agent sendMessage routing", () => {
       text: "Need a release summary",
       projectAgentContext: {
         fromAgentId: sender.agentId,
-        fromDisplayName: "manager"
+        fromDisplayName: "manager",
+        external: false,
+        fromProfileId: sender.profileId ?? sender.agentId,
+        fromProjectName: sender.profileId ?? sender.agentId,
       }
     });
     expect(deliveredMessage).not.toHaveProperty("sourceContext");

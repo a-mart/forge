@@ -75,6 +75,9 @@ const ALL_CLIENT_COMMAND_TYPES = [
   'set_project_agent_reference',
   'delete_project_agent_reference',
   'request_project_agent_recommendations',
+  'get_project_agent_sharing',
+  'set_project_agent_sharing',
+  'get_project_agent_external_directory',
   'fork_session',
   'clear_session',
   'pin_message',
@@ -123,6 +126,9 @@ const REQUEST_ID_COMMAND_TYPES = [
   'set_project_agent_reference',
   'delete_project_agent_reference',
   'request_project_agent_recommendations',
+  'get_project_agent_sharing',
+  'set_project_agent_sharing',
+  'get_project_agent_external_directory',
   'fork_session',
   'clear_session',
   'merge_session_memory',
@@ -404,6 +410,9 @@ const requestIdCommands = [
   { type: 'set_project_agent_reference', agentId: agent.agentId, fileName: 'README.md', content: 'docs', requestId: 'request-19' },
   { type: 'delete_project_agent_reference', agentId: agent.agentId, fileName: 'README.md', requestId: 'request-20' },
   { type: 'request_project_agent_recommendations', agentId: agent.agentId, requestId: 'request-21' },
+  { type: 'get_project_agent_sharing', agentId: agent.agentId, requestId: 'request-21a' },
+  { type: 'set_project_agent_sharing', agentId: agent.agentId, targetProfileIds: [profile.profileId], requestId: 'request-21b' },
+  { type: 'get_project_agent_external_directory', requestId: 'request-21c' },
   { type: 'fork_session', sourceAgentId: agent.agentId, requestId: 'request-22' },
   { type: 'clear_session', agentId: agent.agentId, requestId: 'request-23' },
   { type: 'merge_session_memory', agentId: agent.agentId, requestId: 'request-24' },
@@ -469,6 +478,9 @@ describe('protocol root barrel contract', () => {
       'set_project_agent_reference',
       'delete_project_agent_reference',
       'request_project_agent_recommendations',
+      'get_project_agent_sharing',
+      'set_project_agent_sharing',
+      'get_project_agent_external_directory',
     ])
     expect(WS_REQUEST_CONTRACTS.map((contract) => contract.commandType)).toEqual(WS_REQUEST_CONTRACT_TYPES)
     expect(WS_REQUEST_CONTRACTS.every((contract) => contract.requestId.ui === 'required')).toBe(true)
@@ -703,7 +715,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<ClientCommandType, (typeof ALL_CLIENT_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof ALL_CLIENT_COMMAND_TYPES)[number], ClientCommandType>>().toEqualTypeOf<never>()
 
-    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(53)
+    expect(ALL_CLIENT_COMMAND_TYPES).toHaveLength(56)
     expect(new Set(ALL_CLIENT_COMMAND_TYPES).size).toBe(ALL_CLIENT_COMMAND_TYPES.length)
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('collab_user_message')
     expect(ALL_CLIENT_COMMAND_TYPES).toContain('api_proxy')
@@ -714,7 +726,7 @@ describe('protocol root barrel contract', () => {
     expectTypeOf<Exclude<RequestIdCommandType, (typeof REQUEST_ID_COMMAND_TYPES)[number]>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<(typeof REQUEST_ID_COMMAND_TYPES)[number], RequestIdCommandType>>().toEqualTypeOf<never>()
 
-    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(37)
+    expect(REQUEST_ID_COMMAND_TYPES).toHaveLength(40)
     expect(new Set(REQUEST_ID_COMMAND_TYPES).size).toBe(REQUEST_ID_COMMAND_TYPES.length)
     expect(requestIdCommands.map((command) => command.type)).toEqual(REQUEST_ID_COMMAND_TYPES)
     expect(requestIdCommands.every((command) => typeof command.requestId === 'string')).toBe(true)

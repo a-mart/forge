@@ -150,7 +150,23 @@ function isProjectAgentMessageContext(value: unknown): value is ProjectAgentMess
   }
 
   const maybe = value as Partial<ProjectAgentMessageContext>;
-  return typeof maybe.fromAgentId === "string" && typeof maybe.fromDisplayName === "string";
+  if (typeof maybe.fromAgentId !== "string" || typeof maybe.fromDisplayName !== "string") {
+    return false;
+  }
+
+  if (maybe.external !== undefined && typeof maybe.external !== "boolean") {
+    return false;
+  }
+
+  if (maybe.fromProfileId !== undefined && typeof maybe.fromProfileId !== "string") {
+    return false;
+  }
+
+  if (maybe.fromProjectName !== undefined && typeof maybe.fromProjectName !== "string") {
+    return false;
+  }
+
+  return true;
 }
 
 function isExternalThreadMessageContext(value: unknown): value is ExternalThreadMessageContext {

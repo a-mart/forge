@@ -22,6 +22,8 @@ export interface ProjectAgentDirectoryEntry {
   handle: string;
   whenToUse: string;
   capabilities?: ProjectAgentCapability[];
+  origin?: "local" | "external";
+  sourceProjectName?: string;
 }
 
 export interface ListProjectAgentsOptions {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getProjectAgentSuggestions } from './project-agent-suggestions'
-import type { AgentDescriptor } from '@forge/protocol'
+import type { AgentDescriptor, ProjectAgentExternalDirectoryEntry } from '@forge/protocol'
 
 function makeManager(
   agentId: string,
@@ -172,5 +172,30 @@ describe('getProjectAgentSuggestions', () => {
 
     expect(suggestions).toHaveLength(2)
     expect(suggestions.map((s) => s.handle)).toEqual(['docs', 'releases'])
+  })
+
+  it('includes external shared project agents from server-projected directory snapshots', () => {
+    const active = makeManager('alpha', { profileId: 'alpha' })
+    const externalEntries: ProjectAgentExternalDirectoryEntry[] = [
+      {
+        agentId: 'beta--docs',
+        handle: 'forge/documentation',
+        displayName: 'Docs Agent',
+        whenToUse: 'Documentation help',
+        sourceProjectName: 'Forge',
+        origin: 'external',
+      },
+    ]
+
+    const suggestions = getProjectAgentSuggestions(active, [active], externalEntries)
+
+    expect(suggestions).toEqual([
+      {
+        agentId: 'beta--docs',
+        handle: 'forge/documentation',
+        displayName: 'Docs Agent',
+        whenToUse: 'Documentation help',
+      },
+    ])
   })
 })

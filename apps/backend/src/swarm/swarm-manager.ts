@@ -118,6 +118,7 @@ import {
 import { deleteProjectAgentRecord } from "./project-agent-storage.js";
 import {
   deliverProjectAgentMessage,
+  getProjectAgentPublicName,
   isReservedProjectAgentHandle,
 } from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
@@ -180,6 +181,10 @@ import { MANUAL_MANAGER_STOP_NOTICE } from "./manual-stop-notice.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
+import {
+  ProjectAgentSharingService,
+  type ExternalProjectAgentDeliveryAuthorization,
+} from "./project-agent-sharing-service.js";
 import {
   copySessionWorkPlansForFork,
   transitionSessionWorkPlansForLifecycle,
@@ -395,6 +400,18 @@ interface AppendPreparedInboundConversationPayloadResult {
   event: ConversationMessageEvent;
   persistedAttachments: ConversationAttachment[];
   runtimeAttachments: ConversationAttachment[];
+}
+
+interface PendingInboundTurnContext {
+  source: PreparedInboundConversationPayload["source"];
+  projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
+}
+
+interface ExternalProjectAgentTurnContext {
+  fromAgentId: string;
+  fromDisplayName: string;
+  fromProfileId?: string;
+  fromProjectName?: string;
 }
 
 export interface CodexTransportDebugAgentDiagnostics {
@@ -1181,6 +1198,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingProjectExecutableTrustActivationByManagerId = new Map<string, string>();
   private readonly pendingProjectExecutableWorkerInvalidationByManagerId = new Map<string, string>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
+  private readonly pendingInboundTurnContextsByAgentId = new Map<string, PendingInboundTurnContext[]>();
+  private readonly activeExternalProjectAgentTurnByAgentId = new Map<string, ExternalProjectAgentTurnContext>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
   private pendingAgentsSnapshotEmit = false;
@@ -1212,6 +1231,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly archiveLastUsedHydrator: ArchiveLastUsedHydrator;
   private readonly archiveService: ArchiveService;
   private readonly projectAgentService: SwarmProjectAgentService;
+  private readonly projectAgentSharingService: ProjectAgentSharingService;
   readonly promptRegistry: PromptRegistry;
   private readonly codexAppServerService: CodexAppServerService;
 
@@ -1525,6 +1545,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       refreshSessionMetaStatsBySessionId: (sessionAgentId) =>
         this.refreshSessionMetaStatsBySessionId(sessionAgentId),
       getSessionsForProfile: (profileId) => this.getBuilderSessionsForProfile(profileId),
+      getExternalProjectAgentDirectoryEntries: (profileId) =>
+        this.projectAgentSharingService.getExternalDirectoryEntries(profileId),
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
       resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSkillRosterForDescriptor: (descriptor) => this.resolveSkillRosterForDescriptor(descriptor),
@@ -1816,6 +1838,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       notifyProjectAgentsChanged: (profileId) => this.notifyProjectAgentsChanged(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
     });
+    this.projectAgentSharingService = new ProjectAgentSharingService({
+      dataDir: this.config.paths.dataDir,
+      now: this.now,
+      getProfiles: () => this.listProfiles(),
+      getDescriptor: (agentId) => this.descriptors.get(agentId),
+      getDescriptors: () => this.descriptors.values(),
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
     this.setMaxListeners(SWARM_MANAGER_MAX_EVENT_LISTENERS);
   }
 
@@ -1897,6 +1927,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       descriptors: this.descriptors,
       profiles: this.profiles
     }).reconcileAllProfiles();
+
+    await this.projectAgentSharingService.reconcile();
 
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
@@ -2064,6 +2096,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     _toolCallId: string,
     input: TaskToolInput,
   ): Promise<TaskToolResult> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "task");
+
     const descriptor = this.descriptors.get(callerAgentId);
     if (!descriptor || descriptor.role !== "manager") {
       throw new Error("task is only available to manager sessions.");
@@ -2469,6 +2503,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentId: string,
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "present_choices");
     return this.choiceService.requestUserChoice(agentId, questions);
   }
 
@@ -2965,6 +3000,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       initialMessage?: string;
     }
   ): Promise<{ sessionAgentId: string; sessionLabel: string; profileId: string }> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(creatorAgentId, "create_session");
+
     const creatorDescriptor = this.getRequiredSessionDescriptor(creatorAgentId);
     this.assertDescriptorNotEffectivelyArchived(creatorDescriptor);
 
@@ -3076,6 +3113,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       capabilities?: NonNullable<AgentDescriptor["projectAgent"]>["capabilities"];
     }
   ): Promise<{ agentId: string; handle: string; profileId: string }> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(creatorAgentId, "create_project_agent");
+
     const createdProjectAgent = await this.projectAgentService.createAndPromoteProjectAgent(creatorAgentId, params);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "created",
@@ -3409,6 +3448,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (promptChanged && !directoryChanged) {
       await this.notifyProjectAgentPromptSourceChanged(agentId);
     }
+    if (directoryChanged) {
+      await this.notifySharedProjectAgentTargetsChanged(agentId);
+    }
     return result;
   }
 
@@ -3442,7 +3484,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async renameSession(agentId: string, label: string): Promise<void> {
     const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "rename Builder sessions");
     this.assertDescriptorNotEffectivelyArchived(descriptor);
+    const wasProjectAgent = Boolean(descriptor.projectAgent);
     await this.sessionService.renameSession(agentId, label);
+    if (wasProjectAgent) {
+      await this.notifySharedProjectAgentTargetsChanged(agentId);
+    }
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "renamed",
       sessionDescriptor: cloneDescriptor(this.getRequiredSessionDescriptor(agentId))
@@ -3454,6 +3500,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!profile) {
       throw new Error(`Profile not found: ${profileId}`);
     }
+    const sharedProjectAgentIds = Array.from(this.descriptors.values())
+      .filter((descriptor) => descriptor.role === "manager" && descriptor.profileId === profileId && descriptor.projectAgent)
+      .map((descriptor) => descriptor.agentId);
     this.assertProfileNotArchived(profileId);
     const normalizedName = displayName.trim();
     if (!normalizedName) {
@@ -3463,6 +3512,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       displayName: normalizedName,
       updatedAt: this.now(),
     });
+    if (sharedProjectAgentIds.length > 0) {
+      await Promise.all(sharedProjectAgentIds.map((agentId) => this.notifySharedProjectAgentTargetsChanged(agentId)));
+    }
     this.emitProfilesSnapshot();
     this.emitAgentsSnapshot();
   }
@@ -3491,10 +3543,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "spawn_agent");
     return this.lifecycleService.spawnAgent(callerAgentId, input);
   }
 
   async killAgent(callerAgentId: string, targetAgentId: string): Promise<void> {
+    this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "kill_agent");
     await this.lifecycleService.killAgent(callerAgentId, targetAgentId);
   }
 
@@ -3772,6 +3826,35 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }> {
     this.getRequiredBuilderSessionDescriptor(agentId, "inspect Builder project-agent settings");
     return this.projectAgentService.getProjectAgentConfig(agentId);
+  }
+
+  async getProjectAgentSharing(agentId: string) {
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "manage project-agent sharing");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
+    if (!descriptor.projectAgent) {
+      throw new Error("Session is not a project agent");
+    }
+    return this.projectAgentSharingService.getSharingSnapshot(agentId);
+  }
+
+  async setProjectAgentSharing(agentId: string, targetProfileIds: readonly string[]) {
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "manage project-agent sharing");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
+    if (!descriptor.projectAgent) {
+      throw new Error("Session is not a project agent");
+    }
+    const result = await this.projectAgentSharingService.replaceSharingTargets(agentId, targetProfileIds);
+    const affectedTargetProfileIds = [...result.addedTargetProfileIds, ...result.removedTargetProfileIds];
+    await this.notifySharedProjectAgentTargetsChanged(agentId, affectedTargetProfileIds);
+    return result;
+  }
+
+  async getProjectAgentExternalDirectory(profileId: string) {
+    const profile = this.profiles.get(profileId);
+    if (profile && isSystemProfile(profile)) {
+      throw new Error("Cannot load external project agents for system-managed profiles");
+    }
+    return this.projectAgentSharingService.getExternalDirectoryEntries(profileId);
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {
@@ -4361,27 +4444,57 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const origin = options?.origin ?? "internal";
     const attachments = normalizeConversationAttachments(options?.attachments);
-    const isProjectAgentDelivery =
-      sender.role === "manager" &&
-      target.role === "manager" &&
-      fromAgentId !== targetAgentId &&
-      (sender.profileId ?? sender.agentId) === (target.profileId ?? target.agentId) &&
-      (target.projectAgent !== undefined || target.creatorAgentId === fromAgentId);
-
-    if (isProjectAgentDelivery) {
-      const deliveryResult = await deliverProjectAgentMessage(
-        {
-          now: this.now,
-          getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
-          rateLimitBuckets: this.projectAgentMessageTimestampsBySender
-        },
-        {
-          sender,
-          target,
-          message,
-          delivery
-        }
+    const activeExternalTurn = this.getActiveExternalProjectAgentTurn(fromAgentId);
+    if (activeExternalTurn && targetAgentId !== activeExternalTurn.fromAgentId) {
+      throw new Error(
+        `External project-agent messages are restricted to a direct reply back to ${activeExternalTurn.fromDisplayName} (${activeExternalTurn.fromAgentId}).`
       );
+    }
+
+    const senderProfileId = sender.profileId ?? sender.agentId;
+    const projectAgentDeliveryAuthorization = await this.resolveProjectAgentDeliveryAuthorization(sender, target);
+
+    if (projectAgentDeliveryAuthorization) {
+      if (attachments.length > 0) {
+        throw new Error("Project-agent deliveries do not support attachments.");
+      }
+
+      const rollbackInboundTurnContext = this.enqueueInboundTurnContext(target.agentId, {
+        source: "project_agent_input",
+        projectAgentContext: {
+          fromAgentId: sender.agentId,
+          fromDisplayName: getProjectAgentPublicName(sender),
+          external: projectAgentDeliveryAuthorization.allowCrossProfile,
+          fromProfileId: senderProfileId,
+          fromProjectName: this.profiles.get(senderProfileId)?.displayName ?? senderProfileId,
+        },
+      });
+
+      let deliveryResult;
+      try {
+        deliveryResult = await deliverProjectAgentMessage(
+          {
+            now: this.now,
+            getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
+            rateLimitBuckets: this.projectAgentMessageTimestampsBySender
+          },
+          {
+            sender,
+            target,
+            message,
+            delivery,
+            allowCrossProfile: projectAgentDeliveryAuthorization.allowCrossProfile,
+            allowContactReplyTarget: projectAgentDeliveryAuthorization.allowContactReplyTarget,
+            external: projectAgentDeliveryAuthorization.allowCrossProfile,
+            sourceProfileId: senderProfileId,
+            sourceProjectName: this.profiles.get(senderProfileId)?.displayName ?? senderProfileId,
+          }
+        );
+      } catch (error) {
+        rollbackInboundTurnContext();
+        throw error;
+      }
+
       const { receipt, inboundPayload } = deliveryResult;
       await this.appendPreparedInboundConversationPayload(target, {
         text: inboundPayload.text,
@@ -4390,6 +4503,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         source: "project_agent_input",
         projectAgentContext: inboundPayload.projectAgentContext
       });
+
+      if (projectAgentDeliveryAuthorization.externalAuthorization?.mode === "grant") {
+        await this.projectAgentSharingService.recordExternalContact(target.agentId, senderProfileId, sender.agentId);
+      }
 
       this.logDebug("agent:send_message", {
         fromAgentId,
@@ -4616,6 +4733,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     source: "speak_to_user" | "system" = "speak_to_user",
     targetContext?: MessageTargetContext
   ): Promise<{ targetContext: MessageSourceContext }> {
+    if (source === "speak_to_user") {
+      this.assertExternalProjectAgentTurnCapabilityAllowed(agentId, "speak_to_user");
+    }
+
     let resolvedTargetContext: MessageSourceContext;
     let normalizedText = text;
 
@@ -5363,6 +5484,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       runtimeImageCount: typeof runtimeMessage === "string" ? 0 : (runtimeMessage.images?.length ?? 0)
     });
 
+    const rollbackInboundTurnContext = this.enqueueInboundTurnContext(managerContextId, {
+      source: "user_input",
+    });
+
     try {
       const receipt = await managerRuntime.sendMessage(runtimeMessage, "steer");
       this.logDebug("manager:user_message_dispatch_complete", {
@@ -5375,6 +5500,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         attachmentCount: persistedAttachmentCount
       });
     } catch (error) {
+      rollbackInboundTurnContext();
       this.logDebug("manager:user_message_dispatch_error", {
         managerContextId,
         targetAgentId: managerContextId,
@@ -5434,6 +5560,156 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   getVersioningService(): VersioningMutationSink | undefined {
     return this.versioningService;
+  }
+
+  private enqueueInboundTurnContext(agentId: string, context: PendingInboundTurnContext): () => void {
+    const queue = this.pendingInboundTurnContextsByAgentId.get(agentId) ?? [];
+    queue.push(context);
+    this.pendingInboundTurnContextsByAgentId.set(agentId, queue);
+
+    return () => {
+      const currentQueue = this.pendingInboundTurnContextsByAgentId.get(agentId);
+      if (!currentQueue) {
+        return;
+      }
+
+      const index = currentQueue.lastIndexOf(context);
+      if (index >= 0) {
+        currentQueue.splice(index, 1);
+      }
+
+      if (currentQueue.length === 0) {
+        this.pendingInboundTurnContextsByAgentId.delete(agentId);
+      }
+    };
+  }
+
+  private applyInboundTurnContextRuntimeEvent(agentId: string, event: RuntimeSessionEvent): void {
+    if (event.type === "message_start" && extractRole(event.message) === "user") {
+      const queue = this.pendingInboundTurnContextsByAgentId.get(agentId);
+      const nextContext = queue?.shift();
+      if (queue && queue.length === 0) {
+        this.pendingInboundTurnContextsByAgentId.delete(agentId);
+      }
+
+      const externalProjectAgentContext = nextContext?.source === "project_agent_input" && nextContext.projectAgentContext?.external
+        ? {
+            fromAgentId: nextContext.projectAgentContext.fromAgentId,
+            fromDisplayName: nextContext.projectAgentContext.fromDisplayName,
+            ...(nextContext.projectAgentContext.fromProfileId
+              ? { fromProfileId: nextContext.projectAgentContext.fromProfileId }
+              : {}),
+            ...(nextContext.projectAgentContext.fromProjectName
+              ? { fromProjectName: nextContext.projectAgentContext.fromProjectName }
+              : {}),
+          }
+        : undefined;
+
+      if (externalProjectAgentContext) {
+        this.activeExternalProjectAgentTurnByAgentId.set(agentId, externalProjectAgentContext);
+      } else {
+        this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
+      }
+      return;
+    }
+
+    if (event.type === "turn_end" || event.type === "agent_end") {
+      this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
+    }
+  }
+
+  private getActiveExternalProjectAgentTurn(agentId: string): ExternalProjectAgentTurnContext | undefined {
+    return this.activeExternalProjectAgentTurnByAgentId.get(agentId);
+  }
+
+  private assertExternalProjectAgentTurnCapabilityAllowed(
+    callerAgentId: string,
+    capability:
+      | "spawn_agent"
+      | "kill_agent"
+      | "create_session"
+      | "create_project_agent"
+      | "speak_to_user"
+      | "present_choices"
+      | "task",
+  ): void {
+    const context = this.getActiveExternalProjectAgentTurn(callerAgentId);
+    if (!context) {
+      return;
+    }
+
+    throw new Error(
+      `External project-agent messages are restricted to a direct reply back to ${context.fromDisplayName} (${context.fromAgentId}). ${capability} is disabled for this turn.`
+    );
+  }
+
+  private async resolveProjectAgentDeliveryAuthorization(
+    sender: AgentDescriptor,
+    target: AgentDescriptor,
+  ): Promise<{
+    allowCrossProfile: boolean;
+    allowContactReplyTarget?: boolean;
+    externalAuthorization?: ExternalProjectAgentDeliveryAuthorization;
+  } | null> {
+    if (sender.role !== "manager" || target.role !== "manager" || sender.agentId === target.agentId) {
+      return null;
+    }
+
+    const senderProfileId = sender.profileId ?? sender.agentId;
+    const targetProfileId = target.profileId ?? target.agentId;
+    const localProjectAgentDelivery =
+      senderProfileId === targetProfileId && (target.projectAgent !== undefined || target.creatorAgentId === sender.agentId);
+    if (localProjectAgentDelivery) {
+      return { allowCrossProfile: false };
+    }
+
+    if (senderProfileId === targetProfileId) {
+      return null;
+    }
+
+    const externalAuthorization = await this.projectAgentSharingService.authorizeExternalDelivery({
+      senderAgentId: sender.agentId,
+      senderProfileId,
+      targetAgentId: target.agentId,
+    });
+    if (!externalAuthorization) {
+      return null;
+    }
+
+    if (!target.projectAgent && externalAuthorization.mode !== "contact_reply") {
+      return null;
+    }
+
+    return {
+      allowCrossProfile: true,
+      allowContactReplyTarget: externalAuthorization.mode === "contact_reply",
+      externalAuthorization,
+    };
+  }
+
+  private async notifySharedProjectAgentTargetsChanged(
+    sourceAgentId: string,
+    targetProfileIds?: readonly string[],
+  ): Promise<void> {
+    const sourceDescriptor = this.descriptors.get(sourceAgentId);
+    const fallbackTargetProfileIds = this.projectAgentSharingService
+      .listGrantsForSourceAgent(sourceAgentId)
+      .map((grant) => grant.targetProfileId);
+    const uniqueTargetProfileIds = Array.from(new Set(targetProfileIds ?? fallbackTargetProfileIds));
+
+    if (uniqueTargetProfileIds.length === 0) {
+      return;
+    }
+
+    if (sourceDescriptor?.role === "manager" && sourceDescriptor.profileId) {
+      this.emitSessionProjectAgentUpdated(
+        sourceDescriptor.agentId,
+        sourceDescriptor.profileId,
+        sourceDescriptor.projectAgent ?? null,
+      );
+    }
+
+    await Promise.allSettled(uniqueTargetProfileIds.map((profileId) => this.notifyProjectAgentsChanged(profileId)));
   }
 
   async reloadModelCatalogOverridesAndProjection(): Promise<void> {
@@ -7261,6 +7537,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentIdOrEvent: string | RuntimeSessionEvent,
     maybeEvent?: RuntimeSessionEvent
   ): Promise<void> {
+    const invokedWithExplicitToken = typeof runtimeTokenOrAgentId === "number";
+    const agentId = invokedWithExplicitToken ? (agentIdOrEvent as string) : runtimeTokenOrAgentId;
+    const event = invokedWithExplicitToken ? maybeEvent : (agentIdOrEvent as RuntimeSessionEvent);
+
+    if (event) {
+      this.applyInboundTurnContextRuntimeEvent(agentId, event);
+    }
+
     await this.runtimeController.handleRuntimeSessionEvent(runtimeTokenOrAgentId, agentIdOrEvent, maybeEvent);
   }
 

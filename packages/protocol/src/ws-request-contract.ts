@@ -52,6 +52,9 @@ type ContractCommandType = Extract<
   | 'set_project_agent_reference'
   | 'delete_project_agent_reference'
   | 'request_project_agent_recommendations'
+  | 'get_project_agent_sharing'
+  | 'set_project_agent_sharing'
+  | 'get_project_agent_external_directory'
 >
 type ContractSuccessEventType = Extract<
   ServerEvent['type'],
@@ -88,6 +91,9 @@ type ContractSuccessEventType = Extract<
   | 'project_agent_reference_saved'
   | 'project_agent_reference_deleted'
   | 'project_agent_recommendations'
+  | 'project_agent_sharing'
+  | 'project_agent_sharing_updated'
+  | 'project_agent_external_directory'
 >
 
 export const WS_REQUEST_CONTRACTS = [
@@ -327,6 +333,27 @@ export const WS_REQUEST_CONTRACTS = [
     requestId: { ui: 'required', wire: 'optional' },
     successEvents: ['project_agent_recommendations'],
     errorCodeFragments: ['project_agent_recommendations'],
+  },
+  {
+    commandType: 'get_project_agent_sharing',
+    resultFamily: 'project_agent_sharing',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['project_agent_sharing'],
+    errorCodeFragments: ['project_agent_sharing'],
+  },
+  {
+    commandType: 'set_project_agent_sharing',
+    resultFamily: 'project_agent_sharing_update',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['project_agent_sharing_updated'],
+    errorCodeFragments: ['set_project_agent_sharing'],
+  },
+  {
+    commandType: 'get_project_agent_external_directory',
+    resultFamily: 'project_agent_external_directory',
+    requestId: { ui: 'required', wire: 'optional' },
+    successEvents: ['project_agent_external_directory'],
+    errorCodeFragments: ['project_agent_external_directory'],
   },
 ] as const satisfies readonly WsRequestContract<ContractCommandType, ContractSuccessEventType>[]
 

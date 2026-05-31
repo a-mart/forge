@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { isRepoProjectAgentSource, type ProjectAgentConfigSourceSnapshot, type RepoProjectAgentSourceIdentity } from '@forge/protocol'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  isRepoProjectAgentSource,
+  type ProjectAgentConfigSourceSnapshot,
+  type ProjectAgentShareEligibleTarget,
+  type ProjectAgentShareGrantInfo,
+  type RepoProjectAgentSourceIdentity,
+} from '@forge/protocol'
 import { AlertTriangle, GitBranch, Loader2, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -28,6 +34,8 @@ export function ProjectAgentSettingsSheet({
   onDemote,
   onClose,
   onGetProjectAgentConfig,
+  onGetProjectAgentSharing,
+  onSetProjectAgentSharing,
   onListReferences,
   onGetReference,
   onSetReference,
@@ -48,6 +56,12 @@ export function ProjectAgentSettingsSheet({
   const [configLoading, setConfigLoading] = useState(!isPromoting)
   const [configError, setConfigError] = useState<string | null>(null)
   const [sourceSnapshot, setSourceSnapshot] = useState<ProjectAgentConfigSourceSnapshot | null>(null)
+  const [sharingLoading, setSharingLoading] = useState(!isPromoting && !!onGetProjectAgentSharing)
+  const [sharingError, setSharingError] = useState<string | null>(null)
+  const [sharingGrants, setSharingGrants] = useState<ProjectAgentShareGrantInfo[]>([])
+  const [eligibleShareTargets, setEligibleShareTargets] = useState<ProjectAgentShareEligibleTarget[]>([])
+  const [selectedShareTargetIds, setSelectedShareTargetIds] = useState<string[]>([])
+  const [savedShareTargetIds, setSavedShareTargetIds] = useState<string[]>([])
   const fetchedSystemPromptRef = useRef<string>('')
 
   const [whenToUse, setWhenToUse] = useState(currentProjectAgent?.whenToUse ?? '')
@@ -120,6 +134,34 @@ export function ProjectAgentSettingsSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, isPromoting])
 
+  useEffect(() => {
+    if (isPromoting || !onGetProjectAgentSharing) {
+      setSharingLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setSharingLoading(true)
+    setSharingError(null)
+    void onGetProjectAgentSharing(agentId).then((result) => {
+      if (cancelled) return
+      const activeTargetIds = result.eligibleTargets
+        .filter((target) => target.alreadyShared)
+        .map((target) => target.profileId)
+      setSharingGrants(result.grants)
+      setEligibleShareTargets(result.eligibleTargets)
+      setSelectedShareTargetIds(activeTargetIds)
+      setSavedShareTargetIds(activeTargetIds)
+      setSharingLoading(false)
+    }).catch((err) => {
+      if (cancelled) return
+      setSharingError(err instanceof Error ? err.message : 'Failed to load sharing settings.')
+      setSharingLoading(false)
+    })
+
+    return () => { cancelled = true }
+  }, [agentId, isPromoting, onGetProjectAgentSharing])
+
   // Source diagnostics: use the live snapshot when available, fall back to descriptor identity
   const effectiveSourcePath = sourceSnapshot?.forgeDirRealpath ?? repoSourcePath
   const effectiveDefinitionId = sourceSnapshot?.definitionId ?? repoSource?.definitionId ?? null
@@ -129,21 +171,34 @@ export function ProjectAgentSettingsSheet({
 
   const trimmedWhenToUse = whenToUse.trim()
   const trimmedSystemPrompt = systemPrompt.trim()
-  const canSave = isPromoting
+  const sharingAvailable = !isPromoting && !!onGetProjectAgentSharing && !!onSetProjectAgentSharing
+  const configCanSave = isPromoting
     ? trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX && normalizedHandle.length > 0
     : !isRepoSourced && trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
   const storedCanCreateSessions = currentProjectAgent?.capabilities?.includes('create_session') ?? false
-  const hasChanges = isPromoting
+  const configHasChanges = isPromoting
     || (!isRepoSourced && (
       trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
       || trimmedSystemPrompt !== fetchedSystemPromptRef.current.trim()
       || canCreateSessions !== storedCanCreateSessions
     ))
+  const normalizedSelectedShareTargetIds = useMemo(
+    () => [...selectedShareTargetIds].sort(),
+    [selectedShareTargetIds],
+  )
+  const normalizedSavedShareTargetIds = useMemo(
+    () => [...savedShareTargetIds].sort(),
+    [savedShareTargetIds],
+  )
+  const sharingDirty = sharingAvailable
+    && normalizedSelectedShareTargetIds.join('|') !== normalizedSavedShareTargetIds.join('|')
+  const canSave = isPromoting ? configCanSave : configCanSave || sharingDirty
+  const hasChanges = isPromoting ? configHasChanges : configHasChanges || sharingDirty
 
   // Dirty state: would closing lose user-entered data?
   const isDirty = isPromoting
     ? (trimmedWhenToUse.length > 0 || trimmedSystemPrompt.length > 0)
-    : (!isRepoSourced && (hasChanges || dirtyReferenceFiles.size > 0))
+    : ((!isRepoSourced && (configHasChanges || dirtyReferenceFiles.size > 0)) || sharingDirty)
 
   // ── Close flow: confirm if dirty, otherwise close immediately ──
 
@@ -329,12 +384,24 @@ export function ProjectAgentSettingsSheet({
     setSaving(true)
     setError(null)
     try {
-      await onSave(agentId, {
-        whenToUse: trimmedWhenToUse,
-        ...(trimmedSystemPrompt ? { systemPrompt: trimmedSystemPrompt } : {}),
-        ...(isPromoting && normalizedHandle ? { handle: normalizedHandle } : {}),
-        capabilities: canCreateSessions ? ['create_session'] : [],
-      })
+      if (isPromoting || configHasChanges) {
+        await onSave(agentId, {
+          whenToUse: trimmedWhenToUse,
+          ...(trimmedSystemPrompt ? { systemPrompt: trimmedSystemPrompt } : {}),
+          ...(isPromoting && normalizedHandle ? { handle: normalizedHandle } : {}),
+          capabilities: canCreateSessions ? ['create_session'] : [],
+        })
+      }
+      if (!isPromoting && sharingDirty && onSetProjectAgentSharing) {
+        const result = await onSetProjectAgentSharing(agentId, normalizedSelectedShareTargetIds)
+        const activeTargetIds = result.eligibleTargets
+          .filter((target) => target.alreadyShared)
+          .map((target) => target.profileId)
+        setSharingGrants(result.grants)
+        setEligibleShareTargets(result.eligibleTargets)
+        setSelectedShareTargetIds(activeTargetIds)
+        setSavedShareTargetIds(activeTargetIds)
+      }
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save project agent settings.')
@@ -615,6 +682,91 @@ export function ProjectAgentSettingsSheet({
               </div>
             </div>
 
+            {sharingAvailable ? (
+              <div className="space-y-3 rounded-md border border-border/60 p-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">Sharing</label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Share this Project Agent into other Builder projects. Shared agents appear in the target project directory and mention autocomplete using aliases like <code>@namespace/{(currentProjectAgent?.handle ?? normalizedHandle) || 'agent'}</code>.
+                  </p>
+                </div>
+
+                {sharingLoading ? (
+                  <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 shrink-0 animate-spin" />
+                    <span>Loading sharing targets…</span>
+                  </div>
+                ) : null}
+
+                {sharingError ? (
+                  <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+                    {sharingError}
+                  </p>
+                ) : null}
+
+                {!sharingLoading ? (
+                  <>
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-foreground">Current external aliases</p>
+                      {sharingGrants.length > 0 ? (
+                        <div className="space-y-2">
+                          {sharingGrants.map((grant) => (
+                            <div key={grant.grantId} className="rounded-md border border-border/60 px-3 py-2 text-xs">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="font-medium text-foreground">{grant.targetProjectName}</div>
+                                  <div className="font-mono text-muted-foreground">@{grant.externalHandle}</div>
+                                </div>
+                                {grant.blockedReason ? (
+                                  <Badge variant="outline" className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                                    {grant.blockedReason === 'source_archived' ? 'source archived' : 'target archived'}
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Not shared into any other Builder project yet.</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-foreground">Share into other projects</p>
+                      {eligibleShareTargets.length > 0 ? (
+                        <div className="space-y-2">
+                          {eligibleShareTargets.map((target) => {
+                            const checked = selectedShareTargetIds.includes(target.profileId)
+                            const aliasPreview = `${target.namespacePreview}/${(currentProjectAgent?.handle ?? normalizedHandle) || 'agent'}`
+                            return (
+                              <div key={target.profileId} className="flex items-start gap-3 rounded-md border border-border/60 px-3 py-2">
+                                <Switch
+                                  checked={checked}
+                                  onCheckedChange={(next) => {
+                                    setSelectedShareTargetIds((prev) => next
+                                      ? [...prev, target.profileId]
+                                      : prev.filter((profileId) => profileId !== target.profileId))
+                                  }}
+                                  size="sm"
+                                  aria-label={`Share with ${target.displayName}`}
+                                />
+                                <div className="space-y-0.5">
+                                  <div className="text-sm text-foreground">{target.displayName}</div>
+                                  <div className="font-mono text-[11px] text-muted-foreground">@{aliasPreview}</div>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No other Builder projects are currently eligible for sharing.</p>
+                      )}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
             <ProjectAgentReferenceDocsEditor
               isPromoting={isPromoting}
               referenceDocs={referenceDocs}
@@ -658,8 +810,8 @@ export function ProjectAgentSettingsSheet({
               </p>
             ) : null}
             <div className="flex items-center gap-2">
-              {!isRepoSourced ? (
-                <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving || configLoading}>
+              {(!isRepoSourced || sharingAvailable || isPromoting) ? (
+                <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving || configLoading || sharingLoading}>
                   {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
                 </Button>
               ) : null}

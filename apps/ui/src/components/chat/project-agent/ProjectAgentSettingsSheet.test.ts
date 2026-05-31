@@ -38,6 +38,8 @@ function renderSheet(overrides: {
   onSave?: ProjectAgentSettingsSheetProps['onSave']
   onDemote?: ProjectAgentSettingsSheetProps['onDemote']
   onGetProjectAgentConfig?: ProjectAgentSettingsSheetProps['onGetProjectAgentConfig']
+  onGetProjectAgentSharing?: ProjectAgentSettingsSheetProps['onGetProjectAgentSharing']
+  onSetProjectAgentSharing?: ProjectAgentSettingsSheetProps['onSetProjectAgentSharing']
   onGetReference?: ProjectAgentSettingsSheetProps['onGetReference']
   onSetReference?: ProjectAgentSettingsSheetProps['onSetReference']
   onDeleteReference?: ProjectAgentSettingsSheetProps['onDeleteReference']
@@ -76,6 +78,8 @@ function renderSheet(overrides: {
           systemPrompt: null,
           references: [],
         })),
+        onGetProjectAgentSharing: overrides.onGetProjectAgentSharing,
+        onSetProjectAgentSharing: overrides.onSetProjectAgentSharing,
         onGetReference: overrides.onGetReference,
         onSetReference: overrides.onSetReference,
         onDeleteReference: overrides.onDeleteReference,
@@ -679,5 +683,89 @@ describe('ProjectAgentSettingsSheet', () => {
       (btn) => btn.textContent === 'Cancel',
     )
     expect(cancelButton).toBeTruthy()
+  })
+
+  it('saves sharing changes for repo-sourced project agents', async () => {
+    const onSave = vi.fn(async () => {})
+    const onSetProjectAgentSharing = vi.fn(async () => ({
+      agentId: 'agent-1',
+      grants: [{
+        grantId: 'grant-1',
+        sourceProfileId: 'alpha',
+        sourceAgentId: 'agent-1',
+        sourceHandle: 'repo-agent',
+        sourceProjectName: 'Alpha',
+        targetProfileId: 'mobile',
+        targetProjectName: 'Mobile',
+        targetNamespace: 'alpha',
+        externalHandle: 'alpha/repo-agent',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      }],
+      eligibleTargets: [{
+        profileId: 'mobile',
+        displayName: 'Mobile',
+        alreadyShared: true,
+        namespacePreview: 'alpha',
+      }],
+      addedTargetProfileIds: ['mobile'],
+      removedTargetProfileIds: [],
+    }))
+
+    renderSheet({
+      currentProjectAgent: {
+        handle: 'repo-agent',
+        whenToUse: 'Repository-managed agent',
+        sourceKind: 'repo',
+      },
+      onSave,
+      onGetProjectAgentConfig: vi.fn(async () => ({
+        agentId: 'agent-1',
+        config: {
+          version: 1,
+          agentId: 'agent-1',
+          handle: 'repo-agent',
+          whenToUse: 'Repository-managed agent',
+          promotedAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        systemPrompt: null,
+        references: [],
+      })),
+      onGetProjectAgentSharing: vi.fn(async () => ({
+        agentId: 'agent-1',
+        grants: [],
+        eligibleTargets: [{
+          profileId: 'mobile',
+          displayName: 'Mobile',
+          alreadyShared: false,
+          namespacePreview: 'alpha',
+        }],
+      })),
+      onSetProjectAgentSharing,
+    })
+
+    await flushEffects()
+
+    const shareToggle = document.body.querySelector('[aria-label="Share with Mobile"]') as HTMLButtonElement | null
+    expect(shareToggle).not.toBeNull()
+    flushSync(() => {
+      shareToggle!.click()
+    })
+
+    await flushEffects()
+
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Save',
+    )
+    expect(saveButton).toBeTruthy()
+    flushSync(() => {
+      saveButton!.click()
+    })
+
+    await flushEffects()
+
+    expect(onSave).not.toHaveBeenCalled()
+    expect(onSetProjectAgentSharing).toHaveBeenCalledWith('agent-1', ['mobile'])
   })
 })

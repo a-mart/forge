@@ -58,6 +58,9 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "set_project_agent_reference" &&
     command.type !== "delete_project_agent_reference" &&
     command.type !== "request_project_agent_recommendations" &&
+    command.type !== "get_project_agent_sharing" &&
+    command.type !== "set_project_agent_sharing" &&
+    command.type !== "get_project_agent_external_directory" &&
     command.type !== "fork_session" &&
     command.type !== "merge_session_memory"
   ) {
@@ -567,6 +570,76 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
           requestId: command.requestId
         });
       });
+
+    return true;
+  }
+
+  if (command.type === "get_project_agent_sharing") {
+    try {
+      const snapshot = await swarmManager.getProjectAgentSharing(command.agentId);
+      send(socket, {
+        type: "project_agent_sharing",
+        agentId: snapshot.agentId,
+        grants: snapshot.grants,
+        eligibleTargets: snapshot.eligibleTargets,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "GET_PROJECT_AGENT_SHARING_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "set_project_agent_sharing") {
+    try {
+      const result = await swarmManager.setProjectAgentSharing(command.agentId, command.targetProfileIds);
+      send(socket, {
+        type: "project_agent_sharing_updated",
+        agentId: result.snapshot.agentId,
+        grants: result.snapshot.grants,
+        eligibleTargets: result.snapshot.eligibleTargets,
+        addedTargetProfileIds: result.addedTargetProfileIds,
+        removedTargetProfileIds: result.removedTargetProfileIds,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "SET_PROJECT_AGENT_SHARING_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "get_project_agent_external_directory") {
+    try {
+      const profileId = resolveProfileIdForSessionAgent(managerContextId, (agentId) =>
+        swarmManager.getAgent(agentId),
+      );
+      const entries = await swarmManager.getProjectAgentExternalDirectory(profileId);
+      send(socket, {
+        type: "project_agent_external_directory",
+        profileId,
+        entries,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "GET_PROJECT_AGENT_EXTERNAL_DIRECTORY_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
 
     return true;
   }

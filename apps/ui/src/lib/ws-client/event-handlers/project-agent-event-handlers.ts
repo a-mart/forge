@@ -7,6 +7,7 @@ export function handleProjectAgentEvent(
 ): boolean {
   switch (event.type) {
     case 'session_project_agent_updated':
+      context.updateState({ promptChangeKey: context.state.promptChangeKey + 1 })
       if (event.requestId) {
         context.requestTracker.resolve('set_session_project_agent', event.requestId, {
           agentId: event.agentId,
@@ -80,6 +81,38 @@ export function handleProjectAgentEvent(
           event.requestId,
           new Error(event.message || 'Failed to generate project agent recommendations.'),
         )
+      }
+      return true
+
+    case 'project_agent_sharing':
+      if (event.requestId) {
+        context.requestTracker.resolve('get_project_agent_sharing', event.requestId, {
+          agentId: event.agentId,
+          grants: event.grants,
+          eligibleTargets: event.eligibleTargets,
+        })
+      }
+      return true
+
+    case 'project_agent_sharing_updated':
+      context.updateState({ promptChangeKey: context.state.promptChangeKey + 1 })
+      if (event.requestId) {
+        context.requestTracker.resolve('set_project_agent_sharing', event.requestId, {
+          agentId: event.agentId,
+          grants: event.grants,
+          eligibleTargets: event.eligibleTargets,
+          addedTargetProfileIds: event.addedTargetProfileIds,
+          removedTargetProfileIds: event.removedTargetProfileIds,
+        })
+      }
+      return true
+
+    case 'project_agent_external_directory':
+      if (event.requestId) {
+        context.requestTracker.resolve('get_project_agent_external_directory', event.requestId, {
+          profileId: event.profileId,
+          entries: event.entries,
+        })
       }
       return true
 

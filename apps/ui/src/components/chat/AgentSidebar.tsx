@@ -102,6 +102,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onReorderProfiles,
   onSetSessionProjectAgent,
   onGetProjectAgentConfig,
+  onGetProjectAgentSharing,
+  onSetProjectAgentSharing,
   onListProjectAgentReferences,
   onGetProjectAgentReference,
   onSetProjectAgentReference,
@@ -839,6 +841,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           onDemote={handleDemoteProjectAgent}
           onClose={() => setProjectAgentTarget(null)}
           onGetProjectAgentConfig={onGetProjectAgentConfig}
+          onGetProjectAgentSharing={onGetProjectAgentSharing}
+          onSetProjectAgentSharing={onSetProjectAgentSharing}
           onListReferences={onListProjectAgentReferences}
           onGetReference={onGetProjectAgentReference}
           onSetReference={onSetProjectAgentReference}

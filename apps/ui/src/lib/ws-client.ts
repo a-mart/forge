@@ -12,7 +12,9 @@ import {
   buildDeleteProjectAgentReferenceCommand,
   buildForkSessionCommand,
   buildGetProjectAgentConfigCommand,
+  buildGetProjectAgentExternalDirectoryCommand,
   buildGetProjectAgentReferenceCommand,
+  buildGetProjectAgentSharingCommand,
   buildGetSessionWorkersCommand,
   buildHydrateArchiveLastUsedCommand,
   buildKillAgentCommand,
@@ -31,6 +33,7 @@ import {
   buildRequestProjectAgentRecommendationsCommand,
   buildSessionActionCommand,
   buildSetProjectAgentReferenceCommand,
+  buildSetProjectAgentSharingCommand,
   buildSetSessionProjectAgentCommand,
   buildStopAllAgentsCommand,
   buildSubscribeCommand,
@@ -61,10 +64,13 @@ import type {
   DirectoryValidationResult,
   Listener,
   ProjectAgentConfigResult,
+  ProjectAgentExternalDirectoryResult,
   ProjectAgentReferenceDeletedResult,
   ProjectAgentReferenceResult,
   ProjectAgentReferencesResult,
   ProjectAgentReferenceSavedResult,
+  ProjectAgentSharingResult,
+  ProjectAgentSharingUpdatedResult,
   ArchiveLastUsedHydrationResult,
   ProfileArchiveResult,
   ProfileRestoreResult,
@@ -599,6 +605,30 @@ export class ManagerWsClient {
     )
   }
 
+  async getProjectAgentSharing(agentId: string): Promise<ProjectAgentSharingResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('get_project_agent_sharing', (requestId) =>
+      buildGetProjectAgentSharingCommand(agentId, requestId),
+    )
+  }
+
+  async setProjectAgentSharing(
+    agentId: string,
+    targetProfileIds: string[],
+  ): Promise<ProjectAgentSharingUpdatedResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('set_project_agent_sharing', (requestId) =>
+      buildSetProjectAgentSharingCommand(agentId, targetProfileIds, requestId),
+    )
+  }
+
+  async getProjectAgentExternalDirectory(): Promise<ProjectAgentExternalDirectoryResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('get_project_agent_external_directory', (requestId) =>
+      buildGetProjectAgentExternalDirectoryCommand(requestId),
+    )
+  }
+
   async listProjectAgentReferences(agentId: string): Promise<ProjectAgentReferencesResult> {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('list_project_agent_references', (requestId) =>
@@ -756,7 +786,11 @@ export class ManagerWsClient {
       return
     }
 
-    if (handleProjectAgentEvent(event, { requestTracker: this.requestDispatcher.tracker })) {
+    if (handleProjectAgentEvent(event, {
+      state: this.state,
+      updateState: (patch) => this.updateState(patch),
+      requestTracker: this.requestDispatcher.tracker,
+    })) {
       return
     }
 
