@@ -179,6 +179,30 @@ describe('project-agents helpers', () => {
     expect(populated).not.toContain('Release\n\nNotes')
   })
 
+  it('renders externally shared project agents with source-project attribution', () => {
+    const populated = generateProjectAgentDirectoryBlock([
+      {
+        agentId: 'local-agent',
+        displayName: 'Local Agent',
+        handle: 'local-agent',
+        whenToUse: 'Handle local work.',
+      },
+      {
+        agentId: 'shared-agent',
+        displayName: 'Docs Agent',
+        handle: 'forge/documentation',
+        whenToUse: 'Answer documentation questions.',
+        origin: 'external',
+        sourceProjectName: 'Forge',
+      },
+    ])
+
+    expect(populated).toContain('Project agents in this profile')
+    expect(populated).toContain('Shared project agents from other projects:')
+    expect(populated).toContain('- Docs Agent (`@forge/documentation`, agentId: `shared-agent`, shared from: `Forge`): Answer documentation questions.')
+    expect(populated).toContain('explicitly shared into it')
+  })
+
   it('allows creator-to-child delivery when target has no projectAgent but creatorAgentId matches sender', async () => {
     const sender = makeManagerDescriptor({
       agentId: 'creator-manager',
@@ -312,6 +336,47 @@ describe('project-agents helpers', () => {
         },
       ),
     ).rejects.toThrow(/only allowed between manager sessions in the same profile/i)
+  })
+
+  it('allows cross-profile manager-to-project-agent delivery when the caller explicitly authorizes it', async () => {
+    const sender = makeManagerDescriptor({
+      agentId: 'sender-manager',
+      profileId: 'target-profile',
+      sessionLabel: 'Target Manager',
+    })
+    const target = makeManagerDescriptor({
+      agentId: 'source-project-agent',
+      profileId: 'source-profile',
+      sessionLabel: 'Documentation',
+      projectAgent: { handle: 'documentation', whenToUse: 'Maintains docs' },
+    })
+
+    const result = await deliverProjectAgentMessage(
+      {
+        now: () => '2026-01-02T03:04:05.000Z',
+        getOrCreateRuntimeForDescriptor: async (descriptor) => ({
+          sendMessage: async () => ({
+            targetAgentId: descriptor.agentId,
+            deliveryId: 'delivery-1',
+            acceptedMode: 'auto' as const,
+          }),
+        }) as never,
+        rateLimitBuckets: new Map(),
+      },
+      {
+        sender,
+        target,
+        message: 'hello from another project',
+        delivery: 'auto',
+        allowCrossProfile: true,
+      },
+    )
+
+    expect(result.inboundPayload.projectAgentContext).toEqual({
+      fromAgentId: 'sender-manager',
+      fromDisplayName: 'Target Manager',
+    })
+    expect(result.inboundPayload.runtimeText).toContain('[projectAgentContext]')
   })
 
   it('does not emit a transcript entry or mark activity when runtime creation fails', async () => {

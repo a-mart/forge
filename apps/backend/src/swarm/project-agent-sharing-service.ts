@@ -378,37 +378,59 @@ export class ProjectAgentSharingService {
         continue;
       }
 
-      const sourceDescriptor = this.deps.getDescriptor(grant.sourceAgentId);
-      const sourceProfile = profiles.get(grant.sourceProfileId);
-      const targetProfile = profiles.get(grant.targetProfileId);
-
-      if (
-        !isLiveProjectAgentDescriptor(sourceDescriptor) ||
-        isSourceArchived(sourceDescriptor, sourceProfile) ||
-        isProfileArchived(targetProfile)
-      ) {
-        continue;
+      const projected = this.toExternalDirectoryEntry(grant, profiles);
+      if (projected) {
+        entries.push(projected);
       }
-
-      const externalHandle = `${grant.targetNamespace}/${grant.sourceHandle}`;
-      entries.push({
-        agentId: grant.sourceAgentId,
-        handle: sanitizeProjectAgentPromptMetadata(externalHandle, { maxLength: METADATA_MAX.alias }),
-        displayName: sanitizeProjectAgentPromptMetadata(
-          sourceDescriptor.sessionLabel ?? sourceDescriptor.displayName ?? grant.sourceHandle,
-          { maxLength: METADATA_MAX.displayName },
-        ),
-        whenToUse: sanitizeProjectAgentPromptMetadata(sourceDescriptor.projectAgent.whenToUse, {
-          maxLength: METADATA_MAX.whenToUse,
-        }),
-        sourceProjectName: sanitizeProjectAgentPromptMetadata(sourceProfile?.displayName ?? grant.sourceProfileId, {
-          maxLength: METADATA_MAX.sourceProjectName,
-        }),
-        origin: "external",
-      });
     }
 
     return entries.sort((left, right) => left.displayName.localeCompare(right.displayName));
+  }
+
+  async hasActiveExternalAccess(sourceAgentId: string, targetProfileId: string): Promise<boolean> {
+    await this.ensureLoaded();
+    const grant = this.findGrant(sourceAgentId, targetProfileId);
+    if (!grant) {
+      return false;
+    }
+
+    const profiles = new Map(this.deps.getProfiles().map((profile) => [profile.profileId, profile]));
+    return this.toExternalDirectoryEntry(grant, profiles) !== null;
+  }
+
+  async recordExternalContact(
+    sourceAgentId: string,
+    targetProfileId: string,
+    targetSessionAgentId: string,
+  ): Promise<void> {
+    await this.ensureLoaded();
+    const grant = this.findGrant(sourceAgentId, targetProfileId);
+    if (!grant) {
+      return;
+    }
+
+    const now = this.deps.now();
+    const existing = this.store!.contacts.find(
+      (contact) => contact.grantId === grant.grantId && contact.targetSessionAgentId === targetSessionAgentId,
+    );
+
+    if (existing) {
+      if (existing.lastContactAt === now) {
+        return;
+      }
+      existing.lastContactAt = now;
+      await this.save();
+      return;
+    }
+
+    this.store!.contacts.push({
+      grantId: grant.grantId,
+      targetProfileId,
+      targetSessionAgentId,
+      firstContactAt: now,
+      lastContactAt: now,
+    });
+    await this.save();
   }
 
   listGrantsForSourceAgent(sourceAgentId: string): ProjectAgentShareGrant[] {
@@ -439,6 +461,46 @@ export class ProjectAgentSharingService {
     if (isProfileArchived(profile)) {
       throw new Error("Archived projects cannot be used until restored.");
     }
+  }
+
+  private findGrant(sourceAgentId: string, targetProfileId: string): ProjectAgentShareGrant | undefined {
+    return this.store?.grants.find(
+      (grant) => grant.sourceAgentId === sourceAgentId && grant.targetProfileId === targetProfileId,
+    );
+  }
+
+  private toExternalDirectoryEntry(
+    grant: ProjectAgentShareGrant,
+    profiles: Map<string, ManagerProfile>,
+  ): ProjectAgentExternalDirectoryEntry | null {
+    const sourceDescriptor = this.deps.getDescriptor(grant.sourceAgentId);
+    const sourceProfile = profiles.get(grant.sourceProfileId);
+    const targetProfile = profiles.get(grant.targetProfileId);
+
+    if (
+      !isLiveProjectAgentDescriptor(sourceDescriptor) ||
+      isSourceArchived(sourceDescriptor, sourceProfile) ||
+      isProfileArchived(targetProfile)
+    ) {
+      return null;
+    }
+
+    const externalHandle = `${grant.targetNamespace}/${grant.sourceHandle}`;
+    return {
+      agentId: grant.sourceAgentId,
+      handle: sanitizeProjectAgentPromptMetadata(externalHandle, { maxLength: METADATA_MAX.alias }),
+      displayName: sanitizeProjectAgentPromptMetadata(
+        sourceDescriptor.sessionLabel ?? sourceDescriptor.displayName ?? grant.sourceHandle,
+        { maxLength: METADATA_MAX.displayName },
+      ),
+      whenToUse: sanitizeProjectAgentPromptMetadata(sourceDescriptor.projectAgent.whenToUse, {
+        maxLength: METADATA_MAX.whenToUse,
+      }),
+      sourceProjectName: sanitizeProjectAgentPromptMetadata(sourceProfile?.displayName ?? grant.sourceProfileId, {
+        maxLength: METADATA_MAX.sourceProjectName,
+      }),
+      origin: "external",
+    };
   }
 
   private listExternalAliasesForTarget(targetProfileId: string, excludeSourceAgentId?: string): string[] {

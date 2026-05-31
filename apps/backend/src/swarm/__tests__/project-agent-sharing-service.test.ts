@@ -279,6 +279,29 @@ describe("ProjectAgentSharingService", () => {
     expect(raw.contacts).toEqual([]);
   });
 
+  it("authorizes active external access and records consuming sessions", async () => {
+    const source = makeProjectAgent("docs--s1", "forge", "documentation");
+    const { service, dataDir } = await createService({
+      profiles: [makeProfile("forge", { displayName: "Forge" }), makeProfile("mobile")],
+      descriptors: [source],
+    });
+
+    await service.replaceSharingTargets("docs--s1", ["mobile"]);
+
+    await expect(service.hasActiveExternalAccess("docs--s1", "mobile")).resolves.toBe(true);
+    await expect(service.hasActiveExternalAccess("docs--s1", "web")).resolves.toBe(false);
+
+    await service.recordExternalContact("docs--s1", "mobile", "mobile-session-1");
+    const raw = JSON.parse(await readFile(getProjectAgentSharingStorePath(dataDir), "utf8")) as {
+      contacts: Array<{ targetSessionAgentId: string; targetProfileId: string }>;
+    };
+    expect(raw.contacts).toHaveLength(1);
+    expect(raw.contacts[0]).toMatchObject({
+      targetSessionAgentId: "mobile-session-1",
+      targetProfileId: "mobile",
+    });
+  });
+
   it("source-owned sharing snapshot includes grant topology but external directory does not", async () => {
     const source = makeProjectAgent("docs--s1", "forge", "documentation");
     const { service } = await createService({

@@ -66,6 +66,9 @@ describe('ws command parser session commands', () => {
       set_project_agent_reference: { type: 'set_project_agent_reference', agentId: 'session-a', fileName: 'README.md', content: 'docs' },
       delete_project_agent_reference: { type: 'delete_project_agent_reference', agentId: 'session-a', fileName: 'README.md' },
       request_project_agent_recommendations: { type: 'request_project_agent_recommendations', agentId: 'session-a' },
+      get_project_agent_sharing: { type: 'get_project_agent_sharing', agentId: 'session-a' },
+      set_project_agent_sharing: { type: 'set_project_agent_sharing', agentId: 'session-a', targetProfileIds: ['profile-a'] },
+      get_project_agent_external_directory: { type: 'get_project_agent_external_directory' },
     } as const satisfies { [Type in WsRequestContractType]: { type: Type } & Record<string, unknown> }
 
     for (const contract of WS_REQUEST_CONTRACTS) {

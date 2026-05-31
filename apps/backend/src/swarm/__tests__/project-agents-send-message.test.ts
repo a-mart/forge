@@ -250,6 +250,52 @@ describe("SwarmManager project-agent sendMessage routing", () => {
     ).toEqual([]);
   });
 
+  it("routes shared cross-profile sends through the project-agent delivery path", async () => {
+    const config = await makeTempConfig(8898);
+    const manager = new TestSwarmManager(config);
+
+    const sender = await bootWithDefaultManager(manager, config);
+    const target = await manager.createManager(sender.agentId, {
+      name: "beta",
+      cwd: config.defaultCwd
+    });
+
+    await manager.setSessionProjectAgent(target.agentId, {
+      whenToUse: "Draft release notes"
+    });
+    await manager.setProjectAgentSharing(target.agentId, [sender.profileId ?? sender.agentId]);
+
+    const receipt = await manager.sendMessage(sender.agentId, target.agentId, "Shared cross-profile ping", "auto");
+    const targetRuntime = manager.runtimeByAgentId.get(target.agentId);
+
+    expect(receipt).toMatchObject({
+      targetAgentId: target.agentId,
+      acceptedMode: "prompt"
+    });
+    expect(targetRuntime?.sendCalls[0]).toEqual({
+      message: `[projectAgentContext] {"fromAgentId":"manager","fromDisplayName":"manager"}\n\nShared cross-profile ping`,
+      delivery: "auto"
+    });
+
+    const targetHistory = manager.getConversationHistory(target.agentId);
+    expect(
+      targetHistory.find(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.source === "project_agent_input" &&
+          entry.text === "Shared cross-profile ping"
+      )
+    ).toMatchObject({
+      type: "conversation_message",
+      source: "project_agent_input",
+      text: "Shared cross-profile ping",
+      projectAgentContext: {
+        fromAgentId: sender.agentId,
+        fromDisplayName: "manager"
+      }
+    });
+  });
+
   it("preserves dormant same-profile project-agent history when an async message lands before lazy load", async () => {
     const config = await makeTempConfig(8898);
     const firstBoot = new TestSwarmManager(config);

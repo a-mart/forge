@@ -1490,6 +1490,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       refreshSessionMetaStatsBySessionId: (sessionAgentId) =>
         this.refreshSessionMetaStatsBySessionId(sessionAgentId),
       getSessionsForProfile: (profileId) => this.getBuilderSessionsForProfile(profileId),
+      getExternalProjectAgentDirectoryEntries: (profileId) =>
+        this.projectAgentSharingService.getExternalDirectoryEntries(profileId),
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
       resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSkillRosterForDescriptor: (descriptor) => this.resolveSkillRosterForDescriptor(descriptor),
@@ -4344,14 +4346,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const origin = options?.origin ?? "internal";
     const attachments = normalizeConversationAttachments(options?.attachments);
-    const isProjectAgentDelivery =
+    const senderProfileId = sender.profileId ?? sender.agentId;
+    const targetProfileId = target.profileId ?? target.agentId;
+    const isSameProfileProjectAgentDelivery =
       sender.role === "manager" &&
       target.role === "manager" &&
       fromAgentId !== targetAgentId &&
-      (sender.profileId ?? sender.agentId) === (target.profileId ?? target.agentId) &&
+      senderProfileId === targetProfileId &&
       (target.projectAgent !== undefined || target.creatorAgentId === fromAgentId);
+    const isSharedCrossProfileProjectAgentDelivery =
+      !isSameProfileProjectAgentDelivery &&
+      sender.role === "manager" &&
+      target.role === "manager" &&
+      fromAgentId !== targetAgentId &&
+      target.projectAgent !== undefined &&
+      await this.projectAgentSharingService.hasActiveExternalAccess(target.agentId, senderProfileId);
 
-    if (isProjectAgentDelivery) {
+    if (isSameProfileProjectAgentDelivery || isSharedCrossProfileProjectAgentDelivery) {
       const deliveryResult = await deliverProjectAgentMessage(
         {
           now: this.now,
@@ -4362,7 +4373,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           sender,
           target,
           message,
-          delivery
+          delivery,
+          allowCrossProfile: isSharedCrossProfileProjectAgentDelivery,
         }
       );
       const { receipt, inboundPayload } = deliveryResult;
@@ -4373,6 +4385,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         source: "project_agent_input",
         projectAgentContext: inboundPayload.projectAgentContext
       });
+
+      if (isSharedCrossProfileProjectAgentDelivery) {
+        await this.projectAgentSharingService.recordExternalContact(target.agentId, senderProfileId, sender.agentId);
+      }
 
       this.logDebug("agent:send_message", {
         fromAgentId,

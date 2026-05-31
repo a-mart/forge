@@ -35,16 +35,47 @@ export function generateProjectAgentDirectoryBlock(entries: ProjectAgentDirector
   // every manager prompt. The summary line preserves discoverability without listing all entries.
   const visibleEntries = entries.slice(0, PROJECT_AGENT_DIRECTORY_MAX_ENTRIES);
   const hiddenCount = Math.max(0, entries.length - visibleEntries.length);
+  const localEntries = visibleEntries.filter((entry) => entry.origin !== "external");
+  const externalEntries = visibleEntries.filter((entry) => entry.origin === "external");
+
+  if (externalEntries.length === 0) {
+    const lines = [
+      "Project agents in this profile — use `send_message_to_agent` for async cross-session coordination.",
+      ...localEntries.map((entry) => {
+        const displayName = normalizeProjectAgentInlineText(entry.displayName) || entry.agentId;
+        const whenToUse = normalizeProjectAgentInlineText(entry.whenToUse);
+        return `- ${displayName} (\`@${entry.handle}\`, agentId: \`${entry.agentId}\`): ${whenToUse}`;
+      }),
+      ...(hiddenCount > 0 ? [`(+${hiddenCount} more project agents not shown)`] : []),
+      "These are peer manager sessions in the same profile, not workers. Workers do not have this directory."
+    ];
+
+    return lines.join("\n");
+  }
 
   const lines = [
-    "Project agents in this profile — use `send_message_to_agent` for async cross-session coordination.",
-    ...visibleEntries.map((entry) => {
+    ...(localEntries.length > 0
+      ? ["Project agents in this profile — use `send_message_to_agent` for async cross-session coordination."]
+      : ["Project agents available to this session via sharing — use `send_message_to_agent` for async cross-session coordination."]),
+    ...localEntries.map((entry) => {
       const displayName = normalizeProjectAgentInlineText(entry.displayName) || entry.agentId;
       const whenToUse = normalizeProjectAgentInlineText(entry.whenToUse);
       return `- ${displayName} (\`@${entry.handle}\`, agentId: \`${entry.agentId}\`): ${whenToUse}`;
     }),
+    ...(externalEntries.length > 0
+      ? [
+          ...(localEntries.length > 0 ? [""] : []),
+          "Shared project agents from other projects:",
+          ...externalEntries.map((entry) => {
+            const displayName = normalizeProjectAgentInlineText(entry.displayName) || entry.agentId;
+            const whenToUse = normalizeProjectAgentInlineText(entry.whenToUse);
+            const sourceProjectName = normalizeProjectAgentInlineText(entry.sourceProjectName ?? "another project");
+            return `- ${displayName} (\`@${entry.handle}\`, agentId: \`${entry.agentId}\`, shared from: \`${sourceProjectName}\`): ${whenToUse}`;
+          }),
+        ]
+      : []),
     ...(hiddenCount > 0 ? [`(+${hiddenCount} more project agents not shown)`] : []),
-    "These are peer manager sessions in the same profile, not workers. Workers do not have this directory."
+    "These are peer manager sessions that are either local to this profile or explicitly shared into it. Workers do not have this directory."
   ];
 
   return lines.join("\n");
@@ -66,6 +97,7 @@ interface DeliverProjectAgentMessageOptions {
   target: AgentDescriptor;
   message: string;
   delivery: RequestedDeliveryMode;
+  allowCrossProfile?: boolean;
 }
 
 export interface ProjectAgentDeliveryResult {
@@ -98,7 +130,7 @@ export async function deliverProjectAgentMessage(
 
   const senderProfileId = sender.profileId ?? sender.agentId;
   const targetProfileId = target.profileId ?? target.agentId;
-  if (senderProfileId !== targetProfileId) {
+  if (senderProfileId !== targetProfileId && !options.allowCrossProfile) {
     throw new Error("Project-agent messaging is only allowed between manager sessions in the same profile.");
   }
 

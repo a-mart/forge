@@ -514,6 +514,29 @@ describe('SwarmManager', () => {
     expect(systemPrompt).not.toContain('`@manager`')
   })
 
+  it('includes shared external project agents in the target profile prompt preview', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const source = await bootWithDefaultManager(manager, config)
+    const target = await manager.createManager(source.agentId, {
+      name: 'beta',
+      cwd: config.defaultCwd,
+    })
+
+    await manager.setSessionProjectAgent(source.agentId, {
+      whenToUse: 'Coordinate the main manager session.',
+    })
+    await manager.setProjectAgentSharing(source.agentId, [target.profileId ?? target.agentId])
+
+    const preview = await manager.previewManagerSystemPrompt(target.profileId ?? target.agentId)
+    const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
+
+    expect(systemPrompt).toContain('Shared project agents from other projects:')
+    expect(systemPrompt).toContain('shared from: `manager`')
+    expect(systemPrompt).toContain(`agentId: \`${source.agentId}\``)
+    expect(systemPrompt).toContain('Coordinate the main manager session.')
+  })
+
   it('includes GPT-5 model-specific instructions in the resolved manager prompt', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
