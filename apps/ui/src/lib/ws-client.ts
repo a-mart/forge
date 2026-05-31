@@ -12,7 +12,9 @@ import {
   buildDeleteProjectAgentReferenceCommand,
   buildForkSessionCommand,
   buildGetProjectAgentConfigCommand,
+  buildGetProjectAgentExternalDirectoryCommand,
   buildGetProjectAgentReferenceCommand,
+  buildGetProjectAgentSharingCommand,
   buildGetSessionWorkersCommand,
   buildHydrateArchiveLastUsedCommand,
   buildKillAgentCommand,
@@ -31,6 +33,7 @@ import {
   buildRequestProjectAgentRecommendationsCommand,
   buildSessionActionCommand,
   buildSetProjectAgentReferenceCommand,
+  buildSetProjectAgentSharingCommand,
   buildSetSessionProjectAgentCommand,
   buildStopAllAgentsCommand,
   buildSubscribeCommand,
@@ -61,10 +64,13 @@ import type {
   DirectoryValidationResult,
   Listener,
   ProjectAgentConfigResult,
+  ProjectAgentExternalDirectoryResult,
   ProjectAgentReferenceDeletedResult,
   ProjectAgentReferenceResult,
   ProjectAgentReferencesResult,
   ProjectAgentReferenceSavedResult,
+  ProjectAgentSharingResult,
+  ProjectAgentSharingUpdatedResult,
   ArchiveLastUsedHydrationResult,
   ProfileArchiveResult,
   ProfileRestoreResult,
@@ -596,6 +602,30 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('get_project_agent_config', (requestId) =>
       buildGetProjectAgentConfigCommand(agentId, requestId),
+    )
+  }
+
+  async getProjectAgentSharing(agentId: string): Promise<ProjectAgentSharingResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('get_project_agent_sharing', (requestId) =>
+      buildGetProjectAgentSharingCommand(agentId, requestId),
+    )
+  }
+
+  async setProjectAgentSharing(
+    agentId: string,
+    targetProfileIds: string[],
+  ): Promise<ProjectAgentSharingUpdatedResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('set_project_agent_sharing', (requestId) =>
+      buildSetProjectAgentSharingCommand(agentId, targetProfileIds, requestId),
+    )
+  }
+
+  async getProjectAgentExternalDirectory(): Promise<ProjectAgentExternalDirectoryResult> {
+    assertReconnectableSocket(this.socket)
+    return this.requestDispatcher.enqueueRequest('get_project_agent_external_directory', (requestId) =>
+      buildGetProjectAgentExternalDirectoryCommand(requestId),
     )
   }
 

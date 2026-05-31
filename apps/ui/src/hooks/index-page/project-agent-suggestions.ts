@@ -1,13 +1,14 @@
 import type { ProjectAgentSuggestion } from '@/components/chat/MessageInput'
-import type { AgentDescriptor } from '@forge/protocol'
+import type { AgentDescriptor, ProjectAgentExternalDirectoryEntry } from '@forge/protocol'
 
 export function getProjectAgentSuggestions(
   activeAgent: AgentDescriptor | null | undefined,
   agents: AgentDescriptor[],
+  externalEntries: ProjectAgentExternalDirectoryEntry[] = [],
 ): ProjectAgentSuggestion[] {
   if (!activeAgent || activeAgent.role !== 'manager' || !activeAgent.profileId) return []
 
-  return agents
+  const localSuggestions = agents
     .filter(
       (agent) =>
         agent.projectAgent &&
@@ -20,4 +21,13 @@ export function getProjectAgentSuggestions(
       displayName: agent.sessionLabel ?? agent.displayName ?? agent.agentId,
       whenToUse: agent.projectAgent!.whenToUse,
     }))
+
+  const externalSuggestions = externalEntries.map((entry) => ({
+    agentId: entry.agentId,
+    handle: entry.handle,
+    displayName: entry.displayName,
+    whenToUse: entry.whenToUse,
+  }))
+
+  return [...localSuggestions, ...externalSuggestions]
 }

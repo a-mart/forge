@@ -58,6 +58,7 @@ import type {
   ConversationAttachment,
   ManagerExactModelSelection,
   ManagerReasoningLevel,
+  ProjectAgentExternalDirectoryEntry,
 } from '@forge/protocol'
 
 function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
@@ -143,6 +144,7 @@ export function BuilderSurface({
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
   const [detailedAllView, setDetailedAllView] = useState(false)
   const [activeWorkExpanded, setActiveWorkExpanded] = useState(false)
+  const [externalProjectAgentEntries, setExternalProjectAgentEntries] = useState<ProjectAgentExternalDirectoryEntry[]>([])
 
   const activeAgentId = useMemo(() => {
     const preferredId = state.targetAgentId ?? state.subscribedAgentId ?? null
@@ -291,10 +293,40 @@ export function BuilderSurface({
     return activeManagerAgent?.agentId ?? activeAgent.managerId ?? null
   }, [activeAgent, activeManagerAgent])
 
+  useEffect(() => {
+    if (!state.connected || activeAgent?.role !== 'manager') {
+      setExternalProjectAgentEntries([])
+      return
+    }
+
+    const client = clientRef.current
+    if (!client) {
+      setExternalProjectAgentEntries([])
+      return
+    }
+
+    let cancelled = false
+    void client.getProjectAgentExternalDirectory()
+      .then((result) => {
+        if (!cancelled) {
+          setExternalProjectAgentEntries(result.entries)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setExternalProjectAgentEntries([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeAgent?.agentId, activeAgent?.role, clientRef, state.connected])
+
   // Project agents for @mention autocomplete — only when the active agent is a manager session
   const projectAgentSuggestions = useMemo(
-    () => getProjectAgentSuggestions(activeAgent, state.agents),
-    [activeAgent, state.agents],
+    () => getProjectAgentSuggestions(activeAgent, state.agents, externalProjectAgentEntries),
+    [activeAgent, externalProjectAgentEntries, state.agents],
   )
 
   const diffViewerSessionAgent = useMemo(() => {
@@ -1119,6 +1151,18 @@ export function BuilderSurface({
     return client.getProjectAgentConfig(agentId)
   }, [clientRef])
 
+  const handleGetProjectAgentSharing = useCallback(async (agentId: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.getProjectAgentSharing(agentId)
+  }, [clientRef])
+
+  const handleSetProjectAgentSharing = useCallback(async (agentId: string, targetProfileIds: string[]) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.setProjectAgentSharing(agentId, targetProfileIds)
+  }, [clientRef])
+
   const handleListProjectAgentReferences = useCallback(async (agentId: string) => {
     const client = clientRef.current
     if (!client) throw new Error('WebSocket is not connected.')
@@ -1285,6 +1329,8 @@ export function BuilderSurface({
         onReorderProfiles={handleReorderProfiles}
         onSetSessionProjectAgent={handleSetSessionProjectAgent}
         onGetProjectAgentConfig={handleGetProjectAgentConfig}
+        onGetProjectAgentSharing={handleGetProjectAgentSharing}
+        onSetProjectAgentSharing={handleSetProjectAgentSharing}
         onListProjectAgentReferences={handleListProjectAgentReferences}
         onGetProjectAgentReference={handleGetProjectAgentReference}
         onSetProjectAgentReference={handleSetProjectAgentReference}
