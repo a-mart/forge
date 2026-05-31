@@ -48,6 +48,8 @@ Legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` and `MIDDLEMAN_SKILL_SHARE_DISABLED` ali
 | `FORGE_OPENAI_CODEX_TRANSPORT` | `sse` | Transport override for OpenAI Codex Responses models. Supported values: `sse` (stable reliability default and rollback path), `websocket`, `websocket-cached` (explicit experimental/canary opt-in; retries a fresh full-context WebSocket before falling back to SSE on pre-output close-before-completion failures), and `auto` (safe pre-start SSE fallback). Invalid values fail safe to `sse`. |
 | `FORGE_CODEX_TRANSPORT_DEBUG` | — | Optional debugging flag. Set to `1` to enable the sanitized Codex transport diagnostics endpoint at `/api/debug/codex-transport` for transport selection and counter inspection; otherwise it stays disabled/404. |
 
+The OpenAI Codex Responses transport settings above apply to normal Codex model runtimes. Builder web also has a separate external-thread route: a leading `@Codex` or `[@Codex]` text message starts or continues a Codex CLI app-server sidecar thread. That path is Builder web only, text-only, excluded from Collaboration, limited to one active Codex turn globally, and does not include direct MCP support in Forge. Sidecar display cards are persisted in the parent session by default but are excluded from manager model context and from forked-session history.
+
 ### Collaboration
 
 | Variable | Default | Description |

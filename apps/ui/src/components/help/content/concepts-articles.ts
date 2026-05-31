@@ -24,7 +24,7 @@ The manager controls the flow. It decides which model each worker uses, what ins
 
 The manager picks a model for each worker based on the task. Quick jobs like file reads get a cheaper, faster model. Complex work like architecture review gets a more capable one. If you have specialists configured, the manager routes work to the right specialist automatically based on what the task needs.
 
-Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step. If a worker turn fails, that failure can surface as a system message with the error context preserved instead of looking like a normal completion. In the chat transcript, the All view can further reveal owned direct-worker tool activity through a Detailed toggle, but it only applies to manager-scoped rows and resets when you switch views or agents.`,
+Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step. If a worker turn fails, that failure can surface as a system message with the error context preserved instead of looking like a normal completion. In the chat transcript, the All view can further reveal owned direct-worker tool activity through a Detailed toggle, but it only applies to manager-scoped rows and resets when you switch views or agents. Builder web can also route a leading @Codex or [@Codex] text message to a Codex app-server sidecar. These sidecars are external threads shown with worker-like cards, but their parent-session display cards are not manager model context. The route is text-only, Builder web only, excludes Collaboration, requires the Codex CLI app-server, and supports one active Codex turn globally.`,
   keywords: [
     'manager',
     'worker',
@@ -260,7 +260,7 @@ Sessions are either **running** (actively connected) or **idle** (saved but not 
 
 You can fork a session to branch off from a specific point in the conversation. The fork copies history up to that message and creates a fresh session memory with a note about where it branched. This is useful when you want to try an alternative approach without losing the original thread.
 
-Forks preserve the source session's model state too: if the source was inheriting the profile default, the fork inherits that state; if the source had an explicit session override, the fork keeps that override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage.
+Forks preserve the source session's model state too: if the source was inheriting the profile default, the fork inherits that state; if the source had an explicit session override, the fork keeps that override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Historical Codex sidecar display cards are also omitted from forked sessions.
 
 New sessions and forks inherit all config from the parent profile unless you explicitly override the session model.`,
   keywords: [

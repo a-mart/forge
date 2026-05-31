@@ -41,7 +41,7 @@ const modelsProviders: HelpArticle = {
 
 ## OpenAI / Codex
 
-OpenAI offers the GPT-5 model family through the Codex runtime.
+OpenAI offers the GPT-5 model family through the Codex runtime. Separately, Builder web can send a leading @Codex or [@Codex] text message to an external Codex app-server sidecar thread. That sidecar is not a selectable manager model, requires the Codex CLI app-server, is text-only, and is not available in Collaboration.
 
 - **GPT-5.5** — The standard full Codex coding model. Strong at implementation tasks, refactors, debugging, planning, architecture, and multi-step reasoning. Supports all reasoning levels from none to max.
 - **GPT-5.4** — Prior full OpenAI coding model. Good for complex planning, architecture, and multi-step reasoning when 5.5 is unavailable or intentionally avoided.

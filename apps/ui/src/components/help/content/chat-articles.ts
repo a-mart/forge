@@ -28,6 +28,8 @@ To stop a running response, open the **⋮ menu** in the header and choose **Sto
 
 The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity. A **Detailed** toggle can further reveal owned direct-worker tool activity for manager-scoped rows, but it stays off by default and resets when you switch views or agents.
 
+Builder web also supports Codex app-server sidecars. Start a message with @Codex or [@Codex] to send text to an external Codex thread instead of the manager. Codex sidecars show as worker-like external-thread cards and persist by default. Select the Codex sidecar and send a direct text follow-up to continue that same sidecar thread. This is Builder web only, text-only, excludes Collaboration, allows one active Codex turn globally, requires the Codex CLI app-server, and does not add direct MCP support in Forge.
+
 Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
 
 ## Context window
@@ -79,7 +81,11 @@ Click the microphone button to record a voice message. Forge transcribes it and 
 
 ## Sending while streaming
 
-You can send follow-up messages while the agent is still responding. The input field stays active during streaming so you can queue up additional instructions or corrections.`,
+You can send follow-up messages while the agent is still responding. The input field stays active during streaming so you can queue up additional instructions or corrections.
+
+## Sending to Codex
+
+In Builder web, a leading @Codex or [@Codex] routes the message text to a Codex app-server sidecar thread. Use it for text-only handoff to an external Codex app-server thread. Attachments are not sent, Collaboration channels do not support it, and Forge allows only one active Codex turn at a time. If you select the Codex sidecar, a direct follow-up continues that selected sidecar thread.`,
     keywords: ['send', 'enter', 'format', 'slash', 'command', 'draft', 'voice', 'microphone', 'keyboard'],
     relatedIds: ['chat-overview', 'chat-attachments'],
     contextKeys: ['chat.main'],
@@ -344,6 +350,7 @@ The forked session's memory header records where the fork happened, so the bound
 - The original session is unchanged. Forking is non-destructive.
 - Session memory content from the parent is not carried over. The new session starts with its own empty memory (plus the fork header).
 - Cursor SDK runtime state and usage records are not copied, so forks do not leak SDK resume state or double-count usage.
+- Historical Codex sidecar display cards are not copied.
 - Workers from the parent session are not duplicated.
 
 ## When to use it

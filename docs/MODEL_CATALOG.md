@@ -32,6 +32,10 @@ Forge owns model metadata end-to-end:
 5. Every Pi `ModelRegistry` is constructed with that generated projection path.
 6. Request-time provider quirks are handled by `apps/backend/src/swarm/model-catalog-request-behaviors.ts`. xAI native search is future/experimental pending a dedicated adapter; it is not a current production path.
 
+## Codex app-server sidecar
+
+The Builder web `@Codex` route is an external-thread sidecar, not a selectable manager model. A leading `@Codex` or `[@Codex]` text message uses the Codex CLI app-server and records a `codex-app-server` / `app-server` external-thread descriptor. It is Builder web only, text-only, excluded from Collaboration, limited to one active Codex turn globally, and does not imply direct MCP support in Forge. Parent session display cards are append-only and excluded from model context; forked sessions omit historical Codex display cards.
+
 
 ## Cursor SDK provider
 

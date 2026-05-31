@@ -91,7 +91,7 @@ The key insight: **your manager writes better prompts than you do.** Especially 
 
 ### Chat Interface
 
-The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
+The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. In Builder web, you can also start a message with `@Codex` or `[@Codex]` to route text to an external Codex app-server sidecar thread instead of the manager. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
 
 Two view modes, toggled at the top:
 
@@ -124,7 +124,7 @@ The left sidebar shows all your sessions across all managers. You can switch ses
 
 When workers are active, small green pills appear at the bottom of the chat window. Each pill represents a running worker and shows an elapsed timer. Click a pill to see what that worker is doing: commands it's running, files it's editing, with elapsed time on each tool call.
 
-Quick at-a-glance view of parallel work in progress.
+Quick at-a-glance view of parallel work in progress. Codex app-server sidecars appear as worker-like external-thread cards. They persist by default, can be stopped through the same session stop path, and can be reused after stop. Select the Codex sidecar and send a direct text follow-up to continue that selected sidecar thread. This path is Builder web only, text-only, excludes Collaboration, allows only one active Codex turn globally, requires the Codex CLI app-server, and does not add direct MCP support in Forge.
 
 ### Artifacts Panel
 
@@ -212,7 +212,7 @@ Forking is one of the most useful features for daily workflow. Say you've had a 
 
 **Fork the full conversation:** Use the fork option at the session level to copy the entire conversation into a new session. Same context, fresh workspace.
 
-Either way, the forked session keeps the source session's model state, including whether it was inheriting the profile default or using an explicit override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
+Either way, the forked session keeps the source session's model state, including whether it was inheriting the profile default or using an explicit override. Cursor SDK runtime state and usage records are omitted from forks so resumed branches do not leak prior SDK state or double-count usage. Historical Codex sidecar display cards are omitted from forked sessions. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
 
 ### Switching Between Sessions
 
