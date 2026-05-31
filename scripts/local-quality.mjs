@@ -85,6 +85,43 @@ async function run(command, args, options = {}) {
 
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const git = process.platform === 'win32' ? 'git.exe' : 'git';
+const node = process.execPath;
+
+const HELP_VALIDATE_TRIGGER_PATTERNS = [
+  /^apps\/ui\/src\/components\/help\/content\//u,
+  /^apps\/ui\/src\/components\/help\/help-registry\.ts$/u,
+  /^apps\/ui\/src\/components\/help\/help-types\.ts$/u,
+  /^scripts\/validate-help-content\.mjs$/u,
+  /^scripts\/snapshot-help-content-baseline\.mjs$/u,
+];
+
+function isHelpContentRelated(file) {
+  return HELP_VALIDATE_TRIGGER_PATTERNS.some((pattern) => pattern.test(file));
+}
+
+function shouldRunHelpValidate(changedFiles) {
+  const paths = changedFiles.map((entry) => entry.path);
+  if (paths.some(isHelpContentRelated)) return true;
+  const touchesHelpScriptsOrContent = paths.some(
+    (file) =>
+      file.startsWith('apps/ui/src/components/help/') ||
+      file.startsWith('scripts/validate-help-content') ||
+      file.startsWith('scripts/snapshot-help-content-baseline'),
+  );
+  if (
+    touchesHelpScriptsOrContent &&
+    (paths.includes('package.json') || paths.includes('pnpm-lock.yaml'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+const helpValidateCheck = {
+  id: 'help:validate',
+  label: 'Help content validation (strict)',
+  command: [node, [path.join(repoRoot, 'scripts', 'validate-help-content.mjs'), '--strict']],
+};
 
 async function gitLines(args) {
   const result = await run(git, args, { capture: true });
@@ -211,6 +248,7 @@ function selectChecks(tier, changedFiles) {
         { id: 'knip', label: 'Dead code/dependency check', command: [pnpm, ['exec', 'knip']] },
         { id: 'test', label: 'All tests', command: [pnpm, ['test']] },
         { id: 'typecheck', label: 'All workspace typechecks', command: [pnpm, ['typecheck']] },
+        helpValidateCheck,
         { id: 'build', label: 'Build', command: [pnpm, ['build']] },
       ],
       skipped,
@@ -232,6 +270,12 @@ function selectChecks(tier, changedFiles) {
   if (broadReasons.length > 0) {
     areas.add('all');
     failureHints.push(`Broad quality routing enabled: ${[...new Set(broadReasons)].join('; ')}.`);
+  }
+
+  if (shouldRunHelpValidate(changedFiles)) {
+    checks.push(helpValidateCheck);
+  } else {
+    skipped.push({ id: 'help:validate', reason: 'No help-content-related changes detected.' });
   }
 
   if (tier === 'quick') {

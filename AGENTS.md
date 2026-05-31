@@ -262,9 +262,21 @@ Production ports:
 - UI preview: `http://127.0.0.1:47189`
 - Electron: Defaults to port 47287 for backend, configurable via `FORGE_PORT`
 
+### In-app help content
+
+In-app help article **bodies** live in Markdown under `apps/ui/src/components/help/content/articles/<category>/<article-id>.md`. Article **metadata** (`id`, `title`, `category`, `summary`, `keywords`, `relatedIds`, `contextKeys`) stays in `apps/ui/src/components/help/content/*-articles.ts` with explicit per-article `?raw` imports. Do not use frontmatter in v1.
+
+When adding or editing help content:
+
+1. Edit the `.md` body directly; do not put Markdown bodies in TS template literals.
+2. Update the matching metadata entry and `?raw` import in the owning `*-articles.ts` module.
+3. Run `pnpm help:validate` (strict mode; requires a provenance-safe `.internal/help-content-baseline.json` captured from unmigrated TS sources before migration — do not regenerate from migrated sources).
+4. Run UI typecheck and, for help-content changes, `pnpm quality:changed` or `pnpm quality:quick` (the local quality runner routes help-content paths to strict validation).
+
 ### Validation
 
 ```bash
+pnpm help:validate                                        # Strict help article graph + baseline fidelity checks
 pnpm quality:quick                                        # Fast changed-file validation with a local JSON report
 pnpm quality:changed                                      # Conservative path-aware validation before merge/push
 pnpm quality:full                                         # Full local validation, including build
