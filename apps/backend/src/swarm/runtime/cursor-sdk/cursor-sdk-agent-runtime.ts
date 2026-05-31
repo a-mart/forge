@@ -32,10 +32,11 @@ import type {
 } from "./cursor-sdk-loader.js";
 import { CursorSdkEventMapper } from "./cursor-sdk-event-mapper.js";
 import {
+  classifyCursorSdkFailure,
   createCursorSdkBackgroundScope,
   CursorSdkContainedBackgroundError,
   type CursorSdkBackgroundScope,
-  isCursorSdkTransientAuthConnectError
+  type CursorSdkFailureDecision
 } from "./cursor-sdk-error-containment.js";
 import {
   CURSOR_SDK_PROVIDER_ID,
@@ -49,7 +50,7 @@ import {
 
 export const CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE = "swarm_cursor_sdk_runtime_state";
 const SESSION_HEADER_VERSION = 3;
-const MAX_PRE_OUTPUT_CURSOR_AUTH_RETRIES = 1;
+const MAX_PRE_OUTPUT_CURSOR_FAILURE_RETRIES = 1;
 
 interface CursorSdkRuntimeState {
   version: 1;
@@ -73,6 +74,7 @@ interface PendingCursorSendTracker {
 
 interface ActivePromptState {
   token: number;
+  attemptIndex: number;
   message: RuntimeUserMessage;
   run?: CursorSdkRun;
   backgroundScope?: CursorSdkBackgroundScope;
@@ -342,6 +344,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     const token = ++this.nextPromptToken;
     const active: ActivePromptState = {
       token,
+      attemptIndex: 0,
       message,
       cancelled: this.stoppedPendingDispatch,
       visibleOutputEmitted: false,
@@ -368,10 +371,12 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       }
 
       this.promptDispatchPending = false;
-      while (attemptIndex <= MAX_PRE_OUTPUT_CURSOR_AUTH_RETRIES) {
+      while (attemptIndex <= MAX_PRE_OUTPUT_CURSOR_FAILURE_RETRIES) {
+        active.attemptIndex = attemptIndex;
         const backgroundScope = createCursorSdkBackgroundScope({
           agentId: this.descriptor.agentId,
           promptToken: token,
+          attemptIndex,
           startedAt: this.now(),
           sdkAgentId: this.sdkAgent.agentId,
           logDebug: (scopeMessage, details) => this.logDebug(scopeMessage, details)
@@ -424,27 +429,35 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
             this.captureCursorRunStatuses(active);
             assertCursorRunSucceeded(run, waitResult, active.terminalStatus ?? undefined);
             freezeCursorUsageOutcome(active);
+            backgroundScope.markCompleted();
             await backgroundScope.runWithAttribution(() => this.raceContainedBackgroundFailure(
               backgroundScope,
               this.emitPromptSessionEvents(active, this.eventMapper.completePrompt())
             ));
-            backgroundScope.markCompleted();
           }
           break;
         } catch (error) {
           this.captureCursorRunStatuses(active);
           await this.cancelActiveRun(active);
-          if (this.shouldRetryPreOutputCursorAuthFailure(error, active, attemptIndex)) {
+          const failureDecision = classifyCursorSdkRuntimeFailure(error, active, this.sdkAgent.agentId, attemptIndex);
+          if (this.shouldRetryPreOutputCursorFailure(failureDecision)) {
             this.logDebug("cursor_sdk:background_error_retrying", {
               agentId: this.descriptor.agentId,
               promptToken: token,
-              runId: active.run?.id,
-              sdkAgentId: active.run?.agentId ?? this.sdkAgent.agentId,
-              errorName: extractCursorSdkErrorDetails(error)?.errorName,
-              errorCode: extractCursorSdkErrorDetails(error)?.errorCode,
-              source: extractCursorSdkErrorDetails(error)?.source,
+              runId: failureDecision.evidence.runId,
+              sdkAgentId: failureDecision.evidence.sdkAgentId,
+              errorName: failureDecision.evidence.errorName,
+              errorCode: failureDecision.evidence.errorCode,
+              source: error instanceof CursorSdkContainedBackgroundError ? "cursor_sdk_background" : "cursor_sdk_awaited",
+              family: failureDecision.family,
+              bucket: failureDecision.bucket,
+              connectCode: failureDecision.evidence.connectCode,
+              connectCodeName: failureDecision.evidence.connectCodeName,
+              nodeCodes: failureDecision.evidence.nodeCodes,
+              h2ResetCodes: failureDecision.evidence.h2ResetCodes,
+              providerErrorNames: failureDecision.evidence.providerErrorNames,
               preOutput: true,
-              attempt: `${attemptIndex + 1}/${MAX_PRE_OUTPUT_CURSOR_AUTH_RETRIES}`
+              attempt: `${attemptIndex + 1}/${MAX_PRE_OUTPUT_CURSOR_FAILURE_RETRIES}`
             });
             attemptIndex += 1;
             this.resetRetryablePromptAttempt(active);
@@ -586,6 +599,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
   }
 
   private resetRetryablePromptAttempt(active: ActivePromptState): void {
+    active.attemptIndex += 1;
     active.run = undefined;
     active.pendingSendTracker = undefined;
     active.cursorUsage = undefined;
@@ -599,12 +613,8 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     this.eventMapper.reset();
   }
 
-  private shouldRetryPreOutputCursorAuthFailure(error: unknown, active: ActivePromptState, attemptIndex: number): boolean {
-    return attemptIndex < MAX_PRE_OUTPUT_CURSOR_AUTH_RETRIES
-      && !active.cancelled
-      && !this.isTerminated()
-      && !active.visibleOutputEmitted
-      && isCursorSdkTransientAuthConnectError(error);
+  private shouldRetryPreOutputCursorFailure(decision: CursorSdkFailureDecision): boolean {
+    return !this.isTerminated() && decision.retryPreOutput;
   }
 
   private async raceContainedBackgroundFailure<T>(scope: CursorSdkBackgroundScope, task: Promise<T>): Promise<T> {
@@ -746,57 +756,105 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
   }
 }
 
+function classifyCursorSdkRuntimeFailure(
+  error: unknown,
+  active?: ActivePromptState,
+  fallbackSdkAgentId?: string,
+  attemptIndex = active?.attemptIndex ?? 0
+): CursorSdkFailureDecision {
+  if (error instanceof CursorSdkContainedBackgroundError) {
+    return {
+      ...error.decision,
+      retryPreOutput: error.decision.bucket === "retryable_transport"
+        && !active?.cancelled
+        && !active?.visibleOutputEmitted
+        && attemptIndex < MAX_PRE_OUTPUT_CURSOR_FAILURE_RETRIES,
+      evidence: {
+        ...error.decision.evidence,
+        visibleOutputEmitted: active?.visibleOutputEmitted,
+        attemptIndex,
+        maxRetryAttempts: MAX_PRE_OUTPUT_CURSOR_FAILURE_RETRIES,
+        runId: error.decision.evidence.runId ?? active?.run?.id,
+        sdkAgentId: error.decision.evidence.sdkAgentId ?? active?.run?.agentId ?? fallbackSdkAgentId
+      }
+    };
+  }
+
+  return classifyCursorSdkFailure(error, {
+    source: "awaited",
+    agentId: undefined,
+    promptToken: active?.token,
+    runId: active?.run?.id,
+    sdkAgentId: active?.run?.agentId ?? fallbackSdkAgentId,
+    cancelled: active?.cancelled,
+    completed: active?.outcome === "completed",
+    visibleOutputEmitted: active?.visibleOutputEmitted,
+    attemptIndex,
+    maxRetryAttempts: MAX_PRE_OUTPUT_CURSOR_FAILURE_RETRIES
+  });
+}
+
 function extractCursorSdkErrorDetails(
   error: unknown,
   active?: ActivePromptState,
   fallbackSdkAgentId?: string
 ): Record<string, unknown> | undefined {
-  if (!error || typeof error !== "object") {
-    return undefined;
-  }
-
+  const decision = classifyCursorSdkRuntimeFailure(error, active, fallbackSdkAgentId);
   const details: Record<string, unknown> = {
-    source: error instanceof CursorSdkContainedBackgroundError ? "cursor_sdk_background" : "cursor_sdk_awaited"
+    source: error instanceof CursorSdkContainedBackgroundError ? "cursor_sdk_background" : "cursor_sdk_awaited",
+    cursorFailureFamily: decision.family,
+    cursorFailureBucket: decision.bucket,
+    cursorFailureReason: decision.reason,
+    retryPreOutput: decision.retryPreOutput
   };
 
-  if (error instanceof CursorSdkContainedBackgroundError) {
-    if (error.errorName) {
-      details.errorName = error.errorName;
-    }
-    if (error.errorCode !== undefined) {
-      details.errorCode = error.errorCode;
-    }
-    if (error.runId ?? active?.run?.id) {
-      details.runId = error.runId ?? active?.run?.id;
-    }
-    if (error.sdkAgentId ?? active?.run?.agentId ?? fallbackSdkAgentId) {
-      details.sdkAgentId = error.sdkAgentId ?? active?.run?.agentId ?? fallbackSdkAgentId;
-    }
-    return details;
+  if (decision.evidence.errorName) {
+    details.errorName = decision.evidence.errorName;
+  }
+  if (decision.evidence.errorCode !== undefined) {
+    details.errorCode = decision.evidence.errorCode;
+  }
+  if (decision.evidence.runId ?? active?.run?.id) {
+    details.runId = decision.evidence.runId ?? active?.run?.id;
+  }
+  if (decision.evidence.sdkAgentId ?? active?.run?.agentId ?? fallbackSdkAgentId) {
+    details.sdkAgentId = decision.evidence.sdkAgentId ?? active?.run?.agentId ?? fallbackSdkAgentId;
+  }
+  if (decision.evidence.connectCode !== undefined) {
+    details.connectCode = decision.evidence.connectCode;
+  }
+  if (decision.evidence.connectCodeName) {
+    details.connectCodeName = decision.evidence.connectCodeName;
+  }
+  if (decision.evidence.classificationDetail) {
+    details.classificationDetail = decision.evidence.classificationDetail;
+  }
+  if (decision.evidence.messageSnippet) {
+    details.messageSnippet = decision.evidence.messageSnippet;
+  }
+  if (decision.evidence.cursorSdkProvenance !== undefined) {
+    details.cursorSdkProvenance = decision.evidence.cursorSdkProvenance;
+  }
+  if (decision.evidence.connectRpcProvenance !== undefined) {
+    details.connectRpcProvenance = decision.evidence.connectRpcProvenance;
+  }
+  if (decision.evidence.http2Provenance !== undefined) {
+    details.http2Provenance = decision.evidence.http2Provenance;
+  }
+  if (decision.evidence.providerProvenance !== undefined) {
+    details.providerProvenance = decision.evidence.providerProvenance;
+  }
+  if (decision.evidence.nodeCodes && decision.evidence.nodeCodes.length > 0) {
+    details.nodeCodes = decision.evidence.nodeCodes;
+  }
+  if (decision.evidence.h2ResetCodes && decision.evidence.h2ResetCodes.length > 0) {
+    details.h2ResetCodes = decision.evidence.h2ResetCodes;
+  }
+  if (decision.evidence.providerErrorNames && decision.evidence.providerErrorNames.length > 0) {
+    details.providerErrorNames = decision.evidence.providerErrorNames;
   }
 
-  if (error instanceof Error) {
-    const errorName = error.name && error.name !== "Error" ? error.name : error.constructor.name;
-    if (errorName && errorName !== "Error") {
-      details.errorName = errorName;
-    }
-  }
-
-  const code = (error as { code?: unknown }).code;
-  if (typeof code === "string" && code.trim().length > 0) {
-    details.errorCode = code.trim();
-  } else if (typeof code === "number" && Number.isFinite(code)) {
-    details.errorCode = code;
-  }
-
-  if (active?.run?.id) {
-    details.runId = active.run.id;
-  }
-  if (active?.run?.agentId ?? fallbackSdkAgentId) {
-    details.sdkAgentId = active?.run?.agentId ?? fallbackSdkAgentId;
-  }
-
-  return Object.keys(details).length > 0 ? details : undefined;
+  return details;
 }
 
 function isVisibleCursorPromptEvent(event: RuntimeSessionEvent): boolean {

@@ -107,6 +107,17 @@ function createCursorAuthConnectError(options: {
   );
 }
 
+function createCursorRetryableStreamError(options: {
+  rstCode?: string;
+  message?: string;
+} = {}): Error & { code: string; rstCode?: string } {
+  const error = new Error(options.message ?? "stream failed") as Error & { code: string; rstCode?: string };
+  error.code = "ERR_HTTP2_STREAM_ERROR";
+  error.rstCode = options.rstCode ?? "NGHTTP2_REFUSED_STREAM";
+  error.stack = `Error: ${error.message}\n    at streamRequest (@cursor/sdk/dist/index.js:1:1)`;
+  return error;
+}
+
 function payloadText(payload: string | { text: string; images?: Array<{ data: string; mimeType: string }> }): string {
   return typeof payload === "string" ? payload : payload.text;
 }
@@ -698,8 +709,8 @@ describe("CursorSdkAgentRuntime", () => {
     await runtime.sendMessage("first");
 
     await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledTimes(1);
     expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
     expect(callbacks.onSessionEvent).not.toHaveBeenCalledWith("worker-1", expect.objectContaining({ type: "message_end" }));
     expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
@@ -709,6 +720,11 @@ describe("CursorSdkAgentRuntime", () => {
         source: "cursor_sdk_background",
         errorName: "ConnectError",
         errorCode: "ERR_NOT_LOGGED_IN",
+        cursorFailureBucket: "auth_permission",
+        classificationDetail: "connect:UNAUTHENTICATED",
+        connectRpcProvenance: true,
+        providerProvenance: true,
+        retryPreOutput: false,
         sdkAgentId: "sdk-agent-1"
       })
     }));
@@ -742,9 +758,46 @@ describe("CursorSdkAgentRuntime", () => {
     expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([]);
   });
 
+  it("suppresses detached background failures that arrive after run.wait succeeds but during awaited completion callbacks", async () => {
+    const completionGate = deferred();
+    const lateContainment = deferred<boolean>();
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({
+        id: "run-completed-before-callbacks",
+        streamItems: [assistantText("ok")],
+        waitResult: { status: "finished" }
+      });
+    });
+    const { runtime, callbacks } = await setupRuntime({
+      sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() },
+      callbacks: {
+        onAgentEnd: async (...args) => {
+          if (args[0] === "worker-1") {
+            lateContainment.resolve(emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError()));
+            await completionGate.promise;
+          }
+        }
+      }
+    });
+
+    await runtime.sendMessage("hello");
+    await expect(lateContainment.promise).resolves.toBe(true);
+    completionGate.resolve();
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+      expect.objectContaining({
+        sdkRunId: "run-completed-before-callbacks",
+        outcome: "completed",
+        usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, total: 14 }
+      })
+    ]));
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+  });
+
   it("retries once before visible output, preserves the first-turn wrapper, and records only the successful usage entry", async () => {
     const payloads: string[] = [];
-    const firstAttemptError = createCursorAuthConnectError();
+    const firstAttemptError = createCursorRetryableStreamError({ rstCode: "NGHTTP2_ENHANCE_YOUR_CALM" });
     const send = vi.fn(async (payload: string | { text: string }, options?: CursorSdkSendOptions) => {
       payloads.push(payloadText(payload));
       if (send.mock.calls.length === 1) {
@@ -776,9 +829,32 @@ describe("CursorSdkAgentRuntime", () => {
     ]);
   });
 
+  it("does not swallow a no-ALS late detached failure from attempt 1 while retry attempt 2 is active", async () => {
+    const retryGate = deferred();
+    const send = vi.fn(async (payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      if (send.mock.calls.length === 1) {
+        queueMicrotask(() => {
+          emitCursorSdkBackgroundFailureForTests(createCursorRetryableStreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" }));
+        });
+        return createRun({ streamGate: new Promise(() => undefined), cancel: vi.fn(async () => undefined) });
+      }
+
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({ id: "run-retry-same-lineage", streamGate: retryGate.promise, streamItems: [assistantText("ok")] });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError())).toBe(false);
+    retryGate.resolve();
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1));
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+  });
+
   it("cancels the eventually resolved first send run when a pre-send background failure triggers retry", async () => {
     const payloads: string[] = [];
-    const firstAttemptError = createCursorAuthConnectError();
+    const firstAttemptError = createCursorRetryableStreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" });
     const firstSendGate = deferred<CursorSdkRun>();
     const firstCancel = vi.fn(async () => undefined);
     const send = vi.fn(async (payload: string | { text: string }, options?: CursorSdkSendOptions) => {
@@ -807,8 +883,36 @@ describe("CursorSdkAgentRuntime", () => {
     expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
   });
 
+  it("emits one runtime error after a retryable detached failure happens twice", async () => {
+    const send = vi.fn(async () => {
+      queueMicrotask(() => {
+        emitCursorSdkBackgroundFailureForTests(createCursorRetryableStreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" }));
+      });
+      return createRun({ streamGate: new Promise(() => undefined), cancel: vi.fn(async () => undefined) });
+    });
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => expect(callbacks.onRuntimeError).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(callbacks.onAgentEnd).not.toHaveBeenCalled();
+    expect(callbacks.onRuntimeError).toHaveBeenCalledWith("worker-1", expect.objectContaining({
+      details: expect.objectContaining({
+        source: "cursor_sdk_background",
+        cursorFailureBucket: "retryable_transport",
+        classificationDetail: "http2:NGHTTP2_REFUSED_STREAM",
+        cursorSdkProvenance: true,
+        http2Provenance: true,
+        providerProvenance: true,
+        retryPreOutput: false,
+        h2ResetCodes: expect.arrayContaining(["NGHTTP2_REFUSED_STREAM"])
+      })
+    }));
+  });
+
   it("does not retry after visible assistant output has emitted", async () => {
-    const backgroundError = createCursorAuthConnectError();
+    const backgroundError = createCursorRetryableStreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" });
     const gate = deferred();
     const send = vi.fn(async () => {
       setTimeout(() => {
@@ -828,7 +932,7 @@ describe("CursorSdkAgentRuntime", () => {
 
   it("does not retry after stopInFlight cancels the active attempt", async () => {
     const gate = deferred();
-    const backgroundError = createCursorAuthConnectError();
+    const backgroundError = createCursorRetryableStreamError({ rstCode: "NGHTTP2_REFUSED_STREAM" });
     const cancel = vi.fn(async () => {
       queueMicrotask(() => {
         emitCursorSdkBackgroundFailureForTests(backgroundError);
