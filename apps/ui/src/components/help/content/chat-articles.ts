@@ -494,15 +494,21 @@ Click **Generate recommendations** to have AI suggest both the "when to use" tex
 
 Project agents appear pinned at the top of their profile section in the sidebar with a badge. Click one to open its conversation. Sessions created by a project agent can show a subtle \`Created by @handle\` label in the sidebar.
 
-To message a project agent from another session, mention its handle in your message (the composer offers autocomplete when you type \`@\`). The manager interprets your intent and uses the \`send_message_to_agent\` tool to deliver the message asynchronously. If a project agent created the session, it can keep messaging that session through the same routing path.
+To message a project agent from another session, mention its handle in your message (the composer offers autocomplete when you type \`@\`). Autocomplete includes local agents in the current profile and shared agents explicitly granted from another profile; shared agents are labeled separately so you can tell them apart. The manager interprets your intent and uses the \`send_message_to_agent\` tool to deliver the message asynchronously. If a project agent created the session, it can keep messaging that session through the same routing path.
 
-Messages to project agents are fire-and-forget — there's no reply threading. If the receiving session is idle, Forge wakes it up to handle the incoming work.
+Messages to project agents are fire-and-forget — there's no reply threading. If the receiving session is idle, Forge wakes it up to handle the incoming work. Project Agent sends reject attachments, so send text instructions and references instead of attached files.
+
+## Sharing project agents
+
+Project Agent sharing is source-owned. Open the source agent's settings to grant or remove access for another profile. A target profile can discover a shared agent only after that grant exists, through its external/shared-agent directory and @mention autocomplete.
+
+Shared/external turns are constrained. They do not inherit source-only capabilities from target sessions, and Forge sanitizes shared-agent metadata and prompt rendering before showing it outside the source profile.
 
 ## Managing project agents
 
 Right-click a project agent to access:
 
-- **Settings** — Edit the "when to use" text and role instructions, add reference docs, and manage the agent's files. You can regenerate recommendations here too. The settings drawer is resizable from its left edge and confirms before discarding unsaved changes.
+- **Settings** — Edit the "when to use" text and role instructions, add reference docs, manage sharing grants, and manage the agent's files. You can regenerate recommendations here too. Sharing changes refresh affected runtime prompts so source and target sessions pick up the updated directory. The settings drawer is resizable from its left edge and confirms before discarding unsaved changes.
 - **View Creation History** — Opens the Agent Architect session that created this agent (if it was created via the wizard).
 - **Demote to Regular Session** — Converts the project agent back to a normal session. The handle and discovery metadata are removed, but the conversation history is preserved.
 - Other standard session actions like Rename, Fork, Stop, Delete.
@@ -520,7 +526,7 @@ Agent Creator sessions have special behavior:
 
 Handles must be unique within a profile and are immutable after promotion. If you try to promote a session with a handle that already exists, you'll see an error. Rename the existing project agent or choose a different handle.
 
-The "when to use" blurb is injected into the prompt context of all sibling manager sessions (but not workers). This is how managers learn about available project agents and when to message them.`,
+The "when to use" blurb is injected into the prompt context of sibling manager sessions and explicitly granted target profiles (but not workers). Local and shared agent directory prompt caps are separate, so adding shared agents does not consume the local project-agent directory budget. This is how managers learn about available project agents and when to message them.`,
     keywords: [
       'project agent',
       'create',

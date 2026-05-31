@@ -574,6 +574,12 @@ The global toggle at the top turns the specialist system on or off. When disable
 5. Edit the prompt body to describe this specialist's focus.
 6. Click **Save**.
 
+## Project Agent settings
+
+Project Agent settings include role instructions, reference docs, same-profile session-creation capability, and Builder sharing controls. Sharing is source-owned: grant another profile access from the source Project Agent, and remove the grant there when access should end. Target profiles see granted agents in their external/shared-agent directory and @mention autocomplete, labeled separately from local agents.
+
+Shared/external Project Agent turns are constrained and do not inherit source-only capabilities from target sessions. Project Agent sends reject attachments, and sharing changes refresh affected runtime prompts so directory updates propagate.
+
 ## Project agent session creation
 
 If a project agent has the **Can create sessions** toggle enabled in its settings, it can create new manager sessions in the same profile. Those created sessions can show creator attribution in the sidebar, and the creator keeps using the normal messaging path.

@@ -258,13 +258,15 @@ Each creation attempt starts a fresh dedicated Agent Architect session. After su
 
 Agent Creator sessions cannot be promoted, forked, or created within the Cortex profile.
 
-**Discovery:** Once promoted, project agents appear at the top of the sidebar in their profile with a special badge. Other session agents in the same profile can discover them through the injected directory and send fire-and-forget messages using the existing `send_message_to_agent` tool.
+**Discovery:** Once promoted, project agents appear at the top of the sidebar in their profile with a special badge. Other local session agents in the same profile, plus sessions in profiles that have an explicit sharing grant, can discover them through the injected directory and send fire-and-forget messages using the existing `send_message_to_agent` tool.
 
 **Session creation capability:** Some project agents can be given a **Can create sessions** toggle in Settings. When enabled, that project agent can create new manager sessions in the same profile. Those created sessions show a subtle `Created by @handle` attribution in the sidebar, and the creator can keep messaging them through the normal routing path.
 
-**Messaging:** When a project agent receives a message, it appears as a blue right-justified bubble in its chat (similar to user messages but with sender attribution). The project agent wakes up if idle and can respond by sending a message back to the sender.
+**Messaging:** When a project agent receives a message, it appears as a blue right-justified bubble in its chat (similar to user messages but with sender attribution). The project agent wakes up if idle and can respond by sending a message back to the sender. Project Agent sends are text-only; attachments are rejected.
 
-**@mentions:** Type `@` in the chat composer to see autocomplete suggestions for all project agents in the current profile. Selecting one inserts a mention chip. This is purely UI convenience — the actual routing happens when your session agent interprets your message and decides to use `send_message_to_agent`.
+**@mentions:** Type `@` in the chat composer to see autocomplete suggestions for local project agents in the current profile and shared project agents explicitly granted from another profile. Selecting one inserts a mention chip. This is purely UI convenience — the actual routing happens when your session agent interprets your message and decides to use `send_message_to_agent`.
+
+**Sharing:** Project Agent sharing is source-owned. Open the source agent's Project Agent Settings to grant or remove access for target profiles. Shared agents appear in the target profile's external/shared-agent directory and autocomplete only after a grant, and they are labeled separately from local agents. External/shared turns are constrained and do not inherit source-only capabilities from target sessions.
 
 **Demoting:** Right-click a promoted session and select "Demote from Project Agent" to convert it back to a regular session.
 

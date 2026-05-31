@@ -301,19 +301,25 @@ Project agents persist across restarts and appear in the agent directory that ma
 
 ## How discovery works
 
-When a manager session starts, it receives an injected directory of available project agents in its prompt context. Each entry includes the agent's handle and "when to use" description. The manager can then message relevant project agents when it needs help with tasks that match their specialty.
+When a manager session starts, it receives an injected directory of available project agents in its prompt context. Each entry includes the agent's handle and "when to use" description. The directory includes local agents in the same profile plus shared agents explicitly granted from another profile. The manager can then message relevant project agents when it needs help with tasks that match their specialty.
 
-Worker agents never see the project agent directory — this is a manager-to-manager coordination mechanism only.
+Worker agents never see the project agent directory — this is a manager-to-manager coordination mechanism only. Local and shared directory prompt caps are separate.
 
 ## Fire-and-forget messaging
 
 Project agents communicate through the existing \`send_message_to_agent\` tool. Messages are asynchronous and one-way — there's no reply threading or delivery confirmation. This keeps the model simple: a manager sends work to a project agent, the project agent processes it in its own session, and results appear in that agent's conversation. If a project agent has session-creation capability, it can create new manager sessions in the same profile and continue messaging those sessions through the normal routing path.
 
-If the receiving session is idle when a message arrives, Forge wakes it up automatically to handle the incoming work.
+If the receiving session is idle when a message arrives, Forge wakes it up automatically to handle the incoming work. Project Agent sends reject attachments.
+
+## Sharing
+
+Sharing is source-owned. The source Project Agent's settings control which other profiles have a grant. Target profiles cannot browse arbitrary agents in other profiles; shared agents appear in their external/shared-agent directory and autocomplete only after a grant exists.
+
+Forge distinguishes local and shared agents in the UI and sanitizes external shared-agent metadata and prompt rendering. External/shared turns are constrained and do not inherit source-only capabilities from target sessions. Sharing changes refresh affected runtime prompts so directory changes propagate.
 
 ## @mention autocomplete
 
-The chat composer offers autocomplete for project agent handles when you type \`@\`. This is a convenience feature only — it inserts the handle as text in your message. The \`@mention\` syntax does not trigger any special routing. The manager interprets the intent from the message content and uses the normal tool to send a message if appropriate.
+The chat composer offers autocomplete for project agent handles when you type \`@\`. Suggestions include local project agents and explicitly granted shared agents, with shared agents labeled separately. This is a convenience feature only — it inserts the handle as text in your message. The \`@mention\` syntax does not trigger any special routing. The manager interprets the intent from the message content and uses the normal tool to send a message if appropriate.
 
 ## Two ways to create
 
