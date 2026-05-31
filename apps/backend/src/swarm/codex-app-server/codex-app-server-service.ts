@@ -6,6 +6,11 @@ import {
   validateCodexExternalThreadModelInvariant,
 } from "../external-thread-compatibility.js";
 import { createCodexAppServerClient } from "./codex-app-server-client.js";
+import {
+  finalizeCodexDetailItemsForTurnEnd,
+  normalizeCodexDetailNotification,
+  resetCodexDetailTurnState,
+} from "./codex-app-server-event-normalizer.js";
 import { dispatchCodexAppServerNotification } from "./codex-app-server-events.js";
 import {
   buildCodexSidecarAgentId,
@@ -30,6 +35,7 @@ import {
   DEFAULT_TURN_COMPLETION_GRACE_MS,
 } from "./types.js";
 import type { AgentDescriptor } from "../types.js";
+import type { CodexNormalizedDetailRow } from "./codex-app-server-event-normalizer.js";
 
 export class CodexAppServerService {
   private sharedClient: CodexAppServerClientPort | undefined;
@@ -331,6 +337,12 @@ export class CodexAppServerService {
     activeTurn.graceItemAcceptOpen = false;
     activeTurn.completionGraceToken = undefined;
     this.cancelCompletionGrace(activeTurn);
+    this.finalizeCodexDetailRowsForActiveTurn(
+      sidecarAgentId,
+      descriptor.managerId,
+      activeTurn,
+      "cancelled",
+    );
 
     const threadId = descriptor.externalThread?.threadId;
     try {
@@ -412,6 +424,14 @@ export class CodexAppServerService {
 
     this.markPendingPriorTurnlessInvalidation(activeTurn);
     this.cancelCompletionGrace(activeTurn);
+    if (activeTurn && descriptor) {
+      this.finalizeCodexDetailRowsForActiveTurn(
+        sidecarAgentId,
+        descriptor.managerId,
+        activeTurn,
+        "cancelled",
+      );
+    }
     runtime.openCompletionGraceToken = 0;
     runtime.activeTurn = undefined;
   }
@@ -604,8 +624,82 @@ export class CodexAppServerService {
             await this.finalizeActiveTurn(sidecarAgentId);
           }
         },
+        onStreamDetail: async (method, detailParams) => {
+          this.projectCodexStreamDetailNotifications(
+            sidecarAgentId,
+            descriptor.managerId,
+            activeTurn,
+            method,
+            detailParams,
+          );
+        },
       },
     );
+  }
+
+  private projectCodexStreamDetailNotifications(
+    sidecarAgentId: string,
+    managerAgentId: string,
+    activeTurn: CodexSidecarActiveTurn,
+    method: string,
+    params: unknown,
+  ): void {
+    if (activeTurn.suppressed) {
+      return;
+    }
+
+    const rows = normalizeCodexDetailNotification({
+      method,
+      params,
+      activeTurn,
+      nowIso: this.host.now(),
+      nowMs: Date.now(),
+    });
+
+    this.emitCodexDetailRows(sidecarAgentId, managerAgentId, rows);
+  }
+
+  private emitCodexDetailRows(
+    sidecarAgentId: string,
+    managerAgentId: string,
+    rows: CodexNormalizedDetailRow[],
+  ): void {
+    for (const row of rows) {
+      this.host.emitConversationLog({
+        type: "conversation_log",
+        agentId: sidecarAgentId,
+        timestamp: this.host.now(),
+        source: "runtime_log",
+        kind: row.kind,
+        toolName: row.toolName,
+        toolCallId: row.toolCallId,
+        text: row.text,
+        isError: row.isError,
+      });
+
+      this.host.emitAgentToolCall({
+        type: "agent_tool_call",
+        agentId: managerAgentId,
+        actorAgentId: sidecarAgentId,
+        timestamp: this.host.now(),
+        kind: row.kind,
+        toolName: row.toolName,
+        toolCallId: row.toolCallId,
+        text: row.text,
+        isError: row.isError,
+      });
+    }
+  }
+
+  private finalizeCodexDetailRowsForActiveTurn(
+    sidecarAgentId: string,
+    managerAgentId: string,
+    activeTurn: CodexSidecarActiveTurn,
+    reason: "completed" | "cancelled" | "failed",
+  ): void {
+    const rows = finalizeCodexDetailItemsForTurnEnd(activeTurn, reason);
+    this.emitCodexDetailRows(sidecarAgentId, managerAgentId, rows);
+    resetCodexDetailTurnState(activeTurn);
   }
 
   private handleSharedClientExit(error: Error): void {
@@ -690,6 +784,24 @@ export class CodexAppServerService {
 
     if (activeTurn.assistantText) {
       this.emitAssistantMessageIfNeeded(sidecarAgentId, activeTurn.assistantText);
+    }
+
+    const detailCloseReason =
+      activeTurn.completionDescriptorStatus === "error"
+        ? "failed"
+        : activeTurn.completionParentStatusOverride === "stopped"
+          ? "cancelled"
+          : "completed";
+    const sidecarDescriptor = this.host.getDescriptor(sidecarAgentId);
+    if (sidecarDescriptor) {
+      this.finalizeCodexDetailRowsForActiveTurn(
+        sidecarAgentId,
+        sidecarDescriptor.managerId,
+        activeTurn,
+        detailCloseReason,
+      );
+    } else {
+      resetCodexDetailTurnState(activeTurn);
     }
 
     await this.clearActiveTurn(

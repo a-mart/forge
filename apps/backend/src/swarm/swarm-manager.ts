@@ -5037,6 +5037,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.emitConversationMessage(entry);
       },
       emitConversationMessage: (event) => this.emitConversationMessage(event),
+      emitConversationLog: (event) => this.conversationProjector.emitConversationLog(event),
       emitAgentMessage: (event) => this.emitAgentMessage(event),
       emitAgentToolCall: (event) => this.conversationProjector.emitAgentToolCall(event),
       emitStatus: (agentId, status, pendingCount) => {

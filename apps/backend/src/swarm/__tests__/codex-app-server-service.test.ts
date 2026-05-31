@@ -11,7 +11,9 @@ import type {
 import type {
   AgentDescriptor,
   AgentStatus,
+  AgentToolCallEvent,
   ConversationEntryEvent,
+  ConversationLogEvent,
   ConversationMessageEvent,
 } from "../types.js";
 import { createManagerDescriptor } from "../../test-support/fixtures.js";
@@ -212,6 +214,8 @@ function createFakeHost(initialDescriptors: AgentDescriptor[] = []): {
   const descriptors = new Map(initialDescriptors.map((descriptor) => [descriptor.agentId, descriptor]));
   const conversationEntries: ConversationEntryEvent[] = [];
   const conversationMessages: ConversationMessageEvent[] = [];
+  const conversationLogs: ConversationLogEvent[] = [];
+  const agentToolCalls: AgentToolCallEvent[] = [];
   const statusEvents: Array<{ agentId: string; status: AgentStatus; pendingCount: number }> = [];
   const threadAuditBySessionFile = new Map<string, CodexSidecarPersistedThreadState>();
   const threadFallbackBySessionFile = new Map<string, CodexSidecarPersistedThreadState>();
@@ -231,8 +235,13 @@ function createFakeHost(initialDescriptors: AgentDescriptor[] = []): {
     emitConversationMessage: (event) => {
       conversationMessages.push(event);
     },
+    emitConversationLog: (event) => {
+      conversationLogs.push(event);
+    },
     emitAgentMessage: vi.fn(),
-    emitAgentToolCall: vi.fn(),
+    emitAgentToolCall: (event) => {
+      agentToolCalls.push(event);
+    },
     emitStatus: (agentId, status, pendingCount) => {
       statusEvents.push({ agentId, status, pendingCount });
     },
@@ -274,6 +283,8 @@ function createFakeHost(initialDescriptors: AgentDescriptor[] = []): {
     descriptors,
     conversationEntries,
     conversationMessages,
+    conversationLogs,
+    agentToolCalls,
     statusEvents,
     threadAuditBySessionFile,
     threadFallbackBySessionFile,
@@ -1410,5 +1421,99 @@ describe("CodexAppServerService", () => {
         sidecarAgentId: "mgr-1--codex",
       }),
     );
+  });
+
+  it("projects Codex stream detail rows via emitConversationLog and manager agent_tool_call activity", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationEntries, conversationLogs, agentToolCalls } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "run tools");
+    const turnId = fakeClient!.lastTurnId;
+
+    await fakeClient!.handlers.onNotification?.("item/started", {
+      turnId,
+      item: {
+        id: "cmd-1",
+        type: "commandExecution",
+        command: "echo hi",
+        cwd: "/tmp/project",
+        status: "inProgress",
+        commandActions: [],
+      },
+    });
+
+    await fakeClient!.handlers.onNotification?.("item/completed", {
+      turnId,
+      item: {
+        id: "cmd-1",
+        type: "commandExecution",
+        command: "echo hi",
+        cwd: "/tmp/project",
+        status: "completed",
+        commandActions: [],
+        aggregatedOutput: "hi",
+        exitCode: 0,
+      },
+    });
+
+    expect(conversationLogs.some((row) => row.kind === "tool_execution_start")).toBe(true);
+    expect(conversationLogs.some((row) => row.kind === "tool_execution_end")).toBe(true);
+    expect(conversationLogs.every((row) => row.agentId === "mgr-1--codex")).toBe(true);
+    expect(conversationLogs.every((row) => row.toolCallId === "cmd-1")).toBe(true);
+    expect(agentToolCalls.some((row) => row.actorAgentId === "mgr-1--codex")).toBe(true);
+    expect(agentToolCalls.every((row) => row.agentId === "mgr-1")).toBe(true);
+    expect(conversationEntries.some((entry) => entry.type === "conversation_log")).toBe(false);
+  });
+
+  it("suppresses late detail notifications after interrupt", async () => {
+    const manager = createManagerDescriptor("/tmp/project", { agentId: "mgr-1", profileId: "profile-1" });
+    const { host, conversationLogs } = createFakeHost([manager]);
+    let fakeClient: FakeCodexAppServerClient | undefined;
+    const service = createTestService(host, {
+      createClient: (handlers) => {
+        fakeClient = new FakeCodexAppServerClient(handlers);
+        fakeClient.autoCompleteTurn = false;
+        return fakeClient;
+      },
+    });
+
+    await service.getOrCreateSidecarDescriptor(manager);
+    await service.sendTextTurn("mgr-1--codex", "long task");
+    const turnId = fakeClient!.lastTurnId;
+
+    await fakeClient!.handlers.onNotification?.("item/started", {
+      turnId,
+      item: {
+        id: "cmd-2",
+        type: "commandExecution",
+        command: "sleep 10",
+        cwd: "/tmp/project",
+        status: "inProgress",
+        commandActions: [],
+      },
+    });
+
+    const logsBeforeInterrupt = conversationLogs.length;
+    await service.interruptTurn("mgr-1--codex");
+
+    await fakeClient!.handlers.onNotification?.("item/commandExecution/outputDelta", {
+      turnId,
+      itemId: "cmd-2",
+      delta: "late output",
+    });
+
+    expect(conversationLogs.length).toBeGreaterThan(logsBeforeInterrupt);
+    expect(
+      conversationLogs.some((row) => row.text.includes("late output")),
+    ).toBe(false);
   });
 });
