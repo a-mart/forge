@@ -206,7 +206,7 @@ function mapToolStatus(entry: ToolExecutionDisplayEntry): ToolDisplayStatus {
     return 'pending'
   }
 
-  const payload = entry.outputPayload ?? entry.latestPayload
+  const payload = entry.outputPayload ?? entry.latestPayload ?? ''
   const payloadStatus = parseDetailPayloadStatus(payload)
   if (payloadStatus === 'cancelled') {
     return 'cancelled'
@@ -216,7 +216,7 @@ function mapToolStatus(entry: ToolExecutionDisplayEntry): ToolDisplayStatus {
     return 'completed'
   }
 
-  const lowered = (payload ?? '').toLowerCase()
+  const lowered = payload.toLowerCase()
   if (lowered.includes('[aborted]') || lowered.includes('cancel')) {
     return 'cancelled'
   }

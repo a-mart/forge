@@ -118,7 +118,7 @@ export function parseThreadItemType(item: unknown): string | undefined {
 
 export function isDeniedCodexDetailItemType(itemType: string | undefined): boolean {
   if (!itemType) {
-    return false;
+    return true;
   }
 
   return DENIED_DETAIL_ITEM_TYPES.has(itemType);
