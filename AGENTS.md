@@ -263,9 +263,24 @@ Production ports:
 - UI preview: `http://127.0.0.1:47189`
 - Electron: Defaults to port 47287 for backend, configurable via `FORGE_PORT`
 
+### In-app help content
+
+In-app help article **bodies** live in Markdown under `apps/ui/src/components/help/content/articles/<category>/<article-id>.md`. Article **metadata** (`id`, `title`, `category`, `summary`, `keywords`, `relatedIds`, `contextKeys`) stays in `apps/ui/src/components/help/content/*-articles.ts` with explicit per-article `?raw` imports. Do not use frontmatter in v1.
+
+When adding or editing help content:
+
+1. Edit the `.md` body directly; do not put Markdown bodies in TS template literals.
+2. Update the matching metadata entry and `?raw` import in the owning `*-articles.ts` module.
+3. Run `pnpm help:validate` (permanent structural checks only; no baseline file required).
+4. Run UI typecheck and, for help-content changes, `pnpm quality:changed` or `pnpm quality:quick` (the local quality runner routes help-content paths to `pnpm help:validate`).
+
+**Migration-only fidelity:** To compare against a one-time pre-migration baseline (handoff/review only), use `pnpm help:validate:migration` with a provenance-safe `.internal/help-content-baseline.json` captured from unmigrated TS via `pnpm help:baseline`. Do not regenerate that baseline from migrated sources, and do not require it for normal authoring.
+
 ### Validation
 
 ```bash
+pnpm help:validate                                        # Permanent strict help structural checks (no baseline)
+pnpm help:validate:migration                              # One-time migration fidelity vs provenance-safe baseline
 pnpm quality:quick                                        # Fast changed-file validation with a local JSON report
 pnpm quality:changed                                      # Conservative path-aware validation before merge/push
 pnpm quality:full                                         # Full local validation, including build
