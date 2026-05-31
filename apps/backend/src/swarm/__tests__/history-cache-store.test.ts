@@ -283,4 +283,41 @@ describe("HistoryCacheStore", () => {
     store.clear();
     expect(store.getPersistedEntryCount(sessionFile)).toBeUndefined();
   });
+
+  it("excludes Codex stream detail agent_tool_call rows from disk cache writes and loads", async () => {
+    const root = await createTempDir("history-cache-store-");
+    const sessionFile = join(root, "session.jsonl");
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
+    const store = makeStore();
+    const persistedMessage = makeMessage("m1");
+    const codexToolStart: ConversationEntryEvent = {
+      type: "agent_tool_call",
+      agentId: "manager",
+      actorAgentId: "manager--codex",
+      timestamp: FIXED_NOW,
+      kind: "tool_execution_start",
+      toolName: "codex_command",
+      toolCallId: "cmd-1",
+      text: '{"command":"echo hi"}',
+    };
+
+    writeSession(sessionFile, [persistedMessage], root);
+    const history = [persistedMessage, makeLog("runtime"), codexToolStart];
+    store.queueCacheSnapshotWrite(
+      sessionFile,
+      history,
+      store.buildMetadata(history, 1, store.readSessionFileCanonicalStat(sessionFile))
+    );
+    await store.flushPendingWrites();
+
+    const cacheText = readFileSync(cacheFile, "utf8");
+    expect(cacheText).toContain('"type":"conversation_log"');
+    expect(cacheText).not.toContain('"toolName":"codex_command"');
+
+    const cacheLoad = store.loadConversationHistoryFromCache(sessionFile);
+    expect(cacheLoad.cachedHistory?.entries.map((entry) => entry.type)).toEqual([
+      "conversation_message",
+      "conversation_log"
+    ]);
+  });
 });

@@ -5,6 +5,7 @@ import {
   isProtectedWebTranscriptEntry,
   selectBootstrapConversationHistory,
   shouldPersistConversationEntry,
+  shouldWriteConversationHistoryCacheEntry,
   trimConversationHistory
 } from "../session/history-policy.js";
 import type { ConversationEntryEvent, ConversationMessageEvent } from "../types.js";
@@ -121,6 +122,47 @@ describe("history policy", () => {
     expect(shouldPersistConversationEntry(agentActivity("activity"))).toBe(true);
     expect(shouldPersistConversationEntry(choice("choice"))).toBe(true);
     expect(shouldPersistConversationEntry(workPlanCreated("work-plan-1"))).toBe(true);
+  });
+
+  it("does not persist Codex stream detail agent_tool_call rows", () => {
+    const codexTool = (
+      kind: "tool_execution_start" | "tool_execution_end",
+      toolName: string,
+    ): ConversationEntryEvent => ({
+      type: "agent_tool_call",
+      agentId: "manager-1",
+      actorAgentId: "manager-1--codex",
+      timestamp: FIXED_NOW,
+      kind,
+      toolName,
+      toolCallId: "cmd-1",
+      text: "{}",
+    });
+
+    expect(shouldPersistConversationEntry(codexTool("tool_execution_start", "codex_command"))).toBe(false);
+    expect(shouldPersistConversationEntry(codexTool("tool_execution_end", "codex_command"))).toBe(false);
+    expect(shouldPersistConversationEntry(codexTool("tool_execution_start", "codex_mcp_tool"))).toBe(false);
+  });
+
+  it("does not write Codex stream detail agent_tool_call rows to disk cache", () => {
+    const codexTool = (
+      kind: "tool_execution_start" | "tool_execution_end",
+      toolName: string,
+    ): ConversationEntryEvent => ({
+      type: "agent_tool_call",
+      agentId: "manager-1",
+      actorAgentId: "manager-1--codex",
+      timestamp: FIXED_NOW,
+      kind,
+      toolName,
+      toolCallId: "cmd-1",
+      text: "{}",
+    });
+
+    expect(shouldWriteConversationHistoryCacheEntry(log("runtime"))).toBe(true);
+    expect(shouldWriteConversationHistoryCacheEntry(tool("start", "tool_execution_start"))).toBe(true);
+    expect(shouldWriteConversationHistoryCacheEntry(codexTool("tool_execution_start", "codex_command"))).toBe(false);
+    expect(shouldWriteConversationHistoryCacheEntry(codexTool("tool_execution_end", "codex_plan"))).toBe(false);
   });
 
   it("identifies protected web and CLI transcript entries", () => {

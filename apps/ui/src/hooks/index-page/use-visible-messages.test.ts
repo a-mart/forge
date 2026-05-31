@@ -45,6 +45,19 @@ const foreignWorker: AgentDescriptor = {
   sessionFile: '/tmp/project/foreign-worker.jsonl',
 }
 
+const codexSidecar: AgentDescriptor = {
+  ...worker,
+  agentId: 'manager--codex',
+  displayName: 'Codex',
+  managerId: 'manager',
+  sessionFile: '/tmp/project/manager--codex.jsonl',
+  externalThread: {
+    type: 'codex_app_server',
+    persisted: true,
+    createdByMention: true,
+  },
+}
+
 function makeToolCall(
   agentId: string,
   actorAgentId: string,
@@ -232,6 +245,60 @@ describe('deriveVisibleMessages', () => {
 
     expect(result.visibleMessages).toHaveLength(1)
     expect(result.visibleMessages[0].type).toBe('agent_tool_call')
+  })
+
+  it('hides Codex sidecar tool activity in default manager all view but shows it in detailed all view', () => {
+    const activityMessages: ConversationEntry[] = [
+      makeToolCall('manager', 'manager--codex', 'codex-call'),
+    ]
+
+    const defaultResult = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, codexSidecar],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: false,
+    })
+
+    const detailedResult = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, codexSidecar],
+      activeAgent: manager,
+      channelView: 'all',
+      detailedAllView: true,
+    })
+
+    expect(defaultResult.visibleMessages).toHaveLength(0)
+    expect(detailedResult.visibleMessages).toHaveLength(1)
+    expect(detailedResult.visibleMessages[0].type).toBe('agent_tool_call')
+  })
+
+  it('shows Codex sidecar conversation_log rows in selected sidecar view', () => {
+    const activityMessages: ConversationEntry[] = [
+      {
+        type: 'conversation_log',
+        agentId: 'manager--codex',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        source: 'runtime_log',
+        kind: 'tool_execution_start',
+        toolName: 'codex_command',
+        toolCallId: 'cmd-1',
+        text: '{"command":"echo hi"}',
+      },
+    ]
+
+    const result = deriveVisibleMessages({
+      messages: [],
+      activityMessages,
+      agents: [manager, codexSidecar],
+      activeAgent: codexSidecar,
+      channelView: 'all',
+    })
+
+    expect(result.visibleMessages).toHaveLength(1)
+    expect(result.visibleMessages[0].type).toBe('conversation_log')
   })
 
   it('hides foreign-entry tool rows even when actor is owned worker (detailed)', () => {

@@ -91,6 +91,57 @@ const TOOL_CONFIG: Record<string, ToolConfig> = {
     icon: MessageSquare,
     getDetail: (input) => pickString(input, ['targetAgentId']) ?? null,
   },
+  codex_command: {
+    label: 'Codex ran command',
+    activeLabel: 'Codex running command',
+    cancelledLabel: 'Codex command cancelled',
+    errorLabel: 'Codex command failed',
+    icon: Terminal,
+    getDetail: (input) => pickString(input, ['command']) ?? null,
+  },
+  codex_mcp_tool: {
+    label: 'Codex MCP tool',
+    activeLabel: 'Codex MCP tool running',
+    cancelledLabel: 'Codex MCP tool cancelled',
+    errorLabel: 'Codex MCP tool failed',
+    icon: Terminal,
+    getDetail: (input) => {
+      const tool = pickString(input, ['tool'])
+      const server = pickString(input, ['server'])
+      if (tool && server) {
+        return truncate(`${server}/${tool}`, 72)
+      }
+      return tool ?? server
+    },
+  },
+  codex_file_change: {
+    label: 'Codex changed files',
+    activeLabel: 'Codex changing files',
+    cancelledLabel: 'Codex file change cancelled',
+    errorLabel: 'Codex file change failed',
+    icon: FileText,
+    getDetail: (input) => {
+      const changes = input.changes
+      if (Array.isArray(changes) && changes.length > 0) {
+        const first = changes[0]
+        if (first && typeof first === 'object' && 'path' in first) {
+          const path = (first as { path?: unknown }).path
+          if (typeof path === 'string') {
+            return truncate(path, 72)
+          }
+        }
+      }
+      return null
+    },
+  },
+  codex_plan: {
+    label: 'Codex plan',
+    activeLabel: 'Codex planning',
+    cancelledLabel: 'Codex plan cancelled',
+    errorLabel: 'Codex plan failed',
+    icon: FileText,
+    getDetail: (input) => pickString(input, ['text']) ?? null,
+  },
 }
 
 function truncate(str: string, maxLen: number): string {
@@ -144,16 +195,28 @@ function humanizeToolName(toolName: string): string {
     .trim()
 }
 
+function parseDetailPayloadStatus(payload: string | undefined): string | undefined {
+  const record = parseJsonRecord(payload)
+  const status = record.status
+  return typeof status === 'string' ? status : undefined
+}
+
 function mapToolStatus(entry: ToolExecutionDisplayEntry): ToolDisplayStatus {
   if (entry.latestKind !== 'tool_execution_end') {
     return 'pending'
+  }
+
+  const payload = entry.outputPayload ?? entry.latestPayload ?? ''
+  const payloadStatus = parseDetailPayloadStatus(payload)
+  if (payloadStatus === 'cancelled') {
+    return 'cancelled'
   }
 
   if (!entry.isError) {
     return 'completed'
   }
 
-  const lowered = (entry.outputPayload ?? entry.latestPayload ?? '').toLowerCase()
+  const lowered = payload.toLowerCase()
   if (lowered.includes('[aborted]') || lowered.includes('cancel')) {
     return 'cancelled'
   }

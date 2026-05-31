@@ -2,11 +2,13 @@ import type {
   AgentDescriptor,
   AgentStatus,
   ConversationEntryEvent,
+  ConversationLogEvent,
   ConversationMessageEvent,
   AgentMessageEvent,
   AgentToolCallEvent,
   MessageSourceContext,
 } from "../types.js";
+import type { CodexDetailCounters, CodexTrackedDetailItem } from "./codex-app-server-event-normalizer.js";
 
 export const CODEX_SIDECAR_AGENT_ID_SUFFIX = "--codex";
 export const CODEX_THREAD_STATE_CUSTOM_TYPE = "swarm_codex_app_server_thread_state";
@@ -28,6 +30,7 @@ export interface CodexSidecarHost {
   ensureSessionFileParentDirectory(sessionFile: string): Promise<void>;
   appendConversationEntry(agentId: string, entry: ConversationEntryEvent): void;
   emitConversationMessage(event: ConversationMessageEvent): void;
+  emitConversationLog(event: ConversationLogEvent): void;
   emitAgentMessage(event: AgentMessageEvent): void;
   emitAgentToolCall(event: AgentToolCallEvent): void;
   emitStatus(agentId: string, status: AgentStatus, pendingCount: number): void;
@@ -123,6 +126,8 @@ export interface CodexSidecarActiveTurn {
   graceItemAcceptOpen?: boolean;
   completionGraceTimer?: ReturnType<typeof setTimeout>;
   parentTurnContext?: CodexSidecarParentTurnContext;
+  codexItemsById?: Map<string, CodexTrackedDetailItem>;
+  codexDetailCounters?: CodexDetailCounters;
 }
 
 export interface CodexSidecarRuntimeState {

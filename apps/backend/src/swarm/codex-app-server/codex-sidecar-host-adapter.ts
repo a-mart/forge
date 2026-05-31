@@ -6,6 +6,7 @@ import type {
   AgentStatus,
   AgentToolCallEvent,
   ConversationEntryEvent,
+  ConversationLogEvent,
   ConversationMessageEvent,
   MessageSourceContext,
 } from "../types.js";
@@ -25,6 +26,7 @@ export interface CodexSidecarHostAdapterDeps {
   ensureSessionFileParentDirectory: (sessionFile: string) => Promise<void>;
   appendConversationEntry: (agentId: string, entry: ConversationEntryEvent) => void;
   emitConversationMessage: (event: ConversationMessageEvent) => void;
+  emitConversationLog: (event: ConversationLogEvent) => void;
   emitAgentMessage: (event: AgentMessageEvent) => void;
   emitAgentToolCall: (event: AgentToolCallEvent) => void;
   emitStatus: (agentId: string, status: AgentStatus, pendingCount: number) => void;
@@ -56,6 +58,7 @@ export function createCodexSidecarHostAdapter(
     ensureSessionFileParentDirectory: deps.ensureSessionFileParentDirectory,
     appendConversationEntry: deps.appendConversationEntry,
     emitConversationMessage: deps.emitConversationMessage,
+    emitConversationLog: deps.emitConversationLog,
     emitAgentMessage: deps.emitAgentMessage,
     emitAgentToolCall: deps.emitAgentToolCall,
     emitStatus: deps.emitStatus,

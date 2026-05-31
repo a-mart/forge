@@ -191,4 +191,53 @@ describe("codex app-server notification dispatch", () => {
 
     expect(deltas).toEqual([]);
   });
+
+  it("routes detail notifications through onStreamDetail and rejects turnless detail events", async () => {
+    const detailMethods: string[] = [];
+
+    await dispatchCodexAppServerNotification(
+      "item/started",
+      {
+        turnId: "turn-1",
+        item: {
+          id: "cmd-1",
+          type: "commandExecution",
+          command: "echo hi",
+          cwd: "/tmp",
+          status: "inProgress",
+          commandActions: [],
+        },
+      },
+      dispatchContext,
+      {
+        onTurnStarted: () => undefined,
+        onTurnCompleted: () => undefined,
+        onAgentMessageDelta: () => undefined,
+        onAgentMessageCompleted: () => undefined,
+        onStreamDetail: (method) => {
+          detailMethods.push(method);
+        },
+      },
+    );
+
+    expect(detailMethods).toEqual(["item/started"]);
+
+    detailMethods.length = 0;
+    await dispatchCodexAppServerNotification(
+      "item/commandExecution/outputDelta",
+      { itemId: "cmd-1", delta: "orphan" },
+      dispatchContext,
+      {
+        onTurnStarted: () => undefined,
+        onTurnCompleted: () => undefined,
+        onAgentMessageDelta: () => undefined,
+        onAgentMessageCompleted: () => undefined,
+        onStreamDetail: (method) => {
+          detailMethods.push(method);
+        },
+      },
+    );
+
+    expect(detailMethods).toEqual([]);
+  });
 });

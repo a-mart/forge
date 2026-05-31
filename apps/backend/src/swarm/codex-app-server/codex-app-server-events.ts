@@ -1,3 +1,8 @@
+import {
+  extractStableItemId,
+  isCodexStreamDetailNotificationMethod,
+  shouldAcceptCodexDetailNotification,
+} from "./codex-app-server-event-normalizer.js";
 import type { CodexSidecarActiveTurn } from "./types.js";
 import { parseTurnIdFromNotificationParams } from "./codex-sidecar-ids.js";
 
@@ -19,6 +24,7 @@ export interface CodexNotificationDispatchCallbacks {
   onTurnCompleted(summary: CodexTurnCompletedSummary): void | Promise<void>;
   onAgentMessageDelta(delta: string): void | Promise<void>;
   onAgentMessageCompleted(text: string, context: { turnless: boolean }): void | Promise<void>;
+  onStreamDetail?(method: string, params: unknown): void | Promise<void>;
   onProcessExit?(error: Error): void | Promise<void>;
 }
 
@@ -213,31 +219,48 @@ export async function dispatchCodexAppServerNotification(
     }
 
     case "item/completed": {
-      if (notificationTurnId) {
-        if (shouldIgnoreCodexNotification(activeTurn, notificationTurnId)) {
+      const item = (params as { item?: { type?: unknown } } | undefined)?.item;
+      const isAgentMessage = item?.type === "agentMessage";
+
+      if (isAgentMessage) {
+        if (notificationTurnId) {
+          if (shouldIgnoreCodexNotification(activeTurn, notificationTurnId)) {
+            return;
+          }
+        } else if (
+          !shouldAcceptTurnlessItemNotification(
+            activeTurn,
+            context.openCompletionGraceToken,
+            method,
+          )
+        ) {
           return;
         }
-      } else if (
-        !shouldAcceptTurnlessItemNotification(
-          activeTurn,
-          context.openCompletionGraceToken,
-          method,
-        )
-      ) {
-        return;
-      }
 
-      const item = (params as { item?: { type?: unknown } } | undefined)?.item;
-      if (item?.type === "agentMessage") {
         const text = parseAgentMessageText(params);
         if (text) {
           await callbacks.onAgentMessageCompleted(text, { turnless: !notificationTurnId });
         }
+        break;
+      }
+
+      const itemId = extractStableItemId(params, item);
+      if (shouldAcceptCodexDetailNotification(activeTurn, notificationTurnId, itemId)) {
+        await callbacks.onStreamDetail?.(method, params);
       }
       break;
     }
 
-    default:
+    default: {
+      if (isCodexStreamDetailNotificationMethod(method)) {
+        const itemId = extractStableItemId(params);
+        if (
+          shouldAcceptCodexDetailNotification(activeTurn, notificationTurnId, itemId)
+        ) {
+          await callbacks.onStreamDetail?.(method, params);
+        }
+      }
       break;
+    }
   }
 }

@@ -101,6 +101,67 @@ describe("buildModelChangeRecoveryContext", () => {
     expect(result.bodyText).not.toContain("still running");
   });
 
+  it("excludes Codex sidecar detail rows and parent external-thread cards from recovery context", () => {
+    const entries: ConversationEntryEvent[] = [
+      {
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "user",
+        text: "Ask Codex",
+        timestamp: "2026-04-07T10:00:00.000Z",
+        source: "user_input",
+      },
+      {
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "system",
+        text: "Codex completed",
+        timestamp: "2026-04-07T10:00:01.000Z",
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: "manager-1--codex",
+          requestId: "req-1",
+          turnCorrelationId: "corr-1",
+          status: "completed",
+          excludeFromModelContext: true,
+        },
+      },
+      {
+        type: "conversation_log",
+        agentId: "manager-1--codex",
+        timestamp: "2026-04-07T10:00:02.000Z",
+        source: "runtime_log",
+        kind: "tool_execution_end",
+        toolName: "codex_command",
+        toolCallId: "cmd-1",
+        text: '{"command":"pnpm test","outputPreview":"secret output"}',
+      },
+      {
+        type: "agent_tool_call",
+        agentId: "manager-1",
+        actorAgentId: "manager-1--codex",
+        timestamp: "2026-04-07T10:00:03.000Z",
+        kind: "tool_execution_end",
+        toolName: "codex_command",
+        toolCallId: "cmd-1",
+        text: '{"command":"pnpm test"}',
+      },
+    ];
+
+    const result = buildModelChangeRecoveryContext({
+      descriptor,
+      entries,
+      existingPrompt: "Base system prompt",
+      modelContextWindow: 200_000,
+    });
+
+    expect(result.bodyText).toContain("User: Ask Codex");
+    expect(result.bodyText).not.toContain("Codex completed");
+    expect(result.bodyText).not.toContain("pnpm test");
+    expect(result.bodyText).not.toContain("secret output");
+  });
+
   it("prepends the Claude compaction summary when the source runtime is Claude SDK", () => {
     const entries: ConversationEntryEvent[] = [
       {
