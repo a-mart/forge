@@ -19,6 +19,8 @@ import {
 } from "./agents/project-agent-mutations.js";
 import {
   getProjectAgentHandleCollisionError,
+  getReservedProjectAgentHandleError,
+  isReservedProjectAgentHandle,
   normalizeProjectAgentHandle,
   normalizeProjectAgentInlineText
 } from "./agents/project-agents.js";
@@ -553,6 +555,10 @@ export class SwarmProjectAgentService {
   }
 
   private async assertProjectAgentHandleAvailable(profileId: string, handle: string, ownerAgentId?: string): Promise<void> {
+    if (isReservedProjectAgentHandle(handle)) {
+      throw new Error(getReservedProjectAgentHandleError(handle));
+    }
+
     const descriptorCollision = this.registry.findByHandle(profileId, handle);
     if (descriptorCollision && descriptorCollision.agentId !== ownerAgentId) {
       throw new Error(getProjectAgentHandleCollisionError(handle));

@@ -6,6 +6,7 @@ import type {
   ConversationEntryEvent,
   ConversationMessageAttachment,
 } from "../types.js";
+import { shouldExcludeConversationMessageFromModelContext } from "../external-threads.js";
 
 const DEFAULT_RECOVERY_BUDGET_TOKENS = 768;
 const MIN_RECOVERY_BUDGET_TOKENS = 128;
@@ -175,6 +176,10 @@ function renderManagerRecoveryLine(
   targetAgentId: string
 ): string | undefined {
   if (entry.type === "conversation_message") {
+    if (shouldExcludeConversationMessageFromModelContext(entry)) {
+      return undefined;
+    }
+
     if (entry.source === "user_input") {
       return renderTranscriptLine("User:", entry.text, buildAttachmentPlaceholder(entry.attachments));
     }

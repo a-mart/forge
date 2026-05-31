@@ -16,6 +16,9 @@ import {
 } from '../index.js'
 import type {
   AgentDescriptor,
+  ConversationMessageEvent,
+  ExternalThreadMessageContext,
+  ExternalThreadInfo,
   CliCapabilities,
   CliRunResult,
   CliWsCommand,
@@ -194,6 +197,52 @@ const agent = {
   sessionFile: '/tmp/session.jsonl',
   profileId: profile.profileId,
 } satisfies AgentDescriptor
+
+const codexExternalThread = {
+  type: 'codex_app_server',
+  persisted: true,
+  createdByMention: true,
+  threadId: 'codex-thread-1',
+} satisfies ExternalThreadInfo
+
+const codexSidecar = {
+  agentId: 'agent-1--codex',
+  managerId: agent.agentId,
+  displayName: 'Codex',
+  role: 'worker',
+  status: 'idle',
+  createdAt: now,
+  updatedAt: now,
+  cwd: agent.cwd,
+  model: {
+    provider: 'codex-app-server',
+    modelId: 'app-server',
+    thinkingLevel: 'none',
+  },
+  sessionFile: '/tmp/workers/agent-1--codex.jsonl',
+  profileId: profile.profileId,
+  externalThread: codexExternalThread,
+} satisfies AgentDescriptor
+
+const codexParentCardContext = {
+  type: 'codex_app_server',
+  sidecarAgentId: codexSidecar.agentId,
+  requestId: 'req-1',
+  turnCorrelationId: 'turn-1',
+  status: 'sent',
+  promptPreview: 'hello',
+  excludeFromModelContext: true,
+} satisfies ExternalThreadMessageContext
+
+const codexParentCard = {
+  type: 'conversation_message',
+  agentId: agent.agentId,
+  role: 'system',
+  text: 'Sent to Codex',
+  timestamp: now,
+  source: 'system',
+  externalThreadContext: codexParentCardContext,
+} satisfies ConversationMessageEvent
 
 const terminal = {
   terminalId: 'terminal-1',
@@ -637,6 +686,8 @@ describe('protocol root barrel contract', () => {
     expect(collabServerEvent.type).toBe('collab_bootstrap')
     expect(terminalMeta.version).toBe(1)
     expect(specialist.targetSpace).toContain('builder')
+    expect(codexSidecar.externalThread?.threadId).toBe('codex-thread-1')
+    expect(codexParentCard.externalThreadContext?.excludeFromModelContext).toBe(true)
   })
 
   it('exports CLI protocol contracts from the root barrel', () => {

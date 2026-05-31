@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
-import { getCommonKnowledgePath } from '../swarm/data-paths.js'
+import { getCommonKnowledgePath, getWorkerSessionFilePath } from '../swarm/data-paths.js'
 import { makeTempConfig as buildTempConfig } from '../test-support/index.js'
 const memoryMergeMockState = vi.hoisted(() => ({
   executeLLMMerge: vi.fn(async (..._args: any[]) => '# Swarm Memory\n\n## Decisions\n- merged by mock\n'),
@@ -34,7 +34,12 @@ vi.mock('../swarm/project-agent-analysis.js', async () => {
 
 import type { AgentDescriptor, SwarmConfig } from '../swarm/types.js'
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
-import { FakeRuntime, TestSwarmManager as TestSwarmManagerBase, bootWithDefaultManager } from '../test-support/index.js'
+import {
+  FakeRuntime,
+  TestSwarmManager as TestSwarmManagerBase,
+  bootWithDefaultManager,
+  createCodexExternalThreadWorkerDescriptor,
+} from '../test-support/index.js'
 
 class TestSwarmManager extends TestSwarmManagerBase {
   protected override async createRuntimeForDescriptor(
@@ -1300,6 +1305,32 @@ describe('SwarmManager', () => {
     ])
     const descriptor = manager.listAgents().find((agent) => agent.agentId === worker.agentId)
     expect(descriptor?.status).toBe('terminated')
+  })
+
+  it('passes terminateExternalThreadSidecarTurn cleanup callback through manager killAgent for Codex sidecars', async () => {
+    const config = await makeTempConfig()
+    const terminateExternalThreadSidecarTurn = vi.fn(async (agentId: string) => {
+      const descriptor = manager.getAgent(agentId)
+      if (descriptor) {
+        descriptor.status = 'idle'
+      }
+    })
+    const manager = new TestSwarmManager(config, { terminateExternalThreadSidecarTurn })
+    const session = await bootWithDefaultManager(manager, config)
+    const codex = createCodexExternalThreadWorkerDescriptor(config.defaultCwd, session.agentId, {
+      agentId: `${session.agentId}--codex`,
+      status: 'streaming',
+      profileId: session.profileId,
+      sessionFile: getWorkerSessionFilePath(config.paths.dataDir, session.profileId!, session.agentId, `${session.agentId}--codex`),
+    })
+
+    ;(manager as unknown as { descriptors: Map<string, AgentDescriptor> }).descriptors.set(codex.agentId, codex)
+
+    await manager.killAgent(session.agentId, codex.agentId)
+
+    expect(terminateExternalThreadSidecarTurn).toHaveBeenCalledTimes(1)
+    expect(terminateExternalThreadSidecarTurn).toHaveBeenCalledWith(codex.agentId)
+    expect(manager.getAgent(codex.agentId)?.status).toBe('terminated')
   })
 
   it('stops all agents by cancelling in-flight work without terminating runtimes', async () => {

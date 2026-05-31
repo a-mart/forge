@@ -204,18 +204,21 @@ export async function copySessionHistoryForFork(options: CopySessionHistoryForFo
   }
 
   const omittedCustomTypes = new Set(options.omittedCustomTypes ?? []);
+  const droppedEntryParentIdMap = new Map<string, string | null>();
   const targetHandle = await openFile(options.targetSessionFile, "w");
   let foundForkPoint = !options.fromMessageId;
 
   try {
     for await (const line of sourceHandle.readLines()) {
-      if (!shouldCopySessionHistoryLineForFork(line, omittedCustomTypes)) {
-        continue;
+      const reachedForkPoint =
+        options.fromMessageId !== undefined && isForkTargetConversationEntryLine(line, options.fromMessageId);
+      const forkLine = buildForkSessionHistoryLine(line, omittedCustomTypes, droppedEntryParentIdMap);
+
+      if (forkLine !== undefined) {
+        await targetHandle.write(`${forkLine}\n`);
       }
 
-      await targetHandle.write(`${line}\n`);
-
-      if (options.fromMessageId && isForkTargetConversationEntryLine(line, options.fromMessageId)) {
+      if (reachedForkPoint) {
         foundForkPoint = true;
         break;
       }
@@ -294,25 +297,135 @@ export function parseConversationMessageEntryLine(line: string): { id?: string }
   return undefined;
 }
 
-function shouldCopySessionHistoryLineForFork(line: string, omittedCustomTypes: ReadonlySet<string>): boolean {
+function buildForkSessionHistoryLine(
+  line: string,
+  omittedCustomTypes: ReadonlySet<string>,
+  droppedEntryParentIdMap: Map<string, string | null>
+): string | undefined {
   const trimmedLine = line.trim();
   if (trimmedLine.length === 0) {
-    return true;
+    return line;
   }
 
   let parsedEntry: unknown;
   try {
     parsedEntry = JSON.parse(trimmedLine);
   } catch {
-    return true;
+    return line;
   }
 
-  return !(
+  if (shouldDropSessionHistoryLineForFork(parsedEntry, omittedCustomTypes)) {
+    const entryLink = parseSessionEntryLink(parsedEntry);
+    if (entryLink?.id) {
+      const survivingParentId = resolveForkParentId(entryLink.parentId, droppedEntryParentIdMap);
+      droppedEntryParentIdMap.set(entryLink.id, survivingParentId ?? null);
+    }
+    return undefined;
+  }
+
+  const rewrittenEntry = rewriteForkParentIdForRetainedEntry(parsedEntry, droppedEntryParentIdMap);
+  return rewrittenEntry ? JSON.stringify(rewrittenEntry) : line;
+}
+
+function shouldDropSessionHistoryLineForFork(parsedEntry: unknown, omittedCustomTypes: ReadonlySet<string>): boolean {
+  if (
     isRecordLike(parsedEntry) &&
     parsedEntry.type === "custom" &&
     typeof parsedEntry.customType === "string" &&
     omittedCustomTypes.has(parsedEntry.customType)
+  ) {
+    return true;
+  }
+
+  return isForkExcludedCodexParentCardEntry(parsedEntry);
+}
+
+function isForkExcludedCodexParentCardEntry(parsedEntry: unknown): boolean {
+  if (
+    !isRecordLike(parsedEntry) ||
+    parsedEntry.type !== "custom" ||
+    parsedEntry.customType !== CONVERSATION_ENTRY_TYPE
+  ) {
+    return false;
+  }
+
+  const data = parsedEntry.data;
+  if (!isRecordLike(data) || data.type !== "conversation_message" || data.role !== "system") {
+    return false;
+  }
+
+  const externalThreadContext = data.externalThreadContext;
+  return (
+    isRecordLike(externalThreadContext) &&
+    externalThreadContext.type === "codex_app_server" &&
+    externalThreadContext.excludeFromModelContext === true
   );
+}
+
+function rewriteForkParentIdForRetainedEntry(
+  parsedEntry: unknown,
+  droppedEntryParentIdMap: ReadonlyMap<string, string | null>
+): Record<string, unknown> | undefined {
+  const entryLink = parseSessionEntryLink(parsedEntry);
+  if (!entryLink || entryLink.parentId === undefined) {
+    return undefined;
+  }
+
+  const resolvedParentId = resolveForkParentId(entryLink.parentId, droppedEntryParentIdMap);
+  if (resolvedParentId === entryLink.parentId) {
+    return undefined;
+  }
+
+  return {
+    ...entryLink.entry,
+    parentId: resolvedParentId,
+  };
+}
+
+function parseSessionEntryLink(parsedEntry: unknown):
+  | { entry: Record<string, unknown>; id?: string; parentId?: string | null }
+  | undefined {
+  if (!isRecordLike(parsedEntry)) {
+    return undefined;
+  }
+
+  const id =
+    typeof parsedEntry.id === "string" && parsedEntry.id.trim().length > 0 ? parsedEntry.id : undefined;
+  const parentId =
+    parsedEntry.parentId === null
+      ? null
+      : typeof parsedEntry.parentId === "string" && parsedEntry.parentId.trim().length > 0
+        ? parsedEntry.parentId
+        : undefined;
+
+  if (id === undefined && parentId === undefined) {
+    return undefined;
+  }
+
+  return { entry: parsedEntry, id, parentId };
+}
+
+function resolveForkParentId(
+  parentId: string | null | undefined,
+  droppedEntryParentIdMap: ReadonlyMap<string, string | null>
+): string | null | undefined {
+  if (parentId === undefined || parentId === null) {
+    return parentId;
+  }
+
+  let resolvedParentId: string | null = parentId;
+  const visitedParentIds = new Set<string>();
+
+  while (resolvedParentId !== null && droppedEntryParentIdMap.has(resolvedParentId)) {
+    if (visitedParentIds.has(resolvedParentId)) {
+      break;
+    }
+
+    visitedParentIds.add(resolvedParentId);
+    resolvedParentId = droppedEntryParentIdMap.get(resolvedParentId) ?? null;
+  }
+
+  return resolvedParentId;
 }
 
 function isForkTargetConversationEntryLine(line: string, fromMessageId: string): boolean {

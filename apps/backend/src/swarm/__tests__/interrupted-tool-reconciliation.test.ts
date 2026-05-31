@@ -90,6 +90,39 @@ describe("reconcileInterruptedToolCallsForBoot", () => {
     expect(entries).toHaveLength(2);
   });
 
+  it("does not reconcile unmatched tool starts for streaming external-thread sidecars excluded from boot inputs", async () => {
+    const { manager, append } = await createFixture();
+    const codexSidecar = descriptor({
+      agentId: "manager--codex",
+      role: "worker",
+      managerId: "manager",
+      status: "streaming",
+      sessionFile: join(manager.sessionFile, "../codex.jsonl"),
+      model: {
+        provider: "codex-app-server",
+        modelId: "app-server",
+        thinkingLevel: "none",
+      },
+      externalThread: {
+        type: "codex_app_server",
+        persisted: true,
+        createdByMention: true,
+      },
+    } as Partial<AgentDescriptor>);
+    append(tool({ actorAgentId: codexSidecar.agentId, toolCallId: "codex-open-tool" }));
+
+    const result = reconcileInterruptedToolCallsForBoot({
+      descriptors: new Map([[manager.agentId, manager], [codexSidecar.agentId, codexSidecar]]),
+      interruptedActorAgentIds: new Set([manager.agentId]),
+      now: () => NOW,
+    });
+
+    const entries = await readConversationEntries(manager.sessionFile);
+    expect(result).toEqual({ reconciledToolCalls: 0, deliveryWarnings: 0 });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.kind).toBe("tool_execution_start");
+  });
+
   it("appends a synthetic error end for an unmatched tool start from an interrupted streaming actor", async () => {
     const { manager, worker, append } = await createFixture();
     append(tool({ toolName: "shell", toolCallId: "open-tool", text: "{\"command\":\"pnpm test\"}" }));

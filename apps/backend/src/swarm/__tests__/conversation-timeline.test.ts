@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import {
   CONVERSATION_ENTRY_TYPE,
   ConversationTimeline,
@@ -58,11 +59,24 @@ function buildSessionHeader(cwd: string, id = "session-header"): string {
   });
 }
 
+type SessionEntryWithId = {
+  id: string;
+  type: string;
+  parentId: string | null;
+  customType?: string;
+  data?: unknown;
+};
+
 function buildConversationEntry(id: string, text = id): string {
   return buildConversationMessageEntry({ wrapperId: id, dataId: id, text });
 }
 
-function buildConversationMessageEntry(options: { wrapperId?: string; dataId?: string; text?: string }): string {
+function buildConversationMessageEntry(options: {
+  wrapperId?: string;
+  dataId?: string;
+  text?: string;
+  parentId?: string | null;
+}): string {
   const data: Record<string, unknown> = {
     type: "conversation_message",
     agentId: "manager",
@@ -80,10 +94,44 @@ function buildConversationMessageEntry(options: { wrapperId?: string; dataId?: s
     type: "custom",
     customType: CONVERSATION_ENTRY_TYPE,
     ...(options.wrapperId !== undefined ? { id: options.wrapperId } : {}),
-    parentId: null,
+    parentId: options.parentId ?? null,
     timestamp: FIXED_NOW,
     data
   });
+}
+
+function findConversationCustomEntry(entries: SessionEntryWithId[], text: string): SessionEntryWithId | undefined {
+  return entries.find(
+    (entry) =>
+      entry.type === "custom" &&
+      entry.customType === CONVERSATION_ENTRY_TYPE &&
+      typeof entry.data === "object" &&
+      entry.data !== null &&
+      "type" in entry.data &&
+      "text" in entry.data &&
+      (entry.data as { type?: unknown }).type === "conversation_message" &&
+      (entry.data as { text?: unknown }).text === text
+  );
+}
+
+function extractMessageText(message: unknown): string | undefined {
+  if (!message || typeof message !== "object" || !("content" in message)) {
+    return undefined;
+  }
+
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+
+  const textParts = content
+    .filter(
+      (item): item is { type: "text"; text: string } =>
+        !!item && typeof item === "object" && (item as { type?: unknown }).type === "text" && typeof (item as { text?: unknown }).text === "string"
+    )
+    .map((item) => item.text);
+
+  return textParts.length > 0 ? textParts.join("") : undefined;
 }
 
 describe("ConversationTimeline", () => {
@@ -246,6 +294,220 @@ describe("ConversationTimeline", () => {
     expect(copied).not.toContain("omit_me");
     expect(copied).toContain("keep_me");
     expect(copied).toContain("message-1");
+  });
+
+  it("drops display-only parent Codex cards when copying fork history", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    const codexCard = {
+      type: "custom",
+      customType: "swarm_conversation_entry",
+      id: "card-1",
+      parentId: null,
+      timestamp: "2026-05-30T00:00:00.000Z",
+      data: {
+        type: "conversation_message",
+        agentId: "mgr-1",
+        role: "system",
+        text: "Sent to Codex",
+        timestamp: "2026-05-30T00:00:00.000Z",
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: "mgr-1--codex",
+          requestId: "req-1",
+          turnCorrelationId: "turn-1",
+          status: "sent",
+          promptPreview: "hello",
+          excludeFromModelContext: true,
+        },
+      },
+    };
+
+    writeFileSync(
+      sourceSessionFile,
+      [buildSessionHeader(root), JSON.stringify(codexCard), buildConversationEntry("message-1")].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile });
+
+    const copied = readFileSync(targetSessionFile, "utf8");
+    expect(copied).not.toContain("Sent to Codex");
+    expect(copied).not.toContain("externalThreadContext");
+    expect(copied).not.toContain("mgr-1--codex");
+    expect(copied).toContain("message-1");
+  });
+
+  it("reparents retained entries around dropped Codex cards so SessionManager keeps full-fork branch continuity", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    const codexCard = JSON.stringify({
+      type: "custom",
+      customType: CONVERSATION_ENTRY_TYPE,
+      id: "entry-card-1",
+      parentId: "entry-1",
+      timestamp: "2026-05-30T00:00:00.000Z",
+      data: {
+        id: "card-message-1",
+        type: "conversation_message",
+        agentId: "mgr-1",
+        role: "system",
+        text: "Sent to Codex",
+        timestamp: "2026-05-30T00:00:00.000Z",
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: "mgr-1--codex",
+          requestId: "req-1",
+          turnCorrelationId: "turn-1",
+          status: "sent",
+          promptPreview: "hello",
+          excludeFromModelContext: true,
+        },
+      },
+    });
+
+    writeFileSync(
+      sourceSessionFile,
+      [
+        buildSessionHeader(root),
+        buildConversationMessageEntry({ wrapperId: "entry-1", dataId: "message-1", text: "before Codex" }),
+        codexCard,
+        buildConversationMessageEntry({
+          wrapperId: "entry-2",
+          dataId: "message-2",
+          text: "after Codex",
+          parentId: "entry-card-1",
+        }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile });
+
+    const copiedLines = readFileSync(targetSessionFile, "utf8").trimEnd().split("\n");
+    const reparentedEntry = JSON.parse(copiedLines[2] ?? "{}") as { parentId?: string | null };
+    expect(reparentedEntry.parentId).toBe("entry-1");
+
+    const forkedSession = SessionManager.open(targetSessionFile);
+    const branch = forkedSession.getBranch() as SessionEntryWithId[];
+    expect(findConversationCustomEntry(branch, "before Codex")).toBeDefined();
+    expect(findConversationCustomEntry(branch, "after Codex")).toBeDefined();
+    expect(findConversationCustomEntry(branch, "Sent to Codex")).toBeUndefined();
+  });
+
+  it("reparents retained pi message entries so buildSessionContext keeps pre-card runtime history", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    const sourceSession = SessionManager.open(sourceSessionFile);
+    const beforeEntryId = sourceSession.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "before runtime context" }],
+    } as any);
+    const afterEntryId = sourceSession.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "after runtime context" }],
+    } as any);
+
+    const existingLines = readFileSync(sourceSessionFile, "utf8").trimEnd().split("\n");
+    const afterEntry = JSON.parse(existingLines[2] ?? "{}") as Record<string, unknown>;
+    const codexCard = JSON.stringify({
+      type: "custom",
+      customType: CONVERSATION_ENTRY_TYPE,
+      id: "entry-card-runtime-1",
+      parentId: beforeEntryId,
+      timestamp: "2026-05-30T00:00:00.000Z",
+      data: {
+        id: "card-runtime-message-1",
+        type: "conversation_message",
+        agentId: "mgr-1",
+        role: "system",
+        text: "Sent to Codex",
+        timestamp: "2026-05-30T00:00:00.000Z",
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: "mgr-1--codex",
+          requestId: "req-1",
+          turnCorrelationId: "turn-1",
+          status: "sent",
+          promptPreview: "hello",
+          excludeFromModelContext: true,
+        },
+      },
+    });
+
+    writeFileSync(
+      sourceSessionFile,
+      [
+        existingLines[0],
+        existingLines[1],
+        codexCard,
+        JSON.stringify({ ...afterEntry, id: afterEntryId, parentId: "entry-card-runtime-1" }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile });
+
+    const forkedSession = SessionManager.open(targetSessionFile);
+    const contextTexts = forkedSession.buildSessionContext().messages.map((message) => extractMessageText(message));
+    expect(contextTexts).toContain("before runtime context");
+    expect(contextTexts).toContain("after runtime context");
+    expect(contextTexts).not.toContain("Sent to Codex");
+  });
+
+  it("treats dropped parent Codex cards as valid partial fork boundaries", async () => {
+    const root = await createTempDir("conversation-timeline-");
+    const sourceSessionFile = join(root, "source.jsonl");
+    const targetSessionFile = join(root, "target.jsonl");
+    const codexCard = JSON.stringify({
+      type: "custom",
+      customType: "swarm_conversation_entry",
+      id: "entry-card-1",
+      parentId: "message-1",
+      timestamp: "2026-05-30T00:00:00.000Z",
+      data: {
+        id: "card-message-1",
+        type: "conversation_message",
+        agentId: "mgr-1",
+        role: "system",
+        text: "Sent to Codex",
+        timestamp: "2026-05-30T00:00:00.000Z",
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: "mgr-1--codex",
+          requestId: "req-1",
+          turnCorrelationId: "turn-1",
+          status: "sent",
+          promptPreview: "hello",
+          excludeFromModelContext: true,
+        },
+      },
+    });
+
+    writeFileSync(
+      sourceSessionFile,
+      [
+        buildSessionHeader(root),
+        buildConversationMessageEntry({ wrapperId: "entry-1", dataId: "message-1" }),
+        codexCard,
+        buildConversationMessageEntry({ wrapperId: "entry-2", dataId: "message-2", parentId: "entry-card-1" }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    await copySessionHistoryForFork({ sourceSessionFile, targetSessionFile, fromMessageId: "card-message-1" });
+
+    const copied = readFileSync(targetSessionFile, "utf8");
+    expect(copied).toContain("message-1");
+    expect(copied).not.toContain("Sent to Codex");
+    expect(copied).not.toContain("message-2");
   });
 
   it("copies partial fork history through the matching top-level conversation entry id when data.id is absent", async () => {

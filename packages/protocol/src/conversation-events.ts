@@ -15,6 +15,28 @@ export interface ProjectAgentMessageContext {
   fromDisplayName: string
 }
 
+export const EXTERNAL_THREAD_MESSAGE_STATUSES = [
+  'sent',
+  'running',
+  'completed',
+  'stopped',
+  'error',
+] as const
+export type ExternalThreadMessageStatus = (typeof EXTERNAL_THREAD_MESSAGE_STATUSES)[number]
+
+export interface ExternalThreadMessageContext {
+  type: 'codex_app_server'
+  sidecarAgentId: string
+  requestId: string
+  turnCorrelationId: string
+  threadId?: string
+  promptPreview?: string
+  resultPreview?: string
+  status: ExternalThreadMessageStatus
+  detailMessageId?: string
+  excludeFromModelContext: true
+}
+
 export interface ConversationMessageEvent {
   type: 'conversation_message'
   agentId: string
@@ -27,6 +49,7 @@ export interface ConversationMessageEvent {
   sourceContext?: MessageSourceContext
   collaborationAuthor?: CollaborationAuthor
   projectAgentContext?: ProjectAgentMessageContext
+  externalThreadContext?: ExternalThreadMessageContext
   pinned?: boolean
 }
 

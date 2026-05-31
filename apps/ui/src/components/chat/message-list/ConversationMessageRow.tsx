@@ -7,6 +7,7 @@ import { MessageAttachments } from './MessageAttachments'
 import { MessageFeedback } from './MessageFeedback'
 import { SourceBadge, formatTimestamp } from './message-row-utils'
 import { getAuthorColor, getAuthorInitials } from './collab-author-utils'
+import { ExternalThreadContextCard } from './ExternalThreadContextCard'
 import type { ConversationMessageEntry, MessageListSurface } from './types'
 
 function CopyButton({ text }: { text: string }) {
@@ -80,6 +81,8 @@ interface ConversationMessageRowProps {
   onArtifactClick?: (artifact: ArtifactReference) => void
   onForkFromMessage?: (messageId: string) => void
   onPinMessage?: (messageId: string, pinned: boolean) => void
+  onStopExternalThread?: (sidecarAgentId: string) => void
+  canStopExternalThread?: boolean
   feedbackVote?: 'up' | 'down' | null
   feedbackHasComment?: boolean
   onFeedbackVote?: (
@@ -114,6 +117,8 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   onArtifactClick,
   onForkFromMessage,
   onPinMessage,
+  onStopExternalThread,
+  canStopExternalThread,
   feedbackVote,
   feedbackHasComment,
   onFeedbackVote,
@@ -124,8 +129,12 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   const normalizedText = message.text.trim()
   const hasText = normalizedText.length > 0 && normalizedText !== '.'
   const attachments = message.attachments ?? []
+  const externalThreadContext =
+    message.role === 'system' && message.externalThreadContext?.type === 'codex_app_server'
+      ? message.externalThreadContext
+      : null
 
-  if (!hasText && attachments.length === 0) {
+  if (!hasText && attachments.length === 0 && !externalThreadContext) {
     return null
   }
 
@@ -144,6 +153,22 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
         message={message}
         timestampLabel={timestampLabel}
         wsUrl={wsUrl}
+      />
+    )
+  }
+
+  if (externalThreadContext) {
+    const sidecarAgentId = externalThreadContext.sidecarAgentId?.trim() ?? ''
+    const stopDisabled =
+      !onStopExternalThread || sidecarAgentId.length === 0 || canStopExternalThread !== true
+
+    return (
+      <ExternalThreadContextCard
+        context={externalThreadContext}
+        text={normalizedText}
+        timestampLabel={timestampLabel}
+        onStop={() => onStopExternalThread?.(sidecarAgentId)}
+        stopDisabled={stopDisabled}
       />
     )
   }

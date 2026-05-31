@@ -19,6 +19,10 @@ import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
 import { ChoiceRequestCard } from './message-list/ChoiceRequestCard'
 import { ConversationMessageRow } from './message-list/ConversationMessageRow'
+import {
+  buildStoppableExternalThreadMessageIds,
+  resolveConversationMessageTargetId,
+} from './message-list/external-thread-stop-eligibility'
 import { EmptyState } from './message-list/EmptyState'
 import { ActiveWorkCard, hasActiveWork } from './active-work'
 import {
@@ -53,6 +57,7 @@ interface MessageListProps {
   onArtifactClick?: (artifact: ArtifactReference) => void
   onForkFromMessage?: (messageId: string) => void
   onPinMessage?: (messageId: string, pinned: boolean) => void
+  onStopExternalThread?: (sidecarAgentId: string) => void
   getVote?: (targetId: string, fallbackTargetId?: string) => 'up' | 'down' | null
   hasComment?: (targetId: string, fallbackTargetId?: string) => boolean
   onFeedbackVote?: (
@@ -141,13 +146,6 @@ function isNearBottom(container: HTMLElement, threshold = AUTO_SCROLL_THRESHOLD_
   const distanceFromBottom =
     container.scrollHeight - container.scrollTop - container.clientHeight
   return distanceFromBottom <= threshold
-}
-
-function resolveConversationMessageTargetId(
-  message: Extract<ConversationEntry, { type: 'conversation_message' }>,
-): string {
-  const id = message.id?.trim()
-  return id && id.length > 0 ? id : message.timestamp
 }
 
 function resolveConversationMessageLegacyTargetId(
@@ -336,6 +334,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onArtifactClick,
   onForkFromMessage,
   onPinMessage,
+  onStopExternalThread,
   getVote,
   hasComment,
   onFeedbackVote,
@@ -363,6 +362,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const [showScrollButton, setShowScrollButton] = useState(false)
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
+
+  const stoppableExternalThreadMessageIds = useMemo(
+    () => buildStoppableExternalThreadMessageIds(messages, statuses),
+    [messages, statuses],
+  )
 
   const agentDisplayMap = useMemo<Map<string, AgentDisplayMeta>>(
     () => (agents ? buildAgentDisplayMap(agents) : new Map()),
@@ -614,6 +618,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               const isAssistant = entry.message.role === 'assistant'
               const feedbackTargetId = resolveConversationMessageTargetId(entry.message)
               const feedbackLegacyTargetId = resolveConversationMessageLegacyTargetId(entry.message)
+              const hasExternalThreadContext =
+                entry.message.role === 'system' &&
+                entry.message.externalThreadContext?.type === 'codex_app_server'
 
               return (
                 <div
@@ -631,6 +638,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                     onArtifactClick={onArtifactClick}
                     onForkFromMessage={entry.message.role !== 'system' ? onForkFromMessage : undefined}
                     onPinMessage={entry.message.role !== 'system' ? onPinMessage : undefined}
+                    onStopExternalThread={onStopExternalThread}
+                    canStopExternalThread={
+                      hasExternalThreadContext
+                        ? stoppableExternalThreadMessageIds.has(feedbackTargetId)
+                        : undefined
+                    }
                     feedbackVote={
                       isAssistant && getVote
                         ? getVote(feedbackTargetId, feedbackLegacyTargetId)

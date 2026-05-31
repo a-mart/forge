@@ -19,6 +19,7 @@ import { ChatSidePanels } from '@/components/index-page/ChatSidePanels'
 import { ChatWorkspace } from '@/components/index-page/ChatWorkspace'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { StatsPage } from '@/components/index-page/StatsPage'
+import { shouldEnableCodexMention } from '@/components/index-page/codex-mention-utils'
 import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
 import { chooseFallbackAgentId, filterAgentsAfterProfileArchive, filterAgentsAfterSessionArchive, isAgentEffectivelyArchived, resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
@@ -1457,6 +1458,7 @@ export function BuilderSurface({
                   onArtifactClick: handleOpenArtifact,
                   onForkFromMessage: activeAgentId ? handleForkFromMessage : undefined,
                   onPinMessage: isActiveManager && activeAgentId ? handlePinMessage : undefined,
+                  onStopExternalThread: handleStopSession,
                   getVote: feedbackProfileId ? getVote : undefined,
                   hasComment: feedbackProfileId ? hasComment : undefined,
                   onFeedbackVote: feedbackProfileId ? submitVote : undefined,
@@ -1539,6 +1541,7 @@ export function BuilderSurface({
                   agentId: activeAgentId ?? undefined,
                   slashCommands,
                   projectAgents: projectAgentSuggestions,
+                  enableCodexMention: shouldEnableCodexMention(activeAgent),
                 }}
               />
             )}

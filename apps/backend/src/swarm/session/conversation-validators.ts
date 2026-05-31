@@ -22,9 +22,18 @@ import type {
   ConversationMessageAttachment,
   ConversationMessageEvent,
   ConversationTextAttachment,
+  ExternalThreadMessageContext,
   MessageSourceContext,
   ProjectAgentMessageContext
 } from "../types.js";
+
+const EXTERNAL_THREAD_MESSAGE_STATUSES = [
+  "sent",
+  "running",
+  "completed",
+  "stopped",
+  "error",
+] as const;
 
 export function isConversationEntryEvent(value: unknown): value is ConversationEntryEvent {
   return (
@@ -73,6 +82,10 @@ function isConversationMessageEvent(value: unknown): value is ConversationMessag
   }
 
   if (maybe.projectAgentContext !== undefined && !isProjectAgentMessageContext(maybe.projectAgentContext)) {
+    return false;
+  }
+
+  if (maybe.externalThreadContext !== undefined && !isExternalThreadMessageContext(maybe.externalThreadContext)) {
     return false;
   }
 
@@ -138,6 +151,49 @@ function isProjectAgentMessageContext(value: unknown): value is ProjectAgentMess
 
   const maybe = value as Partial<ProjectAgentMessageContext>;
   return typeof maybe.fromAgentId === "string" && typeof maybe.fromDisplayName === "string";
+}
+
+function isExternalThreadMessageContext(value: unknown): value is ExternalThreadMessageContext {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybe = value as Partial<ExternalThreadMessageContext>;
+  if (maybe.type !== "codex_app_server") {
+    return false;
+  }
+  if (typeof maybe.sidecarAgentId !== "string" || maybe.sidecarAgentId.length === 0) {
+    return false;
+  }
+  if (typeof maybe.requestId !== "string" || maybe.requestId.length === 0) {
+    return false;
+  }
+  if (typeof maybe.turnCorrelationId !== "string" || maybe.turnCorrelationId.length === 0) {
+    return false;
+  }
+  if (maybe.threadId !== undefined && typeof maybe.threadId !== "string") {
+    return false;
+  }
+  if (maybe.promptPreview !== undefined && typeof maybe.promptPreview !== "string") {
+    return false;
+  }
+  if (maybe.resultPreview !== undefined && typeof maybe.resultPreview !== "string") {
+    return false;
+  }
+  if (
+    maybe.status === undefined ||
+    !(EXTERNAL_THREAD_MESSAGE_STATUSES as readonly string[]).includes(maybe.status)
+  ) {
+    return false;
+  }
+  if (maybe.detailMessageId !== undefined && typeof maybe.detailMessageId !== "string") {
+    return false;
+  }
+  if (maybe.excludeFromModelContext !== true) {
+    return false;
+  }
+
+  return true;
 }
 
 function isConversationAttachment(value: unknown): value is ConversationAttachment {

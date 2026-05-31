@@ -19,6 +19,7 @@ import {
 } from "./swarm-manager-utils.js";
 import { extractMessageErrorMessage, extractMessageText, extractRole } from "./message-utils.js";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
+import { isExternalThreadDescriptor } from "./external-thread-compatibility.js";
 
 const IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE = `⚠️ [IDLE WORKER WATCHDOG — BATCHED]
 
@@ -361,6 +362,11 @@ export class SwarmWorkerHealthService {
   }
 
   handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): void {
+    const descriptor = this.options.descriptors.get(agentId);
+    if (descriptor && isExternalThreadDescriptor(descriptor)) {
+      return;
+    }
+
     this.trackWorkerStallProgressEvent(agentId, event);
     this.updateWorkerActivity(agentId, event);
   }
@@ -371,6 +377,10 @@ export class SwarmWorkerHealthService {
     nextStatus: AgentStatus,
     pendingCount: number
   ): Promise<void> {
+    if (isExternalThreadDescriptor(descriptor)) {
+      return;
+    }
+
     const effectiveStatus = descriptor.status;
     if (effectiveStatus === "streaming" && !this.workerStallState.has(agentId)) {
       this.workerStallState.set(agentId, {
@@ -406,6 +416,10 @@ export class SwarmWorkerHealthService {
     agentId: string,
     descriptor: AgentDescriptor & { role: "worker" }
   ): Promise<void> {
+    if (isExternalThreadDescriptor(descriptor)) {
+      return;
+    }
+
     if (this.isRuntimeRecoveryActive(agentId)) {
       const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
       watchdogState.turnSeq += 1;
@@ -492,7 +506,7 @@ export class SwarmWorkerHealthService {
 
   seedWorkerCompletionReportTimestamp(agentId: string): void {
     const descriptor = this.options.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
+    if (!descriptor || descriptor.role !== "worker" || isExternalThreadDescriptor(descriptor)) {
       return;
     }
 
@@ -860,7 +874,7 @@ export class SwarmWorkerHealthService {
     const now = Date.now();
 
     for (const [agentId, descriptor] of this.options.descriptors.entries()) {
-      if (descriptor.role !== "worker" || descriptor.status !== "streaming") {
+      if (descriptor.role !== "worker" || descriptor.status !== "streaming" || isExternalThreadDescriptor(descriptor)) {
         continue;
       }
 

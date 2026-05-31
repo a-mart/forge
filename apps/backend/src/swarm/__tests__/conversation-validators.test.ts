@@ -73,6 +73,49 @@ describe("conversation validators", () => {
     ).toBe(true);
   });
 
+  it("accepts Codex external-thread display/control cards on conversation messages", () => {
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        id: "codex-request-1",
+        role: "system",
+        text: "Sent to Codex",
+        timestamp: FIXED_NOW,
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: "manager-1--codex",
+          requestId: "req-1",
+          turnCorrelationId: "turn-1",
+          status: "sent",
+          promptPreview: "hello",
+          excludeFromModelContext: true
+        }
+      })
+    ).toBe(true);
+  });
+
+  it("rejects Codex external-thread cards missing excludeFromModelContext", () => {
+    expect(
+      isConversationEntryEvent({
+        type: "conversation_message",
+        agentId: "manager-1",
+        role: "system",
+        text: "Sent to Codex",
+        timestamp: FIXED_NOW,
+        source: "system",
+        externalThreadContext: {
+          type: "codex_app_server",
+          sidecarAgentId: "manager-1--codex",
+          requestId: "req-1",
+          turnCorrelationId: "turn-1",
+          status: "sent"
+        }
+      })
+    ).toBe(false);
+  });
+
   it("accepts CLI source context on persisted agent message activity", () => {
     expect(
       isConversationEntryEvent({

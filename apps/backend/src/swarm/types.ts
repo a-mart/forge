@@ -9,6 +9,8 @@ import {
   type CollaborationAuthor,
   type MessageChannel as ProtocolMessageChannel,
   type ManagerProfile,
+  type ExternalThreadInfo,
+  type ExternalThreadMessageContext,
   type ProjectAgentInfo,
   type ProjectAgentMessageContext,
   type WorkPlanSnapshot,
@@ -23,7 +25,12 @@ export type AgentArchetypeId = string;
 
 export type { AgentStatus };
 export type { AgentCollaborationLink, AgentModelOrigin, AgentSessionSurface, CliSessionMetadata, ManagerProfile };
-export type { ProjectAgentMessageContext };
+export type { ExternalThreadInfo, ExternalThreadMessageContext, ProjectAgentMessageContext };
+export {
+  isCodexAppServerExternalThreadDescriptor,
+  isExternalThreadDescriptor,
+  shouldExcludeConversationMessageFromModelContext,
+} from "@forge/protocol";
 export type {
   ChoiceAnswer,
   ChoiceQuestion,
@@ -91,6 +98,7 @@ export interface AgentDescriptor {
   projectAgent?: ProjectAgentInfo;
   agentCreatorResult?: AgentCreatorResult;
   webSearch?: boolean;
+  externalThread?: ExternalThreadInfo;
 }
 
 export interface AgentsStoreFile {
@@ -271,6 +279,7 @@ export interface ConversationMessageEvent {
   sourceContext?: MessageSourceContext;
   collaborationAuthor?: CollaborationAuthor;
   projectAgentContext?: ProjectAgentMessageContext;
+  externalThreadContext?: ExternalThreadMessageContext;
   pinned?: boolean;
 }
 

@@ -146,6 +146,19 @@ export interface AgentCollaborationLink {
   channelId: string
 }
 
+export const EXTERNAL_THREAD_TYPES = ['codex_app_server'] as const
+export type ExternalThreadType = (typeof EXTERNAL_THREAD_TYPES)[number]
+
+export interface CodexAppServerExternalThreadInfo {
+  type: 'codex_app_server'
+  threadId?: string
+  persisted: true
+  createdByMention: boolean
+  lastTurnId?: string
+}
+
+export type ExternalThreadInfo = CodexAppServerExternalThreadInfo
+
 export interface AgentDescriptor {
   agentId: string
   managerId: string
@@ -182,4 +195,5 @@ export interface AgentDescriptor {
   projectAgent?: ProjectAgentInfo
   agentCreatorResult?: AgentCreatorResult
   webSearch?: boolean
+  externalThread?: ExternalThreadInfo
 }

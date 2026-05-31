@@ -95,6 +95,64 @@ describe("session command handler", () => {
     );
   });
 
+  it("stop_session does not unsubscribe preserved Codex external-thread sidecar ids", async () => {
+    const send = vi.fn();
+    const handleDeletedAgentSubscriptions = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      stopSession: vi.fn(async () => ({ terminatedWorkerIds: [] })),
+    };
+
+    await handleSessionCommand({
+      command: { type: "stop_session", agentId: "manager", requestId: "req-stop" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions,
+    });
+
+    expect(handleDeletedAgentSubscriptions).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_stopped",
+        agentId: "manager",
+        terminatedWorkerIds: [],
+        requestId: "req-stop",
+      }),
+    );
+  });
+
+  it("archive_session unsubscribes only truly deleted worker ids", async () => {
+    const send = vi.fn();
+    const handleDeletedAgentSubscriptions = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      archiveSession: vi.fn(async () => ({
+        agentId: "manager--s2",
+        profileId: "manager",
+        archivedAt: "2026-05-20T00:00:00.000Z",
+        terminatedWorkerIds: ["worker-1"],
+      })),
+    };
+
+    await handleSessionCommand({
+      command: { type: "archive_session", agentId: "manager--s2", requestId: "req-archive-stop" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions,
+    });
+
+    expect(handleDeletedAgentSubscriptions).toHaveBeenCalledWith(new Set(["worker-1"]));
+  });
+
   it("rejects archive_session and restore_session inside system-managed profiles", async () => {
     const send = vi.fn();
     const swarmManager = {

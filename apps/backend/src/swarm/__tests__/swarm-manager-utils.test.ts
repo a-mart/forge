@@ -530,6 +530,117 @@ describe("validateAgentDescriptor", () => {
       }
     });
   });
+
+  it("validates and normalizes Codex external-thread metadata", () => {
+    const accepted = validateAgentDescriptor(
+      baseDescriptor({
+        role: "worker",
+        agentId: "mgr-1--codex",
+        displayName: "Codex",
+        model: {
+          provider: "codex-app-server",
+          modelId: "app-server",
+          thinkingLevel: "none"
+        },
+        externalThread: {
+          type: "codex_app_server",
+          persisted: true,
+          createdByMention: true,
+          threadId: "  thread-1  ",
+          lastTurnId: "  turn-9  ",
+          extraField: "drop-me"
+        } as AgentDescriptor["externalThread"] & { extraField: string }
+      })
+    );
+
+    expect(typeof accepted).not.toBe("string");
+    if (typeof accepted !== "string") {
+      expect(accepted.externalThread).toEqual({
+        type: "codex_app_server",
+        persisted: true,
+        createdByMention: true,
+        threadId: "thread-1",
+        lastTurnId: "turn-9"
+      });
+      expect(JSON.stringify(accepted.externalThread)).not.toContain("drop-me");
+    }
+  });
+
+  it("rejects externalThread on non-worker descriptors", () => {
+    expect(
+      validateAgentDescriptor(
+        baseDescriptor({
+          role: "manager",
+          externalThread: {
+            type: "codex_app_server",
+            persisted: true,
+            createdByMention: true,
+          },
+        })
+      )
+    ).toMatch(/worker descriptors/);
+  });
+
+  it("rejects malformed external-thread metadata", () => {
+    const codexWorker = (externalThread: unknown) =>
+      baseDescriptor({
+        role: "worker",
+        agentId: "mgr-1--codex",
+        displayName: "Codex",
+        externalThread: externalThread as AgentDescriptor["externalThread"],
+      });
+
+    expect(
+      validateAgentDescriptor(
+        codexWorker({
+          type: "other",
+          persisted: true,
+          createdByMention: true,
+        })
+      )
+    ).toMatch(/externalThread\.type/);
+
+    expect(
+      validateAgentDescriptor(
+        codexWorker({
+          type: "codex_app_server",
+          persisted: false,
+          createdByMention: true,
+        })
+      )
+    ).toMatch(/externalThread\.persisted/);
+
+    expect(
+      validateAgentDescriptor(
+        codexWorker({
+          type: "codex_app_server",
+          persisted: true,
+          createdByMention: "yes",
+        })
+      )
+    ).toMatch(/externalThread\.createdByMention/);
+  });
+
+  it("rejects Codex external-thread descriptors with non-invariant model metadata", () => {
+    expect(
+      validateAgentDescriptor(
+        baseDescriptor({
+          role: "worker",
+          agentId: "mgr-1--codex",
+          model: {
+            provider: "openai-codex",
+            modelId: "gpt-5.4",
+            thinkingLevel: "medium"
+          },
+          externalThread: {
+            type: "codex_app_server",
+            persisted: true,
+            createdByMention: true
+          }
+        })
+      )
+    ).toMatch(/codex-app-server/);
+  });
 });
 
 describe("resolveModel", () => {

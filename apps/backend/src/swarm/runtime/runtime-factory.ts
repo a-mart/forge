@@ -18,6 +18,7 @@ import type {
   AgentStatus,
   SwarmConfig
 } from "../types.js";
+import { assertForgeRuntimeEligibleDescriptor } from "../external-thread-compatibility.js";
 import { ClaudeRuntimeCreator } from "./claude/claude-runtime-creator.js";
 import { PiRuntimeCreator } from "./pi/pi-runtime-creator.js";
 import { CursorSdkRuntimeCreator } from "./cursor-sdk/cursor-sdk-runtime-creator.js";
@@ -89,6 +90,8 @@ export class RuntimeFactory {
     runtimeToken = 0,
     options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
+    assertForgeRuntimeEligibleDescriptor(descriptor, "create runtime");
+
     if (isClaudeSdkModelDescriptor(descriptor.model)) {
       try {
         return await this.claudeRuntimeCreator.createRuntimeForDescriptor({

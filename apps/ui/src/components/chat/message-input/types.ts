@@ -1,12 +1,8 @@
 import type { ConversationAttachment } from '@forge/protocol'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
+import type { ProjectAgentSuggestion } from './mention-types'
 
-export interface ProjectAgentSuggestion {
-  agentId: string
-  handle: string
-  displayName: string
-  whenToUse: string
-}
+export type { ProjectAgentSuggestion } from './mention-types'
 
 export interface MessageInputProps {
   onSend: (message: string, attachments?: ConversationAttachment[]) => void | boolean | Promise<boolean>
@@ -22,6 +18,8 @@ export interface MessageInputProps {
   draftKey?: string
   slashCommands?: SlashCommand[]
   projectAgents?: ProjectAgentSuggestion[]
+  /** Builder/web only: expose synthetic leading @Codex mention target in autocomplete. */
+  enableCodexMention?: boolean
 }
 
 export interface MessageInputHandle {

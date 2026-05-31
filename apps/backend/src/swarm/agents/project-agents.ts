@@ -13,8 +13,11 @@ export {
   findProjectAgentByHandle,
   getProjectAgentHandleCollisionError,
   getProjectAgentPublicName,
+  getReservedProjectAgentHandleError,
+  isReservedProjectAgentHandle,
   listProjectAgents,
   normalizeProjectAgentHandle,
+  RESERVED_PROJECT_AGENT_HANDLE,
   type ListProjectAgentsOptions,
   type ProjectAgentDescriptor,
   type ProjectAgentDirectoryEntry
