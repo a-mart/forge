@@ -118,7 +118,7 @@ export function parseThreadItemType(item: unknown): string | undefined {
 
 export function isDeniedCodexDetailItemType(itemType: string | undefined): boolean {
   if (!itemType) {
-    return true;
+    return false;
   }
 
   return DENIED_DETAIL_ITEM_TYPES.has(itemType);
@@ -524,12 +524,26 @@ export function normalizeCodexDetailNotification(
     return [];
   }
 
-  if (isDeniedCodexDetailItemType(itemType)) {
+  if (itemType !== undefined && isDeniedCodexDetailItemType(itemType)) {
     return [];
   }
 
   if (!shouldAcceptCodexDetailNotification(activeTurn, notificationTurnId, itemId)) {
     return [];
+  }
+
+  if (
+    itemType === undefined &&
+    (method === "item/commandExecution/outputDelta" ||
+      method === "item/mcpToolCall/progress" ||
+      method === "item/plan/delta" ||
+      method === "item/fileChange/patchUpdated" ||
+      method === "item/fileChange/outputDelta")
+  ) {
+    const trackedItemType = itemId ? activeTurn.codexItemsById?.get(itemId)?.itemType : undefined;
+    if (trackedItemType && isDeniedCodexDetailItemType(trackedItemType)) {
+      return [];
+    }
   }
 
   const rows: CodexNormalizedDetailRow[] = [];

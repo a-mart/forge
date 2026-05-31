@@ -210,6 +210,24 @@ describe('ToolLogRow Codex detail labels', () => {
     expect(container.textContent).toContain('pnpm test')
   })
 
+  it('renders cancelled Codex detail rows from payload status', () => {
+    const entry = makeToolEntry({
+      toolName: 'codex_command',
+      latestKind: 'tool_execution_end',
+      isError: false,
+      latestPayload: JSON.stringify({
+        status: 'cancelled',
+        note: 'Codex item closed on turn cancelled.',
+      }),
+    })
+
+    act(() => {
+      root.render(createElement(ToolLogRow, { type: 'tool_execution', entry }))
+    })
+
+    expect(container.textContent).toContain('Codex command cancelled')
+  })
+
   it('renders codex MCP labels with server/tool detail', () => {
     const entry = makeToolEntry({
       toolName: 'codex_mcp_tool',

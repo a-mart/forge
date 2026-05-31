@@ -131,6 +131,85 @@ describe("codex app-server event normalizer", () => {
     expect(endRows[0]?.toolCallId).toBe("cmd-1");
   });
 
+  it("emits tool_execution_update rows for tracked progress notifications without item payloads", () => {
+    const activeTurn = createActiveTurn();
+
+    normalizeCodexDetailNotification({
+      method: "item/started",
+      params: {
+        turnId: "turn-1",
+        item: {
+          id: "cmd-1",
+          type: "commandExecution",
+          command: "echo hi",
+          cwd: "/tmp",
+          status: "inProgress",
+          commandActions: [],
+        },
+      },
+      activeTurn,
+      nowIso: "2026-05-30T00:00:01.000Z",
+      nowMs: 1_000,
+    });
+
+    normalizeCodexDetailNotification({
+      method: "item/started",
+      params: {
+        turnId: "turn-1",
+        item: {
+          id: "mcp-1",
+          type: "mcpToolCall",
+          server: "forge",
+          tool: "search",
+          status: "inProgress",
+          arguments: {},
+        },
+      },
+      activeTurn,
+      nowIso: "2026-05-30T00:00:01.000Z",
+      nowMs: 1_000,
+    });
+
+    const commandUpdate = normalizeCodexDetailNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        turnId: "turn-1",
+        itemId: "cmd-1",
+        delta: "partial output",
+      },
+      activeTurn,
+      nowIso: "2026-05-30T00:00:02.000Z",
+      nowMs: 2_500,
+    });
+
+    const mcpUpdate = normalizeCodexDetailNotification({
+      method: "item/mcpToolCall/progress",
+      params: {
+        turnId: "turn-1",
+        itemId: "mcp-1",
+        message: "Searching…",
+      },
+      activeTurn,
+      nowIso: "2026-05-30T00:00:03.000Z",
+      nowMs: 3_500,
+    });
+
+    expect(commandUpdate).toEqual([
+      expect.objectContaining({
+        kind: "tool_execution_update",
+        toolCallId: "cmd-1",
+        toolName: "codex_command",
+      }),
+    ]);
+    expect(mcpUpdate).toEqual([
+      expect.objectContaining({
+        kind: "tool_execution_update",
+        toolCallId: "mcp-1",
+        toolName: "codex_mcp_tool",
+      }),
+    ]);
+  });
+
   it("ignores orphan progress updates and mismatched turn ids", () => {
     const activeTurn = createActiveTurn();
 
@@ -231,7 +310,7 @@ describe("codex app-server event normalizer", () => {
     expect(activeTurn.codexDetailCounters?.droppedRowsThisTurn).toBeGreaterThan(0);
   });
 
-  it("closes open tracked items on turn finalization", () => {
+  it("marks cancelled turn finalization rows with cancelled status", () => {
     const activeTurn = createActiveTurn();
     normalizeCodexDetailNotification({
       method: "item/started",
@@ -253,7 +332,8 @@ describe("codex app-server event normalizer", () => {
 
     const rows = finalizeCodexDetailItemsForTurnEnd(activeTurn, "cancelled");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.kind).toBe("tool_execution_end");
     expect(rows[0]?.status).toBe("cancelled");
+    expect(rows[0]?.isError).toBe(false);
+    expect(rows[0]?.text).toContain('"status":"cancelled"');
   });
 });

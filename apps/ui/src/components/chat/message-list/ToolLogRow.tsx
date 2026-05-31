@@ -195,16 +195,28 @@ function humanizeToolName(toolName: string): string {
     .trim()
 }
 
+function parseDetailPayloadStatus(payload: string | undefined): string | undefined {
+  const record = parseJsonRecord(payload)
+  const status = record.status
+  return typeof status === 'string' ? status : undefined
+}
+
 function mapToolStatus(entry: ToolExecutionDisplayEntry): ToolDisplayStatus {
   if (entry.latestKind !== 'tool_execution_end') {
     return 'pending'
+  }
+
+  const payload = entry.outputPayload ?? entry.latestPayload
+  const payloadStatus = parseDetailPayloadStatus(payload)
+  if (payloadStatus === 'cancelled') {
+    return 'cancelled'
   }
 
   if (!entry.isError) {
     return 'completed'
   }
 
-  const lowered = (entry.outputPayload ?? entry.latestPayload ?? '').toLowerCase()
+  const lowered = (payload ?? '').toLowerCase()
   if (lowered.includes('[aborted]') || lowered.includes('cancel')) {
     return 'cancelled'
   }
