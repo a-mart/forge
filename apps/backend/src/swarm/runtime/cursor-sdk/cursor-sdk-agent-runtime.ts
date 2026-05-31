@@ -429,11 +429,11 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
             this.captureCursorRunStatuses(active);
             assertCursorRunSucceeded(run, waitResult, active.terminalStatus ?? undefined);
             freezeCursorUsageOutcome(active);
+            backgroundScope.markCompleted();
             await backgroundScope.runWithAttribution(() => this.raceContainedBackgroundFailure(
               backgroundScope,
               this.emitPromptSessionEvents(active, this.eventMapper.completePrompt())
             ));
-            backgroundScope.markCompleted();
           }
           break;
         } catch (error) {

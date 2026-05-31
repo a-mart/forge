@@ -126,6 +126,12 @@ function createGenericCursorStackError(): Error {
   return error;
 }
 
+function createPlainCursorStackError(message: string): Error {
+  const error = new Error(message);
+  error.stack = `Error: ${error.message}\n    at run (@cursor/sdk/dist/index.js:1:1)`;
+  return error;
+}
+
 function classifyAwaited(error: unknown, options: {
   attemptIndex?: number;
   visibleOutputEmitted?: boolean;
@@ -294,6 +300,16 @@ describe("Cursor SDK error containment classifier", () => {
     expect(decision.evidence.messageSnippet).toContain("ConnectError:");
   });
 
+  it("still allows bracket parsing when real Connect provenance exists", () => {
+    const decision = classifyBackground(
+      createConnectError({ code: 14, message: "ConnectError: [unavailable] upstream unavailable", stackHint: "app.js" }),
+      { attributionMode: "als" }
+    );
+    expect(decision.bucket).toBe("retryable_transport");
+    expect(decision.contain).toBe(true);
+    expect(decision.evidence.connectRpcProvenance).toBe(true);
+  });
+
   it("only retries exact Cursor 429, not generic 429 text", () => {
     const exactDecision = classifyAwaited(createRateLimitError({ isRetryable: true }));
     const genericDecision = classifyAwaited(Object.assign(new Error("rate limited"), { code: 429 }));
@@ -310,6 +326,17 @@ describe("Cursor SDK error containment classifier", () => {
     new Error("NGHTTP2_ENHANCE_YOUR_CALM")
   ])("keeps plain text provider tokens fail-closed for %p", (error) => {
     const decision = classifyBackground(error, { attributionMode: "als" });
+    expect(decision.bucket).toBe("non_cursor");
+    expect(decision.contain).toBe(false);
+    expect(decision.fatal).toBe(true);
+  });
+
+  it.each([
+    createPlainCursorStackError("cursor detached [unavailable]"),
+    createPlainCursorStackError("cursor detached [unauthenticated]")
+  ])("does not treat cursor-only bracket text as Connect provenance for %p", (error) => {
+    const decision = classifyBackground(error, { attributionMode: "als" });
+    expect(decision.family).toBe("cursor_sdk");
     expect(decision.bucket).toBe("non_cursor");
     expect(decision.contain).toBe(false);
     expect(decision.fatal).toBe(true);
@@ -379,8 +406,7 @@ describe("Cursor SDK error containment classifier", () => {
   it.each([
     createHttp2StreamError(),
     createHttp2StreamError({ rstCode: "NGHTTP2_PROTOCOL_ERROR" }),
-    createConnectError({ code: 2, message: "ConnectError: [unknown] weird failure" }),
-    createConnectError({ code: 16, message: "ConnectError: [unauthenticated] detached app error", stackHint: "app.js" })
+    createConnectError({ code: 2, message: "ConnectError: [unknown] weird failure" })
   ])("keeps residual ConnectRPC/HTTP2 unknowns fatal by default for %p", (error) => {
     const decision = classifyBackground(error, { attributionMode: "als" });
     expect(decision.bucket).toBe("non_cursor");

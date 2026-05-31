@@ -56,6 +56,12 @@ function createGenericCursorStackError(): Error {
   return error;
 }
 
+function createPlainCursorStackError(message: string): Error {
+  const error = new Error(message);
+  error.stack = `Error: ${message}\n    at run (@cursor/sdk/dist/index.js:1:1)`;
+  return error;
+}
+
 function createAuthenticationError(stackHint = "app.js"): Error {
   class AuthenticationError extends Error {}
   const error = new AuthenticationError("not logged in");
@@ -349,6 +355,32 @@ async function main(): Promise<void> {
         startedAt: "2026-01-01T00:00:00.000Z"
       });
       await emitInsideScope(scope, new Error("ordinary error mentioning REFUSED_STREAM"));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-cursor-stack-unavailable": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createPlainCursorStackError("cursor detached [unavailable]"));
+      await delay(200);
+      console.log("unexpected-survival");
+      process.exit(99);
+      return;
+    }
+
+    case "fatal-cursor-stack-unauthenticated": {
+      const scope = createCursorSdkBackgroundScope({
+        agentId: "worker-1",
+        promptToken: 1,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      });
+      await emitInsideScope(scope, createPlainCursorStackError("cursor detached [unauthenticated]"));
       await delay(200);
       console.log("unexpected-survival");
       process.exit(99);

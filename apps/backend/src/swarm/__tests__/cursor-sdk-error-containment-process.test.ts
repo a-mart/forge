@@ -68,6 +68,8 @@ describe("Cursor SDK containment child process behavior", () => {
     "fatal-code16-unauth-no-provenance",
     "fatal-connect-unknown-provenance",
     "fatal-plain-text-refused-stream",
+    "fatal-cursor-stack-unavailable",
+    "fatal-cursor-stack-unauthenticated",
     "fatal-plain-text-unavailable",
     "fatal-plain-text-enhance-your-calm",
     "fatal-ordinary-uncaught"

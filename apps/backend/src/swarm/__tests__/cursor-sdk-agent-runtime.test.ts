@@ -758,6 +758,43 @@ describe("CursorSdkAgentRuntime", () => {
     expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([]);
   });
 
+  it("suppresses detached background failures that arrive after run.wait succeeds but during awaited completion callbacks", async () => {
+    const completionGate = deferred();
+    const lateContainment = deferred<boolean>();
+    const send = vi.fn(async (_payload: string | { text: string }, options?: CursorSdkSendOptions) => {
+      await options?.onDelta?.({ update: { type: "turn-ended", usage: { inputTokens: 10, outputTokens: 4 } } });
+      return createRun({
+        id: "run-completed-before-callbacks",
+        streamItems: [assistantText("ok")],
+        waitResult: { status: "finished" }
+      });
+    });
+    const { runtime, callbacks } = await setupRuntime({
+      sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() },
+      callbacks: {
+        onAgentEnd: async (...args) => {
+          if (args[0] === "worker-1") {
+            lateContainment.resolve(emitCursorSdkBackgroundFailureForTests(createCursorAuthConnectError()));
+            await completionGate.promise;
+          }
+        }
+      }
+    });
+
+    await runtime.sendMessage("hello");
+    await expect(lateContainment.promise).resolves.toBe(true);
+    completionGate.resolve();
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runtime.getCustomEntries(CURSOR_SDK_USAGE_ENTRY_TYPE)).toEqual([
+      expect.objectContaining({
+        sdkRunId: "run-completed-before-callbacks",
+        outcome: "completed",
+        usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, total: 14 }
+      })
+    ]));
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+  });
+
   it("retries once before visible output, preserves the first-turn wrapper, and records only the successful usage entry", async () => {
     const payloads: string[] = [];
     const firstAttemptError = createCursorRetryableStreamError({ rstCode: "NGHTTP2_ENHANCE_YOUR_CALM" });

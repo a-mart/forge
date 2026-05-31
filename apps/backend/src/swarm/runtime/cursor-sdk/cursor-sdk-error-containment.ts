@@ -688,13 +688,14 @@ function collectCursorSdkFailureFacts(error: unknown): CursorSdkFailureFacts {
     || chain.some((entry) => typeof entry.code === "string" && (/^ERR_HTTP2_/i.test(entry.code) || /^NGHTTP2_/i.test(entry.code)))
     || /node:internal\/http2|internal\/http2/i.test(stackAndStructuredText);
   const cursorSdkProvenance = cursorModuleHintMatched;
-  const connectRpcProvenance = connectModuleHintMatched;
+  const connectRpcProvenance = connectModuleHintMatched || providerErrorNames.includes("ConnectError");
   const http2Provenance = http2HintMatched;
   const providerProvenance = cursorSdkProvenance || connectRpcProvenance;
   const hasRetryableProviderSignal = chain.some((entry) => entry.isRetryable === true);
-  const allowTextFallback = providerProvenance;
-  const h2ResetCodes = collectHttp2ResetCodes(chain, combinedText, allowTextFallback);
-  const connectCode = pickConnectCode(chain, combinedText, allowTextFallback);
+  const allowHttp2TextFallback = providerProvenance && http2Provenance;
+  const allowConnectTextFallback = connectRpcProvenance;
+  const h2ResetCodes = collectHttp2ResetCodes(chain, combinedText, allowHttp2TextFallback);
+  const connectCode = pickConnectCode(chain, combinedText, allowConnectTextFallback);
   const connectCodeName = normalizeConnectCodeName(connectCode);
   const family = resolveFailureFamily({
     providerErrorNames,
