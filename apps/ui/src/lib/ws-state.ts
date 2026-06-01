@@ -46,6 +46,8 @@ export interface ManagerWsState {
   specialistChangeKey: number
   /** Monotonically increasing counter bumped on model_config_changed WS events */
   modelConfigChangeKey: number
+  /** Global Active Work Plans feature toggle; defaults to enabled. */
+  workPlansEnabled: boolean
 }
 
 export function createInitialManagerWsState(targetAgentId: string | null): ManagerWsState {
@@ -72,5 +74,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     promptChangeKey: 0,
     specialistChangeKey: 0,
     modelConfigChangeKey: 0,
+    workPlansEnabled: true,
   }
 }

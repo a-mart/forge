@@ -202,6 +202,10 @@ import {
   type TaskToolInput,
   type TaskToolResult,
 } from "./coordination/task-tool.js";
+import {
+  ACTIVE_WORK_PLANS_SKILL_HANDLE,
+  getWorkPlansEnabled,
+} from "./coordination/work-plans-settings.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import {
   assertRepoProjectAgentSourceAvailable,
@@ -1243,6 +1247,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   } | undefined;
   private readonly versioningService: VersioningMutationSink | undefined;
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
+  private workPlansEnabled = true;
 
   constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
@@ -1551,6 +1556,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
       resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSkillRosterForDescriptor: (descriptor) => this.resolveSkillRosterForDescriptor(descriptor),
+      getWorkPlansEnabled: () => this.isWorkPlansEnabled(),
       getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
     });
@@ -1971,6 +1977,43 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  async loadWorkPlansSettings(): Promise<void> {
+    this.workPlansEnabled = await getWorkPlansEnabled(this.config.paths.dataDir);
+  }
+
+  isWorkPlansEnabled(): boolean {
+    return this.workPlansEnabled;
+  }
+
+  async applyWorkPlansSettingsChange(enabled: boolean): Promise<void> {
+    this.workPlansEnabled = enabled;
+
+    const sessions = this.listAgents().filter((descriptor) => descriptor.role === "manager");
+    const results = await Promise.allSettled(
+      sessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "work_plans_settings_change")),
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        this.logDebug("work_plans:settings_change:recycle:error", {
+          agentId: sessions[index]?.agentId,
+          message: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
+    });
+
+    if (enabled) {
+      await this.rebroadcastSessionTaskStateSnapshots();
+    }
+  }
+
+  private async rebroadcastSessionTaskStateSnapshots(): Promise<void> {
+    const sessions = this.listAgents().filter((descriptor) => descriptor.role === "manager");
+    await Promise.allSettled(
+      sessions.map((session) => this.emitSessionTaskStateSnapshotForSession(session.agentId)),
+    );
+  }
+
   listAgents(): AgentDescriptor[] {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
   }
@@ -2089,6 +2132,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     requestId?: string,
   ): Promise<SessionTaskStateSnapshotEvent> {
     const descriptor = this.getRequiredSessionDescriptor(sessionAgentId);
+    if (!this.isWorkPlansEnabled()) {
+      return {
+        type: "session_task_state_snapshot",
+        sessionAgentId: descriptor.agentId,
+        profileId: descriptor.profileId ?? descriptor.agentId,
+        revision: 0,
+        activeWorkPlan: null,
+        recentWorkPlans: [],
+        recentWorkPlanCount: 0,
+        recentWorkPlansTruncated: false,
+        diagnostics: { state: "defaulted" },
+        ...(requestId !== undefined ? { requestId } : {}),
+      };
+    }
+
     const snapshot = await this.createWorkPlanServiceForDescriptor(descriptor).loadSnapshot();
     return {
       type: "session_task_state_snapshot",
@@ -2102,6 +2160,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     _toolCallId: string,
     input: TaskToolInput,
   ): Promise<TaskToolResult> {
+    if (!this.isWorkPlansEnabled()) {
+      throw new Error("Active Work Plans are disabled in Settings.");
+    }
+
     this.assertExternalProjectAgentTurnCapabilityAllowed(callerAgentId, "task");
 
     const descriptor = this.descriptors.get(callerAgentId);
@@ -7223,6 +7285,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
+  private filterWorkPlanSkillsForDescriptor(
+    descriptor: AgentDescriptor,
+    skills: SkillMetadata[] | null,
+  ): SkillMetadata[] | null {
+    if (!skills || this.isWorkPlansEnabled()) {
+      return skills;
+    }
+
+    const managerDescriptor = descriptor.role === "manager"
+      ? descriptor
+      : this.descriptors.get(descriptor.managerId);
+    if (managerDescriptor?.role !== "manager") {
+      return skills;
+    }
+
+    return skills.filter((skill) => skill.directoryName !== ACTIVE_WORK_PLANS_SKILL_HANDLE);
+  }
+
   private async resolveSkillRosterForDescriptor(descriptor: AgentDescriptor): Promise<SkillMetadata[] | null> {
     const managerDescriptor = descriptor.role === "manager"
       ? descriptor
@@ -7243,14 +7323,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
             selectionJson: "[]",
             skillMetadataService: this.skillMetadataService,
           });
-          return closedRoster.skills;
+          return this.filterWorkPlanSkillsForDescriptor(descriptor, closedRoster.skills);
         }
 
         const roster = await resolveCollaborationSkillRoster({
           selectionJson: channel.activeSkillHandlesJson,
           skillMetadataService: this.skillMetadataService,
         });
-        return roster.skills;
+        return this.filterWorkPlanSkillsForDescriptor(descriptor, roster.skills);
       } catch (error) {
         this.logDebug("collaboration:skills:resolve_error", {
           agentId: descriptor.agentId,
@@ -7262,7 +7342,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           selectionJson: "[]",
           skillMetadataService: this.skillMetadataService,
         });
-        return closedRoster.skills;
+        return this.filterWorkPlanSkillsForDescriptor(descriptor, closedRoster.skills);
       }
     }
 
@@ -7276,9 +7356,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const workspace = managerDescriptor?.role === "manager"
       ? await this.resolveProjectWorkspaceForManager(managerDescriptor)
       : undefined;
-    return this.skillMetadataService.getProfileSkillMetadataForWorkspace(
-      profileId,
-      workspace?.effectiveForgeDirRealpath,
+    return this.filterWorkPlanSkillsForDescriptor(
+      descriptor,
+      await this.skillMetadataService.getProfileSkillMetadataForWorkspace(
+        profileId,
+        workspace?.effectiveForgeDirRealpath,
+      ),
     );
   }
 

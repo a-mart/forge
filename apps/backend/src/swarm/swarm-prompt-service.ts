@@ -9,6 +9,7 @@ import {
   ACTIVE_WORK_RUNTIME_CONTEXT_HEADER,
   formatWorkPlanRuntimeContext,
 } from "./coordination/work-plan-runtime-context.js";
+import { resolveActiveWorkPlansGuidance } from "./coordination/work-plans-settings.js";
 import {
   getCommonKnowledgePath,
   getProfileMemoryPath,
@@ -156,6 +157,7 @@ export interface SwarmPromptServiceOptions {
     targetSpace?: SpecialistTargetSpace,
   ) => Promise<ResolvedSpecialistDefinitionLike[]>;
   resolveSkillRosterForDescriptor?: (descriptor: AgentDescriptor) => Promise<SkillMetadata[] | null | undefined>;
+  getWorkPlansEnabled?: () => boolean;
   getIntegrationContext: (profileId: string) => string | undefined;
   logDebug: (message: string, details?: unknown) => void;
 }
@@ -673,6 +675,10 @@ export class SwarmPromptService {
   private async getActiveWorkPromptPreviewSection(
     descriptor: AgentDescriptor & { role: "manager"; profileId: string },
   ): Promise<PromptPreviewSection | undefined> {
+    if (this.options.getWorkPlansEnabled?.() === false) {
+      return undefined;
+    }
+
     const snapshot = await this.loadSessionTaskStateSnapshot(descriptor).catch((error) => {
       this.options.logDebug("prompt:preview:active_work:error", {
         agentId: descriptor.agentId,
@@ -816,7 +822,18 @@ export class SwarmPromptService {
   }
 
   private buildStandardPromptVariables(descriptor: AgentDescriptor): Record<string, string> {
-    return this.buildRuntimePromptVariables(this.options.getAgentMemoryPath(descriptor.agentId));
+    return {
+      ...this.buildRuntimePromptVariables(this.options.getAgentMemoryPath(descriptor.agentId)),
+      ACTIVE_WORK_PLANS_GUIDANCE: this.resolveActiveWorkPlansGuidance(descriptor),
+    };
+  }
+
+  private resolveActiveWorkPlansGuidance(descriptor: AgentDescriptor): string {
+    if (descriptor.role !== "manager") {
+      return "";
+    }
+
+    return resolveActiveWorkPlansGuidance(this.options.getWorkPlansEnabled?.() !== false);
   }
 
   private buildRuntimePromptVariables(memoryFilePath: string): Record<string, string> {

@@ -582,7 +582,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         }
       },
     },
-    buildTaskTool(host, descriptor)
+    ...(host.isWorkPlansEnabled?.() === false ? [] : [buildTaskTool(host, descriptor)]),
   ];
 
   return [...shared, ...managerOnly];

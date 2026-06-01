@@ -958,4 +958,27 @@ describe('buildSwarmTools', () => {
     })
   })
 
+  it('omits the task tool for managers when Active Work Plans are disabled', () => {
+    const host: SwarmToolHost = {
+      listAgents: () => [makeManagerDescriptor()],
+      getWorkerActivity: () => undefined,
+      spawnAgent: async () => makeWorkerDescriptor('worker'),
+      killAgent: async () => {},
+      sendMessage: async () => ({
+        targetAgentId: 'worker',
+        deliveryId: 'delivery-1',
+        acceptedMode: 'prompt',
+      }),
+      publishToUser: async () => ({ targetContext: { channel: 'web' } }),
+      requestUserChoice: async () => [],
+      runTaskTool: async () => {
+        throw new Error('task should not be callable when disabled')
+      },
+      isWorkPlansEnabled: () => false,
+    }
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    expect(tools.some((tool) => tool.name === 'task')).toBe(false)
+  })
+
 })

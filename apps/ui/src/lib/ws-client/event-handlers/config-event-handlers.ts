@@ -27,6 +27,28 @@ export function handleConfigEvent(
       context.updateState({ modelConfigChangeKey: context.state.modelConfigChangeKey + 1 })
       return true
 
+    case 'work_plans_settings_changed':
+      if (event.enabled) {
+        const sessionAgentId = context.state.targetAgentId ?? context.state.subscribedAgentId
+        const hasCachedSnapshot = sessionAgentId
+          ? Boolean(context.state.taskSnapshots[sessionAgentId])
+          : false
+
+        context.updateState({
+          workPlansEnabled: true,
+          ...(sessionAgentId && !hasCachedSnapshot
+            ? { taskSnapshotLoadingSessionId: sessionAgentId }
+            : {}),
+        })
+      } else {
+        context.updateState({
+          workPlansEnabled: false,
+          taskSnapshots: {},
+          taskSnapshotLoadingSessionId: null,
+        })
+      }
+      return true
+
     default:
       return false
   }

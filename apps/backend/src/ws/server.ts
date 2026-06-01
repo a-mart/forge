@@ -79,6 +79,7 @@ import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/se
 import { createSkillRoutes } from "./http/routes/skill-routes.js";
 import { createSlashCommandRoutes } from "./http/routes/slash-command-routes.js";
 import { createSpecialistRoutes } from "./http/routes/specialist-routes.js";
+import { createWorkPlansRoutes } from "./http/routes/work-plans-routes.js";
 import { createStatsRoutes } from "./http/routes/stats-routes.js";
 import { createStaticUiRoutes } from "./http/routes/static-ui-routes.js";
 import { createTelemetryRoutes } from "./http/routes/telemetry-routes.js";
@@ -508,6 +509,10 @@ export class SwarmWebSocketServer {
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
+      ...createWorkPlansRoutes({
+        swarmManager: this.swarmManager,
+        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+      }),
       ...createModelConfigRoutes({
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
@@ -553,6 +558,7 @@ export class SwarmWebSocketServer {
     await this.cortexAutoReviewSettingsService.load();
     await this.notificationSettingsService.load();
     await this.unreadTracker.load();
+    await this.swarmManager.loadWorkPlansSettings?.();
 
     const httpServer = createServer((request, response) => {
       void this.handleHttpRequest(request, response);

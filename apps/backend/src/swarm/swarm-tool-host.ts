@@ -63,4 +63,5 @@ export interface SwarmToolHost {
     toolCallId: string,
     input: TaskToolInput,
   ): Promise<TaskToolResult>;
+  isWorkPlansEnabled?(): boolean;
 }

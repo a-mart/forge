@@ -30,3 +30,9 @@ export interface ModelConfigChangedEvent {
   type: 'model_config_changed'
   updatedAt: string
 }
+
+export interface WorkPlansSettingsChangedEvent {
+  type: 'work_plans_settings_changed'
+  enabled: boolean
+  updatedAt: string
+}

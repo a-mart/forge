@@ -13,6 +13,7 @@ import type {
   ModelConfigChangedEvent,
   PromptChangedEvent,
   SpecialistRosterChangedEvent,
+  WorkPlansSettingsChangedEvent,
 } from './config-events.js'
 import type {
   CollaborationBootstrapEvent,
@@ -207,6 +208,7 @@ export type ServerEvent =
   | TerminalClosedEvent
   | TerminalsSnapshotEvent
   | SpecialistRosterChangedEvent
+  | WorkPlansSettingsChangedEvent
   | ModelConfigChangedEvent
   | ApiProxyResponseEvent
   | MessagePinnedEvent

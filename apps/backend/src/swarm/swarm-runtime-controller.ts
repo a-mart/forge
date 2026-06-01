@@ -155,7 +155,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   saveStore(): Promise<void>;
   applyManagerRuntimeRecyclePolicy(
     agentId: string,
-    reason: "model_change" | "cwd_change" | "idle_transition" | "prompt_mode_change" | "project_agent_directory_change" | "project_resource_trust_change" | "specialist_roster_change"
+    reason: "model_change" | "cwd_change" | "idle_transition" | "prompt_mode_change" | "project_agent_directory_change" | "project_resource_trust_change" | "specialist_roster_change" | "work_plans_settings_change"
   ): Promise<"recycled" | "deferred" | "none">;
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;

@@ -49,6 +49,10 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
         name: 'SPECIALIST_ROSTER',
         description: 'Specialist roster block injected into manager prompts when specialists are enabled.',
       },
+      {
+        name: 'ACTIVE_WORK_PLANS_GUIDANCE',
+        description: 'Active Work Plans manager guidance injected when work planning is enabled.',
+      },
     ],
   },
   {
