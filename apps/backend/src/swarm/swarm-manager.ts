@@ -3858,7 +3858,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async getProjectAgentExternalDirectory(profileId: string) {
     const profile = this.profiles.get(profileId);
     if (profile && isSystemProfile(profile)) {
-      throw new Error("Cannot load external project agents for system-managed profiles");
+      return [];
     }
     return this.projectAgentSharingService.getExternalDirectoryEntries(profileId);
   }

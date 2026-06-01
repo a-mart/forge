@@ -257,6 +257,36 @@ describe("ProjectAgentSharingService", () => {
     expect(service.getExternalDirectoryEntries("mobile")).toEqual([]);
   });
 
+  it("returns empty external directories for system-managed profiles", async () => {
+    const source = makeProjectAgent("docs--s1", "forge", "documentation");
+    const { service } = await createService({
+      profiles: [
+        makeProfile("forge", { displayName: "Forge" }),
+        makeProfile("cortex", { profileType: "system" }),
+      ],
+      descriptors: [source],
+    });
+
+    (service as any).store = {
+      version: 1,
+      grants: [
+        {
+          grantId: "grant-1",
+          sourceProfileId: "forge",
+          sourceAgentId: "docs--s1",
+          sourceHandle: "documentation",
+          targetProfileId: "cortex",
+          targetNamespace: "forge",
+          createdAt: "2026-05-31T12:00:00.000Z",
+          updatedAt: "2026-05-31T12:00:00.000Z",
+        },
+      ],
+      contacts: [],
+    };
+
+    expect(service.getExternalDirectoryEntries("cortex")).toEqual([]);
+  });
+
   it("reconciles stale grants and prunes contacts for missing entities", async () => {
     const source = makeProjectAgent("docs--s1", "forge", "documentation");
     const { service, dataDir, descriptors } = await createService({

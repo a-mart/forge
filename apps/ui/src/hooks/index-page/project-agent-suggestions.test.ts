@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { getProjectAgentSuggestions } from './project-agent-suggestions'
-import type { AgentDescriptor, ProjectAgentExternalDirectoryEntry } from '@forge/protocol'
+import {
+  getProjectAgentSuggestions,
+  shouldLoadExternalProjectAgentDirectory,
+} from './project-agent-suggestions'
+import type {
+  AgentDescriptor,
+  ManagerProfile,
+  ProjectAgentExternalDirectoryEntry,
+} from '@forge/protocol'
 
 function makeManager(
   agentId: string,
@@ -62,6 +69,61 @@ function makeProjectAgent(
     ...overrides,
   })
 }
+
+function makeProfile(
+  profileId: string,
+  overrides: Partial<ManagerProfile> = {},
+): ManagerProfile {
+  return {
+    profileId,
+    displayName: profileId,
+    defaultSessionAgentId: profileId,
+    defaultModel: {
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'high',
+    },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+describe('shouldLoadExternalProjectAgentDirectory', () => {
+  it('skips Cortex even before profiles finish loading', () => {
+    expect(
+      shouldLoadExternalProjectAgentDirectory({
+        activeAgentRole: 'manager',
+        activeProfileId: 'cortex',
+        activeProfileType: null,
+      }),
+    ).toBe(false)
+  })
+
+  it('skips system-managed profiles from the profile snapshot', () => {
+    const profiles = [makeProfile('cortex', { profileType: 'system' })]
+
+    expect(
+      shouldLoadExternalProjectAgentDirectory({
+        activeAgentRole: 'manager',
+        activeProfileId: 'cortex',
+        activeProfileType: profiles[0].profileType ?? null,
+      }),
+    ).toBe(false)
+  })
+
+  it('allows normal user profiles', () => {
+    const profiles = [makeProfile('alpha', { profileType: 'user' })]
+
+    expect(
+      shouldLoadExternalProjectAgentDirectory({
+        activeAgentRole: 'manager',
+        activeProfileId: 'alpha',
+        activeProfileType: profiles[0].profileType ?? null,
+      }),
+    ).toBe(true)
+  })
+})
 
 describe('getProjectAgentSuggestions', () => {
   it('filters by active manager profile', () => {

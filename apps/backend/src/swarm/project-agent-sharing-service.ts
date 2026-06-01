@@ -379,6 +379,11 @@ export class ProjectAgentSharingService {
     }
 
     const profiles = new Map(this.deps.getProfiles().map((profile) => [profile.profileId, profile]));
+    const targetProfile = profiles.get(targetProfileId);
+    if (targetProfile && isSystemProfile(targetProfile)) {
+      return [];
+    }
+
     const entries: ProjectAgentExternalDirectoryEntry[] = [];
 
     for (const grant of this.store.grants) {

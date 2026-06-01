@@ -44,6 +44,7 @@ import { usePendingResponse } from '@/hooks/index-page/use-pending-response'
 import { useFileDrop } from '@/hooks/index-page/use-file-drop'
 import {
   getProjectAgentSuggestions,
+  shouldLoadExternalProjectAgentDirectory,
 } from '@/hooks/index-page/project-agent-suggestions'
 import { usePanelState } from '@/hooks/index-page/use-panel-state'
 import {
@@ -294,8 +295,19 @@ export function BuilderSurface({
     return activeManagerAgent?.agentId ?? activeAgent.managerId ?? null
   }, [activeAgent, activeManagerAgent])
 
+  const activeAgentRole = activeAgent?.role ?? null
+  const activeAgentProfileId = activeAgent?.profileId ?? null
+  const activeAgentProfileType = useMemo(
+    () => state.profiles.find((profile) => profile.profileId === activeAgentProfileId)?.profileType ?? null,
+    [activeAgentProfileId, state.profiles],
+  )
+
   useEffect(() => {
-    if (!state.connected || activeAgent?.role !== 'manager') {
+    if (!state.connected || !shouldLoadExternalProjectAgentDirectory({
+      activeAgentRole,
+      activeProfileId: activeAgentProfileId,
+      activeProfileType: activeAgentProfileType,
+    })) {
       setExternalProjectAgentEntries([])
       return
     }
@@ -322,7 +334,14 @@ export function BuilderSurface({
     return () => {
       cancelled = true
     }
-  }, [activeAgent?.agentId, activeAgent?.role, clientRef, state.connected, state.promptChangeKey])
+  }, [
+    activeAgentProfileId,
+    activeAgentProfileType,
+    activeAgentRole,
+    clientRef,
+    state.connected,
+    state.promptChangeKey,
+  ])
 
   // Project agents for @mention autocomplete — only when the active agent is a manager session
   const projectAgentSuggestions = useMemo(
