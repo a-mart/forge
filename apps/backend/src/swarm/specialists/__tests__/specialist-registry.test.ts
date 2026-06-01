@@ -904,12 +904,14 @@ describe("specialist-registry", () => {
     });
     expect(byId.get("backend")).toMatchObject({
       provider: "openai-codex",
+      modelId: "gpt-5.5",
       fallbackProvider: "openai-codex",
       fallbackModelId: "gpt-5.5",
       fallbackReasoningLevel: "medium",
     });
     expect(byId.get("code-reviewer")).toMatchObject({
       provider: "openai-codex",
+      modelId: "gpt-5.5",
       fallbackProvider: "openai-codex",
       fallbackModelId: "gpt-5.5",
       fallbackReasoningLevel: "medium",
@@ -1042,7 +1044,7 @@ describe("specialist-registry", () => {
         "color: '#010203'",
         "enabled: false",
         "whenToUse: Keep my custom backend prompt",
-        "modelId: gpt-5.4",
+        "modelId: gpt-5.5",
         "builtin: true",
         "pinned: true",
         "---",
@@ -1058,7 +1060,7 @@ describe("specialist-registry", () => {
 
     expect(backend).not.toBeNull();
     expect(backend?.frontmatter.displayName).toBe("My Pinned Backend");
-    expect(backend?.frontmatter.modelId).toBe("gpt-5.4");
+    expect(backend?.frontmatter.modelId).toBe("gpt-5.5");
     expect(backend?.frontmatter.enabled).toBe(false);
     expect(backend?.frontmatter.pinned).toBe(true);
     expect(backend?.body).toContain("Do not overwrite this body.");
