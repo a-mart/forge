@@ -32,7 +32,7 @@ The ring icon next to the channel toggle shows how full the context window is. W
 
 For substantial manager-led work, Forge can show an **Active Work** card above the conversation. It is scoped to the current session and shows the manager's plan, item status, and linked worker evidence. Linked worker chips open that worker's transcript when the worker still belongs to the same session. Expandable **Work Plan created** rows in the timeline show the durable `work_plan_created` receipt snapshot, and the card can disclose a bounded list of previous Work Plans when more than one terminal plan is retained.
 
-The matching header indicator toggles the card open or closed and is wired for keyboard and screen-reader access. Collapsing the card only changes the view; the saved plan stays with the session.
+The matching header control opens an anchored Active Work popover with an explicit accessible name. It toggles the card open or closed without scrolling or jumping the transcript. Historical receipt rows hydrate from the latest active or recent task snapshot when available, falling back to the creation snapshot only when needed.
 
 ## Header controls
 

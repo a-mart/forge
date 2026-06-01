@@ -50,6 +50,10 @@ Legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` and `MIDDLEMAN_SKILL_SHARE_DISABLED` ali
 
 The OpenAI Codex Responses transport settings above apply to normal Codex model runtimes. Builder web also has a separate external-thread route: a leading `@Codex` or `[@Codex]` text message starts or continues a Codex CLI app-server sidecar thread. That path is Builder web only, text-only, excluded from Collaboration, limited to one active Codex turn globally, and does not include direct MCP support in Forge. Sidecar display cards are persisted in the parent session by default but are excluded from manager model context and from forked-session history.
 
+### Active Work Plans
+
+Settings → General includes a Builder-only, default-on **Enable Active Work Plans** toggle backed by `shared/config/work-plans.json`. When enabled, managers get the `task` tool, the Active Work skill/guidance/context, and the live Active Work UI. When disabled, those live surfaces are hidden and runtimes recycle or defer recycle as needed; historical read-only Work Plan receipts remain visible.
+
 ### Collaboration
 
 | Variable | Default | Description |
@@ -107,6 +111,7 @@ All persistent state lives in a single data directory:
 │   │   ├── mobile-notification-prefs.json # Mobile push preferences
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
+│   │   ├── work-plans.json                # Builder-only default-on Active Work Plans toggle
 │   │   └── integrations/      # Shared integration configs
 │   ├── cache/                 # Regenerable/ephemeral
 │   │   ├── generated/
@@ -138,6 +143,7 @@ All persistent state lives in a single data directory:
 │       ├── feedback.jsonl     # User feedback
 │       ├── pinned-messages.json  # Pin state (up to 10 message IDs)
 │       ├── tasks.json         # Active Work Plans state
+│   │   ├── work-plans.json    # Builder-only default-on Active Work Plans toggle
 │       ├── context/
 │       │   └── prompt.md      # Collaboration channel additional instructions
 │       ├── reference/         # Collaboration channel reference docs

@@ -24,7 +24,7 @@ The manager reads your message, plans the work, and spawns workers as needed. Yo
 
 ## Watch workers run
 
-Active workers show up as green pills below the chat header. Click any pill to peek at what that worker is doing. For larger efforts, the manager may also show an Active Work card with a session-scoped plan; use the header indicator to collapse or expand it. Creating a plan writes a durable receipt into chat history. The manager streams status updates into the chat as workers report progress.
+Active workers show up as green pills below the chat header. Click any pill to peek at what that worker is doing. For larger efforts, the manager may also show an Active Work card with a session-scoped plan; use the header control to open an anchored popover and collapse or expand it without jumping the transcript. Creating a plan writes a durable receipt into chat history, and historical receipts hydrate from the latest active or recent task snapshot when available. Work Plans are coordination state, not progress by themselves, so when the next step is clear the manager should pair plan creation with immediate real work or delegation. The manager streams status updates into the chat as workers report progress.
 
 Workers run independently. You can keep talking to the manager, start a new task, or close the tab entirely. Workers continue in the background and the manager tracks everything.
 

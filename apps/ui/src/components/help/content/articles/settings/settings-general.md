@@ -8,6 +8,10 @@ Pick a theme (Light, Dark, or System) and choose which code editor opens when yo
 
 Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex, Anthropic Claude, and Cursor SDK when used, with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit/reserve pace and estimated runout times, and use the refresh button in the detail panel to re-poll immediately. Usage state is restored after backend restarts, and weekly estimates follow historical usage curves rather than simple linear interpolation. Pooled OAuth usage polling refreshes tokens first, and pooled auth errors can suppress usage display. The same usage data also feeds Dashboard stats and token analytics. The setting is stored in your browser and applies immediately.
 
+## Active Work Plans
+
+Use **Enable Active Work Plans** to turn the session coordination UI on or off. It is Builder-only and on by default. When enabled, managers get the `task` tool, Active Work guidance, and the live Active Work card in chat. When disabled, the live card hides and manager runtimes recycle or defer recycle so the change takes effect cleanly. Historical Work Plan receipts stay visible either way.
+
 ## Telemetry
 
 Anonymous telemetry is enabled by default and sends only aggregate counts such as sessions, models, and feature adoption. It does not send prompts, code, file paths, repo names, or personal data.
