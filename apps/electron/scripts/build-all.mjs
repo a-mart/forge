@@ -897,7 +897,19 @@ async function stageBackendResources() {
 
 async function copyDirectory(from, to) {
   await mkdir(path.dirname(to), { recursive: true })
-  await cp(from, to, { recursive: true })
+  await cp(from, to, {
+    recursive: true,
+    filter: (source) => shouldCopyPackagedResource(from, source),
+  })
+}
+
+function shouldCopyPackagedResource(root, source) {
+  const relativePath = path.relative(root, source)
+  if (!relativePath) {
+    return true
+  }
+
+  return !relativePath.split(path.sep).includes('node_modules')
 }
 
 async function assertExists(targetPath, label) {
