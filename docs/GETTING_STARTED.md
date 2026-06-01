@@ -296,7 +296,7 @@ One approach that works well for large features is a four-track system:
 
 1. **Brainstorm** — Have a conversation about the feature. Explore options, discuss tradeoffs.
 2. **Plan with review** — The manager creates an implementation plan, then has a separate high-quality model review it and provide feedback. The plan gets updated based on the review.
-3. **Implement** — Workers execute the plan. Backend work goes to one model (e.g., GPT-5.4), frontend to another (e.g., GPT-5.5 at medium reasoning).
+3. **Implement** — Workers execute the plan. Backend work goes to one model (e.g., GPT-5.5 at high reasoning), frontend to another (e.g., GPT-5.5 at medium reasoning).
 4. **Code review** — Two separate models review the implementation independently, then their findings go to a remediation agent to fix any issues.
 
 This approach has enabled one-shotting features with 20,000+ lines of code. It's just one way to work. You'd teach your manager your own version.
@@ -526,7 +526,7 @@ Under **Settings**, you can change the default editor for "Open in editor" on fi
 
 Different models have different strengths. A powerful workflow pattern is routing different kinds of work to different models:
 
-- **Backend/systems work** → GPT-5.4 (high reasoning) via Codex workers
+- **Backend/systems work** → GPT-5.5 (high reasoning) via Codex workers
 - **Frontend/UI work** → GPT-5.5 at medium reasoning (strong at design and visual code)
 - **Plan review** → A high-reasoning model different from the one that wrote the plan
 - **Code review** → Two separate models reviewing independently, then a third model remediating

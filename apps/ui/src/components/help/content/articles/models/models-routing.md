@@ -14,7 +14,7 @@ When the manager spawns a worker, it picks a specialist based on the task. Each 
 - An optional **fallback model** — used when the primary model is unavailable or rate-limited.
 - A **"when to use" description** — tells the manager which tasks to send to this specialist.
 
-For example, the builtin Backend Engineer uses GPT-5.4 at high reasoning. The Frontend Engineer uses GPT-5.5 at medium reasoning. The Architect uses GPT-5.5 at medium reasoning. The Planner uses GPT-5.5 at medium reasoning. The Scout uses GPT-5.4 Mini at low reasoning for quick exploration.
+For example, the builtin Backend Engineer uses GPT-5.5 at high reasoning. The builtin Code Reviewer also uses GPT-5.5 at high reasoning. The Frontend Engineer uses GPT-5.5 at medium reasoning. The Architect uses GPT-5.5 at medium reasoning. The Planner uses GPT-5.5 at medium reasoning. The Scout uses GPT-5.4 Mini at low reasoning for quick exploration.
 
 ## Fallback behavior
 
