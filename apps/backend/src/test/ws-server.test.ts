@@ -2498,7 +2498,12 @@ describe('SwarmWebSocketServer', () => {
       title: 'Secondary CLI live plan',
       itemsText: '[active] Observe CLI live refresh',
     })
-    expect(secondaryResult.snapshot.activeWorkPlan?.title).toBe('Secondary CLI live plan')
+    expect(secondaryResult).toMatchObject({
+      action: 'upsert_plan',
+      status: 'active',
+      planRevision: 1,
+    })
+    expect(secondaryResult).not.toHaveProperty('snapshot')
 
     await waitForEventAfter(
       secondary.events,
@@ -2536,7 +2541,12 @@ describe('SwarmWebSocketServer', () => {
       title: 'Root CLI live plan',
       itemsText: '[active] Observe root CLI live refresh',
     })
-    expect(rootResult.snapshot.activeWorkPlan?.title).toBe('Root CLI live plan')
+    expect(rootResult).toMatchObject({
+      action: 'upsert_plan',
+      status: 'active',
+      planRevision: 1,
+    })
+    expect(rootResult).not.toHaveProperty('snapshot')
 
     await waitForEventAfter(
       root.events,
@@ -3558,7 +3568,12 @@ describe('SwarmWebSocketServer', () => {
       title: 'Secondary live plan',
       itemsText: '[active] Observe live refresh',
     })
-    expect(secondaryResult.snapshot.activeWorkPlan?.title).toBe('Secondary live plan')
+    expect(secondaryResult).toMatchObject({
+      action: 'upsert_plan',
+      status: 'active',
+      planRevision: 1,
+    })
+    expect(secondaryResult).not.toHaveProperty('snapshot')
 
     const secondaryLiveEvent = await waitForEventAfter(
       secondaryEvents,
@@ -3587,7 +3602,12 @@ describe('SwarmWebSocketServer', () => {
       title: 'Root live plan',
       itemsText: '[active] Observe root live refresh',
     })
-    expect(rootResult.snapshot.activeWorkPlan?.title).toBe('Root live plan')
+    expect(rootResult).toMatchObject({
+      action: 'upsert_plan',
+      status: 'active',
+      planRevision: 1,
+    })
+    expect(rootResult).not.toHaveProperty('snapshot')
 
     const rootLiveEvent = await waitForEventAfter(
       rootEvents,

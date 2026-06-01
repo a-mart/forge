@@ -341,8 +341,11 @@ describe('SwarmManager.runTaskTool', () => {
 
     expect(result.details).toMatchObject({
       action: 'upsert_plan',
-      snapshot: { activeWorkPlan: { title: 'Build tool execute path' } },
+      status: 'active',
+      planRevision: 1,
     })
+    expect(result.details).not.toHaveProperty('snapshot')
+    expect((result.content[0] as { text: string }).text).not.toContain('recentWorkPlans')
   })
 
   it('finishing a provider-facing plan closes open items but preserves explicit failed/unknown evidence', async () => {
@@ -373,8 +376,18 @@ describe('SwarmManager.runTaskTool', () => {
       finalSummary: 'Done',
     })
 
-    expect(finished.snapshot.activeWorkPlan).toBeNull()
-    expect(finished.snapshot.recentWorkPlans[0]).toMatchObject({
+    expect(finished).toMatchObject({
+      action: 'finish_plan',
+      stateRevision: 3,
+      planId: created.planId,
+      planRevision: 3,
+      status: 'completed',
+    })
+    expect(finished).not.toHaveProperty('snapshot')
+
+    const fetched = await manager.runTaskTool('manager', 'tool-provider-finish-4', { action: 'get' })
+    expect(fetched.snapshot.activeWorkPlan).toBeNull()
+    expect(fetched.snapshot.recentWorkPlans[0]).toMatchObject({
       planId: created.planId,
       status: 'completed',
       items: [
@@ -413,6 +426,7 @@ describe('SwarmManager.runTaskTool', () => {
       itemsText: '[active] Create plan',
     })
     expect(created).not.toHaveProperty('workPlan')
+    expect(created).not.toHaveProperty('snapshot')
     expect(creationRows).toHaveLength(1)
     expect(creationRows[0]).toMatchObject({
       type: 'work_plan_created',
@@ -442,7 +456,9 @@ describe('SwarmManager.runTaskTool', () => {
     expect(revised).toMatchObject({
       action: 'update_item_status',
       updatedItemId: created.createdItemIds?.[0],
+      status: 'active',
     })
+    expect(revised).not.toHaveProperty('snapshot')
     expect(creationRows).toHaveLength(1)
     expect(snapshots).toHaveLength(2)
 
@@ -454,6 +470,12 @@ describe('SwarmManager.runTaskTool', () => {
       itemId: created.createdItemIds?.[0],
       link: { type: 'worker', agentId: worker.agentId },
     })
+    expect(linked).toMatchObject({
+      action: 'link',
+      linkedItemId: created.createdItemIds?.[0],
+      status: 'active',
+    })
+    expect(linked).not.toHaveProperty('snapshot')
     expect(creationRows).toHaveLength(1)
     expect(snapshots).toHaveLength(3)
     expect(snapshots[2]).toMatchObject({
@@ -469,6 +491,11 @@ describe('SwarmManager.runTaskTool', () => {
       status: 'completed',
       finalSummary: 'Done',
     })
+    expect(finished).toMatchObject({
+      action: 'finish_plan',
+      status: 'completed',
+    })
+    expect(finished).not.toHaveProperty('snapshot')
     expect(creationRows).toHaveLength(1)
     expect(snapshots).toHaveLength(4)
     expect(snapshots[3]).toMatchObject({
@@ -494,8 +521,9 @@ describe('SwarmManager.runTaskTool', () => {
       action: 'upsert_plan',
       stateRevision: 1,
       planRevision: 1,
-      snapshot: { revision: 1 },
+      status: 'active',
     })
+    expect(created).not.toHaveProperty('snapshot')
     expect(created.createdItemIds).toHaveLength(1)
 
     const fetched = await manager.runTaskTool('manager', 'tool-2', { action: 'get' })
@@ -514,8 +542,9 @@ describe('SwarmManager.runTaskTool', () => {
       action: 'link',
       stateRevision: 2,
       linkedItemId: created.createdItemIds?.[0],
-      snapshot: { activeWorkPlan: { items: [{ workerLinks: [{ agentId: worker.agentId }] }] } },
+      status: 'active',
     })
+    expect(linked).not.toHaveProperty('snapshot')
 
     const revised = await manager.runTaskTool('manager', 'tool-4', {
       action: 'update_item_status',
@@ -529,8 +558,9 @@ describe('SwarmManager.runTaskTool', () => {
       action: 'update_item_status',
       stateRevision: 3,
       updatedItemId: created.createdItemIds?.[0],
-      snapshot: { activeWorkPlan: { items: [{ workerLinks: [{ agentId: worker.agentId }], status: 'done' }] } },
+      status: 'active',
     })
+    expect(revised).not.toHaveProperty('snapshot')
 
     await expect(
       manager.runTaskTool('manager', 'tool-5', {
@@ -563,7 +593,9 @@ describe('SwarmManager.runTaskTool', () => {
       stateRevision: 4,
       planId: created.planId,
       planRevision: 4,
+      status: 'completed',
     })
+    expect(finished).not.toHaveProperty('snapshot')
   })
 
   it('rejects archived and non-running manager task mutations before mutating task state', async () => {

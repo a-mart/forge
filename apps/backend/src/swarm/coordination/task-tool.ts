@@ -9,6 +9,7 @@ import {
   type WorkPlanItemStatus,
   type WorkPlanMode,
   type WorkPlanMutableStatus,
+  type WorkPlanStatus,
   type WorkPlanTerminalStatus,
 } from '@forge/protocol'
 import type { SwarmToolHost } from '../swarm-tool-host.js'
@@ -113,7 +114,7 @@ export interface TaskToolMutationResult {
   stateRevision: number
   planId: string
   planRevision: number
-  snapshot: SessionTaskStateSnapshot
+  status: WorkPlanStatus
   createdItemIds?: string[]
   updatedItemId?: string
   linkedItemId?: string
@@ -124,7 +125,7 @@ export function buildTaskTool(host: SwarmToolHost, descriptor: AgentDescriptor):
     name: TASK_TOOL_NAME,
     label: 'Task',
     description:
-      'Manage the current session\'s Active Work plan. Manager-only. This is coordination state, not execution; when the next step is clear, pair plan creation with immediate real work/delegation in the same turn. Call exactly one action: `get`, `upsert_plan`, `update_item_status`, `link`, or `finish_plan`. Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only: one item per line like `[active] Investigate logs`. Use `update_item_status` for status-only item progress after create. Use `link` for worker evidence and `finish_plan` for the final outcome. Do not send nested item arrays or stringified JSON arrays from model-generated tool calls.',
+      'Manage the current session\'s Active Work plan. Manager-only. This is coordination state, not execution; when the next step is clear, pair plan creation with immediate real work/delegation in the same turn. Call exactly one action: `get`, `upsert_plan`, `update_item_status`, `link`, or `finish_plan`. Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only: one item per line like `[active] Investigate logs`. Use `update_item_status` for status-only item progress after create. Use `link` for worker evidence and `finish_plan` for the final outcome. Use `task.get` when you need the full current snapshot; successful mutations return compact acknowledgements with revisions and ids only. Do not send nested item arrays or stringified JSON arrays from model-generated tool calls.',
     parameters: taskToolSchema,
     async execute(toolCallId, params) {
       const result = await host.runTaskTool(descriptor.agentId, toolCallId, params as TaskToolInput)
@@ -238,7 +239,7 @@ export const taskToolSchema = Type.Object(
   {
     additionalProperties: false,
     description:
-      'Arguments for the manager-only task tool. This tool records coordination state only; it does not count as investigating, patching, or validating. Provider-facing upsert_plan supports top-level plan fields plus create-time itemsText; it does not expose structured items arrays. Example: {"action":"upsert_plan","title":"Investigate bug","itemsText":"[active] Trace failure\\n[todo] Patch shared state"}.',
+      'Arguments for the manager-only task tool. This tool records coordination state only; it does not count as investigating, patching, or validating. Provider-facing upsert_plan supports top-level plan fields plus create-time itemsText; it does not expose structured items arrays. Call `task.get` to retrieve the full current snapshot; successful mutations return compact acknowledgements. Example: {"action":"upsert_plan","title":"Investigate bug","itemsText":"[active] Trace failure\\n[todo] Patch shared state"}.',
   },
 )
 

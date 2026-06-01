@@ -425,15 +425,7 @@ describe("claude-mcp-tool-bridge", () => {
       stateRevision: 1,
       planId: "plan-1",
       planRevision: 1,
-      snapshot: {
-        sessionAgentId: manager.agentId,
-        profileId: "profile-1",
-        revision: 1,
-        activeWorkPlan: null,
-        recentWorkPlans: [],
-        recentWorkPlanCount: 0,
-        recentWorkPlansTruncated: false
-      },
+      status: "active",
       normalizedInput: normalizeTaskToolInput(input)
     } satisfies TaskToolResult & { normalizedInput: unknown }));
     const host = createMockHost({ runTaskTool });

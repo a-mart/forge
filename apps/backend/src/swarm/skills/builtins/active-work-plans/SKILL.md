@@ -97,7 +97,7 @@ Tool-call reliability rules:
 - If the plan already exists, use `get`, `update_item_status`, `link`, or `finish_plan`; do not attempt item-list rewrites from the manager prompt.
 - Do not add fields that are not in the examples or schema.
 
-`task.get` and successful mutations return `stateRevision` plus a bounded `snapshot`. Successful mutations also return `planId`, `planRevision`, and sometimes `createdItemIds`, `updatedItemId`, or `linkedItemId`. Prefer passing the latest `stateRevision` as `expectedStateRevision` when linking, updating item status, or finishing an existing plan. If a conflict occurs, call `task.get`, review the latest state, then retry with the latest revision.
+`task.get` returns `stateRevision` plus the full bounded `snapshot`. Successful mutations return compact acknowledgements with `stateRevision`, `planId`, `planRevision`, current plan `status`, and sometimes `createdItemIds`, `updatedItemId`, or `linkedItemId`. Prefer passing the latest `stateRevision` as `expectedStateRevision` when linking, updating item status, or finishing an existing plan. If a conflict occurs, call `task.get`, review the latest state, then retry with the latest revision.
 
 ## Valid tool input shapes
 

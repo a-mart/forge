@@ -2229,7 +2229,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         stateRevision: mutationResult.stateRevision,
         planId: mutationResult.planId,
         planRevision: mutationResult.planRevision,
-        snapshot: mutationResult.snapshot,
+        status: mutationResult.workPlan.status,
         ...(mutationResult.createdItemIds ? { createdItemIds: mutationResult.createdItemIds } : {}),
         ...(mutationResult.updatedItemId ? { updatedItemId: mutationResult.updatedItemId } : {}),
         ...(mutationResult.linkedItemId ? { linkedItemId: mutationResult.linkedItemId } : {}),
