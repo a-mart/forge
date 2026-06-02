@@ -28,8 +28,12 @@ export interface ManagerWsState {
   subscribedAgentId: string | null
   messages: ConversationHistoryEntry[]
   activityMessages: AgentActivityEntry[]
-  /** Persisted cache observations for future header UI; not rendered as chat rows in v1. */
+  /** Persisted cache observations for header UI; not rendered as chat rows. */
   modelCacheObservations: ModelCacheObservationEntry[]
+  /** Bootstrap/live observations held until persisted setting is loaded. */
+  pendingModelCacheObservations: ModelCacheObservationEntry[]
+  /** False until GET/WS confirms server setting; avoids dropping bootstrap while unknown. */
+  modelCacheVisualizationSettingLoaded: boolean
   /** Choice IDs with pending status for the current session */
   pendingChoiceIds: Set<string>
   agents: AgentDescriptor[]
@@ -66,6 +70,8 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     messages: [],
     activityMessages: [],
     modelCacheObservations: [],
+    pendingModelCacheObservations: [],
+    modelCacheVisualizationSettingLoaded: false,
     pendingChoiceIds: new Set(),
     agents: [],
     loadedSessionIds: new Set(),

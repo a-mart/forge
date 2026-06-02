@@ -510,7 +510,7 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
       {isBuilder && (
         <SettingsSection
           label="Prompt Cache Visualization"
-          description="Show a compact prompt-cache indicator in manager chat headers for OpenAI/Codex Pi sessions when cached input token counts are available."
+          description="Show a compact prompt-cache indicator in manager chat headers for OpenAI/Codex Pi sessions when provider-reported cached input token counts are available."
         >
           <div className="flex items-center gap-3">
             <Switch
@@ -529,7 +529,9 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
           </div>
           {!modelCacheVisualizationEnabled && !modelCacheVisualizationLoading ? (
             <p className="mt-2 text-xs italic text-muted-foreground/70">
-              Prompt cache visualization is off. Header indicators and historical cache observations stay hidden.
+              Prompt cache visualization is off by default. While disabled, Forge does not collect new cache
+              observations and hides the header indicator. Observations from earlier enabled periods may appear
+              after you turn this on and load session history; Forge does not report guaranteed miss or drop causes.
             </p>
           ) : null}
           {modelCacheVisualizationError ? (

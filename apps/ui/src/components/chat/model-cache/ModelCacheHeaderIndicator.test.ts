@@ -92,7 +92,9 @@ describe('ModelCacheHeaderIndicator', () => {
       root.render(createElement(ModelCacheHeaderIndicator, { summary: summary! }))
     })
 
-    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Open prompt cache details"]')
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open prompt cache details: Prompt cache 91%"]',
+    )
     act(() => trigger?.click())
 
     expect(document.body.textContent).toContain('Cached token counts are reported by the provider')

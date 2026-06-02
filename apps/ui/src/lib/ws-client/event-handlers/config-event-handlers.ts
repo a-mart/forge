@@ -1,3 +1,4 @@
+import { applyLoadedModelCacheVisualizationSetting } from '../model-cache-visualization-state.js'
 import type { ManagerWsConfigEventContext } from '../types'
 import type { ServerEvent } from '@forge/protocol'
 
@@ -50,10 +51,13 @@ export function handleConfigEvent(
       return true
 
     case 'model_cache_visualization_settings_changed':
-      context.updateState({
-        modelCacheVisualizationEnabled: event.enabled,
-        ...(event.enabled ? {} : { modelCacheObservations: [] }),
-      })
+      context.updateState(
+        applyLoadedModelCacheVisualizationSetting({
+          enabled: event.enabled,
+          currentObservations: context.state.modelCacheObservations,
+          pendingObservations: context.state.pendingModelCacheObservations,
+        }),
+      )
       return true
 
     default:

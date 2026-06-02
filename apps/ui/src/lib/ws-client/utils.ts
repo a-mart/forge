@@ -145,14 +145,6 @@ export function isModelCacheObservationEntry(
   return entry.type === 'model_cache_observation'
 }
 
-/** Fail-closed: do not retain observations in client state while visualization is disabled. */
-export function resolveModelCacheObservationsForState(
-  observations: ModelCacheObservationEntry[],
-  visualizationEnabled: boolean,
-): ModelCacheObservationEntry[] {
-  return visualizationEnabled ? observations : []
-}
-
 export function splitConversationHistory(
   messages: ConversationEntry[],
 ): {

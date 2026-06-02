@@ -12,6 +12,14 @@ Toggle "Show provider usage" to control whether the provider subscription usage 
 
 Use **Enable Active Work Plans** to turn the session coordination UI on or off. It is Builder-only and on by default. When enabled, managers get the `task` tool, Active Work guidance, and the live Active Work card in chat. When disabled, the live card hides and manager runtimes recycle or defer recycle so the change takes effect cleanly. Historical Work Plan receipts stay visible either way.
 
+## Prompt Cache Visualization
+
+Use **Enable prompt cache visualization** to show a compact prompt-cache chip in manager chat headers for OpenAI/Codex Pi sessions. It is Builder-only and **off by default**.
+
+When enabled, Forge captures provider-reported cached input token counts on eligible manager turns and summarizes hit, partial, and miss states in the header popover. While disabled, Forge does not collect new cache observations and hides the indicator. Observations from earlier enabled periods may appear after you turn this on and load session history.
+
+Cached token counts come from the provider. OpenAI does not report specific miss or drop causes, and Forge does not infer them.
+
 ## Telemetry
 
 Anonymous telemetry is enabled by default and sends only aggregate counts such as sessions, models, and feature adoption. It does not send prompts, code, file paths, repo names, or personal data.

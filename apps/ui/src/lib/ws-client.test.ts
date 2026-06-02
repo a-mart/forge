@@ -440,6 +440,7 @@ describe('ManagerWsClient', () => {
 
     emitServerEvent(socket, cacheObservation)
     expect(client.getState().modelCacheObservations).toEqual([])
+    expect(client.getState().pendingModelCacheObservations).toHaveLength(1)
 
     emitServerEvent(socket, {
       type: 'conversation_history',
@@ -447,6 +448,7 @@ describe('ManagerWsClient', () => {
       messages: [cacheObservation],
     })
     expect(client.getState().modelCacheObservations).toEqual([])
+    expect(client.getState().pendingModelCacheObservations).toHaveLength(1)
 
     emitServerEvent(socket, {
       type: 'model_cache_visualization_settings_changed',
@@ -455,14 +457,19 @@ describe('ManagerWsClient', () => {
     })
 
     expect(client.getState().modelCacheVisualizationEnabled).toBe(true)
-    expect(client.getState().modelCacheObservations).toEqual([])
+    expect(client.getState().modelCacheObservations).toHaveLength(1)
+    expect(client.getState().modelCacheObservations[0]?.id).toBe('cache-obs-1')
+    expect(client.getState().pendingModelCacheObservations).toEqual([])
 
     emitServerEvent(socket, {
       ...cacheObservation,
       id: 'cache-obs-2',
     })
-    expect(client.getState().modelCacheObservations).toHaveLength(1)
-    expect(client.getState().modelCacheObservations[0]?.id).toBe('cache-obs-2')
+    expect(client.getState().modelCacheObservations).toHaveLength(2)
+    expect(client.getState().modelCacheObservations.map((entry) => entry.id)).toEqual([
+      'cache-obs-1',
+      'cache-obs-2',
+    ])
 
     emitServerEvent(socket, {
       type: 'model_cache_visualization_settings_changed',

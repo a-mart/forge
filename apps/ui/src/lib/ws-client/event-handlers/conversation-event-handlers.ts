@@ -1,10 +1,7 @@
 import { handleUnreadNotification } from '../../notification-service'
 import { getSidebarPerfRegistry } from '../../perf/sidebar-perf-debug'
-import {
-  clampConversationHistory,
-  resolveModelCacheObservationsForState,
-  splitConversationHistory,
-} from '../utils'
+import { routeModelCacheObservationsForState } from '../model-cache-visualization-state.js'
+import { clampConversationHistory, splitConversationHistory } from '../utils'
 import type { ManagerWsConversationEventContext } from '../types'
 import type { ServerEvent } from '@forge/protocol'
 
@@ -69,21 +66,16 @@ export function handleConversationEvent(
         return true
       }
 
-      if (!context.state.modelCacheVisualizationEnabled) {
-        return true
-      }
+      const routed = routeModelCacheObservationsForState({
+        incoming: [event],
+        enabled: context.state.modelCacheVisualizationEnabled,
+        settingLoaded: context.state.modelCacheVisualizationSettingLoaded,
+        currentObservations: context.state.modelCacheObservations,
+        pendingObservations: context.state.pendingModelCacheObservations,
+        mode: 'upsert',
+      })
 
-      const existingIdx = context.state.modelCacheObservations.findIndex(
-        (observation) => observation.id === event.id,
-      )
-      const nextObservations = [...context.state.modelCacheObservations]
-      if (existingIdx >= 0) {
-        nextObservations[existingIdx] = event
-      } else {
-        nextObservations.push(event)
-      }
-
-      context.updateState({ modelCacheObservations: nextObservations })
+      context.updateState(routed)
       return true
     }
 
@@ -177,10 +169,14 @@ export function handleConversationEvent(
       }
 
       const { messages, activityMessages, modelCacheObservations } = splitConversationHistory(event.messages)
-      const resolvedModelCacheObservations = resolveModelCacheObservationsForState(
-        modelCacheObservations,
-        context.state.modelCacheVisualizationEnabled,
-      )
+      const routedObservations = routeModelCacheObservationsForState({
+        incoming: modelCacheObservations,
+        enabled: context.state.modelCacheVisualizationEnabled,
+        settingLoaded: context.state.modelCacheVisualizationSettingLoaded,
+        currentObservations: context.state.modelCacheObservations,
+        pendingObservations: context.state.pendingModelCacheObservations,
+        mode: 'replace',
+      })
       // Sidebar perf: stop `session_switch.click_to_history_loaded_ms` and mark
       // the active session-switch token eligible for first-paint completion.
       // The interaction nonce ensures stale bootstraps from A→B→A rapid
@@ -196,7 +192,8 @@ export function handleConversationEvent(
       context.updateState({
         messages,
         activityMessages: clampConversationHistory(activityMessages),
-        modelCacheObservations: resolvedModelCacheObservations,
+        modelCacheObservations: routedObservations.modelCacheObservations,
+        pendingModelCacheObservations: routedObservations.pendingModelCacheObservations,
       })
       return true
     }
@@ -236,6 +233,7 @@ export function handleConversationEvent(
         messages: [],
         activityMessages: [],
         modelCacheObservations: [],
+        pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),
         lastError: null,
       })

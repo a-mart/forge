@@ -43,7 +43,7 @@ export function ModelCacheHeaderIndicator({ summary, className }: ModelCacheHead
             statusAccentClass(summary.latestStatus),
             className,
           )}
-          aria-label="Open prompt cache details"
+          aria-label={`Open prompt cache details: ${summary.chipLabel}`}
         >
           <Database className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="truncate">{summary.chipLabel}</span>

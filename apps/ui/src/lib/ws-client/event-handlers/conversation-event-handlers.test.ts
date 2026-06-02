@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCacheObservationEntry } from '@/lib/ws-state'
 import { createInitialManagerWsState } from '@/lib/ws-state'
+import { applyLoadedModelCacheVisualizationSetting } from '../model-cache-visualization-state'
 import { handleConversationEvent } from './conversation-event-handlers'
 import type { ManagerWsState } from '@/lib/ws-state'
 
@@ -47,67 +48,50 @@ function runHandler(
 }
 
 describe('handleConversationEvent model cache observations', () => {
-  it('ignores live observations while visualization is disabled', () => {
-    const state = {
-      ...createInitialManagerWsState('manager'),
-      modelCacheVisualizationEnabled: false,
-    }
-
-    const next = runHandler(state, makeCacheObservation('cache-live'))
-
-    expect(next.modelCacheObservations).toEqual([])
-  })
-
-  it('does not populate observations from bootstrap history while disabled', () => {
-    const state = {
-      ...createInitialManagerWsState('manager'),
-      modelCacheVisualizationEnabled: false,
-    }
-
-    const next = runHandler(state, {
-      type: 'conversation_history',
-      agentId: 'manager',
-      messages: [
-        {
-          type: 'conversation_message',
-          agentId: 'manager',
-          id: 'msg-1',
-          role: 'assistant',
-          text: 'hello',
-          timestamp: '2026-06-02T12:00:00.000Z',
-          source: 'system',
-        },
-        makeCacheObservation('cache-bootstrap'),
-      ],
-    })
-
-    expect(next.modelCacheObservations).toEqual([])
-  })
-
-  it('collects live and bootstrap observations only while enabled', () => {
-    let state = {
-      ...createInitialManagerWsState('manager'),
-      modelCacheVisualizationEnabled: true,
-    }
+  it('buffers bootstrap observations until setting loads, then promotes them when enabled', () => {
+    let state = createInitialManagerWsState('manager')
 
     state = runHandler(state, {
       type: 'conversation_history',
       agentId: 'manager',
       messages: [makeCacheObservation('cache-bootstrap')],
     })
-    expect(state.modelCacheObservations).toHaveLength(1)
 
-    state = runHandler(state, makeCacheObservation('cache-live'))
-    expect(state.modelCacheObservations.map((observation) => observation.id)).toEqual([
-      'cache-bootstrap',
-      'cache-live',
-    ])
+    expect(state.modelCacheVisualizationSettingLoaded).toBe(false)
+    expect(state.modelCacheObservations).toEqual([])
+    expect(state.pendingModelCacheObservations.map((entry) => entry.id)).toEqual(['cache-bootstrap'])
+
+    state = {
+      ...state,
+      ...applyLoadedModelCacheVisualizationSetting({
+        enabled: true,
+        currentObservations: state.modelCacheObservations,
+        pendingObservations: state.pendingModelCacheObservations,
+      }),
+    }
+
+    expect(state.modelCacheObservations.map((entry) => entry.id)).toEqual(['cache-bootstrap'])
+    expect(state.pendingModelCacheObservations).toEqual([])
+  })
+
+  it('ignores live observations while visualization is disabled after setting loads', () => {
+    const state = {
+      ...createInitialManagerWsState('manager'),
+      modelCacheVisualizationEnabled: false,
+      modelCacheVisualizationSettingLoaded: true,
+    }
+
+    const next = runHandler(state, makeCacheObservation('cache-live'))
+
+    expect(next.modelCacheObservations).toEqual([])
+    expect(next.pendingModelCacheObservations).toEqual([])
   })
 
   it('does not reveal observations that arrived while disabled after re-enable', () => {
     let state = {
       ...createInitialManagerWsState('manager'),
       modelCacheVisualizationEnabled: false,
+      modelCacheVisualizationSettingLoaded: true,
     }
 
     state = runHandler(state, makeCacheObservation('stale-while-disabled'))
@@ -115,14 +99,38 @@ describe('handleConversationEvent model cache observations', () => {
 
     state = {
       ...state,
-      modelCacheVisualizationEnabled: true,
+      ...applyLoadedModelCacheVisualizationSetting({
+        enabled: true,
+        currentObservations: state.modelCacheObservations,
+        pendingObservations: state.pendingModelCacheObservations,
+      }),
     }
 
     expect(state.modelCacheObservations).toEqual([])
 
     state = runHandler(state, makeCacheObservation('fresh-after-enable'))
-    expect(state.modelCacheObservations.map((observation) => observation.id)).toEqual([
-      'fresh-after-enable',
-    ])
+    expect(state.modelCacheObservations.map((entry) => entry.id)).toEqual(['fresh-after-enable'])
+  })
+
+  it('clears stale observations when fetched setting resolves to false', () => {
+    let state = {
+      ...createInitialManagerWsState('manager'),
+      modelCacheVisualizationEnabled: true,
+      modelCacheVisualizationSettingLoaded: true,
+      modelCacheObservations: [makeCacheObservation('stale-active')],
+      pendingModelCacheObservations: [makeCacheObservation('stale-pending')],
+    }
+
+    state = {
+      ...state,
+      ...applyLoadedModelCacheVisualizationSetting({
+        enabled: false,
+        currentObservations: state.modelCacheObservations,
+        pendingObservations: state.pendingModelCacheObservations,
+      }),
+    }
+
+    expect(state.modelCacheObservations).toEqual([])
+    expect(state.pendingModelCacheObservations).toEqual([])
   })
 })
