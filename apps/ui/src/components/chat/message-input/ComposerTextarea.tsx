@@ -10,6 +10,9 @@ interface ComposerTextareaProps {
   disabled: boolean
   formatMode: boolean
   hasMentionTokens: boolean
+  mentionAutocompleteOpen?: boolean
+  mentionListboxId?: string
+  mentionActiveDescendantId?: string
   onChange: (value: string) => void
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
   onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void
@@ -25,6 +28,9 @@ export function ComposerTextarea({
   disabled,
   formatMode,
   hasMentionTokens,
+  mentionAutocompleteOpen = false,
+  mentionListboxId,
+  mentionActiveDescendantId,
   onChange,
   onKeyDown,
   onPaste,
@@ -53,6 +59,11 @@ export function ComposerTextarea({
         ref={textareaRef}
         value={value}
         spellCheck
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={mentionAutocompleteOpen}
+        aria-controls={mentionAutocompleteOpen ? mentionListboxId : undefined}
+        aria-activedescendant={mentionActiveDescendantId}
         onChange={handleChange}
         onKeyDown={onKeyDown}
         onPaste={onPaste}

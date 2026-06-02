@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MessageInput, type MessageInputHandle, type ProjectAgentSuggestion } from './MessageInput'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
 import type { ConversationAttachment } from '@forge/protocol'
+import { fetchCodexCatalog } from '@/lib/codex-catalog-api'
+
+const fetchCodexCatalogMock = vi.mocked(fetchCodexCatalog)
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
@@ -42,6 +45,10 @@ vi.mock('@/lib/file-attachments', () => ({
 
 vi.mock('@/lib/api-endpoint', () => ({
   resolveApiEndpoint: (_ws: string, path: string) => `http://127.0.0.1:47187${path}`,
+}))
+
+vi.mock('@/lib/codex-catalog-api', () => ({
+  fetchCodexCatalog: vi.fn(),
 }))
 
 const voiceInputMockState: {
@@ -116,6 +123,7 @@ beforeEach(() => {
   document.body.appendChild(container)
   localStorageMock.clear()
   voiceInputMockState.transcribedText = null
+  fetchCodexCatalogMock.mockReset()
   vi.clearAllMocks()
 })
 
@@ -144,6 +152,7 @@ function renderMessageInput(
     slashCommands: SlashCommand[]
     projectAgents: ProjectAgentSuggestion[]
     enableCodexMention: boolean
+    managerAgentId: string
     wsUrl: string
   }> = {},
   inputRef?: React.RefObject<MessageInputHandle | null>,
@@ -839,6 +848,135 @@ describe('MessageInput', () => {
       await flush()
 
       expect(getTextarea().value).toBe('[@Codex] ')
+    })
+
+    it('inserts leading @Codex -selector shorthand from the tool picker at message start', async () => {
+      fetchCodexCatalogMock.mockResolvedValue({
+        status: 'ok',
+        snapshot: {
+          apps: [],
+          tools: [
+            {
+              selector: 'fireflies/list',
+              serverName: 'fireflies',
+              toolName: 'list',
+            },
+          ],
+          fetchedAt: '2026-01-01T00:00:00.000Z',
+        },
+      })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      await flush()
+
+      typeInTextarea('@Codex -fire')
+      await flush()
+      await flush()
+
+      const toolButton = Array.from(container.querySelectorAll('[role="option"]')).find((button) =>
+        button.textContent?.includes('fireflies/list'),
+      )
+      expect(toolButton).toBeTruthy()
+      flushSync(() => {
+        fireEvent.mouseDown(toolButton!)
+      })
+      await flush()
+
+      expect(getTextarea().value).toBe('@Codex -fireflies/list ')
+    })
+
+    it('inserts inline [@Codex:selector] from the tool picker mid-message', async () => {
+      fetchCodexCatalogMock.mockResolvedValue({
+        status: 'ok',
+        snapshot: {
+          apps: [],
+          tools: [
+            {
+              selector: 'fireflies/list',
+              serverName: 'fireflies',
+              toolName: 'list',
+            },
+          ],
+          fetchedAt: '2026-01-01T00:00:00.000Z',
+        },
+      })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      await flush()
+
+      typeInTextarea('please @Codex -fire')
+      await flush()
+      await flush()
+
+      const toolButton = Array.from(container.querySelectorAll('[role="option"]')).find((button) =>
+        button.textContent?.includes('fireflies/list'),
+      )
+      expect(toolButton).toBeTruthy()
+      flushSync(() => {
+        fireEvent.mouseDown(toolButton!)
+      })
+      await flush()
+
+      expect(getTextarea().value).toBe('please [@Codex:fireflies/list] ')
+    })
+
+    it('shows loading state while Codex tool catalog is fetching', async () => {
+      fetchCodexCatalogMock.mockReturnValue(new Promise(() => {}))
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      await flush()
+
+      typeInTextarea('@Codex -fire')
+      await flush()
+
+      expect(container.textContent).toContain('Loading Codex tools')
+      expect(container.textContent).not.toContain('No matching mentions')
+    })
+
+    it('shows catalog failure state instead of empty-filter copy', async () => {
+      fetchCodexCatalogMock.mockResolvedValue({ status: 'error' })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      await flush()
+
+      typeInTextarea('@Codex -fire')
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Could not load Codex tools')
+      expect(container.textContent).not.toContain('No matching mentions')
+    })
+
+    it('does not quick-send while Codex tool picker is loading', async () => {
+      fetchCodexCatalogMock.mockReturnValue(new Promise(() => {}))
+      const onSend = vi.fn()
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1', onSend })
+      await flush()
+
+      typeInTextarea('@Codex -fire')
+      await flush()
+
+      flushSync(() => {
+        fireEvent.keyDown(getTextarea(), { key: 'Enter' })
+      })
+      await flush()
+
+      expect(onSend).not.toHaveBeenCalled()
+      expect(getTextarea().value).toBe('@Codex -fire')
+    })
+
+    it('exposes combobox/listbox ARIA while mention menu is open', async () => {
+      renderMessageInput({ enableCodexMention: true })
+      await flush()
+
+      typeInTextarea('@cod')
+      await flush()
+
+      const textarea = getTextarea()
+      expect(textarea.getAttribute('aria-expanded')).toBe('true')
+      expect(textarea.getAttribute('aria-controls')).toBeTruthy()
+      expect(container.querySelector('[role="listbox"]')).toBeTruthy()
     })
   })
 })

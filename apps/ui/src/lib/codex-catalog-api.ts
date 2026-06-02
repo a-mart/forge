@@ -21,10 +21,14 @@ export interface CodexCatalogSnapshot {
   fetchedAt: string
 }
 
+export type CodexCatalogFetchResult =
+  | { status: 'ok'; snapshot: CodexCatalogSnapshot }
+  | { status: 'error' }
+
 export async function fetchCodexCatalog(
   wsUrl: string | undefined,
   managerAgentId: string,
-): Promise<CodexCatalogSnapshot | null> {
+): Promise<CodexCatalogFetchResult> {
   const url = resolveApiEndpoint(
     wsUrl,
     `/api/codex-app-server/catalog?managerAgentId=${encodeURIComponent(managerAgentId)}`,
@@ -33,11 +37,11 @@ export async function fetchCodexCatalog(
   try {
     const response = await fetch(url)
     if (!response.ok) {
-      return null
+      return { status: 'error' }
     }
 
-    return (await response.json()) as CodexCatalogSnapshot
+    return { status: 'ok', snapshot: (await response.json()) as CodexCatalogSnapshot }
   } catch {
-    return null
+    return { status: 'error' }
   }
 }

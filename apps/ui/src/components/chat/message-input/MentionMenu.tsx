@@ -6,30 +6,67 @@ import {
   type MentionSuggestion,
 } from './mention-types'
 
+export type MentionMenuStatus =
+  | 'list'
+  | 'loading'
+  | 'error'
+  | 'empty-catalog'
+  | 'empty-filter'
+
 interface MentionMenuProps {
   menuRef: RefObject<HTMLDivElement | null>
+  listboxId: string
+  status: MentionMenuStatus
   mentions: MentionSuggestion[]
   selectedIndex: number
   onSelect: (suggestion: MentionSuggestion) => void
   onHover: (index: number) => void
-  /** True when the menu is open but filtered results are empty. */
-  showEmpty: boolean
   enableCodexMention?: boolean
+  codexToolPicker?: boolean
+}
+
+function optionId(listboxId: string, index: number): string {
+  return `${listboxId}-option-${index}`
+}
+
+function emptyMessage(
+  status: MentionMenuStatus,
+  enableCodexMention: boolean,
+  codexToolPicker: boolean,
+): string {
+  if (status === 'loading') {
+    return 'Loading Codex tools…'
+  }
+  if (status === 'error') {
+    return 'Could not load Codex tools. Try again in a moment.'
+  }
+  if (status === 'empty-catalog') {
+    return 'No Codex tools available'
+  }
+  if (codexToolPicker) {
+    return 'No matching Codex tools'
+  }
+  return enableCodexMention ? 'No matching mentions' : 'No matching project agents'
 }
 
 export function MentionMenu({
   menuRef,
+  listboxId,
+  status,
   mentions,
   selectedIndex,
   onSelect,
   onHover,
-  showEmpty,
   enableCodexMention = false,
+  codexToolPicker = false,
 }: MentionMenuProps) {
-  if (mentions.length > 0) {
+  if (status === 'list' && mentions.length > 0) {
     return (
       <div
         ref={menuRef}
+        id={listboxId}
+        role="listbox"
+        aria-label="Mentions"
         className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg"
       >
         {mentions.map((suggestion, idx) => {
@@ -40,6 +77,7 @@ export function MentionMenu({
             : isCodex
               ? `@${suggestion.handle}`
               : `@${suggestion.handle}`
+          const id = optionId(listboxId, idx)
           return (
             <button
               key={
@@ -49,7 +87,10 @@ export function MentionMenu({
                     ? `codex-tool-${suggestion.selector}`
                     : suggestion.agentId
               }
+              id={id}
               type="button"
+              role="option"
+              aria-selected={idx === selectedIndex}
               className={cn(
                 'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm transition-colors',
                 idx === selectedIndex
@@ -98,18 +139,33 @@ export function MentionMenu({
     )
   }
 
-  if (showEmpty) {
+  if (status === 'loading' || status === 'error' || status === 'empty-catalog' || status === 'empty-filter') {
     return (
       <div
         ref={menuRef}
+        id={listboxId}
+        role="listbox"
+        aria-label="Mentions"
+        aria-busy={status === 'loading'}
         className="mb-1 rounded-lg border border-border bg-popover px-3 py-2 shadow-lg"
       >
-        <p className="text-xs text-muted-foreground">
-          {enableCodexMention ? 'No matching mentions' : 'No matching project agents'}
+        <p className="text-xs text-muted-foreground" role="status">
+          {emptyMessage(status, enableCodexMention, codexToolPicker)}
         </p>
       </div>
     )
   }
 
   return null
+}
+
+export function mentionMenuActiveDescendantId(
+  listboxId: string,
+  status: MentionMenuStatus,
+  selectedIndex: number,
+): string | undefined {
+  if (status !== 'list') {
+    return undefined
+  }
+  return optionId(listboxId, selectedIndex)
 }

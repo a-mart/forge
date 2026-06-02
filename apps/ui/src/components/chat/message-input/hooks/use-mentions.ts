@@ -9,6 +9,9 @@ import {
   toProjectAgentMentionSuggestion,
 } from '../mention-types'
 import {
+  type MentionMenuStatus,
+} from '../MentionMenu'
+import {
   hasComposerMentionTokens,
   isCodexToolPickerTrigger,
   isLeadingMentionPosition,
@@ -38,6 +41,10 @@ interface UseMentionsReturn {
   checkMentionTrigger: (value: string) => boolean
   hasMentionTokens: boolean
   codexCatalogLoading: boolean
+  codexCatalogError: boolean
+  codexToolMode: boolean
+  mentionMenuStatus: MentionMenuStatus | null
+  mentionMenuBlocksQuickSend: boolean
 }
 
 function codexMentionMatchesFilter(filter: string): boolean {
@@ -68,6 +75,7 @@ export function useMentions({
   const [codexToolMode, setCodexToolMode] = useState(false)
   const [codexToolSuggestions, setCodexToolSuggestions] = useState<CodexToolMentionSuggestion[]>([])
   const [codexCatalogLoading, setCodexCatalogLoading] = useState(false)
+  const [codexCatalogError, setCodexCatalogError] = useState(false)
   const mentionMenuRef = useRef<HTMLDivElement | null>(null)
 
   const hasMentionTokens = useMemo(() => hasComposerMentionTokens(input), [input])
@@ -79,13 +87,21 @@ export function useMentions({
 
     let cancelled = false
     setCodexCatalogLoading(true)
+    setCodexCatalogError(false)
 
-    void fetchCodexCatalog(wsUrl, managerAgentId).then((snapshot) => {
+    void fetchCodexCatalog(wsUrl, managerAgentId).then((result) => {
       if (cancelled) {
         return
       }
 
-      const tools = (snapshot?.tools ?? []).map(
+      if (result.status === 'error') {
+        setCodexToolSuggestions([])
+        setCodexCatalogError(true)
+        setCodexCatalogLoading(false)
+        return
+      }
+
+      const tools = (result.snapshot.tools ?? []).map(
         (tool): CodexToolMentionSuggestion => ({
           kind: 'codex_tool',
           selector: tool.selector,
@@ -97,6 +113,7 @@ export function useMentions({
       )
 
       setCodexToolSuggestions(tools)
+      setCodexCatalogError(false)
       setCodexCatalogLoading(false)
     })
 
@@ -170,7 +187,7 @@ export function useMentions({
       if (suggestion.kind === 'codex') {
         replacement = `[@${CODEX_MENTION_HANDLE}] `
       } else if (suggestion.kind === 'codex_tool') {
-        replacement = mentionAtLeadingPosition || codexToolMode
+        replacement = mentionAtLeadingPosition
           ? `@Codex -${suggestion.selector} `
           : `[@Codex:${suggestion.selector}] `
       } else {
@@ -191,7 +208,7 @@ export function useMentions({
         textarea?.setSelectionRange(newCursor, newCursor)
       })
     },
-    [codexToolMode, input, mentionAtLeadingPosition, mentionTokenStart, setInputWithDraft, textareaRef],
+    [input, mentionAtLeadingPosition, mentionTokenStart, setInputWithDraft, textareaRef],
   )
 
   const checkMentionTrigger = useCallback(
@@ -253,6 +270,46 @@ export function useMentions({
     [enableCodexMention, projectAgents, textareaRef],
   )
 
+  const mentionMenuStatus = useMemo((): MentionMenuStatus | null => {
+    if (!isMentionMenuOpen) {
+      return null
+    }
+
+    if (codexToolMode) {
+      if (codexCatalogLoading) {
+        return 'loading'
+      }
+      if (codexCatalogError) {
+        return 'error'
+      }
+      if (filteredMentions.length > 0) {
+        return 'list'
+      }
+      return codexToolSuggestions.length === 0 ? 'empty-catalog' : 'empty-filter'
+    }
+
+    if (filteredMentions.length > 0) {
+      return 'list'
+    }
+
+    if ((projectAgents?.length ?? 0) > 0 || enableCodexMention) {
+      return 'empty-filter'
+    }
+
+    return null
+  }, [
+    codexCatalogError,
+    codexCatalogLoading,
+    codexToolMode,
+    codexToolSuggestions.length,
+    enableCodexMention,
+    filteredMentions.length,
+    isMentionMenuOpen,
+    projectAgents,
+  ])
+
+  const mentionMenuBlocksQuickSend = isMentionMenuOpen && mentionMenuStatus !== 'list'
+
   return {
     isMentionMenuOpen,
     setIsMentionMenuOpen,
@@ -266,5 +323,9 @@ export function useMentions({
     checkMentionTrigger,
     hasMentionTokens,
     codexCatalogLoading,
+    codexCatalogError,
+    codexToolMode,
+    mentionMenuStatus,
+    mentionMenuBlocksQuickSend,
   }
 }

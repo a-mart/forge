@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useImperativeHandle, type KeyboardEvent } from 'react'
+import { forwardRef, useCallback, useId, useImperativeHandle, type KeyboardEvent } from 'react'
 import { ALargeSmall, ArrowUp, List, ListOrdered, Loader2, Mic, Paperclip, Square } from 'lucide-react'
 import { AttachedFiles } from '@/components/chat/AttachedFiles'
 import { Button } from '@/components/ui/button'
@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { findMentionContaining } from './message-input/mention-utils'
 import { toggleBulletList, toggleNumberedList } from './message-input/format-utils'
 import { SlashCommandMenu } from './message-input/SlashCommandMenu'
-import { MentionMenu } from './message-input/MentionMenu'
+import { MentionMenu, mentionMenuActiveDescendantId } from './message-input/MentionMenu'
 import { VoiceRecordingBar } from './message-input/VoiceRecordingBar'
 import { ComposerTextarea } from './message-input/ComposerTextarea'
 import { useDraft } from './message-input/hooks/use-draft'
@@ -40,6 +40,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   ref,
 ) {
   const blockedByLoading = isLoading && !allowWhileLoading
+  const mentionListboxId = useId()
 
   // --- Draft persistence ---
   const {
@@ -189,33 +190,44 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   // --- Keyboard handler ---
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // @mention autocomplete keyboard handling
-    if (mentions.isMentionMenuOpen && mentions.filteredMentions.length > 0) {
-      if (event.key === 'ArrowDown') {
+    if (mentions.isMentionMenuOpen) {
+      if (mentions.mentionMenuStatus === 'list' && mentions.filteredMentions.length > 0) {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          mentions.setMentionSelectedIndex(
+            (mentions.mentionSelectedIndex + 1) % mentions.filteredMentions.length,
+          )
+          return
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          mentions.setMentionSelectedIndex(
+            (mentions.mentionSelectedIndex - 1 + mentions.filteredMentions.length) %
+              mentions.filteredMentions.length,
+          )
+          return
+        }
+        if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+          event.preventDefault()
+          const selected = mentions.filteredMentions[mentions.mentionSelectedIndex]
+          if (selected) mentions.selectMention(selected)
+          return
+        }
+      }
+
+      if (
+        event.key === 'Tab' ||
+        (event.key === 'Enter' && !event.shiftKey && mentions.mentionMenuBlocksQuickSend)
+      ) {
         event.preventDefault()
-        mentions.setMentionSelectedIndex(
-          (mentions.mentionSelectedIndex + 1) % mentions.filteredMentions.length,
-        )
         return
       }
-      if (event.key === 'ArrowUp') {
+
+      if (event.key === 'Escape') {
         event.preventDefault()
-        mentions.setMentionSelectedIndex(
-          (mentions.mentionSelectedIndex - 1 + mentions.filteredMentions.length) %
-            mentions.filteredMentions.length,
-        )
+        mentions.setIsMentionMenuOpen(false)
         return
       }
-      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
-        event.preventDefault()
-        const selected = mentions.filteredMentions[mentions.mentionSelectedIndex]
-        if (selected) mentions.selectMention(selected)
-        return
-      }
-    }
-    if (mentions.isMentionMenuOpen && event.key === 'Escape') {
-      event.preventDefault()
-      mentions.setIsMentionMenuOpen(false)
-      return
     }
 
     // Atomic backspace/delete for mention tokens
@@ -285,12 +297,17 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       }
     } else {
       // Quick-send mode: Enter sends, Shift+Enter inserts newline
-      if (event.key === 'Enter' && !event.shiftKey) {
+      if (event.key === 'Enter' && !event.shiftKey && !mentions.mentionMenuBlocksQuickSend) {
         event.preventDefault()
         submitMessage()
       }
     }
   }
+
+  const mentionActiveDescendantId =
+    mentions.mentionMenuStatus === 'list'
+      ? mentionMenuActiveDescendantId(mentionListboxId, 'list', mentions.mentionSelectedIndex)
+      : undefined
 
   const placeholder = placeholderOverride ?? (
     disabled
@@ -315,18 +332,17 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       ) : null}
 
       {/* @mention autocomplete dropdown */}
-      {mentions.isMentionMenuOpen ? (
+      {mentions.isMentionMenuOpen && mentions.mentionMenuStatus ? (
         <MentionMenu
           menuRef={mentions.mentionMenuRef}
+          listboxId={mentionListboxId}
+          status={mentions.mentionMenuStatus}
           mentions={mentions.filteredMentions}
           selectedIndex={mentions.mentionSelectedIndex}
           onSelect={mentions.selectMention}
           onHover={mentions.setMentionSelectedIndex}
-          showEmpty={
-            mentions.filteredMentions.length === 0 &&
-            ((projectAgents?.length ?? 0) > 0 || enableCodexMention)
-          }
           enableCodexMention={enableCodexMention}
+          codexToolPicker={mentions.codexToolMode}
         />
       ) : null}
 
@@ -377,6 +393,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               disabled={disabled}
               formatMode={formatMode}
               hasMentionTokens={mentions.hasMentionTokens}
+              mentionAutocompleteOpen={mentions.isMentionMenuOpen}
+              mentionListboxId={mentionListboxId}
+              mentionActiveDescendantId={mentionActiveDescendantId}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               onPaste={attachments.handlePaste}
