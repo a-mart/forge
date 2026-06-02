@@ -250,6 +250,12 @@ export interface SwarmAgentLifecycleServiceOptions {
   deleteConversationHistory: (agentId: string, sessionFile: string) => void;
   deleteManagerSchedulesFile: (profileId: string) => Promise<void>;
   migrateLegacyProfileKnowledgeToReferenceDoc: (profileId: string) => Promise<void>;
+  prepareWorkerDescriptorForSpawn?: (context: {
+    callerAgentId: string;
+    input: SpawnAgentInput;
+    descriptor: AgentDescriptor;
+    specialistId?: string;
+  }) => void | Promise<void>;
 }
 
 export class SwarmAgentLifecycleService {
@@ -606,6 +612,13 @@ export class SwarmAgentLifecycleService {
         descriptor.webSearch = true;
       }
     }
+
+    await this.options.prepareWorkerDescriptorForSpawn?.({
+      callerAgentId,
+      input,
+      descriptor,
+      specialistId: specialist?.specialistId,
+    });
 
     this.upsertDescriptor(descriptor);
     await this.options.ensureSessionFileParentDirectory(descriptor.sessionFile);

@@ -57,9 +57,6 @@ function createHost(overrides: Partial<SwarmToolHost> = {}): SwarmToolHost {
     runTaskTool: async () => {
       throw new Error("not needed");
     },
-    delegateCodexPlugin: async () => {
-      throw new Error("not needed");
-    },
     ...overrides,
   };
 }
@@ -109,36 +106,13 @@ describe("codex manager tools", () => {
     });
 
     const managerTools = buildSwarmTools(host, createManager()).map((tool) => tool.name);
-    expect(managerTools).toContain("delegate_codex_plugin");
+    expect(managerTools).not.toContain("delegate_codex_plugin");
     expect(managerTools).not.toContain("list_codex_mcp_tools");
     expect(managerTools).not.toContain("call_codex_mcp_tool");
+    expect(managerTools).toContain("spawn_agent");
   });
 
-  it("delegate_codex_plugin passes only task/context to the server-side scope binder", async () => {
-    const delegateCodexPlugin = vi.fn(async () => ({
-      workerAgentId: "codex-plugin-fireflies",
-      selectors: ["fireflies"],
-      deliveryId: "delivery-1",
-      acceptedMode: "prompt" as const,
-    }));
-    const host = createHost({ delegateCodexPlugin });
-    const tool = buildSwarmTools(host, createManager()).find((entry) => entry.name === "delegate_codex_plugin");
-
-    expect(tool).toBeDefined();
-    const result = await tool!.execute("tc-1", {
-      task: "List meetings via @Codex:RepoPrompt/get_code_structure",
-      context: "Need a concise summary",
-      selectors: ["RepoPrompt/get_code_structure"],
-    });
-
-    expect(delegateCodexPlugin).toHaveBeenCalledWith("manager", {
-      task: "List meetings via @Codex:RepoPrompt/get_code_structure",
-      context: "Need a concise summary",
-    });
-    expect(JSON.stringify(result.details)).toContain("codex-plugin-fireflies");
-  });
-
-  it("exposes scoped Codex plugin tools only to the bound internal worker", async () => {
+  it("exposes scoped Codex plugin tools only to the bound scoped specialist worker", async () => {
     const callScoped = vi.fn(async () => ({
       auditId: "audit-1",
       selector: "fireflies/list_recent",

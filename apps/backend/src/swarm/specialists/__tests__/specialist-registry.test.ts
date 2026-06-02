@@ -1002,6 +1002,7 @@ describe("specialist-registry", () => {
       "backend",
       "code-reviewer",
       "code-reviewer-2",
+      "codex-plugin",
       "collab-doc-writer",
       "collab-planner",
       "collab-researcher",
@@ -1017,6 +1018,7 @@ describe("specialist-registry", () => {
     ].sort());
     expect(builderHandles).toContain("backend");
     expect(builderHandles).toContain("architect");
+    expect(builderHandles).toContain("codex-plugin");
     expect(builderHandles).not.toContain("collab-planner");
     expect(collaborationHandles).toEqual([
       "collab-doc-writer",

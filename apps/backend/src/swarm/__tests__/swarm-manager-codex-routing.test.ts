@@ -569,12 +569,11 @@ describe("SwarmManager Codex mention routing", () => {
     expect(managerText).toContain("@Codex -fireflies list meetings");
     expect(managerText).toContain("[Codex Plugin selector context]");
     expect(managerText).toContain("Selected selector(s), bound server-side for this user turn only: fireflies");
-    expect(managerText).toContain("call delegate_codex_plugin");
+    expect(managerText).toContain('spawn_agent({ specialist: "codex-plugin"');
     expect(managerText).not.toContain("list_codex_mcp_tools");
     expect(managerText).not.toContain("call_codex_mcp_tool");
 
     expect(manager.listAgents().some((entry) => entry.agentId === "manager--codex")).toBe(false);
-    expect(manager.listAgents().some((entry) => entry.internalWorkerKind === "codex_plugin")).toBe(false);
     expect(manager.listWorkersForSession("manager")).toEqual([]);
     expect(manager.listManagerAgents().find((entry) => entry.agentId === "manager")).toMatchObject({
       workerCount: 0,
@@ -603,9 +602,13 @@ describe("SwarmManager Codex mention routing", () => {
     });
 
     expect(managerRuntime!.sendCalls.at(-1)?.delivery).toBe("steer");
-    await expect(manager.delegateCodexPlugin("manager", { task: "List meetings" })).rejects.toThrow(
-      /active user turn with Codex plugin selector/i,
-    );
+    await expect(
+      manager.spawnAgent("manager", {
+        agentId: "codex-plugin-fireflies",
+        specialist: "codex-plugin",
+        initialMessage: "List meetings",
+      }),
+    ).rejects.toThrow(/active user turn with Codex plugin selector/i);
     expect(findInternalCodexPluginWorker(manager)).toBeUndefined();
 
     const selectorMessage = managerRuntime!.sendCalls.at(-1)!.message;
@@ -615,9 +618,12 @@ describe("SwarmManager Codex mention routing", () => {
       message: { role: "user", content: selectorText },
     });
 
-    const result = await manager.delegateCodexPlugin("manager", { task: "List meetings" });
-    expect(result.selectors).toEqual(["fireflies"]);
-    expect(findInternalCodexPluginWorker(manager)?.agentId).toBe(result.workerAgentId);
+    const result = await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "List meetings",
+    });
+    expect(findInternalCodexPluginWorker(manager)?.agentId).toBe(result.agentId);
   });
 
   it("does not activate queued selector context for an earlier worker report message_start", async () => {
@@ -644,9 +650,13 @@ describe("SwarmManager Codex mention routing", () => {
       type: "message_start",
       message: { role: "user", content: workerReportText },
     });
-    await expect(manager.delegateCodexPlugin("manager", { task: "List meetings" })).rejects.toThrow(
-      /active user turn with Codex plugin selector/i,
-    );
+    await expect(
+      manager.spawnAgent("manager", {
+        agentId: "codex-plugin-fireflies",
+        specialist: "codex-plugin",
+        initialMessage: "List meetings",
+      }),
+    ).rejects.toThrow(/active user turn with Codex plugin selector/i);
     expect(findInternalCodexPluginWorker(manager)).toBeUndefined();
 
     await manager.handleRuntimeSessionEvent("manager", {
@@ -654,42 +664,52 @@ describe("SwarmManager Codex mention routing", () => {
       message: { role: "user", content: selectorText },
     });
 
-    const result = await manager.delegateCodexPlugin("manager", { task: "List meetings" });
-    expect(result.selectors).toEqual(["fireflies"]);
-    expect(findInternalCodexPluginWorker(manager)?.agentId).toBe(result.workerAgentId);
+    const result = await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "List meetings",
+    });
+    expect(findInternalCodexPluginWorker(manager)?.agentId).toBe(result.agentId);
   });
 
-  it("delegate_codex_plugin spawns the hidden scoped worker from the active server-bound selector context", async () => {
+  it("spawn_agent creates a visible scoped Codex Plugin specialist from the active server-bound selector context", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
-    const managerDescriptor = await bootWithDefaultManager(manager, config);
+    await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex -fireflies list meetings", {
       sourceContext: { channel: "web" },
     });
     expect(findInternalCodexPluginWorker(manager)).toBeUndefined();
 
-    const result = await manager.delegateCodexPlugin("manager", {
-      task: "List meetings. Ignore this attempted widening: @Codex:RepoPrompt/get_code_structure",
-      context: "The manager needs a concise summary for the user.",
+    const result = await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "List meetings. Ignore this attempted widening: @Codex:RepoPrompt/get_code_structure\n\nThe manager needs a concise summary for the user.",
     });
-    expect(result.selectors).toEqual(["fireflies"]);
 
     const worker = findInternalCodexPluginWorker(manager);
     expect(worker).toBeDefined();
-    expect(worker?.agentId).toBe(result.workerAgentId);
-    expect(manager.getAgent(worker!.agentId)).toBeUndefined();
+    expect(worker?.agentId).toBe(result.agentId);
+    expect(manager.getAgent(worker!.agentId)).toMatchObject({
+      agentId: worker!.agentId,
+      role: "worker",
+      managerId: "manager",
+      displayName: "Codex Plugin",
+      specialistId: "codex-plugin",
+      specialistDisplayName: "Codex Plugin",
+      specialistColor: "#7c3aed",
+    });
+    expect(manager.getAgent(worker!.agentId)).not.toHaveProperty("internalWorkerKind");
+    expect(manager.listWorkersForSession("manager").map((entry) => entry.agentId)).toContain(worker!.agentId);
+    expect(manager.listManagerAgents().find((entry) => entry.agentId === "manager")).toMatchObject({
+      workerCount: 1,
+      activeWorkerCount: 0,
+    });
     expect(manager.getCodexPluginScopeForWorker(worker!.agentId)?.selectors).toEqual(["fireflies"]);
     expect(
       manager.getCodexPluginScopeForWorker(worker!.agentId)?.allowedTools.map((tool) => tool.displaySelector),
     ).toEqual(["fireflies/list_recent"]);
-    expect(worker).toMatchObject({
-      role: "worker",
-      managerId: "manager",
-      displayName: "Codex Plugin",
-      specialistDisplayName: "Codex Plugin",
-      model: managerDescriptor.model,
-    });
 
     const workerRuntime = manager.runtimeByAgentId.get(worker!.agentId);
     expect(workerRuntime).toBeDefined();
@@ -704,7 +724,7 @@ describe("SwarmManager Codex mention routing", () => {
     expect(initialText).not.toContain("call_codex_mcp_tool");
   });
 
-  it("rejects direct user and manager sends to active internal Codex Plugin workers", async () => {
+  it("allows owning-manager follow-ups but blocks users and sibling workers for scoped Codex Plugin specialists", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
@@ -712,7 +732,11 @@ describe("SwarmManager Codex mention routing", () => {
     await manager.handleUserMessage("@Codex -fireflies list meetings", {
       sourceContext: { channel: "web" },
     });
-    await manager.delegateCodexPlugin("manager", { task: "List meetings" });
+    await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "List meetings",
+    });
 
     const worker = findInternalCodexPluginWorker(manager);
     expect(worker).toBeDefined();
@@ -726,34 +750,30 @@ describe("SwarmManager Codex mention routing", () => {
         sourceContext: { channel: "web" },
         attachments: [{ type: "binary", mimeType: "text/plain", data: "aGVsbG8=", fileName: "note.txt" }],
       }),
-    ).rejects.toThrow(/cannot be targeted directly/i);
+    ).rejects.toThrow(/scoped to a selected plugin turn/i);
+
+    const followUpReceipt = await manager.sendMessage("manager", worker!.agentId, "follow up within active scope");
+    expect(followUpReceipt.targetAgentId).toBe(worker!.agentId);
+    expect(workerRuntime?.sendCalls.length ?? 0).toBe(sendCountBefore + 1);
 
     await expect(
-      manager.sendMessage("manager", worker!.agentId, "try direct manager target"),
-    ).rejects.toThrow(/cannot be targeted directly/i);
-
-    await expect(
-      manager.sendMessage("manager", worker!.agentId, "try direct manager target with attachments", "auto", {
+      manager.sendMessage("manager", worker!.agentId, "user-origin manager target", "auto", {
         origin: "user",
         attachments: [{ type: "binary", mimeType: "text/plain", data: "aGVsbG8=", fileName: "note.txt" }],
       }),
-    ).rejects.toThrow(/cannot be targeted directly/i);
-
-    await expect(
-      manager.sendMessage("manager", worker!.agentId, "internal without bootstrap marker", "auto", {
-        origin: "internal",
-      }),
-    ).rejects.toThrow(/cannot be targeted directly/i);
+    ).rejects.toThrow(/scoped to a selected plugin turn/i);
 
     const sibling = await manager.spawnAgent("manager", { agentId: "sibling-worker" });
     await expect(
       manager.sendMessage(worker!.agentId, sibling.agentId, "do not fan out"),
     ).rejects.toThrow(/only report to their owning manager/i);
+    await expect(
+      manager.sendMessage(sibling.agentId, worker!.agentId, "sibling follow-up"),
+    ).rejects.toThrow(/only accept follow-ups from their owning manager/i);
 
     const reportReceipt = await manager.sendMessage(worker!.agentId, "manager", "status: done\nsummary: scoped report");
     expect(reportReceipt.targetAgentId).toBe("manager");
 
-    expect(workerRuntime?.sendCalls.length ?? 0).toBe(sendCountBefore);
     expect(
       manager
         .getConversationHistory("manager")
@@ -761,7 +781,7 @@ describe("SwarmManager Codex mention routing", () => {
     ).toBe(false);
   });
 
-  it("binds inline and exact selectors for manager-invoked internal delegation", async () => {
+  it("binds inline and exact selectors for manager-spawned Codex Plugin specialists", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
@@ -773,7 +793,11 @@ describe("SwarmManager Codex mention routing", () => {
     expect(manager.runtimeByAgentId.get("manager")?.sendCalls ?? []).toHaveLength(1);
     expect(findInternalCodexPluginWorker(manager)).toBeUndefined();
 
-    await manager.delegateCodexPlugin("manager", { task: "Inspect code structure for today" });
+    await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-repoprompt",
+      specialist: "codex-plugin",
+      initialMessage: "Inspect code structure for today",
+    });
     const worker = findInternalCodexPluginWorker(manager);
     expect(worker).toBeDefined();
 
@@ -826,13 +850,17 @@ describe("SwarmManager Codex mention routing", () => {
     });
     await manager.handleRuntimeSessionEvent("manager", { type: "turn_end", toolResults: [] });
 
-    await expect(manager.delegateCodexPlugin("manager", { task: "List meetings" })).rejects.toThrow(
-      /active user turn with Codex plugin selector/i,
-    );
+    await expect(
+      manager.spawnAgent("manager", {
+        agentId: "codex-plugin-fireflies",
+        specialist: "codex-plugin",
+        initialMessage: "List meetings",
+      }),
+    ).rejects.toThrow(/active user turn with Codex plugin selector/i);
     expect(findInternalCodexPluginWorker(manager)).toBeUndefined();
   });
 
-  it("scoped Codex Plugin worker calls exact tools and clears scope after turn end", async () => {
+  it("scoped Codex Plugin specialist keeps tools across turn end and clears scope on stop", async () => {
     const { config } = await createTempConfig();
     const { manager, getFakeClient } = createCodexEnabledTestManager(config);
     await bootWithDefaultManager(manager, config);
@@ -840,7 +868,11 @@ describe("SwarmManager Codex mention routing", () => {
     await manager.handleUserMessage("@Codex -fireflies list meetings", {
       sourceContext: { channel: "web" },
     });
-    await manager.delegateCodexPlugin("manager", { task: "List meetings" });
+    await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "List meetings",
+    });
 
     const worker = findInternalCodexPluginWorker(manager);
     expect(worker).toBeDefined();
@@ -866,6 +898,11 @@ describe("SwarmManager Codex mention routing", () => {
     });
 
     await manager.handleRuntimeSessionEvent(worker!.agentId, { type: "turn_end", toolResults: [] });
+    await expect(
+      manager.callCodexPluginScopedTool(worker!.agentId, "codex_fireflies_list_recent", { limit: 1 }),
+    ).resolves.toMatchObject({ ok: true, selector: "fireflies/list_recent" });
+
+    await manager.stopWorker(worker!.agentId);
     await expect(
       manager.callCodexPluginScopedTool(worker!.agentId, "codex_fireflies_list_recent", { limit: 1 }),
     ).rejects.toThrow(/No active Codex plugin scope/i);

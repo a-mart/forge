@@ -13,6 +13,9 @@ import { isPluginPickerEligible } from "./codex-mcp-catalog.js";
 import type { AgentDescriptor } from "../types.js";
 
 export const CODEX_PLUGIN_INTERNAL_WORKER_KIND = "codex_plugin" as const;
+export const CODEX_PLUGIN_SPECIALIST_ID = "codex-plugin" as const;
+export const CODEX_PLUGIN_SPECIALIST_DISPLAY_NAME = "Codex Plugin" as const;
+export const CODEX_PLUGIN_SPECIALIST_COLOR = "#7c3aed" as const;
 
 const DEFAULT_PENDING_SCOPE_TTL_MS = 60_000;
 const DEFAULT_ACTIVE_SCOPE_TTL_MS = 15 * 60_000;
@@ -103,9 +106,9 @@ export function createCodexPluginDelegationId(): string {
 }
 
 export function buildCodexPluginWorkerPrompt(): string {
-  return `You are Forge's internal Codex Plugin worker.
+  return `You are Forge's Codex Plugin specialist worker.
 
-You were spawned by the Forge server for one user turn that selected a Codex plugin/tool. This is an internal delegated capability, not a general specialist role.
+You were spawned by the owning manager for a user turn that selected a Codex plugin/tool. Forge binds your plugin/tool scope server-side; you are a visible specialist worker, but your connector tools remain limited to that original scope.
 
 Rules:
 - Use only the scoped Codex plugin tools exposed in this runtime for Codex connector data.
@@ -114,7 +117,7 @@ Rules:
 - The scoped tools are read-only v1. Do not attempt write, destructive, file, shell, browser, computer-use, credential, or security operations.
 - Return concise answer-relevant findings to the owning manager with send_message_to_agent.
 - Your report must summarize useful results and caveats, but it must not include raw connector dumps. Redact sensitive values.
-- Do not speak directly to the end user.`;
+- Do not speak directly to the end user unless Forge explicitly adds that capability. Report to the owning manager.`;
 }
 
 export function buildCodexPluginInitialTask(params: {
@@ -305,9 +308,9 @@ export class CodexPluginScopeService {
     this.scopesByWorkerAgentId.delete(workerAgentId);
   }
 
-  closeScopesForManager(managerAgentId: string): void {
+  closeScopesForManager(managerAgentId: string, options?: { exceptWorkerAgentId?: string }): void {
     for (const [workerAgentId, scope] of this.scopesByWorkerAgentId.entries()) {
-      if (scope.managerAgentId === managerAgentId) {
+      if (scope.managerAgentId === managerAgentId && workerAgentId !== options?.exceptWorkerAgentId) {
         scope.state = "closed";
         this.scopesByWorkerAgentId.delete(workerAgentId);
       }
@@ -444,7 +447,7 @@ export function buildCodexPluginScopedToolDefinitions(params: {
       name: "list_scoped_codex_plugin_tools",
       label: "List Scoped Codex Plugin Tools",
       description:
-        "List only the Codex plugin tools scoped to this internal delegation. Does not list the global Codex MCP catalog.",
+        "List only the Codex plugin tools scoped to this Codex Plugin specialist. Does not list the global Codex MCP catalog.",
       parameters: Type.Object({}),
       async execute() {
         const details = {
@@ -469,7 +472,7 @@ export function buildCodexPluginScopedToolDefinitions(params: {
       `Call the read-only scoped Codex plugin tool ${allowedTool.displaySelector}.`,
       allowedTool.pluginDisplayName ? `Plugin: ${allowedTool.pluginDisplayName}.` : undefined,
       allowedTool.description,
-      "This tool is authorized only for the current internal Codex Plugin delegation.",
+      "This tool is authorized only for the current scoped Codex Plugin specialist.",
     ].filter((entry): entry is string => Boolean(entry && entry.trim().length > 0));
 
     tools.push({

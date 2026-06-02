@@ -152,7 +152,7 @@ describe("runtime tool plan", () => {
     ]);
   });
 
-  it("drops Pi default coding tools for internal Codex Plugin workers", async () => {
+  it("drops Pi default coding tools for scoped Codex Plugin specialist workers", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-tool-plan-"));
     const descriptor = createDescriptor(rootDir, {
       agentId: "codex-plugin-fireflies",
