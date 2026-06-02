@@ -55,6 +55,7 @@ import {
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
+import { createCodexCatalogRoutes } from "./http/routes/codex-catalog-routes.js";
 import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings-routes.js";
 import { createCliRoutes } from "./http/routes/cli-routes.js";
 import { createCollaborationRoutes } from "./http/routes/collaboration-routes.js";
@@ -503,6 +504,7 @@ export class SwarmWebSocketServer {
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
+      ...createCodexCatalogRoutes({ swarmManager: this.swarmManager }),
       ...(this.terminalService ? createTerminalRoutes({ terminalService: this.terminalService, settingsService: this.terminalSettingsService }) : []),
       ...this.settingsRoutes.routes,
       ...createSpecialistRoutes({

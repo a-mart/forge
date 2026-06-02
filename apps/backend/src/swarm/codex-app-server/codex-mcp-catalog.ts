@@ -1,0 +1,406 @@
+import { safeJson } from "./codex-app-server-event-normalizer.js";
+import type { CodexAppServerClientPort } from "./types.js";
+
+const CATALOG_CACHE_TTL_MS = 30_000;
+const MAX_CATALOG_ENTRIES = 500;
+const MAX_TOOL_ARGS_BYTES = 16 * 1024;
+const MAX_TOOL_RESULT_BYTES = 32 * 1024;
+
+export interface CodexCatalogApp {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface CodexCatalogMcpTool {
+  selector: string;
+  serverName: string;
+  toolName: string;
+  appId?: string;
+  appName?: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface CodexCatalogSnapshot {
+  apps: CodexCatalogApp[];
+  tools: CodexCatalogMcpTool[];
+  fetchedAt: string;
+}
+
+export interface CodexMcpToolCallInput {
+  managerAgentId: string;
+  cwd: string;
+  threadId: string;
+  serverName: string;
+  toolName: string;
+  args?: Record<string, unknown>;
+}
+
+export interface CodexMcpToolCallResult {
+  auditId: string;
+  selector: string;
+  serverName: string;
+  toolName: string;
+  ok: boolean;
+  content?: unknown;
+  structuredContent?: unknown;
+  error?: string;
+  redactedPreview: string;
+}
+
+interface CatalogCacheEntry {
+  expiresAt: number;
+  snapshot: CodexCatalogSnapshot;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeSelector(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function buildToolSelector(serverName: string, toolName: string): string {
+  return `${serverName}/${toolName}`;
+}
+
+export class CodexMcpCatalog {
+  private cache: CatalogCacheEntry | undefined;
+
+  constructor(private readonly getClient: () => Promise<CodexAppServerClientPort>) {}
+
+  async listCatalog(forceRefresh = false): Promise<CodexCatalogSnapshot> {
+    if (!forceRefresh && this.cache && this.cache.expiresAt > Date.now()) {
+      return this.cache.snapshot;
+    }
+
+    const client = await this.getClient();
+    const apps = await this.fetchApps(client);
+    const tools = await this.fetchMcpTools(client, apps);
+    const snapshot: CodexCatalogSnapshot = {
+      apps,
+      tools: tools.slice(0, MAX_CATALOG_ENTRIES),
+      fetchedAt: new Date().toISOString(),
+    };
+
+    this.cache = {
+      expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
+      snapshot,
+    };
+
+    return snapshot;
+  }
+
+  resolveTool(selector: string, snapshot?: CodexCatalogSnapshot): CodexCatalogMcpTool | undefined {
+    const normalized = normalizeSelector(selector);
+    const catalog = snapshot ?? this.cache?.snapshot;
+    if (!catalog) {
+      return undefined;
+    }
+
+    const exact = catalog.tools.find((tool) => normalizeSelector(tool.selector) === normalized);
+    if (exact) {
+      return exact;
+    }
+
+    const shortName = catalog.tools.find(
+      (tool) =>
+        normalizeSelector(tool.toolName) === normalized ||
+        normalizeSelector(tool.serverName) === normalized,
+    );
+    if (shortName && catalog.tools.filter((tool) => normalizeSelector(tool.toolName) === normalized).length === 1) {
+      return shortName;
+    }
+
+    const suffixMatches = catalog.tools.filter((tool) => {
+      const server = normalizeSelector(tool.serverName);
+      const name = normalizeSelector(tool.toolName);
+      return normalized === name || normalized === server || normalized.endsWith(`/${name}`);
+    });
+
+    return suffixMatches.length === 1 ? suffixMatches[0] : undefined;
+  }
+
+  validateToolArgs(
+    args: Record<string, unknown> | undefined,
+    schema: Record<string, unknown> | undefined,
+  ): void {
+    if (!schema || !isRecord(schema)) {
+      return;
+    }
+
+    const required = Array.isArray(schema.required)
+      ? schema.required.filter((entry): entry is string => typeof entry === "string")
+      : [];
+
+    const properties = isRecord(schema.properties) ? schema.properties : undefined;
+    const payload = args ?? {};
+
+    for (const key of required) {
+      if (!(key in payload)) {
+        throw new Error(`Missing required Codex tool argument: ${key}`);
+      }
+    }
+
+    if (!properties) {
+      return;
+    }
+
+    for (const [key, value] of Object.entries(payload)) {
+      const propertySchema = properties[key];
+      if (!propertySchema || !isRecord(propertySchema)) {
+        continue;
+      }
+
+      const expectedType = asString(propertySchema.type);
+      if (!expectedType) {
+        continue;
+      }
+
+      if (!valueMatchesSchemaType(value, expectedType)) {
+        throw new Error(`Codex tool argument "${key}" must be of type ${expectedType}`);
+      }
+    }
+  }
+
+  boundArgs(args: Record<string, unknown> | undefined): Record<string, unknown> {
+    const payload = args ?? {};
+    const serialized = safeJson(payload);
+    if (Buffer.byteLength(serialized, "utf8") > MAX_TOOL_ARGS_BYTES) {
+      throw new Error("Codex tool arguments exceed the size limit");
+    }
+
+    return JSON.parse(serialized) as Record<string, unknown>;
+  }
+
+  async callTool(input: CodexMcpToolCallInput, tool: CodexCatalogMcpTool): Promise<CodexMcpToolCallResult> {
+    const auditId = `codex-mcp-${Date.now()}`;
+    const boundedArgs = this.boundArgs(input.args);
+    this.validateToolArgs(boundedArgs, tool.inputSchema);
+
+    const client = await this.getClient();
+
+    try {
+      const response = await client.request<unknown>("mcpServer/tool/call", {
+        threadId: input.threadId,
+        cwd: input.cwd,
+        server: input.serverName,
+        tool: input.toolName,
+        arguments: boundedArgs,
+      });
+
+      const parsed = parseToolCallResponse(response);
+      const preview = truncateBytes(safeJson(parsed.redactedPayload), MAX_TOOL_RESULT_BYTES);
+
+      return {
+        auditId,
+        selector: tool.selector,
+        serverName: tool.serverName,
+        toolName: tool.toolName,
+        ok: true,
+        content: parsed.content,
+        structuredContent: parsed.structuredContent,
+        redactedPreview: preview,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        auditId,
+        selector: tool.selector,
+        serverName: tool.serverName,
+        toolName: tool.toolName,
+        ok: false,
+        error: message,
+        redactedPreview: truncateBytes(message, 1024),
+      };
+    }
+  }
+
+  private async fetchApps(client: CodexAppServerClientPort): Promise<CodexCatalogApp[]> {
+    try {
+      const response = await client.request<unknown>("app/list", {});
+      return parseAppsResponse(response);
+    } catch {
+      return [];
+    }
+  }
+
+  private async fetchMcpTools(
+    client: CodexAppServerClientPort,
+    apps: CodexCatalogApp[],
+  ): Promise<CodexCatalogMcpTool[]> {
+    try {
+      const response = await client.request<unknown>("mcpServerStatus/list", {});
+      return parseMcpToolsResponse(response, apps);
+    } catch {
+      return [];
+    }
+  }
+}
+
+function parseAppsResponse(response: unknown): CodexCatalogApp[] {
+  const entries = extractArray(response, ["apps", "items", "data"]);
+  const apps: CodexCatalogApp[] = [];
+
+  for (const entry of entries) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+
+    const id = asString(entry.id) ?? asString(entry.appId) ?? asString(entry.name);
+    const name = asString(entry.name) ?? asString(entry.title) ?? id;
+    if (!id || !name) {
+      continue;
+    }
+
+    apps.push({
+      id,
+      name,
+      description: asString(entry.description) ?? asString(entry.summary),
+    });
+  }
+
+  return apps;
+}
+
+function parseMcpToolsResponse(response: unknown, apps: CodexCatalogApp[]): CodexCatalogMcpTool[] {
+  const servers = extractArray(response, ["servers", "mcpServers", "items", "data"]);
+  const appById = new Map(apps.map((app) => [normalizeSelector(app.id), app]));
+  const tools: CodexCatalogMcpTool[] = [];
+
+  for (const serverEntry of servers) {
+    if (!isRecord(serverEntry)) {
+      continue;
+    }
+
+    const serverName =
+      asString(serverEntry.name) ??
+      asString(serverEntry.serverName) ??
+      asString(serverEntry.id);
+    if (!serverName) {
+      continue;
+    }
+
+    const appId = asString(serverEntry.appId) ?? asString(serverEntry.app);
+    const linkedApp = appId ? appById.get(normalizeSelector(appId)) : undefined;
+    const toolEntries = extractArray(serverEntry, ["tools", "availableTools"]);
+
+    for (const toolEntry of toolEntries) {
+      if (!isRecord(toolEntry)) {
+        continue;
+      }
+
+      const toolName = asString(toolEntry.name) ?? asString(toolEntry.toolName);
+      if (!toolName) {
+        continue;
+      }
+
+      const inputSchema = isRecord(toolEntry.inputSchema)
+        ? toolEntry.inputSchema
+        : isRecord(toolEntry.input_schema)
+          ? toolEntry.input_schema
+          : undefined;
+
+      tools.push({
+        selector: buildToolSelector(serverName, toolName),
+        serverName,
+        toolName,
+        appId: linkedApp?.id,
+        appName: linkedApp?.name,
+        description: asString(toolEntry.description),
+        inputSchema,
+      });
+    }
+  }
+
+  return tools;
+}
+
+function extractArray(response: unknown, keys: string[]): unknown[] {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (!isRecord(response)) {
+    return [];
+  }
+
+  for (const key of keys) {
+    const candidate = response[key];
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function parseToolCallResponse(response: unknown): {
+  content?: unknown;
+  structuredContent?: unknown;
+  redactedPayload: unknown;
+} {
+  if (!isRecord(response)) {
+    return { redactedPayload: response };
+  }
+
+  if (response.isError === true || response.error) {
+    throw new Error(asString(response.error) ?? "Codex MCP tool call failed");
+  }
+
+  if (response.action === "decline" || response.decision === "decline") {
+    throw new Error("Codex MCP tool call requires approval; declined for v1 fail-closed policy");
+  }
+
+  const content = response.content ?? response.result;
+  const structuredContent = response.structuredContent ?? response.structured_content;
+
+  return {
+    content,
+    structuredContent,
+    redactedPayload: {
+      content,
+      structuredContent,
+    },
+  };
+}
+
+function valueMatchesSchemaType(value: unknown, expectedType: string): boolean {
+  switch (expectedType) {
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "object":
+      return isRecord(value);
+    case "array":
+      return Array.isArray(value);
+    case "null":
+      return value === null;
+    default:
+      return true;
+  }
+}
+
+function truncateBytes(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxBytes - 1))}…`;
+}

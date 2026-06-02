@@ -448,6 +448,33 @@ describe("SwarmManager Codex mention routing", () => {
     expect(manager.runtimeByAgentId.get("manager")?.sendCalls).toHaveLength(1);
   });
 
+  it("routes leading @Codex -selector and inline @Codex:selector through the manager runtime", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+
+    const leadingSend = manager.runtimeByAgentId.get("manager")?.sendCalls.at(-1);
+    const leadingText =
+      typeof leadingSend?.message === "string" ? leadingSend.message : leadingSend?.message.text ?? "";
+    expect(leadingText).toContain("list_codex_app_tools");
+    expect(leadingText).toContain("fireflies");
+    expect(manager.listAgents().some((entry) => entry.agentId === "manager--codex")).toBe(false);
+
+    await manager.handleUserMessage("run @Codex:fireflies/list_recent for today", {
+      sourceContext: { channel: "web" },
+    });
+
+    const inlineSend = manager.runtimeByAgentId.get("manager")?.sendCalls.at(-1);
+    const inlineText =
+      typeof inlineSend?.message === "string" ? inlineSend.message : inlineSend?.message.text ?? "";
+    expect(inlineText).toContain("fireflies/list_recent");
+    expect(inlineText).toContain("call_codex_app_tool");
+  });
+
   it("persists parent cards with manager-owned agentId and model-context exclusion", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);

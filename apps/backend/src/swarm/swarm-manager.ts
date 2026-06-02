@@ -347,7 +347,10 @@ import {
   shouldIncludeDescriptorInBootInterruptedToolReconciliation,
 } from "./external-thread-compatibility.js";
 import { CodexAppServerService } from "./codex-app-server/codex-app-server-service.js";
+import type { CodexCatalogSnapshot, CodexMcpToolCallResult } from "./codex-app-server/codex-mcp-catalog.js";
 import {
+  buildCodexToolMentionManagerGuidance,
+  classifyCodexUserMessage,
   isBuilderWebCodexRoutingSurface,
   parseLeadingCodexMention,
 } from "./codex-app-server/codex-mention-router.js";
@@ -5158,6 +5161,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
+    const codexClassification =
+      target.role === "manager" && isBuilderWebCodexRoutingSurface(sourceContext, target)
+        ? classifyCodexUserMessage(trimmed)
+        : { kind: "none" as const };
+
     const appendedMessage = await this.appendConversationUserMessageInternal(
       target,
       trimmed,
@@ -5169,9 +5177,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.scheduleProjectExecutableTrustPrompt(target as AgentDescriptor & { role: "manager" });
     }
 
+    const runtimeText =
+      codexClassification.kind === "manager_tool"
+        ? `${trimmed}\n\n${buildCodexToolMentionManagerGuidance(codexClassification.selectors)}`
+        : trimmed;
+
     await this.dispatchRuntimeUserMessageInternal(
       target,
-      trimmed,
+      runtimeText,
       sourceContext,
       appendedMessage.runtimeAttachments,
       appendedMessage.persistedAttachments.length,
@@ -5281,6 +5294,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return false;
     }
 
+    const classification = classifyCodexUserMessage(trimmed);
+    if (classification.kind === "manager_tool") {
+      return false;
+    }
+
     const mentionRoute = parseLeadingCodexMention(trimmed);
     if (!mentionRoute.routed) {
       return false;
@@ -5303,6 +5321,36 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       emitParentRequestCard: true,
     });
     return true;
+  }
+
+  async listCodexAppTools(managerAgentId: string): Promise<CodexCatalogSnapshot> {
+    const manager = this.requireManagerForCodexTools(managerAgentId);
+    return this.codexAppServerService.listCodexAppTools(manager);
+  }
+
+  async callCodexAppTool(
+    managerAgentId: string,
+    params: { selector: string; args?: Record<string, unknown> },
+  ): Promise<CodexMcpToolCallResult> {
+    const manager = this.requireManagerForCodexTools(managerAgentId);
+    this.assertCodexMentionRoutingAvailable(manager);
+    this.scheduleProjectExecutableTrustPrompt(manager);
+    return this.codexAppServerService.callCodexAppTool(manager, params);
+  }
+
+  private requireManagerForCodexTools(
+    managerAgentId: string,
+  ): AgentDescriptor & { role: "manager"; profileId: string } {
+    const manager = this.descriptors.get(managerAgentId);
+    if (!manager || manager.role !== "manager") {
+      throw new Error(`Codex app tools require a manager session: ${managerAgentId}`);
+    }
+
+    if (!isBuilderWebCodexRoutingSurface({ channel: "web" }, manager)) {
+      throw new Error("Codex app tools are only available on Builder web manager sessions.");
+    }
+
+    return manager as AgentDescriptor & { role: "manager"; profileId: string };
   }
 
   private assertCodexMentionRoutingAvailable(manager: AgentDescriptor & { role: "manager"; profileId: string }): void {

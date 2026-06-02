@@ -35,6 +35,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     slashCommands,
     projectAgents,
     enableCodexMention = false,
+    managerAgentId,
   },
   ref,
 ) {
@@ -118,6 +119,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const mentions = useMentions({
     projectAgents,
     enableCodexMention,
+    managerAgentId: managerAgentId ?? agentId,
+    wsUrl,
     input,
     setInputWithDraft,
     textareaRef,

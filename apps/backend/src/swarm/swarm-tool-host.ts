@@ -8,6 +8,7 @@ import type {
   SendMessageReceipt,
   SpawnAgentInput
 } from "./types.js";
+import type { CodexCatalogSnapshot, CodexMcpToolCallResult } from "./codex-app-server/codex-mcp-catalog.js";
 import type { TaskToolInput, TaskToolResult } from "./coordination/task-tool.js";
 
 export interface SwarmToolHost {
@@ -64,4 +65,9 @@ export interface SwarmToolHost {
     input: TaskToolInput,
   ): Promise<TaskToolResult>;
   isWorkPlansEnabled?(): boolean;
+  listCodexAppTools?(managerAgentId: string): Promise<CodexCatalogSnapshot>;
+  callCodexAppTool?(
+    managerAgentId: string,
+    params: { selector: string; args?: Record<string, unknown> },
+  ): Promise<CodexMcpToolCallResult>;
 }

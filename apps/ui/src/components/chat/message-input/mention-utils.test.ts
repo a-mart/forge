@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   findMentionContaining,
   hasComposerMentionTokens,
+  isCodexToolPickerTrigger,
   isLeadingMentionPosition,
   renderMentionOverlay,
 } from './mention-utils'
@@ -27,5 +28,12 @@ describe('mention-utils codex support', () => {
     const rendered = JSON.stringify(nodes)
     expect(rendered).toContain('emerald')
     expect(rendered).toContain('blue')
+  })
+
+  it('detects inline codex tool tokens and picker trigger', () => {
+    expect(hasComposerMentionTokens('run @Codex:fireflies now')).toBe(true)
+    expect(findMentionContaining('run @Codex:fireflies now', 10)).toEqual({ start: 4, end: 19 })
+    expect(isCodexToolPickerTrigger('@Codex -fire')).toBe(true)
+    expect(isCodexToolPickerTrigger('please @Codex -fire')).toBe(true)
   })
 })

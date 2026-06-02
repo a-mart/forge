@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { fetchCodexCatalog } from '@/lib/codex-catalog-api'
 import {
   CODEX_MENTION_HANDLE,
   CODEX_MENTION_SUGGESTION,
+  type CodexToolMentionSuggestion,
   type MentionSuggestion,
   type ProjectAgentSuggestion,
   toProjectAgentMentionSuggestion,
 } from '../mention-types'
-import { hasComposerMentionTokens, isLeadingMentionPosition } from '../mention-utils'
+import {
+  hasComposerMentionTokens,
+  isCodexToolPickerTrigger,
+  isLeadingMentionPosition,
+} from '../mention-utils'
 
 interface UseMentionsOptions {
   projectAgents?: ProjectAgentSuggestion[]
   enableCodexMention?: boolean
+  managerAgentId?: string
+  wsUrl?: string
   input: string
   setInputWithDraft: (value: string) => void
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
@@ -29,6 +37,7 @@ interface UseMentionsReturn {
   /** Check if the given value should open the mention menu. Returns true if handled. */
   checkMentionTrigger: (value: string) => boolean
   hasMentionTokens: boolean
+  codexCatalogLoading: boolean
 }
 
 function codexMentionMatchesFilter(filter: string): boolean {
@@ -37,9 +46,16 @@ function codexMentionMatchesFilter(filter: string): boolean {
   return CODEX_MENTION_HANDLE.toLowerCase().startsWith(lower)
 }
 
+function codexToolFilterFromTrigger(textBeforeCursor: string): string {
+  const match = textBeforeCursor.match(/(?:^|\s)@codex\s*-\s*([^\s]*)$/i)
+  return match?.[1]?.trim().toLowerCase() ?? ''
+}
+
 export function useMentions({
   projectAgents,
   enableCodexMention = false,
+  managerAgentId,
+  wsUrl,
   input,
   setInputWithDraft,
   textareaRef,
@@ -49,12 +65,64 @@ export function useMentions({
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0)
   const [mentionTokenStart, setMentionTokenStart] = useState(-1)
   const [mentionAtLeadingPosition, setMentionAtLeadingPosition] = useState(false)
+  const [codexToolMode, setCodexToolMode] = useState(false)
+  const [codexToolSuggestions, setCodexToolSuggestions] = useState<CodexToolMentionSuggestion[]>([])
+  const [codexCatalogLoading, setCodexCatalogLoading] = useState(false)
   const mentionMenuRef = useRef<HTMLDivElement | null>(null)
 
   const hasMentionTokens = useMemo(() => hasComposerMentionTokens(input), [input])
 
+  useEffect(() => {
+    if (!codexToolMode || !enableCodexMention || !managerAgentId) {
+      return
+    }
+
+    let cancelled = false
+    setCodexCatalogLoading(true)
+
+    void fetchCodexCatalog(wsUrl, managerAgentId).then((snapshot) => {
+      if (cancelled) {
+        return
+      }
+
+      const tools = (snapshot?.tools ?? []).map(
+        (tool): CodexToolMentionSuggestion => ({
+          kind: 'codex_tool',
+          selector: tool.selector,
+          displayName: tool.appName ? `${tool.appName} · ${tool.toolName}` : tool.selector,
+          whenToUse: tool.description ?? `Call ${tool.selector} via Codex app-server`,
+          serverName: tool.serverName,
+          toolName: tool.toolName,
+        }),
+      )
+
+      setCodexToolSuggestions(tools)
+      setCodexCatalogLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [codexToolMode, enableCodexMention, managerAgentId, wsUrl])
+
   const filteredMentions = useMemo(() => {
     const suggestions: MentionSuggestion[] = []
+
+    if (codexToolMode) {
+      const lower = mentionFilter.toLowerCase()
+      const toolMatches = mentionFilter
+        ? codexToolSuggestions.filter(
+            (tool) =>
+              tool.selector.toLowerCase().includes(lower) ||
+              tool.displayName.toLowerCase().includes(lower) ||
+              tool.toolName.toLowerCase().includes(lower) ||
+              tool.serverName.toLowerCase().includes(lower),
+          )
+        : codexToolSuggestions
+
+      suggestions.push(...toolMatches.slice(0, 40))
+      return suggestions
+    }
 
     if (enableCodexMention && mentionAtLeadingPosition && codexMentionMatchesFilter(mentionFilter)) {
       suggestions.push(CODEX_MENTION_SUGGESTION)
@@ -74,7 +142,14 @@ export function useMentions({
     }
 
     return suggestions
-  }, [enableCodexMention, mentionAtLeadingPosition, mentionFilter, projectAgents])
+  }, [
+    codexToolMode,
+    codexToolSuggestions,
+    enableCodexMention,
+    mentionAtLeadingPosition,
+    mentionFilter,
+    projectAgents,
+  ])
 
   useEffect(() => {
     if (!isMentionMenuOpen) return
@@ -91,8 +166,17 @@ export function useMentions({
     (suggestion: MentionSuggestion) => {
       const textarea = textareaRef.current
       const cursorPos = textarea?.selectionStart ?? input.length
-      const replacement =
-        suggestion.kind === 'codex' ? `[@${CODEX_MENTION_HANDLE}] ` : `[@${suggestion.handle}] `
+      let replacement = ''
+      if (suggestion.kind === 'codex') {
+        replacement = `[@${CODEX_MENTION_HANDLE}] `
+      } else if (suggestion.kind === 'codex_tool') {
+        replacement = mentionAtLeadingPosition || codexToolMode
+          ? `@Codex -${suggestion.selector} `
+          : `[@Codex:${suggestion.selector}] `
+      } else {
+        replacement = `[@${suggestion.handle}] `
+      }
+
       const newValue = input.slice(0, mentionTokenStart) + replacement + input.slice(cursorPos)
       setInputWithDraft(newValue)
       setIsMentionMenuOpen(false)
@@ -100,25 +184,39 @@ export function useMentions({
       setMentionSelectedIndex(0)
       setMentionTokenStart(-1)
       setMentionAtLeadingPosition(false)
+      setCodexToolMode(false)
       const newCursor = mentionTokenStart + replacement.length
       requestAnimationFrame(() => {
         textarea?.focus()
         textarea?.setSelectionRange(newCursor, newCursor)
       })
     },
-    [input, mentionTokenStart, setInputWithDraft, textareaRef],
+    [input, mentionAtLeadingPosition, mentionTokenStart, setInputWithDraft, textareaRef],
   )
 
   const checkMentionTrigger = useCallback(
     (value: string): boolean => {
       const hasProjectAgents = !!(projectAgents && projectAgents.length > 0)
+      const cursorPos = textareaRef.current?.selectionStart ?? value.length
+      const textBeforeCursor = value.slice(0, cursorPos)
+
+      if (enableCodexMention && isCodexToolPickerTrigger(textBeforeCursor)) {
+        const atIdx = textBeforeCursor.toLowerCase().lastIndexOf('@codex')
+        setMentionFilter(codexToolFilterFromTrigger(textBeforeCursor))
+        setMentionTokenStart(atIdx >= 0 ? atIdx : 0)
+        setMentionAtLeadingPosition(isLeadingMentionPosition(value, atIdx >= 0 ? atIdx : 0))
+        setCodexToolMode(true)
+        setIsMentionMenuOpen(true)
+        setMentionSelectedIndex(0)
+        return true
+      }
+
       if (!hasProjectAgents && !enableCodexMention) {
         setIsMentionMenuOpen(false)
+        setCodexToolMode(false)
         return false
       }
 
-      const cursorPos = textareaRef.current?.selectionStart ?? value.length
-      const textBeforeCursor = value.slice(0, cursorPos)
       const atIdx = textBeforeCursor.lastIndexOf('@')
       if (atIdx >= 0) {
         const charBefore = atIdx > 0 ? textBeforeCursor[atIdx - 1] : ' '
@@ -133,12 +231,14 @@ export function useMentions({
           if (!hasProjectAgents && !canOfferCodexMention) {
             setIsMentionMenuOpen(false)
             setMentionAtLeadingPosition(false)
+            setCodexToolMode(false)
             return false
           }
 
           setMentionFilter(tokenAfterAt)
           setMentionTokenStart(atIdx)
           setMentionAtLeadingPosition(isLeadingPosition)
+          setCodexToolMode(false)
           setIsMentionMenuOpen(true)
           setMentionSelectedIndex(0)
           return true
@@ -147,6 +247,7 @@ export function useMentions({
 
       setIsMentionMenuOpen(false)
       setMentionAtLeadingPosition(false)
+      setCodexToolMode(false)
       return false
     },
     [enableCodexMention, projectAgents, textareaRef],
@@ -164,5 +265,6 @@ export function useMentions({
     selectMention,
     checkMentionTrigger,
     hasMentionTokens,
+    codexCatalogLoading,
   }
 }

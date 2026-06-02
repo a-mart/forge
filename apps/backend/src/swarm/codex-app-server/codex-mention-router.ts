@@ -9,23 +9,114 @@ export interface CodexMentionNotRouted {
 
 export type CodexMentionRouteResult = CodexMentionParseResult | CodexMentionNotRouted;
 
-const LEADING_CODEX_MENTION_PATTERN = /^(?:@codex|\[@codex\])(?=\s|$)(?:\s([\s\S]*))?$/i;
+/** Leading plain @Codex / [@Codex] sidecar turn (not tool selector). */
+const LEADING_CODEX_SIDECAR_PATTERN =
+  /^(?:@codex|\[@codex\])(?![-:\]])(?=\s|$)(?:\s([\s\S]*))?$/i;
+
+/** Leading @Codex -<selector> manager tool hint. */
+const LEADING_CODEX_TOOL_PATTERN =
+  /^(?:@codex|\[@codex\])\s*-\s*([^\s]+)(?:\s+([\s\S]*))?$/i;
+
+const INLINE_CODEX_TOOL_PATTERN = /(?:@codex:([^\s\]]+)|\[@codex:([^\]]+)\])/gi;
+
+export type CodexUserMessageRoute =
+  | { kind: "none" }
+  | { kind: "sidecar"; strippedText: string }
+  | { kind: "manager_tool"; selectors: string[]; strippedText: string };
 
 export function parseLeadingCodexMention(text: string): CodexMentionRouteResult {
+  const classified = classifyCodexUserMessage(text);
+  if (classified.kind === "sidecar") {
+    return { routed: true, strippedText: classified.strippedText };
+  }
+
+  return { routed: false };
+}
+
+export function classifyCodexUserMessage(text: string): CodexUserMessageRoute {
   const trimmed = text.trim();
   if (!trimmed) {
-    return { routed: false };
+    return { kind: "none" };
   }
 
-  const match = trimmed.match(LEADING_CODEX_MENTION_PATTERN);
-  if (!match) {
-    return { routed: false };
+  const leadingTool = trimmed.match(LEADING_CODEX_TOOL_PATTERN);
+  if (leadingTool) {
+    const selector = normalizeCodexToolSelector(leadingTool[1]);
+    const remainder = (leadingTool[2] ?? "").trim();
+    const inlineSelectors = extractInlineCodexToolSelectors(trimmed);
+    const selectors = uniqueSelectors([selector, ...inlineSelectors]);
+    return { kind: "manager_tool", selectors, strippedText: remainder };
   }
 
-  return {
-    routed: true,
-    strippedText: (match[1] ?? "").trim(),
-  };
+  const sidecarMatch = trimmed.match(LEADING_CODEX_SIDECAR_PATTERN);
+  if (sidecarMatch) {
+    return { kind: "sidecar", strippedText: (sidecarMatch[1] ?? "").trim() };
+  }
+
+  const inlineSelectors = extractInlineCodexToolSelectors(trimmed);
+  if (inlineSelectors.length > 0) {
+    return {
+      kind: "manager_tool",
+      selectors: inlineSelectors,
+      strippedText: stripInlineCodexToolTokens(trimmed),
+    };
+  }
+
+  return { kind: "none" };
+}
+
+export function extractInlineCodexToolSelectors(text: string): string[] {
+  const selectors: string[] = [];
+  for (const match of text.matchAll(INLINE_CODEX_TOOL_PATTERN)) {
+    const raw = match[1] ?? match[2];
+    if (!raw) {
+      continue;
+    }
+
+    const normalized = normalizeCodexToolSelector(raw);
+    if (normalized) {
+      selectors.push(normalized);
+    }
+  }
+
+  return uniqueSelectors(selectors);
+}
+
+export function stripInlineCodexToolTokens(text: string): string {
+  return text
+    .replace(INLINE_CODEX_TOOL_PATTERN, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+export function buildCodexToolMentionManagerGuidance(selectors: string[]): string {
+  const quoted = selectors.map((entry) => `"${entry}"`).join(", ");
+  return (
+    `[Forge Codex tool mention] The user tagged Codex app/tool selector(s): ${quoted}. ` +
+    "Use list_codex_app_tools when you need the catalog, then call_codex_app_tool with arguments inferred from the conversation. " +
+    "Do not start a Codex sidecar text turn unless the user explicitly asked for a full @Codex conversation."
+  );
+}
+
+function normalizeCodexToolSelector(value: string): string {
+  return value.trim().replace(/^:+/, "").replace(/:+$/, "");
+}
+
+function uniqueSelectors(selectors: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const selector of selectors) {
+    const key = selector.toLowerCase();
+    if (!selector || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(selector);
+  }
+
+  return result;
 }
 
 export function isBuilderWebCodexRoutingSurface(

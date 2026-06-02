@@ -1624,6 +1624,7 @@ export function BuilderSurface({
                   slashCommands,
                   projectAgents: projectAgentSuggestions,
                   enableCodexMention: shouldEnableCodexMention(activeAgent),
+                  managerAgentId: activeAgentId ?? undefined,
                 }}
               />
             )}

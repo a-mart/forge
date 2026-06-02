@@ -20,6 +20,8 @@ export interface MessageInputProps {
   projectAgents?: ProjectAgentSuggestion[]
   /** Builder/web only: expose synthetic leading @Codex mention target in autocomplete. */
   enableCodexMention?: boolean
+  /** Manager session id for Codex app/tool catalog fetches. */
+  managerAgentId?: string
 }
 
 export interface MessageInputHandle {

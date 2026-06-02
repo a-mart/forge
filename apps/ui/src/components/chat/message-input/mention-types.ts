@@ -14,11 +14,23 @@ export interface CodexMentionSuggestion {
   whenToUse: string
 }
 
+export interface CodexToolMentionSuggestion {
+  kind: 'codex_tool'
+  selector: string
+  displayName: string
+  whenToUse: string
+  serverName: string
+  toolName: string
+}
+
 export interface ProjectAgentMentionSuggestion extends ProjectAgentSuggestion {
   kind: 'project_agent'
 }
 
-export type MentionSuggestion = CodexMentionSuggestion | ProjectAgentMentionSuggestion
+export type MentionSuggestion =
+  | CodexMentionSuggestion
+  | CodexToolMentionSuggestion
+  | ProjectAgentMentionSuggestion
 
 export const CODEX_MENTION_SUGGESTION: CodexMentionSuggestion = {
   kind: 'codex',
@@ -37,4 +49,10 @@ export function isCodexMentionSuggestion(
   suggestion: MentionSuggestion,
 ): suggestion is CodexMentionSuggestion {
   return suggestion.kind === 'codex'
+}
+
+export function isCodexToolMentionSuggestion(
+  suggestion: MentionSuggestion,
+): suggestion is CodexToolMentionSuggestion {
+  return suggestion.kind === 'codex_tool'
 }

@@ -4,6 +4,7 @@ import { getSpawnPresetFamilies } from "@forge/protocol";
 import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { ChoiceRequestCancelledError } from "./swarm-manager.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
+import { isBuilderWebCodexRoutingSurface } from "./codex-app-server/codex-mention-router.js";
 import { buildTaskTool } from "./coordination/task-tool.js";
 import {
   type AgentDescriptor,
@@ -583,6 +584,98 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       },
     },
     ...(host.isWorkPlansEnabled?.() === false ? [] : [buildTaskTool(host, descriptor)]),
+    ...(host.listCodexAppTools &&
+    host.callCodexAppTool &&
+    descriptor.role === "manager" &&
+    isBuilderWebCodexRoutingSurface({ channel: "web" }, descriptor)
+      ? [
+          {
+            name: "list_codex_app_tools",
+            label: "List Codex App Tools",
+            description:
+              "List Codex app-server apps and MCP tools available for direct manager calls. " +
+              "Use when the user tagged @Codex -<selector> or inline @Codex:<selector> mentions.",
+            parameters: Type.Object({
+              refresh: Type.Optional(
+                Type.Boolean({
+                  description: "Force refresh of the short-lived Codex catalog cache.",
+                }),
+              ),
+            }),
+            async execute() {
+              const snapshot = await host.listCodexAppTools!(descriptor.agentId);
+              const summary = {
+                appCount: snapshot.apps.length,
+                toolCount: snapshot.tools.length,
+                fetchedAt: snapshot.fetchedAt,
+                tools: snapshot.tools.map((tool) => ({
+                  selector: tool.selector,
+                  serverName: tool.serverName,
+                  toolName: tool.toolName,
+                  appName: tool.appName,
+                  description: tool.description,
+                })),
+              };
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(summary),
+                  },
+                ],
+                details: summary,
+              };
+            },
+          } satisfies ToolDefinition,
+          {
+            name: "call_codex_app_tool",
+            label: "Call Codex App Tool",
+            description:
+              "Call a Codex app-server MCP tool directly via mcpServer/tool/call. " +
+              "Infer arguments from the user's request; only read-only harmless calls are expected in v1.",
+            parameters: Type.Object({
+              selector: Type.String({
+                description: "Tool selector from list_codex_app_tools (server/tool or short name).",
+              }),
+              args: Type.Optional(
+                Type.Record(Type.String(), Type.Unknown(), {
+                  description: "JSON object of tool arguments validated against the tool schema when available.",
+                }),
+              ),
+            }),
+            async execute(_toolCallId, params) {
+              const parsed = params as {
+                selector: string;
+                args?: Record<string, unknown>;
+              };
+
+              const result = await host.callCodexAppTool!(descriptor.agentId, {
+                selector: parsed.selector,
+                args: parsed.args,
+              });
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      ok: result.ok,
+                      selector: result.selector,
+                      serverName: result.serverName,
+                      toolName: result.toolName,
+                      preview: result.redactedPreview,
+                      error: result.error,
+                      auditId: result.auditId,
+                    }),
+                  },
+                ],
+                details: result,
+              };
+            },
+          } satisfies ToolDefinition,
+        ]
+      : []),
   ];
 
   return [...shared, ...managerOnly];

@@ -17,6 +17,12 @@ import {
   parseThreadIdFromThreadResult,
   parseTurnIdFromTurnResult,
 } from "./codex-sidecar-ids.js";
+import { buildCodexDirectToolAuditCard } from "./codex-direct-tool-audit.js";
+import {
+  CodexMcpCatalog,
+  type CodexCatalogSnapshot,
+  type CodexMcpToolCallResult,
+} from "./codex-mcp-catalog.js";
 import { truncateCodexPreview } from "./codex-sidecar-parent-cards.js";
 import type {
   CodexAppServerClientPort,
@@ -44,6 +50,7 @@ export class CodexAppServerService {
   private pendingPriorTurnlessInvalidationGeneration = 0;
   private readonly developerInstructions: string;
   private readonly turnCompletionGraceMs: number;
+  private readonly mcpCatalog = new CodexMcpCatalog(() => this.ensureSharedClient());
 
   constructor(
     private readonly host: CodexSidecarHost,
@@ -66,6 +73,93 @@ export class CodexAppServerService {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async listCodexAppTools(manager: AgentDescriptor): Promise<CodexCatalogSnapshot> {
+    if (manager.role !== "manager") {
+      throw new Error(`Expected manager descriptor, got ${manager.agentId}`);
+    }
+
+    await this.getOrCreateSidecarDescriptor(manager);
+    return this.mcpCatalog.listCatalog();
+  }
+
+  async callCodexAppTool(
+    manager: AgentDescriptor,
+    params: { selector: string; args?: Record<string, unknown> },
+  ): Promise<CodexMcpToolCallResult & { auditMessageId?: string }> {
+    if (manager.role !== "manager") {
+      throw new Error(`Expected manager descriptor, got ${manager.agentId}`);
+    }
+
+    const selector = params.selector.trim();
+    if (!selector) {
+      throw new Error("Codex tool selector is required");
+    }
+
+    this.assertNoGlobalActiveSidecarTurn(manager.agentId);
+
+    const sidecar = await this.getOrCreateSidecarDescriptor(manager);
+    const catalog = await this.mcpCatalog.listCatalog();
+    const resolved = this.mcpCatalog.resolveTool(selector, catalog);
+    if (!resolved) {
+      throw new Error(`Unknown Codex app/tool selector: ${selector}`);
+    }
+
+    const threadId = await this.createOrResumeThread(sidecar.agentId);
+    const requestId = randomUUID();
+    const turnCorrelationId = randomUUID();
+    const startedAt = this.host.now();
+
+    const runningCard = buildCodexDirectToolAuditCard({
+      managerAgentId: manager.agentId,
+      sidecarAgentId: sidecar.agentId,
+      requestId,
+      turnCorrelationId,
+      timestamp: startedAt,
+      selector: resolved.selector,
+      status: "running",
+      result: {
+        auditId: requestId,
+        selector: resolved.selector,
+        serverName: resolved.serverName,
+        toolName: resolved.toolName,
+        ok: true,
+        redactedPreview: "Running…",
+      },
+    });
+    this.host.appendConversationEntry(manager.agentId, runningCard);
+    this.host.emitConversationMessage(runningCard);
+
+    const result = await this.mcpCatalog.callTool(
+      {
+        managerAgentId: manager.agentId,
+        cwd: sidecar.cwd ?? manager.cwd ?? process.cwd(),
+        threadId,
+        serverName: resolved.serverName,
+        toolName: resolved.toolName,
+        args: params.args,
+      },
+      resolved,
+    );
+
+    const completedCard = buildCodexDirectToolAuditCard({
+      managerAgentId: manager.agentId,
+      sidecarAgentId: sidecar.agentId,
+      requestId,
+      turnCorrelationId,
+      timestamp: this.host.now(),
+      selector: resolved.selector,
+      result,
+    });
+
+    this.host.appendConversationEntry(manager.agentId, completedCard);
+    this.host.emitConversationMessage(completedCard);
+
+    return {
+      ...result,
+      auditMessageId: completedCard.id,
+    };
   }
 
   findSidecarForManager(managerAgentId: string): AgentDescriptor | undefined {
@@ -446,6 +540,10 @@ export class CodexAppServerService {
   }
 
   private assertSidecarAvailable(requestedSidecarAgentId: string): void {
+    this.assertNoGlobalActiveSidecarTurn(requestedSidecarAgentId);
+  }
+
+  private assertNoGlobalActiveSidecarTurn(requestedSidecarAgentId: string): void {
     const activeSidecarAgentId = this.getGlobalActiveSidecarAgentId();
     if (!activeSidecarAgentId) {
       return;

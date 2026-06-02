@@ -1,6 +1,10 @@
 import { type RefObject } from 'react'
 import { cn } from '@/lib/utils'
-import { isCodexMentionSuggestion, type MentionSuggestion } from './mention-types'
+import {
+  isCodexMentionSuggestion,
+  isCodexToolMentionSuggestion,
+  type MentionSuggestion,
+} from './mention-types'
 
 interface MentionMenuProps {
   menuRef: RefObject<HTMLDivElement | null>
@@ -30,9 +34,21 @@ export function MentionMenu({
       >
         {mentions.map((suggestion, idx) => {
           const isCodex = isCodexMentionSuggestion(suggestion)
+          const isCodexTool = isCodexToolMentionSuggestion(suggestion)
+          const tokenLabel = isCodexTool
+            ? `@Codex:${suggestion.selector}`
+            : isCodex
+              ? `@${suggestion.handle}`
+              : `@${suggestion.handle}`
           return (
             <button
-              key={isCodex ? 'codex-mention' : suggestion.agentId}
+              key={
+                isCodex
+                  ? 'codex-mention'
+                  : isCodexTool
+                    ? `codex-tool-${suggestion.selector}`
+                    : suggestion.agentId
+              }
               type="button"
               className={cn(
                 'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm transition-colors',
@@ -47,7 +63,7 @@ export function MentionMenu({
               }}
             >
               <div className="flex items-center gap-2">
-                {isCodex ? (
+                {isCodex || isCodexTool ? (
                   <img
                     src="/agents/codex-logo.svg"
                     alt=""
@@ -58,13 +74,15 @@ export function MentionMenu({
                 <code
                   className={cn(
                     'shrink-0 text-xs font-semibold',
-                    isCodex ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground',
+                    isCodex || isCodexTool
+                      ? 'text-emerald-700 dark:text-emerald-300'
+                      : 'text-foreground',
                   )}
                 >
-                  @{suggestion.handle}
+                  {tokenLabel}
                 </code>
                 <span className="text-xs text-muted-foreground">{suggestion.displayName}</span>
-                {isCodex ? (
+                {isCodex || isCodexTool ? (
                   <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                     Codex
                   </span>
