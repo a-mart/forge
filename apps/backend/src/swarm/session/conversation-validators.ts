@@ -1,9 +1,16 @@
 import {
+  MODEL_CACHE_CLASSIFICATION_VERSION,
+  MODEL_CACHE_ELIGIBILITY_THRESHOLD_TOKENS,
+  MODEL_CACHE_HIT_RATIO_THRESHOLD,
+  MODEL_CACHE_PROVIDERS,
+  MODEL_CACHE_STATUSES,
+  MODEL_CACHE_TOKEN_NORMALIZATIONS,
   WORK_PLAN_ITEM_RESULT_STATUSES,
   WORK_PLAN_ITEM_STATUSES,
   WORK_PLAN_LIFECYCLE_REASONS,
   WORK_PLAN_MODES,
   WORK_PLAN_STATUSES,
+  type ModelCacheObservationEvent,
   type WorkPlanCreatedEvent,
   type WorkPlanItemSnapshot,
   type WorkPlanSnapshot,
@@ -42,7 +49,8 @@ export function isConversationEntryEvent(value: unknown): value is ConversationE
     isAgentMessageEvent(value) ||
     isAgentToolCallEvent(value) ||
     isChoiceRequestEvent(value) ||
-    isWorkPlanCreatedEvent(value)
+    isWorkPlanCreatedEvent(value) ||
+    isModelCacheObservationEvent(value)
   );
 }
 
@@ -435,6 +443,46 @@ function isChoiceRequestEvent(value: unknown): value is ChoiceRequestEvent {
   if (typeof maybe.timestamp !== "string") return false;
   if (maybe.status === "answered" && !Array.isArray(maybe.answers)) return false;
   return true;
+}
+
+function isModelCacheObservationEvent(value: unknown): value is ModelCacheObservationEvent {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as Partial<ModelCacheObservationEvent>;
+  if (maybe.type !== "model_cache_observation") return false;
+  if (!isNonEmptyString(maybe.agentId)) return false;
+  if (typeof maybe.id !== "undefined" && !isNonEmptyString(maybe.id)) return false;
+  if (!isNonEmptyString(maybe.timestamp)) return false;
+  if (maybe.runtimeType !== "pi") return false;
+  if (!isStringInSet(maybe.provider, MODEL_CACHE_PROVIDERS)) return false;
+  if (!isNonEmptyString(maybe.modelId)) return false;
+  if (maybe.api !== undefined && !isNonEmptyString(maybe.api)) return false;
+  if (maybe.turnId !== undefined && !isNonEmptyString(maybe.turnId)) return false;
+  if (!maybe.tokens || typeof maybe.tokens !== "object") return false;
+
+  const tokens = maybe.tokens;
+  if (!isNonNegativeInteger(tokens.promptInputTokens)) return false;
+  if (!isNonNegativeInteger(tokens.cachedInputTokens)) return false;
+  if (!isNonNegativeInteger(tokens.cacheWriteInputTokens)) return false;
+  if (!isNonNegativeInteger(tokens.uncachedInputTokens)) return false;
+  if (!isNonNegativeInteger(tokens.outputTokens)) return false;
+  if (!isNonNegativeInteger(tokens.totalTokens)) return false;
+  if (!isStringInSet(tokens.normalization, MODEL_CACHE_TOKEN_NORMALIZATIONS)) return false;
+  if (tokens.promptInputTokens < MODEL_CACHE_ELIGIBILITY_THRESHOLD_TOKENS) return false;
+
+  if (!maybe.classification || typeof maybe.classification !== "object") return false;
+  const classification = maybe.classification;
+  if (classification.version !== MODEL_CACHE_CLASSIFICATION_VERSION) return false;
+  if (!isStringInSet(classification.status, MODEL_CACHE_STATUSES)) return false;
+  if (!isFiniteRatio(classification.cachedRatio)) return false;
+  if (classification.thresholdTokens !== MODEL_CACHE_ELIGIBILITY_THRESHOLD_TOKENS) return false;
+  if (classification.hitRatioThreshold !== MODEL_CACHE_HIT_RATIO_THRESHOLD) return false;
+
+  return true;
+}
+
+function isFiniteRatio(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 function isWorkPlanCreatedEvent(value: unknown): value is WorkPlanCreatedEvent {

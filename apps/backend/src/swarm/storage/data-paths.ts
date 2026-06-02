@@ -371,6 +371,10 @@ export function getWorkPlansSettingsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "work-plans.json");
 }
 
+export function getModelCacheVisualizationSettingsPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "model-cache-visualization.json");
+}
+
 export function getProjectAgentSharingStorePath(dataDir: string): string {
   return join(getSharedStateDir(dataDir), "project-agent-shares.json");
 }

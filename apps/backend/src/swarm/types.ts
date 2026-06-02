@@ -345,13 +345,42 @@ export interface WorkPlanCreatedEvent {
   plan: WorkPlanSnapshot;
 }
 
+export interface ModelCacheObservationEvent {
+  type: "model_cache_observation";
+  agentId: string;
+  id?: string;
+  timestamp: string;
+  runtimeType: "pi";
+  provider: "openai" | "openai-codex";
+  modelId: string;
+  api?: string;
+  turnId?: string;
+  tokens: {
+    promptInputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteInputTokens: number;
+    uncachedInputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    normalization: "raw_input_tokens_total" | "normalized_components";
+  };
+  classification: {
+    version: 1;
+    status: "hit" | "partial" | "miss";
+    cachedRatio: number;
+    thresholdTokens: 1024;
+    hitRatioThreshold: 0.8;
+  };
+}
+
 export type ConversationEntryEvent =
   | ConversationMessageEvent
   | ConversationLogEvent
   | AgentMessageEvent
   | AgentToolCallEvent
   | ChoiceRequestEvent
-  | WorkPlanCreatedEvent;
+  | WorkPlanCreatedEvent
+  | ModelCacheObservationEvent;
 
 export interface AgentStatusEvent {
   type: "agent_status";
