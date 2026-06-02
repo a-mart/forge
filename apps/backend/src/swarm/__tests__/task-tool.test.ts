@@ -2,6 +2,7 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { Value } from '@sinclair/typebox/value'
 import { describe, expect, it, vi } from 'vitest'
 import { buildTaskTool, normalizeTaskToolInput, taskToolSchema, type TaskToolResult } from '../coordination/task-tool.js'
+import { MAX_WORK_PLANS_PER_SESSION } from '../coordination/session-coordination-state.js'
 import { WorkPlanImmutableError, WorkPlanItemResolutionError, WorkPlanNotFoundError } from '../coordination/work-plan-service.js'
 import { WorkPlanLinkValidationError } from '../coordination/work-plan-link-validation.js'
 import { ARCHIVED_PROJECT_OPERATION_MESSAGE } from '../archive/archive-resolver.js'
@@ -503,6 +504,51 @@ describe('SwarmManager.runTaskTool', () => {
       revision: finished.stateRevision,
       activeWorkPlan: null,
     })
+  })
+
+  it('creates a new task tool plan after eight terminal historical plans', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    let expectedStateRevision: number | undefined
+
+    for (let index = 1; index <= MAX_WORK_PLANS_PER_SESSION; index += 1) {
+      const created = await manager.runTaskTool('manager', `tool-cap-create-${index}`, {
+        action: 'upsert_plan',
+        expectedStateRevision,
+        title: `Historical plan ${index}`,
+        itemsText: `[active] Historical item ${index}`,
+      })
+      const finished = await manager.runTaskTool('manager', `tool-cap-finish-${index}`, {
+        action: 'finish_plan',
+        expectedStateRevision: created.stateRevision,
+        planId: created.planId,
+        status: 'completed',
+        finalSummary: `Finished ${index}`,
+      })
+      expectedStateRevision = finished.stateRevision
+    }
+
+    const createdNinth = await manager.runTaskTool('manager', 'tool-cap-create-9', {
+      action: 'upsert_plan',
+      expectedStateRevision,
+      title: 'Ninth plan',
+      itemsText: '[active] Continue after history cap',
+    })
+
+    expect(createdNinth).toMatchObject({
+      action: 'upsert_plan',
+      status: 'active',
+    })
+
+    const fetched = await manager.runTaskTool('manager', 'tool-cap-get', { action: 'get' })
+    expect(fetched.snapshot.activeWorkPlan?.planId).toBe(createdNinth.planId)
+    expect(fetched.snapshot.recentWorkPlanCount).toBe(MAX_WORK_PLANS_PER_SESSION - 1)
+
+    const tasksFile = JSON.parse(await readFile(getSessionTasksPath(config.paths.dataDir, 'manager', 'manager'), 'utf8')) as {
+      workPlans: Array<{ planId: string }>
+    }
+    expect(tasksFile.workPlans).toHaveLength(MAX_WORK_PLANS_PER_SESSION)
   })
 
   it('creates, gets, links, finishes, and CAS-protects the current session work plan', async () => {

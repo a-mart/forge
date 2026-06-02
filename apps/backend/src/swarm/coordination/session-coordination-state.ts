@@ -61,6 +61,7 @@ export const WORK_PLAN_MUTATION_ACTIONS = ["upsert_plan", "update_item_status", 
 export type WorkPlanMutationAction = (typeof WORK_PLAN_MUTATION_ACTIONS)[number];
 
 export const MAX_WORK_PLANS_PER_SESSION = 8;
+export const WORK_PLAN_HISTORY_CAPACITY_MESSAGE = `Active Work Plan history is full (maximum ${MAX_WORK_PLANS_PER_SESSION} saved plans) and could not be pruned safely. Continue without creating a new Work Plan, or report that Active Work history hit its storage limit.`;
 export const MAX_WORK_PLAN_ITEMS = 25;
 export const MAX_WORK_PLAN_WORKER_LINKS = 8;
 export const MAX_WORK_PLAN_REVISION_NOTES = 20;
@@ -371,7 +372,9 @@ function normalizeArray<T>(
   }
 
   if (value.length > maxLength) {
-    throw new SessionCoordinationStateValidationError(`${path} must contain at most ${maxLength} items`);
+    throw new SessionCoordinationStateValidationError(
+      path === "workPlans" ? WORK_PLAN_HISTORY_CAPACITY_MESSAGE : `${path} must contain at most ${maxLength} items`
+    );
   }
 
   return value.map((item, index) => itemNormalizer(item, `${path}[${index}]`));

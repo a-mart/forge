@@ -2,7 +2,13 @@ import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createEmptySessionCoordinationState, type WorkPlanRecord } from '../coordination/session-coordination-state.js'
+import {
+  createEmptySessionCoordinationState,
+  MAX_WORK_PLANS_PER_SESSION,
+  SessionCoordinationStateValidationError,
+  WORK_PLAN_HISTORY_CAPACITY_MESSAGE,
+  type WorkPlanRecord,
+} from '../coordination/session-coordination-state.js'
 import {
   SessionCoordinationStateRevisionConflictError,
   SessionCoordinationStore,
@@ -560,6 +566,98 @@ describe('work-plan-service', () => {
     expect(created.snapshot.diagnostics).toEqual({ state: 'ok' })
   })
 
+  it('prunes the oldest terminal history when creating a ninth plan after eight finished plans', async () => {
+    const dataDir = await createDataDir()
+    let nowMs = Date.parse(FIXED_TIMESTAMP)
+    const { service, store } = createHarness(dataDir, { now: () => new Date(nowMs) })
+    let expectedStateRevision: number | undefined
+
+    for (let index = 1; index <= MAX_WORK_PLANS_PER_SESSION; index += 1) {
+      const created = await service.upsertPlan(managerActor(), {
+        expectedStateRevision,
+        title: `Historical plan ${index}`,
+        items: [{ title: `Do historical work ${index}` }],
+      })
+      nowMs += 1000
+      const finished = await service.finishPlan(managerActor(), {
+        expectedStateRevision: created.stateRevision,
+        planId: created.planId,
+        status: 'completed',
+        finalSummary: `Finished ${index}`,
+      })
+      nowMs += 1000
+      expectedStateRevision = finished.stateRevision
+    }
+
+    const beforeCreate = await service.get(managerActor())
+    expect(beforeCreate.snapshot.activeWorkPlan).toBeNull()
+    expect(beforeCreate.snapshot.recentWorkPlanCount).toBe(MAX_WORK_PLANS_PER_SESSION)
+
+    const createdNinth = await service.upsertPlan(managerActor(), {
+      expectedStateRevision,
+      title: 'Ninth plan',
+      items: [{ title: 'Continue after full history' }],
+    })
+
+    expect(createdNinth.planId).toBe('plan-9')
+    expect(createdNinth.snapshot.activeWorkPlan?.planId).toBe('plan-9')
+    expect(createdNinth.snapshot.recentWorkPlanCount).toBe(MAX_WORK_PLANS_PER_SESSION - 1)
+    expect(createdNinth.snapshot.recentWorkPlans.map((plan) => plan.planId)).not.toContain('plan-1')
+
+    const persisted = await store.load()
+    expect(persisted.state.workPlans).toHaveLength(MAX_WORK_PLANS_PER_SESSION)
+    expect(persisted.state.workPlans.map((plan) => plan.planId)).toEqual([
+      'plan-2',
+      'plan-3',
+      'plan-4',
+      'plan-5',
+      'plan-6',
+      'plan-7',
+      'plan-8',
+      'plan-9',
+    ])
+  })
+
+  it('does not prune an existing non-terminal plan when capacity is full', async () => {
+    const dataDir = await createDataDir()
+    const { service, store } = createHarness(dataDir)
+    let expectedStateRevision: number | undefined
+
+    for (let index = 1; index < MAX_WORK_PLANS_PER_SESSION; index += 1) {
+      const created = await service.upsertPlan(managerActor(), {
+        expectedStateRevision,
+        title: `Terminal plan ${index}`,
+        items: [{ title: `Do terminal work ${index}` }],
+      })
+      const finished = await service.finishPlan(managerActor(), {
+        expectedStateRevision: created.stateRevision,
+        planId: created.planId,
+        status: 'completed',
+        finalSummary: `Finished ${index}`,
+      })
+      expectedStateRevision = finished.stateRevision
+    }
+
+    const active = await service.upsertPlan(managerActor(), {
+      expectedStateRevision,
+      title: 'Active preserved at cap',
+      items: [{ title: 'Do active work' }],
+    })
+
+    await expect(
+      service.upsertPlan(managerActor(), {
+        expectedStateRevision: active.stateRevision,
+        title: 'Should not evict active plan',
+        items: [{ title: 'Another active plan' }],
+      }),
+    ).rejects.toBeInstanceOf(WorkPlanActiveInvariantError)
+
+    const persisted = await store.load()
+    expect(persisted.state.workPlans).toHaveLength(MAX_WORK_PLANS_PER_SESSION)
+    expect(persisted.state.workPlans.map((plan) => plan.planId)).toContain(active.planId)
+    expect(persisted.state.workPlans.find((plan) => plan.planId === active.planId)?.status).toBe('active')
+  })
+
   it('uses unique default-generated item ids within a single create mutation', async () => {
     const dataDir = await createDataDir()
     const { service } = createHarness(dataDir, { useDefaultCreateId: true })
@@ -800,6 +898,17 @@ describe('work-plan-service', () => {
       code: 'validation_error',
       message: 'workPlans[0].title must be at most 200 characters',
     })
+
+    expect(
+      toWorkPlanServiceErrorDescriptor(
+        new SessionCoordinationStateValidationError(`workPlans must contain at most ${MAX_WORK_PLANS_PER_SESSION} items`),
+        'upsert_plan',
+      ),
+    ).toEqual({
+      action: 'upsert_plan',
+      code: 'validation_error',
+      message: WORK_PLAN_HISTORY_CAPACITY_MESSAGE,
+    })
   })
 
   it('maps invalid expectedStateRevision values to validation_error for WP4', async () => {
@@ -931,6 +1040,7 @@ function createHarness(
   options: {
     agents?: AgentDescriptor[]
     useDefaultCreateId?: boolean
+    now?: () => Date
     storeDeps?: ConstructorParameters<typeof SessionCoordinationStore>[0]['deps']
   } = {},
 ): { service: WorkPlanService; store: SessionCoordinationStore } {
@@ -939,7 +1049,7 @@ function createHarness(
     profileId: PROFILE_ID,
     sessionAgentId: SESSION_ID,
     deps: {
-      now: () => new Date(FIXED_TIMESTAMP),
+      now: options.now ?? (() => new Date(FIXED_TIMESTAMP)),
       randomId: (() => {
         let counter = 0
         return () => `id-${++counter}`
@@ -954,7 +1064,7 @@ function createHarness(
     deps: {
       store,
       listAgents: () => options.agents ?? [],
-      now: () => new Date(FIXED_TIMESTAMP),
+      now: options.now ?? (() => new Date(FIXED_TIMESTAMP)),
       ...(options.useDefaultCreateId
         ? {}
         : {
