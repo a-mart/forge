@@ -195,11 +195,13 @@ import {
   WorkPlanService,
   WorkPlanServiceValidationError,
   type WorkPlanMutationResult,
+  type WorkPlanServiceAction,
 } from "./coordination/work-plan-service.js";
 import {
   normalizeTaskToolInput,
   type TaskToolGetInput,
   type TaskToolInput,
+  type TaskToolRecoverableErrorResult,
   type TaskToolResult,
 } from "./coordination/task-tool.js";
 import {
@@ -2197,9 +2199,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const service = this.createWorkPlanServiceForDescriptor(descriptor);
+    let normalizedInput: TaskToolInput | undefined;
 
     try {
-      const normalizedInput = normalizeTaskToolInput(input);
+      normalizedInput = normalizeTaskToolInput(input);
       if (normalizedInput.action === "get") {
         const result = await service.get({
           agentId: descriptor.agentId,
@@ -2247,8 +2250,114 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         ...(mutationResult.linkedItemId ? { linkedItemId: mutationResult.linkedItemId } : {}),
       };
     } catch (error) {
-      throw new Error(this.mapTaskToolErrorMessage(error, input));
+      const taskInput = normalizedInput ?? input;
+      const recoverableResult = await this.toRecoverableTaskToolResult(service, error, taskInput);
+      if (recoverableResult) {
+        return recoverableResult;
+      }
+      throw new Error(this.mapTaskToolErrorMessage(error, taskInput));
     }
+  }
+
+  private async toRecoverableTaskToolResult(
+    service: WorkPlanService,
+    error: unknown,
+    input: TaskToolInput,
+  ): Promise<TaskToolRecoverableErrorResult | null> {
+    const descriptor = toWorkPlanServiceErrorDescriptor(error, this.getKnownTaskToolServiceAction(input));
+    if (!this.isRecoverableTaskToolErrorCode(descriptor.code)) {
+      return null;
+    }
+
+    const stateSummary = await this.loadRecoverableTaskToolStateSummary(service, descriptor.actualStateRevision);
+    const suggestedAction = this.getRecoverableTaskToolSuggestedAction(descriptor.code, descriptor.message);
+    return {
+      action: this.getTaskToolResultAction(input),
+      ok: false,
+      error: {
+        code: descriptor.code,
+        message: this.mapTaskToolErrorMessage(error, input),
+        recoverable: true,
+        ...(suggestedAction ? { suggestedAction } : {}),
+      },
+      ...stateSummary,
+    };
+  }
+
+  private isRecoverableTaskToolErrorCode(code: string): boolean {
+    return code === "work_plan_not_found"
+      || code === "item_resolution_failed"
+      || code === "state_revision_conflict"
+      || code === "work_plan_immutable"
+      || code === "active_plan_exists"
+      || code === "validation_error";
+  }
+
+  private getRecoverableTaskToolSuggestedAction(
+    code: string,
+    message: string,
+  ): TaskToolRecoverableErrorResult["error"]["suggestedAction"] {
+    switch (code) {
+      case "work_plan_not_found":
+      case "item_resolution_failed":
+      case "state_revision_conflict":
+      case "work_plan_immutable":
+      case "active_plan_exists":
+        return "task.get";
+      case "validation_error":
+        return /\bworkPlans\b|session coordination state/iu.test(message) ? "continue_without_plan" : "retry";
+      default:
+        return undefined;
+    }
+  }
+
+  private async loadRecoverableTaskToolStateSummary(
+    service: WorkPlanService,
+    fallbackStateRevision?: number,
+  ): Promise<Pick<TaskToolRecoverableErrorResult, "stateRevision" | "activePlan">> {
+    const result: Pick<TaskToolRecoverableErrorResult, "stateRevision" | "activePlan"> = {
+      ...(fallbackStateRevision !== undefined ? { stateRevision: fallbackStateRevision } : {}),
+    };
+
+    try {
+      const snapshot = await service.loadSnapshot();
+      if (snapshot.diagnostics?.state === "unavailable") {
+        return result;
+      }
+
+      const activePlan = snapshot.activeWorkPlan;
+      return {
+        stateRevision: snapshot.revision,
+        ...(activePlan
+          ? {
+              activePlan: {
+                planId: activePlan.planId,
+                planRevision: activePlan.revision,
+                status: activePlan.status,
+                itemCount: activePlan.itemCount,
+              },
+            }
+          : {}),
+      };
+    } catch {
+      return result;
+    }
+  }
+
+  private getTaskToolResultAction(input: TaskToolInput): string {
+    const action = (input as { action?: unknown } | undefined)?.action;
+    return typeof action === "string" && action.length > 0 ? action : "unknown";
+  }
+
+  private getKnownTaskToolServiceAction(input: TaskToolInput): WorkPlanServiceAction | undefined {
+    const action = this.getTaskToolResultAction(input);
+    return action === "get"
+      || action === "upsert_plan"
+      || action === "update_item_status"
+      || action === "link"
+      || action === "finish_plan"
+      ? action
+      : undefined;
   }
 
   private async runTaskToolMutation(

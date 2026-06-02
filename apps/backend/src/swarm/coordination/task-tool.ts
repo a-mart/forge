@@ -18,7 +18,7 @@ import {
   MAX_WORK_PLAN_ITEMS,
   MAX_WORK_PLAN_TITLE_LENGTH,
 } from './session-coordination-state.js'
-import { WorkPlanServiceValidationError } from './work-plan-service.js'
+import { WorkPlanServiceValidationError, type WorkPlanServiceErrorCode } from './work-plan-service.js'
 
 export const TASK_TOOL_NAME = 'task'
 
@@ -101,7 +101,7 @@ export interface TaskToolFinishPlanInput {
   warnings?: string[]
 }
 
-export type TaskToolResult = TaskToolGetResult | TaskToolMutationResult
+export type TaskToolResult = TaskToolGetResult | TaskToolMutationResult | TaskToolRecoverableErrorResult
 
 export interface TaskToolGetResult {
   action: 'get'
@@ -120,12 +120,32 @@ export interface TaskToolMutationResult {
   linkedItemId?: string
 }
 
+export type TaskToolRecoverableSuggestedAction = 'task.get' | 'retry' | 'continue_without_plan'
+
+export interface TaskToolRecoverableErrorResult {
+  action: string
+  ok: false
+  error: {
+    code: WorkPlanServiceErrorCode
+    message: string
+    recoverable: true
+    suggestedAction?: TaskToolRecoverableSuggestedAction
+  }
+  stateRevision?: number
+  activePlan?: {
+    planId: string
+    planRevision: number
+    status: WorkPlanStatus
+    itemCount: number
+  }
+}
+
 export function buildTaskTool(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefinition {
   return {
     name: TASK_TOOL_NAME,
     label: 'Task',
     description:
-      'Manage the current session\'s Active Work plan. Manager-only. This is coordination state, not execution; when the next step is clear, pair plan creation with immediate real work/delegation in the same turn. Call exactly one action: `get`, `upsert_plan`, `update_item_status`, `link`, or `finish_plan`. Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only: one item per line like `[active] Investigate logs`. Use `update_item_status` for status-only item progress after create. Use `link` for worker evidence and `finish_plan` for the final outcome. Use `task.get` when you need the full current snapshot; successful mutations return compact acknowledgements with revisions and ids only. Do not send nested item arrays or stringified JSON arrays from model-generated tool calls.',
+      'Manage the current session\'s Active Work plan. Manager-only. This is coordination state, not execution; when the next step is clear, pair plan creation with immediate real work/delegation in the same turn. Call exactly one action: `get`, `upsert_plan`, `update_item_status`, `link`, or `finish_plan`. Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only: one item per line like `[active] Investigate logs`. Use `update_item_status` for status-only item progress after create. Use `link` for worker evidence and `finish_plan` for the final outcome. Use `task.get` when you need the full current snapshot; successful mutations return compact acknowledgements with revisions and ids only. Expected state conflicts may return `{ ok: false, error: { recoverable: true } }`; recover by calling `task.get`, retrying with fresh ids/revisions, or continuing without plan state instead of stopping the user turn. Do not send nested item arrays or stringified JSON arrays from model-generated tool calls.',
     parameters: taskToolSchema,
     async execute(toolCallId, params) {
       const result = await host.runTaskTool(descriptor.agentId, toolCallId, params as TaskToolInput)
@@ -239,7 +259,7 @@ export const taskToolSchema = Type.Object(
   {
     additionalProperties: false,
     description:
-      'Arguments for the manager-only task tool. This tool records coordination state only; it does not count as investigating, patching, or validating. Provider-facing upsert_plan supports top-level plan fields plus create-time itemsText; it does not expose structured items arrays. Call `task.get` to retrieve the full current snapshot; successful mutations return compact acknowledgements. Example: {"action":"upsert_plan","title":"Investigate bug","itemsText":"[active] Trace failure\\n[todo] Patch shared state"}.',
+      'Arguments for the manager-only task tool. This tool records coordination state only; it does not count as investigating, patching, or validating. Provider-facing upsert_plan supports top-level plan fields plus create-time itemsText; it does not expose structured items arrays. Call `task.get` to retrieve the full current snapshot; successful mutations return compact acknowledgements. Recoverable conflicts return ok:false with an error code and suggestedAction; treat those as tool results, not fatal tool errors. Example: {"action":"upsert_plan","title":"Investigate bug","itemsText":"[active] Trace failure\\n[todo] Patch shared state"}.',
   },
 )
 

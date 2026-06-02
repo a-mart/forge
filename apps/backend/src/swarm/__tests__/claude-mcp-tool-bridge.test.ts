@@ -452,6 +452,63 @@ describe("claude-mcp-tool-bridge", () => {
     expect(forwardedArgs.itemsText).toBe("[active] Create plan");
   });
 
+  it("treats recoverable task results as non-error Claude MCP tool results", async () => {
+    const manager = createMockDescriptor();
+    const runTaskTool = vi.fn(async () => ({
+      action: "finish_plan",
+      ok: false,
+      error: {
+        code: "work_plan_not_found",
+        message: "The requested work plan no longer exists. Call `task.get` to refresh before retrying.",
+        recoverable: true,
+        suggestedAction: "task.get"
+      },
+      stateRevision: 3,
+      activePlan: {
+        planId: "plan-active",
+        planRevision: 2,
+        status: "active",
+        itemCount: 1
+      }
+    } satisfies TaskToolResult));
+    const host = createMockHost({ runTaskTool });
+    const { registeredTools } = await buildBridge(buildSwarmTools(host, manager));
+
+    const result = await invokeTool(registeredTools, "task", {
+      action: "finish_plan",
+      planId: "plan-stale",
+      status: "completed",
+      finalSummary: "Done"
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(result.isError).toBeUndefined();
+    expect(payload).toMatchObject({
+      ok: false,
+      error: {
+        code: "work_plan_not_found",
+        recoverable: true,
+        suggestedAction: "task.get"
+      },
+      stateRevision: 3,
+      activePlan: { planId: "plan-active" }
+    });
+  });
+
+  it("keeps hard task failures as Claude MCP tool errors", async () => {
+    const manager = createMockDescriptor();
+    const runTaskTool = vi.fn(async () => {
+      throw new Error("Active Work Plans are disabled in Settings.");
+    });
+    const host = createMockHost({ runTaskTool });
+    const { registeredTools } = await buildBridge(buildSwarmTools(host, manager));
+
+    const result = await invokeTool(registeredTools, "task", { action: "get" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Tool task failed: Active Work Plans are disabled in Settings.");
+  });
+
   it("dispatches list_agents and returns JSON content", async () => {
     const manager = createMockDescriptor();
     const worker = createMockDescriptor({
