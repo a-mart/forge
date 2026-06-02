@@ -19,6 +19,7 @@ import {
 } from "./codex-sidecar-ids.js";
 import {
   CodexMcpCatalog,
+  type CodexCatalogMcpTool,
   type CodexCatalogSnapshot,
   type CodexMcpToolCallResult,
 } from "./codex-mcp-catalog.js";
@@ -35,7 +36,6 @@ import type {
   CodexSidecarActiveTurn,
 } from "./types.js";
 import {
-  CodexSidecarBusyError,
   CODEX_THREAD_STATE_CUSTOM_TYPE,
   DEFAULT_CODEX_SIDE_CAR_DEVELOPER_INSTRUCTIONS,
   DEFAULT_TURN_COMPLETION_GRACE_MS,
@@ -78,6 +78,13 @@ export class CodexAppServerService {
 
   async listCodexMcpTools(): Promise<CodexCatalogSnapshot> {
     return this.mcpCatalog.listCatalog();
+  }
+
+  resolveCodexMcpToolInCatalog(
+    selector: string,
+    catalog: CodexCatalogSnapshot,
+  ): CodexCatalogMcpTool | undefined {
+    return this.mcpCatalog.resolveTool(selector, catalog);
   }
 
   async callCodexMcpTool(params: {
@@ -516,13 +523,6 @@ export class CodexAppServerService {
     }
 
     return descriptor;
-  }
-
-  private assertSidecarAvailable(requestedSidecarAgentId: string): void {
-    this.operationLock.assertAvailable({
-      kind: "sidecar_turn",
-      ownerId: requestedSidecarAgentId,
-    });
   }
 
   private getGlobalActiveSidecarAgentId(): string | undefined {

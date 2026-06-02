@@ -48,7 +48,7 @@ async function handleCodexCatalogRequest(
   }
 
   try {
-    const snapshot = await swarmManager.listCodexAppTools(managerAgentId);
+    const snapshot = await swarmManager.browseCodexMcpCatalog(managerAgentId);
     sendJson(response, 200, snapshot as unknown as Record<string, unknown>);
   } catch (error) {
     sendJson(response, 503, {

@@ -55,6 +55,32 @@ class FakeCodexAppServerClient implements CodexAppServerClientPort {
       return { plugins: [] } as T;
     }
 
+    if (method === "app/list") {
+      return { apps: [{ id: "fireflies", name: "Fireflies" }] } as T;
+    }
+
+    if (method === "mcpServerStatus/list") {
+      return {
+        servers: [
+          {
+            name: "fireflies",
+            tools: [
+              {
+                name: "list_recent",
+                readOnly: true,
+                annotations: { readOnlyHint: true },
+                inputSchema: { type: "object", properties: { limit: { type: "integer" } }, required: ["limit"] },
+              },
+            ],
+          },
+        ],
+      } as T;
+    }
+
+    if (method === "mcpServer/tool/call") {
+      return { content: [{ type: "text", text: "ok" }] } as T;
+    }
+
     throw new Error(`Unexpected fake request: ${method}`);
   }
 
@@ -448,7 +474,16 @@ describe("SwarmManager Codex mention routing", () => {
     expect(manager.runtimeByAgentId.get("manager")?.sendCalls).toHaveLength(1);
   });
 
-  it("blocks Codex MCP tools for scheduled web messages", async () => {
+  it("allows catalog browsing before any user message", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    const snapshot = await manager.browseCodexMcpCatalog("manager");
+    expect(snapshot.tools.some((tool) => tool.selector === "fireflies/list_recent")).toBe(true);
+  });
+
+  it("blocks Codex MCP tool calls for scheduled and non-Codex web turns", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
@@ -458,7 +493,40 @@ describe("SwarmManager Codex mention routing", () => {
       { sourceContext: { channel: "web" } },
     );
 
-    await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/scheduled/i);
+    await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/scheduled|Codex tool mention/i);
+    await expect(
+      manager.callCodexMcpTool("manager", { selector: "fireflies/list_recent", args: { limit: 1 } }),
+    ).rejects.toThrow(/scheduled|Codex tool mention/i);
+
+    await manager.handleUserMessage("plain hello", { sourceContext: { channel: "web" } });
+    await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/Codex tool mention/i);
+    await expect(
+      manager.callCodexMcpTool("manager", { selector: "fireflies/list_recent", args: { limit: 1 } }),
+    ).rejects.toThrow(/Codex tool mention/i);
+  });
+
+  it("allows Codex-tagged turns to call only authorized selectors", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+
+    await expect(
+      manager.callCodexMcpTool("manager", {
+        selector: "other_server/unknown_tool",
+        args: { limit: 1 },
+      }),
+    ).rejects.toThrow(/not authorized|Unknown Codex MCP tool selector/i);
+
+    const result = await manager.callCodexMcpTool("manager", {
+      selector: "fireflies/list_recent",
+      args: { limit: 1 },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.selector).toBe("fireflies/list_recent");
   });
 
   it("routes leading @Codex -selector and inline @Codex:selector through the manager runtime", async () => {
