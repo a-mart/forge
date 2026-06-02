@@ -191,7 +191,7 @@ export function useMentions({
         textarea?.setSelectionRange(newCursor, newCursor)
       })
     },
-    [input, mentionAtLeadingPosition, mentionTokenStart, setInputWithDraft, textareaRef],
+    [codexToolMode, input, mentionAtLeadingPosition, mentionTokenStart, setInputWithDraft, textareaRef],
   )
 
   const checkMentionTrigger = useCallback(
