@@ -93,7 +93,7 @@ export function buildCodexToolMentionManagerGuidance(selectors: string[]): strin
   const quoted = selectors.map((entry) => `"${entry}"`).join(", ");
   return (
     `[Forge Codex tool mention] The user tagged Codex app/tool selector(s): ${quoted}. ` +
-    "Use list_codex_app_tools when you need the catalog, then call_codex_app_tool with arguments inferred from the conversation. " +
+    "Use list_codex_mcp_tools when you need the catalog, then call_codex_mcp_tool with arguments inferred from the conversation. " +
     "Do not start a Codex sidecar text turn unless the user explicitly asked for a full @Codex conversation."
   );
 }

@@ -19,7 +19,7 @@ function createManager(): AgentDescriptor {
 }
 
 describe("codex manager tools", () => {
-  it("exposes list/call codex tools only for builder web managers", () => {
+  it("exposes list/call codex MCP tools only for builder web managers", () => {
     const host: SwarmToolHost = {
       listAgents: () => [],
       spawnAgent: async () => {
@@ -36,8 +36,8 @@ describe("codex manager tools", () => {
       runTaskTool: async () => {
         throw new Error("not needed");
       },
-      listCodexAppTools: async () => ({ apps: [], tools: [], fetchedAt: new Date().toISOString() }),
-      callCodexAppTool: async () => ({
+      listCodexMcpTools: async () => ({ apps: [], tools: [], fetchedAt: new Date().toISOString() }),
+      callCodexMcpTool: async () => ({
         auditId: "audit-1",
         selector: "fireflies/list",
         serverName: "fireflies",
@@ -48,8 +48,8 @@ describe("codex manager tools", () => {
     };
 
     const managerTools = buildSwarmTools(host, createManager()).map((tool) => tool.name);
-    expect(managerTools).toContain("list_codex_app_tools");
-    expect(managerTools).toContain("call_codex_app_tool");
+    expect(managerTools).toContain("list_codex_mcp_tools");
+    expect(managerTools).toContain("call_codex_mcp_tool");
 
     const collabManager = buildSwarmTools(host, {
       ...createManager(),
@@ -57,7 +57,7 @@ describe("codex manager tools", () => {
       collab: { channelId: "ch-1" },
     } as AgentDescriptor).map((tool) => tool.name);
 
-    expect(collabManager).not.toContain("list_codex_app_tools");
-    expect(collabManager).not.toContain("call_codex_app_tool");
+    expect(collabManager).not.toContain("list_codex_mcp_tools");
+    expect(collabManager).not.toContain("call_codex_mcp_tool");
   });
 });

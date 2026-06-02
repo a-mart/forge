@@ -349,6 +349,11 @@ import {
 import { CodexAppServerService } from "./codex-app-server/codex-app-server-service.js";
 import type { CodexCatalogSnapshot, CodexMcpToolCallResult } from "./codex-app-server/codex-mcp-catalog.js";
 import {
+  assertCodexMcpToolGateAllowed,
+  evaluateCodexMcpToolGate,
+  type CodexMcpToolGateEvaluation,
+} from "./codex-app-server/codex-mcp-tool-gate.js";
+import {
   buildCodexToolMentionManagerGuidance,
   classifyCodexUserMessage,
   isBuilderWebCodexRoutingSurface,
@@ -1207,6 +1212,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingProjectExecutableWorkerInvalidationByManagerId = new Map<string, string>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly pendingInboundTurnContextsByAgentId = new Map<string, PendingInboundTurnContext[]>();
+  private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
   private readonly activeExternalProjectAgentTurnByAgentId = new Map<string, ExternalProjectAgentTurnContext>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
@@ -5174,6 +5180,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
 
     if (target.role === "manager") {
+      this.setCodexMcpToolTurnGate(target, sourceContext, trimmed, "user_input");
       this.scheduleProjectExecutableTrustPrompt(target as AgentDescriptor & { role: "manager" });
     }
 
@@ -5323,19 +5330,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return true;
   }
 
-  async listCodexAppTools(managerAgentId: string): Promise<CodexCatalogSnapshot> {
+  async listCodexMcpTools(managerAgentId: string): Promise<CodexCatalogSnapshot> {
     const manager = this.requireManagerForCodexTools(managerAgentId);
-    return this.codexAppServerService.listCodexAppTools(manager);
+    this.assertActiveCodexMcpToolTurnGate(manager.agentId);
+    return this.codexAppServerService.listCodexMcpTools();
   }
 
-  async callCodexAppTool(
+  async callCodexMcpTool(
     managerAgentId: string,
     params: { selector: string; args?: Record<string, unknown> },
   ): Promise<CodexMcpToolCallResult> {
     const manager = this.requireManagerForCodexTools(managerAgentId);
+    this.assertActiveCodexMcpToolTurnGate(manager.agentId);
     this.assertCodexMentionRoutingAvailable(manager);
     this.scheduleProjectExecutableTrustPrompt(manager);
-    return this.codexAppServerService.callCodexAppTool(manager, params);
+    return this.codexAppServerService.callCodexMcpTool({
+      managerAgentId: manager.agentId,
+      cwd: manager.cwd ?? process.cwd(),
+      selector: params.selector,
+      args: params.args,
+    });
   }
 
   private requireManagerForCodexTools(
@@ -5343,14 +5357,34 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): AgentDescriptor & { role: "manager"; profileId: string } {
     const manager = this.descriptors.get(managerAgentId);
     if (!manager || manager.role !== "manager") {
-      throw new Error(`Codex app tools require a manager session: ${managerAgentId}`);
-    }
-
-    if (!isBuilderWebCodexRoutingSurface({ channel: "web" }, manager)) {
-      throw new Error("Codex app tools are only available on Builder web manager sessions.");
+      throw new Error(`Codex MCP tools require a manager session: ${managerAgentId}`);
     }
 
     return manager as AgentDescriptor & { role: "manager"; profileId: string };
+  }
+
+  private assertActiveCodexMcpToolTurnGate(managerAgentId: string): void {
+    const gate = this.codexMcpToolTurnGateByManagerId.get(managerAgentId);
+    if (!gate) {
+      throw new Error("Codex MCP tools are only available during an eligible Builder web user turn.");
+    }
+
+    assertCodexMcpToolGateAllowed(gate);
+  }
+
+  private setCodexMcpToolTurnGate(
+    manager: AgentDescriptor,
+    sourceContext: MessageSourceContext,
+    messageText: string,
+    inboundSource: PendingInboundTurnContext["source"] = "user_input",
+  ): void {
+    const gate = evaluateCodexMcpToolGate({
+      manager,
+      sourceContext,
+      messageText,
+      inboundSource,
+    });
+    this.codexMcpToolTurnGateByManagerId.set(manager.agentId, gate);
   }
 
   private assertCodexMentionRoutingAvailable(manager: AgentDescriptor & { role: "manager"; profileId: string }): void {

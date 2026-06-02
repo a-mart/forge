@@ -17,12 +17,12 @@ import {
   parseThreadIdFromThreadResult,
   parseTurnIdFromTurnResult,
 } from "./codex-sidecar-ids.js";
-import { buildCodexDirectToolAuditCard } from "./codex-direct-tool-audit.js";
 import {
   CodexMcpCatalog,
   type CodexCatalogSnapshot,
   type CodexMcpToolCallResult,
 } from "./codex-mcp-catalog.js";
+import { CodexOperationLock } from "./codex-operation-lock.js";
 import { truncateCodexPreview } from "./codex-sidecar-parent-cards.js";
 import type {
   CodexAppServerClientPort,
@@ -51,6 +51,7 @@ export class CodexAppServerService {
   private readonly developerInstructions: string;
   private readonly turnCompletionGraceMs: number;
   private readonly mcpCatalog = new CodexMcpCatalog(() => this.ensureSharedClient());
+  private readonly operationLock = new CodexOperationLock();
 
   constructor(
     private readonly host: CodexSidecarHost,
@@ -75,91 +76,65 @@ export class CodexAppServerService {
     }
   }
 
-  async listCodexAppTools(manager: AgentDescriptor): Promise<CodexCatalogSnapshot> {
-    if (manager.role !== "manager") {
-      throw new Error(`Expected manager descriptor, got ${manager.agentId}`);
-    }
-
-    await this.getOrCreateSidecarDescriptor(manager);
+  async listCodexMcpTools(): Promise<CodexCatalogSnapshot> {
     return this.mcpCatalog.listCatalog();
   }
 
-  async callCodexAppTool(
-    manager: AgentDescriptor,
-    params: { selector: string; args?: Record<string, unknown> },
-  ): Promise<CodexMcpToolCallResult & { auditMessageId?: string }> {
-    if (manager.role !== "manager") {
-      throw new Error(`Expected manager descriptor, got ${manager.agentId}`);
-    }
-
+  async callCodexMcpTool(params: {
+    managerAgentId: string;
+    cwd: string;
+    selector: string;
+    args?: Record<string, unknown>;
+  }): Promise<CodexMcpToolCallResult> {
     const selector = params.selector.trim();
     if (!selector) {
-      throw new Error("Codex tool selector is required");
+      throw new Error("Codex MCP tool selector is required");
     }
 
-    this.assertNoGlobalActiveSidecarTurn(manager.agentId);
+    const lease = { kind: "direct_mcp_call" as const, ownerId: params.managerAgentId };
+    this.operationLock.acquire(lease);
 
-    const sidecar = await this.getOrCreateSidecarDescriptor(manager);
-    const catalog = await this.mcpCatalog.listCatalog();
-    const resolved = this.mcpCatalog.resolveTool(selector, catalog);
-    if (!resolved) {
-      throw new Error(`Unknown Codex app/tool selector: ${selector}`);
+    try {
+      const catalog = await this.mcpCatalog.listCatalog();
+      const resolved = this.mcpCatalog.resolveTool(selector, catalog);
+      if (!resolved) {
+        throw new Error(`Unknown Codex MCP tool selector: ${selector}`);
+      }
+
+      const threadId = await this.startEphemeralThread(params.cwd);
+      return await this.mcpCatalog.callTool(
+        {
+          managerAgentId: params.managerAgentId,
+          cwd: params.cwd,
+          threadId,
+          serverName: resolved.serverName,
+          toolName: resolved.toolName,
+          args: params.args,
+        },
+        resolved,
+      );
+    } finally {
+      this.operationLock.release(lease);
+    }
+  }
+
+  getOperationLockForTest(): CodexOperationLock {
+    return this.operationLock;
+  }
+
+  private async startEphemeralThread(cwd: string): Promise<string> {
+    const client = await this.ensureSharedClient();
+    const started = await client.request("thread/start", {
+      cwd,
+      ephemeral: true,
+      developerInstructions: this.developerInstructions,
+    });
+    const threadId = parseThreadIdFromThreadResult(started);
+    if (!threadId) {
+      throw new Error("Codex app-server did not return an ephemeral thread id");
     }
 
-    const threadId = await this.createOrResumeThread(sidecar.agentId);
-    const requestId = randomUUID();
-    const turnCorrelationId = randomUUID();
-    const startedAt = this.host.now();
-
-    const runningCard = buildCodexDirectToolAuditCard({
-      managerAgentId: manager.agentId,
-      sidecarAgentId: sidecar.agentId,
-      requestId,
-      turnCorrelationId,
-      timestamp: startedAt,
-      selector: resolved.selector,
-      status: "running",
-      result: {
-        auditId: requestId,
-        selector: resolved.selector,
-        serverName: resolved.serverName,
-        toolName: resolved.toolName,
-        ok: true,
-        redactedPreview: "Running…",
-      },
-    });
-    this.host.appendConversationEntry(manager.agentId, runningCard);
-    this.host.emitConversationMessage(runningCard);
-
-    const result = await this.mcpCatalog.callTool(
-      {
-        managerAgentId: manager.agentId,
-        cwd: sidecar.cwd ?? manager.cwd ?? process.cwd(),
-        threadId,
-        serverName: resolved.serverName,
-        toolName: resolved.toolName,
-        args: params.args,
-      },
-      resolved,
-    );
-
-    const completedCard = buildCodexDirectToolAuditCard({
-      managerAgentId: manager.agentId,
-      sidecarAgentId: sidecar.agentId,
-      requestId,
-      turnCorrelationId,
-      timestamp: this.host.now(),
-      selector: resolved.selector,
-      result,
-    });
-
-    this.host.appendConversationEntry(manager.agentId, completedCard);
-    this.host.emitConversationMessage(completedCard);
-
-    return {
-      ...result,
-      auditMessageId: completedCard.id,
-    };
+    return threadId;
   }
 
   findSidecarForManager(managerAgentId: string): AgentDescriptor | undefined {
@@ -317,7 +292,8 @@ export class CodexAppServerService {
       throw new Error("Codex turn text must not be empty");
     }
 
-    this.assertSidecarAvailable(sidecarAgentId);
+    const sidecarLease = { kind: "sidecar_turn" as const, ownerId: sidecarAgentId };
+    this.operationLock.acquire(sidecarLease);
 
     const descriptor = this.requireSidecarDescriptor(sidecarAgentId);
     const runtime = this.getOrCreateRuntime(sidecarAgentId);
@@ -399,6 +375,7 @@ export class CodexAppServerService {
 
       return { turnId, correlationId };
     } catch (error) {
+      this.operationLock.release(sidecarLease);
       this.handleSendTextTurnFailure(sidecarAgentId, error);
       throw error instanceof Error ? error : new Error(String(error));
     }
@@ -504,6 +481,7 @@ export class CodexAppServerService {
     const runtime = this.sidecarRuntimeByAgentId.get(sidecarAgentId);
     const activeTurn = runtime?.activeTurn;
     if (!activeTurn) {
+      this.operationLock.release({ kind: "sidecar_turn", ownerId: sidecarAgentId });
       return;
     }
 
@@ -528,6 +506,7 @@ export class CodexAppServerService {
     }
     runtime.openCompletionGraceToken = 0;
     runtime.activeTurn = undefined;
+    this.operationLock.release({ kind: "sidecar_turn", ownerId: sidecarAgentId });
   }
 
   private requireSidecarDescriptor(sidecarAgentId: string): AgentDescriptor {
@@ -540,16 +519,10 @@ export class CodexAppServerService {
   }
 
   private assertSidecarAvailable(requestedSidecarAgentId: string): void {
-    this.assertNoGlobalActiveSidecarTurn(requestedSidecarAgentId);
-  }
-
-  private assertNoGlobalActiveSidecarTurn(requestedSidecarAgentId: string): void {
-    const activeSidecarAgentId = this.getGlobalActiveSidecarAgentId();
-    if (!activeSidecarAgentId) {
-      return;
-    }
-
-    throw new CodexSidecarBusyError(activeSidecarAgentId, requestedSidecarAgentId);
+    this.operationLock.assertAvailable({
+      kind: "sidecar_turn",
+      ownerId: requestedSidecarAgentId,
+    });
   }
 
   private getGlobalActiveSidecarAgentId(): string | undefined {
@@ -990,6 +963,8 @@ export class CodexAppServerService {
       this.host.emitAgentsSnapshot();
       await this.persistDescriptorUpdate(descriptor, descriptorStatus === "error" ? "turn_error" : "turn_cleared");
     }
+
+    this.operationLock.release({ kind: "sidecar_turn", ownerId: sidecarAgentId });
   }
 
   private async persistDescriptorUpdate(

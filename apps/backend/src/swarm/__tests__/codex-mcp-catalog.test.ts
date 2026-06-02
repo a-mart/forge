@@ -25,6 +25,8 @@ class FakeCatalogClient implements CodexAppServerClientPort {
               {
                 name: "list_recent",
                 description: "List recent meetings",
+                readOnly: true,
+                annotations: { readOnlyHint: true },
                 inputSchema: {
                   type: "object",
                   properties: { limit: { type: "integer" } },
@@ -102,6 +104,59 @@ describe("CodexMcpCatalog", () => {
     expect(result.ok).toBe(true);
     expect(result.redactedPreview).toContain("[redacted]");
     expect(result.redactedPreview).not.toContain("abc.def.ghi");
+  });
+
+  it("paginates catalog list endpoints when nextCursor is provided", async () => {
+    let page = 0;
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string, params?: unknown): Promise<T> => {
+      if (method === "app/list") {
+        page += 1;
+        if (page === 1) {
+          return { apps: [{ id: "a1", name: "A1" }], nextCursor: "page-2" } as T;
+        }
+        return { apps: [{ id: "a2", name: "A2" }] } as T;
+      }
+      return new FakeCatalogClient().request(method, params);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const snapshot = await catalog.listCatalog(true);
+    expect(snapshot.apps.map((app) => app.id)).toEqual(["a1", "a2"]);
+  });
+
+  it("rejects non-read-only tools at call time", async () => {
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string, params?: unknown): Promise<T> => {
+      if (method === "mcpServerStatus/list") {
+        return {
+          servers: [
+            {
+              name: "fireflies",
+              tools: [{ name: "delete_item", description: "Delete a record" }],
+            },
+          ],
+        } as T;
+      }
+      return new FakeCatalogClient().request(method, params);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const snapshot = await catalog.listCatalog(true);
+    const tool = catalog.resolveTool("fireflies/delete_item", snapshot)!;
+
+    await expect(
+      catalog.callTool(
+        {
+          managerAgentId: "manager",
+          cwd: "/tmp",
+          threadId: "thread-1",
+          serverName: tool.serverName,
+          toolName: tool.toolName,
+        },
+        tool,
+      ),
+    ).rejects.toThrow(/blocked/i);
   });
 
   it("fails closed on elicitation-style responses", async () => {

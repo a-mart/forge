@@ -584,14 +584,14 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       },
     },
     ...(host.isWorkPlansEnabled?.() === false ? [] : [buildTaskTool(host, descriptor)]),
-    ...(host.listCodexAppTools &&
-    host.callCodexAppTool &&
+    ...(host.listCodexMcpTools &&
+    host.callCodexMcpTool &&
     descriptor.role === "manager" &&
     isBuilderWebCodexRoutingSurface({ channel: "web" }, descriptor)
       ? [
           {
-            name: "list_codex_app_tools",
-            label: "List Codex App Tools",
+            name: "list_codex_mcp_tools",
+            label: "List Codex MCP Tools",
             description:
               "List Codex app-server apps and MCP tools available for direct manager calls. " +
               "Use when the user tagged @Codex -<selector> or inline @Codex:<selector> mentions.",
@@ -603,7 +603,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
               ),
             }),
             async execute() {
-              const snapshot = await host.listCodexAppTools!(descriptor.agentId);
+              const snapshot = await host.listCodexMcpTools!(descriptor.agentId);
               const summary = {
                 appCount: snapshot.apps.length,
                 toolCount: snapshot.tools.length,
@@ -629,14 +629,14 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             },
           } satisfies ToolDefinition,
           {
-            name: "call_codex_app_tool",
-            label: "Call Codex App Tool",
+            name: "call_codex_mcp_tool",
+            label: "Call Codex MCP Tool",
             description:
               "Call a Codex app-server MCP tool directly via mcpServer/tool/call. " +
               "Infer arguments from the user's request; only read-only harmless calls are expected in v1.",
             parameters: Type.Object({
               selector: Type.String({
-                description: "Tool selector from list_codex_app_tools (server/tool or short name).",
+                description: "Tool selector from list_codex_mcp_tools (server/tool or short name).",
               }),
               args: Type.Optional(
                 Type.Record(Type.String(), Type.Unknown(), {
@@ -650,7 +650,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
                 args?: Record<string, unknown>;
               };
 
-              const result = await host.callCodexAppTool!(descriptor.agentId, {
+              const result = await host.callCodexMcpTool!(descriptor.agentId, {
                 selector: parsed.selector,
                 args: parsed.args,
               });

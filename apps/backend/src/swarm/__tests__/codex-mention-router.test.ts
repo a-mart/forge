@@ -80,7 +80,7 @@ describe("stripInlineCodexToolTokens", () => {
 describe("buildCodexToolMentionManagerGuidance", () => {
   it("mentions tagged selectors for the manager runtime", () => {
     expect(buildCodexToolMentionManagerGuidance(["fireflies"])).toContain("fireflies");
-    expect(buildCodexToolMentionManagerGuidance(["fireflies"])).toContain("list_codex_app_tools");
+    expect(buildCodexToolMentionManagerGuidance(["fireflies"])).toContain("list_codex_mcp_tools");
   });
 });
 

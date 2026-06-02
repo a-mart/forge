@@ -448,6 +448,19 @@ describe("SwarmManager Codex mention routing", () => {
     expect(manager.runtimeByAgentId.get("manager")?.sendCalls).toHaveLength(1);
   });
 
+  it("blocks Codex MCP tools for scheduled web messages", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage(
+      '[Scheduled Task: Nightly]\n[scheduleContext] {"scheduleId":"sched-1"}\n\n@Codex -fireflies',
+      { sourceContext: { channel: "web" } },
+    );
+
+    await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/scheduled/i);
+  });
+
   it("routes leading @Codex -selector and inline @Codex:selector through the manager runtime", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
@@ -460,7 +473,7 @@ describe("SwarmManager Codex mention routing", () => {
     const leadingSend = manager.runtimeByAgentId.get("manager")?.sendCalls.at(-1);
     const leadingText =
       typeof leadingSend?.message === "string" ? leadingSend.message : leadingSend?.message.text ?? "";
-    expect(leadingText).toContain("list_codex_app_tools");
+    expect(leadingText).toContain("list_codex_mcp_tools");
     expect(leadingText).toContain("fireflies");
     expect(manager.listAgents().some((entry) => entry.agentId === "manager--codex")).toBe(false);
 
@@ -472,7 +485,7 @@ describe("SwarmManager Codex mention routing", () => {
     const inlineText =
       typeof inlineSend?.message === "string" ? inlineSend.message : inlineSend?.message.text ?? "";
     expect(inlineText).toContain("fireflies/list_recent");
-    expect(inlineText).toContain("call_codex_app_tool");
+    expect(inlineText).toContain("call_codex_mcp_tool");
   });
 
   it("persists parent cards with manager-owned agentId and model-context exclusion", async () => {

@@ -65,8 +65,8 @@ export interface SwarmToolHost {
     input: TaskToolInput,
   ): Promise<TaskToolResult>;
   isWorkPlansEnabled?(): boolean;
-  listCodexAppTools?(managerAgentId: string): Promise<CodexCatalogSnapshot>;
-  callCodexAppTool?(
+  listCodexMcpTools?(managerAgentId: string): Promise<CodexCatalogSnapshot>;
+  callCodexMcpTool?(
     managerAgentId: string,
     params: { selector: string; args?: Record<string, unknown> },
   ): Promise<CodexMcpToolCallResult>;

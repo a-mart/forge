@@ -1,4 +1,6 @@
 import { safeJson } from "./codex-app-server-event-normalizer.js";
+import { assertCodexMcpToolReadOnlyAllowed } from "./codex-mcp-tool-safety.js";
+import { parseCodexMcpToolSafetyFields } from "./codex-mcp-tool-safety.js";
 import type { CodexAppServerClientPort } from "./types.js";
 
 const CATALOG_CACHE_TTL_MS = 30_000;
@@ -20,6 +22,9 @@ export interface CodexCatalogMcpTool {
   appName?: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  readOnly?: boolean;
+  destructive?: boolean;
+  annotations?: Record<string, unknown>;
 }
 
 export interface CodexCatalogSnapshot {
@@ -186,6 +191,7 @@ export class CodexMcpCatalog {
 
   async callTool(input: CodexMcpToolCallInput, tool: CodexCatalogMcpTool): Promise<CodexMcpToolCallResult> {
     const auditId = `codex-mcp-${Date.now()}`;
+    assertCodexMcpToolReadOnlyAllowed(tool);
     const boundedArgs = this.boundArgs(input.args);
     this.validateToolArgs(boundedArgs, tool.inputSchema);
 
@@ -229,8 +235,7 @@ export class CodexMcpCatalog {
 
   private async fetchApps(client: CodexAppServerClientPort): Promise<CodexCatalogApp[]> {
     try {
-      const response = await client.request<unknown>("app/list", {});
-      return parseAppsResponse(response);
+      return await this.fetchPaginated(client, "app/list", parseAppsResponse);
     } catch {
       return [];
     }
@@ -241,11 +246,40 @@ export class CodexMcpCatalog {
     apps: CodexCatalogApp[],
   ): Promise<CodexCatalogMcpTool[]> {
     try {
-      const response = await client.request<unknown>("mcpServerStatus/list", {});
-      return parseMcpToolsResponse(response, apps);
+      return await this.fetchPaginated(client, "mcpServerStatus/list", (response) =>
+        parseMcpToolsResponse(response, apps),
+      );
     } catch {
       return [];
     }
+  }
+
+  private async fetchPaginated<T>(
+    client: CodexAppServerClientPort,
+    method: string,
+    parsePage: (response: unknown) => T[],
+  ): Promise<T[]> {
+    const merged: T[] = [];
+    let cursor: string | undefined;
+    let pageCount = 0;
+
+    while (pageCount < 20) {
+      const response = await client.request<unknown>(
+        method,
+        cursor ? { cursor, pageToken: cursor, nextCursor: cursor } : {},
+      );
+      merged.push(...parsePage(response));
+
+      const nextCursor = readNextCursor(response);
+      if (!nextCursor || nextCursor === cursor) {
+        break;
+      }
+
+      cursor = nextCursor;
+      pageCount += 1;
+    }
+
+    return merged;
   }
 }
 
@@ -311,6 +345,7 @@ function parseMcpToolsResponse(response: unknown, apps: CodexCatalogApp[]): Code
         : isRecord(toolEntry.input_schema)
           ? toolEntry.input_schema
           : undefined;
+      const safety = parseCodexMcpToolSafetyFields(toolEntry);
 
       tools.push({
         selector: buildToolSelector(serverName, toolName),
@@ -320,11 +355,27 @@ function parseMcpToolsResponse(response: unknown, apps: CodexCatalogApp[]): Code
         appName: linkedApp?.name,
         description: asString(toolEntry.description),
         inputSchema,
+        readOnly: safety.readOnly,
+        destructive: safety.destructive,
+        annotations: safety.annotations,
       });
     }
   }
 
   return tools;
+}
+
+function readNextCursor(response: unknown): string | undefined {
+  if (!isRecord(response)) {
+    return undefined;
+  }
+
+  return (
+    asString(response.nextCursor) ??
+    asString(response.next_cursor) ??
+    asString(response.pageToken) ??
+    asString(response.page_token)
+  );
 }
 
 function extractArray(response: unknown, keys: string[]): unknown[] {
