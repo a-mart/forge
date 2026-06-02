@@ -14,6 +14,16 @@ export interface CodexMentionSuggestion {
   whenToUse: string
 }
 
+export interface CodexPluginMentionSuggestion {
+  kind: 'codex_plugin'
+  selector: string
+  displayName: string
+  whenToUse: string
+  category?: string
+  riskHints?: string[]
+}
+
+/** Advanced fallback only; hidden from the default plugin picker. */
 export interface CodexToolMentionSuggestion {
   kind: 'codex_tool'
   selector: string
@@ -29,6 +39,7 @@ export interface ProjectAgentMentionSuggestion extends ProjectAgentSuggestion {
 
 export type MentionSuggestion =
   | CodexMentionSuggestion
+  | CodexPluginMentionSuggestion
   | CodexToolMentionSuggestion
   | ProjectAgentMentionSuggestion
 
@@ -49,6 +60,12 @@ export function isCodexMentionSuggestion(
   suggestion: MentionSuggestion,
 ): suggestion is CodexMentionSuggestion {
   return suggestion.kind === 'codex'
+}
+
+export function isCodexPluginMentionSuggestion(
+  suggestion: MentionSuggestion,
+): suggestion is CodexPluginMentionSuggestion {
+  return suggestion.kind === 'codex_plugin'
 }
 
 export function isCodexToolMentionSuggestion(

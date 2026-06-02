@@ -3,7 +3,7 @@ import { fetchCodexCatalog } from '@/lib/codex-catalog-api'
 import {
   CODEX_MENTION_HANDLE,
   CODEX_MENTION_SUGGESTION,
-  type CodexToolMentionSuggestion,
+  type CodexPluginMentionSuggestion,
   type MentionSuggestion,
   type ProjectAgentSuggestion,
   toProjectAgentMentionSuggestion,
@@ -12,10 +12,10 @@ import type { MentionMenuStatus } from '../mention-menu-a11y'
 import {
   canOfferCodexMentionAtPosition,
   codexMentionMatchesFilter,
-  codexToolFilterFromTrigger,
-  findCodexToolTriggerStart,
+  codexPluginFilterFromTrigger,
+  findCodexPluginTriggerStart,
   hasComposerMentionTokens,
-  isCodexToolPickerTrigger,
+  isCodexPluginPickerTrigger,
   isLeadingMentionPosition,
 } from '../mention-utils'
 
@@ -64,7 +64,7 @@ export function useMentions({
   const [mentionTokenStart, setMentionTokenStart] = useState(-1)
   const [mentionAtLeadingPosition, setMentionAtLeadingPosition] = useState(false)
   const [codexToolMode, setCodexToolMode] = useState(false)
-  const [codexToolSuggestions, setCodexToolSuggestions] = useState<CodexToolMentionSuggestion[]>([])
+  const [codexPluginSuggestions, setCodexPluginSuggestions] = useState<CodexPluginMentionSuggestion[]>([])
   const [codexCatalogLoading, setCodexCatalogLoading] = useState(false)
   const [codexCatalogError, setCodexCatalogError] = useState(false)
   const mentionMenuRef = useRef<HTMLDivElement | null>(null)
@@ -86,24 +86,24 @@ export function useMentions({
       }
 
       if (result.status === 'error') {
-        setCodexToolSuggestions([])
+        setCodexPluginSuggestions([])
         setCodexCatalogError(true)
         setCodexCatalogLoading(false)
         return
       }
 
-      const tools = (result.snapshot.tools ?? []).map(
-        (tool): CodexToolMentionSuggestion => ({
-          kind: 'codex_tool',
-          selector: tool.selector,
-          displayName: tool.appName ? `${tool.appName} · ${tool.toolName}` : tool.selector,
-          whenToUse: tool.description ?? `Call ${tool.selector} via Codex app-server`,
-          serverName: tool.serverName,
-          toolName: tool.toolName,
+      const plugins = (result.snapshot.plugins ?? []).map(
+        (plugin): CodexPluginMentionSuggestion => ({
+          kind: 'codex_plugin',
+          selector: plugin.selector,
+          displayName: plugin.displayName,
+          whenToUse: plugin.description ?? `Use the ${plugin.displayName} Codex plugin`,
+          category: plugin.category,
+          riskHints: plugin.riskHints,
         }),
       )
 
-      setCodexToolSuggestions(tools)
+      setCodexPluginSuggestions(plugins)
       setCodexCatalogError(false)
       setCodexCatalogLoading(false)
     })
@@ -118,17 +118,17 @@ export function useMentions({
 
     if (codexToolMode) {
       const lower = mentionFilter.toLowerCase()
-      const toolMatches = mentionFilter
-        ? codexToolSuggestions.filter(
-            (tool) =>
-              tool.selector.toLowerCase().includes(lower) ||
-              tool.displayName.toLowerCase().includes(lower) ||
-              tool.toolName.toLowerCase().includes(lower) ||
-              tool.serverName.toLowerCase().includes(lower),
+      const pluginMatches = mentionFilter
+        ? codexPluginSuggestions.filter(
+            (plugin) =>
+              plugin.selector.toLowerCase().includes(lower) ||
+              plugin.displayName.toLowerCase().includes(lower) ||
+              plugin.whenToUse.toLowerCase().includes(lower) ||
+              (plugin.category?.toLowerCase().includes(lower) ?? false),
           )
-        : codexToolSuggestions
+        : codexPluginSuggestions
 
-      suggestions.push(...toolMatches.slice(0, 40))
+      suggestions.push(...pluginMatches.slice(0, 40))
       return suggestions
     }
 
@@ -156,7 +156,7 @@ export function useMentions({
     return suggestions
   }, [
     codexToolMode,
-    codexToolSuggestions,
+    codexPluginSuggestions,
     enableCodexMention,
     mentionAtLeadingPosition,
     mentionFilter,
@@ -180,12 +180,12 @@ export function useMentions({
       const cursorPos = textarea?.selectionStart ?? input.length
       let replacement = ''
       if (suggestion.kind === 'codex') {
-        replacement = `[@${CODEX_MENTION_HANDLE}] `
-      } else if (suggestion.kind === 'codex_tool') {
+        replacement = `[@${CODEX_MENTION_HANDLE}]`
+      } else if (suggestion.kind === 'codex_plugin') {
         replacement = mentionAtLeadingPosition
           ? `@Codex -${suggestion.selector} `
           : `[@Codex:${suggestion.selector}] `
-      } else {
+      } else if (suggestion.kind === 'project_agent') {
         replacement = `[@${suggestion.handle}] `
       }
 
@@ -212,9 +212,9 @@ export function useMentions({
       const cursorPos = textareaRef.current?.selectionStart ?? value.length
       const textBeforeCursor = value.slice(0, cursorPos)
 
-      if (enableCodexMention && isCodexToolPickerTrigger(textBeforeCursor)) {
-        const tokenStart = findCodexToolTriggerStart(textBeforeCursor)
-        setMentionFilter(codexToolFilterFromTrigger(textBeforeCursor))
+      if (enableCodexMention && isCodexPluginPickerTrigger(textBeforeCursor)) {
+        const tokenStart = findCodexPluginTriggerStart(textBeforeCursor)
+        setMentionFilter(codexPluginFilterFromTrigger(textBeforeCursor))
         setMentionTokenStart(tokenStart)
         setMentionAtLeadingPosition(isLeadingMentionPosition(value, tokenStart))
         setCodexToolMode(true)
@@ -281,7 +281,7 @@ export function useMentions({
       if (filteredMentions.length > 0) {
         return 'list'
       }
-      return codexToolSuggestions.length === 0 ? 'empty-catalog' : 'empty-filter'
+      return codexPluginSuggestions.length === 0 ? 'empty-catalog' : 'empty-filter'
     }
 
     if (filteredMentions.length > 0) {
@@ -297,7 +297,7 @@ export function useMentions({
     codexCatalogError,
     codexCatalogLoading,
     codexToolMode,
-    codexToolSuggestions.length,
+    codexPluginSuggestions.length,
     enableCodexMention,
     filteredMentions.length,
     isMentionMenuOpen,

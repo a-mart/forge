@@ -1,5 +1,10 @@
 import type { MessageSourceContext } from "../types.js";
 import type { AgentDescriptor } from "../types.js";
+import {
+  type CodexCatalogSnapshot,
+  type CodexMcpCatalog,
+  isToolSelectorAuthorizedInCatalog,
+} from "./codex-mcp-catalog.js";
 import { isBuilderWebCodexRoutingSurface } from "./codex-mention-router.js";
 
 export interface CodexMcpToolGateEvaluation {
@@ -100,54 +105,23 @@ export function buildCodexMcpToolTurnAuthorization(params: {
 export function isCodexMcpToolSelectorAuthorized(
   requestedSelector: string,
   authorizedSelectors: string[],
-  resolveTool: (selector: string) => { selector: string; serverName: string } | undefined,
+  catalog: CodexCatalogSnapshot,
+  catalogResolver: Pick<CodexMcpCatalog, "resolveTool" | "resolvePlugin" | "toolMatchesPluginScope">,
 ): boolean {
   const trimmedRequested = requestedSelector.trim();
   if (!trimmedRequested || authorizedSelectors.length === 0) {
     return false;
   }
 
-  const requestedResolved = resolveTool(trimmedRequested);
-  if (!requestedResolved) {
+  const requestedTool = catalogResolver.resolveTool(trimmedRequested, catalog);
+  if (!requestedTool) {
     return false;
   }
 
-  const requestedKey = requestedResolved.selector.trim().toLowerCase();
-  const requestedServer = requestedResolved.serverName.trim().toLowerCase();
-  const requestedServerPrefix = trimmedRequested.includes("/")
-    ? trimmedRequested.split("/")[0]?.trim().toLowerCase()
-    : undefined;
-
-  for (const authorized of authorizedSelectors) {
-    const trimmedAuthorized = authorized.trim();
-    if (!trimmedAuthorized) {
-      continue;
-    }
-
-    if (trimmedAuthorized.toLowerCase() === trimmedRequested.toLowerCase()) {
-      return true;
-    }
-
-    const authorizedResolved = resolveTool(trimmedAuthorized);
-    if (authorizedResolved && authorizedResolved.selector.trim().toLowerCase() === requestedKey) {
-      return true;
-    }
-
-    if (trimmedAuthorized.toLowerCase() === requestedServer) {
-      if (
-        requestedServerPrefix &&
-        requestedServerPrefix !== trimmedAuthorized.toLowerCase() &&
-        requestedServerPrefix !== requestedServer
-      ) {
-        continue;
-      }
-      return true;
-    }
-  }
-
-  if (requestedServerPrefix) {
-    return false;
-  }
-
-  return false;
+  return isToolSelectorAuthorizedInCatalog(
+    requestedTool,
+    authorizedSelectors,
+    catalog,
+    catalogResolver,
+  );
 }

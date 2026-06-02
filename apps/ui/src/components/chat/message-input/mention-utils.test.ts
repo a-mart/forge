@@ -41,9 +41,11 @@ describe('mention-utils codex support', () => {
     expect(isCodexToolPickerTrigger('please @Codex -fire')).toBe(true)
   })
 
-  it('detects tool picker after [@Codex] chip token', () => {
+  it('detects plugin picker after [@Codex] chip token and colon triggers', () => {
     expect(isCodexToolPickerTrigger('[@Codex] -')).toBe(true)
     expect(isCodexToolPickerTrigger('[@Codex]-fire')).toBe(true)
+    expect(isCodexToolPickerTrigger('[@Codex]:')).toBe(true)
+    expect(isCodexToolPickerTrigger('@Codex:')).toBe(true)
     expect(isCodexToolPickerTrigger('please [@Codex] -repo')).toBe(true)
     expect(codexToolFilterFromTrigger('[@Codex] -fire')).toBe('fire')
     expect(findCodexToolTriggerStart('[@Codex] -fire')).toBe(0)

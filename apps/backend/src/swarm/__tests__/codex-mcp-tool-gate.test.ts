@@ -6,9 +6,50 @@ import {
   isCodexMcpToolSelectorAuthorized,
   isScheduledTaskUserMessage,
 } from "../codex-app-server/codex-mcp-tool-gate.js";
+import { CodexMcpCatalog, type CodexCatalogSnapshot } from "../codex-app-server/codex-mcp-catalog.js";
 import { createManagerDescriptor } from "../../test-support/fixtures.js";
 
+function buildCatalogSnapshot(): CodexCatalogSnapshot {
+  return {
+    apps: [{ id: "fireflies", name: "Fireflies" }],
+    plugins: [
+      {
+        selector: "fireflies",
+        pluginId: "fireflies",
+        displayName: "Fireflies",
+        relatedServerNames: ["fireflies"],
+      },
+      {
+        selector: "repo-prompt",
+        pluginId: "repo-prompt",
+        displayName: "RepoPrompt",
+        relatedServerNames: ["RepoPrompt"],
+      },
+    ],
+    tools: [
+      {
+        selector: "fireflies/list_recent",
+        serverName: "fireflies",
+        toolName: "list_recent",
+        readOnly: true,
+      },
+      {
+        selector: "RepoPrompt/get_code_structure",
+        serverName: "RepoPrompt",
+        toolName: "get_code_structure",
+        readOnly: true,
+      },
+    ],
+    fetchedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
 describe("codex-mcp-tool-gate", () => {
+  const catalogSnapshot = buildCatalogSnapshot();
+  const catalogResolver = new CodexMcpCatalog(async () => {
+    throw new Error("catalog resolver should not fetch in gate tests");
+  });
+
   it("detects scheduled task messages even when channel is web", () => {
     expect(
       isScheduledTaskUserMessage(
@@ -74,42 +115,51 @@ describe("codex-mcp-tool-gate", () => {
   });
 
   it("authorizes RepoPrompt/get_code_structure when tagged inline", () => {
-    const catalog = {
-      selector: "RepoPrompt/get_code_structure",
-      serverName: "RepoPrompt",
-    };
-    const resolveTool = (selector: string) => {
-      if (selector === "RepoPrompt/get_code_structure") {
-        return catalog;
-      }
-      return undefined;
-    };
-
     expect(
-      isCodexMcpToolSelectorAuthorized("RepoPrompt/get_code_structure", ["RepoPrompt/get_code_structure"], resolveTool),
+      isCodexMcpToolSelectorAuthorized(
+        "RepoPrompt/get_code_structure",
+        ["RepoPrompt/get_code_structure"],
+        catalogSnapshot,
+        catalogResolver,
+      ),
     ).toBe(true);
   });
 
-  it("matches authorized selectors and derived server/tool resolutions", () => {
-    const catalog = {
-      selector: "fireflies/list_recent",
-      serverName: "fireflies",
-    };
-    const resolveTool = (selector: string) => {
-      if (selector === "fireflies/list_recent") {
-        return catalog;
-      }
-      if (selector === "fireflies") {
-        return catalog;
-      }
-      return undefined;
-    };
-
+  it("authorizes plugin-scoped selectors for tools within that plugin", () => {
     expect(
-      isCodexMcpToolSelectorAuthorized("fireflies/list_recent", ["fireflies"], resolveTool),
+      isCodexMcpToolSelectorAuthorized(
+        "fireflies/list_recent",
+        ["fireflies"],
+        catalogSnapshot,
+        catalogResolver,
+      ),
     ).toBe(true);
     expect(
-      isCodexMcpToolSelectorAuthorized("other/list", ["fireflies"], resolveTool),
+      isCodexMcpToolSelectorAuthorized(
+        "RepoPrompt/get_code_structure",
+        ["fireflies"],
+        catalogSnapshot,
+        catalogResolver,
+      ),
+    ).toBe(false);
+  });
+
+  it("matches explicit tool selectors and rejects unrelated servers", () => {
+    expect(
+      isCodexMcpToolSelectorAuthorized(
+        "fireflies/list_recent",
+        ["fireflies/list_recent"],
+        catalogSnapshot,
+        catalogResolver,
+      ),
+    ).toBe(true);
+    expect(
+      isCodexMcpToolSelectorAuthorized(
+        "other/list",
+        ["fireflies"],
+        catalogSnapshot,
+        catalogResolver,
+      ),
     ).toBe(false);
   });
 

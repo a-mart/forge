@@ -109,27 +109,33 @@ export function codexMentionMatchesFilter(filter: string): boolean {
   return CODEX_MENTION_HANDLE.toLowerCase().startsWith(lower)
 }
 
-export function isCodexToolPickerTrigger(textBeforeCursor: string): boolean {
+export function isCodexPluginPickerTrigger(textBeforeCursor: string): boolean {
   return (
-    /(?:^|\s)@codex\s*-\s*[^\s]*$/i.test(textBeforeCursor) ||
-    /(?:^|\s)\[@codex\]\s*-\s*[^\s]*$/i.test(textBeforeCursor)
+    /(?:^|\s)@codex\s*[-:]\s*[^\s]*$/i.test(textBeforeCursor) ||
+    /(?:^|\s)\[@codex\]\s*[-:]\s*[^\s]*$/i.test(textBeforeCursor)
   )
 }
 
-export function codexToolFilterFromTrigger(textBeforeCursor: string): string {
-  const bracketMatch = textBeforeCursor.match(/(?:^|\s)\[@codex\]\s*-\s*([^\s]*)$/i)
+/** @deprecated Use isCodexPluginPickerTrigger */
+export const isCodexToolPickerTrigger = isCodexPluginPickerTrigger
+
+export function codexPluginFilterFromTrigger(textBeforeCursor: string): string {
+  const bracketMatch = textBeforeCursor.match(/(?:^|\s)\[@codex\]\s*[-:]\s*([^\s]*)$/i)
   if (bracketMatch) {
     return bracketMatch[1]?.trim().toLowerCase() ?? ''
   }
 
-  const match = textBeforeCursor.match(/(?:^|\s)@codex\s*-\s*([^\s]*)$/i)
+  const match = textBeforeCursor.match(/(?:^|\s)@codex\s*[-:]\s*([^\s]*)$/i)
   return match?.[1]?.trim().toLowerCase() ?? ''
 }
 
-/** Index of the @Codex or [@Codex] token that opened the tool picker. */
-export function findCodexToolTriggerStart(textBeforeCursor: string): number {
+/** @deprecated Use codexPluginFilterFromTrigger */
+export const codexToolFilterFromTrigger = codexPluginFilterFromTrigger
+
+/** Index of the @Codex or [@Codex] token that opened the plugin picker. */
+export function findCodexPluginTriggerStart(textBeforeCursor: string): number {
   const lower = textBeforeCursor.toLowerCase()
-  if (/(?:^|\s)\[@codex\]\s*-/i.test(textBeforeCursor)) {
+  if (/(?:^|\s)\[@codex\]\s*[-:]/i.test(textBeforeCursor)) {
     const bracketIdx = lower.lastIndexOf('[@codex]')
     if (bracketIdx >= 0) {
       return bracketIdx
@@ -139,6 +145,9 @@ export function findCodexToolTriggerStart(textBeforeCursor: string): number {
   const atIdx = lower.lastIndexOf('@codex')
   return atIdx >= 0 ? atIdx : 0
 }
+
+/** @deprecated Use findCodexPluginTriggerStart */
+export const findCodexToolTriggerStart = findCodexPluginTriggerStart
 
 export function canOfferCodexMentionAtPosition(
   text: string,

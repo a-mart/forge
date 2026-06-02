@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils'
 import { mentionMenuOptionId, type MentionMenuStatus } from './mention-menu-a11y'
 import {
   isCodexMentionSuggestion,
+  isCodexPluginMentionSuggestion,
   isCodexToolMentionSuggestion,
   type MentionSuggestion,
 } from './mention-types'
@@ -27,16 +28,16 @@ function emptyMessage(
   codexToolPicker: boolean,
 ): string {
   if (status === 'loading') {
-    return 'Loading Codex tools…'
+    return 'Loading Codex plugins…'
   }
   if (status === 'error') {
-    return 'Could not load Codex tools. Try again in a moment.'
+    return 'Could not load Codex plugins. Try again in a moment.'
   }
   if (status === 'empty-catalog') {
-    return 'No Codex tools available'
+    return 'No Codex plugins available'
   }
   if (codexToolPicker) {
-    return 'No matching Codex tools'
+    return 'No matching Codex plugins'
   }
   return enableCodexMention ? 'No matching mentions' : 'No matching project agents'
 }
@@ -63,21 +64,25 @@ export function MentionMenu({
       >
         {mentions.map((suggestion, idx) => {
           const isCodex = isCodexMentionSuggestion(suggestion)
-          const isCodexTool = isCodexToolMentionSuggestion(suggestion)
-          const tokenLabel = isCodexTool
+          const isCodexPlugin = isCodexPluginMentionSuggestion(suggestion)
+          const tokenLabel = isCodexPlugin
             ? `@Codex:${suggestion.selector}`
             : isCodex
               ? `@${suggestion.handle}`
-              : `@${suggestion.handle}`
+              : isCodexToolMentionSuggestion(suggestion)
+                ? `@Codex:${suggestion.selector}`
+                : `@${suggestion.handle}`
           const id = mentionMenuOptionId(listboxId, idx)
           return (
             <button
               key={
                 isCodex
                   ? 'codex-mention'
-                  : isCodexTool
-                    ? `codex-tool-${suggestion.selector}`
-                    : suggestion.agentId
+                  : isCodexPlugin
+                    ? `codex-plugin-${suggestion.selector}`
+                    : isCodexToolMentionSuggestion(suggestion)
+                      ? `codex-tool-${suggestion.selector}`
+                      : suggestion.agentId
               }
               id={id}
               type="button"
@@ -96,7 +101,7 @@ export function MentionMenu({
               }}
             >
               <div className="flex items-center gap-2">
-                {isCodex || isCodexTool ? (
+                {isCodex || isCodexPlugin ? (
                   <img
                     src="/agents/codex-logo.svg"
                     alt=""
@@ -107,7 +112,7 @@ export function MentionMenu({
                 <code
                   className={cn(
                     'shrink-0 text-xs font-semibold',
-                    isCodex || isCodexTool
+                    isCodex || isCodexPlugin
                       ? 'text-emerald-700 dark:text-emerald-300'
                       : 'text-foreground',
                   )}
@@ -115,7 +120,7 @@ export function MentionMenu({
                   {tokenLabel}
                 </code>
                 <span className="text-xs text-muted-foreground">{suggestion.displayName}</span>
-                {isCodex || isCodexTool ? (
+                {isCodex || isCodexPlugin ? (
                   <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                     Codex
                   </span>

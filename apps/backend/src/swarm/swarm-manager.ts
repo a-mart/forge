@@ -353,7 +353,6 @@ import {
   buildCodexMcpToolTurnAuthorization,
   evaluateCodexMcpCatalogBrowseGate,
   evaluateCodexMcpToolGate,
-  isCodexMcpToolSelectorAuthorized,
   type CodexMcpToolGateEvaluation,
 } from "./codex-app-server/codex-mcp-tool-gate.js";
 import {
@@ -5349,8 +5348,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async listCodexMcpTools(managerAgentId: string): Promise<CodexCatalogSnapshot> {
-    this.requireAuthorizedCodexMcpToolTurn(managerAgentId);
-    return this.codexAppServerService.listCodexMcpTools();
+    const gate = this.requireAuthorizedCodexMcpToolTurn(managerAgentId);
+    const catalog = await this.codexAppServerService.listCodexMcpTools();
+    const authorizedSelectors = gate.authorizedSelectors ?? [];
+    const scopedTools = this.codexAppServerService.filterCodexMcpToolsForAuthorizedSelectors(
+      catalog,
+      authorizedSelectors,
+    );
+
+    return {
+      ...catalog,
+      tools: scopedTools,
+    };
   }
 
   async callCodexMcpTool(
@@ -5361,13 +5370,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const gate = this.requireAuthorizedCodexMcpToolTurn(manager.agentId);
     const authorizedSelectors = gate.authorizedSelectors ?? [];
     const catalog = await this.codexAppServerService.listCodexMcpTools();
-    const resolveTool = (selector: string) =>
-      this.codexAppServerService.resolveCodexMcpToolInCatalog(selector, catalog);
-    if (!resolveTool(params.selector)) {
+    if (!this.codexAppServerService.resolveCodexMcpToolInCatalog(params.selector, catalog)) {
       throw new Error(`Unknown Codex MCP tool selector: ${params.selector}`);
     }
 
-    if (!isCodexMcpToolSelectorAuthorized(params.selector, authorizedSelectors, resolveTool)) {
+    if (
+      !this.codexAppServerService.isCodexMcpToolSelectorAuthorized(
+        params.selector,
+        authorizedSelectors,
+        catalog,
+      )
+    ) {
       throw new Error(
         `Codex MCP tool selector is not authorized for this turn: ${params.selector}`,
       );

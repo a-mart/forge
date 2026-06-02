@@ -87,6 +87,32 @@ export class CodexAppServerService {
     return this.mcpCatalog.resolveTool(selector, catalog);
   }
 
+  resolveCodexPluginInCatalog(
+    selector: string,
+    catalog: CodexCatalogSnapshot,
+  ) {
+    return this.mcpCatalog.resolvePlugin(selector, catalog);
+  }
+
+  isCodexMcpToolSelectorAuthorized(
+    requestedSelector: string,
+    authorizedSelectors: string[],
+    catalog: CodexCatalogSnapshot,
+  ): boolean {
+    return this.mcpCatalog.isToolSelectorAuthorized(
+      requestedSelector,
+      authorizedSelectors,
+      catalog,
+    );
+  }
+
+  filterCodexMcpToolsForAuthorizedSelectors(
+    catalog: CodexCatalogSnapshot,
+    authorizedSelectors: string[],
+  ): CodexCatalogMcpTool[] {
+    return this.mcpCatalog.filterToolsForAuthorizedSelectors(catalog, authorizedSelectors);
+  }
+
   async callCodexMcpTool(params: {
     managerAgentId: string;
     cwd: string;

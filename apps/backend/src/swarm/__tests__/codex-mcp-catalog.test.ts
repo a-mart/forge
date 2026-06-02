@@ -10,6 +10,25 @@ class FakeCatalogClient implements CodexAppServerClientPort {
   async request<T>(method: string, params?: unknown): Promise<T> {
     this.requests.push({ method, params });
 
+    if (method === "plugin/list") {
+      return {
+        plugins: [
+          {
+            id: "fireflies",
+            name: "Fireflies",
+            description: "Meeting notes",
+            category: "productivity",
+          },
+          {
+            pluginId: "repo-prompt",
+            displayName: "RepoPrompt",
+            description: "Repository browser tools",
+            serverNames: ["RepoPrompt"],
+          },
+        ],
+      } as T;
+    }
+
     if (method === "app/list") {
       return {
         apps: [{ id: "fireflies", name: "Fireflies" }],
@@ -92,6 +111,28 @@ describe("CodexMcpCatalog", () => {
     );
   });
 
+  it("lists plugins from plugin/list as the primary catalog source", async () => {
+    const client = new FakeCatalogClient();
+    const catalog = new CodexMcpCatalog(async () => client);
+
+    const snapshot = await catalog.listCatalog(true);
+    expect(snapshot.plugins).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          selector: "fireflies",
+          displayName: "Fireflies",
+          pluginId: "fireflies",
+        }),
+        expect.objectContaining({
+          selector: "repo-prompt",
+          displayName: "RepoPrompt",
+          relatedServerNames: ["RepoPrompt"],
+        }),
+      ]),
+    );
+    expect(client.requests.some((entry) => entry.method === "plugin/list")).toBe(true);
+  });
+
   it("lists apps and tools with tolerant parsing", async () => {
     const client = new FakeCatalogClient();
     const catalog = new CodexMcpCatalog(async () => client);
@@ -103,6 +144,22 @@ describe("CodexMcpCatalog", () => {
       serverName: "fireflies",
       toolName: "list_recent",
     });
+  });
+
+  it("authorizes tools within a plugin scope and rejects unrelated servers", async () => {
+    const client = new FakeCatalogClient();
+    const catalog = new CodexMcpCatalog(async () => client);
+    const snapshot = await catalog.listCatalog(true);
+
+    expect(
+      catalog.isToolSelectorAuthorized("fireflies/list_recent", ["fireflies"], snapshot),
+    ).toBe(true);
+    expect(
+      catalog.isToolSelectorAuthorized("fireflies/list_recent", ["repo-prompt"], snapshot),
+    ).toBe(false);
+    expect(catalog.filterToolsForAuthorizedSelectors(snapshot, ["fireflies"]).map((tool) => tool.selector)).toEqual([
+      "fireflies/list_recent",
+    ]);
   });
 
   it("validates required args and redacts tool output", async () => {

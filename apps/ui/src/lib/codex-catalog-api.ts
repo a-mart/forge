@@ -6,6 +6,19 @@ export interface CodexCatalogApp {
   description?: string
 }
 
+export interface CodexCatalogPlugin {
+  selector: string
+  pluginId?: string
+  uri?: string
+  displayName: string
+  description?: string
+  enabled?: boolean
+  accessState?: string
+  icon?: string
+  riskHints?: string[]
+  category?: string
+}
+
 export interface CodexCatalogMcpTool {
   selector: string
   serverName: string
@@ -17,6 +30,7 @@ export interface CodexCatalogMcpTool {
 
 export interface CodexCatalogSnapshot {
   apps: CodexCatalogApp[]
+  plugins: CodexCatalogPlugin[]
   tools: CodexCatalogMcpTool[]
   fetchedAt: string
 }

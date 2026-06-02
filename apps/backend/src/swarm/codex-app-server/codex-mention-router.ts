@@ -92,8 +92,9 @@ export function stripInlineCodexToolTokens(text: string): string {
 export function buildCodexToolMentionManagerGuidance(selectors: string[]): string {
   const quoted = selectors.map((entry) => `"${entry}"`).join(", ");
   return (
-    `[Forge Codex tool mention] The user tagged Codex app/tool selector(s): ${quoted}. ` +
-    "Use list_codex_mcp_tools when you need the catalog, then call_codex_mcp_tool with arguments inferred from the conversation. " +
+    `[Forge Codex tool mention] The user tagged Codex plugin/tool selector(s): ${quoted}. ` +
+    "Plugin selectors authorize safe MCP tools within that plugin scope only. " +
+    "Use list_codex_mcp_tools to see allowed tools for this turn, then call_codex_mcp_tool with arguments inferred from the conversation. " +
     "Do not start a Codex sidecar text turn unless the user explicitly asked for a full @Codex conversation."
   );
 }

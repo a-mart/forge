@@ -59,19 +59,19 @@ describe('MentionMenu', () => {
   it('shows loading status for Codex tool picker', () => {
     renderMenu({ status: 'loading', mentions: [], codexToolPicker: true })
 
-    expect(container.textContent).toContain('Loading Codex tools')
+    expect(container.textContent).toContain('Loading Codex plugins')
     expect(container.querySelector('[role="listbox"]')?.getAttribute('aria-busy')).toBe('true')
   })
 
   it('shows catalog fetch failure message', () => {
     renderMenu({ status: 'error', mentions: [], codexToolPicker: true })
 
-    expect(container.textContent).toContain('Could not load Codex tools')
+    expect(container.textContent).toContain('Could not load Codex plugins')
   })
 
   it('shows empty-catalog message when no tools are available', () => {
     renderMenu({ status: 'empty-catalog', mentions: [], codexToolPicker: true })
 
-    expect(container.textContent).toContain('No Codex tools available')
+    expect(container.textContent).toContain('No Codex plugins available')
   })
 })

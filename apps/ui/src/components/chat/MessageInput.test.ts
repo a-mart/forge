@@ -820,11 +820,18 @@ describe('MessageInput', () => {
       expect(container.textContent).not.toContain('No matching mentions')
     })
 
-    it('opens Codex tool picker after [@Codex] chip when user types -', async () => {
+    it('opens Codex plugin picker after [@Codex] chip when user types -', async () => {
       fetchCodexCatalogMock.mockResolvedValue({
         status: 'ok',
         snapshot: {
           apps: [],
+          plugins: [
+            {
+              selector: 'repo-prompt',
+              displayName: 'RepoPrompt',
+              description: 'Repository browser tools',
+            },
+          ],
           tools: [
             {
               selector: 'RepoPrompt/get_code_structure',
@@ -843,7 +850,8 @@ describe('MessageInput', () => {
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('RepoPrompt/get_code_structure')
+      expect(container.textContent).toContain('RepoPrompt')
+      expect(container.textContent).not.toContain('get_code_structure')
       expect(container.textContent).not.toContain('No matching mentions')
     })
 
@@ -885,14 +893,21 @@ describe('MessageInput', () => {
       })
       await flush()
 
-      expect(getTextarea().value).toBe('[@Codex] ')
+      expect(getTextarea().value).toBe('[@Codex]')
     })
 
-    it('inserts leading @Codex -selector shorthand from the tool picker at message start', async () => {
+    it('inserts leading @Codex -plugin shorthand from the plugin picker at message start', async () => {
       fetchCodexCatalogMock.mockResolvedValue({
         status: 'ok',
         snapshot: {
           apps: [],
+          plugins: [
+            {
+              selector: 'fireflies',
+              displayName: 'Fireflies',
+              description: 'Meeting notes',
+            },
+          ],
           tools: [
             {
               selector: 'fireflies/list',
@@ -911,30 +926,48 @@ describe('MessageInput', () => {
       await flush()
       await flush()
 
-      const toolButton = Array.from(container.querySelectorAll('[role="option"]')).find((button) =>
-        button.textContent?.includes('fireflies/list'),
+      const pluginButton = Array.from(container.querySelectorAll('[role="option"]')).find((button) =>
+        button.textContent?.includes('Fireflies'),
       )
-      expect(toolButton).toBeTruthy()
+      expect(pluginButton).toBeTruthy()
+      expect(container.textContent).not.toContain('fireflies/list')
       flushSync(() => {
-        fireEvent.mouseDown(toolButton!)
+        fireEvent.mouseDown(pluginButton!)
       })
       await flush()
 
-      expect(getTextarea().value).toBe('@Codex -fireflies/list ')
+      expect(getTextarea().value).toBe('@Codex -fireflies ')
     })
 
-    it('inserts inline [@Codex:selector] from the tool picker mid-message', async () => {
+    it('opens plugin picker for @Codex: colon trigger', async () => {
       fetchCodexCatalogMock.mockResolvedValue({
         status: 'ok',
         snapshot: {
           apps: [],
-          tools: [
-            {
-              selector: 'fireflies/list',
-              serverName: 'fireflies',
-              toolName: 'list',
-            },
-          ],
+          plugins: [{ selector: 'fireflies', displayName: 'Fireflies' }],
+          tools: [{ selector: 'fireflies/list', serverName: 'fireflies', toolName: 'list' }],
+          fetchedAt: '2026-01-01T00:00:00.000Z',
+        },
+      })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      await flush()
+
+      typeInTextarea('[@Codex]:fire')
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Fireflies')
+      expect(container.textContent).not.toContain('fireflies/list')
+    })
+
+    it('inserts inline [@Codex:plugin] from the plugin picker mid-message', async () => {
+      fetchCodexCatalogMock.mockResolvedValue({
+        status: 'ok',
+        snapshot: {
+          apps: [],
+          plugins: [{ selector: 'fireflies', displayName: 'Fireflies' }],
+          tools: [{ selector: 'fireflies/list', serverName: 'fireflies', toolName: 'list' }],
           fetchedAt: '2026-01-01T00:00:00.000Z',
         },
       })
@@ -946,19 +979,19 @@ describe('MessageInput', () => {
       await flush()
       await flush()
 
-      const toolButton = Array.from(container.querySelectorAll('[role="option"]')).find((button) =>
-        button.textContent?.includes('fireflies/list'),
+      const pluginButton = Array.from(container.querySelectorAll('[role="option"]')).find((button) =>
+        button.textContent?.includes('Fireflies'),
       )
-      expect(toolButton).toBeTruthy()
+      expect(pluginButton).toBeTruthy()
       flushSync(() => {
-        fireEvent.mouseDown(toolButton!)
+        fireEvent.mouseDown(pluginButton!)
       })
       await flush()
 
-      expect(getTextarea().value).toBe('please [@Codex:fireflies/list] ')
+      expect(getTextarea().value).toBe('please [@Codex:fireflies] ')
     })
 
-    it('shows loading state while Codex tool catalog is fetching', async () => {
+    it('shows loading state while Codex plugin catalog is fetching', async () => {
       fetchCodexCatalogMock.mockReturnValue(new Promise(() => {}))
 
       renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
@@ -967,7 +1000,7 @@ describe('MessageInput', () => {
       typeInTextarea('@Codex -fire')
       await flush()
 
-      expect(container.textContent).toContain('Loading Codex tools')
+      expect(container.textContent).toContain('Loading Codex plugins')
       expect(container.textContent).not.toContain('No matching mentions')
     })
 
@@ -981,7 +1014,7 @@ describe('MessageInput', () => {
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('Could not load Codex tools')
+      expect(container.textContent).toContain('Could not load Codex plugins')
       expect(container.textContent).not.toContain('No matching mentions')
     })
 
