@@ -13,6 +13,10 @@ export type ConversationHistoryEntry = Extract<
   ConversationEntry,
   { type: 'conversation_message' | 'conversation_log' | 'choice_request' | 'work_plan_created' }
 >
+export type ModelCacheObservationEntry = Extract<
+  ConversationEntry,
+  { type: 'model_cache_observation' }
+>
 export type AgentActivityEntry = Extract<
   ConversationEntry,
   { type: 'agent_message' | 'agent_tool_call' }
@@ -24,6 +28,8 @@ export interface ManagerWsState {
   subscribedAgentId: string | null
   messages: ConversationHistoryEntry[]
   activityMessages: AgentActivityEntry[]
+  /** Persisted cache observations for future header UI; not rendered as chat rows in v1. */
+  modelCacheObservations: ModelCacheObservationEntry[]
   /** Choice IDs with pending status for the current session */
   pendingChoiceIds: Set<string>
   agents: AgentDescriptor[]
@@ -57,6 +63,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     subscribedAgentId: null,
     messages: [],
     activityMessages: [],
+    modelCacheObservations: [],
     pendingChoiceIds: new Set(),
     agents: [],
     loadedSessionIds: new Set(),

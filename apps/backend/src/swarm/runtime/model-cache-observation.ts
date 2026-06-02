@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   MODEL_CACHE_CLASSIFICATION_VERSION,
   MODEL_CACHE_ELIGIBILITY_THRESHOLD_TOKENS,
@@ -222,6 +223,20 @@ export function extractModelCacheModelFacts(
   return { provider, modelId: modelIdRaw, api }
 }
 
+/** Stable observation id: explicit id, else turnId, else generated at emission. */
+export function resolveModelCacheObservationId(options: {
+  id?: string
+  turnId?: string
+}): string {
+  if (typeof options.id === 'string' && options.id.trim().length > 0) {
+    return options.id.trim()
+  }
+  if (typeof options.turnId === 'string' && options.turnId.trim().length > 0) {
+    return options.turnId.trim()
+  }
+  return randomUUID().slice(0, 8)
+}
+
 export function buildModelCacheObservation(options: {
   agentId: string
   timestamp: string
@@ -234,10 +249,11 @@ export function buildModelCacheObservation(options: {
   classification: ModelCacheClassification
   id?: string
 }): ModelCacheObservationEvent {
+  const id = resolveModelCacheObservationId({ id: options.id, turnId: options.turnId })
   return {
     type: 'model_cache_observation',
     agentId: options.agentId,
-    id: options.id,
+    id,
     timestamp: options.timestamp,
     runtimeType: options.runtimeType,
     provider: options.provider,

@@ -8,6 +8,7 @@ import {
   isModelCacheClassificationConsistent,
   isSupportedModelCacheProvider,
   normalizeModelCacheProvider,
+  resolveModelCacheObservationId,
 } from '../runtime/model-cache-observation.js'
 
 const baseDescriptor: AgentDescriptor = {
@@ -89,6 +90,12 @@ describe('model-cache-observation', () => {
     expect(classifyModelCache(hit!)?.status).toBe('hit')
   })
 
+  it('assigns stable ids from turnId or generates one at emission', () => {
+    expect(resolveModelCacheObservationId({ id: 'custom-id' })).toBe('custom-id')
+    expect(resolveModelCacheObservationId({ turnId: 'turn-abc' })).toBe('turn-abc')
+    expect(resolveModelCacheObservationId({})).toMatch(/^[0-9a-f]{8}$/i)
+  })
+
   it('builds observations from eligible assistant message_end payloads', () => {
     const observation = buildModelCacheObservationFromMessageEnd({
       agentId: 'manager-1',
@@ -110,6 +117,7 @@ describe('model-cache-observation', () => {
       provider: 'openai-codex',
       modelId: 'gpt-5.5',
       turnId: 'turn-1',
+      id: 'turn-1',
       classification: { status: 'hit', version: 1 },
     })
   })

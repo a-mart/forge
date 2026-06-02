@@ -32,6 +32,7 @@ export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string>
   'agent_tool_call',
   'choice_request',
   'work_plan_created',
+  'model_cache_observation',
 ])
 
 export function handleConversationEvent(
@@ -56,6 +57,25 @@ export function handleConversationEvent(
       }
 
       context.updateState({ messages: [...context.state.messages, event] })
+      return true
+    }
+
+    case 'model_cache_observation': {
+      if (event.agentId !== context.state.targetAgentId) {
+        return true
+      }
+
+      const existingIdx = context.state.modelCacheObservations.findIndex(
+        (observation) => observation.id === event.id,
+      )
+      const nextObservations = [...context.state.modelCacheObservations]
+      if (existingIdx >= 0) {
+        nextObservations[existingIdx] = event
+      } else {
+        nextObservations.push(event)
+      }
+
+      context.updateState({ modelCacheObservations: nextObservations })
       return true
     }
 
@@ -148,7 +168,7 @@ export function handleConversationEvent(
         return true
       }
 
-      const { messages, activityMessages } = splitConversationHistory(event.messages)
+      const { messages, activityMessages, modelCacheObservations } = splitConversationHistory(event.messages)
       // Sidebar perf: stop `session_switch.click_to_history_loaded_ms` and mark
       // the active session-switch token eligible for first-paint completion.
       // The interaction nonce ensures stale bootstraps from A→B→A rapid
@@ -164,6 +184,7 @@ export function handleConversationEvent(
       context.updateState({
         messages,
         activityMessages: clampConversationHistory(activityMessages),
+        modelCacheObservations,
       })
       return true
     }
@@ -202,6 +223,7 @@ export function handleConversationEvent(
       context.updateState({
         messages: [],
         activityMessages: [],
+        modelCacheObservations: [],
         pendingChoiceIds: new Set(),
         lastError: null,
       })

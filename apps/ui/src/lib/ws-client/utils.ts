@@ -1,4 +1,9 @@
-import type { AgentActivityEntry, ConversationHistoryEntry, ManagerWsState } from '../ws-state'
+import type {
+  AgentActivityEntry,
+  ConversationHistoryEntry,
+  ModelCacheObservationEntry,
+  ManagerWsState,
+} from '../ws-state'
 import { MAX_CLIENT_CONVERSATION_HISTORY, isAgentActivityEntry } from './runtime-types'
 import type {
   AgentDescriptor,
@@ -134,15 +139,31 @@ export function normalizeConversationAttachments(
   return normalized
 }
 
+export function isModelCacheObservationEntry(
+  entry: ConversationEntry,
+): entry is ModelCacheObservationEntry {
+  return entry.type === 'model_cache_observation'
+}
+
 export function splitConversationHistory(
   messages: ConversationEntry[],
-): { messages: ConversationHistoryEntry[]; activityMessages: AgentActivityEntry[] } {
+): {
+  messages: ConversationHistoryEntry[]
+  activityMessages: AgentActivityEntry[]
+  modelCacheObservations: ModelCacheObservationEntry[]
+} {
   const conversationMessages: ConversationHistoryEntry[] = []
   const activityMessages: AgentActivityEntry[] = []
+  const modelCacheObservations: ModelCacheObservationEntry[] = []
 
   for (const entry of messages) {
     if (isAgentActivityEntry(entry)) {
       activityMessages.push(entry)
+      continue
+    }
+
+    if (isModelCacheObservationEntry(entry)) {
+      modelCacheObservations.push(entry)
       continue
     }
 
@@ -152,6 +173,7 @@ export function splitConversationHistory(
   return {
     messages: conversationMessages,
     activityMessages,
+    modelCacheObservations,
   }
 }
 

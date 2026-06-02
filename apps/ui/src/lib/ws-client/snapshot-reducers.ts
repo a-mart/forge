@@ -379,6 +379,7 @@ export function reduceManagerDeleted(input: {
           subscribedAgentId: fallbackId,
           messages: [],
           activityMessages: [],
+          modelCacheObservations: [],
           pendingChoiceIds: new Set(),
           terminals: [],
           terminalSessionScopeId: null,
@@ -399,6 +400,7 @@ export function reduceManagerDeleted(input: {
         subscribedAgentId: null,
         messages: [],
         activityMessages: [],
+        modelCacheObservations: [],
         pendingChoiceIds: new Set(),
         terminals: [],
         terminalSessionScopeId: null,
@@ -465,6 +467,7 @@ export function reduceSessionDeleted(input: {
           subscribedAgentId: fallbackId,
           messages: [],
           activityMessages: [],
+          modelCacheObservations: [],
           pendingChoiceIds: new Set(),
           ...(previousTerminalScopeId !== nextTerminalScopeId
             ? { terminals: [], terminalSessionScopeId: null }

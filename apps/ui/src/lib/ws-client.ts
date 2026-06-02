@@ -264,6 +264,7 @@ export class ManagerWsClient {
       targetAgentId: trimmed,
       messages: [],
       activityMessages: [],
+      modelCacheObservations: [],
       pendingChoiceIds: new Set(),
       taskSnapshotLoadingSessionId: trimmed,
       ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),

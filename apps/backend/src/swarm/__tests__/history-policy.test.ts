@@ -266,20 +266,33 @@ describe("history policy", () => {
     expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY + 2);
   });
 
-  it("includes model_cache_observation in bootstrap transcript selection", () => {
+  it("does not displace visible transcript rows with model_cache_observation under tight bootstrap budget", () => {
     const history = [
-      agentActivity("activity-1"),
       message("message-1"),
       modelCacheObservation("cache-obs-1"),
-      tool("activity-2", "tool_execution_start")
+      message("message-2"),
+      agentActivity("activity-1"),
     ];
 
     const selection = selectBootstrapConversationHistory({
       fullHistory: history,
-      isWithinBudget: (messages) => messages.length <= 3
+      isWithinBudget: (messages) => messages.length <= 2,
     });
 
-    expect(ids(selection.history)).toEqual(["message-1", "cache-obs-1", "activity-2"]);
+    expect(selection.history).toHaveLength(2);
+    expect(ids(selection.history)).toEqual(["message-1", "message-2"]);
+    expect(ids(selection.history)).not.toContain("cache-obs-1");
+  });
+
+  it("includes model_cache_observation only when bootstrap budget has room after transcript", () => {
+    const history = [message("message-1"), modelCacheObservation("cache-obs-1")];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      isWithinBudget: (messages) => messages.length <= 2,
+    });
+
+    expect(ids(selection.history)).toEqual(["message-1", "cache-obs-1"]);
   });
 
   it("keeps transcript entries first and fills leftover bootstrap budget with tail activity in source order", () => {

@@ -73,6 +73,37 @@ function createTaskSnapshotEvent(
   }
 }
 
+function createModelCacheObservationEvent(
+  agentId: string,
+  id: string,
+): Extract<ServerEvent, { type: 'model_cache_observation' }> {
+  return {
+    type: 'model_cache_observation',
+    agentId,
+    id,
+    timestamp: '2026-06-02T12:00:00.000Z',
+    runtimeType: 'pi',
+    provider: 'openai',
+    modelId: 'gpt-5',
+    tokens: {
+      promptInputTokens: 2000,
+      cachedInputTokens: 1600,
+      cacheWriteInputTokens: 0,
+      uncachedInputTokens: 400,
+      outputTokens: 120,
+      totalTokens: 2120,
+      normalization: 'raw_input_tokens_total',
+    },
+    classification: {
+      version: 1,
+      status: 'hit',
+      cachedRatio: 0.8,
+      thresholdTokens: 1024,
+      hitRatioThreshold: 0.8,
+    },
+  }
+}
+
 function createWorkPlanCreatedEvent(
   agentId: string,
   id: string,
@@ -416,6 +447,34 @@ describe('SwarmWebSocketServer', () => {
     )
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(workerEvents.some((event) => event.type === 'work_plan_created' && event.agentId === 'manager')).toBe(false)
+
+    const unreadBeforeCache = workerEvents.filter((event) => event.type === 'unread_notification').length
+
+    manager.emit(
+      'model_cache_observation',
+      createModelCacheObservationEvent('manager', 'cache-obs-web-live'),
+    )
+    await waitForEvent(
+      managerEvents,
+      (event) =>
+        event.type === 'model_cache_observation' &&
+        event.agentId === 'manager' &&
+        event.id === 'cache-obs-web-live',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const unreadAfterCache = workerEvents.filter((event) => event.type === 'unread_notification').length
+    expect(unreadAfterCache).toBe(unreadBeforeCache)
+    expect(
+      managerEvents.some(
+        (event) => event.type === 'model_cache_observation' && event.agentId === 'manager',
+      ),
+    ).toBe(true)
+    expect(
+      workerEvents.some(
+        (event) => event.type === 'model_cache_observation' && event.agentId === 'manager',
+      ),
+    ).toBe(false)
 
     managerClient.close()
     await once(managerClient, 'close')
