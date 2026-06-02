@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { boundCodexMcpToolUiPreview, truncateBytesUtf8 } from "./codex-mcp-args.js";
+import { redactCodexMcpSensitiveText } from "./codex-app-server-event-normalizer.js";
 import {
   type CodexCatalogMcpTool,
   type CodexCatalogPlugin,
@@ -118,6 +119,8 @@ Rules:
 
 export function buildCodexPluginInitialTask(params: {
   managerAgentId: string;
+  task: string;
+  context?: string;
   userMessage: string;
   strippedRequest: string;
   selectors: readonly string[];
@@ -131,23 +134,39 @@ export function buildCodexPluginInitialTask(params: {
     inputMode: tool.inputMode,
   }));
 
+  const sanitizedTask = sanitizeDelegationText(params.task);
+  const sanitizedContext = params.context ? sanitizeDelegationText(params.context) : "";
+  const sanitizedStrippedRequest = sanitizeDelegationText(params.strippedRequest);
+  const sanitizedOriginalRequest = sanitizeDelegationText(params.userMessage);
+  const sanitizedSelectors = params.selectors.map((selector) => sanitizeDelegationText(selector, 240));
+
   return [
     "Codex Plugin delegation task.",
     "",
     `Owning manager: ${params.managerAgentId}`,
-    `Selected selector(s): ${params.selectors.join(", ")}`,
+    `Selected selector(s): ${sanitizedSelectors.join(", ")}`,
     "",
-    "User request after removing selector tokens:",
-    params.strippedRequest || "(No remaining text after selector tokens; infer the requested action from the full user message.)",
+    "Manager-provided task:",
+    sanitizedTask,
+    ...(sanitizedContext
+      ? ["", "Additional manager-provided context:", sanitizedContext]
+      : []),
     "",
-    "Full original user message for intent only:",
-    params.userMessage,
+    "Original user request after removing selector tokens (sanitized):",
+    sanitizedStrippedRequest || "(No remaining text after selector tokens; infer intent from the full original user request.)",
+    "",
+    "Full original user request for intent only (sanitized):",
+    sanitizedOriginalRequest,
     "",
     "Scoped tools available for this delegation (names are exact runtime tool names):",
     JSON.stringify(toolCards, null, 2),
     "",
-    "Use the scoped tools needed to answer the request. Then send a concise sanitized report to the manager via send_message_to_agent. Include enough context for the manager to answer the user, but do not include raw connector payloads or hidden metadata.",
+    "Use the scoped tools needed to answer the manager's task. Then send a concise sanitized report to the manager via send_message_to_agent. Include enough context for the manager to answer the user, but do not include raw connector payloads or hidden metadata.",
   ].join("\n");
+}
+
+function sanitizeDelegationText(value: string, maxBytes = 8 * 1024): string {
+  return truncateBytesUtf8(redactCodexMcpSensitiveText(value), maxBytes);
 }
 
 export class CodexPluginScopeService {

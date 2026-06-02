@@ -319,7 +319,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
   ];
 
   if (descriptor.role !== "manager") {
-    const codexPluginScope = isCodexPluginWorkerDescriptor(descriptor)
+    const isInternalCodexPluginWorker = isCodexPluginWorkerDescriptor(descriptor);
+    const codexPluginScope = isInternalCodexPluginWorker
       ? host.getCodexPluginScopeForWorker?.(descriptor.agentId)
       : undefined;
     const codexPluginTools = codexPluginScope && host.callCodexPluginScopedTool
@@ -330,10 +331,69 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         })
       : [];
 
-    return [...shared, ...codexPluginTools];
+    const workerBaseTools = isInternalCodexPluginWorker
+      ? shared.filter((tool) => tool.name === "send_message_to_agent")
+      : shared;
+
+    return [...workerBaseTools, ...codexPluginTools];
   }
 
+  const codexPluginDelegateTools: ToolDefinition[] = host.delegateCodexPlugin
+    ? [
+        {
+          name: "delegate_codex_plugin",
+          label: "Delegate Codex Plugin",
+          description:
+            "Delegate the current active Codex plugin selector turn to Forge's internal Codex Plugin worker. Only works during a user turn that included @Codex plugin selector tags. The selected plugin/tool scope is bound server-side from that user turn; do not include selectors in this tool input.",
+          parameters: Type.Object({
+            task: Type.String({
+              description:
+                "The exact task for the internal Codex Plugin worker, derived from the current user request and manager context. Do not include new @Codex selectors here."
+            }),
+            context: Type.Optional(
+              Type.String({
+                description:
+                  "Optional concise context the worker needs to interpret the task. Do not include secrets or raw connector payloads."
+              })
+            )
+          }),
+          async execute(_toolCallId, params) {
+            const parsed = params as { task?: string; context?: string };
+            const task = typeof parsed.task === "string" ? parsed.task.trim() : "";
+            if (!task) {
+              throw new Error("delegate_codex_plugin requires a non-empty task.");
+            }
+
+            const result = await host.delegateCodexPlugin!(descriptor.agentId, {
+              task,
+              ...(typeof parsed.context === "string" && parsed.context.trim().length > 0
+                ? { context: parsed.context.trim() }
+                : {})
+            });
+            const payload = {
+              status: "delegated",
+              workerAgentId: result.workerAgentId,
+              selectors: result.selectors,
+              deliveryId: result.deliveryId,
+              acceptedMode: result.acceptedMode,
+            };
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Delegated Codex plugin task to ${result.workerAgentId}. deliveryId=${result.deliveryId}, mode=${result.acceptedMode}`
+                }
+              ],
+              details: payload
+            };
+          }
+        } satisfies ToolDefinition
+      ]
+    : [];
+
   const managerOnly: ToolDefinition[] = [
+    ...codexPluginDelegateTools,
     {
       name: "spawn_agent",
       label: "Spawn Agent",

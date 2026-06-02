@@ -35,6 +35,7 @@ import {
 import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
 import type { SwarmToolHost } from "../../swarm-tool-host.js";
+import { isCodexPluginWorkerDescriptor } from "../../codex-app-server/codex-plugin-scope-service.js";
 import { isCollabSession, resolveExactModel } from "../../swarm-manager-utils.js";
 import type {
   AgentContextUsage,
@@ -312,11 +313,12 @@ export class PiRuntimeCreator {
       });
     }
 
-    const activeToolNames = new Set(session.getActiveToolNames());
-    for (const tool of swarmTools) {
-      activeToolNames.add(tool.name);
-    }
-    session.setActiveToolsByName(Array.from(activeToolNames));
+    const activeToolNames = resolvePiActiveToolNamesForDescriptor(
+      descriptor,
+      session.getActiveToolNames(),
+      swarmTools.map((tool) => tool.name),
+    );
+    session.setActiveToolsByName(activeToolNames);
 
     this.deps.logDebug("runtime:create:ready", {
       runtime: "pi",
@@ -628,6 +630,18 @@ function normalizeExtensionDisplayName(pathValue: string, resolvedPathValue: str
   }
 
   return normalizedBase || candidate;
+}
+
+export function resolvePiActiveToolNamesForDescriptor(
+  descriptor: AgentDescriptor,
+  sessionActiveToolNames: readonly string[],
+  swarmToolNames: readonly string[],
+): string[] {
+  if (isCodexPluginWorkerDescriptor(descriptor)) {
+    return Array.from(new Set(swarmToolNames));
+  }
+
+  return Array.from(new Set([...sessionActiveToolNames, ...swarmToolNames]));
 }
 
 const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
