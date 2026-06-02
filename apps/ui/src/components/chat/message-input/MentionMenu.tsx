@@ -60,7 +60,14 @@ export function MentionMenu({
         id={listboxId}
         role="listbox"
         aria-label="Mentions"
-        className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg"
+        className={cn(
+          'mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg',
+          '[color-scheme:light] dark:[color-scheme:dark]',
+          '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
+          '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
+          '[&::-webkit-scrollbar-thumb:hover]:bg-border/80',
+          '[scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]',
+        )}
       >
         {mentions.map((suggestion, idx) => {
           const isCodex = isCodexMentionSuggestion(suggestion)

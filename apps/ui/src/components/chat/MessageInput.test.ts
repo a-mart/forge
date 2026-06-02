@@ -857,6 +857,63 @@ describe('MessageInput', () => {
       expect(container.textContent).not.toContain('No matching mentions')
     })
 
+    it('moves through Codex plugin suggestions with arrow keys and selects the active option', async () => {
+      fetchCodexCatalogMock.mockResolvedValue({
+        status: 'ok',
+        snapshot: {
+          apps: [],
+          plugins: [
+            { selector: 'fireflies', displayName: 'Fireflies', description: 'Meeting notes' },
+            { selector: 'repo-prompt', displayName: 'RepoPrompt', description: 'Repository browser tools' },
+            { selector: 'linear', displayName: 'Linear', description: 'Issue tracker' },
+          ],
+          tools: [],
+          fetchedAt: '2026-01-01T00:00:00.000Z',
+        },
+      })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-plugins-keyboard' })
+      await flush()
+
+      typeInTextarea('@Codex -')
+      await flush()
+      await flush()
+
+      const textarea = getTextarea()
+      const options = Array.from(container.querySelectorAll('[role="option"]'))
+      expect(options).toHaveLength(3)
+      expect(options[0].getAttribute('aria-selected')).toBe('true')
+      expect(textarea.getAttribute('aria-activedescendant')).toBe(options[0].id)
+
+      flushSync(() => {
+        fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+      })
+      await flush()
+
+      expect(options[1].getAttribute('aria-selected')).toBe('true')
+      expect(textarea.getAttribute('aria-activedescendant')).toBe(options[1].id)
+
+      flushSync(() => {
+        fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+      })
+      await flush()
+
+      expect(options[0].getAttribute('aria-selected')).toBe('true')
+      expect(textarea.getAttribute('aria-activedescendant')).toBe(options[0].id)
+
+      flushSync(() => {
+        fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+      })
+      await flush()
+
+      flushSync(() => {
+        fireEvent.keyDown(textarea, { key: 'Enter' })
+      })
+      await flush()
+
+      expect(getTextarea().value).toBe('[@Codex:repo-prompt]')
+    })
+
     it('does not open an empty mention popup for inline @ when only Codex mention is enabled', async () => {
       renderMessageInput({ enableCodexMention: true })
       await flush()
