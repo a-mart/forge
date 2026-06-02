@@ -608,9 +608,50 @@ describe("SwarmManager Codex mention routing", () => {
     );
     expect(findInternalCodexPluginWorker(manager)).toBeUndefined();
 
+    const selectorMessage = managerRuntime!.sendCalls.at(-1)!.message;
+    const selectorText = typeof selectorMessage === "string" ? selectorMessage : selectorMessage.text;
     await manager.handleRuntimeSessionEvent("manager", {
       type: "message_start",
-      message: { role: "user", content: [] },
+      message: { role: "user", content: selectorText },
+    });
+
+    const result = await manager.delegateCodexPlugin("manager", { task: "List meetings" });
+    expect(result.selectors).toEqual(["fireflies"]);
+    expect(findInternalCodexPluginWorker(manager)?.agentId).toBe(result.workerAgentId);
+  });
+
+  it("does not activate queued selector context for an earlier worker report message_start", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+    const worker = await manager.spawnAgent("manager", { agentId: "reporting-worker" });
+
+    const managerRuntime = manager.runtimeByAgentId.get("manager");
+    expect(managerRuntime).toBeDefined();
+    managerRuntime!.busy = true;
+
+    await manager.sendMessage(worker.agentId, "manager", "status: done\nsummary: worker report");
+    const workerReportMessage = managerRuntime!.sendCalls.at(-1)!.message;
+    const workerReportText = typeof workerReportMessage === "string" ? workerReportMessage : workerReportMessage.text;
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+    const selectorMessage = managerRuntime!.sendCalls.at(-1)!.message;
+    const selectorText = typeof selectorMessage === "string" ? selectorMessage : selectorMessage.text;
+
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "message_start",
+      message: { role: "user", content: workerReportText },
+    });
+    await expect(manager.delegateCodexPlugin("manager", { task: "List meetings" })).rejects.toThrow(
+      /active user turn with Codex plugin selector/i,
+    );
+    expect(findInternalCodexPluginWorker(manager)).toBeUndefined();
+
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "message_start",
+      message: { role: "user", content: selectorText },
     });
 
     const result = await manager.delegateCodexPlugin("manager", { task: "List meetings" });

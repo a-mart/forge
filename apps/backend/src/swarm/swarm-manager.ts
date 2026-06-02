@@ -118,6 +118,7 @@ import {
 import { deleteProjectAgentRecord } from "./project-agent-storage.js";
 import {
   deliverProjectAgentMessage,
+  formatProjectAgentRuntimeMessage,
   getProjectAgentPublicName,
   isReservedProjectAgentHandle,
 } from "./project-agents.js";
@@ -266,6 +267,7 @@ import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
   RuntimeSessionEvent,
+  RuntimeSessionMessage,
   RuntimeShutdownOptions,
   RuntimeUserMessage,
   SetPinnedContentOptions,
@@ -439,6 +441,7 @@ interface CodexPluginDelegationTurnContext {
 
 interface PendingInboundTurnContext {
   source: PreparedInboundConversationPayload["source"];
+  runtimeMessageText?: string;
   projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
   codexMcpToolGate?: CodexMcpToolGateEvaluation;
   codexPluginDelegationContext?: CodexPluginDelegationTurnContext;
@@ -4710,8 +4713,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         throw new Error("Project-agent deliveries do not support attachments.");
       }
 
+      const projectAgentContext = {
+        fromAgentId: sender.agentId,
+        fromDisplayName: getProjectAgentPublicName(sender),
+        external: projectAgentDeliveryAuthorization.allowCrossProfile,
+        fromProfileId: senderProfileId,
+        fromProjectName: this.profiles.get(senderProfileId)?.displayName ?? senderProfileId,
+      };
       const rollbackInboundTurnContext = this.enqueueInboundTurnContext(target.agentId, {
         source: "project_agent_input",
+        runtimeMessageText: formatProjectAgentRuntimeMessage(projectAgentContext, message),
         codexMcpToolGate: this.buildCodexMcpToolTurnGate(
           target as AgentDescriptor & { role: "manager" },
           { channel: "web" },
@@ -4719,13 +4730,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           { kind: "none" },
           "project_agent_input",
         ),
-        projectAgentContext: {
-          fromAgentId: sender.agentId,
-          fromDisplayName: getProjectAgentPublicName(sender),
-          external: projectAgentDeliveryAuthorization.allowCrossProfile,
-          fromProfileId: senderProfileId,
-          fromProjectName: this.profiles.get(senderProfileId)?.displayName ?? senderProfileId,
-        },
+        projectAgentContext,
       });
 
       let deliveryResult;
@@ -6146,6 +6151,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         : undefined;
     const rollbackInboundTurnContext = this.enqueueInboundTurnContext(managerContextId, {
       source: "user_input",
+      runtimeMessageText: extractRuntimeMessageText(runtimeMessage),
       codexMcpToolGate,
       codexPluginDelegationContext,
     });
@@ -6252,6 +6258,31 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private dequeueInboundTurnContextForRuntimeMessage(
+    agentId: string,
+    message: RuntimeSessionMessage,
+  ): PendingInboundTurnContext | undefined {
+    const queue = this.pendingInboundTurnContextsByAgentId.get(agentId);
+    const nextContext = queue?.[0];
+    if (!queue || !nextContext) {
+      return undefined;
+    }
+
+    if (nextContext.runtimeMessageText !== undefined) {
+      const messageText = extractMessageText(message);
+      if (!messageText || !runtimeMessageTextMatches(nextContext.runtimeMessageText, messageText)) {
+        return undefined;
+      }
+    }
+
+    queue.shift();
+    if (queue.length === 0) {
+      this.pendingInboundTurnContextsByAgentId.delete(agentId);
+    }
+
+    return nextContext;
+  }
+
   private applyInboundTurnContextRuntimeEvent(agentId: string, event: RuntimeSessionEvent): void {
     const descriptor = this.descriptors.get(agentId);
     if (isCodexPluginWorkerDescriptor(descriptor)) {
@@ -6264,11 +6295,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     if (event.type === "message_start" && extractRole(event.message) === "user") {
-      const queue = this.pendingInboundTurnContextsByAgentId.get(agentId);
-      const nextContext = queue?.shift();
-      if (queue && queue.length === 0) {
-        this.pendingInboundTurnContextsByAgentId.delete(agentId);
-      }
+      const nextContext = this.dequeueInboundTurnContextForRuntimeMessage(agentId, event.message);
 
       const externalProjectAgentContext = nextContext?.source === "project_agent_input" && nextContext.projectAgentContext?.external
         ? {
@@ -8961,6 +8988,14 @@ function selectedOpenAICodexTransport(): CodexTransportDebugAgentDiagnostics["se
     default:
       return "sse";
   }
+}
+
+function normalizeRuntimeMessageTextForMatch(value: string): string {
+  return value.replace(/\r\n/g, "\n").trim();
+}
+
+function runtimeMessageTextMatches(expected: string, actual: string): boolean {
+  return normalizeRuntimeMessageTextForMatch(expected) === normalizeRuntimeMessageTextForMatch(actual);
 }
 
 function hashDebugAgentId(agentId: string): string {
