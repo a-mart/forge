@@ -2050,7 +2050,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   listAgents(): AgentDescriptor[] {
-    return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
+    return this.sortedDescriptors()
+      .filter((descriptor) => !isCodexPluginWorkerDescriptor(descriptor))
+      .map((descriptor) => cloneDescriptor(descriptor));
   }
 
   listAgentsForInternalUse(): AgentDescriptor[] {
@@ -3919,7 +3921,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   getAgent(agentId: string): AgentDescriptor | undefined {
     const descriptor = this.descriptors.get(agentId);
-    if (!descriptor) {
+    if (!descriptor || isCodexPluginWorkerDescriptor(descriptor)) {
       return undefined;
     }
 
@@ -4100,6 +4102,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         if (descriptor.sessionSurface !== "collab") {
           managers.push(descriptor);
         }
+        continue;
+      }
+
+      if (isCodexPluginWorkerDescriptor(descriptor)) {
         continue;
       }
 
@@ -4529,7 +4535,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     targetAgentId: string,
     message: string,
     delivery: RequestedDeliveryMode = "auto",
-    options?: { origin?: "user" | "internal"; attachments?: ConversationAttachment[] }
+    options?: {
+      origin?: "user" | "internal";
+      attachments?: ConversationAttachment[];
+      internalDeliveryKind?: "codex_plugin_bootstrap";
+    }
   ): Promise<SendMessageReceipt> {
     const sender = this.descriptors.get(fromAgentId);
     if (!sender) {
@@ -4558,6 +4568,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         `Worker ${sender.agentId} cannot message manager ${targetAgentId} (own manager is ${sender.managerId})`
       );
     }
+
+    this.assertCodexPluginWorkerDeliveryAllowed(target, options);
 
     const origin = options?.origin ?? "internal";
     const attachments = normalizeConversationAttachments(options?.attachments);
@@ -5181,6 +5193,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
     const target = this.resolveUserMessageTarget(options?.targetAgentId);
+    this.assertCodexPluginWorkerNotUserTargetable(target);
 
     if (await this.maybeRouteCodexUserMessage(target, trimmed, attachments, sourceContext)) {
       return;
@@ -5251,6 +5264,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       undefined,
       codexClassification,
     );
+  }
+
+  private assertCodexPluginWorkerNotUserTargetable(target: AgentDescriptor): void {
+    if (!isCodexPluginWorkerDescriptor(target)) {
+      return;
+    }
+
+    throw new Error("Codex Plugin internal workers cannot be targeted directly.");
+  }
+
+  private assertCodexPluginWorkerDeliveryAllowed(
+    target: AgentDescriptor,
+    options: { origin?: "user" | "internal"; internalDeliveryKind?: "codex_plugin_bootstrap" } | undefined,
+  ): void {
+    if (!isCodexPluginWorkerDescriptor(target)) {
+      return;
+    }
+
+    if (options?.origin === "internal" && options.internalDeliveryKind === "codex_plugin_bootstrap") {
+      return;
+    }
+
+    throw new Error("Codex Plugin internal workers cannot be targeted directly.");
   }
 
   private resolveUserMessageTarget(targetAgentId?: string): AgentDescriptor {
@@ -5443,6 +5479,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       await this.sendMessage(manager.agentId, workerAgentId, initialTask, "auto", {
         origin: "internal",
+        internalDeliveryKind: "codex_plugin_bootstrap",
       });
 
       this.logDebug("codex_plugin:delegation_started", {
@@ -8122,6 +8159,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     contextUsage?: AgentContextUsage
   ): void {
     const descriptor = this.descriptors.get(agentId);
+    if (isCodexPluginWorkerDescriptor(descriptor)) {
+      return;
+    }
+
     const resolvedContextUsage = normalizeContextUsage(contextUsage ?? descriptor?.contextUsage);
     const runtime = this.runtimes.get(agentId);
     const contextRecoveryInProgress = runtime?.isContextRecoveryInProgress?.() === true;

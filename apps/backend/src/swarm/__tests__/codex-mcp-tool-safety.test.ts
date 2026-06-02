@@ -39,6 +39,16 @@ describe("codex-mcp-tool-safety", () => {
     ).toBe(false);
   });
 
+  it("rejects separator and camel-case denied tool names even when read-only annotated", () => {
+    for (const toolName of ["send_email", "delete-item", "browser_open", "computer_use", "fileRead"]) {
+      expect(
+        classifyCodexMcpToolSafety(
+          tool({ toolName, readOnly: true, annotations: { readOnlyHint: true } }),
+        ).allowed,
+      ).toBe(false);
+    }
+  });
+
   it("throws on blocked tools", () => {
     expect(() => assertCodexMcpToolReadOnlyAllowed(tool({ toolName: "send_email" }))).toThrow(
       /blocked/i,

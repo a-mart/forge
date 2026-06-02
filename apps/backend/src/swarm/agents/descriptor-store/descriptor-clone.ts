@@ -107,6 +107,7 @@ export function cloneProjectAgentForPublic(projectAgent: AgentDescriptor["projec
 export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDescriptor {
   const {
     sessionSystemPrompt: _sessionSystemPrompt,
+    internalWorkerKind: _internalWorkerKind,
     ...publicDescriptor
   } = cloneDescriptorForPersistence(descriptor);
 
