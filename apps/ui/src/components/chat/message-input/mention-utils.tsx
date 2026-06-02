@@ -99,7 +99,7 @@ export function renderMentionOverlay(text: string): ReactNode[] {
 }
 
 export function hasComposerMentionTokens(text: string): boolean {
-  return /\[@[^\]]+\]/i.test(text) || CODEX_INLINE_TOOL_TOKEN_RE.test(text)
+  return /\[@[^\]]+\]/i.test(text) || /@codex:[^\s]+/i.test(text)
 }
 
 export function isCodexToolPickerTrigger(textBeforeCursor: string): boolean {
