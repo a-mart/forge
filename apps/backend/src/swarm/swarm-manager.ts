@@ -442,6 +442,13 @@ interface CodexPluginDelegationTurnContext {
   userMessageId?: string;
 }
 
+interface PendingCodexPluginSpawnContext {
+  delegationId: string;
+  activeContext: CodexPluginDelegationTurnContext;
+  task: string;
+  materializedWorkerAgentIds: Set<string>;
+}
+
 interface PendingInboundTurnContext {
   source: PreparedInboundConversationPayload["source"];
   runtimeMessageText?: string;
@@ -1244,14 +1251,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingInboundTurnContextsByAgentId = new Map<string, PendingInboundTurnContext[]>();
   private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
   private readonly activeCodexPluginDelegationByManagerId = new Map<string, CodexPluginDelegationTurnContext>();
-  private readonly pendingCodexPluginSpawnByManagerId = new Map<
-    string,
-    {
-      delegationId: string;
-      activeContext: CodexPluginDelegationTurnContext;
-      task: string;
-    }
-  >();
+  private readonly pendingCodexPluginSpawnByManagerId = new Map<string, PendingCodexPluginSpawnContext>();
+  private readonly pendingCodexPluginSpawnByInput = new WeakMap<SpawnAgentInput, PendingCodexPluginSpawnContext>();
   private readonly pendingCodexPluginInitialTaskByWorkerId = new Map<string, string>();
   private readonly activeExternalProjectAgentTurnByAgentId = new Map<string, ExternalProjectAgentTurnContext>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
@@ -1769,12 +1770,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           versioning: this.versioningService
         });
       },
-      prepareWorkerDescriptorForSpawn: async ({ descriptor, specialistId }) => {
+      prepareWorkerDescriptorForSpawn: async ({ descriptor, specialistId, input }) => {
         if (specialistId !== CODEX_PLUGIN_SPECIALIST_ID) {
           return;
         }
 
-        const pending = this.pendingCodexPluginSpawnByManagerId.get(descriptor.managerId);
+        const pending = this.pendingCodexPluginSpawnByInput.get(input) ??
+          this.pendingCodexPluginSpawnByManagerId.get(descriptor.managerId);
         if (!pending) {
           return;
         }
@@ -1785,6 +1787,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           delegationId: pending.delegationId,
           selectors: pending.activeContext.selectors,
         });
+        pending.materializedWorkerAgentIds.add(descriptor.agentId);
         this.codexPluginScopeService.closeScopesForManager(descriptor.managerId, {
           exceptWorkerAgentId: descriptor.agentId,
         });
@@ -5660,19 +5663,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const requestedAgentId = input.agentId?.trim() || this.defaultCodexPluginWorkerAgentId(activeContext);
     const delegationId = createCodexPluginDelegationId();
-    this.pendingCodexPluginSpawnByManagerId.set(manager.agentId, {
+    const materializedWorkerAgentIds = new Set<string>();
+    const pendingSpawn: PendingCodexPluginSpawnContext = {
       delegationId,
       activeContext,
       task,
-    });
+      materializedWorkerAgentIds,
+    };
+    const spawnInput: SpawnAgentInput = {
+      ...input,
+      agentId: requestedAgentId,
+      specialist: CODEX_PLUGIN_SPECIALIST_ID,
+      initialMessage: undefined,
+    };
+    this.pendingCodexPluginSpawnByManagerId.set(manager.agentId, pendingSpawn);
+    this.pendingCodexPluginSpawnByInput.set(spawnInput, pendingSpawn);
 
     try {
-      const descriptor = await this.lifecycleService.spawnAgent(manager.agentId, {
-        ...input,
-        agentId: requestedAgentId,
-        specialist: CODEX_PLUGIN_SPECIALIST_ID,
-        initialMessage: undefined,
-      });
+      const descriptor = await this.lifecycleService.spawnAgent(manager.agentId, spawnInput);
 
       const initialTask = this.pendingCodexPluginInitialTaskByWorkerId.get(descriptor.agentId);
       if (initialTask) {
@@ -5694,10 +5702,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       return descriptor;
     } catch (error) {
-      for (const workerAgentId of [...this.pendingCodexPluginInitialTaskByWorkerId.keys()]) {
+      for (const workerAgentId of materializedWorkerAgentIds) {
         this.codexPluginScopeService.closeScopeForWorker(workerAgentId);
+        this.pendingCodexPluginInitialTaskByWorkerId.delete(workerAgentId);
       }
-      this.pendingCodexPluginInitialTaskByWorkerId.clear();
       this.logDebug("codex_plugin:specialist_spawn_failed", {
         managerAgentId: manager.agentId,
         requestedAgentId,
@@ -5707,7 +5715,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       });
       throw error;
     } finally {
-      this.pendingCodexPluginSpawnByManagerId.delete(manager.agentId);
+      if (this.pendingCodexPluginSpawnByManagerId.get(manager.agentId)?.delegationId === delegationId) {
+        this.pendingCodexPluginSpawnByManagerId.delete(manager.agentId);
+      }
+      this.pendingCodexPluginSpawnByInput.delete(spawnInput);
     }
   }
 

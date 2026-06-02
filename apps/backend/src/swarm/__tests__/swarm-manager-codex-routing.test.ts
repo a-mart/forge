@@ -916,6 +916,83 @@ describe("SwarmManager Codex mention routing", () => {
     expect(statuses.some((entry) => entry.agentId === worker!.agentId)).toBe(true);
   });
 
+  it("keeps unrelated pending Codex Plugin scope and bootstrap task when a concurrent spawn fails", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+    const { sessionAgent: secondManager } = await manager.createSession("manager", { label: "Second" });
+
+    let firstRuntimeCreationStarted = false;
+    let firstRuntimeReleased = false;
+    let releaseFirstRuntime: () => void = () => undefined;
+    const firstRuntimeGate = new Promise<void>((resolve) => {
+      releaseFirstRuntime = () => {
+        if (!firstRuntimeReleased) {
+          firstRuntimeReleased = true;
+          resolve();
+        }
+      };
+    });
+
+    manager.onCreateRuntime = async ({ descriptor }) => {
+      if (descriptor.agentId === "codex-plugin-first") {
+        firstRuntimeCreationStarted = true;
+        return firstRuntimeGate;
+      }
+      if (descriptor.agentId === "codex-plugin-second") {
+        throw new Error("second runtime boom");
+      }
+    };
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+    const firstSpawn = manager.spawnAgent("manager", {
+      agentId: "codex-plugin-first",
+      specialist: "codex-plugin",
+      initialMessage: "List meetings",
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(firstRuntimeCreationStarted).toBe(true);
+      });
+      expect(manager.getCodexPluginScopeForWorker("codex-plugin-first")?.selectors).toEqual(["fireflies"]);
+      const pendingInitialTasks = (manager as unknown as {
+        pendingCodexPluginInitialTaskByWorkerId: Map<string, string>;
+      }).pendingCodexPluginInitialTaskByWorkerId;
+      expect(pendingInitialTasks.has("codex-plugin-first")).toBe(true);
+
+      await manager.handleUserMessage("@Codex -fireflies list meetings from second manager", {
+        targetAgentId: secondManager.agentId,
+        sourceContext: { channel: "web" },
+      });
+      await expect(
+        manager.spawnAgent(secondManager.agentId, {
+          agentId: "codex-plugin-second",
+          specialist: "codex-plugin",
+          initialMessage: "List meetings from second manager",
+        }),
+      ).rejects.toThrow(/second runtime boom/);
+
+      expect(manager.getCodexPluginScopeForWorker("codex-plugin-first")?.selectors).toEqual(["fireflies"]);
+      expect(pendingInitialTasks.has("codex-plugin-first")).toBe(true);
+      expect(pendingInitialTasks.has("codex-plugin-second")).toBe(false);
+
+      releaseFirstRuntime();
+      const first = await firstSpawn;
+      expect(first.agentId).toBe("codex-plugin-first");
+      const firstRuntime = manager.runtimeByAgentId.get(first.agentId);
+      const initialSend = firstRuntime?.sendCalls.at(-1);
+      const initialText = typeof initialSend?.message === "string" ? initialSend.message : initialSend?.message.text ?? "";
+      expect(initialText).toContain("Codex Plugin delegation task");
+      expect(pendingInitialTasks.has("codex-plugin-first")).toBe(false);
+    } finally {
+      releaseFirstRuntime();
+      await firstSpawn.catch(() => undefined);
+    }
+  });
+
   it("binds scoped Codex Plugin materialization to the final uniquified worker id", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
