@@ -86,6 +86,16 @@ class FakeCodexAppServerClient implements CodexAppServerClientPort {
               },
             ],
           },
+          {
+            name: "RepoPrompt",
+            tools: {
+              get_code_structure: {
+                description: "Inspect repository structure",
+                readOnly: true,
+                annotations: { readOnlyHint: true },
+              },
+            },
+          },
         ],
       } as T;
     }
@@ -519,6 +529,42 @@ describe("SwarmManager Codex mention routing", () => {
     await expect(
       manager.callCodexMcpTool("manager", { selector: "fireflies/list_recent", args: { limit: 1 } }),
     ).rejects.toThrow(/Codex tool mention/i);
+  });
+
+  it("allows Codex MCP tools during tagged Builder turn before runtime message_start", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("[@Codex:RepoPrompt/get_code_structure] inspect repo", {
+      sourceContext: { channel: "web" },
+    });
+
+    const catalog = await manager.listCodexMcpTools("manager");
+    expect(catalog.tools.some((tool) => tool.selector === "RepoPrompt/get_code_structure")).toBe(true);
+
+    const result = await manager.callCodexMcpTool("manager", {
+      selector: "RepoPrompt/get_code_structure",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.selector).toBe("RepoPrompt/get_code_structure");
+  });
+
+  it("preserves active Codex gate across later user message_start without pending context", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("[@Codex:RepoPrompt/get_code_structure] inspect repo", {
+      sourceContext: { channel: "web" },
+    });
+
+    await activateManagerInboundTurn(manager);
+    await manager.handleRuntimeSessionEvent("manager", managerUserMessageStartEvent());
+
+    await expect(
+      manager.callCodexMcpTool("manager", { selector: "RepoPrompt/get_code_structure" }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it("allows Codex-tagged turns to call only authorized selectors", async () => {

@@ -5408,6 +5408,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return gate;
   }
 
+  private hasActiveAuthorizedCodexMcpToolGate(managerAgentId: string): boolean {
+    const gate = this.codexMcpToolTurnGateByManagerId.get(managerAgentId);
+    return Boolean(gate?.allowed && gate.authorizedSelectors && gate.authorizedSelectors.length > 0);
+  }
+
   private buildCodexMcpToolTurnGate(
     manager: AgentDescriptor,
     sourceContext: MessageSourceContext,
@@ -5676,22 +5681,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       runtimeImageCount: typeof runtimeMessage === "string" ? 0 : (runtimeMessage.images?.length ?? 0)
     });
 
+    const codexMcpToolGate =
+      target.role === "manager"
+        ? this.buildCodexMcpToolTurnGate(
+            target as AgentDescriptor & { role: "manager" },
+            sourceContext,
+            text,
+            codexClassification,
+            "user_input",
+          )
+        : undefined;
     const rollbackInboundTurnContext = this.enqueueInboundTurnContext(managerContextId, {
       source: "user_input",
-      codexMcpToolGate:
-        target.role === "manager"
-          ? this.buildCodexMcpToolTurnGate(
-              target as AgentDescriptor & { role: "manager" },
-              sourceContext,
-              text,
-              codexClassification,
-              "user_input",
-            )
-          : undefined,
+      codexMcpToolGate,
     });
 
     try {
       const receipt = await managerRuntime.sendMessage(runtimeMessage, "steer");
+      if (codexMcpToolGate) {
+        this.codexMcpToolTurnGateByManagerId.set(managerContextId, codexMcpToolGate);
+      }
       this.logDebug("manager:user_message_dispatch_complete", {
         managerContextId,
         targetAgentId: managerContextId,
@@ -5817,7 +5826,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (manager?.role === "manager") {
         if (nextContext?.codexMcpToolGate) {
           this.codexMcpToolTurnGateByManagerId.set(agentId, nextContext.codexMcpToolGate);
-        } else {
+        } else if (!this.hasActiveAuthorizedCodexMcpToolGate(agentId)) {
           this.codexMcpToolTurnGateByManagerId.set(agentId, {
             allowed: false,
             reason: "Codex MCP tools are only available on turns with Codex tool mention tags.",

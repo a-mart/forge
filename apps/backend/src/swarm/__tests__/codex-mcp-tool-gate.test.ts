@@ -73,6 +73,23 @@ describe("codex-mcp-tool-gate", () => {
     ).toBe(false);
   });
 
+  it("authorizes RepoPrompt/get_code_structure when tagged inline", () => {
+    const catalog = {
+      selector: "RepoPrompt/get_code_structure",
+      serverName: "RepoPrompt",
+    };
+    const resolveTool = (selector: string) => {
+      if (selector === "RepoPrompt/get_code_structure") {
+        return catalog;
+      }
+      return undefined;
+    };
+
+    expect(
+      isCodexMcpToolSelectorAuthorized("RepoPrompt/get_code_structure", ["RepoPrompt/get_code_structure"], resolveTool),
+    ).toBe(true);
+  });
+
   it("matches authorized selectors and derived server/tool resolutions", () => {
     const catalog = {
       selector: "fireflies/list_recent",

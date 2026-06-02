@@ -56,6 +56,42 @@ class FakeCatalogClient implements CodexAppServerClientPort {
 }
 
 describe("CodexMcpCatalog", () => {
+  it("parses object-map MCP tool entries from mcpServerStatus/list", async () => {
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string, params?: unknown): Promise<T> => {
+      if (method === "mcpServerStatus/list") {
+        return {
+          servers: [
+            {
+              name: "RepoPrompt",
+              tools: {
+                get_code_structure: {
+                  description: "Inspect repository structure",
+                  readOnly: true,
+                  annotations: { readOnlyHint: true },
+                },
+              },
+            },
+          ],
+        } as T;
+      }
+      return new FakeCatalogClient().request(method, params);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const snapshot = await catalog.listCatalog(true);
+
+    expect(snapshot.tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          selector: "RepoPrompt/get_code_structure",
+          serverName: "RepoPrompt",
+          toolName: "get_code_structure",
+        }),
+      ]),
+    );
+  });
+
   it("lists apps and tools with tolerant parsing", async () => {
     const client = new FakeCatalogClient();
     const catalog = new CodexMcpCatalog(async () => client);

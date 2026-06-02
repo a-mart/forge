@@ -327,13 +327,7 @@ function parseMcpToolsResponse(response: unknown, apps: CodexCatalogApp[]): Code
 
     const appId = asString(serverEntry.appId) ?? asString(serverEntry.app);
     const linkedApp = appId ? appById.get(normalizeSelector(appId)) : undefined;
-    const toolEntries = extractArray(serverEntry, ["tools", "availableTools"]);
-
-    for (const toolEntry of toolEntries) {
-      if (!isRecord(toolEntry)) {
-        continue;
-      }
-
+    for (const toolEntry of extractToolEntriesFromServer(serverEntry)) {
       const toolName = asString(toolEntry.name) ?? asString(toolEntry.toolName);
       if (!toolName) {
         continue;
@@ -362,6 +356,41 @@ function parseMcpToolsResponse(response: unknown, apps: CodexCatalogApp[]): Code
   }
 
   return tools;
+}
+
+function extractToolEntriesFromServer(serverEntry: Record<string, unknown>): Record<string, unknown>[] {
+  const arrayEntries = extractArray(serverEntry, ["tools", "availableTools"]);
+  const normalized: Record<string, unknown>[] = [];
+
+  for (const entry of arrayEntries) {
+    if (isRecord(entry)) {
+      normalized.push(entry);
+    }
+  }
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  const toolsValue = serverEntry.tools ?? serverEntry.availableTools;
+  if (!isRecord(toolsValue)) {
+    return [];
+  }
+
+  return Object.entries(toolsValue).map(([key, value]) => {
+    if (isRecord(value)) {
+      return {
+        ...value,
+        name: asString(value.name) ?? asString(value.toolName) ?? key,
+        toolName: asString(value.toolName) ?? asString(value.name) ?? key,
+      };
+    }
+
+    return {
+      name: key,
+      toolName: key,
+    };
+  });
 }
 
 function readNextCursor(response: unknown): string | undefined {
