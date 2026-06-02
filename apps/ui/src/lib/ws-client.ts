@@ -49,6 +49,7 @@ import {
 import { WebSocketTransport } from './ws-client/websocket-transport'
 import { BootstrapBuffer } from './ws-client/bootstrap-buffer'
 import { SessionWorkerCache } from './ws-client/session-worker-cache'
+import { applyLoadedModelCacheVisualizationSetting as reduceLoadedModelCacheVisualizationSetting } from './ws-client/model-cache-visualization-state'
 import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
@@ -180,6 +181,17 @@ export class ManagerWsClient {
 
   getState(): ManagerWsState {
     return this.state
+  }
+
+  applyLoadedModelCacheVisualizationSetting(enabled: boolean): void {
+    this.bootstrapBuffer.flush()
+    this.updateState(
+      reduceLoadedModelCacheVisualizationSetting({
+        enabled,
+        currentObservations: this.state.modelCacheObservations,
+        pendingObservations: this.state.pendingModelCacheObservations,
+      }),
+    )
   }
 
   markUnread(agentId: string): void {

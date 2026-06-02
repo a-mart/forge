@@ -39,7 +39,6 @@ import {
 import { fetchWorkPlansEnabled } from '@/components/settings/work-plans-api'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
-import { applyLoadedModelCacheVisualizationSetting } from '@/lib/ws-client/model-cache-visualization-state'
 import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
 import { useVisibleMessages } from '@/hooks/index-page/use-visible-messages'
@@ -146,21 +145,14 @@ export function BuilderSurface({
     void fetchModelCacheVisualizationEnabled(wsUrl)
       .then((enabled) => {
         if (!cancelled) {
-          setState((prev) => ({
-            ...prev,
-            ...applyLoadedModelCacheVisualizationSetting({
-              enabled,
-              currentObservations: prev.modelCacheObservations,
-              pendingObservations: prev.pendingModelCacheObservations,
-            }),
-          }))
+          clientRef.current?.applyLoadedModelCacheVisualizationSetting(enabled)
         }
       })
       .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [setState, wsUrl])
+  }, [clientRef, wsUrl])
 
   useEffect(() => {
     if (activeView !== 'archive') {

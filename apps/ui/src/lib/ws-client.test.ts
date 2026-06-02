@@ -49,6 +49,34 @@ function emitServerEvent(socket: FakeWebSocket, event: unknown): void {
   })
 }
 
+function makeModelCacheObservation(agentId = 'manager', id = 'cache-obs-1') {
+  return {
+    type: 'model_cache_observation' as const,
+    agentId,
+    id,
+    timestamp: '2026-06-02T12:00:00.000Z',
+    runtimeType: 'pi' as const,
+    provider: 'openai-codex' as const,
+    modelId: 'gpt-5.5',
+    tokens: {
+      promptInputTokens: 3000,
+      cachedInputTokens: 2500,
+      cacheWriteInputTokens: 0,
+      uncachedInputTokens: 500,
+      outputTokens: 120,
+      totalTokens: 3120,
+      normalization: 'raw_input_tokens_total' as const,
+    },
+    classification: {
+      version: 1 as const,
+      status: 'hit' as const,
+      cachedRatio: 0.8333333333333334,
+      thresholdTokens: 1024,
+      hitRatioThreshold: 0.8,
+    },
+  }
+}
+
 function makeWorkPlanCreatedEvent(agentId = 'manager', id = 'work-plan-created-1'): WorkPlanCreatedEvent {
   const timestamp = new Date().toISOString()
   return {
@@ -4460,6 +4488,107 @@ describe('ManagerWsClient', () => {
 
       return { client, socket }
     }
+
+    it('applies fetched model-cache enabled setting through canonical client state during pending bootstrap', () => {
+      const { client, socket } = setupConnectedClient()
+      const observation = makeModelCacheObservation('session-b', 'cache-obs-bootstrap')
+
+      client.subscribeToAgent('session-b')
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [observation],
+      })
+
+      client.applyLoadedModelCacheVisualizationSetting(true)
+
+      expect(client.getState().modelCacheVisualizationEnabled).toBe(true)
+      expect(client.getState().modelCacheObservations.map((entry) => entry.id)).toEqual([
+        'cache-obs-bootstrap',
+      ])
+      expect(client.getState().pendingModelCacheObservations).toEqual([])
+
+      emitServerEvent(socket, {
+        type: 'agent_status',
+        agentId: 'session-b',
+        status: 'idle',
+        pendingCount: 0,
+      })
+
+      expect(client.getState().modelCacheObservations.map((entry) => entry.id)).toEqual([
+        'cache-obs-bootstrap',
+      ])
+      expect(client.getState().pendingModelCacheObservations).toEqual([])
+
+      client.destroy()
+    })
+
+    it('applies fetched model-cache disabled setting through canonical client state and prevents resurrection', () => {
+      const { client, socket } = setupConnectedClient()
+      const liveObservation = makeModelCacheObservation('session-a', 'cache-obs-live')
+      const bootstrapObservation = makeModelCacheObservation('session-b', 'cache-obs-bootstrap')
+
+      client.applyLoadedModelCacheVisualizationSetting(true)
+      emitServerEvent(socket, liveObservation)
+      expect(client.getState().modelCacheObservations.map((entry) => entry.id)).toEqual([
+        'cache-obs-live',
+      ])
+
+      client.subscribeToAgent('session-b')
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [bootstrapObservation],
+      })
+
+      client.applyLoadedModelCacheVisualizationSetting(false)
+
+      expect(client.getState().modelCacheVisualizationEnabled).toBe(false)
+      expect(client.getState().modelCacheObservations).toEqual([])
+      expect(client.getState().pendingModelCacheObservations).toEqual([])
+
+      emitServerEvent(socket, {
+        type: 'agent_status',
+        agentId: 'session-b',
+        status: 'idle',
+        pendingCount: 0,
+      })
+
+      expect(client.getState().modelCacheObservations).toEqual([])
+      expect(client.getState().pendingModelCacheObservations).toEqual([])
+
+      client.destroy()
+    })
+
+    it('force-flushes pending bootstrap before applying model-cache settings_changed false', () => {
+      const { client, socket } = setupConnectedClient()
+      const observation = makeModelCacheObservation('session-b', 'cache-obs-bootstrap')
+
+      client.applyLoadedModelCacheVisualizationSetting(true)
+      client.subscribeToAgent('session-b')
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [observation],
+      })
+
+      emitServerEvent(socket, {
+        type: 'model_cache_visualization_settings_changed',
+        enabled: false,
+        updatedAt: new Date().toISOString(),
+      })
+
+      expect(client.getState().modelCacheVisualizationEnabled).toBe(false)
+      expect(client.getState().modelCacheObservations).toEqual([])
+      expect(client.getState().pendingModelCacheObservations).toEqual([])
+
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      expect(client.getState().modelCacheObservations).toEqual([])
+      expect(client.getState().pendingModelCacheObservations).toEqual([])
+
+      client.destroy()
+    })
 
     it('coalesces bootstrap events into a single state update on session switch', () => {
       const { client, socket } = setupConnectedClient()
