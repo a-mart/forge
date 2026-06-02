@@ -1,5 +1,9 @@
-import { redactCodexMcpSensitiveText, safeJson } from "./codex-app-server-event-normalizer.js";
-import { boundCodexMcpToolArgs, truncateBytesUtf8 } from "./codex-mcp-args.js";
+import { safeJson } from "./codex-app-server-event-normalizer.js";
+import {
+  boundCodexMcpToolArgs,
+  formatCodexMcpToolFailureMessage,
+  truncateBytesUtf8,
+} from "./codex-mcp-args.js";
 import { assertCodexMcpToolReadOnlyAllowed } from "./codex-mcp-tool-safety.js";
 import { parseCodexMcpToolSafetyFields } from "./codex-mcp-tool-safety.js";
 import type { CodexAppServerClientPort } from "./types.js";
@@ -201,6 +205,14 @@ export class CodexMcpCatalog {
       });
 
       const parsed = parseToolCallResponse(response);
+      if (!parsed.ok) {
+        return buildCodexMcpToolFailureResult({
+          auditId,
+          tool,
+          rawMessage: parsed.message,
+        });
+      }
+
       const preview = truncateBytesUtf8(safeJson(parsed.redactedPayload), MAX_TOOL_RESULT_BYTES);
 
       return {
@@ -212,17 +224,11 @@ export class CodexMcpCatalog {
         redactedPreview: preview,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const errorPreview = truncateBytesUtf8(redactCodexMcpSensitiveText(message), 1024);
-      return {
+      return buildCodexMcpToolFailureResult({
         auditId,
-        selector: tool.selector,
-        serverName: tool.serverName,
-        toolName: tool.toolName,
-        ok: false,
-        errorPreview,
-        redactedPreview: errorPreview,
-      };
+        tool,
+        rawMessage: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -390,35 +396,96 @@ function extractArray(response: unknown, keys: string[]): unknown[] {
   return [];
 }
 
-function parseToolCallResponse(response: unknown): {
-  content?: unknown;
-  structuredContent?: unknown;
-  redactedPayload: unknown;
-} {
-  if (!isRecord(response)) {
-    return { redactedPayload: response };
+type ParsedToolCallResponse =
+  | { ok: true; redactedPayload: unknown }
+  | { ok: false; message: string };
+
+function parseToolCallResponse(response: unknown): ParsedToolCallResponse {
+  const failureMessage = extractToolCallFailureMessage(response);
+  if (failureMessage) {
+    return { ok: false, message: failureMessage };
   }
 
-  if (response.isError === true || response.error) {
-    throw new Error(asString(response.error) ?? "Codex MCP tool call failed");
+  if (!isRecord(response)) {
+    return { ok: true, redactedPayload: response };
   }
 
   if (response.action === "decline" || response.decision === "decline") {
-    throw new Error("Codex MCP tool call requires approval; declined for v1 fail-closed policy");
+    return {
+      ok: false,
+      message: "Codex MCP tool call requires approval; declined for v1 fail-closed policy",
+    };
   }
 
   const content = response.content ?? response.result;
   const structuredContent = response.structuredContent ?? response.structured_content;
 
   return {
-    content,
-    structuredContent,
+    ok: true,
     redactedPayload: {
       content,
       structuredContent,
     },
   };
 }
+
+function extractToolCallFailureMessage(response: unknown): string | undefined {
+  if (!isRecord(response)) {
+    return undefined;
+  }
+
+  if (response.isError === true) {
+    return formatToolCallErrorValue(response.error) ?? "Codex MCP tool call failed";
+  }
+
+  const hasResultContent = response.content !== undefined || response.result !== undefined;
+  if (!hasResultContent && response.error !== undefined && response.error !== null) {
+    return formatToolCallErrorValue(response.error) ?? "Codex MCP tool call failed";
+  }
+
+  return undefined;
+}
+
+function formatToolCallErrorValue(error: unknown): string | undefined {
+  if (typeof error === "string") {
+    const trimmed = error.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  if (!isRecord(error)) {
+    return asString(error);
+  }
+
+  const message = asString(error.message) ?? asString(error.error);
+  if (message) {
+    return message;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return undefined;
+  }
+}
+
+function buildCodexMcpToolFailureResult(params: {
+  auditId: string;
+  tool: CodexCatalogMcpTool;
+  rawMessage: string;
+}): CodexMcpToolCallResult {
+  const errorPreview = formatCodexMcpToolFailureMessage(params.rawMessage);
+  return {
+    auditId: params.auditId,
+    selector: params.tool.selector,
+    serverName: params.tool.serverName,
+    toolName: params.tool.toolName,
+    ok: false,
+    errorPreview,
+    redactedPreview: errorPreview,
+  };
+}
+
+export { formatCodexMcpToolFailureMessage } from "./codex-mcp-args.js";
 
 function valueMatchesSchemaType(value: unknown, expectedType: string): boolean {
   switch (expectedType) {
@@ -441,4 +508,3 @@ function valueMatchesSchemaType(value: unknown, expectedType: string): boolean {
   }
 }
 
-export { truncateBytesUtf8 } from "./codex-mcp-args.js";

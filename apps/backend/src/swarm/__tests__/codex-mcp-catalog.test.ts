@@ -199,6 +199,83 @@ describe("CodexMcpCatalog", () => {
     expect("error" in result).toBe(false);
   });
 
+  it("redacts MCP tool isError payloads without leaking secrets", async () => {
+    const errorClient: CodexAppServerClientPort = {
+      ...new FakeCatalogClient(),
+      request: async <T>(method: string, params?: unknown): Promise<T> => {
+        if (method === "mcpServer/tool/call") {
+          return {
+            isError: true,
+            error: "Meeting transcript for adam@secret.com Bearer sk-live-abcdef1234567890",
+          } as T;
+        }
+        return new FakeCatalogClient().request(method, params);
+      },
+    };
+
+    const catalog = new CodexMcpCatalog(async () => errorClient);
+    const snapshot = await catalog.listCatalog(true);
+    const tool = catalog.resolveTool("fireflies/list_recent", snapshot)!;
+
+    const result = await catalog.callTool(
+      {
+        managerAgentId: "manager",
+        cwd: "/tmp",
+        threadId: "thread-1",
+        serverName: tool.serverName,
+        toolName: tool.toolName,
+        args: { limit: 1 },
+      },
+      tool,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errorPreview).toContain("[redacted]");
+    expect(result.errorPreview).not.toContain("sk-live-abcdef1234567890");
+    expect(result.errorPreview).not.toContain("adam@secret.com");
+    expect(result.redactedPreview).toBe(result.errorPreview);
+    expect("error" in result).toBe(false);
+  });
+
+  it("redacts JSON-RPC style MCP error payloads without leaking secrets", async () => {
+    const rpcErrorClient: CodexAppServerClientPort = {
+      ...new FakeCatalogClient(),
+      request: async <T>(method: string, params?: unknown): Promise<T> => {
+        if (method === "mcpServer/tool/call") {
+          return {
+            error: {
+              code: -32000,
+              message: "upstream failed Bearer sk-live-abcdef1234567890 for adam@secret.com",
+            },
+          } as T;
+        }
+        return new FakeCatalogClient().request(method, params);
+      },
+    };
+
+    const catalog = new CodexMcpCatalog(async () => rpcErrorClient);
+    const snapshot = await catalog.listCatalog(true);
+    const tool = catalog.resolveTool("fireflies/list_recent", snapshot)!;
+
+    const result = await catalog.callTool(
+      {
+        managerAgentId: "manager",
+        cwd: "/tmp",
+        threadId: "thread-1",
+        serverName: tool.serverName,
+        toolName: tool.toolName,
+        args: { limit: 1 },
+      },
+      tool,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errorPreview).toContain("[redacted]");
+    expect(result.errorPreview).not.toContain("sk-live-abcdef1234567890");
+    expect(result.errorPreview).not.toContain("adam@secret.com");
+    expect(JSON.stringify(result)).not.toContain("sk-live-abcdef1234567890");
+  });
+
   it("redacts and bounds MCP error text returned to callers", async () => {
     const leakingClient: CodexAppServerClientPort = {
       ...new FakeCatalogClient(),

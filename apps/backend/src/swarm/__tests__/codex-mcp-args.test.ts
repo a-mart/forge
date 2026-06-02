@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   boundCodexMcpToolArgs,
+  formatCodexMcpToolFailureMessage,
   truncateBytesUtf8,
 } from "../codex-app-server/codex-mcp-args.js";
 
@@ -30,5 +31,18 @@ describe("codex-mcp-args", () => {
     expect(Buffer.byteLength(truncated, "utf8")).toBeLessThanOrEqual(32);
     expect(truncated.endsWith("…")).toBe(true);
     expect(() => Buffer.from(truncated, "utf8").toString("utf8")).not.toThrow();
+  });
+});
+
+describe("formatCodexMcpToolFailureMessage", () => {
+  it("redacts bearer, api keys, jwt, and email tokens", () => {
+    const preview = formatCodexMcpToolFailureMessage(
+      "failed for adam@secret.com Bearer sk-live-abcdef1234567890 eyJhbGciOiJIUzI1NiJ9.payload.sig",
+    );
+
+    expect(preview).toContain("[redacted]");
+    expect(preview).not.toContain("sk-live-abcdef1234567890");
+    expect(preview).not.toContain("adam@secret.com");
+    expect(Buffer.byteLength(preview, "utf8")).toBeLessThanOrEqual(1024);
   });
 });

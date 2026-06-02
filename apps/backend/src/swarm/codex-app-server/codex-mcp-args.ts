@@ -1,3 +1,13 @@
+import { redactCodexMcpSensitiveText } from "./codex-app-server-event-normalizer.js";
+
+export function formatCodexMcpToolFailureMessage(message: string, maxBytes = 1024): string {
+  const trimmed = message.trim();
+  return truncateBytesUtf8(
+    redactCodexMcpSensitiveText(trimmed.length > 0 ? trimmed : "Codex MCP tool call failed"),
+    maxBytes,
+  );
+}
+
 export function assertCodexMcpToolArgsSerializable(
   value: unknown,
   seen: WeakSet<object> = new WeakSet(),
