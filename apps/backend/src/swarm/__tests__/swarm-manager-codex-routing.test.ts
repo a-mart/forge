@@ -14,8 +14,21 @@ import {
   isReservedProjectAgentHandle,
 } from "../agents/project-agents.js";
 import type { AgentDescriptor } from "../types.js";
+import type { RuntimeSessionEvent } from "../runtime-contracts.js";
 import { TestSwarmManager, bootWithDefaultManager } from "../../test-support/index.js";
 import { createTempConfig } from "../../test-support/temp-config.js";
+
+function managerUserMessageStartEvent(): RuntimeSessionEvent {
+  return { type: "message_start", message: { role: "user", content: "hello" } };
+}
+
+async function activateManagerInboundTurn(manager: TestSwarmManager, agentId = "manager"): Promise<void> {
+  await manager.handleRuntimeSessionEvent(agentId, managerUserMessageStartEvent());
+}
+
+async function endManagerInboundTurn(manager: TestSwarmManager, agentId = "manager"): Promise<void> {
+  await manager.handleRuntimeSessionEvent(agentId, { type: "turn_end", toolResults: [] });
+}
 
 class FakeCodexAppServerClient implements CodexAppServerClientPort {
   turnCounter = 0;
@@ -492,13 +505,16 @@ describe("SwarmManager Codex mention routing", () => {
       '[Scheduled Task: Nightly]\n[scheduleContext] {"scheduleId":"sched-1"}\n\n@Codex -fireflies',
       { sourceContext: { channel: "web" } },
     );
+    await activateManagerInboundTurn(manager);
 
     await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/scheduled|Codex tool mention/i);
     await expect(
       manager.callCodexMcpTool("manager", { selector: "fireflies/list_recent", args: { limit: 1 } }),
     ).rejects.toThrow(/scheduled|Codex tool mention/i);
 
+    await endManagerInboundTurn(manager);
     await manager.handleUserMessage("plain hello", { sourceContext: { channel: "web" } });
+    await activateManagerInboundTurn(manager);
     await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/Codex tool mention/i);
     await expect(
       manager.callCodexMcpTool("manager", { selector: "fireflies/list_recent", args: { limit: 1 } }),
@@ -513,6 +529,7 @@ describe("SwarmManager Codex mention routing", () => {
     await manager.handleUserMessage("@Codex -fireflies list meetings", {
       sourceContext: { channel: "web" },
     });
+    await activateManagerInboundTurn(manager);
 
     await expect(
       manager.callCodexMcpTool("manager", {
@@ -527,6 +544,43 @@ describe("SwarmManager Codex mention routing", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.selector).toBe("fireflies/list_recent");
+  });
+
+  it("clears Codex MCP authorization after turn_end so later continuations cannot call", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+    await activateManagerInboundTurn(manager);
+
+    await manager.callCodexMcpTool("manager", {
+      selector: "fireflies/list_recent",
+      args: { limit: 1 },
+    });
+
+    await endManagerInboundTurn(manager);
+
+    await expect(
+      manager.callCodexMcpTool("manager", {
+        selector: "fireflies/list_recent",
+        args: { limit: 1 },
+      }),
+    ).rejects.toThrow(/eligible Builder web user turn|Codex tool mention/i);
+
+    await manager.handleUserMessage("follow up without codex tags", {
+      sourceContext: { channel: "web" },
+    });
+    await activateManagerInboundTurn(manager);
+
+    await expect(
+      manager.callCodexMcpTool("manager", {
+        selector: "fireflies/list_recent",
+        args: { limit: 1 },
+      }),
+    ).rejects.toThrow(/Codex tool mention/i);
   });
 
   it("routes leading @Codex -selector and inline @Codex:selector through the manager runtime", async () => {

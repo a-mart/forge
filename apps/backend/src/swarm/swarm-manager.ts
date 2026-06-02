@@ -421,6 +421,7 @@ interface AppendPreparedInboundConversationPayloadResult {
 interface PendingInboundTurnContext {
   source: PreparedInboundConversationPayload["source"];
   projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
+  codexMcpToolGate?: CodexMcpToolGateEvaluation;
 }
 
 interface ExternalProjectAgentTurnContext {
@@ -4541,6 +4542,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       const rollbackInboundTurnContext = this.enqueueInboundTurnContext(target.agentId, {
         source: "project_agent_input",
+        codexMcpToolGate: this.buildCodexMcpToolTurnGate(
+          target as AgentDescriptor & { role: "manager" },
+          { channel: "web" },
+          message,
+          { kind: "none" },
+          "project_agent_input",
+        ),
         projectAgentContext: {
           fromAgentId: sender.agentId,
           fromDisplayName: getProjectAgentPublicName(sender),
@@ -5183,7 +5191,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
 
     if (target.role === "manager") {
-      this.setCodexMcpToolTurnGate(target, sourceContext, trimmed, codexClassification, "user_input");
       this.scheduleProjectExecutableTrustPrompt(target as AgentDescriptor & { role: "manager" });
     }
 
@@ -5198,7 +5205,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sourceContext,
       appendedMessage.runtimeAttachments,
       appendedMessage.persistedAttachments.length,
-      options?.delivery
+      options?.delivery,
+      undefined,
+      codexClassification,
     );
   }
 
@@ -5399,24 +5408,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return gate;
   }
 
-  private setCodexMcpToolTurnGate(
+  private buildCodexMcpToolTurnGate(
     manager: AgentDescriptor,
     sourceContext: MessageSourceContext,
     messageText: string,
     codexClassification: ReturnType<typeof classifyCodexUserMessage>,
     inboundSource: PendingInboundTurnContext["source"] = "user_input",
-  ): void {
+  ): CodexMcpToolGateEvaluation {
     const surfaceGate = evaluateCodexMcpToolGate({
       manager,
       sourceContext,
       messageText,
       inboundSource,
     });
-    const gate = buildCodexMcpToolTurnAuthorization({
+    return buildCodexMcpToolTurnAuthorization({
       surfaceGate,
       codexClassification,
     });
-    this.codexMcpToolTurnGateByManagerId.set(manager.agentId, gate);
   }
 
   private assertCodexMentionRoutingAvailable(manager: AgentDescriptor & { role: "manager"; profileId: string }): void {
@@ -5563,6 +5571,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     persistedAttachmentCount: number,
     delivery?: RequestedDeliveryMode,
     collaborationAuthor?: CollaborationAuthor,
+    codexClassification: ReturnType<typeof classifyCodexUserMessage> = { kind: "none" },
   ): Promise<void> {
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
 
@@ -5669,6 +5678,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const rollbackInboundTurnContext = this.enqueueInboundTurnContext(managerContextId, {
       source: "user_input",
+      codexMcpToolGate:
+        target.role === "manager"
+          ? this.buildCodexMcpToolTurnGate(
+              target as AgentDescriptor & { role: "manager" },
+              sourceContext,
+              text,
+              codexClassification,
+              "user_input",
+            )
+          : undefined,
     });
 
     try {
@@ -5793,11 +5812,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       } else {
         this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
       }
+
+      const manager = this.descriptors.get(agentId);
+      if (manager?.role === "manager") {
+        if (nextContext?.codexMcpToolGate) {
+          this.codexMcpToolTurnGateByManagerId.set(agentId, nextContext.codexMcpToolGate);
+        } else {
+          this.codexMcpToolTurnGateByManagerId.set(agentId, {
+            allowed: false,
+            reason: "Codex MCP tools are only available on turns with Codex tool mention tags.",
+          });
+        }
+      }
       return;
     }
 
     if (event.type === "turn_end" || event.type === "agent_end") {
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
+      this.codexMcpToolTurnGateByManagerId.delete(agentId);
     }
   }
 

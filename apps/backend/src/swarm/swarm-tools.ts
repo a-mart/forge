@@ -655,22 +655,24 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
                 args: parsed.args,
               });
 
+              const publicDetails = {
+                ok: result.ok,
+                selector: result.selector,
+                serverName: result.serverName,
+                toolName: result.toolName,
+                preview: result.redactedPreview,
+                error: result.error,
+                auditId: result.auditId,
+              };
+
               return {
                 content: [
                   {
                     type: "text",
-                    text: JSON.stringify({
-                      ok: result.ok,
-                      selector: result.selector,
-                      serverName: result.serverName,
-                      toolName: result.toolName,
-                      preview: result.redactedPreview,
-                      error: result.error,
-                      auditId: result.auditId,
-                    }),
+                    text: JSON.stringify(publicDetails),
                   },
                 ],
-                details: result,
+                details: publicDetails,
               };
             },
           } satisfies ToolDefinition,

@@ -96,7 +96,7 @@ describe("CodexMcpCatalog", () => {
         threadId: "thread-1",
         serverName: tool!.serverName,
         toolName: tool!.toolName,
-        args: { limit: 1 },
+        args: { limit: 1, token: "Bearer raw-token-value" },
       },
       tool!,
     );
@@ -104,6 +104,14 @@ describe("CodexMcpCatalog", () => {
     expect(result.ok).toBe(true);
     expect(result.redactedPreview).toContain("[redacted]");
     expect(result.redactedPreview).not.toContain("abc.def.ghi");
+    expect("content" in result).toBe(false);
+    expect("structuredContent" in result).toBe(false);
+
+    const callRequest = client.requests.find((entry) => entry.method === "mcpServer/tool/call");
+    expect((callRequest?.params as { arguments?: Record<string, unknown> })?.arguments).toEqual({
+      limit: 1,
+      token: "Bearer raw-token-value",
+    });
   });
 
   it("paginates catalog list endpoints when nextCursor is provided", async () => {

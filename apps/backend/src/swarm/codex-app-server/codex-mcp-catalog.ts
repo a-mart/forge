@@ -1,4 +1,5 @@
 import { safeJson } from "./codex-app-server-event-normalizer.js";
+import { boundCodexMcpToolArgs, truncateBytesUtf8 } from "./codex-mcp-args.js";
 import { assertCodexMcpToolReadOnlyAllowed } from "./codex-mcp-tool-safety.js";
 import { parseCodexMcpToolSafetyFields } from "./codex-mcp-tool-safety.js";
 import type { CodexAppServerClientPort } from "./types.js";
@@ -48,8 +49,6 @@ export interface CodexMcpToolCallResult {
   serverName: string;
   toolName: string;
   ok: boolean;
-  content?: unknown;
-  structuredContent?: unknown;
   error?: string;
   redactedPreview: string;
 }
@@ -180,13 +179,7 @@ export class CodexMcpCatalog {
   }
 
   boundArgs(args: Record<string, unknown> | undefined): Record<string, unknown> {
-    const payload = args ?? {};
-    const serialized = safeJson(payload);
-    if (Buffer.byteLength(serialized, "utf8") > MAX_TOOL_ARGS_BYTES) {
-      throw new Error("Codex tool arguments exceed the size limit");
-    }
-
-    return JSON.parse(serialized) as Record<string, unknown>;
+    return boundCodexMcpToolArgs(args, MAX_TOOL_ARGS_BYTES);
   }
 
   async callTool(input: CodexMcpToolCallInput, tool: CodexCatalogMcpTool): Promise<CodexMcpToolCallResult> {
@@ -207,7 +200,7 @@ export class CodexMcpCatalog {
       });
 
       const parsed = parseToolCallResponse(response);
-      const preview = truncateBytes(safeJson(parsed.redactedPayload), MAX_TOOL_RESULT_BYTES);
+      const preview = truncateBytesUtf8(safeJson(parsed.redactedPayload), MAX_TOOL_RESULT_BYTES);
 
       return {
         auditId,
@@ -215,8 +208,6 @@ export class CodexMcpCatalog {
         serverName: tool.serverName,
         toolName: tool.toolName,
         ok: true,
-        content: parsed.content,
-        structuredContent: parsed.structuredContent,
         redactedPreview: preview,
       };
     } catch (error) {
@@ -228,7 +219,7 @@ export class CodexMcpCatalog {
         toolName: tool.toolName,
         ok: false,
         error: message,
-        redactedPreview: truncateBytes(message, 1024),
+        redactedPreview: truncateBytesUtf8(message, 1024),
       };
     }
   }
@@ -448,10 +439,4 @@ function valueMatchesSchemaType(value: unknown, expectedType: string): boolean {
   }
 }
 
-function truncateBytes(value: string, maxBytes: number): string {
-  if (Buffer.byteLength(value, "utf8") <= maxBytes) {
-    return value;
-  }
-
-  return `${value.slice(0, Math.max(0, maxBytes - 1))}…`;
-}
+export { truncateBytesUtf8 } from "./codex-mcp-args.js";
