@@ -18,6 +18,7 @@ import { useDrawerResize } from '@/hooks/use-drawer-resize'
 import { slugifySessionName } from '../agent-sidebar/utils'
 import { PROJECT_AGENT_WHEN_TO_USE_MAX } from '../agent-sidebar/constants'
 import { ProjectAgentReferenceDocsEditor } from './ProjectAgentReferenceDocsEditor'
+import { ProjectAgentSharingSection } from './ProjectAgentSharingSection'
 import { DiscardChangesDialog } from './DiscardChangesDialog'
 import type { ProjectAgentSettingsSheetProps } from '../agent-sidebar/types'
 
@@ -705,64 +706,13 @@ export function ProjectAgentSettingsSheet({
                 ) : null}
 
                 {!sharingLoading ? (
-                  <>
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-foreground">Current external aliases</p>
-                      {sharingGrants.length > 0 ? (
-                        <div className="space-y-2">
-                          {sharingGrants.map((grant) => (
-                            <div key={grant.grantId} className="rounded-md border border-border/60 px-3 py-2 text-xs">
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <div className="font-medium text-foreground">{grant.targetProjectName}</div>
-                                  <div className="font-mono text-muted-foreground">@{grant.externalHandle}</div>
-                                </div>
-                                {grant.blockedReason ? (
-                                  <Badge variant="outline" className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                                    {grant.blockedReason === 'source_archived' ? 'source archived' : 'target archived'}
-                                  </Badge>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">Not shared into any other Builder project yet.</p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-foreground">Share into other projects</p>
-                      {eligibleShareTargets.length > 0 ? (
-                        <div className="space-y-2">
-                          {eligibleShareTargets.map((target) => {
-                            const checked = selectedShareTargetIds.includes(target.profileId)
-                            const aliasPreview = `${target.namespacePreview}/${(currentProjectAgent?.handle ?? normalizedHandle) || 'agent'}`
-                            return (
-                              <div key={target.profileId} className="flex items-start gap-3 rounded-md border border-border/60 px-3 py-2">
-                                <Switch
-                                  checked={checked}
-                                  onCheckedChange={(next) => {
-                                    setSelectedShareTargetIds((prev) => next
-                                      ? [...prev, target.profileId]
-                                      : prev.filter((profileId) => profileId !== target.profileId))
-                                  }}
-                                  size="sm"
-                                  aria-label={`Share with ${target.displayName}`}
-                                />
-                                <div className="space-y-0.5">
-                                  <div className="text-sm text-foreground">{target.displayName}</div>
-                                  <div className="font-mono text-[11px] text-muted-foreground">@{aliasPreview}</div>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">No other Builder projects are currently eligible for sharing.</p>
-                      )}
-                    </div>
-                  </>
+                  <ProjectAgentSharingSection
+                    grants={sharingGrants}
+                    eligibleTargets={eligibleShareTargets}
+                    selectedTargetIds={selectedShareTargetIds}
+                    projectAgentHandle={(currentProjectAgent?.handle ?? normalizedHandle) || 'agent'}
+                    onSelectedTargetIdsChange={setSelectedShareTargetIds}
+                  />
                 ) : null}
               </div>
             ) : null}

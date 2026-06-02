@@ -126,6 +126,7 @@ export interface SessionRowItemProps {
   highlightQuery?: string
   onPinSession?: (agentId: string, pinned: boolean) => void
   onPromoteToProjectAgent?: () => void
+  onOpenProjectAgentSharing?: () => void
   onOpenProjectAgentSettings?: () => void
   onDemoteProjectAgent?: () => void
   onViewCreationHistory?: () => void
@@ -178,6 +179,7 @@ export interface ProfileGroupProps {
   dragHandleListeners?: Record<string, unknown> | undefined
   onPinSession?: (agentId: string, pinned: boolean) => void
   onPromoteToProjectAgent?: (agentId: string) => void
+  onOpenProjectAgentSharing?: (agentId: string) => void
   onOpenProjectAgentSettings?: (agentId: string) => void
   onDemoteProjectAgent?: (agentId: string) => void | Promise<void>
   onCreateAgentCreator?: (profileId: string) => void

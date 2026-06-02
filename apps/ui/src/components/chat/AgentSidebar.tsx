@@ -52,6 +52,7 @@ import {
   SessionModelDialog,
 } from './agent-sidebar/dialogs'
 import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsSheet'
+import { ProjectAgentSharingDialog } from './project-agent/ProjectAgentSharingDialog'
 import { findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
 import { useCortexReviewBadge, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import type { AgentSidebarProps } from './agent-sidebar/types'
@@ -200,6 +201,11 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     agentId: string
     sessionLabel: string
     currentProjectAgent: ProjectAgentInfo | null
+  } | null>(null)
+  const [projectAgentSharingTarget, setProjectAgentSharingTarget] = useState<{
+    agentId: string
+    sessionLabel: string
+    currentProjectAgent: ProjectAgentInfo
   } | null>(null)
 
   const handleForkSetTarget = useCallback((sourceAgentId: string) => setForkTarget({ sourceAgentId }), [])
@@ -371,6 +377,16 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     })
   }, [agents])
 
+  const handleOpenProjectAgentSharing = useCallback((agentId: string) => {
+    const agent = agents.find((a) => a.agentId === agentId)
+    if (!agent?.projectAgent) return
+    setProjectAgentSharingTarget({
+      agentId,
+      sessionLabel: agent.sessionLabel || agent.displayName || agent.agentId,
+      currentProjectAgent: agent.projectAgent,
+    })
+  }, [agents])
+
   const handleDemoteProjectAgent = useCallback(async (agentId: string) => {
     await onSetSessionProjectAgent?.(agentId, null)
   }, [onSetSessionProjectAgent])
@@ -467,6 +483,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       dragHandleRef={dragHandleRef}
       dragHandleListeners={dragHandleListeners}
       onPromoteToProjectAgent={onSetSessionProjectAgent ? handlePromoteToProjectAgent : undefined}
+      onOpenProjectAgentSharing={onGetProjectAgentSharing && onSetProjectAgentSharing ? handleOpenProjectAgentSharing : undefined}
       onOpenProjectAgentSettings={onSetSessionProjectAgent ? handleOpenProjectAgentSettings : undefined}
       onPinSession={onPinSession}
       onDemoteProjectAgent={onSetSessionProjectAgent ? handleDemoteProjectAgent : undefined}
@@ -490,7 +507,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onUpdateSessionModel, handleRequestSessionModelChange, handleUseProjectDefault,
     onUpdateManagerCwd, handleRequestChangeCwd, showModelIcons, parsedSearch.term,
     getVisibleSessionLimit,
-    onSetSessionProjectAgent, handlePromoteToProjectAgent, handleOpenProjectAgentSettings,
+    onSetSessionProjectAgent, handlePromoteToProjectAgent, handleOpenProjectAgentSharing,
+    onGetProjectAgentSharing, onSetProjectAgentSharing, handleOpenProjectAgentSettings,
     onPinSession, handleDemoteProjectAgent, onCreateAgentCreator, mutedAgentsState,
     handleToggleMute, handleMuteAllSessions, getCreatorAttribution,
     hideCliSessions, handleToggleHideCliSessions,
@@ -828,6 +846,18 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           onClose={() => setChangeCwdTarget(null)}
           onBrowseDirectory={onBrowseDirectory}
           onValidateDirectory={onValidateDirectory}
+        />
+      ) : null}
+
+      {/* Project Agent sharing dialog */}
+      {projectAgentSharingTarget && onGetProjectAgentSharing && onSetProjectAgentSharing ? (
+        <ProjectAgentSharingDialog
+          agentId={projectAgentSharingTarget.agentId}
+          sessionLabel={projectAgentSharingTarget.sessionLabel}
+          currentProjectAgent={projectAgentSharingTarget.currentProjectAgent}
+          onClose={() => setProjectAgentSharingTarget(null)}
+          onGetProjectAgentSharing={onGetProjectAgentSharing}
+          onSetProjectAgentSharing={onSetProjectAgentSharing}
         />
       ) : null}
 
