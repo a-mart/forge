@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
+import type { ServerEvent } from '@forge/protocol'
 import { ConversationProjector } from '../swarm/conversation-projector.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
 import { reconcileInterruptedToolCallsForBoot } from '../swarm/interrupted-tool-reconciliation.js'
@@ -659,6 +660,65 @@ describe('ConversationProjector session tree continuity', () => {
 
     expect(history.filter((entry) => entry.type === 'work_plan_created' && entry.id === 'shared-stable-id')).toHaveLength(1)
     expect(history.filter((entry) => entry.type === 'conversation_message' && entry.id === 'shared-stable-id')).toHaveLength(1)
+  })
+
+  it('persists model_cache_observation entries as swarm_conversation_entry custom rows', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-model-cache-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed entry to create session header' }],
+    } as any)
+
+    const runtime = makeRuntimeForSession(descriptor)
+    const emitted: ServerEvent[] = []
+    const projector = new ConversationProjector({
+      descriptors: new Map([[descriptor.agentId, descriptor]]),
+      runtimes: new Map([[descriptor.agentId, runtime]]),
+      conversationEntriesByAgentId: new Map(),
+      now: () => FIXED_NOW,
+      emitServerEvent: (_eventName, payload) => {
+        emitted.push(payload)
+      },
+      logDebug: () => {},
+    })
+
+    projector.emitModelCacheObservation({
+      type: 'model_cache_observation',
+      agentId: descriptor.agentId,
+      id: 'cache-obs-1',
+      timestamp: FIXED_NOW,
+      runtimeType: 'pi',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      tokens: {
+        promptInputTokens: 2000,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        uncachedInputTokens: 2000,
+        outputTokens: 50,
+        totalTokens: 2050,
+        normalization: 'raw_input_tokens_total',
+      },
+      classification: {
+        version: 1,
+        status: 'miss',
+        cachedRatio: 0,
+        thresholdTokens: 1024,
+        hitRatioThreshold: 0.8,
+      },
+    })
+
+    const history = projector.getConversationHistory(descriptor.agentId)
+    expect(history.filter((entry) => entry.type === 'model_cache_observation')).toHaveLength(1)
+    expect(emitted.some((event) => event.type === 'model_cache_observation')).toBe(true)
+
+    const raw = await readFile(sessionFile, 'utf8')
+    expect(raw).toContain('model_cache_observation')
+    expect(raw).toContain('swarm_conversation_entry')
   })
 
   it('backfills missing message ids from wrapper entry ids when loading persisted history', async () => {

@@ -16,6 +16,10 @@ import {
   type WorkPlanSnapshot,
   type WorkPlanWorkerLinkSnapshot
 } from "@forge/protocol";
+import {
+  areModelCacheTokenFactsConsistent,
+  isModelCacheClassificationConsistent,
+} from "../runtime/model-cache-observation.js";
 import type {
   AgentMessageEvent,
   AgentToolCallEvent,
@@ -477,6 +481,8 @@ function isModelCacheObservationEvent(value: unknown): value is ModelCacheObserv
   if (!isFiniteRatio(classification.cachedRatio)) return false;
   if (classification.thresholdTokens !== MODEL_CACHE_ELIGIBILITY_THRESHOLD_TOKENS) return false;
   if (classification.hitRatioThreshold !== MODEL_CACHE_HIT_RATIO_THRESHOLD) return false;
+  if (!areModelCacheTokenFactsConsistent(tokens)) return false;
+  if (!isModelCacheClassificationConsistent(tokens, classification)) return false;
 
   return true;
 }

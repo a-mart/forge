@@ -3,6 +3,35 @@ import { isConversationEntryEvent } from "../session/conversation-validators.js"
 
 const FIXED_NOW = "2026-01-01T00:00:00.000Z";
 
+function makeModelCacheObservation(overrides: Record<string, unknown> = {}) {
+  return {
+    type: "model_cache_observation",
+    agentId: "manager-1",
+    id: "cache-obs-1",
+    timestamp: FIXED_NOW,
+    runtimeType: "pi",
+    provider: "openai",
+    modelId: "gpt-5",
+    tokens: {
+      promptInputTokens: 2000,
+      cachedInputTokens: 1600,
+      cacheWriteInputTokens: 0,
+      uncachedInputTokens: 400,
+      outputTokens: 120,
+      totalTokens: 2120,
+      normalization: "raw_input_tokens_total",
+    },
+    classification: {
+      version: 1,
+      status: "hit",
+      cachedRatio: 0.8,
+      thresholdTokens: 1024,
+      hitRatioThreshold: 0.8,
+    },
+    ...overrides,
+  };
+}
+
 function makeWorkPlanCreated(overrides: Record<string, unknown> = {}) {
   return {
     type: "work_plan_created",
@@ -128,6 +157,57 @@ describe("conversation validators", () => {
         sourceContext: { channel: "cli", messageId: "dispatch-1" }
       })
     ).toBe(true);
+  });
+
+  it("accepts a valid model_cache_observation entry", () => {
+    expect(isConversationEntryEvent(makeModelCacheObservation())).toBe(true);
+  });
+
+  it("rejects malformed model_cache_observation token and classification invariants", () => {
+    expect(isConversationEntryEvent(makeModelCacheObservation({ id: "" }))).toBe(false);
+    expect(
+      isConversationEntryEvent(
+        makeModelCacheObservation({
+          tokens: {
+            promptInputTokens: 2000,
+            cachedInputTokens: 1500,
+            cacheWriteInputTokens: 800,
+            uncachedInputTokens: 0,
+            outputTokens: 10,
+            totalTokens: 2010,
+            normalization: "raw_input_tokens_total",
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isConversationEntryEvent(
+        makeModelCacheObservation({
+          classification: {
+            version: 1,
+            status: "miss",
+            cachedRatio: 0.8,
+            thresholdTokens: 1024,
+            hitRatioThreshold: 0.8,
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isConversationEntryEvent(
+        makeModelCacheObservation({
+          tokens: {
+            promptInputTokens: 900,
+            cachedInputTokens: 0,
+            cacheWriteInputTokens: 0,
+            uncachedInputTokens: 900,
+            outputTokens: 10,
+            totalTokens: 910,
+            normalization: "raw_input_tokens_total",
+          },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("accepts a valid work_plan_created receipt with a nested Work Plan snapshot", () => {

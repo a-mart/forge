@@ -13,6 +13,11 @@ import {
 } from '@forge/protocol'
 import type { AgentDescriptor } from '../types.js'
 
+/** Rounded-token slack when validating cached + write + uncached against prompt input. */
+export const MODEL_CACHE_TOKEN_INVARIANT_TOLERANCE = 1
+
+const CLASSIFICATION_RATIO_TOLERANCE = 0.0001
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -99,15 +104,7 @@ export function extractModelCacheTokenFacts(usageValue: unknown): ModelCacheToke
     return null
   }
 
-  if (
-    cachedInputTokens > promptInputTokens ||
-    cacheWriteInputTokens > promptInputTokens ||
-    uncachedInputTokens > promptInputTokens
-  ) {
-    return null
-  }
-
-  return {
+  const tokens: ModelCacheTokenFacts = {
     promptInputTokens,
     cachedInputTokens,
     cacheWriteInputTokens,
@@ -116,9 +113,65 @@ export function extractModelCacheTokenFacts(usageValue: unknown): ModelCacheToke
     totalTokens,
     normalization,
   }
+
+  if (!areModelCacheTokenFactsConsistent(tokens)) {
+    return null
+  }
+
+  return tokens
+}
+
+export function areModelCacheTokenFactsConsistent(tokens: ModelCacheTokenFacts): boolean {
+  const { promptInputTokens, cachedInputTokens, cacheWriteInputTokens, uncachedInputTokens } = tokens
+
+  if (
+    cachedInputTokens > promptInputTokens ||
+    cacheWriteInputTokens > promptInputTokens ||
+    uncachedInputTokens > promptInputTokens
+  ) {
+    return false
+  }
+
+  const componentSum = cachedInputTokens + cacheWriteInputTokens + uncachedInputTokens
+  return componentSum <= promptInputTokens + MODEL_CACHE_TOKEN_INVARIANT_TOLERANCE
+}
+
+export function expectedModelCacheStatus(
+  cachedInputTokens: number,
+  cachedRatio: number,
+): ModelCacheStatus {
+  if (cachedInputTokens === 0) {
+    return 'miss'
+  }
+  if (cachedRatio >= MODEL_CACHE_HIT_RATIO_THRESHOLD) {
+    return 'hit'
+  }
+  return 'partial'
+}
+
+export function isModelCacheClassificationConsistent(
+  tokens: ModelCacheTokenFacts,
+  classification: ModelCacheClassification,
+): boolean {
+  if (tokens.promptInputTokens <= 0) {
+    return false
+  }
+
+  const expectedRatio = tokens.cachedInputTokens / tokens.promptInputTokens
+  if (Math.abs(classification.cachedRatio - expectedRatio) > CLASSIFICATION_RATIO_TOLERANCE) {
+    return false
+  }
+
+  return (
+    classification.status === expectedModelCacheStatus(tokens.cachedInputTokens, classification.cachedRatio)
+  )
 }
 
 export function classifyModelCache(tokens: ModelCacheTokenFacts): ModelCacheClassification | null {
+  if (!areModelCacheTokenFactsConsistent(tokens)) {
+    return null
+  }
+
   if (tokens.promptInputTokens <= 0) {
     return null
   }
@@ -128,14 +181,7 @@ export function classifyModelCache(tokens: ModelCacheTokenFacts): ModelCacheClas
     return null
   }
 
-  let status: ModelCacheStatus
-  if (tokens.cachedInputTokens === 0) {
-    status = 'miss'
-  } else if (cachedRatio >= MODEL_CACHE_HIT_RATIO_THRESHOLD) {
-    status = 'hit'
-  } else {
-    status = 'partial'
-  }
+  const status = expectedModelCacheStatus(tokens.cachedInputTokens, cachedRatio)
 
   return {
     version: MODEL_CACHE_CLASSIFICATION_VERSION,

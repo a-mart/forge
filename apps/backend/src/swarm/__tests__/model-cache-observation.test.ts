@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentDescriptor } from '../types.js'
 import {
+  areModelCacheTokenFactsConsistent,
   buildModelCacheObservationFromMessageEnd,
   classifyModelCache,
   extractModelCacheTokenFacts,
+  isModelCacheClassificationConsistent,
   isSupportedModelCacheProvider,
   normalizeModelCacheProvider,
 } from '../runtime/model-cache-observation.js'
@@ -110,6 +112,46 @@ describe('model-cache-observation', () => {
       turnId: 'turn-1',
       classification: { status: 'hit', version: 1 },
     })
+  })
+
+  it('rejects inconsistent usage where cached + write exceeds prompt input', () => {
+    expect(
+      extractModelCacheTokenFacts({
+        input_tokens: 2000,
+        cache_read_input_tokens: 1500,
+        cache_creation_input_tokens: 800,
+      }),
+    ).toBeNull()
+  })
+
+  it('rejects raw totals where cached plus write consume the full prompt budget with no room', () => {
+    expect(
+      extractModelCacheTokenFacts({
+        input_tokens: 1500,
+        cache_read_input_tokens: 1500,
+        cache_creation_input_tokens: 500,
+      }),
+    ).toBeNull()
+  })
+
+  it('validates token and classification consistency helpers', () => {
+    const tokens = extractModelCacheTokenFacts({
+      input_tokens: 2000,
+      cache_read_input_tokens: 500,
+    })
+    expect(tokens).not.toBeNull()
+    expect(areModelCacheTokenFactsConsistent(tokens!)).toBe(true)
+
+    const classification = classifyModelCache(tokens!)
+    expect(classification).not.toBeNull()
+    expect(isModelCacheClassificationConsistent(tokens!, classification!)).toBe(true)
+
+    expect(
+      isModelCacheClassificationConsistent(tokens!, {
+        ...classification!,
+        status: 'hit',
+      }),
+    ).toBe(false)
   })
 
   it('returns null for unsupported providers', () => {

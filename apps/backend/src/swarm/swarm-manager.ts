@@ -21,6 +21,7 @@ import type {
   ServerEvent,
   SessionActiveToolsSnapshotEvent,
   SessionTaskStateSnapshotEvent,
+  ModelCacheObservationEvent,
   WorkPlanCreatedEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -6117,6 +6118,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitWorkPlanCreated(event: WorkPlanCreatedEvent): void {
     this.conversationProjector.emitWorkPlanCreated(event);
+  }
+
+  emitModelCacheObservation(event: ModelCacheObservationEvent): void {
+    this.conversationProjector.emitModelCacheObservation(event);
   }
 
   private emitConversationReset(agentId: string, reason: "user_new_command" | "api_reset"): void {

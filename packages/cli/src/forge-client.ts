@@ -816,6 +816,7 @@ class RunWaitTracker {
       case 'agent_message':
       case 'choice_request':
       case 'work_plan_created':
+      case 'model_cache_observation':
         this.markActivity()
     }
   }
