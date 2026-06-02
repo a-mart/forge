@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCodexCatalogRoutes } from "../codex-catalog-routes.js";
-import type { SwarmManager } from "../../../swarm/swarm-manager.js";
+import type { SwarmManager } from "../../../../swarm/swarm-manager.js";
 
 describe("codex-catalog-routes", () => {
   it("serves catalog snapshots via browseCodexMcpCatalog", async () => {

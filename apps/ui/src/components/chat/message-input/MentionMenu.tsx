@@ -1,17 +1,13 @@
 import { type RefObject } from 'react'
 import { cn } from '@/lib/utils'
+import { mentionMenuOptionId, type MentionMenuStatus } from './mention-menu-a11y'
 import {
   isCodexMentionSuggestion,
   isCodexToolMentionSuggestion,
   type MentionSuggestion,
 } from './mention-types'
 
-export type MentionMenuStatus =
-  | 'list'
-  | 'loading'
-  | 'error'
-  | 'empty-catalog'
-  | 'empty-filter'
+export type { MentionMenuStatus } from './mention-menu-a11y'
 
 interface MentionMenuProps {
   menuRef: RefObject<HTMLDivElement | null>
@@ -23,10 +19,6 @@ interface MentionMenuProps {
   onHover: (index: number) => void
   enableCodexMention?: boolean
   codexToolPicker?: boolean
-}
-
-function optionId(listboxId: string, index: number): string {
-  return `${listboxId}-option-${index}`
 }
 
 function emptyMessage(
@@ -77,7 +69,7 @@ export function MentionMenu({
             : isCodex
               ? `@${suggestion.handle}`
               : `@${suggestion.handle}`
-          const id = optionId(listboxId, idx)
+          const id = mentionMenuOptionId(listboxId, idx)
           return (
             <button
               key={
@@ -157,15 +149,4 @@ export function MentionMenu({
   }
 
   return null
-}
-
-export function mentionMenuActiveDescendantId(
-  listboxId: string,
-  status: MentionMenuStatus,
-  selectedIndex: number,
-): string | undefined {
-  if (status !== 'list') {
-    return undefined
-  }
-  return optionId(listboxId, selectedIndex)
 }

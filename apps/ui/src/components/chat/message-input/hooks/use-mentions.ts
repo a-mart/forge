@@ -8,9 +8,7 @@ import {
   type ProjectAgentSuggestion,
   toProjectAgentMentionSuggestion,
 } from '../mention-types'
-import {
-  type MentionMenuStatus,
-} from '../MentionMenu'
+import type { MentionMenuStatus } from '../mention-menu-a11y'
 import {
   hasComposerMentionTokens,
   isCodexToolPickerTrigger,
