@@ -34,7 +34,7 @@ Forge owns model metadata end-to-end:
 
 ## Codex app-server sidecar
 
-The Builder web `@Codex` route is an external-thread sidecar, not a selectable manager model. A leading `@Codex` or `[@Codex]` text message uses the Codex CLI app-server and records a `codex-app-server` / `app-server` external-thread descriptor. It is Builder web only, text-only, excluded from Collaboration, limited to one active Codex turn globally, and does not imply direct MCP support in Forge. Parent session display cards are append-only and excluded from model context; forked sessions omit historical Codex display cards.
+The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@Codex]` text message uses the Codex CLI app-server as a direct sidecar thread. Selector forms like `@Codex -<selector>` and inline `@Codex:<selector>` / `[@Codex:<selector>]` route through the manager, inject guidance, and can call Codex MCP tools. Manager-routed turns use the Codex catalog endpoint `/api/codex-app-server/catalog?managerAgentId=...`, are authorized per turn against the selected selector, keep read-only/safety gates and sanitized cache/results, and stay in the normal manager audit trail. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Parent session display cards are append-only and excluded from model context; forked sessions omit historical Codex display cards.
 
 
 ## Cursor SDK provider

@@ -29,4 +29,4 @@ You can send follow-up messages while the agent is still responding. The input f
 
 ## Sending to Codex
 
-In Builder web, a leading @Codex or [@Codex] routes the message text to a Codex app-server sidecar thread. Use it for text-only handoff to an external Codex app-server thread. Attachments are not sent, Collaboration channels do not support it, and Forge allows only one active Codex turn at a time. If you select the Codex sidecar, a direct follow-up continues that selected sidecar thread.
+In Builder web, a plain leading @Codex or [@Codex] routes the message text to a direct Codex app-server sidecar thread. Use it for text-only handoff to an external Codex app-server thread. Attachments are not sent, Collaboration channels do not support it, and Forge allows only one active direct Codex turn at a time. If you use @Codex -<selector> or an inline @Codex:<selector> / [@Codex:<selector>] mention, Forge routes through the manager instead, injects Codex guidance, and enables Codex MCP tools for that turn. If you select the Codex sidecar, a direct follow-up continues that selected sidecar thread.

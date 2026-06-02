@@ -91,7 +91,7 @@ The key insight: **your manager writes better prompts than you do.** Especially 
 
 ### Chat Interface
 
-The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. In Builder web, you can also start a message with `@Codex` or `[@Codex]` to route text to an external Codex app-server sidecar thread instead of the manager. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
+The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. In Builder web, a plain leading `@Codex` or `[@Codex]` starts or continues a direct Codex app-server sidecar turn, while selector forms like `@Codex -<selector>` and inline `@Codex:<selector>` / `[@Codex:<selector>]` route through the manager with injected guidance and Codex MCP tool access. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
 
 Two view modes, toggled at the top:
 
@@ -124,7 +124,7 @@ The left sidebar shows all your sessions across all managers. You can switch ses
 
 When workers are active, small green pills appear at the bottom of the chat window. Each pill represents a running worker and shows an elapsed timer. Click a pill to see what that worker is doing: commands it's running, files it's editing, with elapsed time on each tool call.
 
-Quick at-a-glance view of parallel work in progress. Codex app-server sidecars appear as worker-like external-thread cards. They persist by default, can be stopped through the same session stop path, and can be reused after stop. Select the Codex sidecar and send a direct text follow-up to continue that selected sidecar thread. This path is Builder web only, text-only, excludes Collaboration, allows only one active Codex turn globally, requires the Codex CLI app-server, and does not add direct MCP support in Forge.
+Quick at-a-glance view of parallel work in progress. Codex app-server sidecars appear as worker-like external-thread cards. They persist by default, can be stopped through the same session stop path, and can be reused after stop. Plain `@Codex` / `[@Codex]` text follow-ups continue the direct sidecar thread; selector-based mentions open the manager-routed path with Codex MCP tools, catalog lookup, and normal manager audit rows. The sidecar path is Builder web only, text-only, excludes Collaboration, and allows only one active direct Codex turn globally.
 
 ### Artifacts Panel
 

@@ -20,7 +20,7 @@ To stop a running response, open the **⋮ menu** in the header and choose **Sto
 
 The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity. A **Detailed** toggle can further reveal owned direct-worker tool activity for manager-scoped rows, but it stays off by default and resets when you switch views or agents.
 
-Builder web also supports Codex app-server sidecars. Start a message with @Codex or [@Codex] to send text to an external Codex thread instead of the manager. Codex sidecars show as worker-like external-thread cards and persist by default. Select the Codex sidecar and send a direct text follow-up to continue that same sidecar thread. This is Builder web only, text-only, excludes Collaboration, allows one active Codex turn globally, requires the Codex CLI app-server, and does not add direct MCP support in Forge.
+Builder web also supports Codex app-server sidecars. A plain leading @Codex or [@Codex] starts or continues a direct sidecar text turn. Selector forms like @Codex -<selector> and inline @Codex:<selector> / [@Codex:<selector>] route through the manager with injected guidance and Codex MCP tool access. Direct sidecars show as worker-like external-thread cards and persist by default; manager-routed turns stay in the normal manager audit trail. This is Builder web only, text-only for the direct sidecar path, excludes Collaboration, and allows one active direct Codex turn globally.
 
 Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
 

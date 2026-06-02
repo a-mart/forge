@@ -48,7 +48,7 @@ Legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` and `MIDDLEMAN_SKILL_SHARE_DISABLED` ali
 | `FORGE_OPENAI_CODEX_TRANSPORT` | `sse` | Transport override for OpenAI Codex Responses models. Supported values: `sse` (stable reliability default and rollback path), `websocket`, `websocket-cached` (explicit experimental/canary opt-in; retries a fresh full-context WebSocket before falling back to SSE on pre-output close-before-completion failures), and `auto` (safe pre-start SSE fallback). Invalid values fail safe to `sse`. |
 | `FORGE_CODEX_TRANSPORT_DEBUG` | — | Optional debugging flag. Set to `1` to enable the sanitized Codex transport diagnostics endpoint at `/api/debug/codex-transport` for transport selection and counter inspection; otherwise it stays disabled/404. |
 
-The OpenAI Codex Responses transport settings above apply to normal Codex model runtimes. Builder web also has a separate external-thread route: a leading `@Codex` or `[@Codex]` text message starts or continues a Codex CLI app-server sidecar thread. That path is Builder web only, text-only, excluded from Collaboration, limited to one active Codex turn globally, and does not include direct MCP support in Forge. Sidecar display cards are persisted in the parent session by default but are excluded from manager model context and from forked-session history.
+The OpenAI Codex Responses transport settings above apply to normal Codex model runtimes. Builder web also has a separate direct sidecar route: a plain leading `@Codex` or `[@Codex]` text message starts or continues a Codex CLI app-server sidecar thread. Selector forms like `@Codex -<selector>` and inline `@Codex:<selector>` / `[@Codex:<selector>]` route through the manager with injected guidance, can call Codex MCP tools, and are authorized per turn against the selected selector. Manager-routed Codex turns use the catalog endpoint `/api/codex-app-server/catalog?managerAgentId=...`, keep read-only/safety gates and sanitized cache/results, and stay in the normal manager audit trail. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Sidecar display cards are persisted in the parent session by default but are excluded from manager model context and from forked-session history.
 
 ### Active Work Plans
 
@@ -93,7 +93,7 @@ OpenAI and Anthropic support either OAuth or API key auth. Claude SDK is separat
 For the native Cursor runtime, Forge uses the Forge-owned Cursor SDK `stateRoot` and persisted `sdkAgentId` to keep runtime state local to the app.
 
 
-Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. Those visibility settings also control whether a model can appear in manager create-session, change-default, and per-session override selectors. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
+Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. Those visibility settings also control whether a model can appear in manager create-session, change-default, and per-session override selectors. Codex selector mentions are handled separately through the manager-routed Codex catalog and MCP tool path. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 
 ## Data Directory
 
