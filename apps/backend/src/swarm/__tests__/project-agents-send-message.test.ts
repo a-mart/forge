@@ -319,9 +319,16 @@ describe("SwarmManager project-agent sendMessage routing", () => {
     await manager.setProjectAgentSharing(target.agentId, [sender.profileId ?? sender.agentId]);
 
     await manager.sendMessage(sender.agentId, target.agentId, "Shared cross-profile ping", "auto");
+    const targetRuntime = manager.runtimeByAgentId.get(target.agentId);
+    const targetRuntimeMessage = targetRuntime?.sendCalls.at(-1)?.message;
+    const targetRuntimeText = typeof targetRuntimeMessage === "string" ? targetRuntimeMessage : targetRuntimeMessage?.text;
+    if (typeof targetRuntimeText !== "string") {
+      throw new Error("Expected project-agent runtime message text");
+    }
+
     await manager.handleRuntimeSessionEvent(target.agentId, {
       type: "message_start",
-      message: { role: "user", content: "Shared cross-profile ping" }
+      message: { role: "user", content: targetRuntimeText }
     });
 
     await expect(manager.publishToUser(target.agentId, "Should stay internal")).rejects.toThrow(/disabled for this turn/i);
