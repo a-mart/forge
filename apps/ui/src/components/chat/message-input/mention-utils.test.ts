@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   canOfferCodexMentionAtPosition,
   codexMentionMatchesFilter,
-  codexToolFilterFromTrigger,
-  findCodexToolTriggerStart,
+  codexPluginFilterFromTrigger,
+  findCodexPluginTriggerStart,
   findMentionContaining,
   hasComposerMentionTokens,
-  isCodexToolPickerTrigger,
+  isCodexPluginPickerTrigger,
   isLeadingMentionPosition,
   renderMentionOverlay,
 } from './mention-utils'
@@ -37,19 +37,19 @@ describe('mention-utils codex support', () => {
   it('detects inline codex tool tokens and picker trigger', () => {
     expect(hasComposerMentionTokens('run @Codex:fireflies now')).toBe(true)
     expect(findMentionContaining('run @Codex:fireflies now', 10)).toEqual({ start: 4, end: 20 })
-    expect(isCodexToolPickerTrigger('@Codex -fire')).toBe(true)
-    expect(isCodexToolPickerTrigger('please @Codex -fire')).toBe(true)
+    expect(isCodexPluginPickerTrigger('@Codex -fire')).toBe(true)
+    expect(isCodexPluginPickerTrigger('please @Codex -fire')).toBe(true)
   })
 
   it('detects plugin picker after [@Codex] chip token and colon triggers', () => {
-    expect(isCodexToolPickerTrigger('[@Codex] -')).toBe(true)
-    expect(isCodexToolPickerTrigger('[@Codex]-fire')).toBe(true)
-    expect(isCodexToolPickerTrigger('[@Codex]:')).toBe(true)
-    expect(isCodexToolPickerTrigger('@Codex:')).toBe(true)
-    expect(isCodexToolPickerTrigger('please [@Codex] -repo')).toBe(true)
-    expect(codexToolFilterFromTrigger('[@Codex] -fire')).toBe('fire')
-    expect(findCodexToolTriggerStart('[@Codex] -fire')).toBe(0)
-    expect(findCodexToolTriggerStart('please [@Codex] -repo')).toBe(7)
+    expect(isCodexPluginPickerTrigger('[@Codex] -')).toBe(true)
+    expect(isCodexPluginPickerTrigger('[@Codex]-fire')).toBe(true)
+    expect(isCodexPluginPickerTrigger('[@Codex]:')).toBe(true)
+    expect(isCodexPluginPickerTrigger('@Codex:')).toBe(true)
+    expect(isCodexPluginPickerTrigger('please [@Codex] -repo')).toBe(true)
+    expect(codexPluginFilterFromTrigger('[@Codex] -fire')).toBe('fire')
+    expect(findCodexPluginTriggerStart('[@Codex] -fire')).toBe(0)
+    expect(findCodexPluginTriggerStart('please [@Codex] -repo')).toBe(7)
   })
 
   it('matches codex mention filters for inline prefixes', () => {

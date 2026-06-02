@@ -116,9 +116,6 @@ export function isCodexPluginPickerTrigger(textBeforeCursor: string): boolean {
   )
 }
 
-/** @deprecated Use isCodexPluginPickerTrigger */
-export const isCodexToolPickerTrigger = isCodexPluginPickerTrigger
-
 export function codexPluginFilterFromTrigger(textBeforeCursor: string): string {
   const bracketMatch = textBeforeCursor.match(/(?:^|\s)\[@codex\]\s*[-:]\s*([^\s]*)$/i)
   if (bracketMatch) {
@@ -128,9 +125,6 @@ export function codexPluginFilterFromTrigger(textBeforeCursor: string): string {
   const match = textBeforeCursor.match(/(?:^|\s)@codex\s*[-:]\s*([^\s]*)$/i)
   return match?.[1]?.trim().toLowerCase() ?? ''
 }
-
-/** @deprecated Use codexPluginFilterFromTrigger */
-export const codexToolFilterFromTrigger = codexPluginFilterFromTrigger
 
 /** Index of the @Codex or [@Codex] token that opened the plugin picker. */
 export function findCodexPluginTriggerStart(textBeforeCursor: string): number {
@@ -145,9 +139,6 @@ export function findCodexPluginTriggerStart(textBeforeCursor: string): number {
   const atIdx = lower.lastIndexOf('@codex')
   return atIdx >= 0 ? atIdx : 0
 }
-
-/** @deprecated Use findCodexPluginTriggerStart */
-export const findCodexToolTriggerStart = findCodexPluginTriggerStart
 
 export function canOfferCodexMentionAtPosition(
   text: string,
