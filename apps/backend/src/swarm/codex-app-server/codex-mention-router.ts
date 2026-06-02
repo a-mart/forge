@@ -13,6 +13,9 @@ export type CodexMentionRouteResult = CodexMentionParseResult | CodexMentionNotR
 const LEADING_CODEX_SIDECAR_PATTERN =
   /^(?:@codex|\[@codex\])(?![-:\]])(?=\s|$)(?:\s([\s\S]*))?$/i;
 
+/** Leading [@Codex:<selector>] manager tool hint. */
+const LEADING_CODEX_BRACKET_TOOL_PATTERN = /^\[@codex:([^\]]+)\](?:\s+([\s\S]*))?$/i;
+
 /** Leading @Codex -<selector> manager tool hint. */
 const LEADING_CODEX_TOOL_PATTERN =
   /^(?:@codex|\[@codex\])\s*-\s*([^\s]+)(?:\s+([\s\S]*))?$/i;
@@ -37,6 +40,15 @@ export function classifyCodexUserMessage(text: string): CodexUserMessageRoute {
   const trimmed = text.trim();
   if (!trimmed) {
     return { kind: "none" };
+  }
+
+  const leadingBracketTool = trimmed.match(LEADING_CODEX_BRACKET_TOOL_PATTERN);
+  if (leadingBracketTool) {
+    const selector = normalizeCodexToolSelector(leadingBracketTool[1]);
+    const remainder = (leadingBracketTool[2] ?? "").trim();
+    const inlineSelectors = extractInlineCodexToolSelectors(trimmed);
+    const selectors = uniqueSelectors([selector, ...inlineSelectors]);
+    return { kind: "manager_tool", selectors, strippedText: remainder };
   }
 
   const leadingTool = trimmed.match(LEADING_CODEX_TOOL_PATTERN);

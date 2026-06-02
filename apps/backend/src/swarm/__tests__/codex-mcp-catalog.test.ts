@@ -311,6 +311,7 @@ describe("CodexMcpCatalog", () => {
     expect(result.ok).toBe(true);
     expect(result.redactedPreview).toContain("[redacted]");
     expect(result.redactedPreview).not.toContain("abc.def.ghi");
+    expect(Buffer.byteLength(result.redactedPreview, "utf8")).toBeLessThanOrEqual(2048);
     expect("content" in result).toBe(false);
     expect("structuredContent" in result).toBe(false);
 

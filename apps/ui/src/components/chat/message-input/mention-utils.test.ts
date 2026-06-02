@@ -34,6 +34,13 @@ describe('mention-utils codex support', () => {
     expect(rendered).toContain('blue')
   })
 
+  it('renders leading [@Codex:plugin] tokens as codex tool chips', () => {
+    const nodes = renderMentionOverlay('[@Codex:fireflies] summarize')
+    const rendered = JSON.stringify(nodes)
+    expect(rendered).toContain('emerald')
+    expect(rendered).toContain('@Codex:fireflies')
+  })
+
   it('detects inline codex tool tokens and picker trigger', () => {
     expect(hasComposerMentionTokens('run @Codex:fireflies now')).toBe(true)
     expect(findMentionContaining('run @Codex:fireflies now', 10)).toEqual({ start: 4, end: 20 })

@@ -60,4 +60,46 @@ describe("codex manager tools", () => {
     expect(collabManager).not.toContain("list_codex_mcp_tools");
     expect(collabManager).not.toContain("call_codex_mcp_tool");
   });
+
+  it("bounds call_codex_mcp_tool persisted preview details for UI", async () => {
+    const longPreview = JSON.stringify({ summary: "x".repeat(8_000), email: "adam@secret.com" });
+    const host: SwarmToolHost = {
+      listAgents: () => [],
+      spawnAgent: async () => {
+        throw new Error("not needed");
+      },
+      killAgent: async () => {},
+      sendMessage: async () => ({
+        targetAgentId: "worker",
+        deliveryId: "d1",
+        acceptedMode: "followUp",
+      }),
+      publishToUser: async () => ({ targetContext: { channel: "web" } }),
+      requestUserChoice: async () => [],
+      runTaskTool: async () => {
+        throw new Error("not needed");
+      },
+      listCodexMcpTools: async () => ({ apps: [], tools: [], fetchedAt: new Date().toISOString() }),
+      callCodexMcpTool: async () => ({
+        auditId: "audit-1",
+        selector: "fireflies/list",
+        serverName: "fireflies",
+        toolName: "list",
+        ok: true,
+        redactedPreview: longPreview,
+      }),
+    };
+
+    const tool = buildSwarmTools(host, createManager()).find((entry) => entry.name === "call_codex_mcp_tool");
+    expect(tool).toBeDefined();
+
+    const result = await tool!.execute("tc-1", { selector: "fireflies/list" });
+    const details = result.details as { preview?: string };
+    expect(details.preview).toBeDefined();
+    expect(details.preview).not.toContain("adam@secret.com");
+    const { MAX_CODEX_MCP_UI_PREVIEW_BYTES } = await import("../codex-app-server/codex-mcp-args.js");
+    expect(Buffer.byteLength(details.preview ?? "", "utf8")).toBeLessThanOrEqual(
+      MAX_CODEX_MCP_UI_PREVIEW_BYTES,
+    );
+  });
 });

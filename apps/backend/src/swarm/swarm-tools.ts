@@ -4,6 +4,7 @@ import { getSpawnPresetFamilies } from "@forge/protocol";
 import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { ChoiceRequestCancelledError } from "./swarm-manager.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
+import { boundCodexMcpToolUiPreview } from "./codex-app-server/codex-mcp-args.js";
 import { isBuilderWebCodexRoutingSurface } from "./codex-app-server/codex-mention-router.js";
 import { buildTaskTool } from "./coordination/task-tool.js";
 import {
@@ -660,8 +661,12 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
                 selector: result.selector,
                 serverName: result.serverName,
                 toolName: result.toolName,
-                preview: result.redactedPreview,
-                errorPreview: result.errorPreview,
+                preview: result.redactedPreview
+                  ? boundCodexMcpToolUiPreview(result.redactedPreview)
+                  : undefined,
+                errorPreview: result.errorPreview
+                  ? boundCodexMcpToolUiPreview(result.errorPreview)
+                  : undefined,
                 auditId: result.auditId,
               };
 

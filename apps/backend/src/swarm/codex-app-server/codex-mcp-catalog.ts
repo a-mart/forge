@@ -1,8 +1,8 @@
 import { safeJson } from "./codex-app-server-event-normalizer.js";
 import {
   boundCodexMcpToolArgs,
+  boundCodexMcpToolUiPreview,
   formatCodexMcpToolFailureMessage,
-  truncateBytesUtf8,
 } from "./codex-mcp-args.js";
 import { assertCodexMcpToolReadOnlyAllowed } from "./codex-mcp-tool-safety.js";
 import { parseCodexMcpToolSafetyFields } from "./codex-mcp-tool-safety.js";
@@ -11,7 +11,6 @@ import type { CodexAppServerClientPort } from "./types.js";
 const CATALOG_CACHE_TTL_MS = 30_000;
 const MAX_CATALOG_ENTRIES = 500;
 const MAX_TOOL_ARGS_BYTES = 16 * 1024;
-const MAX_TOOL_RESULT_BYTES = 32 * 1024;
 const CODEX_APPS_AGGREGATE_SERVER = "codex_apps";
 
 export interface CodexCatalogApp {
@@ -322,7 +321,7 @@ export class CodexMcpCatalog {
         });
       }
 
-      const preview = truncateBytesUtf8(safeJson(parsed.redactedPayload), MAX_TOOL_RESULT_BYTES);
+      const preview = boundCodexMcpToolUiPreview(safeJson(parsed.redactedPayload));
 
       return {
         auditId,

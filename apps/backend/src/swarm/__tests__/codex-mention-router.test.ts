@@ -42,6 +42,11 @@ describe("classifyCodexUserMessage", () => {
       selectors: ["fireflies"],
       strippedText: "summarize meetings",
     });
+    expect(classifyCodexUserMessage("[@Codex:fireflies] summarize meetings")).toEqual({
+      kind: "manager_tool",
+      selectors: ["fireflies"],
+      strippedText: "summarize meetings",
+    });
   });
 
   it("classifies inline @Codex:selector mentions for the manager path", () => {

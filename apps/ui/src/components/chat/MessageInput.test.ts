@@ -9,6 +9,7 @@ import { MessageInput, type MessageInputHandle, type ProjectAgentSuggestion } fr
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
 import type { ConversationAttachment } from '@forge/protocol'
 import { fetchCodexCatalog } from '@/lib/codex-catalog-api'
+import { clearCodexCatalogCache } from '@/lib/codex-catalog-cache'
 
 const fetchCodexCatalogMock = vi.mocked(fetchCodexCatalog)
 
@@ -124,6 +125,7 @@ beforeEach(() => {
   localStorageMock.clear()
   voiceInputMockState.transcribedText = null
   fetchCodexCatalogMock.mockReset()
+  clearCodexCatalogCache()
   vi.clearAllMocks()
 })
 
@@ -936,7 +938,7 @@ describe('MessageInput', () => {
       })
       await flush()
 
-      expect(getTextarea().value).toBe('@Codex -fireflies ')
+      expect(getTextarea().value).toBe('[@Codex:fireflies]')
     })
 
     it('opens plugin picker for @Codex: colon trigger', async () => {
@@ -988,13 +990,35 @@ describe('MessageInput', () => {
       })
       await flush()
 
-      expect(getTextarea().value).toBe('please [@Codex:fireflies] ')
+      expect(getTextarea().value).toBe('please [@Codex:fireflies]')
+    })
+
+    it('uses preloaded catalog immediately when cache is warm', async () => {
+      fetchCodexCatalogMock.mockResolvedValue({
+        status: 'ok',
+        snapshot: {
+          apps: [],
+          plugins: [{ selector: 'fireflies', displayName: 'Fireflies' }],
+          tools: [],
+          fetchedAt: '2026-01-01T00:00:00.000Z',
+        },
+      })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      await flush()
+      await flush()
+
+      typeInTextarea('@Codex -fire')
+      await flush()
+
+      expect(container.textContent).toContain('Fireflies')
+      expect(container.textContent).not.toContain('Loading Codex plugins')
     })
 
     it('shows loading state while Codex plugin catalog is fetching', async () => {
       fetchCodexCatalogMock.mockReturnValue(new Promise(() => {}))
 
-      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-loading' })
       await flush()
 
       typeInTextarea('@Codex -fire')
@@ -1007,7 +1031,7 @@ describe('MessageInput', () => {
     it('shows catalog failure state instead of empty-filter copy', async () => {
       fetchCodexCatalogMock.mockResolvedValue({ status: 'error' })
 
-      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-catalog-error' })
       await flush()
 
       typeInTextarea('@Codex -fire')
@@ -1022,7 +1046,7 @@ describe('MessageInput', () => {
       fetchCodexCatalogMock.mockReturnValue(new Promise(() => {}))
       const onSend = vi.fn()
 
-      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1', onSend })
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-quick-send', onSend })
       await flush()
 
       typeInTextarea('@Codex -fire')

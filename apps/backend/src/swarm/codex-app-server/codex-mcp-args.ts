@@ -1,5 +1,15 @@
 import { redactCodexMcpSensitiveText } from "./codex-app-server-event-normalizer.js";
 
+/** Upper bound for previews persisted in manager tool rows and chat details. */
+export const MAX_CODEX_MCP_UI_PREVIEW_BYTES = 2048;
+
+export function boundCodexMcpToolUiPreview(value: string): string {
+  return truncateBytesUtf8(
+    redactCodexMcpSensitiveText(value),
+    MAX_CODEX_MCP_UI_PREVIEW_BYTES,
+  );
+}
+
 export function formatCodexMcpToolFailureMessage(message: string, maxBytes = 1024): string {
   const trimmed = message.trim();
   return truncateBytesUtf8(

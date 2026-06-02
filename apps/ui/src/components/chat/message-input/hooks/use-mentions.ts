@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchCodexCatalog } from '@/lib/codex-catalog-api'
+import type { CodexCatalogPlugin } from '@/lib/codex-catalog-api'
+import {
+  ensureCodexCatalogWarm,
+  fetchCodexCatalogWithCache,
+  getCachedCodexCatalog,
+} from '@/lib/codex-catalog-cache'
 import {
   CODEX_MENTION_HANDLE,
   CODEX_MENTION_SUGGESTION,
@@ -71,28 +76,9 @@ export function useMentions({
 
   const hasMentionTokens = useMemo(() => hasComposerMentionTokens(input), [input])
 
-  useEffect(() => {
-    if (!codexToolMode || !enableCodexMention || !managerAgentId) {
-      return
-    }
-
-    let cancelled = false
-    setCodexCatalogLoading(true)
-    setCodexCatalogError(false)
-
-    void fetchCodexCatalog(wsUrl, managerAgentId).then((result) => {
-      if (cancelled) {
-        return
-      }
-
-      if (result.status === 'error') {
-        setCodexPluginSuggestions([])
-        setCodexCatalogError(true)
-        setCodexCatalogLoading(false)
-        return
-      }
-
-      const plugins = (result.snapshot.plugins ?? []).map(
+  const mapPluginsToSuggestions = useCallback(
+    (plugins: CodexCatalogPlugin[]): CodexPluginMentionSuggestion[] =>
+      plugins.map(
         (plugin): CodexPluginMentionSuggestion => ({
           kind: 'codex_plugin',
           selector: plugin.selector,
@@ -101,9 +87,49 @@ export function useMentions({
           category: plugin.category,
           riskHints: plugin.riskHints,
         }),
-      )
+      ),
+    [],
+  )
 
-      setCodexPluginSuggestions(plugins)
+  useEffect(() => {
+    if (!enableCodexMention || !managerAgentId) {
+      return
+    }
+
+    ensureCodexCatalogWarm(wsUrl, managerAgentId)
+  }, [enableCodexMention, managerAgentId, wsUrl])
+
+  useEffect(() => {
+    if (!codexToolMode || !enableCodexMention || !managerAgentId) {
+      return
+    }
+
+    let cancelled = false
+    const cached = getCachedCodexCatalog(managerAgentId)
+    if (cached) {
+      setCodexPluginSuggestions(mapPluginsToSuggestions(cached.plugins ?? []))
+      setCodexCatalogError(false)
+      setCodexCatalogLoading(false)
+    } else {
+      setCodexCatalogLoading(true)
+      setCodexCatalogError(false)
+    }
+
+    void fetchCodexCatalogWithCache(wsUrl, managerAgentId).then((result) => {
+      if (cancelled) {
+        return
+      }
+
+      if (result.status === 'error') {
+        if (!cached) {
+          setCodexPluginSuggestions([])
+          setCodexCatalogError(true)
+        }
+        setCodexCatalogLoading(false)
+        return
+      }
+
+      setCodexPluginSuggestions(mapPluginsToSuggestions(result.snapshot.plugins ?? []))
       setCodexCatalogError(false)
       setCodexCatalogLoading(false)
     })
@@ -111,7 +137,7 @@ export function useMentions({
     return () => {
       cancelled = true
     }
-  }, [codexToolMode, enableCodexMention, managerAgentId, wsUrl])
+  }, [codexToolMode, enableCodexMention, managerAgentId, mapPluginsToSuggestions, wsUrl])
 
   const filteredMentions = useMemo(() => {
     const suggestions: MentionSuggestion[] = []
@@ -182,9 +208,7 @@ export function useMentions({
       if (suggestion.kind === 'codex') {
         replacement = `[@${CODEX_MENTION_HANDLE}]`
       } else if (suggestion.kind === 'codex_plugin') {
-        replacement = mentionAtLeadingPosition
-          ? `@Codex -${suggestion.selector} `
-          : `[@Codex:${suggestion.selector}] `
+        replacement = `[@Codex:${suggestion.selector}]`
       } else if (suggestion.kind === 'project_agent') {
         replacement = `[@${suggestion.handle}] `
       }
@@ -203,7 +227,7 @@ export function useMentions({
         textarea?.setSelectionRange(newCursor, newCursor)
       })
     },
-    [input, mentionAtLeadingPosition, mentionTokenStart, setInputWithDraft, textareaRef],
+    [input, mentionTokenStart, setInputWithDraft, textareaRef],
   )
 
   const checkMentionTrigger = useCallback(

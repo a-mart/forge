@@ -3,6 +3,8 @@ import { CODEX_MENTION_HANDLE } from './mention-types'
 
 export const MENTION_TOKEN_RE = /\[@[^\]]+\]/gi
 export const CODEX_INLINE_TOOL_TOKEN_RE = /@codex:[^\s]+/gi
+/** Legacy leading plugin shorthand still rendered as a chip in overlays. */
+export const CODEX_LEADING_PLUGIN_TOKEN_RE = /@codex\s+-\s*[^\s]+/gi
 
 /** True when the @ trigger sits at the leading edge of the composer text. */
 export function isLeadingMentionPosition(text: string, atIdx: number): boolean {
@@ -11,11 +13,21 @@ export function isLeadingMentionPosition(text: string, atIdx: number): boolean {
 
 function normalizeMentionHandle(token: string): string {
   if (token.startsWith('[@') && token.endsWith(']')) {
-    return token.slice(2, -1).trim()
+    const inner = token.slice(2, -1).trim()
+    if (inner.toLowerCase().startsWith('codex:')) {
+      return inner.slice('codex:'.length).trim()
+    }
+
+    return inner
   }
 
   if (token.toLowerCase().startsWith('@codex:')) {
     return token.slice('@codex:'.length).trim()
+  }
+
+  const legacyPlugin = token.match(/^@codex\s+-\s*(.+)$/i)
+  if (legacyPlugin) {
+    return legacyPlugin[1]?.trim() ?? ''
   }
 
   return token.slice(1).trim()
@@ -32,12 +44,16 @@ function isCodexToolMentionToken(token: string): boolean {
     return true
   }
 
-  return lower.startsWith('@codex:')
+  if (lower.startsWith('@codex:')) {
+    return true
+  }
+
+  return /^@codex\s+-/.test(lower)
 }
 
 /** Find the mention token range that contains or is bounded by the given cursor position. */
 export function findMentionContaining(text: string, pos: number): { start: number; end: number } | null {
-  const patterns = [MENTION_TOKEN_RE, CODEX_INLINE_TOOL_TOKEN_RE]
+  const patterns = [MENTION_TOKEN_RE, CODEX_INLINE_TOOL_TOKEN_RE, CODEX_LEADING_PLUGIN_TOKEN_RE]
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
       const start = match.index!
@@ -55,7 +71,10 @@ export function findMentionContaining(text: string, pos: number): { start: numbe
 export function renderMentionOverlay(text: string): ReactNode[] {
   const parts: ReactNode[] = []
   let lastIdx = 0
-  const combined = new RegExp(`${MENTION_TOKEN_RE.source}|${CODEX_INLINE_TOOL_TOKEN_RE.source}`, 'gi')
+  const combined = new RegExp(
+    `${MENTION_TOKEN_RE.source}|${CODEX_INLINE_TOOL_TOKEN_RE.source}|${CODEX_LEADING_PLUGIN_TOKEN_RE.source}`,
+    'gi',
+  )
 
   for (const match of text.matchAll(combined)) {
     const start = match.index!
@@ -99,7 +118,11 @@ export function renderMentionOverlay(text: string): ReactNode[] {
 }
 
 export function hasComposerMentionTokens(text: string): boolean {
-  return /\[@[^\]]+\]/i.test(text) || /@codex:[^\s]+/i.test(text)
+  return (
+    /\[@[^\]]+\]/i.test(text) ||
+    /@codex:[^\s]+/i.test(text) ||
+    CODEX_LEADING_PLUGIN_TOKEN_RE.test(text)
+  )
 }
 
 /** True when filter is empty (leading @) or a non-empty prefix of the Codex handle. */
