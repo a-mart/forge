@@ -15,9 +15,10 @@ function buildCatalogSnapshot(): CodexCatalogSnapshot {
     plugins: [
       {
         selector: "fireflies",
-        pluginId: "fireflies",
+        name: "fireflies",
+        pluginId: "fireflies@openai-curated",
         displayName: "Fireflies",
-        relatedServerNames: ["fireflies"],
+        codexAppsToolNames: ["fireflies_fireflies_get_summary"],
       },
       {
         selector: "repo-prompt",
@@ -27,6 +28,12 @@ function buildCatalogSnapshot(): CodexCatalogSnapshot {
       },
     ],
     tools: [
+      {
+        selector: "codex_apps/fireflies_fireflies_get_summary",
+        serverName: "codex_apps",
+        toolName: "fireflies_fireflies_get_summary",
+        readOnly: true,
+      },
       {
         selector: "fireflies/list_recent",
         serverName: "fireflies",
@@ -128,7 +135,7 @@ describe("codex-mcp-tool-gate", () => {
   it("authorizes plugin-scoped selectors for tools within that plugin", () => {
     expect(
       isCodexMcpToolSelectorAuthorized(
-        "fireflies/list_recent",
+        "codex_apps/fireflies_fireflies_get_summary",
         ["fireflies"],
         catalogSnapshot,
         catalogResolver,
@@ -142,20 +149,28 @@ describe("codex-mcp-tool-gate", () => {
         catalogResolver,
       ),
     ).toBe(false);
+    expect(
+      isCodexMcpToolSelectorAuthorized(
+        "codex_apps/fireflies_fireflies_get_summary",
+        ["codex_apps"],
+        catalogSnapshot,
+        catalogResolver,
+      ),
+    ).toBe(false);
   });
 
   it("matches explicit tool selectors and rejects unrelated servers", () => {
     expect(
       isCodexMcpToolSelectorAuthorized(
-        "fireflies/list_recent",
-        ["fireflies/list_recent"],
+        "codex_apps/fireflies_fireflies_get_summary",
+        ["codex_apps/fireflies_fireflies_get_summary"],
         catalogSnapshot,
         catalogResolver,
       ),
     ).toBe(true);
     expect(
       isCodexMcpToolSelectorAuthorized(
-        "other/list",
+        "codex_apps/gmail_gmail_search_messages",
         ["fireflies"],
         catalogSnapshot,
         catalogResolver,

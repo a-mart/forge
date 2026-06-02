@@ -12,26 +12,37 @@ const CATALOG_CACHE_TTL_MS = 30_000;
 const MAX_CATALOG_ENTRIES = 500;
 const MAX_TOOL_ARGS_BYTES = 16 * 1024;
 const MAX_TOOL_RESULT_BYTES = 32 * 1024;
+const CODEX_APPS_AGGREGATE_SERVER = "codex_apps";
 
 export interface CodexCatalogApp {
   id: string;
   name: string;
   description?: string;
+  pluginDisplayNames?: Record<string, string>;
 }
 
 export interface CodexCatalogPlugin {
+  /** User-facing plugin slug used in @Codex mentions (typically plugin `name`). */
   selector: string;
+  /** Short plugin name from app-server (e.g. fireflies). */
+  name?: string;
   pluginId?: string;
   uri?: string;
   displayName: string;
   description?: string;
   enabled?: boolean;
+  installed?: boolean;
   accessState?: string;
+  availability?: string;
   icon?: string;
   riskHints?: string[];
   category?: string;
+  marketplaceName?: string;
+  marketplacePath?: string;
   relatedServerNames?: string[];
   relatedAppIds?: string[];
+  /** Tool names on aggregate codex_apps server uniquely mapped to this plugin. */
+  codexAppsToolNames?: string[];
 }
 
 export interface CodexCatalogMcpTool {
@@ -112,11 +123,12 @@ export class CodexMcpCatalog {
 
     const client = await this.getClient();
     const apps = await this.fetchApps(client);
-    const plugins = await this.fetchPlugins(client);
+    const plugins = enrichPluginsFromApps(await this.fetchPlugins(client), apps);
     const tools = await this.fetchMcpTools(client, apps);
+    const enrichedPlugins = enrichPluginsWithCodexAppsToolScopes(plugins, tools);
     const snapshot: CodexCatalogSnapshot = {
       apps,
-      plugins: plugins.slice(0, MAX_CATALOG_ENTRIES),
+      plugins: enrichedPlugins.slice(0, MAX_CATALOG_ENTRIES),
       tools: tools.slice(0, MAX_CATALOG_ENTRIES),
       fetchedAt: new Date().toISOString(),
     };
@@ -143,11 +155,23 @@ export class CodexMcpCatalog {
       return exact;
     }
 
-    const byId = catalog.plugins.find(
-      (plugin) => plugin.pluginId && normalizeSelector(plugin.pluginId) === normalized,
+    const byShortName = catalog.plugins.filter(
+      (plugin) => plugin.name && normalizeSelector(plugin.name) === normalized,
     );
-    if (byId) {
-      return byId;
+    if (byShortName.length === 1) {
+      return byShortName[0];
+    }
+
+    const byId = catalog.plugins.filter((plugin) => {
+      if (!plugin.pluginId) {
+        return false;
+      }
+      const pluginId = normalizeSelector(plugin.pluginId);
+      const idBase = normalizeSelector(plugin.pluginId.split("@")[0] ?? "");
+      return pluginId === normalized || idBase === normalized;
+    });
+    if (byId.length === 1) {
+      return byId[0];
     }
 
     const nameMatches = catalog.plugins.filter(
@@ -197,11 +221,15 @@ export class CodexMcpCatalog {
       return exact;
     }
 
-    const shortName = catalog.tools.find(
-      (tool) =>
-        normalizeSelector(tool.toolName) === normalized ||
-        normalizeSelector(tool.serverName) === normalized,
-    );
+    const shortName = catalog.tools.find((tool) => {
+      if (normalizeSelector(tool.toolName) === normalized) {
+        return true;
+      }
+      if (isAggregateCodexAppsServer(tool.serverName)) {
+        return false;
+      }
+      return normalizeSelector(tool.serverName) === normalized;
+    });
     if (shortName && catalog.tools.filter((tool) => normalizeSelector(tool.toolName) === normalized).length === 1) {
       return shortName;
     }
@@ -209,7 +237,13 @@ export class CodexMcpCatalog {
     const suffixMatches = catalog.tools.filter((tool) => {
       const server = normalizeSelector(tool.serverName);
       const name = normalizeSelector(tool.toolName);
-      return normalized === name || normalized === server || normalized.endsWith(`/${name}`);
+      if (normalized === name || normalized.endsWith(`/${name}`)) {
+        return true;
+      }
+      if (isAggregateCodexAppsServer(tool.serverName)) {
+        return false;
+      }
+      return normalized === server;
     });
 
     return suffixMatches.length === 1 ? suffixMatches[0] : undefined;
@@ -365,64 +399,130 @@ export class CodexMcpCatalog {
 }
 
 function parsePluginsResponse(response: unknown): CodexCatalogPlugin[] {
+  const fromMarketplaces = parseMarketplacePluginsResponse(response);
+  if (fromMarketplaces.length > 0) {
+    return fromMarketplaces;
+  }
+
   const entries = extractArray(response, ["plugins", "items", "data"]);
   const plugins: CodexCatalogPlugin[] = [];
 
   for (const entry of entries) {
-    if (!isRecord(entry)) {
-      continue;
+    const parsed = parsePluginEntry(entry);
+    if (parsed) {
+      plugins.push(parsed);
     }
-
-    const pluginId =
-      asString(entry.id) ??
-      asString(entry.pluginId) ??
-      asString(entry.plugin_id) ??
-      asString(entry.slug);
-    const displayName =
-      asString(entry.displayName) ??
-      asString(entry.display_name) ??
-      asString(entry.name) ??
-      asString(entry.title) ??
-      pluginId;
-    if (!displayName) {
-      continue;
-    }
-
-    const selector = pluginId ?? slugifyCatalogKey(displayName);
-    if (!selector) {
-      continue;
-    }
-
-    const relatedServerNames = collectStringArray(entry, [
-      "serverNames",
-      "server_names",
-      "mcpServers",
-      "mcp_servers",
-      "servers",
-    ]);
-    const relatedAppIds = collectStringArray(entry, ["appIds", "app_ids", "apps", "linkedApps"]);
-
-    plugins.push({
-      selector,
-      pluginId: pluginId ?? selector,
-      uri: asString(entry.uri) ?? asString(entry.pluginUri) ?? asString(entry.plugin_uri),
-      displayName,
-      description: asString(entry.description) ?? asString(entry.summary),
-      enabled: readOptionalBoolean(entry.enabled ?? entry.isEnabled ?? entry.is_enabled),
-      accessState:
-        asString(entry.accessState) ??
-        asString(entry.access_state) ??
-        asString(entry.state) ??
-        asString(entry.status),
-      icon: asString(entry.icon) ?? asString(entry.iconUrl) ?? asString(entry.icon_url),
-      riskHints: collectPluginRiskHints(entry),
-      category: asString(entry.category) ?? asString(entry.kind) ?? asString(entry.type),
-      relatedServerNames,
-      relatedAppIds,
-    });
   }
 
   return plugins;
+}
+
+function parseMarketplacePluginsResponse(response: unknown): CodexCatalogPlugin[] {
+  const marketplaces = extractArray(response, ["marketplaces"]);
+  const plugins: CodexCatalogPlugin[] = [];
+
+  for (const marketplaceEntry of marketplaces) {
+    if (!isRecord(marketplaceEntry)) {
+      continue;
+    }
+
+    const marketplaceName = asString(marketplaceEntry.name);
+    const marketplacePath = asString(marketplaceEntry.path);
+    const nestedPlugins = extractArray(marketplaceEntry, ["plugins"]);
+
+    for (const pluginEntry of nestedPlugins) {
+      const parsed = parsePluginEntry(pluginEntry, { marketplaceName, marketplacePath });
+      if (parsed) {
+        plugins.push(parsed);
+      }
+    }
+  }
+
+  return plugins;
+}
+
+function parsePluginEntry(
+  entry: unknown,
+  marketplace?: { marketplaceName?: string; marketplacePath?: string },
+): CodexCatalogPlugin | undefined {
+  if (!isRecord(entry)) {
+    return undefined;
+  }
+
+  const pluginId =
+    asString(entry.id) ??
+    asString(entry.pluginId) ??
+    asString(entry.plugin_id) ??
+    asString(entry.slug);
+  const shortName = asString(entry.name);
+  const iface = isRecord(entry.interface) ? entry.interface : undefined;
+  const displayName =
+    asString(iface?.displayName) ??
+    asString(iface?.display_name) ??
+    asString(entry.displayName) ??
+    asString(entry.display_name) ??
+    shortName ??
+    asString(entry.title) ??
+    pluginId;
+  if (!displayName) {
+    return undefined;
+  }
+
+  const selector =
+    shortName ??
+    (pluginId ? pluginId.split("@")[0]?.trim() : undefined) ??
+    slugifyCatalogKey(displayName);
+  if (!selector) {
+    return undefined;
+  }
+
+  const relatedServerNames = collectStringArray(entry, [
+    "serverNames",
+    "server_names",
+    "mcpServers",
+    "mcp_servers",
+    "servers",
+  ]);
+  const relatedAppIds = collectStringArray(entry, ["appIds", "app_ids", "apps", "linkedApps"]);
+
+  return {
+    selector,
+    name: shortName,
+    pluginId: pluginId ?? selector,
+    uri: asString(entry.uri) ?? asString(entry.pluginUri) ?? asString(entry.plugin_uri),
+    displayName,
+    description:
+      asString(iface?.shortDescription) ??
+      asString(iface?.short_description) ??
+      asString(iface?.longDescription) ??
+      asString(iface?.long_description) ??
+      asString(entry.description) ??
+      asString(entry.summary),
+    enabled: readOptionalBoolean(entry.enabled ?? entry.isEnabled ?? entry.is_enabled),
+    installed: readOptionalBoolean(entry.installed ?? entry.isInstalled ?? entry.is_installed),
+    accessState:
+      asString(entry.accessState) ??
+      asString(entry.access_state) ??
+      asString(entry.state) ??
+      asString(entry.status),
+    availability: asString(entry.availability),
+    icon:
+      asString(entry.icon) ??
+      asString(entry.iconUrl) ??
+      asString(entry.icon_url) ??
+      asString(iface?.icon) ??
+      asString(iface?.logo),
+    riskHints: collectPluginRiskHints(entry, iface),
+    category:
+      asString(iface?.category) ??
+      asString(entry.category) ??
+      asString(entry.kind) ??
+      asString(entry.type),
+    marketplaceName: marketplace?.marketplaceName,
+    marketplacePath: marketplace?.marketplacePath,
+    relatedServerNames,
+    relatedAppIds,
+  };
 }
 
 function parseAppsResponse(response: unknown): CodexCatalogApp[] {
@@ -440,10 +540,13 @@ function parseAppsResponse(response: unknown): CodexCatalogApp[] {
       continue;
     }
 
+    const pluginDisplayNames = readStringRecord(entry.pluginDisplayNames ?? entry.plugin_display_names);
+
     apps.push({
       id,
       name,
       description: asString(entry.description) ?? asString(entry.summary),
+      pluginDisplayNames,
     });
   }
 
@@ -670,7 +773,6 @@ export function isToolSelectorAuthorizedInCatalog(
   }
 
   const requestedKey = normalizeSelector(requestedTool.selector);
-  const requestedServer = normalizeSelector(requestedTool.serverName);
 
   for (const authorized of authorizedSelectors) {
     const trimmedAuthorized = authorized.trim();
@@ -693,23 +795,6 @@ export function isToolSelectorAuthorizedInCatalog(
     const authorizedPlugin = resolver.resolvePlugin(trimmedAuthorized, catalog);
     if (authorizedPlugin && resolver.toolMatchesPluginScope(requestedTool, authorizedPlugin)) {
       return true;
-    }
-
-    const authorizedLower = normalizeSelector(trimmedAuthorized);
-    if (authorizedLower === requestedServer) {
-      const scopedTools = catalog.tools.filter((tool) =>
-        resolver.toolMatchesPluginScope(tool, {
-          selector: trimmedAuthorized,
-          displayName: trimmedAuthorized,
-          relatedServerNames: [trimmedAuthorized],
-        }),
-      );
-      if (scopedTools.length === 1 && normalizeSelector(scopedTools[0]!.selector) === requestedKey) {
-        return true;
-      }
-      if (scopedTools.some((tool) => normalizeSelector(tool.selector) === requestedKey)) {
-        return true;
-      }
     }
   }
 
@@ -739,10 +824,16 @@ export function filterToolsForAuthorizedSelectors(
 }
 
 function toolMatchesPluginScope(tool: CodexCatalogMcpTool, plugin: CodexCatalogPlugin): boolean {
+  if (isAggregateCodexAppsServer(tool.serverName)) {
+    return plugin.codexAppsToolNames?.includes(tool.toolName) ?? false;
+  }
+
   const pluginKeys = new Set<string>();
   for (const key of [
     plugin.selector,
+    plugin.name,
     plugin.pluginId,
+    plugin.pluginId?.split("@")[0],
     plugin.displayName,
     slugifyCatalogKey(plugin.displayName),
     ...(plugin.relatedServerNames ?? []),
@@ -757,6 +848,10 @@ function toolMatchesPluginScope(tool: CodexCatalogMcpTool, plugin: CodexCatalogP
   const server = normalizeSelector(tool.serverName);
   const appId = tool.appId ? normalizeSelector(tool.appId) : undefined;
 
+  if (isAggregateCodexAppsServer(server)) {
+    return false;
+  }
+
   if (pluginKeys.has(server)) {
     return true;
   }
@@ -766,6 +861,145 @@ function toolMatchesPluginScope(tool: CodexCatalogMcpTool, plugin: CodexCatalogP
   }
 
   return false;
+}
+
+function isAggregateCodexAppsServer(serverName: string): boolean {
+  return normalizeSelector(serverName) === CODEX_APPS_AGGREGATE_SERVER;
+}
+
+function enrichPluginsFromApps(
+  plugins: CodexCatalogPlugin[],
+  apps: CodexCatalogApp[],
+): CodexCatalogPlugin[] {
+  const displayNameEntries: Array<{ key: string; displayName: string }> = [];
+  for (const app of apps) {
+    if (!app.pluginDisplayNames) {
+      continue;
+    }
+    for (const [key, displayName] of Object.entries(app.pluginDisplayNames)) {
+      displayNameEntries.push({ key, displayName });
+    }
+  }
+
+  if (displayNameEntries.length === 0) {
+    return plugins;
+  }
+
+  return plugins.map((plugin) => {
+    const relatedAppIds = new Set(plugin.relatedAppIds ?? []);
+    for (const { key, displayName } of displayNameEntries) {
+      if (pluginMatchesAppPluginKey(plugin, key, displayName)) {
+        relatedAppIds.add(key);
+      }
+    }
+
+    return relatedAppIds.size > (plugin.relatedAppIds?.length ?? 0)
+      ? { ...plugin, relatedAppIds: [...relatedAppIds] }
+      : plugin;
+  });
+}
+
+function pluginMatchesAppPluginKey(
+  plugin: CodexCatalogPlugin,
+  key: string,
+  displayName: string,
+): boolean {
+  const normalizedKey = normalizeSelector(key);
+  const candidates = [
+    plugin.selector,
+    plugin.name,
+    plugin.pluginId,
+    plugin.pluginId?.split("@")[0],
+    plugin.displayName,
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeSelector(value!));
+
+  if (candidates.includes(normalizedKey)) {
+    return true;
+  }
+
+  return normalizeSelector(displayName) === normalizeSelector(plugin.displayName);
+}
+
+function enrichPluginsWithCodexAppsToolScopes(
+  plugins: CodexCatalogPlugin[],
+  tools: CodexCatalogMcpTool[],
+): CodexCatalogPlugin[] {
+  const codexAppsTools = tools.filter((tool) => isAggregateCodexAppsServer(tool.serverName));
+  if (codexAppsTools.length === 0) {
+    return plugins;
+  }
+
+  return plugins.map((plugin) => {
+    const matchedToolNames = codexAppsTools
+      .filter((tool) => isToolUniquelyMatchedToPlugin(tool, plugin, plugins))
+      .map((tool) => tool.toolName);
+
+    return matchedToolNames.length > 0
+      ? { ...plugin, codexAppsToolNames: matchedToolNames }
+      : plugin;
+  });
+}
+
+function isToolUniquelyMatchedToPlugin(
+  tool: CodexCatalogMcpTool,
+  plugin: CodexCatalogPlugin,
+  allPlugins: CodexCatalogPlugin[],
+): boolean {
+  const prefixes = derivePluginToolPrefixes(plugin);
+  const normalizedToolName = normalizeSelector(tool.toolName);
+  const matchingPrefixes = prefixes.filter((prefix) => normalizedToolName.startsWith(prefix));
+  if (matchingPrefixes.length === 0) {
+    return false;
+  }
+
+  for (const otherPlugin of allPlugins) {
+    if (otherPlugin === plugin) {
+      continue;
+    }
+
+    const otherPrefixes = derivePluginToolPrefixes(otherPlugin);
+    if (otherPrefixes.some((prefix) => normalizedToolName.startsWith(prefix))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function derivePluginToolPrefixes(plugin: CodexCatalogPlugin): string[] {
+  const prefixes = new Set<string>();
+  for (const candidate of [
+    plugin.name,
+    plugin.selector,
+    plugin.pluginId?.split("@")[0],
+    slugifyCatalogKey(plugin.name ?? ""),
+    slugifyCatalogKey(plugin.displayName),
+  ]) {
+    const normalized = candidate ? normalizeSelector(candidate).replace(/-/g, "_") : undefined;
+    if (normalized) {
+      prefixes.add(`${normalized}_`);
+    }
+  }
+
+  return [...prefixes];
+}
+
+function readStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const record: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const text = asString(entry);
+    if (text) {
+      record[key] = text;
+    }
+  }
+
+  return Object.keys(record).length > 0 ? record : undefined;
 }
 
 function collectStringArray(record: Record<string, unknown>, keys: string[]): string[] {
@@ -790,7 +1024,10 @@ function collectStringArray(record: Record<string, unknown>, keys: string[]): st
   return values;
 }
 
-function collectPluginRiskHints(entry: Record<string, unknown>): string[] | undefined {
+function collectPluginRiskHints(
+  entry: Record<string, unknown>,
+  iface?: Record<string, unknown>,
+): string[] | undefined {
   const hints = new Set<string>();
   const riskKeys = [
     "riskHints",
@@ -824,6 +1061,12 @@ function collectPluginRiskHints(entry: Record<string, unknown>): string[] | unde
     }
   }
 
+  if (iface) {
+    for (const keyword of collectStringArray(iface, ["keywords", "tags"])) {
+      hints.add(keyword);
+    }
+  }
+
   const textBlob = [
     asString(entry.category),
     asString(entry.kind),
@@ -831,6 +1074,9 @@ function collectPluginRiskHints(entry: Record<string, unknown>): string[] | unde
     asString(entry.description),
     asString(entry.summary),
     asString(entry.name),
+    asString(iface?.category),
+    asString(iface?.shortDescription),
+    asString(iface?.longDescription),
   ]
     .filter(Boolean)
     .join(" ")

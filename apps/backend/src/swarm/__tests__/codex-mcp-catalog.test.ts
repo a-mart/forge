@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { CodexMcpCatalog } from "../codex-app-server/codex-mcp-catalog.js";
 import type { CodexAppServerClientPort } from "../codex-app-server/types.js";
+import {
+  LIVE_APP_LIST_RESPONSE,
+  LIVE_MCP_SERVER_STATUS_RESPONSE,
+  LIVE_PLUGIN_LIST_RESPONSE,
+} from "./codex-mcp-catalog-live-fixtures.js";
 
 class FakeCatalogClient implements CodexAppServerClientPort {
   readonly requests: Array<{ method: string; params?: unknown }> = [];
@@ -15,7 +20,8 @@ class FakeCatalogClient implements CodexAppServerClientPort {
         plugins: [
           {
             id: "fireflies",
-            name: "Fireflies",
+            name: "fireflies",
+            displayName: "Fireflies",
             description: "Meeting notes",
             category: "productivity",
           },
@@ -144,6 +150,61 @@ describe("CodexMcpCatalog", () => {
       serverName: "fireflies",
       toolName: "list_recent",
     });
+  });
+
+  it("parses live-shaped plugin/list marketplaces and maps codex_apps tools to plugins", async () => {
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string): Promise<T> => {
+      if (method === "plugin/list") {
+        return LIVE_PLUGIN_LIST_RESPONSE as T;
+      }
+      if (method === "app/list") {
+        return LIVE_APP_LIST_RESPONSE as T;
+      }
+      if (method === "mcpServerStatus/list") {
+        return LIVE_MCP_SERVER_STATUS_RESPONSE as T;
+      }
+      return new FakeCatalogClient().request(method);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const snapshot = await catalog.listCatalog(true);
+
+    const fireflies = snapshot.plugins.find((plugin) => plugin.selector === "fireflies");
+    expect(fireflies).toMatchObject({
+      selector: "fireflies",
+      name: "fireflies",
+      pluginId: "fireflies@openai-curated",
+      displayName: "Fireflies",
+      marketplaceName: "openai-curated",
+      codexAppsToolNames: ["fireflies_fireflies_get_summary"],
+    });
+
+    expect(
+      catalog.isToolSelectorAuthorized(
+        "codex_apps/fireflies_fireflies_get_summary",
+        ["fireflies"],
+        snapshot,
+      ),
+    ).toBe(true);
+    expect(
+      catalog.isToolSelectorAuthorized(
+        "codex_apps/gmail_gmail_search_messages",
+        ["fireflies"],
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(
+      catalog.isToolSelectorAuthorized(
+        "codex_apps/fireflies_fireflies_get_summary",
+        ["codex_apps"],
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(catalog.resolvePlugin("fireflies", snapshot)?.displayName).toBe("Fireflies");
+    expect(
+      catalog.filterToolsForAuthorizedSelectors(snapshot, ["fireflies"]).map((tool) => tool.toolName),
+    ).toEqual(["fireflies_fireflies_get_summary"]);
   });
 
   it("authorizes tools within a plugin scope and rejects unrelated servers", async () => {
