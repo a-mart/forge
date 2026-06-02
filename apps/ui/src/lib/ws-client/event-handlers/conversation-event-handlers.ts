@@ -1,6 +1,10 @@
 import { handleUnreadNotification } from '../../notification-service'
 import { getSidebarPerfRegistry } from '../../perf/sidebar-perf-debug'
-import { clampConversationHistory, splitConversationHistory } from '../utils'
+import {
+  clampConversationHistory,
+  resolveModelCacheObservationsForState,
+  splitConversationHistory,
+} from '../utils'
 import type { ManagerWsConversationEventContext } from '../types'
 import type { ServerEvent } from '@forge/protocol'
 
@@ -62,6 +66,10 @@ export function handleConversationEvent(
 
     case 'model_cache_observation': {
       if (event.agentId !== context.state.targetAgentId) {
+        return true
+      }
+
+      if (!context.state.modelCacheVisualizationEnabled) {
         return true
       }
 
@@ -169,6 +177,10 @@ export function handleConversationEvent(
       }
 
       const { messages, activityMessages, modelCacheObservations } = splitConversationHistory(event.messages)
+      const resolvedModelCacheObservations = resolveModelCacheObservationsForState(
+        modelCacheObservations,
+        context.state.modelCacheVisualizationEnabled,
+      )
       // Sidebar perf: stop `session_switch.click_to_history_loaded_ms` and mark
       // the active session-switch token eligible for first-paint completion.
       // The interaction nonce ensures stale bootstraps from A→B→A rapid
@@ -184,7 +196,7 @@ export function handleConversationEvent(
       context.updateState({
         messages,
         activityMessages: clampConversationHistory(activityMessages),
-        modelCacheObservations,
+        modelCacheObservations: resolvedModelCacheObservations,
       })
       return true
     }

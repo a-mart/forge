@@ -398,6 +398,17 @@ describe('SettingsGeneral — collab target', () => {
     expect(container.textContent).not.toContain('Show model icons')
   })
 
+  it('hides prompt cache visualization and does not load builder-only setting in collab mode', async () => {
+    renderCollab()
+    await flush()
+    await flush()
+
+    expect(container.textContent).not.toContain('Prompt Cache Visualization')
+    expect(container.textContent).not.toContain('Enable prompt cache visualization')
+    expect(modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled).not.toHaveBeenCalled()
+    expect(modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi).not.toHaveBeenCalled()
+  })
+
   it('still renders Cortex settings in collab mode', async () => {
     renderCollab()
     await flush()

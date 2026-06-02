@@ -397,8 +397,33 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
-  it('syncs model cache visualization settings over WS and clears hidden observations when disabled', () => {
+  it('ignores observations while disabled and clears them when settings turn off', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    const cacheObservation = {
+      type: 'model_cache_observation' as const,
+      agentId: 'manager',
+      id: 'cache-obs-1',
+      timestamp: '2026-06-02T12:00:00.000Z',
+      runtimeType: 'pi' as const,
+      provider: 'openai-codex' as const,
+      modelId: 'gpt-5.5',
+      tokens: {
+        promptInputTokens: 3000,
+        cachedInputTokens: 2500,
+        cacheWriteInputTokens: 0,
+        uncachedInputTokens: 500,
+        outputTokens: 120,
+        totalTokens: 3120,
+        normalization: 'raw_input_tokens_total' as const,
+      },
+      classification: {
+        version: 1 as const,
+        status: 'hit' as const,
+        cachedRatio: 0.8333333333333334,
+        thresholdTokens: 1024,
+        hitRatioThreshold: 0.8,
+      },
+    }
 
     client.start()
     vi.advanceTimersByTime(60)
@@ -413,33 +438,15 @@ describe('ManagerWsClient', () => {
 
     expect(client.getState().modelCacheVisualizationEnabled).toBe(false)
 
-    emitServerEvent(socket, {
-      type: 'model_cache_observation',
-      agentId: 'manager',
-      id: 'cache-obs-1',
-      timestamp: '2026-06-02T12:00:00.000Z',
-      runtimeType: 'pi',
-      provider: 'openai-codex',
-      modelId: 'gpt-5.5',
-      tokens: {
-        promptInputTokens: 3000,
-        cachedInputTokens: 2500,
-        cacheWriteInputTokens: 0,
-        uncachedInputTokens: 500,
-        outputTokens: 120,
-        totalTokens: 3120,
-        normalization: 'raw_input_tokens_total',
-      },
-      classification: {
-        version: 1,
-        status: 'hit',
-        cachedRatio: 0.8333333333333334,
-        thresholdTokens: 1024,
-        hitRatioThreshold: 0.8,
-      },
-    })
+    emitServerEvent(socket, cacheObservation)
+    expect(client.getState().modelCacheObservations).toEqual([])
 
-    expect(client.getState().modelCacheObservations).toHaveLength(1)
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [cacheObservation],
+    })
+    expect(client.getState().modelCacheObservations).toEqual([])
 
     emitServerEvent(socket, {
       type: 'model_cache_visualization_settings_changed',
@@ -448,7 +455,14 @@ describe('ManagerWsClient', () => {
     })
 
     expect(client.getState().modelCacheVisualizationEnabled).toBe(true)
+    expect(client.getState().modelCacheObservations).toEqual([])
+
+    emitServerEvent(socket, {
+      ...cacheObservation,
+      id: 'cache-obs-2',
+    })
     expect(client.getState().modelCacheObservations).toHaveLength(1)
+    expect(client.getState().modelCacheObservations[0]?.id).toBe('cache-obs-2')
 
     emitServerEvent(socket, {
       type: 'model_cache_visualization_settings_changed',
