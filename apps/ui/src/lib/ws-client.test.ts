@@ -397,6 +397,71 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('syncs model cache visualization settings over WS and clears hidden observations when disabled', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    expect(client.getState().modelCacheVisualizationEnabled).toBe(false)
+
+    emitServerEvent(socket, {
+      type: 'model_cache_observation',
+      agentId: 'manager',
+      id: 'cache-obs-1',
+      timestamp: '2026-06-02T12:00:00.000Z',
+      runtimeType: 'pi',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      tokens: {
+        promptInputTokens: 3000,
+        cachedInputTokens: 2500,
+        cacheWriteInputTokens: 0,
+        uncachedInputTokens: 500,
+        outputTokens: 120,
+        totalTokens: 3120,
+        normalization: 'raw_input_tokens_total',
+      },
+      classification: {
+        version: 1,
+        status: 'hit',
+        cachedRatio: 0.8333333333333334,
+        thresholdTokens: 1024,
+        hitRatioThreshold: 0.8,
+      },
+    })
+
+    expect(client.getState().modelCacheObservations).toHaveLength(1)
+
+    emitServerEvent(socket, {
+      type: 'model_cache_visualization_settings_changed',
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    })
+
+    expect(client.getState().modelCacheVisualizationEnabled).toBe(true)
+    expect(client.getState().modelCacheObservations).toHaveLength(1)
+
+    emitServerEvent(socket, {
+      type: 'model_cache_visualization_settings_changed',
+      enabled: false,
+      updatedAt: new Date().toISOString(),
+    })
+
+    expect(client.getState().modelCacheVisualizationEnabled).toBe(false)
+    expect(client.getState().modelCacheObservations).toEqual([])
+
+    client.destroy()
+  })
+
   it('tracks pending choice ids from live events and bootstrap snapshots', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

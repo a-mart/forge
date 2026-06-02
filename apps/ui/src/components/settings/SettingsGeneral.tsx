@@ -52,6 +52,10 @@ import {
   setWorkPlansEnabledApi,
 } from '@/components/settings/work-plans-api'
 import {
+  fetchModelCacheVisualizationEnabled,
+  setModelCacheVisualizationEnabledApi,
+} from '@/components/settings/model-cache-visualization-api'
+import {
   fetchAvailableShells,
   updateTerminalShellSettings,
   type AvailableShellsResponse,
@@ -105,6 +109,11 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   const [workPlansLoading, setWorkPlansLoading] = useState(true)
   const [workPlansUpdating, setWorkPlansUpdating] = useState(false)
   const [workPlansError, setWorkPlansError] = useState<string | null>(null)
+
+  const [modelCacheVisualizationEnabled, setModelCacheVisualizationEnabled] = useState(false)
+  const [modelCacheVisualizationLoading, setModelCacheVisualizationLoading] = useState(true)
+  const [modelCacheVisualizationUpdating, setModelCacheVisualizationUpdating] = useState(false)
+  const [modelCacheVisualizationError, setModelCacheVisualizationError] = useState<string | null>(null)
 
   // Terminal shell settings — Builder-only
   const [terminalShells, setTerminalShells] = useState<AvailableShellsResponse | null>(null)
@@ -223,6 +232,7 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   }, [cortexSource])
 
   const workPlansSource = apiClient ?? wsUrl
+  const modelCacheVisualizationSource = apiClient ?? wsUrl
 
   useEffect(() => {
     if (!isBuilder) return
@@ -246,6 +256,30 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
     }
   }, [isBuilder, workPlansSource])
 
+  useEffect(() => {
+    if (!isBuilder) return
+    let cancelled = false
+    setModelCacheVisualizationLoading(true)
+    setModelCacheVisualizationError(null)
+    void fetchModelCacheVisualizationEnabled(modelCacheVisualizationSource)
+      .then((enabled) => {
+        if (!cancelled) setModelCacheVisualizationEnabled(enabled)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setModelCacheVisualizationError(
+            err instanceof Error ? err.message : 'Could not load prompt cache visualization setting',
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setModelCacheVisualizationLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isBuilder, modelCacheVisualizationSource])
+
   const handleWorkPlansToggle = useCallback(
     (checked: boolean) => {
       if (workPlansUpdating) return
@@ -263,6 +297,27 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
         })
     },
     [workPlansSource, workPlansUpdating],
+  )
+
+  const handleModelCacheVisualizationToggle = useCallback(
+    (checked: boolean) => {
+      if (modelCacheVisualizationUpdating) return
+      setModelCacheVisualizationUpdating(true)
+      setModelCacheVisualizationError(null)
+      void setModelCacheVisualizationEnabledApi(modelCacheVisualizationSource, checked)
+        .then(() => {
+          setModelCacheVisualizationEnabled(checked)
+        })
+        .catch((err) => {
+          setModelCacheVisualizationError(
+            err instanceof Error ? err.message : 'Failed to update prompt cache visualization setting',
+          )
+        })
+        .finally(() => {
+          setModelCacheVisualizationUpdating(false)
+        })
+    },
+    [modelCacheVisualizationSource, modelCacheVisualizationUpdating],
   )
 
   const handleCortexToggle = useCallback(
@@ -448,6 +503,37 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
           ) : null}
           {workPlansError ? (
             <p className="mt-2 text-xs text-destructive">{workPlansError}</p>
+          ) : null}
+        </SettingsSection>
+      )}
+
+      {isBuilder && (
+        <SettingsSection
+          label="Prompt Cache Visualization"
+          description="Show a compact prompt-cache indicator in manager chat headers for OpenAI/Codex Pi sessions when cached input token counts are available."
+        >
+          <div className="flex items-center gap-3">
+            <Switch
+              id="model-cache-visualization-enabled-toggle"
+              checked={modelCacheVisualizationEnabled}
+              disabled={modelCacheVisualizationLoading || modelCacheVisualizationUpdating}
+              onCheckedChange={handleModelCacheVisualizationToggle}
+              aria-label="Enable prompt cache visualization"
+            />
+            <Label htmlFor="model-cache-visualization-enabled-toggle" className="text-sm font-medium">
+              Enable prompt cache visualization
+            </Label>
+            {modelCacheVisualizationUpdating ? (
+              <span className="text-xs text-muted-foreground">Saving…</span>
+            ) : null}
+          </div>
+          {!modelCacheVisualizationEnabled && !modelCacheVisualizationLoading ? (
+            <p className="mt-2 text-xs italic text-muted-foreground/70">
+              Prompt cache visualization is off. Header indicators and historical cache observations stay hidden.
+            </p>
+          ) : null}
+          {modelCacheVisualizationError ? (
+            <p className="mt-2 text-xs text-destructive">{modelCacheVisualizationError}</p>
           ) : null}
         </SettingsSection>
       )}

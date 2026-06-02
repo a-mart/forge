@@ -37,6 +37,8 @@ import {
   chooseMostRecentSessionFallbackForDeletedTarget,
 } from '@/hooks/index-page/deleted-agent-fallback'
 import { fetchWorkPlansEnabled } from '@/components/settings/work-plans-api'
+import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
+import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
 import { useVisibleMessages } from '@/hooks/index-page/use-visible-messages'
@@ -130,6 +132,21 @@ export function BuilderSurface({
       .then((enabled) => {
         if (!cancelled) {
           setState((prev) => ({ ...prev, workPlansEnabled: enabled }))
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [setState, state.connected, wsUrl])
+
+  useEffect(() => {
+    if (!state.connected) return
+    let cancelled = false
+    void fetchModelCacheVisualizationEnabled(wsUrl)
+      .then((enabled) => {
+        if (!cancelled) {
+          setState((prev) => ({ ...prev, modelCacheVisualizationEnabled: enabled }))
         }
       })
       .catch(() => {})
@@ -298,6 +315,14 @@ export function BuilderSurface({
     activeManagerId &&
     state.taskSnapshotLoadingSessionId !== activeManagerId
       ? state.taskSnapshots[activeManagerId] ?? null
+      : null
+
+  const modelCacheHeaderSummary =
+    state.modelCacheVisualizationEnabled && isActiveManager
+      ? buildModelCacheHeaderSummary({
+          enabled: true,
+          observations: state.modelCacheObservations,
+        })
       : null
 
   const terminalSessionAgentId = useMemo(() => {
@@ -1461,6 +1486,7 @@ export function BuilderSurface({
                   detailedAllView: effectiveDetailedAllView,
                   onDetailedAllViewChange: isActiveManager ? setDetailedAllView : undefined,
                   contextWindowUsage,
+                  modelCacheHeaderSummary,
                   activeWorkSnapshot,
                   activeWorkAgents: state.agents,
                   activeWorkStatuses: state.statuses,

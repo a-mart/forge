@@ -54,6 +54,8 @@ export interface ManagerWsState {
   modelConfigChangeKey: number
   /** Global Active Work Plans feature toggle; defaults to enabled. */
   workPlansEnabled: boolean
+  /** Prompt/model cache visualization toggle; defaults to off. */
+  modelCacheVisualizationEnabled: boolean
 }
 
 export function createInitialManagerWsState(targetAgentId: string | null): ManagerWsState {
@@ -82,5 +84,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     specialistChangeKey: 0,
     modelConfigChangeKey: 0,
     workPlansEnabled: true,
+    modelCacheVisualizationEnabled: false,
   }
 }

@@ -98,6 +98,18 @@ vi.mock('@/components/settings/work-plans-api', () => ({
   setWorkPlansEnabledApi: (...args: unknown[]) => workPlansApiMock.setWorkPlansEnabledApi(...args),
 }))
 
+const modelCacheVisualizationApiMock = vi.hoisted(() => ({
+  fetchModelCacheVisualizationEnabled: vi.fn(),
+  setModelCacheVisualizationEnabledApi: vi.fn(),
+}))
+
+vi.mock('@/components/settings/model-cache-visualization-api', () => ({
+  fetchModelCacheVisualizationEnabled: (...args: unknown[]) =>
+    modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled(...args),
+  setModelCacheVisualizationEnabledApi: (...args: unknown[]) =>
+    modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi(...args),
+}))
+
 const terminalApiMock = vi.hoisted(() => ({
   fetchAvailableShells: vi.fn(),
   updateTerminalShellSettings: vi.fn(),
@@ -135,6 +147,8 @@ beforeEach(() => {
   })
   workPlansApiMock.fetchWorkPlansEnabled.mockResolvedValue(true)
   workPlansApiMock.setWorkPlansEnabledApi.mockResolvedValue(undefined)
+  modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled.mockResolvedValue(false)
+  modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi.mockResolvedValue(undefined)
   terminalApiMock.fetchAvailableShells.mockResolvedValue({
     shells: [
       { name: 'Bash', path: '/bin/bash', available: true },
@@ -571,5 +585,35 @@ describe('SettingsGeneral — collab target', () => {
     expect(container.textContent).toContain('Enable Active Work Plans')
     expect(container.querySelector('#work-plans-enabled-toggle')).toBeTruthy()
     expect(workPlansApiMock.fetchWorkPlansEnabled).toHaveBeenCalled()
+  })
+
+  it('renders prompt cache visualization toggle defaulting off', async () => {
+    renderGeneral()
+    await flush()
+
+    expect(container.textContent).toContain('Enable prompt cache visualization')
+    expect(container.querySelector('#model-cache-visualization-enabled-toggle')).toBeTruthy()
+    expect(modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled).toHaveBeenCalled()
+
+    const toggle = container.querySelector('#model-cache-visualization-enabled-toggle') as HTMLInputElement | null
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('updates prompt cache visualization via PUT when toggled on', async () => {
+    renderGeneral()
+    await flush()
+
+    const toggle = container.querySelector('#model-cache-visualization-enabled-toggle') as HTMLInputElement | null
+    expect(toggle).toBeTruthy()
+
+    flushSync(() => {
+      fireEvent.click(toggle!)
+    })
+    await flush()
+
+    expect(modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi).toHaveBeenCalledWith(
+      expect.any(String),
+      true,
+    )
   })
 })

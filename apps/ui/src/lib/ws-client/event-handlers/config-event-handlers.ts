@@ -49,6 +49,13 @@ export function handleConfigEvent(
       }
       return true
 
+    case 'model_cache_visualization_settings_changed':
+      context.updateState({
+        modelCacheVisualizationEnabled: event.enabled,
+        ...(event.enabled ? {} : { modelCacheObservations: [] }),
+      })
+      return true
+
     default:
       return false
   }

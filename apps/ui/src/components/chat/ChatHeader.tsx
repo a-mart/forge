@@ -16,6 +16,8 @@ import { PinNavigator } from '@/components/chat/PinNavigator'
 import { SystemPromptDialog } from '@/components/chat/message-list/SystemPromptDialog'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { ActiveWorkHeaderIndicator } from '@/components/chat/active-work'
+import { ModelCacheHeaderIndicator } from '@/components/chat/model-cache'
+import type { ModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { cn } from '@/lib/utils'
 import { formatElapsed } from '@/lib/format-utils'
 import type { AgentDescriptor, AgentStatus, AgentSessionPurpose, SessionTaskStateSnapshotEvent } from '@forge/protocol'
@@ -43,6 +45,7 @@ interface ChatHeaderProps {
   /** Callback to toggle Detailed All mode. Present only for manager sessions. */
   onDetailedAllViewChange?: (value: boolean) => void
   contextWindowUsage: { mode: 'known'; usedTokens: number; contextWindow: number } | { mode: 'updating'; contextWindow: number } | null
+  modelCacheHeaderSummary?: ModelCacheHeaderSummary | null
   activeWorkSnapshot?: SessionTaskStateSnapshotEvent | null
   activeWorkAgents?: AgentDescriptor[]
   activeWorkStatuses?: Record<string, { status: AgentStatus }>
@@ -156,6 +159,7 @@ export function ChatHeader({
   detailedAllView = false,
   onDetailedAllViewChange,
   contextWindowUsage,
+  modelCacheHeaderSummary,
   activeWorkSnapshot,
   activeWorkAgents = [],
   activeWorkStatuses = {},
@@ -413,6 +417,10 @@ export function ChatHeader({
               compactionCount={compactionCount}
               isUpdating={contextWindowUsage.mode === 'updating'}
             />
+          ) : null}
+
+          {modelCacheHeaderSummary ? (
+            <ModelCacheHeaderIndicator summary={modelCacheHeaderSummary} />
           ) : null}
 
           {activeWorkSnapshot ? (
