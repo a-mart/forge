@@ -63,6 +63,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   dragHandleListeners,
   onPinSession,
   onPromoteToProjectAgent,
+  onOpenProjectAgentSharing,
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
   onCreateAgentCreator,
@@ -382,6 +383,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                   highlightQuery={highlightQuery}
                   onPinSession={onPinSession}
                   onPromoteToProjectAgent={!isCortex && onPromoteToProjectAgent ? () => onPromoteToProjectAgent(sid) : undefined}
+                  onOpenProjectAgentSharing={onOpenProjectAgentSharing ? () => onOpenProjectAgentSharing(sid) : undefined}
                   onOpenProjectAgentSettings={onOpenProjectAgentSettings ? () => onOpenProjectAgentSettings(sid) : undefined}
                   onDemoteProjectAgent={onDemoteProjectAgent ? () => { void onDemoteProjectAgent(sid) } : undefined}
                   onViewCreationHistory={

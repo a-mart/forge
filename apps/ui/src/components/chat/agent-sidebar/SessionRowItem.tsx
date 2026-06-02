@@ -18,6 +18,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  Share2,
   Sparkles,
   Terminal,
   Trash2,
@@ -65,6 +66,7 @@ const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
   'highlightQuery',
   'onPinSession',
   'onPromoteToProjectAgent',
+  'onOpenProjectAgentSharing',
   'onOpenProjectAgentSettings',
   'onDemoteProjectAgent',
   'onViewCreationHistory',
@@ -116,6 +118,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   highlightQuery,
   onPinSession,
   onPromoteToProjectAgent,
+  onOpenProjectAgentSharing,
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
   onViewCreationHistory,
@@ -153,9 +156,12 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   const hasGroup3 = Boolean(onChangeSessionModel)
     || (isModelOverridden && Boolean(onUseProjectDefault))
     || (Boolean(onPromoteToProjectAgent) && !isProjectAgent && sessionAgent.sessionPurpose !== 'cortex_review' && sessionAgent.sessionPurpose !== 'agent_creator')
-    || (isProjectAgent && Boolean(onOpenProjectAgentSettings))
-    || (isProjectAgent && Boolean(onViewCreationHistory))
-    || (isProjectAgent && Boolean(onDemoteProjectAgent))
+  const hasProjectAgentGroup = isProjectAgent && (
+    Boolean(onOpenProjectAgentSharing)
+    || Boolean(onOpenProjectAgentSettings)
+    || Boolean(onViewCreationHistory)
+    || Boolean(onDemoteProjectAgent)
+  )
 
   // Compute streaming state from statuses map
   const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
@@ -373,6 +379,14 @@ export const SessionRowItem = React.memo(function SessionRowItem({
               Promote to Project Agent
             </ContextMenuItem>
           ) : null}
+          {/* ── Group 4: Project Agent sharing & lifecycle ── */}
+          {hasProjectAgentGroup ? <ContextMenuSeparator /> : null}
+          {isProjectAgent && onOpenProjectAgentSharing ? (
+            <ContextMenuItem onClick={() => onOpenProjectAgentSharing()}>
+              <Share2 className="mr-2 size-3.5" />
+              Share Project Agent…
+            </ContextMenuItem>
+          ) : null}
           {isProjectAgent && onOpenProjectAgentSettings ? (
             <ContextMenuItem onClick={() => onOpenProjectAgentSettings()}>
               <Settings className="mr-2 size-3.5" />
@@ -400,7 +414,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             </ContextMenuItem>
           ) : null}
 
-          {/* ── Group 4: Archive / destructive ── */}
+          {/* ── Group 5: Archive / destructive ── */}
           {(onArchive || archiveDisabledReason || (!isDefault && onDelete)) ? (
             <ContextMenuSeparator />
           ) : null}

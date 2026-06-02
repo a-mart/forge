@@ -184,6 +184,64 @@ describe('SessionRowItem repo-sourced project agent badge', () => {
     expect(repoLabel).toBeNull()
   })
 
+  it('shows direct sharing action for promoted project agents only', () => {
+    const onOpenProjectAgentSharing = vi.fn()
+    renderRow({
+      session: {
+        sessionAgent: makeAgent({
+          projectAgent: {
+            handle: 'local-agent',
+            whenToUse: 'Local tasks',
+          },
+        }),
+        workers: [],
+        isDefault: false,
+      },
+      onOpenProjectAgentSharing,
+      onOpenProjectAgentSettings: vi.fn(),
+      onDemoteProjectAgent: vi.fn(),
+    })
+
+    const trigger = container.querySelector('[data-slot="context-menu-trigger"]') ?? container.firstElementChild
+    expect(trigger).not.toBeNull()
+    flushSync(() => {
+      trigger!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+    })
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Share Project Agent…')
+    expect(text).toContain('Project Agent Settings')
+    expect(text).toContain('Demote to Session')
+
+    const shareItem = Array.from(document.body.querySelectorAll('[role="menuitem"]')).find(
+      (item) => item.textContent?.includes('Share Project Agent'),
+    ) as HTMLElement | undefined
+    expect(shareItem).toBeDefined()
+    flushSync(() => {
+      shareItem!.click()
+    })
+    expect(onOpenProjectAgentSharing).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not show direct sharing action for regular sessions', () => {
+    renderRow({
+      onOpenProjectAgentSharing: vi.fn(),
+      onOpenProjectAgentSettings: vi.fn(),
+      onDemoteProjectAgent: vi.fn(),
+    })
+
+    const trigger = container.querySelector('[data-slot="context-menu-trigger"]') ?? container.firstElementChild
+    expect(trigger).not.toBeNull()
+    flushSync(() => {
+      trigger!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+    })
+
+    const text = document.body.textContent ?? ''
+    expect(text).not.toContain('Share Project Agent')
+    expect(text).not.toContain('Project Agent Settings')
+    expect(text).not.toContain('Demote to Session')
+  })
+
   it('shows distinct unlink context menu item for reload-style public project agent source marker', () => {
     renderRow({
       session: {
