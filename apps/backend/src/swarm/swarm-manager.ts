@@ -4690,6 +4690,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       );
     }
 
+    this.assertCodexPluginWorkerSenderDeliveryAllowed(sender, target);
     this.assertCodexPluginWorkerDeliveryAllowed(target, options);
 
     const origin = options?.origin ?? "internal";
@@ -5410,6 +5411,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     throw new Error("Codex Plugin internal workers cannot be targeted directly.");
+  }
+
+  private assertCodexPluginWorkerSenderDeliveryAllowed(sender: AgentDescriptor, target: AgentDescriptor): void {
+    if (!isCodexPluginWorkerDescriptor(sender)) {
+      return;
+    }
+
+    if (target.role === "manager" && target.agentId === sender.managerId) {
+      return;
+    }
+
+    throw new Error("Codex Plugin internal workers can only report to their owning manager.");
   }
 
   private assertCodexPluginWorkerDeliveryAllowed(
@@ -6142,7 +6155,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (codexMcpToolGate) {
         this.codexMcpToolTurnGateByManagerId.set(managerContextId, codexMcpToolGate);
       }
-      if (codexPluginDelegationContext) {
+      if (codexPluginDelegationContext && receipt.acceptedMode === "prompt") {
         this.activeCodexPluginDelegationByManagerId.set(managerContextId, codexPluginDelegationContext);
       }
       this.logDebug("manager:user_message_dispatch_complete", {

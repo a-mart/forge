@@ -589,6 +589,35 @@ describe("SwarmManager Codex mention routing", () => {
     ).toBe(true);
   });
 
+  it("does not authorize queued selector delegation until that selector turn starts", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    const managerRuntime = manager.runtimeByAgentId.get("manager");
+    expect(managerRuntime).toBeDefined();
+    managerRuntime!.busy = true;
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+
+    expect(managerRuntime!.sendCalls.at(-1)?.delivery).toBe("steer");
+    await expect(manager.delegateCodexPlugin("manager", { task: "List meetings" })).rejects.toThrow(
+      /active user turn with Codex plugin selector/i,
+    );
+    expect(findInternalCodexPluginWorker(manager)).toBeUndefined();
+
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "message_start",
+      message: { role: "user", content: [] },
+    });
+
+    const result = await manager.delegateCodexPlugin("manager", { task: "List meetings" });
+    expect(result.selectors).toEqual(["fireflies"]);
+    expect(findInternalCodexPluginWorker(manager)?.agentId).toBe(result.workerAgentId);
+  });
+
   it("delegate_codex_plugin spawns the hidden scoped worker from the active server-bound selector context", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
@@ -674,6 +703,14 @@ describe("SwarmManager Codex mention routing", () => {
         origin: "internal",
       }),
     ).rejects.toThrow(/cannot be targeted directly/i);
+
+    const sibling = await manager.spawnAgent("manager", { agentId: "sibling-worker" });
+    await expect(
+      manager.sendMessage(worker!.agentId, sibling.agentId, "do not fan out"),
+    ).rejects.toThrow(/only report to their owning manager/i);
+
+    const reportReceipt = await manager.sendMessage(worker!.agentId, "manager", "status: done\nsummary: scoped report");
+    expect(reportReceipt.targetAgentId).toBe("manager");
 
     expect(workerRuntime?.sendCalls.length ?? 0).toBe(sendCountBefore);
     expect(
