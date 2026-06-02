@@ -34,12 +34,31 @@ describe("codex app-server event normalizer", () => {
     const serialized = safeJson({
       Authorization: "Bearer abc.def.ghi",
       apiKey: "sk-live-secret-key-value",
+      accessToken: "access-token-secret",
+      refreshToken: "refresh-token-secret",
+      secretKey: "secret-key-value",
+      apiToken: "api-token-secret",
+      "api-key": "api-key-secret",
+      credentials: { nested: "credential-secret" },
+      textPayload: '{"accessToken":"inline-access-token","refresh-token":"inline-refresh-token"}',
       command: "echo ok",
     });
 
     expect(serialized).toContain("[redacted]");
-    expect(serialized).not.toContain("sk-live-secret-key-value");
-    expect(serialized).not.toContain("Bearer abc");
+    for (const secret of [
+      "sk-live-secret-key-value",
+      "Bearer abc",
+      "access-token-secret",
+      "refresh-token-secret",
+      "secret-key-value",
+      "api-token-secret",
+      "api-key-secret",
+      "credential-secret",
+      "inline-access-token",
+      "inline-refresh-token",
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
   });
 
   it("builds whitelisted command display payloads only", () => {

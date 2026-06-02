@@ -14,21 +14,8 @@ import {
   isReservedProjectAgentHandle,
 } from "../agents/project-agents.js";
 import type { AgentDescriptor } from "../types.js";
-import type { RuntimeSessionEvent } from "../runtime-contracts.js";
 import { TestSwarmManager, bootWithDefaultManager } from "../../test-support/index.js";
 import { createTempConfig } from "../../test-support/temp-config.js";
-
-function managerUserMessageStartEvent(): RuntimeSessionEvent {
-  return { type: "message_start", message: { role: "user", content: "hello" } };
-}
-
-async function activateManagerInboundTurn(manager: TestSwarmManager, agentId = "manager"): Promise<void> {
-  await manager.handleRuntimeSessionEvent(agentId, managerUserMessageStartEvent());
-}
-
-async function endManagerInboundTurn(manager: TestSwarmManager, agentId = "manager"): Promise<void> {
-  await manager.handleRuntimeSessionEvent(agentId, { type: "turn_end", toolResults: [] });
-}
 
 class FakeCodexAppServerClient implements CodexAppServerClientPort {
   turnCounter = 0;
@@ -65,7 +52,25 @@ class FakeCodexAppServerClient implements CodexAppServerClientPort {
     }
 
     if (method === "plugin/list") {
-      return { plugins: [] } as T;
+      return {
+        plugins: [
+          {
+            name: "fireflies",
+            id: "fireflies@openai-curated",
+            enabled: true,
+            availability: "available",
+            interface: { displayName: "Fireflies", shortDescription: "Meeting summaries" },
+          },
+          {
+            name: "repo-prompt",
+            id: "repo-prompt",
+            enabled: true,
+            availability: "available",
+            interface: { displayName: "RepoPrompt", shortDescription: "Repository inspection" },
+            serverNames: ["RepoPrompt"],
+          },
+        ],
+      } as T;
     }
 
     if (method === "app/list") {
@@ -101,7 +106,20 @@ class FakeCodexAppServerClient implements CodexAppServerClientPort {
     }
 
     if (method === "mcpServer/tool/call") {
-      return { content: [{ type: "text", text: "ok" }] } as T;
+      return {
+        content: [
+          {
+            type: "text",
+            text: '{"accessToken":"inline-access-token","api-key":"inline-api-key"}',
+          },
+        ],
+        structuredContent: {
+          refreshToken: "refresh-token-secret",
+          secretKey: "secret-key-secret",
+          apiToken: "api-token-secret",
+          credentials: { password: "credential-password-secret" },
+        },
+      } as T;
     }
 
     throw new Error(`Unexpected fake request: ${method}`);
@@ -206,6 +224,16 @@ function createCodexEnabledTestManager(config: Awaited<ReturnType<typeof createT
 
 function createCodexEnabledManagerOnly(config: Awaited<ReturnType<typeof createTempConfig>>["config"]) {
   return createCodexEnabledTestManager(config).manager;
+}
+
+function findInternalCodexPluginWorker(
+  manager: { listAgentsForInternalUse(): AgentDescriptor[] },
+): AgentDescriptor | undefined {
+  return manager.listAgentsForInternalUse().find((entry) => entry.internalWorkerKind === "codex_plugin");
+}
+
+function hasInternalCodexPluginWorker(manager: { listAgentsForInternalUse(): AgentDescriptor[] }): boolean {
+  return Boolean(findInternalCodexPluginWorker(manager));
 }
 
 function createBusyCodexTestManager(config: Awaited<ReturnType<typeof createTempConfig>>["config"]) {
@@ -506,181 +534,207 @@ describe("SwarmManager Codex mention routing", () => {
     expect(snapshot.tools.some((tool) => tool.selector === "fireflies/list_recent")).toBe(true);
   });
 
-  it("blocks Codex MCP tool calls for scheduled and non-Codex web turns", async () => {
+  it("keeps raw Codex MCP manager methods denied even after selector turns", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
-    await manager.handleUserMessage(
-      '[Scheduled Task: Nightly]\n[scheduleContext] {"scheduleId":"sched-1"}\n\n@Codex -fireflies',
-      { sourceContext: { channel: "web" } },
-    );
-    await activateManagerInboundTurn(manager);
-
-    await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/scheduled|Codex tool mention/i);
+    await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/not available to manager runtimes/i);
     await expect(
       manager.callCodexMcpTool("manager", { selector: "fireflies/list_recent", args: { limit: 1 } }),
-    ).rejects.toThrow(/scheduled|Codex tool mention/i);
+    ).rejects.toThrow(/not available to manager runtimes/i);
 
-    await endManagerInboundTurn(manager);
-    await manager.handleUserMessage("plain hello", { sourceContext: { channel: "web" } });
-    await activateManagerInboundTurn(manager);
-    await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/Codex tool mention/i);
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+
+    await expect(manager.listCodexMcpTools("manager")).rejects.toThrow(/not available to manager runtimes/i);
     await expect(
       manager.callCodexMcpTool("manager", { selector: "fireflies/list_recent", args: { limit: 1 } }),
-    ).rejects.toThrow(/Codex tool mention/i);
+    ).rejects.toThrow(/not available to manager runtimes/i);
   });
 
-  it("allows Codex MCP tools during tagged Builder turn before runtime message_start", async () => {
+  it("routes selector mentions to an internal Codex Plugin worker without manager runtime guidance", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
-    await bootWithDefaultManager(manager, config);
-
-    await manager.handleUserMessage("[@Codex:RepoPrompt/get_code_structure] inspect repo", {
-      sourceContext: { channel: "web" },
-    });
-
-    const catalog = await manager.listCodexMcpTools("manager");
-    expect(catalog.tools.some((tool) => tool.selector === "RepoPrompt/get_code_structure")).toBe(true);
-
-    const result = await manager.callCodexMcpTool("manager", {
-      selector: "RepoPrompt/get_code_structure",
-    });
-    expect(result.ok).toBe(true);
-    expect(result.selector).toBe("RepoPrompt/get_code_structure");
-  });
-
-  it("preserves active Codex gate across later user message_start without pending context", async () => {
-    const { config } = await createTempConfig();
-    const manager = createCodexEnabledManagerOnly(config);
-    await bootWithDefaultManager(manager, config);
-
-    await manager.handleUserMessage("[@Codex:RepoPrompt/get_code_structure] inspect repo", {
-      sourceContext: { channel: "web" },
-    });
-
-    await activateManagerInboundTurn(manager);
-    await manager.handleRuntimeSessionEvent("manager", managerUserMessageStartEvent());
-
-    await expect(
-      manager.callCodexMcpTool("manager", { selector: "RepoPrompt/get_code_structure" }),
-    ).resolves.toMatchObject({ ok: true });
-  });
-
-  it("allows Codex-tagged turns to call only authorized selectors", async () => {
-    const { config } = await createTempConfig();
-    const manager = createCodexEnabledManagerOnly(config);
-    await bootWithDefaultManager(manager, config);
-
-    await manager.handleUserMessage("@Codex -fireflies list meetings", {
-      sourceContext: { channel: "web" },
-    });
-    await activateManagerInboundTurn(manager);
-
-    await expect(
-      manager.callCodexMcpTool("manager", {
-        selector: "other_server/unknown_tool",
-        args: { limit: 1 },
-      }),
-    ).rejects.toThrow(/not authorized|Unknown Codex MCP tool selector/i);
-
-    const result = await manager.callCodexMcpTool("manager", {
-      selector: "fireflies/list_recent",
-      args: { limit: 1 },
-    });
-    expect(result.ok).toBe(true);
-    expect(result.selector).toBe("fireflies/list_recent");
-  });
-
-  it("discards stale pending Codex turn context when manager runtime detaches before message_start", async () => {
-    const { config } = await createTempConfig();
-    const manager = createCodexEnabledManagerOnly(config);
-    await bootWithDefaultManager(manager, config);
+    const managerDescriptor = await bootWithDefaultManager(manager, config);
 
     await manager.handleUserMessage("@Codex -fireflies list meetings", {
       sourceContext: { channel: "web" },
     });
 
-    const detached = (
-      manager as unknown as {
-        detachRuntime(agentId: string): boolean;
-      }
-    ).detachRuntime("manager");
-    expect(detached).toBe(true);
-
-    await manager.handleUserMessage("plain follow up", { sourceContext: { channel: "web" } });
-    await activateManagerInboundTurn(manager);
-
-    await expect(
-      manager.callCodexMcpTool("manager", {
-        selector: "fireflies/list_recent",
-        args: { limit: 1 },
-      }),
-    ).rejects.toThrow(/Codex tool mention/i);
-  });
-
-  it("clears Codex MCP authorization after turn_end so later continuations cannot call", async () => {
-    const { config } = await createTempConfig();
-    const manager = createCodexEnabledManagerOnly(config);
-    await bootWithDefaultManager(manager, config);
-
-    await manager.handleUserMessage("@Codex -fireflies list meetings", {
-      sourceContext: { channel: "web" },
-    });
-    await activateManagerInboundTurn(manager);
-
-    await manager.callCodexMcpTool("manager", {
-      selector: "fireflies/list_recent",
-      args: { limit: 1 },
-    });
-
-    await endManagerInboundTurn(manager);
-
-    await expect(
-      manager.callCodexMcpTool("manager", {
-        selector: "fireflies/list_recent",
-        args: { limit: 1 },
-      }),
-    ).rejects.toThrow(/eligible Builder web user turn|Codex tool mention/i);
-
-    await manager.handleUserMessage("follow up without codex tags", {
-      sourceContext: { channel: "web" },
-    });
-    await activateManagerInboundTurn(manager);
-
-    await expect(
-      manager.callCodexMcpTool("manager", {
-        selector: "fireflies/list_recent",
-        args: { limit: 1 },
-      }),
-    ).rejects.toThrow(/Codex tool mention/i);
-  });
-
-  it("routes leading @Codex -selector and inline @Codex:selector through the manager runtime", async () => {
-    const { config } = await createTempConfig();
-    const manager = createCodexEnabledManagerOnly(config);
-    await bootWithDefaultManager(manager, config);
-
-    await manager.handleUserMessage("@Codex -fireflies list meetings", {
-      sourceContext: { channel: "web" },
-    });
-
-    const leadingSend = manager.runtimeByAgentId.get("manager")?.sendCalls.at(-1);
-    const leadingText =
-      typeof leadingSend?.message === "string" ? leadingSend.message : leadingSend?.message.text ?? "";
-    expect(leadingText).toContain("list_codex_mcp_tools");
-    expect(leadingText).toContain("fireflies");
+    expect(manager.runtimeByAgentId.get("manager")?.sendCalls ?? []).toHaveLength(0);
     expect(manager.listAgents().some((entry) => entry.agentId === "manager--codex")).toBe(false);
+    expect(manager.listAgents().some((entry) => entry.internalWorkerKind === "codex_plugin")).toBe(false);
+    expect(manager.listWorkersForSession("manager")).toEqual([]);
+    expect(manager.listManagerAgents().find((entry) => entry.agentId === "manager")).toMatchObject({
+      workerCount: 0,
+      activeWorkerCount: 0,
+    });
 
-    await manager.handleUserMessage("run @Codex:fireflies/list_recent for today", {
+    const worker = findInternalCodexPluginWorker(manager);
+    expect(worker).toBeDefined();
+    expect(manager.getAgent(worker!.agentId)).toBeUndefined();
+    expect(worker).toMatchObject({
+      role: "worker",
+      managerId: "manager",
+      displayName: "Codex Plugin",
+      specialistDisplayName: "Codex Plugin",
+      model: managerDescriptor.model,
+    });
+
+    const workerRuntime = manager.runtimeByAgentId.get(worker!.agentId);
+    expect(workerRuntime).toBeDefined();
+    const initialSend = workerRuntime!.sendCalls.at(-1);
+    const initialText = typeof initialSend?.message === "string" ? initialSend.message : initialSend?.message.text ?? "";
+    expect(initialText).toContain("Codex Plugin delegation task");
+    expect(initialText).toContain("fireflies/list_recent");
+    expect(initialText).not.toContain("list_codex_mcp_tools");
+    expect(initialText).not.toContain("call_codex_mcp_tool");
+
+    expect(
+      manager
+        .getConversationHistory("manager")
+        .some((entry) => entry.type === "conversation_message" && entry.role === "user" && entry.text === "@Codex -fireflies list meetings"),
+    ).toBe(true);
+  });
+
+  it("rejects direct user and manager sends to active internal Codex Plugin workers", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
       sourceContext: { channel: "web" },
     });
 
-    const inlineSend = manager.runtimeByAgentId.get("manager")?.sendCalls.at(-1);
-    const inlineText =
-      typeof inlineSend?.message === "string" ? inlineSend.message : inlineSend?.message.text ?? "";
-    expect(inlineText).toContain("fireflies/list_recent");
-    expect(inlineText).toContain("call_codex_mcp_tool");
+    const worker = findInternalCodexPluginWorker(manager);
+    expect(worker).toBeDefined();
+    expect(manager.getCodexPluginScopeForWorker(worker!.agentId)).toBeDefined();
+    const workerRuntime = manager.runtimeByAgentId.get(worker!.agentId);
+    const sendCountBefore = workerRuntime?.sendCalls.length ?? 0;
+
+    await expect(
+      manager.handleUserMessage("try direct user target", {
+        targetAgentId: worker!.agentId,
+        sourceContext: { channel: "web" },
+        attachments: [{ type: "binary", mimeType: "text/plain", data: "aGVsbG8=", fileName: "note.txt" }],
+      }),
+    ).rejects.toThrow(/cannot be targeted directly/i);
+
+    await expect(
+      manager.sendMessage("manager", worker!.agentId, "try direct manager target"),
+    ).rejects.toThrow(/cannot be targeted directly/i);
+
+    await expect(
+      manager.sendMessage("manager", worker!.agentId, "try direct manager target with attachments", "auto", {
+        origin: "user",
+        attachments: [{ type: "binary", mimeType: "text/plain", data: "aGVsbG8=", fileName: "note.txt" }],
+      }),
+    ).rejects.toThrow(/cannot be targeted directly/i);
+
+    await expect(
+      manager.sendMessage("manager", worker!.agentId, "internal without bootstrap marker", "auto", {
+        origin: "internal",
+      }),
+    ).rejects.toThrow(/cannot be targeted directly/i);
+
+    expect(workerRuntime?.sendCalls.length ?? 0).toBe(sendCountBefore);
+    expect(
+      manager
+        .getConversationHistory("manager")
+        .some((entry) => entry.type === "conversation_message" && entry.text.includes("try direct user target")),
+    ).toBe(false);
+  });
+
+  it("routes inline and exact selectors to the internal worker", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("run @Codex:RepoPrompt/get_code_structure for today", {
+      sourceContext: { channel: "web" },
+    });
+
+    expect(manager.runtimeByAgentId.get("manager")?.sendCalls ?? []).toHaveLength(0);
+    const worker = findInternalCodexPluginWorker(manager);
+    expect(worker).toBeDefined();
+
+    const initialSend = manager.runtimeByAgentId.get(worker!.agentId)!.sendCalls.at(-1);
+    const initialText = typeof initialSend?.message === "string" ? initialSend.message : initialSend?.message.text ?? "";
+    expect(initialText).toContain("RepoPrompt/get_code_structure");
+    expect(initialText).toContain("run for today");
+  });
+
+  it("selector turns with attachments fail before persistence and worker spawn", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await expect(
+      manager.handleUserMessage("@Codex -fireflies summarize attachment", {
+        sourceContext: { channel: "web" },
+        attachments: [{ type: "binary", mimeType: "text/plain", data: "aGVsbG8=", fileName: "note.txt" }],
+      }),
+    ).rejects.toThrow(/does not support attachments/i);
+
+    expect(hasInternalCodexPluginWorker(manager)).toBe(false);
+    expect(manager.runtimeByAgentId.get("manager")?.sendCalls ?? []).toHaveLength(0);
+    expect(manager.getConversationHistory("manager").some((entry) => entry.type === "conversation_message" && entry.text.includes("summarize attachment"))).toBe(false);
+  });
+
+  it("scheduled selector turns fail closed before manager dispatch or worker spawn", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await expect(
+      manager.handleUserMessage(
+        '[Scheduled Task: Nightly]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nUse @Codex:fireflies',
+        { sourceContext: { channel: "web" } },
+      ),
+    ).rejects.toThrow(/scheduled task/i);
+
+    expect(hasInternalCodexPluginWorker(manager)).toBe(false);
+    expect(manager.runtimeByAgentId.get("manager")?.sendCalls ?? []).toHaveLength(0);
+  });
+
+  it("scoped Codex Plugin worker calls exact tools and clears scope after turn end", async () => {
+    const { config } = await createTempConfig();
+    const { manager, getFakeClient } = createCodexEnabledTestManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+
+    const worker = findInternalCodexPluginWorker(manager);
+    expect(worker).toBeDefined();
+
+    const result = await manager.callCodexPluginScopedTool(worker!.agentId, "codex_fireflies_list_recent", { limit: 1 });
+    expect(result).toMatchObject({ ok: true, selector: "fireflies/list_recent" });
+    expect(result.redactedPreview).toContain("[redacted]");
+    for (const secret of [
+      "inline-access-token",
+      "inline-api-key",
+      "refresh-token-secret",
+      "secret-key-secret",
+      "api-token-secret",
+      "credential-password-secret",
+    ]) {
+      expect(result.redactedPreview).not.toContain(secret);
+    }
+    const toolCallRequest = getFakeClient()!.requests.find((request) => request.method === "mcpServer/tool/call");
+    expect(toolCallRequest?.params).toMatchObject({
+      server: "fireflies",
+      tool: "list_recent",
+      arguments: { limit: 1 },
+    });
+
+    await manager.handleRuntimeSessionEvent(worker!.agentId, { type: "turn_end", toolResults: [] });
+    await expect(
+      manager.callCodexPluginScopedTool(worker!.agentId, "codex_fireflies_list_recent", { limit: 1 }),
+    ).rejects.toThrow(/No active Codex plugin scope/i);
   });
 
   it("persists parent cards with manager-owned agentId and model-context exclusion", async () => {

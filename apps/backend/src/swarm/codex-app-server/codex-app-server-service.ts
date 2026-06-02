@@ -124,27 +124,43 @@ export class CodexAppServerService {
       throw new Error("Codex MCP tool selector is required");
     }
 
-    const lease = { kind: "direct_mcp_call" as const, ownerId: params.managerAgentId };
+    const catalog = await this.mcpCatalog.listCatalog();
+    const resolved = this.mcpCatalog.resolveTool(selector, catalog);
+    if (!resolved) {
+      throw new Error(`Unknown Codex MCP tool selector: ${selector}`);
+    }
+
+    return this.callCodexMcpToolByExactTool({
+      managerAgentId: params.managerAgentId,
+      ownerId: params.managerAgentId,
+      cwd: params.cwd,
+      tool: resolved,
+      args: params.args,
+    });
+  }
+
+  async callCodexMcpToolByExactTool(params: {
+    managerAgentId: string;
+    ownerId: string;
+    cwd: string;
+    tool: CodexCatalogMcpTool;
+    args?: Record<string, unknown>;
+  }): Promise<CodexMcpToolCallResult> {
+    const lease = { kind: "direct_mcp_call" as const, ownerId: params.ownerId };
     this.operationLock.acquire(lease);
 
     try {
-      const catalog = await this.mcpCatalog.listCatalog();
-      const resolved = this.mcpCatalog.resolveTool(selector, catalog);
-      if (!resolved) {
-        throw new Error(`Unknown Codex MCP tool selector: ${selector}`);
-      }
-
       const threadId = await this.startEphemeralThread(params.cwd);
       return await this.mcpCatalog.callTool(
         {
           managerAgentId: params.managerAgentId,
           cwd: params.cwd,
           threadId,
-          serverName: resolved.serverName,
-          toolName: resolved.toolName,
+          serverName: params.tool.serverName,
+          toolName: params.tool.toolName,
           args: params.args,
         },
-        resolved,
+        params.tool,
       );
     } finally {
       this.operationLock.release(lease);

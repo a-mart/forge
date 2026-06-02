@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildCodexToolMentionManagerGuidance,
   classifyCodexUserMessage,
   extractInlineCodexToolSelectors,
   isBuilderWebCodexRoutingSurface,
@@ -36,27 +35,27 @@ describe("parseLeadingCodexMention", () => {
 });
 
 describe("classifyCodexUserMessage", () => {
-  it("classifies leading tool mentions for the manager path", () => {
+  it("classifies leading selector mentions for plugin delegation", () => {
     expect(classifyCodexUserMessage("@Codex -fireflies summarize meetings")).toEqual({
-      kind: "manager_tool",
+      kind: "plugin_delegate",
       selectors: ["fireflies"],
       strippedText: "summarize meetings",
     });
     expect(classifyCodexUserMessage("[@Codex:fireflies] summarize meetings")).toEqual({
-      kind: "manager_tool",
+      kind: "plugin_delegate",
       selectors: ["fireflies"],
       strippedText: "summarize meetings",
     });
   });
 
-  it("classifies inline @Codex:selector mentions for the manager path", () => {
+  it("classifies inline @Codex:selector mentions for plugin delegation", () => {
     expect(classifyCodexUserMessage("please run @Codex:fireflies/list_recent now")).toEqual({
-      kind: "manager_tool",
+      kind: "plugin_delegate",
       selectors: ["fireflies/list_recent"],
       strippedText: "please run now",
     });
     expect(classifyCodexUserMessage("use [@Codex:fireflies] here")).toEqual({
-      kind: "manager_tool",
+      kind: "plugin_delegate",
       selectors: ["fireflies"],
       strippedText: "use here",
     });
@@ -79,13 +78,6 @@ describe("extractInlineCodexToolSelectors", () => {
 describe("stripInlineCodexToolTokens", () => {
   it("removes inline codex tool tokens from visible text", () => {
     expect(stripInlineCodexToolTokens("run @Codex:fireflies now")).toBe("run now");
-  });
-});
-
-describe("buildCodexToolMentionManagerGuidance", () => {
-  it("mentions tagged selectors for the manager runtime", () => {
-    expect(buildCodexToolMentionManagerGuidance(["fireflies"])).toContain("fireflies");
-    expect(buildCodexToolMentionManagerGuidance(["fireflies"])).toContain("list_codex_mcp_tools");
   });
 });
 

@@ -9,6 +9,7 @@ import type {
   SpawnAgentInput
 } from "./types.js";
 import type { CodexCatalogSnapshot, CodexMcpToolCallResult } from "./codex-app-server/codex-mcp-catalog.js";
+import type { CodexPluginScopeRuntimeView } from "./codex-app-server/codex-plugin-scope-service.js";
 import type { TaskToolInput, TaskToolResult } from "./coordination/task-tool.js";
 
 export interface SwarmToolHost {
@@ -69,5 +70,11 @@ export interface SwarmToolHost {
   callCodexMcpTool?(
     managerAgentId: string,
     params: { selector: string; args?: Record<string, unknown> },
+  ): Promise<CodexMcpToolCallResult>;
+  getCodexPluginScopeForWorker?(workerAgentId: string): CodexPluginScopeRuntimeView | undefined;
+  callCodexPluginScopedTool?(
+    workerAgentId: string,
+    scopedToolName: string,
+    args?: Record<string, unknown>,
   ): Promise<CodexMcpToolCallResult>;
 }
