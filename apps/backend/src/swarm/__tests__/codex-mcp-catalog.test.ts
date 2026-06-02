@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CodexMcpCatalog } from "../codex-app-server/codex-mcp-catalog.js";
+import { CodexMcpCatalog, isPluginPickerEligible } from "../codex-app-server/codex-mcp-catalog.js";
 import type { CodexAppServerClientPort } from "../codex-app-server/types.js";
 import {
   LIVE_APP_LIST_RESPONSE,
@@ -22,14 +22,25 @@ class FakeCatalogClient implements CodexAppServerClientPort {
             id: "fireflies",
             name: "fireflies",
             displayName: "Fireflies",
+            enabled: true,
+            availability: "available",
             description: "Meeting notes",
             category: "productivity",
           },
           {
             pluginId: "repo-prompt",
             displayName: "RepoPrompt",
+            enabled: true,
+            availability: "available",
             description: "Repository browser tools",
             serverNames: ["RepoPrompt"],
+          },
+          {
+            id: "disabled-only",
+            name: "disabled_only",
+            displayName: "Disabled Only",
+            enabled: false,
+            availability: "available",
           },
         ],
       } as T;
@@ -205,6 +216,48 @@ describe("CodexMcpCatalog", () => {
     expect(
       catalog.filterToolsForAuthorizedSelectors(snapshot, ["fireflies"]).map((tool) => tool.toolName),
     ).toEqual(["fireflies_fireflies_get_summary"]);
+
+    expect(snapshot.plugins.map((plugin) => plugin.selector).sort()).toEqual([
+      "fireflies",
+      "gmail",
+      "google_calendar",
+    ]);
+    expect(snapshot.plugins.some((plugin) => plugin.selector === "disabled_demo")).toBe(false);
+    expect(snapshot.plugins.some((plugin) => plugin.selector === "unavailable_demo")).toBe(false);
+  });
+
+  it("filters picker catalog to enabled=true plugins with allowed availability", () => {
+    expect(
+      isPluginPickerEligible({
+        selector: "fireflies",
+        displayName: "Fireflies",
+        enabled: true,
+        availability: "available",
+      }),
+    ).toBe(true);
+    expect(
+      isPluginPickerEligible({
+        selector: "disabled",
+        displayName: "Disabled",
+        enabled: false,
+        availability: "available",
+      }),
+    ).toBe(false);
+    expect(
+      isPluginPickerEligible({
+        selector: "missing-enabled",
+        displayName: "Missing Enabled",
+        availability: "available",
+      }),
+    ).toBe(false);
+    expect(
+      isPluginPickerEligible({
+        selector: "unavailable",
+        displayName: "Unavailable",
+        enabled: true,
+        availability: "unavailable",
+      }),
+    ).toBe(false);
   });
 
   it("authorizes tools within a plugin scope and rejects unrelated servers", async () => {

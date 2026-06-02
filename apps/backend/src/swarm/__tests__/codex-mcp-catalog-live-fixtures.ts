@@ -45,6 +45,28 @@ export const LIVE_PLUGIN_LIST_RESPONSE = {
             category: "productivity",
           },
         },
+        {
+          id: "disabled-demo@openai-curated",
+          name: "disabled_demo",
+          enabled: false,
+          installed: false,
+          availability: "available",
+          interface: {
+            displayName: "Disabled Demo",
+            shortDescription: "Should not appear in picker",
+          },
+        },
+        {
+          id: "unavailable-demo@openai-curated",
+          name: "unavailable_demo",
+          enabled: true,
+          installed: false,
+          availability: "unavailable",
+          interface: {
+            displayName: "Unavailable Demo",
+            shortDescription: "Should not appear in picker",
+          },
+        },
       ],
     },
   ],

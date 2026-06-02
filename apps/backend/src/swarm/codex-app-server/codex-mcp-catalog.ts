@@ -126,9 +126,10 @@ export class CodexMcpCatalog {
     const plugins = enrichPluginsFromApps(await this.fetchPlugins(client), apps);
     const tools = await this.fetchMcpTools(client, apps);
     const enrichedPlugins = enrichPluginsWithCodexAppsToolScopes(plugins, tools);
+    const pickerPlugins = filterPluginsForPicker(enrichedPlugins);
     const snapshot: CodexCatalogSnapshot = {
       apps,
-      plugins: enrichedPlugins.slice(0, MAX_CATALOG_ENTRIES),
+      plugins: pickerPlugins.slice(0, MAX_CATALOG_ENTRIES),
       tools: tools.slice(0, MAX_CATALOG_ENTRIES),
       fetchedAt: new Date().toISOString(),
     };
@@ -396,6 +397,48 @@ export class CodexMcpCatalog {
 
     return merged;
   }
+}
+
+const PLUGIN_AVAILABILITY_BLOCKED = new Set([
+  "unavailable",
+  "disabled",
+  "blocked",
+  "error",
+  "uninstalled",
+  "not_available",
+  "not-available",
+]);
+
+const PLUGIN_AVAILABILITY_ALLOWED = new Set(["available", "ready", "installed"]);
+
+/** Plugins eligible for the default composer picker (enabled + available only). */
+export function isPluginPickerEligible(plugin: CodexCatalogPlugin): boolean {
+  if (plugin.enabled !== true) {
+    return false;
+  }
+
+  return isPluginAvailabilityEligible(plugin.availability);
+}
+
+function isPluginAvailabilityEligible(availability: string | undefined): boolean {
+  if (!availability) {
+    return true;
+  }
+
+  const normalized = availability.trim().toLowerCase();
+  if (PLUGIN_AVAILABILITY_BLOCKED.has(normalized)) {
+    return false;
+  }
+
+  if (PLUGIN_AVAILABILITY_ALLOWED.has(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function filterPluginsForPicker(plugins: CodexCatalogPlugin[]): CodexCatalogPlugin[] {
+  return plugins.filter(isPluginPickerEligible);
 }
 
 function parsePluginsResponse(response: unknown): CodexCatalogPlugin[] {
