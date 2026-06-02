@@ -153,6 +153,7 @@ export function reduceAgentsSnapshot(input: {
     patch.targetAgentId = fallbackTarget ?? null
     patch.messages = []
     patch.activityMessages = []
+    patch.modelCacheObservations = []
     patch.pendingChoiceIds = new Set()
 
     const previousTerminalScopeId = resolveTerminalScopeAgentId(state.targetAgentId, state.agents)

@@ -12,7 +12,14 @@ import {
   type ModelCacheTokenFacts,
   type ModelCacheTokenNormalization,
 } from '@forge/protocol'
+import type { RuntimeSessionEvent } from '../runtime-contracts.js'
+import type { SwarmAgentRuntime } from '../runtime-contracts.js'
 import type { AgentDescriptor } from '../types.js'
+import {
+  extractMessageErrorMessage,
+  extractMessageStopReason,
+  extractRole,
+} from '../session/message-utils.js'
 
 /** Rounded-token slack when validating cached + write + uncached against prompt input. */
 export const MODEL_CACHE_TOKEN_INVARIANT_TOLERANCE = 1
@@ -263,6 +270,49 @@ export function buildModelCacheObservation(options: {
     tokens: options.tokens,
     classification: options.classification,
   }
+}
+
+export function captureModelCacheObservationFromRuntimeEvent(options: {
+  agentId: string
+  descriptor: AgentDescriptor | undefined
+  effectiveEvent: RuntimeSessionEvent
+  runtime: SwarmAgentRuntime | undefined
+  timestamp: string
+  enabled: boolean
+}): ModelCacheObservationEvent | null {
+  if (!options.enabled) {
+    return null
+  }
+
+  if (!options.descriptor || options.descriptor.role !== 'manager') {
+    return null
+  }
+
+  if (options.effectiveEvent.type !== 'message_end') {
+    return null
+  }
+
+  if (extractRole(options.effectiveEvent.message) !== 'assistant') {
+    return null
+  }
+
+  const stopReason = extractMessageStopReason(options.effectiveEvent.message)
+  const errorMessage = extractMessageErrorMessage(options.effectiveEvent.message)
+  if (stopReason === 'error' || stopReason === 'aborted' || errorMessage !== undefined) {
+    return null
+  }
+
+  if (!options.runtime || options.runtime.runtimeType !== 'pi') {
+    return null
+  }
+
+  return buildModelCacheObservationFromMessageEnd({
+    agentId: options.agentId,
+    timestamp: options.timestamp,
+    descriptor: options.descriptor,
+    message: options.effectiveEvent.message,
+    runtimeType: 'pi',
+  })
 }
 
 export function buildModelCacheObservationFromMessageEnd(options: {

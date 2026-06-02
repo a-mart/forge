@@ -3,6 +3,7 @@ import type { AgentDescriptor } from '../types.js'
 import {
   areModelCacheTokenFactsConsistent,
   buildModelCacheObservationFromMessageEnd,
+  captureModelCacheObservationFromRuntimeEvent,
   classifyModelCache,
   extractModelCacheTokenFacts,
   isModelCacheClassificationConsistent,
@@ -177,5 +178,64 @@ describe('model-cache-observation', () => {
     })
 
     expect(observation).toBeNull()
+  })
+
+  it('captureModelCacheObservationFromRuntimeEvent fails closed when disabled or runtime missing', () => {
+    const message = {
+      role: 'assistant',
+      provider: 'openai',
+      modelId: 'gpt-5',
+      usage: { input_tokens: 3000, cache_read_input_tokens: 2500, output_tokens: 120 },
+    }
+    const effectiveEvent = { type: 'message_end', message } as const
+    const piRuntime = { runtimeType: 'pi' } as const
+
+    expect(
+      captureModelCacheObservationFromRuntimeEvent({
+        agentId: 'manager-1',
+        descriptor: baseDescriptor,
+        effectiveEvent,
+        runtime: piRuntime as never,
+        timestamp: '2026-06-02T12:00:00.000Z',
+        enabled: false,
+      }),
+    ).toBeNull()
+
+    expect(
+      captureModelCacheObservationFromRuntimeEvent({
+        agentId: 'manager-1',
+        descriptor: baseDescriptor,
+        effectiveEvent,
+        runtime: undefined,
+        timestamp: '2026-06-02T12:00:00.000Z',
+        enabled: true,
+      }),
+    ).toBeNull()
+  })
+
+  it('captureModelCacheObservationFromRuntimeEvent returns observation for eligible manager Pi assistant ends', () => {
+    const observation = captureModelCacheObservationFromRuntimeEvent({
+      agentId: 'manager-1',
+      descriptor: baseDescriptor,
+      effectiveEvent: {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          provider: 'openai',
+          modelId: 'gpt-5',
+          usage: { input_tokens: 3000, cache_read_input_tokens: 2500, output_tokens: 120 },
+        },
+      },
+      runtime: { runtimeType: 'pi' } as never,
+      timestamp: '2026-06-02T12:00:00.000Z',
+      enabled: true,
+    })
+
+    expect(observation).toMatchObject({
+      type: 'model_cache_observation',
+      agentId: 'manager-1',
+      runtimeType: 'pi',
+      provider: 'openai',
+    })
   })
 })
