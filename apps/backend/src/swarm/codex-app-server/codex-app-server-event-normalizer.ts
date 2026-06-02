@@ -18,6 +18,7 @@ const SECRET_KEY_PATTERN =
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._-]+\b/gi;
 const SK_KEY_PATTERN = /\b(sk-[A-Za-z0-9_-]{8,})\b/g;
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
+const EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 
 const ALLOWED_DETAIL_ITEM_TYPES = new Set([
   "commandExecution",
@@ -219,11 +220,16 @@ export function shouldAcceptCodexDetailNotification(
   return activeTurn.codexItemsById?.has(itemId) === true;
 }
 
-function redactString(value: string): string {
+export function redactCodexMcpSensitiveText(value: string): string {
   return value
     .replace(BEARER_PATTERN, "Bearer [redacted]")
     .replace(SK_KEY_PATTERN, "[redacted-api-key]")
-    .replace(JWT_PATTERN, "[redacted-token]");
+    .replace(JWT_PATTERN, "[redacted-token]")
+    .replace(EMAIL_PATTERN, "[redacted-email]");
+}
+
+function redactString(value: string): string {
+  return redactCodexMcpSensitiveText(value);
 }
 
 function truncateText(value: string, maxChars: number): string {

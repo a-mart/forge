@@ -7747,7 +7747,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private detachRuntime(agentId: string, runtimeToken?: number): boolean {
-    return this.runtimeController.detachRuntime(agentId, runtimeToken);
+    const detached = this.runtimeController.detachRuntime(agentId, runtimeToken);
+    if (detached) {
+      this.discardPendingInboundTurnContexts(agentId);
+    }
+    return detached;
+  }
+
+  private discardPendingInboundTurnContexts(agentId: string): void {
+    this.pendingInboundTurnContextsByAgentId.delete(agentId);
+    this.codexMcpToolTurnGateByManagerId.delete(agentId);
   }
 
   private async runRuntimeShutdown(
@@ -7789,6 +7798,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentIdOrError: string | RuntimeErrorEvent,
     maybeError?: RuntimeErrorEvent
   ): Promise<void> {
+    const invokedWithExplicitToken = typeof runtimeTokenOrAgentId === "number";
+    const agentId = invokedWithExplicitToken ? (agentIdOrError as string) : runtimeTokenOrAgentId;
+    const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "manager") {
+      this.pendingInboundTurnContextsByAgentId.delete(agentId);
+    }
+
     await this.runtimeController.handleRuntimeError(runtimeTokenOrAgentId, agentIdOrError, maybeError);
   }
 

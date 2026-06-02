@@ -195,6 +195,42 @@ describe("CodexMcpCatalog", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/approval/i);
+    expect(result.errorPreview).toMatch(/approval/i);
+    expect("error" in result).toBe(false);
+  });
+
+  it("redacts and bounds MCP error text returned to callers", async () => {
+    const leakingClient: CodexAppServerClientPort = {
+      ...new FakeCatalogClient(),
+      request: async <T>(method: string, params?: unknown): Promise<T> => {
+        if (method === "mcpServer/tool/call") {
+          throw new Error("Meeting notes for adam@secret.com Bearer sk-live-abcdef1234567890");
+        }
+        return new FakeCatalogClient().request(method, params);
+      },
+    };
+
+    const catalog = new CodexMcpCatalog(async () => leakingClient);
+    const snapshot = await catalog.listCatalog(true);
+    const tool = catalog.resolveTool("fireflies/list_recent", snapshot)!;
+
+    const result = await catalog.callTool(
+      {
+        managerAgentId: "manager",
+        cwd: "/tmp",
+        threadId: "thread-1",
+        serverName: tool.serverName,
+        toolName: tool.toolName,
+        args: { limit: 1 },
+      },
+      tool,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errorPreview).toContain("[redacted]");
+    expect(result.errorPreview).not.toContain("sk-live-abcdef1234567890");
+    expect(result.errorPreview).not.toContain("adam@secret.com");
+    expect(result.redactedPreview).toBe(result.errorPreview);
+    expect(Buffer.byteLength(result.errorPreview ?? "", "utf8")).toBeLessThanOrEqual(1024);
   });
 });

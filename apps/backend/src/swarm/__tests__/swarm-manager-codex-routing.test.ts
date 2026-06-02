@@ -546,6 +546,33 @@ describe("SwarmManager Codex mention routing", () => {
     expect(result.selector).toBe("fireflies/list_recent");
   });
 
+  it("discards stale pending Codex turn context when manager runtime detaches before message_start", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+
+    const detached = (
+      manager as unknown as {
+        detachRuntime(agentId: string): boolean;
+      }
+    ).detachRuntime("manager");
+    expect(detached).toBe(true);
+
+    await manager.handleUserMessage("plain follow up", { sourceContext: { channel: "web" } });
+    await activateManagerInboundTurn(manager);
+
+    await expect(
+      manager.callCodexMcpTool("manager", {
+        selector: "fireflies/list_recent",
+        args: { limit: 1 },
+      }),
+    ).rejects.toThrow(/Codex tool mention/i);
+  });
+
   it("clears Codex MCP authorization after turn_end so later continuations cannot call", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);

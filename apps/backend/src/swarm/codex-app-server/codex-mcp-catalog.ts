@@ -1,4 +1,4 @@
-import { safeJson } from "./codex-app-server-event-normalizer.js";
+import { redactCodexMcpSensitiveText, safeJson } from "./codex-app-server-event-normalizer.js";
 import { boundCodexMcpToolArgs, truncateBytesUtf8 } from "./codex-mcp-args.js";
 import { assertCodexMcpToolReadOnlyAllowed } from "./codex-mcp-tool-safety.js";
 import { parseCodexMcpToolSafetyFields } from "./codex-mcp-tool-safety.js";
@@ -49,7 +49,8 @@ export interface CodexMcpToolCallResult {
   serverName: string;
   toolName: string;
   ok: boolean;
-  error?: string;
+  /** Redacted, byte-bounded error preview safe for model context and tool details. */
+  errorPreview?: string;
   redactedPreview: string;
 }
 
@@ -212,14 +213,15 @@ export class CodexMcpCatalog {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const errorPreview = truncateBytesUtf8(redactCodexMcpSensitiveText(message), 1024);
       return {
         auditId,
         selector: tool.selector,
         serverName: tool.serverName,
         toolName: tool.toolName,
         ok: false,
-        error: message,
-        redactedPreview: truncateBytesUtf8(message, 1024),
+        errorPreview,
+        redactedPreview: errorPreview,
       };
     }
   }

@@ -661,7 +661,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
                 serverName: result.serverName,
                 toolName: result.toolName,
                 preview: result.redactedPreview,
-                error: result.error,
+                errorPreview: result.errorPreview,
                 auditId: result.auditId,
               };
 
