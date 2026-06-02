@@ -82,6 +82,13 @@ export function classifyCodexMcpToolSafety(tool: CodexCatalogMcpTool): {
     };
   }
 
+  if (annotationFlags.openWorld === true) {
+    return {
+      allowed: false,
+      reason: `Codex MCP tool ${tool.selector} declares open-world access and is blocked in v1.`,
+    };
+  }
+
   if (tool.readOnly === true || annotationFlags.readOnly === true) {
     return { allowed: true };
   }

@@ -159,6 +159,8 @@ export interface CodexAppServerExternalThreadInfo {
 
 export type ExternalThreadInfo = CodexAppServerExternalThreadInfo
 
+export type InternalWorkerKind = 'codex_plugin'
+
 export interface AgentDescriptor {
   agentId: string
   managerId: string
@@ -192,6 +194,7 @@ export interface AgentDescriptor {
   specialistId?: string
   specialistDisplayName?: string
   specialistColor?: string
+  internalWorkerKind?: InternalWorkerKind
   projectAgent?: ProjectAgentInfo
   agentCreatorResult?: AgentCreatorResult
   webSearch?: boolean

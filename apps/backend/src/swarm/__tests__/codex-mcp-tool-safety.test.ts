@@ -26,12 +26,17 @@ describe("codex-mcp-tool-safety", () => {
     ).toBe(true);
   });
 
-  it("rejects destructive and unannotated tools", () => {
+  it("rejects destructive, open-world, and unannotated tools", () => {
     expect(classifyCodexMcpToolSafety(tool({ destructive: true })).allowed).toBe(false);
     expect(classifyCodexMcpToolSafety(tool({ toolName: "delete_item" })).allowed).toBe(false);
     expect(classifyCodexMcpToolSafety(tool({ description: "Update calendar event" })).allowed).toBe(
       false,
     );
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({ readOnly: true, annotations: { readOnlyHint: true, openWorldHint: true } }),
+      ).allowed,
+    ).toBe(false);
   });
 
   it("throws on blocked tools", () => {

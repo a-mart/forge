@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildSwarmTools } from "../swarm-tools.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import type { AgentDescriptor } from "../types.js";
+import type { CodexPluginScopeRuntimeView } from "../codex-app-server/codex-plugin-scope-service.js";
 
 function createManager(): AgentDescriptor {
   return {
@@ -14,29 +15,86 @@ function createManager(): AgentDescriptor {
     updatedAt: new Date().toISOString(),
     cwd: "/tmp/project",
     model: { provider: "openai", modelId: "gpt-5", thinkingLevel: "medium" },
+    sessionFile: "/tmp/project/manager.jsonl",
     sessionSurface: "builder",
   };
 }
 
+function createWorker(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
+  return {
+    agentId: "worker",
+    managerId: "manager",
+    role: "worker",
+    displayName: "Worker",
+    status: "idle",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    cwd: "/tmp/project",
+    model: { provider: "openai", modelId: "gpt-5", thinkingLevel: "medium" },
+    sessionFile: "/tmp/project/worker.jsonl",
+    ...overrides,
+  };
+}
+
+function createHost(overrides: Partial<SwarmToolHost> = {}): SwarmToolHost {
+  return {
+    listAgents: () => [],
+    getWorkerActivity: () => undefined,
+    spawnAgent: async () => {
+      throw new Error("not needed");
+    },
+    killAgent: async () => {},
+    sendMessage: async () => ({
+      targetAgentId: "worker",
+      deliveryId: "d1",
+      acceptedMode: "followUp",
+    }),
+    createSessionFromAgent: async () => {
+      throw new Error("not needed");
+    },
+    publishToUser: async () => ({ targetContext: { channel: "web" } }),
+    requestUserChoice: async () => [],
+    runTaskTool: async () => {
+      throw new Error("not needed");
+    },
+    ...overrides,
+  };
+}
+
+function createScope(): CodexPluginScopeRuntimeView {
+  return {
+    delegationId: "delegation-1",
+    managerAgentId: "manager",
+    workerAgentId: "codex-plugin-fireflies",
+    state: "active",
+    selectors: ["fireflies"],
+    expiresAt: Date.now() + 60_000,
+    allowedTools: [
+      {
+        scopedToolName: "codex_fireflies_list_recent",
+        displaySelector: "fireflies/list_recent",
+        serverName: "fireflies",
+        toolName: "list_recent",
+        pluginSelector: "fireflies",
+        pluginDisplayName: "Fireflies",
+        description: "List recent meetings",
+        inputSchema: {
+          type: "object",
+          properties: { limit: { type: "integer" } },
+          required: [],
+          additionalProperties: true,
+        },
+        inputMode: "schema",
+        readOnly: true,
+      },
+    ],
+  };
+}
+
 describe("codex manager tools", () => {
-  it("exposes list/call codex MCP tools only for builder web managers", () => {
-    const host: SwarmToolHost = {
-      listAgents: () => [],
-      spawnAgent: async () => {
-        throw new Error("not needed");
-      },
-      killAgent: async () => {},
-      sendMessage: async () => ({
-        targetAgentId: "worker",
-        deliveryId: "d1",
-        acceptedMode: "followUp",
-      }),
-      publishToUser: async () => ({ targetContext: { channel: "web" } }),
-      requestUserChoice: async () => [],
-      runTaskTool: async () => {
-        throw new Error("not needed");
-      },
-      listCodexMcpTools: async () => ({ apps: [], tools: [], fetchedAt: new Date().toISOString() }),
+  it("does not expose raw Codex MCP list/call tools to managers", () => {
+    const host = createHost({
+      listCodexMcpTools: async () => ({ apps: [], plugins: [], tools: [], fetchedAt: new Date().toISOString() }),
       callCodexMcpTool: async () => ({
         auditId: "audit-1",
         selector: "fireflies/list",
@@ -45,61 +103,44 @@ describe("codex manager tools", () => {
         ok: true,
         redactedPreview: "{}",
       }),
-    };
+    });
 
     const managerTools = buildSwarmTools(host, createManager()).map((tool) => tool.name);
-    expect(managerTools).toContain("list_codex_mcp_tools");
-    expect(managerTools).toContain("call_codex_mcp_tool");
-
-    const collabManager = buildSwarmTools(host, {
-      ...createManager(),
-      sessionSurface: "collab",
-      collab: { channelId: "ch-1" },
-    } as AgentDescriptor).map((tool) => tool.name);
-
-    expect(collabManager).not.toContain("list_codex_mcp_tools");
-    expect(collabManager).not.toContain("call_codex_mcp_tool");
+    expect(managerTools).not.toContain("list_codex_mcp_tools");
+    expect(managerTools).not.toContain("call_codex_mcp_tool");
   });
 
-  it("bounds call_codex_mcp_tool persisted preview details for UI", async () => {
-    const longPreview = JSON.stringify({ summary: "x".repeat(8_000), email: "adam@secret.com" });
-    const host: SwarmToolHost = {
-      listAgents: () => [],
-      spawnAgent: async () => {
-        throw new Error("not needed");
-      },
-      killAgent: async () => {},
-      sendMessage: async () => ({
-        targetAgentId: "worker",
-        deliveryId: "d1",
-        acceptedMode: "followUp",
-      }),
-      publishToUser: async () => ({ targetContext: { channel: "web" } }),
-      requestUserChoice: async () => [],
-      runTaskTool: async () => {
-        throw new Error("not needed");
-      },
-      listCodexMcpTools: async () => ({ apps: [], tools: [], fetchedAt: new Date().toISOString() }),
-      callCodexMcpTool: async () => ({
-        auditId: "audit-1",
-        selector: "fireflies/list",
-        serverName: "fireflies",
-        toolName: "list",
-        ok: true,
-        redactedPreview: longPreview,
-      }),
-    };
+  it("exposes scoped Codex plugin tools only to the bound internal worker", async () => {
+    const callScoped = vi.fn(async () => ({
+      auditId: "audit-1",
+      selector: "fireflies/list_recent",
+      serverName: "fireflies",
+      toolName: "list_recent",
+      ok: true,
+      redactedPreview: JSON.stringify({ summary: "ok", email: "adam@secret.com" }),
+    }));
+    const host = createHost({
+      getCodexPluginScopeForWorker: (agentId) => (agentId === "codex-plugin-fireflies" ? createScope() : undefined),
+      callCodexPluginScopedTool: callScoped,
+    });
 
-    const tool = buildSwarmTools(host, createManager()).find((entry) => entry.name === "call_codex_mcp_tool");
+    const ordinaryWorkerTools = buildSwarmTools(host, createWorker()).map((tool) => tool.name);
+    expect(ordinaryWorkerTools).not.toContain("codex_fireflies_list_recent");
+
+    const internalWorker = createWorker({
+      agentId: "codex-plugin-fireflies",
+      internalWorkerKind: "codex_plugin",
+      specialistDisplayName: "Codex Plugin",
+    });
+    const scopedTools = buildSwarmTools(host, internalWorker);
+    expect(scopedTools.map((tool) => tool.name)).toContain("list_scoped_codex_plugin_tools");
+    const tool = scopedTools.find((entry) => entry.name === "codex_fireflies_list_recent");
     expect(tool).toBeDefined();
 
-    const result = await tool!.execute("tc-1", { selector: "fireflies/list" });
+    const result = await tool!.execute("tc-1", { limit: 1 });
+    expect(callScoped).toHaveBeenCalledWith("codex-plugin-fireflies", "codex_fireflies_list_recent", { limit: 1 });
     const details = result.details as { preview?: string };
-    expect(details.preview).toBeDefined();
+    expect(details.preview).toContain("[redacted-email]");
     expect(details.preview).not.toContain("adam@secret.com");
-    const { MAX_CODEX_MCP_UI_PREVIEW_BYTES } = await import("../codex-app-server/codex-mcp-args.js");
-    expect(Buffer.byteLength(details.preview ?? "", "utf8")).toBeLessThanOrEqual(
-      MAX_CODEX_MCP_UI_PREVIEW_BYTES,
-    );
   });
 });
