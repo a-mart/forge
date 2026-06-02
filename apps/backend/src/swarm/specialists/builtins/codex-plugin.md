@@ -1,11 +1,11 @@
 ---
 displayName: Codex Plugin
-color: "#7c3aed"
+color: "#475569"
 enabled: true
 whenToUse: Contextual/automatic only. Forge exposes this specialist during @Codex plugin selector turns; managers spawn it to run scoped read-only Codex plugin tools for the bound worker lifetime, then report sanitized findings back.
 modelId: gpt-5.5
 TargetSpace: [builder]
-reasoningLevel: high
+reasoningLevel: medium
 fallbackModelId: gpt-5.5
 fallbackReasoningLevel: medium
 builtin: true
