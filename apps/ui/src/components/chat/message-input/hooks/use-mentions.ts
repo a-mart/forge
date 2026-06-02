@@ -10,6 +10,10 @@ import {
 } from '../mention-types'
 import type { MentionMenuStatus } from '../mention-menu-a11y'
 import {
+  canOfferCodexMentionAtPosition,
+  codexMentionMatchesFilter,
+  codexToolFilterFromTrigger,
+  findCodexToolTriggerStart,
   hasComposerMentionTokens,
   isCodexToolPickerTrigger,
   isLeadingMentionPosition,
@@ -43,17 +47,6 @@ interface UseMentionsReturn {
   codexToolMode: boolean
   mentionMenuStatus: MentionMenuStatus | null
   mentionMenuBlocksQuickSend: boolean
-}
-
-function codexMentionMatchesFilter(filter: string): boolean {
-  if (!filter) return true
-  const lower = filter.toLowerCase()
-  return CODEX_MENTION_HANDLE.toLowerCase().startsWith(lower)
-}
-
-function codexToolFilterFromTrigger(textBeforeCursor: string): string {
-  const match = textBeforeCursor.match(/(?:^|\s)@codex\s*-\s*([^\s]*)$/i)
-  return match?.[1]?.trim().toLowerCase() ?? ''
 }
 
 export function useMentions({
@@ -139,7 +132,11 @@ export function useMentions({
       return suggestions
     }
 
-    if (enableCodexMention && mentionAtLeadingPosition && codexMentionMatchesFilter(mentionFilter)) {
+    if (
+      enableCodexMention &&
+      codexMentionMatchesFilter(mentionFilter) &&
+      (mentionAtLeadingPosition || mentionFilter.length > 0)
+    ) {
       suggestions.push(CODEX_MENTION_SUGGESTION)
     }
 
@@ -216,10 +213,10 @@ export function useMentions({
       const textBeforeCursor = value.slice(0, cursorPos)
 
       if (enableCodexMention && isCodexToolPickerTrigger(textBeforeCursor)) {
-        const atIdx = textBeforeCursor.toLowerCase().lastIndexOf('@codex')
+        const tokenStart = findCodexToolTriggerStart(textBeforeCursor)
         setMentionFilter(codexToolFilterFromTrigger(textBeforeCursor))
-        setMentionTokenStart(atIdx >= 0 ? atIdx : 0)
-        setMentionAtLeadingPosition(isLeadingMentionPosition(value, atIdx >= 0 ? atIdx : 0))
+        setMentionTokenStart(tokenStart)
+        setMentionAtLeadingPosition(isLeadingMentionPosition(value, tokenStart))
         setCodexToolMode(true)
         setIsMentionMenuOpen(true)
         setMentionSelectedIndex(0)
@@ -242,7 +239,8 @@ export function useMentions({
           tokenAfterAt.length <= 50
         ) {
           const isLeadingPosition = isLeadingMentionPosition(value, atIdx)
-          const canOfferCodexMention = enableCodexMention && isLeadingPosition
+          const canOfferCodexMention =
+            enableCodexMention && canOfferCodexMentionAtPosition(value, atIdx, tokenAfterAt)
           if (!hasProjectAgents && !canOfferCodexMention) {
             setIsMentionMenuOpen(false)
             setMentionAtLeadingPosition(false)

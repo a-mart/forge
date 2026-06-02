@@ -102,6 +102,48 @@ export function hasComposerMentionTokens(text: string): boolean {
   return /\[@[^\]]+\]/i.test(text) || /@codex:[^\s]+/i.test(text)
 }
 
+/** True when filter is empty (leading @) or a non-empty prefix of the Codex handle. */
+export function codexMentionMatchesFilter(filter: string): boolean {
+  if (!filter) return true
+  const lower = filter.toLowerCase()
+  return CODEX_MENTION_HANDLE.toLowerCase().startsWith(lower)
+}
+
 export function isCodexToolPickerTrigger(textBeforeCursor: string): boolean {
-  return /(?:^|\s)@codex\s*-\s*[^\s]*$/i.test(textBeforeCursor)
+  return (
+    /(?:^|\s)@codex\s*-\s*[^\s]*$/i.test(textBeforeCursor) ||
+    /(?:^|\s)\[@codex\]\s*-\s*[^\s]*$/i.test(textBeforeCursor)
+  )
+}
+
+export function codexToolFilterFromTrigger(textBeforeCursor: string): string {
+  const bracketMatch = textBeforeCursor.match(/(?:^|\s)\[@codex\]\s*-\s*([^\s]*)$/i)
+  if (bracketMatch) {
+    return bracketMatch[1]?.trim().toLowerCase() ?? ''
+  }
+
+  const match = textBeforeCursor.match(/(?:^|\s)@codex\s*-\s*([^\s]*)$/i)
+  return match?.[1]?.trim().toLowerCase() ?? ''
+}
+
+/** Index of the @Codex or [@Codex] token that opened the tool picker. */
+export function findCodexToolTriggerStart(textBeforeCursor: string): number {
+  const lower = textBeforeCursor.toLowerCase()
+  if (/(?:^|\s)\[@codex\]\s*-/i.test(textBeforeCursor)) {
+    const bracketIdx = lower.lastIndexOf('[@codex]')
+    if (bracketIdx >= 0) {
+      return bracketIdx
+    }
+  }
+
+  const atIdx = lower.lastIndexOf('@codex')
+  return atIdx >= 0 ? atIdx : 0
+}
+
+export function canOfferCodexMentionAtPosition(
+  text: string,
+  atIdx: number,
+  tokenAfterAt: string,
+): boolean {
+  return isLeadingMentionPosition(text, atIdx) || (tokenAfterAt.length > 0 && codexMentionMatchesFilter(tokenAfterAt))
 }

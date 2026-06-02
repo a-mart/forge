@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canOfferCodexMentionAtPosition,
+  codexMentionMatchesFilter,
+  codexToolFilterFromTrigger,
+  findCodexToolTriggerStart,
   findMentionContaining,
   hasComposerMentionTokens,
   isCodexToolPickerTrigger,
@@ -35,5 +39,22 @@ describe('mention-utils codex support', () => {
     expect(findMentionContaining('run @Codex:fireflies now', 10)).toEqual({ start: 4, end: 20 })
     expect(isCodexToolPickerTrigger('@Codex -fire')).toBe(true)
     expect(isCodexToolPickerTrigger('please @Codex -fire')).toBe(true)
+  })
+
+  it('detects tool picker after [@Codex] chip token', () => {
+    expect(isCodexToolPickerTrigger('[@Codex] -')).toBe(true)
+    expect(isCodexToolPickerTrigger('[@Codex]-fire')).toBe(true)
+    expect(isCodexToolPickerTrigger('please [@Codex] -repo')).toBe(true)
+    expect(codexToolFilterFromTrigger('[@Codex] -fire')).toBe('fire')
+    expect(findCodexToolTriggerStart('[@Codex] -fire')).toBe(0)
+    expect(findCodexToolTriggerStart('please [@Codex] -repo')).toBe(7)
+  })
+
+  it('matches codex mention filters for inline prefixes', () => {
+    expect(codexMentionMatchesFilter('C')).toBe(true)
+    expect(codexMentionMatchesFilter('cod')).toBe(true)
+    expect(codexMentionMatchesFilter('zzz')).toBe(false)
+    expect(canOfferCodexMentionAtPosition('please @C', 7, 'C')).toBe(true)
+    expect(canOfferCodexMentionAtPosition('please @', 7, '')).toBe(false)
   })
 })

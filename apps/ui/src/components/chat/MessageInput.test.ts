@@ -809,6 +809,44 @@ describe('MessageInput', () => {
       expect(container.textContent).toContain('@docs')
     })
 
+    it('shows @Codex while typing an inline codex prefix', async () => {
+      renderMessageInput({ enableCodexMention: true, projectAgents })
+      await flush()
+
+      typeInTextarea('Test one two three @C')
+      await flush()
+
+      expect(container.textContent).toContain('@Codex')
+      expect(container.textContent).not.toContain('No matching mentions')
+    })
+
+    it('opens Codex tool picker after [@Codex] chip when user types -', async () => {
+      fetchCodexCatalogMock.mockResolvedValue({
+        status: 'ok',
+        snapshot: {
+          apps: [],
+          tools: [
+            {
+              selector: 'RepoPrompt/get_code_structure',
+              serverName: 'RepoPrompt',
+              toolName: 'get_code_structure',
+            },
+          ],
+          fetchedAt: '2026-01-01T00:00:00.000Z',
+        },
+      })
+
+      renderMessageInput({ enableCodexMention: true, managerAgentId: 'manager-1' })
+      await flush()
+
+      typeInTextarea('[@Codex] -repo')
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('RepoPrompt/get_code_structure')
+      expect(container.textContent).not.toContain('No matching mentions')
+    })
+
     it('does not open an empty mention popup for inline @ when only Codex mention is enabled', async () => {
       renderMessageInput({ enableCodexMention: true })
       await flush()
