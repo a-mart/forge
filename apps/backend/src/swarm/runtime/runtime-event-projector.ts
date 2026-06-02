@@ -258,13 +258,17 @@ export class RuntimeEventProjector {
     descriptor: AgentDescriptor | undefined,
     effectiveEvent: RuntimeSessionEvent
   ): void {
+    if (!this.deps.isModelCacheVisualizationEnabled()) {
+      return;
+    }
+
     const observation = captureModelCacheObservationFromRuntimeEvent({
       agentId,
       descriptor,
       effectiveEvent,
       runtime: this.deps.getRuntime(agentId),
       timestamp: this.deps.now(),
-      enabled: this.deps.isModelCacheVisualizationEnabled()
+      enabled: true
     });
 
     if (observation) {

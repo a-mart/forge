@@ -4,6 +4,7 @@ import {
   areModelCacheTokenFactsConsistent,
   buildModelCacheObservationFromMessageEnd,
   captureModelCacheObservationFromRuntimeEvent,
+  isIntermediateToolUseModelCacheMessageEnd,
   classifyModelCache,
   extractModelCacheTokenFacts,
   isModelCacheClassificationConsistent,
@@ -211,6 +212,62 @@ describe('model-cache-observation', () => {
         enabled: true,
       }),
     ).toBeNull()
+  })
+
+  it.each(['toolUse', 'tool_use', 'ToolUse'])('treats %s assistant ends as intermediate tool-use', (stopReason) => {
+    expect(
+      isIntermediateToolUseModelCacheMessageEnd({
+        role: 'assistant',
+        stopReason,
+      }),
+    ).toBe(true)
+  })
+
+  it('captureModelCacheObservationFromRuntimeEvent skips intermediate tool-use assistant ends', () => {
+    expect(
+      captureModelCacheObservationFromRuntimeEvent({
+        agentId: 'manager-1',
+        descriptor: baseDescriptor,
+        effectiveEvent: {
+          type: 'message_end',
+          message: {
+            role: 'assistant',
+            provider: 'openai',
+            modelId: 'gpt-5',
+            stopReason: 'toolUse',
+            usage: { input_tokens: 3000, cache_read_input_tokens: 2500, output_tokens: 120 },
+          },
+        },
+        runtime: { runtimeType: 'pi' } as never,
+        timestamp: '2026-06-02T12:00:00.000Z',
+        enabled: true,
+      }),
+    ).toBeNull()
+  })
+
+  it('captureModelCacheObservationFromRuntimeEvent uses message turnId for observation id', () => {
+    const observation = captureModelCacheObservationFromRuntimeEvent({
+      agentId: 'manager-1',
+      descriptor: baseDescriptor,
+      effectiveEvent: {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          provider: 'openai',
+          modelId: 'gpt-5',
+          turnId: 'turn-abc',
+          usage: { input_tokens: 3000, cache_read_input_tokens: 2500, output_tokens: 120 },
+        },
+      },
+      runtime: { runtimeType: 'pi' } as never,
+      timestamp: '2026-06-02T12:00:00.000Z',
+      enabled: true,
+    })
+
+    expect(observation).toMatchObject({
+      turnId: 'turn-abc',
+      id: 'turn-abc',
+    })
   })
 
   it('captureModelCacheObservationFromRuntimeEvent returns observation for eligible manager Pi assistant ends', () => {

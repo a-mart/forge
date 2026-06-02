@@ -399,6 +399,7 @@ describe("RuntimeEventProjector", () => {
 
       await projector.projectEvent({ agentId: manager.agentId, event: eligibleCacheAssistantEnd() });
 
+      expect(deps.getRuntime).not.toHaveBeenCalled();
       expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
     });
 
@@ -418,9 +419,25 @@ describe("RuntimeEventProjector", () => {
           agentId: manager.agentId,
           runtimeType: "pi",
           provider: "openai-codex",
-          id: expect.any(String)
+          turnId: "turn-42",
+          id: "turn-42"
         })
       );
+    });
+
+    it.each(["toolUse", "tool_use", "ToolUse"])("does not emit for intermediate tool-use assistant ends (%s)", async (stopReason) => {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({ agentId: "manager-cache-tool-use", role: "manager", managerId: "manager-cache-tool-use" });
+      descriptors.set(manager.agentId, manager);
+      vi.mocked(deps.isModelCacheVisualizationEnabled).mockReturnValue(true);
+      vi.mocked(deps.getRuntime).mockReturnValue(piRuntime(manager));
+
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: eligibleCacheAssistantEnd({ stopReason })
+      });
+
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
     });
 
     it.each([

@@ -230,6 +230,46 @@ export function extractModelCacheModelFacts(
   return { provider, modelId: modelIdRaw, api }
 }
 
+function normalizeStopReasonToken(stopReason: string): string {
+  return stopReason.replace(/[_-]/g, '').toLowerCase()
+}
+
+/** Intermediate Pi assistant ends that request tools — not the final model response. */
+export function isIntermediateToolUseModelCacheMessageEnd(message: unknown): boolean {
+  const stopReason = extractMessageStopReason(message)
+  if (!stopReason) {
+    return false
+  }
+
+  return normalizeStopReasonToken(stopReason) === 'tooluse'
+}
+
+export function extractModelCacheObservationTurnId(
+  effectiveEvent: RuntimeSessionEvent,
+): string | undefined {
+  if (effectiveEvent.type !== 'message_end') {
+    return undefined
+  }
+
+  const message = isRecord(effectiveEvent.message) ? effectiveEvent.message : null
+  if (message && typeof message.turnId === 'string') {
+    const trimmed = message.turnId.trim()
+    if (trimmed.length > 0) {
+      return trimmed
+    }
+  }
+
+  const eventTurnId = (effectiveEvent as { turnId?: unknown }).turnId
+  if (typeof eventTurnId === 'string') {
+    const trimmed = eventTurnId.trim()
+    if (trimmed.length > 0) {
+      return trimmed
+    }
+  }
+
+  return undefined
+}
+
 /** Stable observation id: explicit id, else turnId, else generated at emission. */
 export function resolveModelCacheObservationId(options: {
   id?: string
@@ -302,15 +342,22 @@ export function captureModelCacheObservationFromRuntimeEvent(options: {
     return null
   }
 
+  if (isIntermediateToolUseModelCacheMessageEnd(options.effectiveEvent.message)) {
+    return null
+  }
+
   if (!options.runtime || options.runtime.runtimeType !== 'pi') {
     return null
   }
+
+  const turnId = extractModelCacheObservationTurnId(options.effectiveEvent)
 
   return buildModelCacheObservationFromMessageEnd({
     agentId: options.agentId,
     timestamp: options.timestamp,
     descriptor: options.descriptor,
     message: options.effectiveEvent.message,
+    turnId,
     runtimeType: 'pi',
   })
 }
