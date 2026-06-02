@@ -147,14 +147,8 @@ describe("CodexPluginScopeService", () => {
     ).rejects.toThrow(/open-world/i);
   });
 
-  it("enforces stale and cross-scope scoped tool calls", async () => {
-    let now = 1000;
-    const service = new CodexPluginScopeService({
-      catalog: adapter(catalog()),
-      nowMs: () => now,
-      pendingScopeTtlMs: 100,
-      activeScopeTtlMs: 100,
-    });
+  it("rejects scoped tool calls after the worker scope is closed", async () => {
+    const service = new CodexPluginScopeService({ catalog: adapter(catalog()) });
     const { scope } = await service.materializePendingScope({
       managerAgentId: "manager",
       workerAgentId: "codex-plugin-fireflies",
@@ -166,8 +160,8 @@ describe("CodexPluginScopeService", () => {
     expect(() => service.authorizeScopedToolCall("codex-plugin-fireflies", "codex_repoprompt_get_code_structure")).toThrow(/not allowed/i);
 
     service.activateScopeForWorker("codex-plugin-fireflies", "delegation-1");
-    now += 101;
-    expect(() => service.authorizeScopedToolCall("codex-plugin-fireflies", scope.allowedTools[0]!.scopedToolName)).toThrow(/No active|expired/i);
+    service.closeScopeForWorker("codex-plugin-fireflies");
+    expect(() => service.authorizeScopedToolCall("codex-plugin-fireflies", scope.allowedTools[0]!.scopedToolName)).toThrow(/No active|closed/i);
   });
 
   it("generates deterministic collision-safe names and args fallback for huge schemas", async () => {

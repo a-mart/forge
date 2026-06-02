@@ -17,8 +17,6 @@ export const CODEX_PLUGIN_SPECIALIST_ID = "codex-plugin" as const;
 export const CODEX_PLUGIN_SPECIALIST_DISPLAY_NAME = "Codex Plugin" as const;
 export const CODEX_PLUGIN_SPECIALIST_COLOR = "#7c3aed" as const;
 
-const DEFAULT_PENDING_SCOPE_TTL_MS = 60_000;
-const DEFAULT_ACTIVE_SCOPE_TTL_MS = 15 * 60_000;
 const MAX_ALLOWED_TOOLS_PER_SCOPE = 24;
 const MAX_DESCRIPTION_BYTES = 512;
 const MAX_SCHEMA_BYTES = 8 * 1024;
@@ -45,7 +43,6 @@ export interface CodexPluginScopeRecord {
   workerAgentId: string;
   turnId?: string;
   createdAt: number;
-  expiresAt: number;
   state: "pending_runtime" | "active" | "closed";
   selectors: string[];
   allowedTools: readonly CodexPluginAllowedTool[];
@@ -58,7 +55,6 @@ export interface CodexPluginScopeRuntimeView {
   state: CodexPluginScopeRecord["state"];
   selectors: readonly string[];
   allowedTools: readonly CodexPluginAllowedTool[];
-  expiresAt: number;
 }
 
 export interface CodexPluginMaterializeResult {
@@ -84,8 +80,6 @@ export interface CodexPluginScopeCatalogAdapter {
 export interface CodexPluginScopeServiceOptions {
   catalog: CodexPluginScopeCatalogAdapter;
   nowMs?: () => number;
-  pendingScopeTtlMs?: number;
-  activeScopeTtlMs?: number;
 }
 
 export interface CodexPluginScopeMaterializeInput {
@@ -108,7 +102,7 @@ export function createCodexPluginDelegationId(): string {
 export function buildCodexPluginWorkerPrompt(): string {
   return `You are Forge's Codex Plugin specialist worker.
 
-You were spawned by the owning manager for a user turn that selected a Codex plugin/tool. Forge binds your plugin/tool scope server-side; you are a visible specialist worker, but your connector tools remain limited to that original scope.
+You were spawned by the owning manager for a user turn that selected a Codex plugin/tool. Forge binds your plugin/tool scope server-side for this worker's lifetime; you are a visible specialist worker, but your connector tools remain limited to that original scope.
 
 Rules:
 - Use only the scoped Codex plugin tools exposed in this runtime for Codex connector data.
@@ -175,20 +169,14 @@ function sanitizeDelegationText(value: string, maxBytes = 8 * 1024): string {
 export class CodexPluginScopeService {
   private readonly scopesByWorkerAgentId = new Map<string, CodexPluginScopeRecord>();
   private readonly nowMs: () => number;
-  private readonly pendingScopeTtlMs: number;
-  private readonly activeScopeTtlMs: number;
 
   constructor(private readonly options: CodexPluginScopeServiceOptions) {
     this.nowMs = options.nowMs ?? (() => Date.now());
-    this.pendingScopeTtlMs = options.pendingScopeTtlMs ?? DEFAULT_PENDING_SCOPE_TTL_MS;
-    this.activeScopeTtlMs = options.activeScopeTtlMs ?? DEFAULT_ACTIVE_SCOPE_TTL_MS;
   }
 
   async materializePendingScope(
     input: CodexPluginScopeMaterializeInput,
   ): Promise<CodexPluginMaterializeResult> {
-    this.pruneExpiredScopes();
-
     const selectors = normalizeSelectors(input.selectors);
     if (selectors.length === 0) {
       throw new Error("Codex plugin delegation requires at least one selector.");
@@ -206,7 +194,6 @@ export class CodexPluginScopeService {
       managerAgentId: input.managerAgentId,
       workerAgentId: input.workerAgentId,
       createdAt: now,
-      expiresAt: now + this.pendingScopeTtlMs,
       state: "pending_runtime",
       selectors,
       allowedTools: Object.freeze(allowedTools.map((tool) => Object.freeze({ ...tool }))),
@@ -229,7 +216,6 @@ export class CodexPluginScopeService {
       state: scope.state,
       selectors: scope.selectors,
       allowedTools: scope.allowedTools,
-      expiresAt: scope.expiresAt,
     };
   }
 
@@ -245,13 +231,8 @@ export class CodexPluginScopeService {
     if (scope.state === "closed") {
       throw new Error("Codex plugin scope is closed.");
     }
-    if (this.isExpired(scope)) {
-      this.closeScopeForWorker(workerAgentId);
-      throw new Error("Codex plugin scope expired before activation.");
-    }
 
     scope.state = "active";
-    scope.expiresAt = this.nowMs() + this.activeScopeTtlMs;
     if (turnId) {
       scope.turnId = turnId;
     }
@@ -262,16 +243,11 @@ export class CodexPluginScopeService {
     if (!scope || scope.state === "closed") {
       return;
     }
-    if (this.isExpired(scope)) {
-      this.closeScopeForWorker(workerAgentId);
-      return;
-    }
     if (turnId && !scope.turnId) {
       scope.turnId = turnId;
     }
     if (scope.state === "pending_runtime") {
       scope.state = "active";
-      scope.expiresAt = this.nowMs() + this.activeScopeTtlMs;
     }
   }
 
@@ -279,14 +255,9 @@ export class CodexPluginScopeService {
     workerAgentId: string,
     scopedToolName: string,
   ): CodexPluginScopedToolCallAuthorization {
-    this.pruneExpiredScopes();
     const scope = this.requireScope(workerAgentId);
     if (scope.state === "closed") {
       throw new Error("Codex plugin scope is closed.");
-    }
-    if (this.isExpired(scope)) {
-      this.closeScopeForWorker(workerAgentId);
-      throw new Error("Codex plugin scope has expired.");
     }
     if (scope.workerAgentId !== workerAgentId) {
       throw new Error("Codex plugin scope worker mismatch.");
@@ -317,15 +288,6 @@ export class CodexPluginScopeService {
     }
   }
 
-  pruneExpiredScopes(): void {
-    for (const [workerAgentId, scope] of this.scopesByWorkerAgentId.entries()) {
-      if (this.isExpired(scope) || scope.state === "closed") {
-        scope.state = "closed";
-        this.scopesByWorkerAgentId.delete(workerAgentId);
-      }
-    }
-  }
-
   private requireScope(workerAgentId: string): CodexPluginScopeRecord {
     const scope = this.scopesByWorkerAgentId.get(workerAgentId);
     if (!scope) {
@@ -335,18 +297,7 @@ export class CodexPluginScopeService {
   }
 
   private isScopeUsable(scope: CodexPluginScopeRecord): boolean {
-    if (scope.state === "closed") {
-      return false;
-    }
-    if (this.isExpired(scope)) {
-      this.closeScopeForWorker(scope.workerAgentId);
-      return false;
-    }
-    return true;
-  }
-
-  private isExpired(scope: CodexPluginScopeRecord): boolean {
-    return scope.expiresAt <= this.nowMs();
+    return scope.state !== "closed";
   }
 
   private resolveAllowedToolsForSelectors(
