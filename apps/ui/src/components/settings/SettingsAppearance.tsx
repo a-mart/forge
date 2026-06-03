@@ -22,6 +22,7 @@ import {
   mixColor,
   readStoredAppearanceConfig,
   resolveAppearanceCssVariables,
+  resolveAppearanceIsDark,
   type AppearanceCodeFont,
   type AppearanceConfig,
   type AppearanceFont,
@@ -42,11 +43,7 @@ export function SettingsAppearance() {
 
   const draftIsDirty = !areAppearanceConfigsEqual(draftAppearance, appliedAppearance)
 
-  const previewIsDark = useMemo(() => {
-    if (draftAppearance.mode === 'dark') return true
-    if (draftAppearance.mode === 'light') return false
-    return typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-  }, [draftAppearance.mode])
+  const previewIsDark = useMemo(() => resolveAppearanceIsDark(draftAppearance.mode), [draftAppearance.mode])
 
   const previewVariables = useMemo(
     () => resolveAppearanceCssVariables({ ...draftAppearance, customApplied: true }, previewIsDark),
@@ -80,6 +77,14 @@ export function SettingsAppearance() {
   }, [])
 
   const handleApply = useCallback(() => {
+    if (isOriginalForgeDraft(draftAppearance)) {
+      const defaults = getDefaultAppearanceConfig()
+      setDraftAppearance(defaults)
+      setAppliedAppearance(defaults)
+      applyAppearanceConfig(defaults, { applyModeWhenCustomDisabled: true })
+      return
+    }
+
     const next = { ...draftAppearance, version: 1, customApplied: true } satisfies AppearanceConfig
     setDraftAppearance(next)
     setAppliedAppearance(next)
@@ -94,16 +99,17 @@ export function SettingsAppearance() {
   }, [])
 
   return (
-    <div className="flex flex-col gap-8">
-      <SettingsSection
-        label="Appearance"
-        description="Draft a device-local appearance, preview it here, then apply it when ready."
-      >
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(17rem,20rem)] xl:items-start xl:gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(18rem,21rem)] 2xl:gap-6">
+      <div className="flex min-w-0 flex-col gap-8">
+        <SettingsSection
+          label="Appearance"
+          description="Draft a device-local appearance, preview it here, then apply it when ready."
+        >
         <SettingsWithCTA
           label="Theme mode"
           description="Draft light, dark, or system mode. The app changes only after Apply."
         >
-          <div className="grid w-full grid-cols-3 gap-1 rounded-lg border border-border bg-muted/30 p-1 sm:w-[20rem]">
+          <div className="grid w-full grid-cols-3 gap-1 rounded-lg border border-border bg-muted/30 p-1 sm:w-80">
             {MODE_OPTIONS.map((option) => {
               const active = draftAppearance.mode === option.value
               return (
@@ -153,7 +159,7 @@ export function SettingsAppearance() {
             value={draftAppearance.uiFont}
             onValueChange={(value) => patchDraft({ uiFont: value as AppearanceFont })}
           >
-            <SelectTrigger className="w-full sm:w-56">
+            <SelectTrigger className="w-full sm:w-64">
               <SelectValue placeholder="Select UI font" />
             </SelectTrigger>
             <SelectContent>
@@ -172,7 +178,7 @@ export function SettingsAppearance() {
             value={draftAppearance.codeFont}
             onValueChange={(value) => patchDraft({ codeFont: value as AppearanceCodeFont })}
           >
-            <SelectTrigger className="w-full sm:w-56">
+            <SelectTrigger className="w-full sm:w-64">
               <SelectValue placeholder="Select code font" />
             </SelectTrigger>
             <SelectContent>
@@ -182,13 +188,13 @@ export function SettingsAppearance() {
             </SelectContent>
           </Select>
         </SettingsWithCTA>
-      </SettingsSection>
+        </SettingsSection>
 
-      <SettingsSection
-        label="Template themes"
-        description="Forge-native presets. Selecting one updates the draft and preview only."
-      >
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <SettingsSection
+          label="Template themes"
+          description="Forge-native presets. Selecting one updates the draft and preview only."
+        >
+        <div className="grid gap-3 lg:grid-cols-2">
           {APPEARANCE_TEMPLATES.map((template) => {
             const active = isTemplateDraftActive(draftAppearance, template)
             return (
@@ -227,14 +233,16 @@ export function SettingsAppearance() {
             )
           })}
         </div>
-      </SettingsSection>
+        </SettingsSection>
+      </div>
 
-      <SettingsSection
-        label="Draft preview"
-        description="This card previews the draft only. The rest of Forge will not change until you click Apply."
-      >
-        <div className="mb-3 flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={handleRandomize}>
+      <div className="flex min-w-0 flex-col gap-6 xl:sticky xl:top-4">
+        <SettingsSection
+          label="Draft preview"
+          description="This card previews the draft only. The rest of Forge will not change until you click Apply."
+        >
+        <div className="mb-3 flex justify-stretch sm:justify-end xl:justify-stretch">
+          <Button type="button" variant="outline" size="sm" className="w-full sm:w-auto xl:w-full" onClick={handleRandomize}>
             <Shuffle className="mr-1.5 size-3.5" />
             Randomize draft
           </Button>
@@ -243,7 +251,7 @@ export function SettingsAppearance() {
           className="rounded-xl border p-4 shadow-sm"
           style={previewShellStyle(previewVariables)}
         >
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border p-3" style={previewCardStyle(previewVariables)}>
+          <div className="mb-3 flex flex-col items-start justify-between gap-3 rounded-lg border p-3 sm:flex-row sm:items-center xl:flex-col xl:items-start" style={previewCardStyle(previewVariables)}>
             <div>
               <div className="text-sm font-semibold" style={{ color: previewVariables['--foreground'] }}>Forge workspace</div>
               <div className="text-xs" style={{ color: previewVariables['--muted-foreground'] }}>Draft-only appearance preview</div>
@@ -255,12 +263,12 @@ export function SettingsAppearance() {
               Primary
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-[1fr_12rem]">
+          <div className="grid gap-3">
             <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: previewVariables['--muted'], color: previewVariables['--foreground'] }}>
               Draft changes stay inside this preview until you apply them.
             </div>
             <code
-              className="rounded-lg border p-3 text-xs"
+              className="min-w-0 rounded-lg border p-3 text-xs"
               style={{
                 backgroundColor: previewVariables['--card'],
                 borderColor: previewVariables['--border'],
@@ -272,20 +280,21 @@ export function SettingsAppearance() {
             </code>
           </div>
         </div>
-      </SettingsSection>
+        </SettingsSection>
 
-      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs text-muted-foreground">
-          {draftIsDirty ? 'You have unapplied draft changes.' : appliedAppearance.customApplied ? 'Custom appearance is applied.' : 'Forge default appearance is active.'}
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={handleReset}>
-            <RotateCcw className="mr-1.5 size-3.5" />
-            Reset defaults
-          </Button>
-          <Button type="button" size="sm" onClick={handleApply} disabled={!draftIsDirty && appliedAppearance.customApplied}>
-            Apply appearance
-          </Button>
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between xl:flex-col xl:items-stretch">
+          <p className="text-xs text-muted-foreground">
+            {draftIsDirty ? 'You have unapplied draft changes.' : appliedAppearance.customApplied ? 'Custom appearance is applied.' : 'Forge default appearance is active.'}
+          </p>
+          <div className="flex justify-end gap-2 xl:flex-col">
+            <Button type="button" variant="outline" size="sm" onClick={handleReset}>
+              <RotateCcw className="mr-1.5 size-3.5" />
+              Reset defaults
+            </Button>
+            <Button type="button" size="sm" onClick={handleApply} disabled={!draftIsDirty && appliedAppearance.customApplied}>
+              Apply appearance
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -324,6 +333,17 @@ function isTemplateDraftActive(draft: AppearanceConfig, template: AppearanceTemp
     draft.accentColor === template.accentColor &&
     draft.backgroundColor === template.backgroundColor &&
     draft.foregroundColor === template.foregroundColor
+}
+
+function isOriginalForgeDraft(draft: AppearanceConfig): boolean {
+  const defaults = getDefaultAppearanceConfig()
+  return draft.templateId === defaults.templateId &&
+    draft.mode === defaults.mode &&
+    draft.accentColor === defaults.accentColor &&
+    draft.backgroundColor === defaults.backgroundColor &&
+    draft.foregroundColor === defaults.foregroundColor &&
+    draft.uiFont === defaults.uiFont &&
+    draft.codeFont === defaults.codeFont
 }
 
 function previewShellStyle(vars: Record<string, string>): CSSProperties {

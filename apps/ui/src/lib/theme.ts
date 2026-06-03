@@ -1,5 +1,5 @@
 export type ThemePreference = 'light' | 'dark' | 'auto'
-export type AppearanceTemplateId = 'forge' | 'aurora' | 'midnight' | 'terminal' | 'sakura' | 'desert' | 'ice' | 'contrast'
+export type AppearanceTemplateId = 'forge' | 'aurora' | 'midnight' | 'terminal' | 'sakura' | 'desert'
 export type AppearanceFont = 'geist' | 'system' | 'inter' | 'serif'
 export type AppearanceCodeFont = 'geist-mono' | 'system-mono' | 'jetbrains' | 'sf-mono'
 
@@ -68,12 +68,14 @@ const CUSTOM_APPEARANCE_VARIABLES = [
 export const APPEARANCE_TEMPLATES: AppearanceTemplate[] = [
   {
     id: 'forge',
-    name: 'Forge Classic',
-    description: 'The familiar warm Forge palette with grounded green actions.',
+    name: 'Original Forge',
+    description: 'Restores the true system-driven default Forge skin.',
     accentColor: '#2e7d32',
     backgroundColor: '#f8f5f0',
     foregroundColor: '#3e2723',
     preferredMode: 'auto',
+    uiFont: 'geist',
+    codeFont: 'geist-mono',
   },
   {
     id: 'aurora',
@@ -122,26 +124,6 @@ export const APPEARANCE_TEMPLATES: AppearanceTemplate[] = [
     backgroundColor: '#fffbeb',
     foregroundColor: '#431407',
     preferredMode: 'light',
-  },
-  {
-    id: 'ice',
-    name: 'Polar Ice',
-    description: 'Clean arctic blues with crisp indigo action color.',
-    accentColor: '#4f46e5',
-    backgroundColor: '#f8fafc',
-    foregroundColor: '#0f172a',
-    preferredMode: 'light',
-    uiFont: 'system',
-  },
-  {
-    id: 'contrast',
-    name: 'Signal Contrast',
-    description: 'Maximum clarity with stark surfaces and bright blue focus.',
-    accentColor: '#2563eb',
-    backgroundColor: '#ffffff',
-    foregroundColor: '#020617',
-    preferredMode: 'light',
-    codeFont: 'system-mono',
   },
 ]
 
@@ -202,7 +184,7 @@ export const THEME_INIT_SCRIPT = `(() => {
       try {
         const parsed = JSON.parse(stored);
         const customApplied = parsed?.customApplied === true;
-        return {
+        const normalized = {
           ...defaults,
           ...(parsed && typeof parsed === 'object' ? parsed : {}),
           mode: customApplied && isMode(parsed?.mode) ? parsed.mode : defaults.mode,
@@ -210,8 +192,20 @@ export const THEME_INIT_SCRIPT = `(() => {
           backgroundColor: validHex(parsed?.backgroundColor) ? parsed.backgroundColor : defaults.backgroundColor,
           foregroundColor: validHex(parsed?.foregroundColor) ? parsed.foregroundColor : defaults.foregroundColor,
           customApplied,
-          draftOnly: !customApplied,
         };
+        const hasDefaultValues =
+          normalized.mode === defaults.mode &&
+          normalized.accentColor === defaults.accentColor &&
+          normalized.backgroundColor === defaults.backgroundColor &&
+          normalized.foregroundColor === defaults.foregroundColor &&
+          normalized.uiFont === defaults.uiFont &&
+          normalized.codeFont === defaults.codeFont &&
+          normalized.templateId === defaults.templateId;
+        if (hasDefaultValues) {
+          try { window.localStorage.removeItem(storageKey); } catch {}
+          return { ...defaults, draftOnly: false };
+        }
+        return { ...normalized, draftOnly: !customApplied };
       } catch { return { ...defaults, draftOnly: false }; }
     })();
     if (config.draftOnly) return;
@@ -244,6 +238,7 @@ export const THEME_INIT_SCRIPT = `(() => {
       return (lighter + 0.05) / (darker + 0.05);
     };
     const bestForeground = (background) => contrastRatio('#ffffff', background) >= contrastRatio('#000000', background) ? '#ffffff' : '#000000';
+    const readableForeground = (background, preferred) => contrastRatio(preferred, background) >= 4.5 ? preferred : bestForeground(background);
     const vars = (() => {
       const bg = isDark ? mix(config.backgroundColor, '#000000', 0.82) : config.backgroundColor;
       const fg = isDark ? mix(config.foregroundColor, '#ffffff', 0.78) : config.foregroundColor;
@@ -252,6 +247,10 @@ export const THEME_INIT_SCRIPT = `(() => {
       const muted = isDark ? mix(bg, '#ffffff', 0.12) : mix(bg, fg, 0.06);
       const border = isDark ? mix(bg, '#ffffff', 0.24) : mix(bg, fg, 0.14);
       const primaryForeground = bestForeground(accent);
+      const secondaryForeground = readableForeground(muted, fg);
+      const mutedForeground = readableForeground(muted, isDark ? mix(fg, bg, 0.18) : mix(fg, bg, 0.2));
+      const resolvedAccent = isDark ? mix(accent, bg, 0.48) : mix(accent, bg, 0.62);
+      const accentForeground = readableForeground(resolvedAccent, fg);
       return {
         '--background': bg,
         '--foreground': fg,
@@ -262,11 +261,11 @@ export const THEME_INIT_SCRIPT = `(() => {
         '--primary': accent,
         '--primary-foreground': primaryForeground,
         '--secondary': muted,
-        '--secondary-foreground': fg,
+        '--secondary-foreground': secondaryForeground,
         '--muted': muted,
-        '--muted-foreground': isDark ? mix(fg, bg, 0.28) : mix(fg, bg, 0.36),
-        '--accent': isDark ? mix(accent, bg, 0.48) : mix(accent, bg, 0.62),
-        '--accent-foreground': fg,
+        '--muted-foreground': mutedForeground,
+        '--accent': resolvedAccent,
+        '--accent-foreground': accentForeground,
         '--border': border,
         '--input': border,
         '--ring': accent,
@@ -275,7 +274,7 @@ export const THEME_INIT_SCRIPT = `(() => {
         '--sidebar-primary': accent,
         '--sidebar-primary-foreground': primaryForeground,
         '--sidebar-accent': muted,
-        '--sidebar-accent-foreground': fg,
+        '--sidebar-accent-foreground': secondaryForeground,
         '--sidebar-border': border,
         '--sidebar-ring': accent,
         '--app-font-sans': ${JSON.stringify(UI_FONT_STACKS)}[config.uiFont] || ${JSON.stringify(UI_FONT_STACKS.geist)},
@@ -312,6 +311,17 @@ export function getDefaultAppearanceConfig(): AppearanceConfig {
   return { ...DEFAULT_APPEARANCE }
 }
 
+export function hasDefaultAppearanceValues(config: AppearanceConfig): boolean {
+  return config.version === DEFAULT_APPEARANCE.version &&
+    config.mode === DEFAULT_APPEARANCE.mode &&
+    config.accentColor === DEFAULT_APPEARANCE.accentColor &&
+    config.backgroundColor === DEFAULT_APPEARANCE.backgroundColor &&
+    config.foregroundColor === DEFAULT_APPEARANCE.foregroundColor &&
+    config.uiFont === DEFAULT_APPEARANCE.uiFont &&
+    config.codeFont === DEFAULT_APPEARANCE.codeFont &&
+    config.templateId === DEFAULT_APPEARANCE.templateId
+}
+
 export function normalizeAppearanceConfig(value: unknown): AppearanceConfig {
   if (isThemePreference(value)) {
     return { ...DEFAULT_APPEARANCE, mode: value }
@@ -322,7 +332,7 @@ export function normalizeAppearanceConfig(value: unknown): AppearanceConfig {
   }
 
   const input = value as Partial<AppearanceConfig>
-  return {
+  const normalized: AppearanceConfig = {
     version: 1,
     mode: isThemePreference(input.mode) ? input.mode : DEFAULT_APPEARANCE.mode,
     accentColor: isHexColor(input.accentColor) ? input.accentColor : DEFAULT_APPEARANCE.accentColor,
@@ -335,6 +345,8 @@ export function normalizeAppearanceConfig(value: unknown): AppearanceConfig {
     // as a draft-only migration so merely opening Forge does not change the app.
     customApplied: input.customApplied === true,
   }
+
+  return hasDefaultAppearanceValues(normalized) ? { ...DEFAULT_APPEARANCE } : normalized
 }
 
 export function readStoredAppearanceConfig(): AppearanceConfig {
@@ -345,8 +357,13 @@ export function readStoredAppearanceConfig(): AppearanceConfig {
   try {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
     if (!stored) return { ...DEFAULT_APPEARANCE }
-    if (isThemePreference(stored)) return normalizeAppearanceConfig(stored)
-    return normalizeAppearanceConfig(JSON.parse(stored))
+    const normalized = isThemePreference(stored)
+      ? normalizeAppearanceConfig(stored)
+      : normalizeAppearanceConfig(JSON.parse(stored))
+    if (hasDefaultAppearanceValues(normalized)) {
+      window.localStorage.removeItem(THEME_STORAGE_KEY)
+    }
+    return normalized
   } catch {
     return { ...DEFAULT_APPEARANCE }
   }
@@ -393,6 +410,14 @@ export function getBestContrastingForeground(background: string): '#000000' | '#
   return getContrastRatio('#ffffff', background) >= getContrastRatio('#000000', background) ? '#ffffff' : '#000000'
 }
 
+function getReadableForeground(background: string, preferred: string): string {
+  return getContrastRatio(preferred, background) >= 4.5 ? preferred : getBestContrastingForeground(background)
+}
+
+export function resolveAppearanceIsDark(mode: ThemePreference): boolean {
+  return mode === 'dark' || (mode === 'auto' && getSystemPrefersDark())
+}
+
 export function resolveAppearanceCssVariables(config: AppearanceConfig, isDark: boolean): AppearanceCssVariables {
   const bg = isDark ? mixColor(config.backgroundColor, '#000000', 0.82) : config.backgroundColor
   const fg = isDark ? mixColor(config.foregroundColor, '#ffffff', 0.78) : config.foregroundColor
@@ -401,6 +426,10 @@ export function resolveAppearanceCssVariables(config: AppearanceConfig, isDark: 
   const muted = isDark ? mixColor(bg, '#ffffff', 0.12) : mixColor(bg, fg, 0.06)
   const border = isDark ? mixColor(bg, '#ffffff', 0.24) : mixColor(bg, fg, 0.14)
   const primaryForeground = getBestContrastingForeground(accent)
+  const secondaryForeground = getReadableForeground(muted, fg)
+  const mutedForeground = getReadableForeground(muted, isDark ? mixColor(fg, bg, 0.18) : mixColor(fg, bg, 0.2))
+  const resolvedAccent = isDark ? mixColor(accent, bg, 0.48) : mixColor(accent, bg, 0.62)
+  const accentForeground = getReadableForeground(resolvedAccent, fg)
 
   return {
     '--background': bg,
@@ -412,11 +441,11 @@ export function resolveAppearanceCssVariables(config: AppearanceConfig, isDark: 
     '--primary': accent,
     '--primary-foreground': primaryForeground,
     '--secondary': muted,
-    '--secondary-foreground': fg,
+    '--secondary-foreground': secondaryForeground,
     '--muted': muted,
-    '--muted-foreground': isDark ? mixColor(fg, bg, 0.28) : mixColor(fg, bg, 0.36),
-    '--accent': isDark ? mixColor(accent, bg, 0.48) : mixColor(accent, bg, 0.62),
-    '--accent-foreground': fg,
+    '--muted-foreground': mutedForeground,
+    '--accent': resolvedAccent,
+    '--accent-foreground': accentForeground,
     '--border': border,
     '--input': border,
     '--ring': accent,
@@ -425,7 +454,7 @@ export function resolveAppearanceCssVariables(config: AppearanceConfig, isDark: 
     '--sidebar-primary': accent,
     '--sidebar-primary-foreground': primaryForeground,
     '--sidebar-accent': muted,
-    '--sidebar-accent-foreground': fg,
+    '--sidebar-accent-foreground': secondaryForeground,
     '--sidebar-border': border,
     '--sidebar-ring': accent,
     '--app-font-sans': UI_FONT_STACKS[config.uiFont],
@@ -469,7 +498,7 @@ function getSystemPrefersDark(): boolean {
 }
 
 function resolveIsDark(mode: ThemePreference): boolean {
-  return mode === 'dark' || (mode === 'auto' && getSystemPrefersDark())
+  return resolveAppearanceIsDark(mode)
 }
 
 function applyThemeModeOnly(mode: ThemePreference): void {
@@ -521,7 +550,11 @@ export function applyAppearanceConfig(
 
   if (persist) {
     try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(normalized))
+      if (hasDefaultAppearanceValues(normalized)) {
+        window.localStorage.removeItem(THEME_STORAGE_KEY)
+      } else {
+        window.localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(normalized))
+      }
     } catch {
       // Ignore localStorage write failures in restricted environments.
     }
@@ -584,6 +617,9 @@ export function initializeThemePreference(): ThemePreference {
   }
 
   const config = readStoredAppearanceConfig()
-  applyAppearanceConfig(config, { persist: false })
+  applyAppearanceConfig(config, {
+    persist: false,
+    applyModeWhenCustomDisabled: hasDefaultAppearanceValues(config),
+  })
   return config.mode
 }

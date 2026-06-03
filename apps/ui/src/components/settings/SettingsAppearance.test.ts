@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsAppearance } from './SettingsAppearance'
-import { getContrastRatio, getDefaultAppearanceConfig, normalizeAppearanceConfig, resolveAppearanceCssVariables } from '@/lib/theme'
+import { getContrastRatio, normalizeAppearanceConfig, resolveAppearanceCssVariables } from '@/lib/theme'
 
 const STORAGE_KEY = 'swarm-theme'
 
@@ -31,6 +31,7 @@ afterEach(() => {
   document.documentElement.className = ''
   document.documentElement.removeAttribute('style')
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 function renderAppearance(): void {
@@ -55,6 +56,30 @@ function clickButton(label: string): void {
 
 function readStored(): Record<string, string | boolean | number> {
   return JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}')
+}
+
+function stubPrefersDark(matches: boolean): void {
+  vi.stubGlobal('matchMedia', () => ({
+    matches,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }))
+}
+
+function rgbString(hex: string): string {
+  const value = hex.replace('#', '')
+  const [r, g, b] = [0, 2, 4].map((index) => parseInt(value.slice(index, index + 2), 16))
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+function findPreviewShell(): HTMLElement {
+  const title = Array.from(container.querySelectorAll('div')).find((element) =>
+    element.textContent === 'Forge workspace',
+  )
+  expect(title).toBeTruthy()
+  const shell = title?.parentElement?.parentElement?.parentElement
+  expect(shell).toBeTruthy()
+  return shell as HTMLElement
 }
 
 describe('SettingsAppearance', () => {
@@ -106,6 +131,40 @@ describe('SettingsAppearance', () => {
     expect(getContrastRatio(appliedVars['--primary-foreground'], appliedVars['--primary'])).toBeGreaterThanOrEqual(4.5)
   })
 
+  it('previews Original Forge system mode with matchMedia instead of stale applied DOM dark class', () => {
+    stubPrefersDark(false)
+    renderAppearance()
+    clickButton('Terminal Lime')
+    clickButton('Apply appearance')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+
+    clickButton('Original Forge')
+
+    const lightDefaultBackground = resolveAppearanceCssVariables(
+      { ...normalizeAppearanceConfig({}), customApplied: true },
+      false,
+    )['--background']
+    expect(findPreviewShell().style.backgroundColor).toBe(rgbString(lightDefaultBackground))
+  })
+
+  it('applying Original Forge after a custom dark template restores true defaults', () => {
+    renderAppearance()
+    clickButton('Terminal Lime')
+    clickButton('Apply appearance')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(document.documentElement.style.getPropertyValue('--primary')).not.toBe('')
+
+    clickButton('Original Forge')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(document.documentElement.style.getPropertyValue('--primary')).not.toBe('')
+
+    clickButton('Apply appearance')
+
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
+  })
+
   it('reset defaults clears custom app variables, persisted custom state, and stale dark mode', () => {
     renderAppearance()
     clickButton('Terminal Lime')
@@ -115,11 +174,7 @@ describe('SettingsAppearance', () => {
 
     clickButton('Reset defaults')
 
-    const defaults = getDefaultAppearanceConfig()
-    const stored = readStored()
-    expect(stored.templateId).toBe(defaults.templateId)
-    expect(stored.accentColor).toBe(defaults.accentColor)
-    expect(stored.customApplied).toBe(false)
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
     expect(document.documentElement.classList.contains('dark')).toBe(false)
     expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
   })

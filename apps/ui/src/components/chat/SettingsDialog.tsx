@@ -21,6 +21,12 @@ import { SettingsCliAccess } from '@/components/settings/SettingsCliAccess'
 import { SettingsCollaboration } from '@/components/settings/SettingsCollaboration'
 import type { AgentDescriptor, ManagerProfile, TelegramStatusEvent } from '@forge/protocol'
 
+function getSettingsContentWidthClassName(activeTab: SettingsTab): string | undefined {
+  if (activeTab === 'appearance') return 'max-w-6xl'
+  if (activeTab === 'skills') return 'max-w-full'
+  return undefined
+}
+
 interface SettingsPanelProps {
   wsUrl: string
   managers: AgentDescriptor[]
@@ -117,7 +123,7 @@ export function SettingsPanel({
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onBack={onBack}
-      contentWidthClassName={activeTab === 'skills' ? 'max-w-full' : undefined}
+      contentWidthClassName={getSettingsContentWidthClassName(activeTab)}
       fillHeight={activeTab === 'skills'}
       availableTabs={availableTabs}
       targetLabel={targetLabel}
