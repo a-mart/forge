@@ -175,6 +175,120 @@ describe('settings routes', () => {
     expect(swarmManager.deleteSettingsAuth).not.toHaveBeenCalled()
   })
 
+  it('handles OpenAI broker source routes before generic auth provider routes', async () => {
+    const settings = {
+      settings: {
+        mode: 'local',
+        effectiveMode: 'local',
+        source: 'default',
+        envOverride: false,
+        broker: { configured: false, hasToken: false, clientId: 'forge', timeoutMs: 10000 },
+      },
+    }
+    const swarmManager = {
+      getOpenAIAuthBrokerSettings: vi.fn(async () => settings),
+      testOpenAIAuthBrokerSettings: vi.fn(async () => ({ ok: false, error: 'missing config' })),
+      deleteSettingsAuth: vi.fn(async () => undefined),
+      listCredentialPool: vi.fn(async () => createPoolState([])),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager)
+    const getResponse = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/source`)
+    expect(getResponse.status).toBe(200)
+    await expect(getResponse.json()).resolves.toEqual(settings)
+
+    const testResponse = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/source/test`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ broker: { url: 'https://broker.example.test', token: 'broker-secret-token' } }),
+    })
+    expect(testResponse.status).toBe(200)
+    await expect(testResponse.json()).resolves.toEqual({ ok: false, error: 'missing config' })
+
+    expect(swarmManager.getOpenAIAuthBrokerSettings).toHaveBeenCalledTimes(1)
+    expect(swarmManager.testOpenAIAuthBrokerSettings).toHaveBeenCalledWith({
+      broker: { url: 'https://broker.example.test', token: 'broker-secret-token' },
+    })
+    expect(swarmManager.deleteSettingsAuth).not.toHaveBeenCalled()
+    expect(swarmManager.listCredentialPool).not.toHaveBeenCalled()
+  })
+
+  it('saves OpenAI broker source settings without echoing tokens and invalidates OpenAI usage', async () => {
+    const payload = {
+      settings: {
+        mode: 'local',
+        effectiveMode: 'local',
+        source: 'settings',
+        envOverride: false,
+        broker: {
+          configured: false,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********cret',
+          clientId: 'forge',
+          timeoutMs: 10000,
+        },
+      },
+    }
+    const swarmManager = {
+      updateOpenAIAuthBrokerSettings: vi.fn(async () => payload),
+    }
+    const statsService = {
+      invalidateProviderUsage: vi.fn(async () => undefined),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager, statsService)
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/source`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'local', broker: { url: 'https://broker.example.test', token: 'broker-bearer-secret' } }),
+    })
+
+    expect(response.status).toBe(200)
+    const body = await response.text()
+    expect(body).not.toContain('broker-bearer-secret')
+    expect(JSON.parse(body)).toEqual(payload)
+    expect(swarmManager.updateOpenAIAuthBrokerSettings).toHaveBeenCalledWith({
+      mode: 'local',
+      broker: { url: 'https://broker.example.test', token: 'broker-bearer-secret' },
+    })
+    expect(statsService.invalidateProviderUsage).toHaveBeenCalledWith('openai')
+  })
+
+  it('rejects local OpenAI auth and pool mutations while central broker mode is active', async () => {
+    const swarmManager = {
+      isOpenAIAuthBrokerModeActive: vi.fn(async () => true),
+      updateSettingsAuth: vi.fn(async () => undefined),
+      deleteSettingsAuth: vi.fn(async () => undefined),
+      listCredentialPool: vi.fn(async () => createPoolState([])),
+      setCredentialPoolStrategy: vi.fn(async () => undefined),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager)
+    const genericPut = await fetch(`${server.baseUrl}/api/settings/auth`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ 'openai-codex': 'sk-local' }),
+    })
+    const genericDelete = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex`, { method: 'DELETE' })
+    const poolMutation = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/strategy`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ strategy: 'least_used' }),
+    })
+
+    for (const response of [genericPut, genericDelete, poolMutation]) {
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({
+        code: 'central_broker_mode_active',
+        error: 'Switch OpenAI auth source back to local before editing local OpenAI credentials.',
+      })
+    }
+    expect(swarmManager.updateSettingsAuth).not.toHaveBeenCalled()
+    expect(swarmManager.deleteSettingsAuth).not.toHaveBeenCalled()
+    expect(swarmManager.setCredentialPoolStrategy).not.toHaveBeenCalled()
+  })
+
   it('lists pooled Anthropic credentials via the provider-scoped route', async () => {
     const pool = createPoolState([makeCredential({ id: 'acct-ant-1', label: 'Primary Anthropic', isPrimary: true })])
     const swarmManager = {

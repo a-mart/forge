@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import { CredentialPoolService } from "./credential-pool.js";
+import { OpenAIAuthSettingsService } from "./openai-auth/openai-auth-settings-service.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type {
@@ -383,6 +384,10 @@ export async function getManagedModelProviderCredentialAvailability(
   const availability = new Map<string, boolean>();
 
   for (const [provider, summary] of summaries) {
+    if (provider === "openai-codex" && summary.centralBroker) {
+      availability.set(provider, isCentralBrokerCredentialAvailable(summary));
+      continue;
+    }
     availability.set(provider, summary.configured);
   }
 
@@ -398,14 +403,19 @@ export async function getManagedModelProviderCredentialSummaries(
   config: SwarmConfig,
   options: { credentialPoolService?: CredentialPoolService } = {}
 ): Promise<Map<string, ForgeProviderCredentialSummary>> {
-  const [authFile, secrets] = await Promise.all([
+  const [authFile, secrets, brokerSettings] = await Promise.all([
     resolveAuthFileForReadFromConfig(config),
-    readSecretsStoreFromConfig(config)
+    readSecretsStoreFromConfig(config),
+    new OpenAIAuthSettingsService({ config }).getSettingsState(),
   ]);
   const authStorage = AuthStorage.create(authFile);
   const summaries = new Map<string, ForgeProviderCredentialSummary>();
 
   for (const [provider, envVars] of Object.entries(MANAGED_MODEL_PROVIDER_ENV_VARS)) {
+    if (provider === "openai-codex" && brokerSettings.effectiveMode === "central_broker") {
+      summaries.set(provider, buildCentralBrokerCredentialSummary(brokerSettings));
+      continue;
+    }
     const authTypes = new Set<ForgeProviderCredentialAuthType>();
     const sources = new Set<ForgeProviderCredentialSource>();
 
@@ -456,6 +466,39 @@ export async function getManagedModelProviderCredentialSummaries(
   });
 
   return summaries;
+}
+
+function buildCentralBrokerCredentialSummary(
+  brokerSettings: Awaited<ReturnType<OpenAIAuthSettingsService["getSettingsState"]>>
+): ForgeProviderCredentialSummary {
+  const counts = brokerSettings.broker.status?.accounts;
+  const totalAccounts = counts
+    ? counts.healthy + counts.cooldown + counts.auth_error + counts.disabled + counts.unknown
+    : undefined;
+  const availableAccounts = counts ? counts.healthy : undefined;
+  const configured = brokerSettings.broker.configured;
+  const degraded = brokerSettings.broker.status?.degraded;
+  return {
+    configured,
+    authTypes: configured ? ["oauth"] : [],
+    sources: ["central_broker"],
+    centralBroker: {
+      configured,
+      reachable: brokerSettings.broker.status ? brokerSettings.broker.status.ok || degraded !== "unreachable" : undefined,
+      ...(degraded ? { degraded } : {}),
+      ...(availableAccounts !== undefined ? { availableAccounts } : {}),
+      ...(totalAccounts !== undefined ? { totalAccounts } : {}),
+      ...(brokerSettings.broker.status?.message ? { detail: brokerSettings.broker.status.message } : {}),
+    },
+  };
+}
+
+function isCentralBrokerCredentialAvailable(summary: ForgeProviderCredentialSummary): boolean {
+  if (!summary.configured) {
+    return false;
+  }
+  const degraded = summary.centralBroker?.degraded;
+  return degraded !== "invalid_bearer" && degraded !== "unreachable" && degraded !== "no_accounts" && degraded !== "token_shape_unverified";
 }
 
 async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<string, string>> {

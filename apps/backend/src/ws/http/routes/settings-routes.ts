@@ -12,6 +12,9 @@ import type {
   CredentialPoolStrategy,
   NotificationSettingsMutationResponse,
   NotificationSettingsResponse,
+  OpenAIBrokerSettingsResponse,
+  OpenAIBrokerTestResponse,
+  UpdateOpenAIBrokerSettingsRequest,
   SettingsAuthLoginEventName,
   SettingsAuthLoginEventPayload,
   SettingsAuthLoginProviderId,
@@ -34,6 +37,7 @@ import type { HttpRoute } from "../shared/http-route.js";
 const SETTINGS_ENV_ENDPOINT_PATH = "/api/settings/env";
 const SETTINGS_AUTH_ENDPOINT_PATH = "/api/settings/auth";
 const SETTINGS_AUTH_LOGIN_ENDPOINT_PATH = "/api/settings/auth/login";
+const OPENAI_AUTH_SOURCE_ENDPOINT_PATH = "/api/settings/auth/openai-codex/source";
 const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
 const SETTINGS_AUTH_METHODS = "GET, PUT, DELETE, POST, OPTIONS";
 const SETTINGS_NOTIFICATIONS_ENDPOINT_PATH = "/api/settings/notifications";
@@ -244,7 +248,15 @@ async function handleSettingsAuthHttpRequest(
   const authPathSegments = authRelativePath.split("/").filter((segment) => segment.length > 0);
   const rawProviderSegment = authPathSegments[0] ?? "";
 
+  if (isOpenAIAuthBrokerSourcePath(requestUrl.pathname)) {
+    await handleOpenAIAuthBrokerSourceHttpRequest(swarmManager, invalidateProviderUsage, request, response, requestUrl);
+    return;
+  }
+
   if (authPathSegments[1] === "accounts") {
+    if (await rejectLocalOpenAIAuthMutationWhenBrokerActive(swarmManager, request, response, decodeURIComponent(rawProviderSegment))) {
+      return;
+    }
     const poolPrefix = `${SETTINGS_AUTH_ENDPOINT_PATH}/${rawProviderSegment}/accounts`;
     await handleCredentialPoolHttpRequest(
       swarmManager,
@@ -260,6 +272,9 @@ async function handleSettingsAuthHttpRequest(
   }
 
   if (authPathSegments[1] === "strategy" && authPathSegments.length === 2) {
+    if (await rejectLocalOpenAIAuthMutationWhenBrokerActive(swarmManager, request, response, decodeURIComponent(rawProviderSegment))) {
+      return;
+    }
     await handleCredentialPoolStrategyHttpRequest(
       swarmManager,
       invalidateProviderUsage,
@@ -306,6 +321,9 @@ async function handleSettingsAuthHttpRequest(
   if (request.method === "PUT" && requestUrl.pathname === SETTINGS_AUTH_ENDPOINT_PATH) {
     applyCorsHeaders(request, response, methods);
     const payload = parseSettingsAuthUpdateBody(await readJsonBody(request));
+    if (await rejectLocalOpenAIAuthMutationWhenBrokerActive(swarmManager, request, response, ...Object.keys(payload))) {
+      return;
+    }
     await swarmManager.updateSettingsAuth(payload);
     await invalidateProviderUsage(...Object.keys(payload));
     const providers = await swarmManager.listSettingsAuth();
@@ -319,6 +337,10 @@ async function handleSettingsAuthHttpRequest(
     const provider = decodeURIComponent(requestUrl.pathname.slice(SETTINGS_AUTH_ENDPOINT_PATH.length + 1));
     if (!provider) {
       sendJson(response, 400, { error: "Missing auth provider" });
+      return;
+    }
+
+    if (await rejectLocalOpenAIAuthMutationWhenBrokerActive(swarmManager, request, response, provider)) {
       return;
     }
 
@@ -339,6 +361,103 @@ async function handleSettingsAuthHttpRequest(
   applyCorsHeaders(request, response, methods);
   response.setHeader("Allow", methods);
   sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+async function handleOpenAIAuthBrokerSourceHttpRequest(
+  swarmManager: SwarmManager,
+  invalidateProviderUsage: InvalidateProviderUsage,
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestUrl: URL
+): Promise<void> {
+  const methods = "GET, PUT, POST, DELETE, OPTIONS";
+
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, methods);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  applyCorsHeaders(request, response, methods);
+
+  try {
+    if (request.method === "GET" && requestUrl.pathname === OPENAI_AUTH_SOURCE_ENDPOINT_PATH) {
+      const payload: OpenAIBrokerSettingsResponse = await swarmManager.getOpenAIAuthBrokerSettings();
+      sendJson(response, 200, payload as unknown as Record<string, unknown>);
+      return;
+    }
+
+    if (request.method === "GET" && requestUrl.pathname === `${OPENAI_AUTH_SOURCE_ENDPOINT_PATH}/status`) {
+      const payload: OpenAIBrokerSettingsResponse = await swarmManager.getOpenAIAuthBrokerSettings();
+      sendJson(response, 200, payload as unknown as Record<string, unknown>);
+      return;
+    }
+
+    if (request.method === "PUT" && requestUrl.pathname === OPENAI_AUTH_SOURCE_ENDPOINT_PATH) {
+      const payload = parseOpenAIAuthBrokerSettingsUpdateBody(await readJsonBody(request));
+      const result: OpenAIBrokerSettingsResponse = await swarmManager.updateOpenAIAuthBrokerSettings(payload);
+      await invalidateProviderUsage("openai-codex");
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
+      return;
+    }
+
+    if (request.method === "POST" && requestUrl.pathname === `${OPENAI_AUTH_SOURCE_ENDPOINT_PATH}/test`) {
+      const body = await readOptionalJsonBody(request);
+      const result: OpenAIBrokerTestResponse = await swarmManager.testOpenAIAuthBrokerSettings(
+        body === undefined ? undefined : parseOpenAIAuthBrokerSettingsPartialBody(body)
+      );
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
+      return;
+    }
+
+    if (request.method === "POST" && requestUrl.pathname === `${OPENAI_AUTH_SOURCE_ENDPOINT_PATH}/disable`) {
+      const result: OpenAIBrokerSettingsResponse = await swarmManager.disableOpenAIAuthBroker();
+      await invalidateProviderUsage("openai-codex");
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
+      return;
+    }
+
+    if (request.method === "DELETE" && requestUrl.pathname === OPENAI_AUTH_SOURCE_ENDPOINT_PATH) {
+      const result: OpenAIBrokerSettingsResponse = await swarmManager.clearOpenAIAuthBrokerSettings();
+      await invalidateProviderUsage("openai-codex");
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
+      return;
+    }
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to update OpenAI broker settings" });
+    return;
+  }
+
+  response.setHeader("Allow", methods);
+  sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+function isOpenAIAuthBrokerSourcePath(pathname: string): boolean {
+  return pathname === OPENAI_AUTH_SOURCE_ENDPOINT_PATH || pathname.startsWith(`${OPENAI_AUTH_SOURCE_ENDPOINT_PATH}/`);
+}
+
+async function rejectLocalOpenAIAuthMutationWhenBrokerActive(
+  swarmManager: SwarmManager,
+  request: IncomingMessage,
+  response: ServerResponse,
+  ...providers: string[]
+): Promise<boolean> {
+  if (!providers.some((provider) => provider.trim().toLowerCase() === "openai-codex")) {
+    return false;
+  }
+  const brokerModeActive = typeof (swarmManager as { isOpenAIAuthBrokerModeActive?: unknown }).isOpenAIAuthBrokerModeActive === "function"
+    ? await swarmManager.isOpenAIAuthBrokerModeActive()
+    : false;
+  if (!brokerModeActive) {
+    return false;
+  }
+  applyCorsHeaders(request, response, SETTINGS_AUTH_METHODS);
+  sendJson(response, 400, {
+    code: "central_broker_mode_active",
+    error: "Switch OpenAI auth source back to local before editing local OpenAI credentials.",
+  });
+  return true;
 }
 
 // ── Credential Pool Routes ──
@@ -1048,6 +1167,50 @@ function parseSettingsEnvUpdateBody(value: unknown): Record<string, string> {
   }
 
   return updates;
+}
+
+async function readOptionalJsonBody(request: IncomingMessage): Promise<unknown | undefined> {
+  const value = await readJsonBody(request);
+  if (!value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0)) {
+    return undefined;
+  }
+  return value;
+}
+
+function parseOpenAIAuthBrokerSettingsPartialBody(value: unknown): Partial<UpdateOpenAIBrokerSettingsRequest> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Request body must be a JSON object");
+  }
+  const body = value as Record<string, unknown>;
+  return {
+    ...(body.mode === "local" || body.mode === "central_broker" ? { mode: body.mode } : {}),
+    ...(body.broker !== undefined ? { broker: parseOpenAIAuthBrokerPatch(body.broker) } : {}),
+    ...(typeof body.testBeforeEnable === "boolean" ? { testBeforeEnable: body.testBeforeEnable } : {}),
+  };
+}
+
+function parseOpenAIAuthBrokerSettingsUpdateBody(value: unknown): UpdateOpenAIBrokerSettingsRequest {
+  const parsed = parseOpenAIAuthBrokerSettingsPartialBody(value);
+  if (parsed.mode !== "local" && parsed.mode !== "central_broker") {
+    throw new Error("OpenAI broker settings mode must be 'local' or 'central_broker'");
+  }
+  return parsed as UpdateOpenAIBrokerSettingsRequest;
+}
+
+function parseOpenAIAuthBrokerPatch(value: unknown): NonNullable<UpdateOpenAIBrokerSettingsRequest["broker"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("OpenAI broker settings broker payload must be an object");
+  }
+  const body = value as Record<string, unknown>;
+  return {
+    ...(typeof body.url === "string" ? { url: body.url.trim() } : {}),
+    ...(typeof body.token === "string" ? { token: body.token.trim() } : {}),
+    ...(typeof body.clearToken === "boolean" ? { clearToken: body.clearToken } : {}),
+    ...(typeof body.clientId === "string" ? { clientId: body.clientId.trim() } : {}),
+    ...(typeof body.instanceLabel === "string" ? { instanceLabel: body.instanceLabel.trim() } : {}),
+    ...(typeof body.userLabel === "string" ? { userLabel: body.userLabel.trim() } : {}),
+    ...(typeof body.timeoutMs === "number" ? { timeoutMs: body.timeoutMs } : {}),
+  };
 }
 
 function parseSettingsAuthUpdateBody(value: unknown): Record<string, string> {

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AuthCredential } from "@mariozechner/pi-coding-agent";
 import {
+  type OpenAIBrokerSettingsResponse,
+  type OpenAIBrokerTestResponse,
+  type UpdateOpenAIBrokerSettingsRequest,
   getCatalogModelKey,
   type CredentialPoolState,
   type ManagerExactModelSelection,
@@ -38,6 +41,7 @@ import {
   getManagedModelProviderCredentialAvailability,
   type SecretsEnvService
 } from "./secrets-env-service.js";
+import { OpenAIAuthSettingsService } from "./openai-auth/openai-auth-settings-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
 import {
@@ -96,7 +100,11 @@ export interface SwarmSettingsServiceOptions {
 }
 
 export class SwarmSettingsService {
-  constructor(private readonly options: SwarmSettingsServiceOptions) {}
+  private readonly openAIAuthSettingsService: OpenAIAuthSettingsService;
+
+  constructor(private readonly options: SwarmSettingsServiceOptions) {
+    this.openAIAuthSettingsService = new OpenAIAuthSettingsService({ config: options.config });
+  }
 
   async updateManagerModel(
     managerId: string,
@@ -512,15 +520,72 @@ export class SwarmSettingsService {
   }
 
   async listSettingsAuth(): Promise<SettingsAuthProvider[]> {
-    return this.options.secretsEnvService.listSettingsAuth();
+    const [providers, brokerSettings] = await Promise.all([
+      this.options.secretsEnvService.listSettingsAuth(),
+      this.openAIAuthSettingsService.getSettingsState(),
+    ]);
+    if (brokerSettings.effectiveMode !== "central_broker") {
+      return providers;
+    }
+
+    return providers.map((provider) => {
+      if (provider.provider !== "openai-codex") {
+        return provider;
+      }
+      return {
+        provider: "openai-codex",
+        configured: brokerSettings.broker.configured,
+        authType: brokerSettings.broker.configured ? "oauth" : undefined,
+        maskedValue: brokerSettings.broker.tokenMasked,
+        source: "central_broker",
+        readOnly: true,
+        statusDetail: brokerSettings.broker.status?.message ?? brokerSettings.broker.status?.degraded,
+      } satisfies SettingsAuthProvider;
+    });
   }
 
   async updateSettingsAuth(values: Record<string, string>): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed(Object.keys(values));
     await this.options.secretsEnvService.updateSettingsAuth(values);
   }
 
   async deleteSettingsAuth(provider: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.options.secretsEnvService.deleteSettingsAuth(provider);
+  }
+
+  async getOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
+    return this.openAIAuthSettingsService.getSettings();
+  }
+
+  async updateOpenAIAuthBrokerSettings(request: UpdateOpenAIBrokerSettingsRequest): Promise<OpenAIBrokerSettingsResponse> {
+    return this.openAIAuthSettingsService.updateSettings(request);
+  }
+
+  async disableOpenAIAuthBroker(): Promise<OpenAIBrokerSettingsResponse> {
+    return this.openAIAuthSettingsService.disableBroker();
+  }
+
+  async clearOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
+    return this.openAIAuthSettingsService.clearBrokerSettings();
+  }
+
+  async testOpenAIAuthBrokerSettings(request?: Partial<UpdateOpenAIBrokerSettingsRequest>): Promise<OpenAIBrokerTestResponse> {
+    return this.openAIAuthSettingsService.testSettings(request);
+  }
+
+  async isOpenAIAuthBrokerModeActive(): Promise<boolean> {
+    return (await this.openAIAuthSettingsService.getEffectiveMode()) === "central_broker";
+  }
+
+  private async assertLocalOpenAIAuthMutationAllowed(providers: string[]): Promise<void> {
+    const touchesOpenAI = providers.some((provider) => provider.trim().toLowerCase() === "openai-codex");
+    if (!touchesOpenAI) {
+      return;
+    }
+    if (await this.isOpenAIAuthBrokerModeActive()) {
+      throw new Error("central_broker_mode_active: Switch OpenAI auth source back to local before editing local OpenAI credentials.");
+    }
   }
 
   getCredentialPoolService(): CredentialPoolService {
