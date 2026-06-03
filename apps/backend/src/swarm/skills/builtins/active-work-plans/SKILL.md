@@ -77,6 +77,8 @@ Do not put raw worker prompts, full worker transcripts, raw JSON, long logs, fil
 
 Use the manager-only `task` tool when available. It records descriptive coordination state; it does not execute work. If the user explicitly asks for an Active Work Plan, Work Plan, task plan, or `task` tool action, call `task` before claiming the plan exists.
 
+After an actionable worker callback or recoverable `task` result, close the turn with a visible Forge action (`speak_to_user`, `send_message_to_agent`, `present_choices`, or `task`) or an explicit intentional-silence rationale. Do not leave the callback open with empty assistant text.
+
 - `get`: recover the current plan state before continuing after a pause, compaction, restart, model switch, or uncertainty.
 - `upsert_plan`: create a new active plan with `itemsText`, one short item per line, plus top-level title/goal/mode/status fields. Keep revision notes short.
 - `update_item_status`: mark one item's status after worker evidence without rewriting the item list.

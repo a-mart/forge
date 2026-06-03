@@ -292,6 +292,14 @@ describe("SwarmManager Codex mention routing", () => {
       const history = manager.getConversationHistory("manager");
       expect(history.some((entry) => entry.type === "conversation_message" && entry.externalThreadContext?.status === "sent")).toBe(true);
       expect(history.some((entry) => entry.type === "conversation_message" && entry.externalThreadContext?.status === "completed")).toBe(true);
+      expect(
+        history.some(
+          (entry) =>
+            entry.type === "conversation_message" &&
+            entry.role === "system" &&
+            entry.text.includes("no visible action"),
+        ),
+      ).toBe(false);
     });
   });
 

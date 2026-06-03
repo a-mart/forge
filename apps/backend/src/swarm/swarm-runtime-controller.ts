@@ -74,6 +74,11 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   secretsEnvService: {
     getCredentialPoolService(): CredentialPoolService;
   };
+  handleManagerStatusTransition(
+    descriptor: AgentDescriptor,
+    status: AgentStatus,
+    pendingCount: number
+  ): void | Promise<void>;
   cortexService: {
     handleManagerStatusTransition(
       descriptor: AgentDescriptor,
@@ -159,6 +164,13 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   ): Promise<"recycled" | "deferred" | "none">;
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;
+  noteManagerNoOpRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): void;
+  suppressManagerNoOpGuard(agentId: string, reason: string): void;
+  finalizeManagerNoOpGuard(
+    agentId: string,
+    source: "agent_end" | "idle",
+    options?: { pendingCount?: number }
+  ): void | Promise<void>;
 }
 
 export class SwarmRuntimeController {
@@ -453,7 +465,7 @@ export class SwarmRuntimeController {
           this.host.finalizeWorkerIdleTurn(agentId, descriptor, source),
         shouldSuppressWorkerIdleFinalization: (descriptor) => this.shouldSuppressWorkerIdleFinalization(descriptor),
         handleManagerStatusTransition: (descriptor, status, pendingCount) =>
-          this.host.cortexService.handleManagerStatusTransition(descriptor, status, pendingCount),
+          this.host.handleManagerStatusTransition(descriptor, status, pendingCount),
         applyManagerRuntimeRecyclePolicy: (agentId, reason) =>
           this.host.applyManagerRuntimeRecyclePolicy(agentId, reason)
       });
@@ -556,6 +568,11 @@ export class SwarmRuntimeController {
       return;
     }
 
+    const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "manager") {
+      this.host.noteManagerNoOpRuntimeSessionEvent(agentId, event);
+    }
+
     await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
   }
 
@@ -579,6 +596,11 @@ export class SwarmRuntimeController {
       return;
     }
 
+    const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "manager") {
+      this.host.suppressManagerNoOpGuard(agentId, "runtime_error");
+    }
+
     await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
   }
 
@@ -597,8 +619,14 @@ export class SwarmRuntimeController {
     if (this.shouldIgnoreRuntimeCallback(agentId, runtimeToken)) {
       return;
     }
+
     this.clearTrackedToolPaths(agentId);
+
     const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "manager") {
+      await this.host.finalizeManagerNoOpGuard(agentId, "agent_end");
+      return;
+    }
     if (!descriptor || descriptor.role !== "worker") {
       return;
     }

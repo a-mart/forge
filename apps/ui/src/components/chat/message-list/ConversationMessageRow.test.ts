@@ -43,7 +43,40 @@ function buildMessage(): ConversationMessageEvent {
   }
 }
 
+function buildNoOpDiagnosticMessage(): ConversationMessageEvent {
+  return {
+    type: 'conversation_message',
+    agentId: 'manager-1',
+    id: 'noop-diagnostic-1',
+    role: 'system',
+    text: 'Manager returned no visible action after a worker update. Forge sent an internal recovery nudge.',
+    timestamp: '2026-05-30T10:31:00.000Z',
+    source: 'system',
+  }
+}
+
 describe('ConversationMessageRow', () => {
+  it('renders manager no-op diagnostics as visible system notes without feedback controls', () => {
+    const onFeedbackVote = vi.fn().mockResolvedValue(undefined)
+
+    flushSync(() => {
+      root.render(
+        createElement(ConversationMessageRow, {
+          message: buildNoOpDiagnosticMessage(),
+          onFeedbackVote,
+        }),
+      )
+    })
+
+    const systemNote = container.querySelector('[role="note"][aria-label="System message"]')
+    expect(systemNote).toBeTruthy()
+    expect(systemNote!.textContent).toContain('System')
+    expect(systemNote!.textContent).toContain('Manager returned no visible action after a worker update')
+    expect(systemNote!.className).toContain('amber')
+    expect(container.querySelector('[aria-label="Thumbs up"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Thumbs down"]')).toBeNull()
+  })
+
   it('renders external-thread card even when system message text is empty', () => {
     flushSync(() => {
       root.render(
