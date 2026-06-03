@@ -5414,10 +5414,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       : { kind: "none" as const };
 
     if (codexClassification.kind === "plugin_delegate") {
-      if (attachments.length > 0) {
-        throw new Error("Codex plugin delegation does not support attachments yet.");
-      }
-
       const surfaceGate = evaluateCodexMcpToolGate({
         manager: target,
         sourceContext,
@@ -5476,7 +5472,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private assertCodexPluginWorkerDeliveryAllowed(
     sender: AgentDescriptor,
     target: AgentDescriptor,
-    options: { origin?: "user" | "internal"; internalDeliveryKind?: "codex_plugin_bootstrap" } | undefined,
+    options: {
+      origin?: "user" | "internal";
+      attachments?: ConversationAttachment[];
+      internalDeliveryKind?: "codex_plugin_bootstrap";
+    } | undefined,
   ): void {
     if (isCodexPluginWorkerDescriptor(sender)) {
       if (target.role === "manager" && target.agentId === sender.managerId) {
@@ -5500,6 +5500,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (!this.codexPluginScopeService.getScopeForWorker(target.agentId)) {
       throw new Error("Codex Plugin worker scope is no longer active. Start a new @Codex plugin selector turn to create a fresh scoped worker.");
+    }
+
+    if (normalizeConversationAttachments(options?.attachments).length > 0) {
+      throw new Error(
+        "Codex Plugin workers do not accept attachment payloads. Inspect or summarize attachments in the manager turn, then pass only relevant text context to the Codex Plugin specialist."
+      );
     }
   }
 
@@ -5985,6 +5991,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       `Selected selector(s), bound server-side for this scoped Codex Plugin worker: ${context.selectors.join(", ")}`,
       `Request after removing selector tokens: ${strippedRequest}`,
       "If plugin data or work is needed, spawn the visible Codex Plugin specialist with spawn_agent({ specialist: \"codex-plugin\", initialMessage: \"<task and context>\" }). The server binds only the selected scope to that worker for its lifetime; do not include or invent selectors in the worker input.",
+      "If this user turn includes attachments, inspect them in the manager context and pass only relevant text summaries to the Codex Plugin specialist; attachment payloads are not forwarded to Codex Plugin workers.",
       "Do not call raw Codex MCP tools. Do not start a plain Codex sidecar unless the user specifically requested plain @Codex sidecar behavior.",
     ].join("\n");
   }

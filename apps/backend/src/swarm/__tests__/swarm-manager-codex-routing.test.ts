@@ -757,6 +757,15 @@ describe("SwarmManager Codex mention routing", () => {
     expect(workerRuntime?.sendCalls.length ?? 0).toBe(sendCountBefore + 1);
 
     await expect(
+      manager.sendMessage("manager", worker!.agentId, "follow-up with attachment", "auto", {
+        attachments: [
+          { type: "text", mimeType: "text/plain", text: "raw attachment payload", fileName: "note.txt" },
+        ],
+      }),
+    ).rejects.toThrow(/do not accept attachment payloads/i);
+    expect(workerRuntime?.sendCalls.length ?? 0).toBe(sendCountBefore + 1);
+
+    await expect(
       manager.sendMessage("manager", worker!.agentId, "user-origin manager target", "auto", {
         origin: "user",
         attachments: [{ type: "binary", mimeType: "text/plain", data: "aGVsbG8=", fileName: "note.txt" }],
@@ -807,21 +816,69 @@ describe("SwarmManager Codex mention routing", () => {
     expect(initialText).toContain("run for today");
   });
 
-  it("selector turns with attachments fail before persistence and worker spawn", async () => {
+  it("selector turns with attachments dispatch to the manager without automatically spawning a Codex Plugin worker", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
 
-    await expect(
-      manager.handleUserMessage("@Codex -fireflies summarize attachment", {
-        sourceContext: { channel: "web" },
-        attachments: [{ type: "binary", mimeType: "text/plain", data: "aGVsbG8=", fileName: "note.txt" }],
-      }),
-    ).rejects.toThrow(/does not support attachments/i);
+    await manager.handleUserMessage("@Codex -fireflies summarize attachment", {
+      sourceContext: { channel: "web" },
+      attachments: [
+        { type: "text", mimeType: "text/plain", text: "secret raw file body", fileName: "note.txt" },
+      ],
+    });
 
     expect(hasInternalCodexPluginWorker(manager)).toBe(false);
-    expect(manager.runtimeByAgentId.get("manager")?.sendCalls ?? []).toHaveLength(0);
-    expect(manager.getConversationHistory("manager").some((entry) => entry.type === "conversation_message" && entry.text.includes("summarize attachment"))).toBe(false);
+    expect(manager.runtimeByAgentId.get("manager")?.sendCalls ?? []).toHaveLength(1);
+    const managerSend = manager.runtimeByAgentId.get("manager")!.sendCalls.at(-1);
+    const managerText = typeof managerSend?.message === "string" ? managerSend.message : managerSend?.message.text ?? "";
+    expect(managerText).toContain("@Codex -fireflies summarize attachment");
+    expect(managerText).toContain("[Codex Plugin selector context]");
+    expect(managerText).toContain("If this user turn includes attachments");
+    expect(managerText).toContain("The user attached the following files:");
+    expect(managerText).toContain("note.txt");
+    expect(managerText).toContain("secret raw file body");
+    expect(
+      manager
+        .getConversationHistory("manager")
+        .some(
+          (entry) =>
+            entry.type === "conversation_message" &&
+            entry.text.includes("summarize attachment") &&
+            entry.attachments?.[0]?.fileName === "note.txt",
+        ),
+    ).toBe(true);
+  });
+
+  it("Codex Plugin specialist spawn after an attachment selector turn does not forward raw attachments", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies summarize attachment", {
+      sourceContext: { channel: "web" },
+      attachments: [
+        { type: "text", mimeType: "text/plain", text: "secret raw file body", fileName: "note.txt" },
+      ],
+    });
+
+    await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "Use the manager-provided text summary only.",
+    });
+
+    const worker = findInternalCodexPluginWorker(manager);
+    expect(worker).toBeDefined();
+    const workerSend = manager.runtimeByAgentId.get(worker!.agentId)!.sendCalls.at(-1);
+    const workerMessage = workerSend?.message;
+    const workerText = typeof workerMessage === "string" ? workerMessage : workerMessage?.text ?? "";
+    expect(workerText).toContain("Codex Plugin delegation task");
+    expect(workerText).toContain("Use the manager-provided text summary only.");
+    expect(workerText).not.toContain("The user attached the following files:");
+    expect(workerText).not.toContain("secret raw file body");
+    expect(workerText).not.toContain("note.txt");
+    expect(typeof workerMessage === "string" ? [] : workerMessage?.images ?? []).toEqual([]);
   });
 
   it("scheduled selector turns fail closed before manager dispatch or worker spawn", async () => {
