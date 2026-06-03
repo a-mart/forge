@@ -206,6 +206,38 @@ describe("CodexPluginScopeService", () => {
     expect(scope.allowedTools.some((tool) => tool.inputMode === "args")).toBe(true);
   });
 
+  it("returns full redacted connector content to the worker while keeping public details preview-only", async () => {
+    const service = new CodexPluginScopeService({ catalog: adapter(catalog()) });
+    const { scope } = await service.materializePendingScope({
+      managerAgentId: "manager",
+      workerAgentId: "codex-plugin-fireflies",
+      selectors: ["fireflies"],
+    });
+    const definitions = buildCodexPluginScopedToolDefinitions({
+      scope,
+      executeScopedTool: async () => ({
+        auditId: "audit-1",
+        selector: "codex_apps/fireflies_fireflies_get_transcript",
+        serverName: "codex_apps",
+        toolName: "fireflies_fireflies_get_transcript",
+        ok: true,
+        redactedPreview: "{\"content\":\"preview…\"}",
+        redactedModelContent: "{\"content\":\"full redacted transcript tail\"}",
+        redactedModelContentTruncated: false,
+      }),
+    });
+
+    const transcriptTool = definitions.find((tool) => tool.name === "codex_fireflies_list_recent")!;
+    const result = await transcriptTool.execute("tc-1", { limit: 1 });
+    const contentText = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+    expect(contentText).toContain("fullRedactedContent");
+    expect(contentText).toContain("full redacted transcript tail");
+    expect(JSON.stringify(result.details)).toContain("preview");
+    expect(JSON.stringify(result.details)).not.toContain("fullRedactedContent");
+    expect(JSON.stringify(result.details)).not.toContain("full redacted transcript tail");
+  });
+
   it("list fallback returns scoped cards only", async () => {
     const service = new CodexPluginScopeService({ catalog: adapter(catalog()) });
     const { scope } = await service.materializePendingScope({

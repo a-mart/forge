@@ -1,8 +1,9 @@
-import { safeJson } from "./codex-app-server-event-normalizer.js";
 import {
   boundCodexMcpToolArgs,
+  boundCodexMcpToolModelContent,
   boundCodexMcpToolUiPreview,
   formatCodexMcpToolFailureMessage,
+  stringifyRedactedCodexMcpPayload,
 } from "./codex-mcp-args.js";
 import { assertCodexMcpToolReadOnlyAllowed } from "./codex-mcp-tool-safety.js";
 import { parseCodexMcpToolSafetyFields } from "./codex-mcp-tool-safety.js";
@@ -82,6 +83,9 @@ export interface CodexMcpToolCallResult {
   /** Redacted, byte-bounded error preview safe for model context and tool details. */
   errorPreview?: string;
   redactedPreview: string;
+  /** Redacted, larger payload for narrow read-only connector tools that need full content in worker context. */
+  redactedModelContent?: string;
+  redactedModelContentTruncated?: boolean;
 }
 
 interface CatalogCacheEntry {
@@ -321,7 +325,11 @@ export class CodexMcpCatalog {
         });
       }
 
-      const preview = boundCodexMcpToolUiPreview(safeJson(parsed.redactedPayload));
+      const redactedPayloadText = stringifyRedactedCodexMcpPayload(parsed.redactedPayload);
+      const preview = boundCodexMcpToolUiPreview(redactedPayloadText);
+      const modelContent = shouldExposeFullRedactedPayloadToScopedWorker(tool)
+        ? boundCodexMcpToolModelContent(redactedPayloadText)
+        : undefined;
 
       return {
         auditId,
@@ -330,6 +338,8 @@ export class CodexMcpCatalog {
         toolName: tool.toolName,
         ok: true,
         redactedPreview: preview,
+        redactedModelContent: modelContent?.text,
+        redactedModelContentTruncated: modelContent?.truncated,
       };
     } catch (error) {
       return buildCodexMcpToolFailureResult({
@@ -716,6 +726,23 @@ function extractArray(response: unknown, keys: string[]): unknown[] {
 type ParsedToolCallResponse =
   | { ok: true; redactedPayload: unknown }
   | { ok: false; message: string };
+
+function shouldExposeFullRedactedPayloadToScopedWorker(tool: CodexCatalogMcpTool): boolean {
+  const toolName = tool.toolName.toLowerCase();
+  const selector = tool.selector.toLowerCase();
+  const description = (tool.description ?? "").toLowerCase();
+  const firefliesScoped = selector.includes("fireflies") || tool.serverName.toLowerCase().includes("fireflies");
+  if (!firefliesScoped) {
+    return false;
+  }
+
+  if (toolName.includes("get_transcript") || toolName.endsWith("_fetch")) {
+    return true;
+  }
+
+  const text = `${toolName} ${selector} ${description}`;
+  return text.includes("transcript") && (text.includes("download") || text.includes("export"));
+}
 
 function parseToolCallResponse(response: unknown): ParsedToolCallResponse {
   const failureMessage = extractToolCallFailureMessage(response);

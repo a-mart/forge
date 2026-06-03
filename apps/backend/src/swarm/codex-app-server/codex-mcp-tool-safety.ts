@@ -55,8 +55,12 @@ function tokenizePolicyText(value: string): string[] {
     .filter((token) => token.length > 0);
 }
 
+function findDeniedPolicyTokens(value: string, deniedTokens: ReadonlySet<string>): string[] {
+  return tokenizePolicyText(value).filter((token) => deniedTokens.has(token));
+}
+
 function hasDeniedPolicyToken(value: string, deniedTokens: ReadonlySet<string>): boolean {
-  return tokenizePolicyText(value).some((token) => deniedTokens.has(token));
+  return findDeniedPolicyTokens(value, deniedTokens).length > 0;
 }
 
 function readBoolean(value: unknown): boolean | undefined {
@@ -75,6 +79,13 @@ function readBoolean(value: unknown): boolean | undefined {
   }
 
   return undefined;
+}
+
+function canUseFirefliesTranscriptDownloadException(
+  deniedTokens: readonly string[],
+  exceptionAllowed: boolean,
+): boolean {
+  return exceptionAllowed && deniedTokens.every((token) => token === "download" || token === "file");
 }
 
 function collectAnnotationFlags(annotations: unknown): {
@@ -97,19 +108,52 @@ function collectAnnotationFlags(annotations: unknown): {
   };
 }
 
+function isNarrowReadOnlyFirefliesTranscriptDownloadTool(
+  tool: CodexCatalogMcpTool,
+  annotationFlags: ReturnType<typeof collectAnnotationFlags>,
+): boolean {
+  if (tool.destructive === true || annotationFlags.destructive === true || annotationFlags.openWorld === true) {
+    return false;
+  }
+  if (tool.readOnly !== true && annotationFlags.readOnly !== true) {
+    return false;
+  }
+
+  const haystack = `${tool.selector} ${tool.serverName} ${tool.toolName} ${tool.description ?? ""}`.toLowerCase();
+  return haystack.includes("fireflies") && haystack.includes("transcript") && haystack.includes("download");
+}
+
 export function classifyCodexMcpToolSafety(tool: CodexCatalogMcpTool): {
   allowed: boolean;
   reason?: string;
 } {
   const combined = `${tool.serverName} ${tool.toolName} ${tool.description ?? ""}`;
-  if (hasDeniedPolicyToken(`${tool.serverName}/${tool.toolName}`, DENIED_TOOL_NAME_TOKENS)) {
+  const annotationFlags = collectAnnotationFlags(tool.annotations);
+  const firefliesTranscriptDownloadException = isNarrowReadOnlyFirefliesTranscriptDownloadTool(
+    tool,
+    annotationFlags,
+  );
+  const deniedNameTokens = findDeniedPolicyTokens(
+    `${tool.serverName}/${tool.toolName}`,
+    DENIED_TOOL_NAME_TOKENS,
+  );
+  if (
+    deniedNameTokens.length > 0 &&
+    !canUseFirefliesTranscriptDownloadException(deniedNameTokens, firefliesTranscriptDownloadException)
+  ) {
     return {
       allowed: false,
       reason: `Codex MCP tool ${tool.selector} is blocked by v1 safety policy (tool name).`,
     };
   }
 
-  if (tool.description && hasDeniedPolicyToken(tool.description, DENIED_DESCRIPTION_TOKENS)) {
+  const deniedDescriptionTokens = tool.description
+    ? findDeniedPolicyTokens(tool.description, DENIED_DESCRIPTION_TOKENS)
+    : [];
+  if (
+    deniedDescriptionTokens.length > 0 &&
+    !canUseFirefliesTranscriptDownloadException(deniedDescriptionTokens, firefliesTranscriptDownloadException)
+  ) {
     return {
       allowed: false,
       reason: `Codex MCP tool ${tool.selector} is blocked by v1 safety policy (description).`,
@@ -123,7 +167,6 @@ export function classifyCodexMcpToolSafety(tool: CodexCatalogMcpTool): {
     };
   }
 
-  const annotationFlags = collectAnnotationFlags(tool.annotations);
   if (annotationFlags.destructive === true || tool.destructive === true) {
     return {
       allowed: false,
