@@ -135,19 +135,23 @@ export function isFirefliesCodexMcpTool(tool: CodexCatalogMcpTool): boolean {
     return true;
   }
 
+  const hasExplicitFirefliesMetadata =
+    appId === "fireflies" ||
+    appName === "fireflies" ||
+    metadataPlugin === "fireflies" ||
+    metadataPlugin.split("@")[0] === "fireflies";
+  if (hasExplicitFirefliesMetadata) {
+    return true;
+  }
+
   if (
     isAggregateCodexAppsTool(tool) &&
-    (selector.startsWith("codex_apps/fireflies_") || toolName.startsWith("fireflies_"))
+    (selector.startsWith("codex_apps/fireflies_fireflies_") || toolName.startsWith("fireflies_fireflies_"))
   ) {
     return true;
   }
 
-  return (
-    appId === "fireflies" ||
-    appName === "fireflies" ||
-    metadataPlugin === "fireflies" ||
-    metadataPlugin.split("@")[0] === "fireflies"
-  );
+  return false;
 }
 
 function collectAnnotationFlags(annotations: unknown): {

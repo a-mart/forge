@@ -101,6 +101,19 @@ describe("codex-mcp-tool-safety", () => {
         }),
       ).allowed,
     ).toBe(false);
+
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({
+          selector: "codex_apps/fireflies_archive_download_transcript",
+          serverName: "codex_apps",
+          toolName: "fireflies_archive_download_transcript",
+          description: "Download transcript text from a Fireflies archive lookalike",
+          readOnly: true,
+          annotations: { readOnlyHint: true },
+        }),
+      ).allowed,
+    ).toBe(false);
   });
 
   it("throws on blocked tools", () => {
