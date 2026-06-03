@@ -149,6 +149,12 @@ import {
   type WorkerStallState,
   type WorkerWatchdogState
 } from "./swarm-worker-health-service.js";
+import {
+  ManagerNoOpGuard,
+  shouldBeginManagerNoOpGuardForDelivery,
+  shouldQueueManagerNoOpGuardForDelivery,
+  shouldTrackInboundManagerTurn,
+} from "./manager-noop-guard.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
 import type { ImportSkillOptions } from "./skills/skill-sharing-service.js";
 import {
@@ -1261,6 +1267,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private agentsSnapshotVersion = 0;
   private profilesSnapshotVersion = 0;
   private readonly workerHealthService: SwarmWorkerHealthService;
+  private readonly managerNoOpGuard: ManagerNoOpGuard;
   private readonly specialistFallbackManager: SwarmSpecialistFallbackManager;
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly sidebarPerfRecorder: SidebarPerfRecorder;
@@ -1355,6 +1362,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       isRuntimeInContextRecovery: (agentId) => this.isRuntimeInContextRecovery(agentId),
       isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
       logDebug: (message, details) => this.logDebug(message, details)
+    });
+    this.managerNoOpGuard = new ManagerNoOpGuard({
+      now: this.now,
+      logDebug: (message, details) => this.logDebug(message, details),
+      emitConversationMessage: (event) => this.emitConversationMessage(event),
+      sendInternalManagerMessage: (managerId, message) =>
+        this.sendMessage(managerId, managerId, message, "auto", { origin: "internal" }).then(() => undefined),
+      isManualStopPending: (managerId) =>
+        this.pendingManualManagerStopNoticeTimersByAgentId.has(managerId),
+      isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
     });
     this.specialistFallbackManager = new SwarmSpecialistFallbackManager({
       descriptors: this.descriptors,
@@ -4883,6 +4900,30 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
 
+    const inboundTurnTrigger = shouldTrackInboundManagerTurn({
+      targetRole: target.role,
+      senderRole: sender.role,
+      origin,
+      message,
+      internalDeliveryKind: options?.internalDeliveryKind,
+    });
+    if (inboundTurnTrigger && shouldBeginManagerNoOpGuardForDelivery(receipt.acceptedMode)) {
+      this.managerNoOpGuard.beginTurn(target.agentId, inboundTurnTrigger, {
+        fromWorkerAgentId: sender.role === "worker" ? sender.agentId : undefined,
+        triggerPreview: message,
+      });
+    } else if (inboundTurnTrigger && shouldQueueManagerNoOpGuardForDelivery(receipt.acceptedMode)) {
+      this.managerNoOpGuard.queuePendingTurn(target.agentId, {
+        triggerKind: inboundTurnTrigger,
+        fromWorkerAgentId: sender.role === "worker" ? sender.agentId : undefined,
+        triggerPreview: message,
+        runtimeMessageText: extractRuntimeMessageText(modelMessage),
+        deliveryId: receipt.deliveryId,
+        requestedDelivery: delivery,
+        acceptedMode: receipt.acceptedMode,
+      });
+    }
+
     this.logDebug("agent:send_message", {
       fromAgentId,
       targetAgentId,
@@ -5081,6 +5122,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitConversationMessage(payload);
     if (source === "speak_to_user") {
+      this.managerNoOpGuard.noteVisibleOutput(agentId);
       this.markSessionActivity(agentId, payload.timestamp);
     }
 
@@ -8385,6 +8427,48 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.runtimeController.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId);
   }
 
+  noteManagerNoOpRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): void {
+    this.managerNoOpGuard.noteRuntimeSessionEvent(agentId, event);
+  }
+
+  suppressManagerNoOpGuard(agentId: string, reason: string): void {
+    this.managerNoOpGuard.suppress(agentId, reason);
+  }
+
+  async finalizeManagerNoOpGuard(
+    agentId: string,
+    source: "agent_end" | "idle",
+    options?: { pendingCount?: number },
+  ): Promise<void> {
+    try {
+      await this.managerNoOpGuard.tryFinalize(agentId, source, options);
+    } catch (error) {
+      this.logDebug(`manager:noop_guard:${source}_finalize_failed`, {
+        managerId: agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async handleManagerStatusTransition(
+    descriptor: AgentDescriptor,
+    nextStatus: AgentStatus,
+    pendingCount: number,
+  ): Promise<void> {
+    await this.cortexService.handleManagerStatusTransition(descriptor, nextStatus, pendingCount);
+
+    if (descriptor.role === "manager" && nextStatus === "idle" && pendingCount === 0) {
+      try {
+        await this.managerNoOpGuard.tryFinalize(descriptor.agentId, "idle", { pendingCount });
+      } catch (error) {
+        this.logDebug("manager:noop_guard:idle_finalize_failed", {
+          managerId: descriptor.agentId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
   async queueVersionedToolMutation(
     descriptor: AgentDescriptor,
     mutation: VersioningMutation
@@ -8564,6 +8648,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private markPendingManualManagerStopNotice(agentId: string): void {
+    this.managerNoOpGuard.suppress(agentId, "manual_stop");
     this.clearPendingManualManagerStopNoticeTimer(agentId);
 
     const timer = setTimeout(() => {

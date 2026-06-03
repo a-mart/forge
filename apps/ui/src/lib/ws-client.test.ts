@@ -239,6 +239,71 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('preserves manager no-op diagnostic system rows from history and live events', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+    const snapshots: ReturnType<typeof client.getState>[] = []
+    client.subscribe((state) => {
+      snapshots.push(state)
+    })
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'manager',
+      messages: [
+        {
+          type: 'conversation_message',
+          agentId: 'manager',
+          id: 'noop-history',
+          role: 'system',
+          text: 'Manager returned no visible action after a worker update.',
+          timestamp: new Date().toISOString(),
+          source: 'system',
+        },
+      ],
+    })
+
+    emitServerEvent(socket, {
+      type: 'conversation_message',
+      agentId: 'manager',
+      id: 'noop-live',
+      role: 'system',
+      text: 'Manager returned no visible action after a worker update. Forge sent an internal recovery nudge.',
+      timestamp: new Date().toISOString(),
+      source: 'system',
+    })
+
+    const messages = snapshots.at(-1)?.messages ?? []
+    expect(messages).toHaveLength(2)
+    expect(messages[0]).toMatchObject({
+      type: 'conversation_message',
+      id: 'noop-history',
+      role: 'system',
+      source: 'system',
+      text: 'Manager returned no visible action after a worker update.',
+    })
+    expect(messages[1]).toMatchObject({
+      type: 'conversation_message',
+      id: 'noop-live',
+      role: 'system',
+      source: 'system',
+      text: 'Manager returned no visible action after a worker update. Forge sent an internal recovery nudge.',
+    })
+
+    client.destroy()
+  })
+
   it('sends choice response and cancel commands', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

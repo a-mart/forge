@@ -129,6 +129,7 @@ describe('task tool schema', () => {
     expect(tool.description).toContain('Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only')
     expect(tool.description).toContain('update_item_status')
     expect(tool.description).toContain('Expected state conflicts may return `{ ok: false')
+    expect(tool.description).toContain('recover by calling `task.get`, retrying with fresh ids/revisions, or continuing without plan state')
     expect(tool.description).toContain('Do not send nested item arrays')
     expect((taskToolSchema as { description?: string }).description).toContain('Recoverable conflicts return ok:false')
   })

@@ -188,6 +188,7 @@ function mapNonManagerRuntimeEvent(
     case "agent_end":
     case "turn_start":
     case "turn_end":
+    case "queued_input_start":
     case "message_update":
     case "auto_compaction_start":
     case "auto_compaction_end":
@@ -283,6 +284,7 @@ function mapToolCallActivityFromRuntime(
     case "agent_end":
     case "turn_start":
     case "turn_end":
+    case "queued_input_start":
     case "message_start":
     case "message_update":
     case "message_end":

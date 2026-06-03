@@ -263,6 +263,14 @@ export class RuntimeEventProjector {
         this.deps.logDebug(`manager:event:${event.type}`);
         return;
 
+      case "queued_input_start":
+        this.deps.logDebug("manager:event:queued_input_start", {
+          deliveryId: effectiveEvent.deliveryId,
+          acceptedMode: effectiveEvent.acceptedMode,
+          requestedMode: effectiveEvent.requestedMode,
+        });
+        return;
+
       case "turn_end":
         this.deps.logDebug("manager:event:turn_end", {
           toolResults: effectiveEvent.toolResults.length
@@ -430,6 +438,7 @@ function isBareTerminatedErrorMessage(message: string | undefined): boolean {
 function isPositiveWorkerRuntimeProgressEvent(event: RuntimeSessionEvent): boolean {
   switch (event.type) {
     case "turn_start":
+    case "queued_input_start":
     case "message_start":
     case "tool_execution_start":
     case "tool_execution_update":

@@ -8,6 +8,11 @@ import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
+import {
+  MANAGER_NOOP_DIAGNOSTIC_FINAL,
+  MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+  ManagerNoOpGuard,
+} from "../manager-noop-guard.js";
 import { SwarmRuntimeController, type SwarmRuntimeControllerHost } from "../swarm-runtime-controller.js";
 import { SwarmWorkerHealthService, TRANSIENT_WORKER_TERMINATED_GRACE_MS } from "../swarm-worker-health-service.js";
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
@@ -173,6 +178,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     secretsEnvService: {
       getCredentialPoolService: vi.fn()
     },
+    handleManagerStatusTransition: cortexHandleManagerStatus,
     cortexService: {
       handleManagerStatusTransition: cortexHandleManagerStatus
     },
@@ -235,7 +241,10 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     saveStore: vi.fn(),
     applyManagerRuntimeRecyclePolicy,
     queueVersionedToolMutation: vi.fn(),
-    logDebug: vi.fn()
+    logDebug: vi.fn(),
+    noteManagerNoOpRuntimeSessionEvent: vi.fn(),
+    suppressManagerNoOpGuard: vi.fn(),
+    finalizeManagerNoOpGuard: vi.fn()
   };
 
   return {
@@ -1533,6 +1542,229 @@ describe("SwarmRuntimeController", () => {
     controller.clearIntentionalStopRuntimeCallbackSuppression(worker.agentId, token);
     await controller.handleRuntimeStatus(token, worker.agentId, "idle" as AgentStatus, 0);
     expect(emitStatus).toHaveBeenCalledTimes(1);
+  });
+
+  function wireManagerNoOpGuardToHost(
+    harness: ReturnType<typeof createRuntimeControllerHarness>,
+    options?: { isRuntimeRecoveryActive?: () => boolean },
+  ): ManagerNoOpGuard {
+    const guard = new ManagerNoOpGuard({
+      now: () => new Date().toISOString(),
+      logDebug: () => undefined,
+      emitConversationMessage: (event) => harness.emitConversationMessage(event),
+      sendInternalManagerMessage: vi.fn(async () => undefined),
+      isManualStopPending: () => false,
+      isRuntimeRecoveryActive: options?.isRuntimeRecoveryActive ?? (() => false),
+    });
+
+    harness.host.noteManagerNoOpRuntimeSessionEvent = (agentId, event) => {
+      guard.noteRuntimeSessionEvent(agentId, event);
+    };
+    harness.host.suppressManagerNoOpGuard = (agentId, reason) => {
+      guard.suppress(agentId, reason);
+    };
+    harness.host.finalizeManagerNoOpGuard = async (agentId, source, finalizeOptions) => {
+      await guard.tryFinalize(agentId, source, finalizeOptions);
+    };
+
+    return guard;
+  }
+
+  it("observes MCP-namespaced manager tool_execution_start through the runtime controller callback path", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const harness = createRuntimeControllerHarness(config);
+    const guard = wireManagerNoOpGuardToHost(harness);
+    const controller = new SwarmRuntimeController(harness.host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-noop-tools",
+      role: "manager",
+      managerId: "mgr-noop-tools",
+      status: "streaming",
+    });
+    harness.descriptors.set(manager.agentId, { ...manager });
+    guard.beginTurn(manager.agentId, "worker_callback");
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, {
+      type: "tool_execution_start",
+      toolName: "mcp__forge-swarm-manager__send_message_to_agent",
+      toolCallId: "msg-1",
+      args: { targetAgentId: "worker-1", message: "go" },
+    });
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, {
+      type: "tool_execution_end",
+      toolName: "mcp__forge-swarm-manager__send_message_to_agent",
+      toolCallId: "msg-1",
+      result: { ok: true },
+      isError: false,
+    });
+    await controller.handleRuntimeAgentEnd(token, manager.agentId);
+
+    expect(
+      harness.emitConversationMessage.mock.calls.some(
+        (call) =>
+          call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE ||
+          call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
+      ),
+    ).toBe(false);
+  });
+
+  it("suppresses manager no-op guard on runtime errors after callback-gate filtering", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const harness = createRuntimeControllerHarness(config);
+    const guard = wireManagerNoOpGuardToHost(harness);
+    const controller = new SwarmRuntimeController(harness.host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-noop-error",
+      role: "manager",
+      managerId: "mgr-noop-error",
+      status: "streaming",
+    });
+    harness.descriptors.set(manager.agentId, { ...manager });
+    guard.beginTurn(manager.agentId, "worker_callback");
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeError(token, manager.agentId, {
+      phase: "prompt_start",
+      message: "runtime blew up",
+    });
+    await controller.handleRuntimeAgentEnd(token, manager.agentId);
+
+    expect(
+      harness.emitConversationMessage.mock.calls.some(
+        (call) => call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+      ),
+    ).toBe(false);
+  });
+
+  it("suppresses manager no-op guard on message_end runtime errors after callback-gate filtering", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const harness = createRuntimeControllerHarness(config);
+    const guard = wireManagerNoOpGuardToHost(harness);
+    const controller = new SwarmRuntimeController(harness.host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-noop-message-end-error",
+      role: "manager",
+      managerId: "mgr-noop-message-end-error",
+      status: "streaming",
+    });
+    harness.descriptors.set(manager.agentId, { ...manager });
+    guard.beginTurn(manager.agentId, "worker_callback");
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "provider failed",
+      },
+    });
+    await controller.handleRuntimeAgentEnd(token, manager.agentId);
+
+    expect(
+      harness.emitConversationMessage.mock.calls.some(
+        (call) => call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+      ),
+    ).toBe(false);
+  });
+
+  it("clears tracked tool paths on manager agent_end", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const harness = createRuntimeControllerHarness(config);
+    wireManagerNoOpGuardToHost(harness);
+    const controller = new SwarmRuntimeController(harness.host);
+    const clearTrackedToolPaths = vi.spyOn(controller, "clearTrackedToolPaths");
+
+    const manager = baseDescriptor({
+      agentId: "mgr-noop-clear-tools",
+      role: "manager",
+      managerId: "mgr-noop-clear-tools",
+      status: "streaming",
+    });
+    harness.descriptors.set(manager.agentId, { ...manager });
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeAgentEnd(token, manager.agentId);
+
+    expect(clearTrackedToolPaths).toHaveBeenCalledWith(manager.agentId);
+  });
+
+  it("ignores stale manager session events for no-op guard observation", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const harness = createRuntimeControllerHarness(config);
+    const guard = wireManagerNoOpGuardToHost(harness);
+    const controller = new SwarmRuntimeController(harness.host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-noop-stale",
+      role: "manager",
+      managerId: "mgr-noop-stale",
+      status: "streaming",
+    });
+    harness.descriptors.set(manager.agentId, { ...manager });
+
+    const staleToken = controller.allocateRuntimeToken(manager.agentId);
+    const currentToken = controller.allocateRuntimeToken(manager.agentId);
+    const notedTools: string[] = [];
+    harness.host.noteManagerNoOpRuntimeSessionEvent = (agentId, event) => {
+      if (event.type === "tool_execution_start") {
+        notedTools.push(event.toolName);
+      }
+      guard.noteRuntimeSessionEvent(agentId, event);
+    };
+    guard.beginTurn(manager.agentId, "worker_callback");
+
+    await controller.handleRuntimeSessionEvent(staleToken, manager.agentId, {
+      type: "tool_execution_start",
+      toolName: "task",
+      toolCallId: "task-1",
+      args: {},
+    });
+    await controller.handleRuntimeSessionEvent(currentToken, manager.agentId, {
+      type: "tool_execution_start",
+      toolName: "present_choices",
+      toolCallId: "choice-1",
+      args: {},
+    });
+
+    expect(notedTools).toEqual(["present_choices"]);
+  });
+
+  it("finalizes manager no-op guard on agent_end through the runtime controller callback path", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const harness = createRuntimeControllerHarness(config);
+    const guard = wireManagerNoOpGuardToHost(harness);
+    const controller = new SwarmRuntimeController(harness.host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-noop-end",
+      role: "manager",
+      managerId: "mgr-noop-end",
+      status: "streaming",
+    });
+    harness.descriptors.set(manager.agentId, { ...manager });
+    guard.beginTurn(manager.agentId, "worker_callback", { triggerPreview: "status: done" });
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeAgentEnd(token, manager.agentId);
+
+    expect(
+      harness.emitConversationMessage.mock.calls.some(
+        (call) =>
+          call[0]?.role === "system" && call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+      ),
+    ).toBe(true);
   });
 
   it("wires listRuntimeExtensionSnapshots through a booted TestSwarmManager", async () => {

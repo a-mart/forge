@@ -512,6 +512,39 @@ describe("CursorSdkAgentRuntime", () => {
     expect(sent[2]).toBe("third");
   });
 
+  it("emits queued input start when a queued follow-up actually begins", async () => {
+    const firstGate = deferred();
+    const send = vi.fn(async () => createRun(send.mock.calls.length === 1 ? { streamGate: firstGate.promise } : {}));
+    const { runtime, callbacks } = await setupRuntime({ sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() } });
+
+    const firstReceipt = await runtime.sendMessage("first");
+    const secondReceipt = await runtime.sendMessage("second", "followUp");
+
+    expect(firstReceipt.acceptedMode).toBe("prompt");
+    expect(secondReceipt.acceptedMode).toBe("followUp");
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(callbacks.onSessionEvent).not.toHaveBeenCalledWith(
+      "worker-1",
+      expect.objectContaining({
+        type: "queued_input_start",
+        deliveryId: secondReceipt.deliveryId,
+      }),
+    );
+
+    firstGate.resolve();
+
+    await waitFor(() => expect(callbacks.onSessionEvent).toHaveBeenCalledWith(
+      "worker-1",
+      expect.objectContaining({
+        type: "queued_input_start",
+        deliveryId: secondReceipt.deliveryId,
+        acceptedMode: "followUp",
+        message: expect.objectContaining({ text: "second" }),
+      }),
+    ));
+    await waitFor(() => expect(callbacks.onAgentEnd).toHaveBeenCalledTimes(2));
+  });
+
   it("stop cancels active run without runtime error and clears queued prompts", async () => {
     const gate = deferred();
     const cancel = vi.fn(async () => {
