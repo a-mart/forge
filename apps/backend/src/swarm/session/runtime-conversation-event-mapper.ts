@@ -178,7 +178,7 @@ function mapNonManagerRuntimeEvent(
           kind: "tool_execution_end",
           toolName: event.toolName,
           toolCallId: event.toolCallId,
-          text: safeJson(event.result),
+          text: safeJson(sanitizeToolExecutionEndResultForAudit(event.result)),
           isError: event.isError
         }
       ];
@@ -273,7 +273,7 @@ function mapToolCallActivityFromRuntime(
         kind: "tool_execution_end",
         toolName: event.toolName,
         toolCallId: event.toolCallId,
-        text: safeJson(event.result),
+        text: safeJson(sanitizeToolExecutionEndResultForAudit(event.result)),
         isError: event.isError
       };
 
@@ -290,6 +290,104 @@ function mapToolCallActivityFromRuntime(
     case "auto_retry_end":
       return undefined;
   }
+}
+
+export function sanitizeToolExecutionEndResultForAudit(value: unknown): unknown {
+  return sanitizeAuditValue(value, new WeakSet<object>());
+}
+
+function sanitizeAuditValue(value: unknown, seen: WeakSet<object>): unknown {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+    return value.map((entry) => sanitizeAuditValue(entry, seen));
+  }
+
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+  seen.add(value);
+
+  const publicDetails = isRecord(value.details) ? sanitizeAuditValue(value.details, new WeakSet<object>()) : undefined;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (isFullContentAuditKey(key) || isFullContentAuditNote(key, entry)) {
+      continue;
+    }
+
+    if (key === "content" && Array.isArray(entry)) {
+      sanitized[key] = sanitizeToolResultContentArrayForAudit(entry, publicDetails, seen);
+      continue;
+    }
+
+    sanitized[key] = sanitizeAuditValue(entry, seen);
+  }
+
+  return sanitized;
+}
+
+function sanitizeToolResultContentArrayForAudit(
+  content: unknown[],
+  publicDetails: unknown,
+  seen: WeakSet<object>,
+): unknown[] {
+  return content.map((entry) => {
+    if (!isRecord(entry) || typeof entry.text !== "string") {
+      return sanitizeAuditValue(entry, seen);
+    }
+
+    const parsedText = parseJsonObject(entry.text);
+    if (!parsedText || !containsFullContentAuditField(parsedText)) {
+      return sanitizeAuditValue(entry, seen);
+    }
+
+    const sanitizedEntry = sanitizeAuditValue(entry, seen) as Record<string, unknown>;
+    return {
+      ...sanitizedEntry,
+      text: JSON.stringify(publicDetails ?? sanitizeAuditValue(parsedText, new WeakSet<object>())),
+    };
+  });
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function containsFullContentAuditField(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsFullContentAuditField(entry));
+  }
+
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.entries(value).some(
+    ([key, entry]) => isFullContentAuditKey(key) || containsFullContentAuditField(entry)
+  );
+}
+
+function isFullContentAuditKey(key: string): boolean {
+  return /^(fullRedactedContent|fullRedactedContentTruncated|redactedModelContent|redactedModelContentTruncated|fullContent|fullContentTruncated|fullText|fullTextTruncated|fullRedactedText|fullRedactedTextTruncated|fullTranscript|fullTranscriptTruncated|fullRedactedTranscript|fullRedactedTranscriptTruncated)$/i.test(key);
+}
+
+function isFullContentAuditNote(key: string, value: unknown): boolean {
+  return key === "note" && typeof value === "string" && /fullRedactedContent|redactedModelContent|full content/i.test(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export function safeJson(value: unknown): string {
