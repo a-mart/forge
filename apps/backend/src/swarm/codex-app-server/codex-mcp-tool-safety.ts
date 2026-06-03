@@ -88,6 +88,68 @@ function canUseFirefliesTranscriptDownloadException(
   return exceptionAllowed && deniedTokens.every((token) => token === "download" || token === "file");
 }
 
+function normalizeIdentity(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function isAggregateCodexAppsTool(tool: CodexCatalogMcpTool): boolean {
+  return normalizeIdentity(tool.serverName) === "codex_apps";
+}
+
+function readStringField(
+  record: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+export function isFirefliesCodexMcpTool(tool: CodexCatalogMcpTool): boolean {
+  const serverName = normalizeIdentity(tool.serverName);
+  const selector = normalizeIdentity(tool.selector);
+  const toolName = normalizeIdentity(tool.toolName);
+  const appId = normalizeIdentity(tool.appId);
+  const appName = normalizeIdentity(tool.appName);
+  const metadataPlugin = normalizeIdentity(
+    readStringField(tool.annotations, [
+      "plugin",
+      "pluginId",
+      "plugin_id",
+      "app",
+      "appId",
+      "app_id",
+    ]),
+  );
+
+  if (serverName === "fireflies" || selector.startsWith("fireflies/")) {
+    return true;
+  }
+
+  if (
+    isAggregateCodexAppsTool(tool) &&
+    (selector.startsWith("codex_apps/fireflies_") || toolName.startsWith("fireflies_"))
+  ) {
+    return true;
+  }
+
+  return (
+    appId === "fireflies" ||
+    appName === "fireflies" ||
+    metadataPlugin === "fireflies" ||
+    metadataPlugin.split("@")[0] === "fireflies"
+  );
+}
+
 function collectAnnotationFlags(annotations: unknown): {
   readOnly?: boolean;
   destructive?: boolean;
@@ -120,7 +182,7 @@ function isNarrowReadOnlyFirefliesTranscriptDownloadTool(
   }
 
   const haystack = `${tool.selector} ${tool.serverName} ${tool.toolName} ${tool.description ?? ""}`.toLowerCase();
-  return haystack.includes("fireflies") && haystack.includes("transcript") && haystack.includes("download");
+  return isFirefliesCodexMcpTool(tool) && haystack.includes("transcript") && haystack.includes("download");
 }
 
 export function classifyCodexMcpToolSafety(tool: CodexCatalogMcpTool): {

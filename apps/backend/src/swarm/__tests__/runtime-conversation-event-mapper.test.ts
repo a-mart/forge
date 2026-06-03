@@ -134,6 +134,71 @@ describe("RuntimeConversationEventMapper", () => {
     ]);
   });
 
+  it("preserves ordinary worker and manager tool results with fullText fields", () => {
+    const result = { fullText: "complete ordinary tool output", summary: "short summary" };
+
+    const workerProjections = mapRuntimeEvent({
+      descriptor: makeDescriptor(),
+      event: {
+        type: "tool_execution_end",
+        toolName: "ordinary_tool",
+        toolCallId: "tool-full-text-worker",
+        result,
+        isError: false
+      }
+    });
+
+    expect(workerProjections).toHaveLength(2);
+    for (const projection of workerProjections) {
+      expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
+      if (projection.type !== "agent_tool_call" && projection.type !== "conversation_log") {
+        continue;
+      }
+      expect(JSON.parse(projection.text)).toEqual(result);
+    }
+
+    expect(
+      mapRuntimeEvent({
+        descriptor: makeDescriptor({ agentId: "manager", role: "manager", managerId: "manager" }),
+        event: {
+          type: "tool_execution_end",
+          toolName: "manager_tool",
+          toolCallId: "tool-full-text-manager",
+          result,
+          isError: false
+        }
+      })
+    ).toMatchObject([{ type: "agent_tool_call", text: JSON.stringify(result) }]);
+  });
+
+  it("leaves non-Codex tool results untouched even when they contain model-only-looking keys", () => {
+    const result = {
+      fullRedactedContent: "ordinary tool field that must remain visible",
+      redactedModelContent: "ordinary compatibility field",
+      summary: "short summary"
+    };
+
+    const projections = mapRuntimeEvent({
+      descriptor: makeDescriptor(),
+      event: {
+        type: "tool_execution_end",
+        toolName: "ordinary_tool",
+        toolCallId: "tool-non-codex-full-content",
+        result,
+        isError: false
+      }
+    });
+
+    expect(projections).toHaveLength(2);
+    for (const projection of projections) {
+      expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
+      if (projection.type !== "agent_tool_call" && projection.type !== "conversation_log") {
+        continue;
+      }
+      expect(JSON.parse(projection.text)).toEqual(result);
+    }
+  });
+
   it("keeps message_start role filtering to user, assistant, and system", () => {
     expect(
       mapRuntimeEvent({

@@ -37,7 +37,7 @@ export class RuntimeConversationEventMapper {
 
     if (descriptor) {
       const managerContextId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
-      const toolProjection = mapToolCallActivityFromRuntime(managerContextId, agentId, event, timestamp);
+      const toolProjection = mapToolCallActivityFromRuntime(managerContextId, agentId, event, timestamp, descriptor);
       if (toolProjection) {
         projections.push(toolProjection);
       }
@@ -51,7 +51,7 @@ export class RuntimeConversationEventMapper {
       return projections;
     }
 
-    const runtimeLogProjections = mapNonManagerRuntimeEvent(agentId, event, timestamp);
+    const runtimeLogProjections = mapNonManagerRuntimeEvent(agentId, event, timestamp, descriptor);
     projections.push(...runtimeLogProjections);
     return projections;
   }
@@ -60,7 +60,8 @@ export class RuntimeConversationEventMapper {
 function mapNonManagerRuntimeEvent(
   agentId: string,
   event: RuntimeSessionEvent,
-  timestamp: string
+  timestamp: string,
+  descriptor?: AgentDescriptor
 ): RuntimeConversationProjection[] {
   switch (event.type) {
     case "message_start": {
@@ -178,7 +179,7 @@ function mapNonManagerRuntimeEvent(
           kind: "tool_execution_end",
           toolName: event.toolName,
           toolCallId: event.toolCallId,
-          text: safeJson(sanitizeToolExecutionEndResultForAudit(event.result)),
+          text: safeJson(sanitizeToolExecutionEndResultForAudit(event.result, { descriptor, toolName: event.toolName })),
           isError: event.isError
         }
       ];
@@ -237,7 +238,8 @@ function mapToolCallActivityFromRuntime(
   managerContextId: string,
   actorAgentId: string,
   event: RuntimeSessionEvent,
-  timestamp: string
+  timestamp: string,
+  descriptor: AgentDescriptor
 ): AgentToolCallEvent | undefined {
   switch (event.type) {
     case "tool_execution_start":
@@ -273,7 +275,7 @@ function mapToolCallActivityFromRuntime(
         kind: "tool_execution_end",
         toolName: event.toolName,
         toolCallId: event.toolCallId,
-        text: safeJson(sanitizeToolExecutionEndResultForAudit(event.result)),
+        text: safeJson(sanitizeToolExecutionEndResultForAudit(event.result, { descriptor, toolName: event.toolName })),
         isError: event.isError
       };
 
@@ -292,8 +294,27 @@ function mapToolCallActivityFromRuntime(
   }
 }
 
-export function sanitizeToolExecutionEndResultForAudit(value: unknown): unknown {
+export function sanitizeToolExecutionEndResultForAudit(
+  value: unknown,
+  context?: { descriptor?: AgentDescriptor; toolName?: string },
+): unknown {
+  if (!shouldSanitizeCodexPluginScopedToolResult(value, context)) {
+    return value;
+  }
+
   return sanitizeAuditValue(value, new WeakSet<object>());
+}
+
+function shouldSanitizeCodexPluginScopedToolResult(
+  value: unknown,
+  context?: { descriptor?: AgentDescriptor; toolName?: string },
+): boolean {
+  const descriptor = context?.descriptor;
+  if (descriptor?.role !== "worker" || descriptor.internalWorkerKind !== "codex_plugin") {
+    return false;
+  }
+
+  return containsFullContentAuditField(value);
 }
 
 function sanitizeAuditValue(value: unknown, seen: WeakSet<object>): unknown {
@@ -369,6 +390,11 @@ function containsFullContentAuditField(value: unknown): boolean {
     return value.some((entry) => containsFullContentAuditField(entry));
   }
 
+  if (typeof value === "string" && /fullRedactedContent|redactedModelContent/i.test(value)) {
+    const parsed = parseJsonObject(value);
+    return parsed ? containsFullContentAuditField(parsed) : false;
+  }
+
   if (!isRecord(value)) {
     return false;
   }
@@ -379,7 +405,7 @@ function containsFullContentAuditField(value: unknown): boolean {
 }
 
 function isFullContentAuditKey(key: string): boolean {
-  return /^(fullRedactedContent|fullRedactedContentTruncated|redactedModelContent|redactedModelContentTruncated|fullContent|fullContentTruncated|fullText|fullTextTruncated|fullRedactedText|fullRedactedTextTruncated|fullTranscript|fullTranscriptTruncated|fullRedactedTranscript|fullRedactedTranscriptTruncated)$/i.test(key);
+  return /^(fullRedactedContent|fullRedactedContentTruncated|redactedModelContent|redactedModelContentTruncated)$/i.test(key);
 }
 
 function isFullContentAuditNote(key: string, value: unknown): boolean {

@@ -5,8 +5,11 @@ import {
   formatCodexMcpToolFailureMessage,
   stringifyRedactedCodexMcpPayload,
 } from "./codex-mcp-args.js";
-import { assertCodexMcpToolReadOnlyAllowed } from "./codex-mcp-tool-safety.js";
-import { parseCodexMcpToolSafetyFields } from "./codex-mcp-tool-safety.js";
+import {
+  assertCodexMcpToolReadOnlyAllowed,
+  isFirefliesCodexMcpTool,
+  parseCodexMcpToolSafetyFields,
+} from "./codex-mcp-tool-safety.js";
 import type { CodexAppServerClientPort } from "./types.js";
 
 const CATALOG_CACHE_TTL_MS = 30_000;
@@ -728,20 +731,21 @@ type ParsedToolCallResponse =
   | { ok: false; message: string };
 
 function shouldExposeFullRedactedPayloadToScopedWorker(tool: CodexCatalogMcpTool): boolean {
-  const toolName = tool.toolName.toLowerCase();
-  const selector = tool.selector.toLowerCase();
-  const description = (tool.description ?? "").toLowerCase();
-  const firefliesScoped = selector.includes("fireflies") || tool.serverName.toLowerCase().includes("fireflies");
-  if (!firefliesScoped) {
+  if (!isFirefliesCodexMcpTool(tool)) {
     return false;
   }
 
-  if (toolName.includes("get_transcript") || toolName.endsWith("_fetch")) {
-    return true;
+  const tokens = `${tool.toolName} ${tool.selector} ${tool.description ?? ""}`
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+  if (!tokens.includes("transcript") && !tokens.includes("transcripts")) {
+    return false;
   }
 
-  const text = `${toolName} ${selector} ${description}`;
-  return text.includes("transcript") && (text.includes("download") || text.includes("export"));
+  return ["fetch", "get", "download", "export"].some((token) => tokens.includes(token));
 }
 
 function parseToolCallResponse(response: unknown): ParsedToolCallResponse {

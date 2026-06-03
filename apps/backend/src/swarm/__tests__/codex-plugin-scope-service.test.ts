@@ -206,20 +206,38 @@ describe("CodexPluginScopeService", () => {
     expect(scope.allowedTools.some((tool) => tool.inputMode === "args")).toBe(true);
   });
 
-  it("returns full redacted connector content to the worker while keeping public details preview-only", async () => {
-    const service = new CodexPluginScopeService({ catalog: adapter(catalog()) });
+  it("returns full redacted Fireflies fetch_transcript content to the worker while keeping public details preview-only", async () => {
+    const baseCatalog = catalog();
+    const service = new CodexPluginScopeService({
+      catalog: adapter(
+        catalog({
+          tools: [
+            ...baseCatalog.tools,
+            {
+              selector: "fireflies/fetch_transcript",
+              serverName: "fireflies",
+              toolName: "fetch_transcript",
+              description: "Fetch full transcript by ID",
+              readOnly: true,
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object", properties: { transcriptId: { type: "string" } } },
+            },
+          ],
+        }),
+      ),
+    });
     const { scope } = await service.materializePendingScope({
       managerAgentId: "manager",
       workerAgentId: "codex-plugin-fireflies",
-      selectors: ["fireflies"],
+      selectors: ["fireflies/fetch_transcript"],
     });
     const definitions = buildCodexPluginScopedToolDefinitions({
       scope,
       executeScopedTool: async () => ({
         auditId: "audit-1",
-        selector: "codex_apps/fireflies_fireflies_get_transcript",
-        serverName: "codex_apps",
-        toolName: "fireflies_fireflies_get_transcript",
+        selector: "fireflies/fetch_transcript",
+        serverName: "fireflies",
+        toolName: "fetch_transcript",
         ok: true,
         redactedPreview: "{\"content\":\"preview…\"}",
         redactedModelContent: "{\"content\":\"full redacted transcript tail\"}",
@@ -227,8 +245,8 @@ describe("CodexPluginScopeService", () => {
       }),
     });
 
-    const transcriptTool = definitions.find((tool) => tool.name === "codex_fireflies_list_recent")!;
-    const result = await transcriptTool.execute("tc-1", { limit: 1 });
+    const transcriptTool = definitions.find((tool) => tool.name === "codex_fireflies_fetch_transcript")!;
+    const result = await transcriptTool.execute("tc-1", { transcriptId: "transcript-1" });
     const contentText = result.content[0]?.type === "text" ? result.content[0].text : "";
 
     expect(contentText).toContain("fullRedactedContent");

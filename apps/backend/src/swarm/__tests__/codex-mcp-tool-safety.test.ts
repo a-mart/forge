@@ -88,6 +88,19 @@ describe("codex-mcp-tool-safety", () => {
         }),
       ).allowed,
     ).toBe(false);
+
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({
+          selector: "files/download_fireflies_transcript",
+          serverName: "files",
+          toolName: "download_fireflies_transcript",
+          description: "Download Fireflies transcript text from a file store",
+          readOnly: true,
+          annotations: { readOnlyHint: true },
+        }),
+      ).allowed,
+    ).toBe(false);
   });
 
   it("throws on blocked tools", () => {
