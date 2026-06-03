@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, TerminalSquare, Puzzle, UserCog, Info, Cpu, Users, FolderGit2 } from 'lucide-react'
+import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, TerminalSquare, Puzzle, UserCog, Info, Cpu, Users, FolderGit2, Palette } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
@@ -16,6 +16,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'general', label: 'General', icon: <Settings className="size-4" /> },
+  { id: 'appearance', label: 'Appearance', icon: <Palette className="size-4" /> },
   { id: 'notifications', label: 'Notifications', icon: <Bell className="size-4" /> },
   { id: 'auth', label: 'Authentication', icon: <KeyRound className="size-4" /> },
   { id: 'models', label: 'Models', icon: <Cpu className="size-4" /> },

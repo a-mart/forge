@@ -17,6 +17,7 @@ vi.mock('@/components/settings/SettingsLayout', () => ({
 
 // Mock all individual settings panes to avoid their dependencies
 vi.mock('@/components/settings/SettingsGeneral', () => ({ SettingsGeneral: () => createElement('div', null, 'General') }))
+vi.mock('@/components/settings/SettingsAppearance', () => ({ SettingsAppearance: () => createElement('div', null, 'Appearance') }))
 vi.mock('@/components/settings/SettingsNotifications', () => ({ SettingsNotifications: () => createElement('div', null, 'Notifications') }))
 vi.mock('@/components/settings/SettingsAuth', () => ({ SettingsAuth: () => createElement('div', null, 'Auth') }))
 vi.mock('@/components/settings/SettingsModels', () => ({ SettingsModels: () => createElement('div', null, 'Models') }))
@@ -40,7 +41,7 @@ const BUILDER_TARGET: SettingsBackendTarget = {
   fetchCredentials: 'same-origin',
   requiresAdmin: false,
   availableTabs: [
-    'general', 'notifications', 'auth', 'models', 'integrations',
+    'general', 'appearance', 'notifications', 'auth', 'models', 'integrations',
     'skills', 'prompts', 'specialists', 'slash-commands', 'extensions',
     'collaboration', 'about',
   ],
@@ -55,7 +56,7 @@ const COLLAB_TARGET: SettingsBackendTarget = {
   fetchCredentials: 'include',
   requiresAdmin: true,
   availableTabs: [
-    'general', 'auth', 'models', 'integrations',
+    'general', 'appearance', 'auth', 'models', 'integrations',
     'skills', 'prompts', 'specialists', 'slash-commands', 'extensions',
     'collaboration', 'about',
   ],

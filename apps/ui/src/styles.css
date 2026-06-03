@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&display=swap");
 @import "./styles/terminal.css";
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
@@ -37,8 +35,8 @@
   --sidebar-accent-foreground: #3e2723;
   --sidebar-border: #e8e0d6;
   --sidebar-ring: #2e7d32;
-  --font-sans: "Geist", sans-serif;
-  --font-mono: "Geist Mono", monospace;
+  --app-font-sans: "Geist", sans-serif;
+  --app-font-mono: "Geist Mono", monospace;
   --radius: 0.5rem;
 }
 
@@ -78,8 +76,8 @@
 }
 
 @theme inline {
-  --font-sans: "Geist", sans-serif;
-  --font-mono: "Geist Mono", monospace;
+  --font-sans: var(--app-font-sans);
+  --font-mono: var(--app-font-mono);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -124,7 +122,7 @@
 html,
 body {
   height: 100dvh;
-  font-family: var(--font-sans), "Segoe UI", sans-serif;
+  font-family: var(--app-font-sans), "Segoe UI", sans-serif;
   overflow: hidden;
 }
 
