@@ -14,10 +14,11 @@ import {
 } from "../manager-noop-guard.js";
 
 describe("manager-noop-guard classification", () => {
-  it("treats explicit worker status callbacks as actionable", () => {
+  it("treats only first-line worker status callbacks as actionable", () => {
     expect(isActionableWorkerCallbackMessage("status: done\nsummary: shipped fix")).toBe(true);
-    expect(isActionableWorkerCallbackMessage("STATUS: PARTIAL\nsummary: still validating")).toBe(true);
+    expect(isActionableWorkerCallbackMessage("\nSTATUS: PARTIAL\nsummary: still validating")).toBe(true);
     expect(isActionableWorkerCallbackMessage("still working on the grep pass")).toBe(false);
+    expect(isActionableWorkerCallbackMessage("deployment status: done\nsummary: incidental prose")).toBe(false);
   });
 
   it("recognizes watchdog auto-reports separately from actionable callbacks", () => {
@@ -72,6 +73,15 @@ describe("manager-noop-guard classification", () => {
         message: "SYSTEM: [Forge manager recovery] close the callback",
       }),
     ).toBe("recovery_nudge");
+
+    expect(
+      shouldTrackInboundManagerTurn({
+        targetRole: "manager",
+        senderRole: "worker",
+        origin: "internal",
+        message: "deployment status: done\nsummary: incidental prose",
+      }),
+    ).toBeNull();
 
     expect(
       shouldTrackInboundManagerTurn({
@@ -205,7 +215,7 @@ describe("ManagerNoOpGuard", () => {
     expect(emitConversationMessage).not.toHaveBeenCalled();
   });
 
-  it("does not fire when action tools complete successfully, including MCP-namespaced action tools", async () => {
+  it("does not fire when some Forge action tool completes successfully, including MCP-namespaced action tools", async () => {
     const emitConversationMessage = vi.fn();
     const guard = new ManagerNoOpGuard({
       now: () => "2026-06-03T00:00:00.000Z",

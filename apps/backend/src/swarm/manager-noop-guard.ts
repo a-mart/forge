@@ -7,6 +7,8 @@ import {
   hasMessageErrorMessageField,
 } from "./session/message-utils.js";
 import type { AcceptedDeliveryMode, AgentDescriptor, ConversationMessageEvent } from "./types.js";
+import { isActionableWorkerCallbackMessage } from "./worker-callback-message.js";
+export { isActionableWorkerCallbackMessage } from "./worker-callback-message.js";
 
 export const MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE =
   "Manager returned no visible action after a worker update. Forge sent an internal recovery nudge.";
@@ -16,9 +18,10 @@ export const MANAGER_NOOP_DIAGNOSTIC_FINAL =
 
 export const MANAGER_NOOP_RECOVERY_NUDGE_PREFIX = "SYSTEM: [Forge manager recovery]";
 
-const ACTIONABLE_STATUS_PATTERN = /\bstatus:\s*(done|partial|blocked)\b/i;
 const WORKER_AUTO_REPORT_PATTERN = /^SYSTEM:\s*Worker\s+.+\s+(completed its turn|ended its turn)/i;
 
+// The no-op guard enforces that a callback turn produced some Forge action.
+// Semantic user/peer closeout requirements stay in the manager prompt and task guidance.
 const MANAGER_ACTION_TOOLS = new Set([
   "speak_to_user",
   "send_message_to_agent",
@@ -67,15 +70,6 @@ export interface ManagerNoOpGuardDeps {
 
 export function isWorkerWatchdogAutoReportMessage(message: string): boolean {
   return WORKER_AUTO_REPORT_PATTERN.test(message.trim());
-}
-
-export function isActionableWorkerCallbackMessage(message: string): boolean {
-  const trimmed = message.trim();
-  if (trimmed.length === 0) {
-    return false;
-  }
-
-  return ACTIONABLE_STATUS_PATTERN.test(trimmed);
 }
 
 export function shouldBeginManagerNoOpGuardForDelivery(acceptedMode: AcceptedDeliveryMode): boolean {
@@ -441,7 +435,7 @@ export class ManagerNoOpGuard {
         managerId,
         [
           `${MANAGER_NOOP_RECOVERY_NUDGE_PREFIX} Your previous turn ended without a visible Forge action.`,
-          "Close the actionable worker callback with speak_to_user, send_message_to_agent, present_choices, task, or delegation.",
+          "Close the actionable worker callback with speak_to_user, send_message_to_agent, present_choices, further delegation, or task plus any needed user/peer closeout.",
           "If intentional silence is correct, state that rationale explicitly instead of returning empty assistant text.",
           preview,
         ]

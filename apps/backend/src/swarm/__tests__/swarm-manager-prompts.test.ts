@@ -792,6 +792,8 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('Never use plain assistant text for user communication.')
     expect(managerPrompt).toContain('End users only see:')
     expect(managerPrompt).toContain('Messages prefixed `SYSTEM:` are internal context, not direct user requests.')
+    expect(managerPrompt).toContain('Final, partial, or blocked worker reports (`[workerCallback] ...` or first non-empty line `status: done|partial|blocked`) are actionable callbacks.')
+    expect(managerPrompt).toContain('Plain assistant text, whitespace, and hidden notes do not close a callback.')
     expect(managerPrompt).toContain('Project agents in this profile — none configured.')
     expect(managerPrompt).toContain('Workers do not receive the project-agent directory.')
     expect(managerPrompt).toContain('[projectAgentContext] { ... }')

@@ -155,6 +155,7 @@ import {
   shouldQueueManagerNoOpGuardForDelivery,
   shouldTrackInboundManagerTurn,
 } from "./manager-noop-guard.js";
+import { formatActionableWorkerCallbackRuntimeMessage } from "./worker-callback-message.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
 import type { ImportSkillOptions } from "./skills/skill-sharing-service.js";
 import {
@@ -4879,10 +4880,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const watchdogTurnSeqAtDispatch = this.workerHealthService.getWorkerReportDispatchTurnSeq(sender, target);
 
+    const runtimeText = origin !== "user" && sender.role === "worker" && target.role === "manager"
+      ? formatActionableWorkerCallbackRuntimeMessage({
+          fromAgentId: sender.agentId,
+          message,
+        })
+      : message;
+
     const modelMessage = await this.prepareModelInboundMessage(
       targetAgentId,
       {
-        text: message,
+        text: runtimeText,
         attachments
       },
       origin

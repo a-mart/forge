@@ -50,6 +50,52 @@ function runtimeText(message: string | { text: string }): string {
 }
 
 describe("SwarmManager manager no-op guard", () => {
+  it("labels actionable worker callbacks in the manager runtime message", async () => {
+    const config = await makeTempConfig(8794);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Callback Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    managerRuntime.sendCalls = [];
+
+    await manager.sendMessage(worker.agentId, "manager", "status: partial\nsummary: ready for review");
+
+    const runtimeMessage = managerRuntime.sendCalls.at(-1)?.message;
+    const runtimeText = typeof runtimeMessage === "string" ? runtimeMessage : runtimeMessage?.text;
+    expect(runtimeText).toBe(
+      `SYSTEM: [workerCallback] {"fromAgentId":"${worker.agentId}","intent":"partial"}\nstatus: partial\nsummary: ready for review`,
+    );
+  });
+
+  it("keeps routine worker progress as a generic internal manager runtime message", async () => {
+    const config = await makeTempConfig(8793);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Progress Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    managerRuntime.sendCalls = [];
+
+    await manager.sendMessage(worker.agentId, "manager", "still checking logs");
+
+    expect(managerRuntime.sendCalls.at(-1)?.message).toBe("SYSTEM: still checking logs");
+  });
+
+  it("does not label incidental prose containing a status field", async () => {
+    const config = await makeTempConfig(8792);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Incidental Status Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    managerRuntime.sendCalls = [];
+
+    await manager.sendMessage(worker.agentId, "manager", "deployment status: done\nsummary: not a closeout");
+
+    expect(managerRuntime.sendCalls.at(-1)?.message).toBe("SYSTEM: deployment status: done\nsummary: not a closeout");
+  });
+
   it("persists a system diagnostic and sends one recovery nudge after an empty manager worker-callback turn", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);

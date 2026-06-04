@@ -185,7 +185,7 @@ describe('SwarmManager', () => {
   })
 
 
-  it('keeps worker-to-manager completion reporting on the generic send path', async () => {
+  it('keeps worker-to-manager completion reporting on the generic send path with runtime callback labeling', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -198,7 +198,9 @@ describe('SwarmManager', () => {
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: done', 'auto')
 
-    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: status: done')
+    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
+      `SYSTEM: [workerCallback] {"fromAgentId":"${worker.agentId}","intent":"done"}\nstatus: done`,
+    )
 
     const managerHistory = manager.getConversationHistory('manager')
     expect(

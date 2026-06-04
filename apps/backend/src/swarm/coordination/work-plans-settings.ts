@@ -7,7 +7,7 @@ import { isEnoentError } from '../swarm-manager-utils.js'
 export const ACTIVE_WORK_PLANS_SKILL_HANDLE = 'active-work-plans'
 
 export const ACTIVE_WORK_PLANS_GUIDANCE_ENABLED =
-  '- For substantive multi-step or multi-worker work, use the Active Work Plans skill and `task` tool when durable visible progress would help, and use `task` when the user explicitly asks for an Active Work Plan, Work Plan, or task plan. Do not create plans for quick answers or routine one-step work. Work Plans are descriptive state, not workflow execution; creating or updating one is not meaningful progress by itself. When the next step is clear, pair plan creation with immediate delegation/execution in the same turn, and never let a plan card be the only visible action after saying you will investigate, patch, or validate something. Keep plans compact and update them only at meaningful boundaries.'
+  '- For substantive multi-step or multi-worker work, use the Active Work Plans skill and `task` tool when durable visible progress would help, and use `task` when the user explicitly asks for an Active Work Plan, Work Plan, or task plan. Do not create plans for quick answers or routine one-step work. Work Plans are descriptive coordination state, not workflow execution. Task updates do not by themselves close final/blocked worker callbacks when user/peer closeout, choices, or delegation is needed. Pair plan creation with immediate delegation/execution when the next step is clear. Keep plans compact and update them only at meaningful boundaries.'
 
 export function resolveActiveWorkPlansGuidance(enabled: boolean): string {
   return enabled ? ACTIVE_WORK_PLANS_GUIDANCE_ENABLED : ''
