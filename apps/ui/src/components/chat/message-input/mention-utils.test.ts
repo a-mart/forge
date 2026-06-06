@@ -41,6 +41,13 @@ describe('mention-utils codex support', () => {
     expect(rendered).toContain('@Codex:fireflies')
   })
 
+  it('keeps codex chip text font metrics aligned with the transparent textarea text', () => {
+    const nodes = renderMentionOverlay('[@Codex:fireflies].')
+    const rendered = JSON.stringify(nodes)
+    expect(rendered).toContain('@Codex:fireflies')
+    expect(rendered).not.toContain('font-medium')
+  })
+
   it('detects inline codex tool tokens and picker trigger', () => {
     expect(hasComposerMentionTokens('run @Codex:fireflies now')).toBe(true)
     expect(findMentionContaining('run @Codex:fireflies now', 10)).toEqual({ start: 4, end: 20 })
