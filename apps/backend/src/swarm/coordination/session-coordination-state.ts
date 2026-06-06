@@ -60,8 +60,6 @@ export const INTERNAL_WORK_PLAN_LINK_TYPES = ["worker"] as const satisfies reado
 export const WORK_PLAN_MUTATION_ACTIONS = ["upsert_plan", "update_item_status", "link", "finish_plan", "system"] as const;
 export type WorkPlanMutationAction = (typeof WORK_PLAN_MUTATION_ACTIONS)[number];
 
-export const MAX_WORK_PLANS_PER_SESSION = 8;
-export const WORK_PLAN_HISTORY_CAPACITY_MESSAGE = `Active Work Plan history is full (maximum ${MAX_WORK_PLANS_PER_SESSION} saved plans) and could not be pruned safely. Continue without creating a new Work Plan, or report that Active Work history hit its storage limit.`;
 export const MAX_WORK_PLAN_ITEMS = 25;
 export const MAX_WORK_PLAN_WORKER_LINKS = 8;
 export const MAX_WORK_PLAN_REVISION_NOTES = 20;
@@ -210,7 +208,7 @@ export function normalizeSessionCoordinationState(value: unknown): SessionCoordi
     schemaVersion: SESSION_COORDINATION_SCHEMA_VERSION,
     revision: normalizeNonNegativeInteger(state.revision, "revision"),
     updatedAt: normalizeRequiredIsoTimestamp(state.updatedAt, "updatedAt"),
-    workPlans: normalizeArray(state.workPlans, "workPlans", MAX_WORK_PLANS_PER_SESSION, normalizeWorkPlanRecord)
+    workPlans: normalizeUnboundedArray(state.workPlans, "workPlans", normalizeWorkPlanRecord)
   };
 }
 
@@ -361,6 +359,18 @@ function normalizeWorkPlanMutationProvenance(value: unknown, path: string): Work
   };
 }
 
+function normalizeUnboundedArray<T>(
+  value: unknown,
+  path: string,
+  itemNormalizer: (value: unknown, path: string) => T
+): T[] {
+  if (!Array.isArray(value)) {
+    throw new SessionCoordinationStateValidationError(`${path} must be an array`);
+  }
+
+  return value.map((item, index) => itemNormalizer(item, `${path}[${index}]`));
+}
+
 function normalizeArray<T>(
   value: unknown,
   path: string,
@@ -372,9 +382,7 @@ function normalizeArray<T>(
   }
 
   if (value.length > maxLength) {
-    throw new SessionCoordinationStateValidationError(
-      path === "workPlans" ? WORK_PLAN_HISTORY_CAPACITY_MESSAGE : `${path} must contain at most ${maxLength} items`
-    );
+    throw new SessionCoordinationStateValidationError(`${path} must contain at most ${maxLength} items`);
   }
 
   return value.map((item, index) => itemNormalizer(item, `${path}[${index}]`));

@@ -6,15 +6,12 @@ import type {
   WorkPlanMode,
   WorkPlanMutableStatus,
   WorkPlanSnapshot,
-  WorkPlanStatus,
   WorkPlanTerminalStatus,
 } from '@forge/protocol'
 import type { AgentDescriptor } from '../types.js'
 import {
   MAX_WORK_PLAN_MUTATION_PROVENANCE,
   MAX_WORK_PLAN_REVISION_NOTES,
-  MAX_WORK_PLANS_PER_SESSION,
-  WORK_PLAN_HISTORY_CAPACITY_MESSAGE,
   INTERNAL_WORK_PLAN_ITEM_STATUSES,
   SessionCoordinationStateValidationError,
   createEmptySessionCoordinationState,
@@ -612,7 +609,7 @@ export function toWorkPlanServiceErrorDescriptor(
     return {
       action,
       code: 'validation_error',
-      message: mapSessionCoordinationValidationMessage(error.message),
+      message: error.message,
     }
   }
 
@@ -647,59 +644,6 @@ function replaceOrInsertPlan(state: SessionCoordinationState, plan: WorkPlanReco
   }
 
   state.workPlans.push(plan)
-  pruneTerminalWorkPlanHistoryToCapacity(state, plan.planId)
-}
-
-function pruneTerminalWorkPlanHistoryToCapacity(state: SessionCoordinationState, protectedPlanId: string): void {
-  while (state.workPlans.length > MAX_WORK_PLANS_PER_SESSION) {
-    const pruneIndex = findOldestTerminalWorkPlanIndex(state, protectedPlanId)
-    if (pruneIndex < 0) {
-      throw new WorkPlanServiceValidationError(WORK_PLAN_HISTORY_CAPACITY_MESSAGE)
-    }
-    state.workPlans.splice(pruneIndex, 1)
-  }
-}
-
-function findOldestTerminalWorkPlanIndex(state: SessionCoordinationState, protectedPlanId: string): number {
-  let oldestIndex = -1
-  let oldestTimestamp = Number.POSITIVE_INFINITY
-  let oldestPlanId = ''
-
-  state.workPlans.forEach((plan, index) => {
-    if (plan.planId === protectedPlanId || isNonTerminalWorkPlanStatus(plan.status)) {
-      return
-    }
-
-    const timestamp = parseWorkPlanPruneTimestamp(plan)
-    if (
-      oldestIndex < 0
-      || timestamp < oldestTimestamp
-      || (timestamp === oldestTimestamp && plan.planId.localeCompare(oldestPlanId) < 0)
-    ) {
-      oldestIndex = index
-      oldestTimestamp = timestamp
-      oldestPlanId = plan.planId
-    }
-  })
-
-  return oldestIndex
-}
-
-function parseWorkPlanPruneTimestamp(plan: WorkPlanRecord): number {
-  const parsed = Date.parse(plan.completedAt ?? plan.updatedAt ?? plan.createdAt)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-function isNonTerminalWorkPlanStatus(status: WorkPlanStatus): boolean {
-  return NON_TERMINAL_PLAN_STATUSES.has(status as WorkPlanMutableStatus)
-}
-
-function mapSessionCoordinationValidationMessage(message: string): string {
-  if (message === `workPlans must contain at most ${MAX_WORK_PLANS_PER_SESSION} items`) {
-    return WORK_PLAN_HISTORY_CAPACITY_MESSAGE
-  }
-
-  return message
 }
 
 function resolveItemForLink(plan: WorkPlanRecord, itemId: string | undefined): WorkPlanItem {

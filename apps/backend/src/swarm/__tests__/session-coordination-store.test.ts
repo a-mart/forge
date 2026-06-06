@@ -89,6 +89,31 @@ describe("session-coordination-store", () => {
     });
   });
 
+  it.each([8, 24, 100])("loads valid tasks.json with %i retained Work Plans", async (planCount) => {
+    const dataDir = await createDataDir();
+    const filePath = getSessionTasksPath(dataDir, PROFILE_ID, SESSION_ID);
+    const workPlans = Array.from({ length: planCount }, (_, index) => {
+      const timestamp = new Date(Date.parse(FIXED_TIMESTAMP) + index * 60_000).toISOString();
+      return createPlan(`Historical plan ${index + 1}`, {
+        planId: `plan-${index + 1}`,
+        status: "completed",
+        completedAt: timestamp,
+        updatedAt: timestamp
+      });
+    });
+    await writeSessionFile(
+      filePath,
+      JSON.stringify({ schemaVersion: 1, revision: planCount, updatedAt: FIXED_TIMESTAMP, workPlans })
+    );
+    const store = createStore(dataDir);
+
+    const loaded = await store.load();
+
+    expect(loaded.diagnostics).toEqual({ state: "ok" });
+    expect(loaded.state.workPlans).toHaveLength(planCount);
+    expect(loaded.state.workPlans[0]?.planId).toBe("plan-1");
+  });
+
   it("serializes concurrent updates so both mutations persist", async () => {
     const dataDir = await createDataDir();
     const store = createStore(dataDir);

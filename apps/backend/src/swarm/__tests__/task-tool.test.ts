@@ -1,8 +1,8 @@
 import { mkdir, readFile } from 'node:fs/promises'
 import { Value } from '@sinclair/typebox/value'
+import { MAX_RECENT_WORK_PLAN_SNAPSHOTS } from '@forge/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { buildTaskTool, normalizeTaskToolInput, taskToolSchema, type TaskToolResult } from '../coordination/task-tool.js'
-import { MAX_WORK_PLANS_PER_SESSION } from '../coordination/session-coordination-state.js'
 import { WorkPlanImmutableError, WorkPlanItemResolutionError, WorkPlanNotFoundError } from '../coordination/work-plan-service.js'
 import { WorkPlanLinkValidationError } from '../coordination/work-plan-link-validation.js'
 import { ARCHIVED_PROJECT_OPERATION_MESSAGE } from '../archive/archive-resolver.js'
@@ -627,50 +627,60 @@ describe('SwarmManager.runTaskTool', () => {
     })
   })
 
-  it('creates a new task tool plan after eight terminal historical plans', async () => {
-    const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-    let expectedStateRevision: number | undefined
+  it.each([8, 24, 100])(
+    'creates a new task tool plan after %i retained terminal historical plans',
+    async (historyCount) => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      await bootWithDefaultManager(manager, config)
+      let expectedStateRevision: number | undefined
+      let firstHistoricalPlanId: string | undefined
 
-    for (let index = 1; index <= MAX_WORK_PLANS_PER_SESSION; index += 1) {
-      const created = await manager.runTaskTool('manager', `tool-cap-create-${index}`, {
+      for (let index = 1; index <= historyCount; index += 1) {
+        const created = await manager.runTaskTool('manager', `tool-history-${historyCount}-create-${index}`, {
+          action: 'upsert_plan',
+          expectedStateRevision,
+          title: `Historical plan ${index}`,
+          itemsText: `[active] Historical item ${index}`,
+        })
+        firstHistoricalPlanId ??= created.planId
+        const finished = await manager.runTaskTool('manager', `tool-history-${historyCount}-finish-${index}`, {
+          action: 'finish_plan',
+          expectedStateRevision: created.stateRevision,
+          planId: created.planId,
+          status: 'completed',
+          finalSummary: `Finished ${index}`,
+        })
+        expectedStateRevision = finished.stateRevision
+      }
+
+      const createdNext = await manager.runTaskTool('manager', `tool-history-${historyCount}-create-next`, {
         action: 'upsert_plan',
         expectedStateRevision,
-        title: `Historical plan ${index}`,
-        itemsText: `[active] Historical item ${index}`,
+        title: `Plan ${historyCount + 1}`,
+        itemsText: '[active] Continue after retained history',
       })
-      const finished = await manager.runTaskTool('manager', `tool-cap-finish-${index}`, {
-        action: 'finish_plan',
-        expectedStateRevision: created.stateRevision,
-        planId: created.planId,
-        status: 'completed',
-        finalSummary: `Finished ${index}`,
+
+      expect(createdNext).toMatchObject({
+        action: 'upsert_plan',
+        status: 'active',
       })
-      expectedStateRevision = finished.stateRevision
-    }
+      expect(createdNext).not.toHaveProperty('snapshot')
 
-    const createdNinth = await manager.runTaskTool('manager', 'tool-cap-create-9', {
-      action: 'upsert_plan',
-      expectedStateRevision,
-      title: 'Ninth plan',
-      itemsText: '[active] Continue after history cap',
-    })
+      const fetched = await manager.runTaskTool('manager', `tool-history-${historyCount}-get`, { action: 'get' })
+      expect(fetched.snapshot.activeWorkPlan?.planId).toBe(createdNext.planId)
+      expect(fetched.snapshot.recentWorkPlanCount).toBe(historyCount)
+      expect(fetched.snapshot.recentWorkPlans).toHaveLength(Math.min(historyCount, MAX_RECENT_WORK_PLAN_SNAPSHOTS))
+      expect(fetched.snapshot.recentWorkPlansTruncated).toBe(historyCount > MAX_RECENT_WORK_PLAN_SNAPSHOTS)
 
-    expect(createdNinth).toMatchObject({
-      action: 'upsert_plan',
-      status: 'active',
-    })
-
-    const fetched = await manager.runTaskTool('manager', 'tool-cap-get', { action: 'get' })
-    expect(fetched.snapshot.activeWorkPlan?.planId).toBe(createdNinth.planId)
-    expect(fetched.snapshot.recentWorkPlanCount).toBe(MAX_WORK_PLANS_PER_SESSION - 1)
-
-    const tasksFile = JSON.parse(await readFile(getSessionTasksPath(config.paths.dataDir, 'manager', 'manager'), 'utf8')) as {
-      workPlans: Array<{ planId: string }>
-    }
-    expect(tasksFile.workPlans).toHaveLength(MAX_WORK_PLANS_PER_SESSION)
-  })
+      const tasksFile = JSON.parse(await readFile(getSessionTasksPath(config.paths.dataDir, 'manager', 'manager'), 'utf8')) as {
+        workPlans: Array<{ planId: string }>
+      }
+      expect(tasksFile.workPlans).toHaveLength(historyCount + 1)
+      expect(tasksFile.workPlans[0]?.planId).toBe(firstHistoricalPlanId)
+      expect(tasksFile.workPlans.map((plan) => plan.planId)).toContain(createdNext.planId)
+    },
+  )
 
   it('creates, gets, links, finishes, and CAS-protects the current session work plan', async () => {
     const config = await makeTempConfig()

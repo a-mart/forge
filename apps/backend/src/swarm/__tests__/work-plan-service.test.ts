@@ -4,9 +4,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   createEmptySessionCoordinationState,
-  MAX_WORK_PLANS_PER_SESSION,
   SessionCoordinationStateValidationError,
-  WORK_PLAN_HISTORY_CAPACITY_MESSAGE,
   type WorkPlanRecord,
 } from '../coordination/session-coordination-state.js'
 import {
@@ -566,64 +564,62 @@ describe('work-plan-service', () => {
     expect(created.snapshot.diagnostics).toEqual({ state: 'ok' })
   })
 
-  it('prunes the oldest terminal history when creating a ninth plan after eight finished plans', async () => {
-    const dataDir = await createDataDir()
-    let nowMs = Date.parse(FIXED_TIMESTAMP)
-    const { service, store } = createHarness(dataDir, { now: () => new Date(nowMs) })
-    let expectedStateRevision: number | undefined
+  it.each([8, 24, 100])(
+    'retains all %i terminal historical plans when creating the next plan',
+    async (historyCount) => {
+      const dataDir = await createDataDir()
+      let nowMs = Date.parse(FIXED_TIMESTAMP)
+      const { service, store } = createHarness(dataDir, { now: () => new Date(nowMs) })
+      let expectedStateRevision: number | undefined
 
-    for (let index = 1; index <= MAX_WORK_PLANS_PER_SESSION; index += 1) {
-      const created = await service.upsertPlan(managerActor(), {
+      for (let index = 1; index <= historyCount; index += 1) {
+        const created = await service.upsertPlan(managerActor(), {
+          expectedStateRevision,
+          title: `Historical plan ${index}`,
+          items: [{ title: `Do historical work ${index}` }],
+        })
+        nowMs += 1000
+        const finished = await service.finishPlan(managerActor(), {
+          expectedStateRevision: created.stateRevision,
+          planId: created.planId,
+          status: 'completed',
+          finalSummary: `Finished ${index}`,
+        })
+        nowMs += 1000
+        expectedStateRevision = finished.stateRevision
+      }
+
+      const beforeCreate = await service.get(managerActor())
+      expect(beforeCreate.snapshot.activeWorkPlan).toBeNull()
+      expect(beforeCreate.snapshot.recentWorkPlanCount).toBe(historyCount)
+      expect(beforeCreate.snapshot.recentWorkPlans).toHaveLength(Math.min(historyCount, MAX_RECENT_WORK_PLAN_SNAPSHOTS))
+      expect(beforeCreate.snapshot.recentWorkPlansTruncated).toBe(historyCount > MAX_RECENT_WORK_PLAN_SNAPSHOTS)
+
+      const createdNext = await service.upsertPlan(managerActor(), {
         expectedStateRevision,
-        title: `Historical plan ${index}`,
-        items: [{ title: `Do historical work ${index}` }],
+        title: `Plan ${historyCount + 1}`,
+        items: [{ title: 'Continue after retained history' }],
       })
-      nowMs += 1000
-      const finished = await service.finishPlan(managerActor(), {
-        expectedStateRevision: created.stateRevision,
-        planId: created.planId,
-        status: 'completed',
-        finalSummary: `Finished ${index}`,
-      })
-      nowMs += 1000
-      expectedStateRevision = finished.stateRevision
-    }
 
-    const beforeCreate = await service.get(managerActor())
-    expect(beforeCreate.snapshot.activeWorkPlan).toBeNull()
-    expect(beforeCreate.snapshot.recentWorkPlanCount).toBe(MAX_WORK_PLANS_PER_SESSION)
+      expect(createdNext.planId).toBe(`plan-${historyCount + 1}`)
+      expect(createdNext.snapshot.activeWorkPlan?.planId).toBe(`plan-${historyCount + 1}`)
+      expect(createdNext.snapshot.recentWorkPlanCount).toBe(historyCount)
+      expect(createdNext.snapshot.recentWorkPlans).toHaveLength(Math.min(historyCount, MAX_RECENT_WORK_PLAN_SNAPSHOTS))
+      expect(createdNext.snapshot.recentWorkPlansTruncated).toBe(historyCount > MAX_RECENT_WORK_PLAN_SNAPSHOTS)
 
-    const createdNinth = await service.upsertPlan(managerActor(), {
-      expectedStateRevision,
-      title: 'Ninth plan',
-      items: [{ title: 'Continue after full history' }],
-    })
+      const persisted = await store.load()
+      expect(persisted.state.workPlans).toHaveLength(historyCount + 1)
+      expect(persisted.state.workPlans[0]?.planId).toBe('plan-1')
+      expect(persisted.state.workPlans.map((plan) => plan.planId)).toContain(`plan-${historyCount + 1}`)
+    },
+  )
 
-    expect(createdNinth.planId).toBe('plan-9')
-    expect(createdNinth.snapshot.activeWorkPlan?.planId).toBe('plan-9')
-    expect(createdNinth.snapshot.recentWorkPlanCount).toBe(MAX_WORK_PLANS_PER_SESSION - 1)
-    expect(createdNinth.snapshot.recentWorkPlans.map((plan) => plan.planId)).not.toContain('plan-1')
-
-    const persisted = await store.load()
-    expect(persisted.state.workPlans).toHaveLength(MAX_WORK_PLANS_PER_SESSION)
-    expect(persisted.state.workPlans.map((plan) => plan.planId)).toEqual([
-      'plan-2',
-      'plan-3',
-      'plan-4',
-      'plan-5',
-      'plan-6',
-      'plan-7',
-      'plan-8',
-      'plan-9',
-    ])
-  })
-
-  it('does not prune an existing non-terminal plan when capacity is full', async () => {
+  it('preserves the single non-terminal plan invariant after retained history grows beyond the former cap', async () => {
     const dataDir = await createDataDir()
     const { service, store } = createHarness(dataDir)
     let expectedStateRevision: number | undefined
 
-    for (let index = 1; index < MAX_WORK_PLANS_PER_SESSION; index += 1) {
+    for (let index = 1; index <= 12; index += 1) {
       const created = await service.upsertPlan(managerActor(), {
         expectedStateRevision,
         title: `Terminal plan ${index}`,
@@ -640,20 +636,20 @@ describe('work-plan-service', () => {
 
     const active = await service.upsertPlan(managerActor(), {
       expectedStateRevision,
-      title: 'Active preserved at cap',
+      title: 'Active preserved with retained history',
       items: [{ title: 'Do active work' }],
     })
 
     await expect(
       service.upsertPlan(managerActor(), {
         expectedStateRevision: active.stateRevision,
-        title: 'Should not evict active plan',
+        title: 'Should not create a second active plan',
         items: [{ title: 'Another active plan' }],
       }),
     ).rejects.toBeInstanceOf(WorkPlanActiveInvariantError)
 
     const persisted = await store.load()
-    expect(persisted.state.workPlans).toHaveLength(MAX_WORK_PLANS_PER_SESSION)
+    expect(persisted.state.workPlans).toHaveLength(13)
     expect(persisted.state.workPlans.map((plan) => plan.planId)).toContain(active.planId)
     expect(persisted.state.workPlans.find((plan) => plan.planId === active.planId)?.status).toBe('active')
   })
@@ -901,13 +897,13 @@ describe('work-plan-service', () => {
 
     expect(
       toWorkPlanServiceErrorDescriptor(
-        new SessionCoordinationStateValidationError(`workPlans must contain at most ${MAX_WORK_PLANS_PER_SESSION} items`),
+        new SessionCoordinationStateValidationError('workPlans[0].items must contain at most 25 items'),
         'upsert_plan',
       ),
     ).toEqual({
       action: 'upsert_plan',
       code: 'validation_error',
-      message: WORK_PLAN_HISTORY_CAPACITY_MESSAGE,
+      message: 'workPlans[0].items must contain at most 25 items',
     })
   })
 

@@ -62,6 +62,7 @@ export const SESSION_TASK_DIAGNOSTIC_STATES = [
 ] as const
 export type SessionTaskDiagnosticState = (typeof SESSION_TASK_DIAGNOSTIC_STATES)[number]
 
+/** Projection-only cap for live snapshots/tool results. Persisted Work Plan history is not capped by this value. */
 export const MAX_RECENT_WORK_PLAN_SNAPSHOTS = 8
 
 export interface WorkPlanBlockerSnapshot {
