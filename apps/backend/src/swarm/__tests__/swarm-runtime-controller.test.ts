@@ -10,7 +10,6 @@ import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import {
   MANAGER_NOOP_DIAGNOSTIC_FINAL,
-  MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
   ManagerNoOpGuard,
 } from "../manager-noop-guard.js";
 import { SwarmRuntimeController, type SwarmRuntimeControllerHost } from "../swarm-runtime-controller.js";
@@ -1604,9 +1603,7 @@ describe("SwarmRuntimeController", () => {
 
     expect(
       harness.emitConversationMessage.mock.calls.some(
-        (call) =>
-          call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE ||
-          call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
+        (call) => call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
       ),
     ).toBe(false);
   });
@@ -1636,7 +1633,7 @@ describe("SwarmRuntimeController", () => {
 
     expect(
       harness.emitConversationMessage.mock.calls.some(
-        (call) => call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+        (call) => call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
       ),
     ).toBe(false);
   });
@@ -1671,7 +1668,7 @@ describe("SwarmRuntimeController", () => {
 
     expect(
       harness.emitConversationMessage.mock.calls.some(
-        (call) => call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+        (call) => call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
       ),
     ).toBe(false);
   });
@@ -1762,9 +1759,9 @@ describe("SwarmRuntimeController", () => {
     expect(
       harness.emitConversationMessage.mock.calls.some(
         (call) =>
-          call[0]?.role === "system" && call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+          call[0]?.role === "system" && call[0]?.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("wires listRuntimeExtensionSnapshots through a booted TestSwarmManager", async () => {

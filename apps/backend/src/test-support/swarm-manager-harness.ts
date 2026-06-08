@@ -35,6 +35,7 @@ export class FakeRuntime implements SwarmAgentRuntime {
   recycleCalls = 0
   nextDeliveryId = 0
   busy = false
+  inputDispatchPending = false
   contextRecoveryInProgress = false
   terminateMutatesDescriptorStatus = true
   sendMessageError: Error | undefined
@@ -70,6 +71,10 @@ export class FakeRuntime implements SwarmAgentRuntime {
 
   isContextRecoveryInProgress(): boolean {
     return this.contextRecoveryInProgress
+  }
+
+  isInputDispatchPending(): boolean {
+    return this.inputDispatchPending
   }
 
   async prepareForSpecialistFallbackReplay(): Promise<SpecialistFallbackReplaySnapshot | undefined> {
@@ -119,7 +124,7 @@ export class FakeRuntime implements SwarmAgentRuntime {
     return {
       targetAgentId: this.descriptor.agentId,
       deliveryId: `delivery-${this.nextDeliveryId}`,
-      acceptedMode: this.busy ? 'steer' : 'prompt',
+      acceptedMode: this.busy || this.inputDispatchPending ? (delivery === 'followUp' ? 'followUp' : 'steer') : 'prompt',
     }
   }
 

@@ -7,7 +7,6 @@ import {
   isWorkerWatchdogAutoReportMessage,
   ManagerNoOpGuard,
   MANAGER_NOOP_DIAGNOSTIC_FINAL,
-  MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
   shouldBeginManagerNoOpGuardForDelivery,
   shouldQueueManagerNoOpGuardForDelivery,
   shouldTrackInboundManagerTurn,
@@ -155,7 +154,7 @@ describe("manager-noop-guard classification", () => {
 });
 
 describe("ManagerNoOpGuard", () => {
-  it("emits one diagnostic and one internal nudge for worker callback no-ops", async () => {
+  it("sends an internal recovery nudge without a visible diagnostic for initial worker callback no-ops", async () => {
     const emitConversationMessage = vi.fn();
     const sendInternalManagerMessage = vi.fn(async () => undefined);
     const guard = new ManagerNoOpGuard({
@@ -174,14 +173,41 @@ describe("ManagerNoOpGuard", () => {
 
     await guard.tryFinalize("manager", "agent_end");
 
-    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
-    expect(emitConversationMessage.mock.calls[0]?.[0]).toMatchObject({
-      role: "system",
-      source: "system",
-      text: MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
-    });
+    expect(emitConversationMessage).not.toHaveBeenCalled();
     expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
     expect(String(sendInternalManagerMessage.mock.calls[0]?.[1])).toContain("SYSTEM: [Forge manager recovery]");
+  });
+
+  it("emits the final diagnostic when the recovery nudge is accepted as non-guardable steer", async () => {
+    const emitConversationMessage = vi.fn();
+    const sendInternalManagerMessage = vi.fn(async () => ({
+      targetAgentId: "manager",
+      deliveryId: "nudge-steer-1",
+      acceptedMode: "steer" as const,
+    }));
+    const guard = new ManagerNoOpGuard({
+      now: () => "2026-06-03T00:00:00.000Z",
+      logDebug: () => undefined,
+      emitConversationMessage,
+      sendInternalManagerMessage,
+      isManualStopPending: () => false,
+      isRuntimeRecoveryActive: () => false,
+    });
+
+    guard.beginTurn("manager", "worker_callback", {
+      fromWorkerAgentId: "worker-1",
+      triggerPreview: "status: done\nsummary: finished",
+    });
+
+    await guard.tryFinalize("manager", "agent_end");
+    await guard.tryFinalize("manager", "idle");
+
+    expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      role: "system",
+      text: MANAGER_NOOP_DIAGNOSTIC_FINAL,
+    }));
   });
 
   it("does not fire when a manager action tool completes successfully", async () => {
@@ -284,13 +310,14 @@ describe("ManagerNoOpGuard", () => {
     expect(emitConversationMessage).not.toHaveBeenCalled();
   });
 
-  it("fires when an attempted manager action tool fails", async () => {
+  it("sends a recovery nudge when an attempted manager action tool fails", async () => {
     const emitConversationMessage = vi.fn();
+    const sendInternalManagerMessage = vi.fn(async () => undefined);
     const guard = new ManagerNoOpGuard({
       now: () => "2026-06-03T00:00:00.000Z",
       logDebug: () => undefined,
       emitConversationMessage,
-      sendInternalManagerMessage: vi.fn(async () => undefined),
+      sendInternalManagerMessage,
       isManualStopPending: () => false,
       isRuntimeRecoveryActive: () => false,
     });
@@ -312,18 +339,18 @@ describe("ManagerNoOpGuard", () => {
 
     await guard.tryFinalize("manager", "agent_end");
 
-    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
-      text: MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
-    }));
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+    expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
   });
 
   it("activates delivery-less queued follow-up guard only when the matching queued user message starts", async () => {
     const emitConversationMessage = vi.fn();
+    const sendInternalManagerMessage = vi.fn(async () => undefined);
     const guard = new ManagerNoOpGuard({
       now: () => "2026-06-03T00:00:00.000Z",
       logDebug: () => undefined,
       emitConversationMessage,
-      sendInternalManagerMessage: vi.fn(async () => undefined),
+      sendInternalManagerMessage,
       isManualStopPending: () => false,
       isRuntimeRecoveryActive: () => false,
     });
@@ -350,9 +377,8 @@ describe("ManagerNoOpGuard", () => {
     });
     await guard.tryFinalize("manager", "agent_end");
 
-    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
-      text: MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
-    }));
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+    expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
   });
 
   it("does not activate a delivery-scoped queued follow-up from unrelated same-text prompt events", async () => {
@@ -404,9 +430,7 @@ describe("ManagerNoOpGuard", () => {
     });
     await guard.tryFinalize("manager", "agent_end");
 
-    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
-      text: MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
-    }));
+    expect(emitConversationMessage).not.toHaveBeenCalled();
     expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
   });
 
@@ -451,9 +475,7 @@ describe("ManagerNoOpGuard", () => {
     });
     await guard.tryFinalize("manager", "agent_end");
 
-    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
-      text: MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
-    }));
+    expect(emitConversationMessage).not.toHaveBeenCalled();
     expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
   });
 
@@ -503,9 +525,7 @@ describe("ManagerNoOpGuard", () => {
     });
     await guard.tryFinalize("manager", "agent_end");
 
-    expect(emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
-      text: MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
-    }));
+    expect(emitConversationMessage).not.toHaveBeenCalled();
     expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
   });
 
@@ -564,14 +584,55 @@ describe("ManagerNoOpGuard", () => {
     guard.beginTurn("manager", "recovery_nudge");
     await guard.tryFinalize("manager", "agent_end");
 
-    expect(emitConversationMessage).toHaveBeenCalledTimes(2);
-    expect(emitConversationMessage.mock.calls[1]?.[0]).toMatchObject({
+    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage.mock.calls[0]?.[0]).toMatchObject({
       text: MANAGER_NOOP_DIAGNOSTIC_FINAL,
     });
     expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("does not emit duplicate diagnostics when agent_end and idle finalizers both run", async () => {
+  it("sends a fresh silent nudge for a later worker callback after recovery succeeds", async () => {
+    const emitConversationMessage = vi.fn();
+    const sendInternalManagerMessage = vi.fn(async () => undefined);
+    const guard = new ManagerNoOpGuard({
+      now: () => "2026-06-03T00:00:00.000Z",
+      logDebug: () => undefined,
+      emitConversationMessage,
+      sendInternalManagerMessage,
+      isManualStopPending: () => false,
+      isRuntimeRecoveryActive: () => false,
+    });
+
+    guard.beginTurn("manager", "worker_callback", { triggerPreview: "status: done\nsummary: first" });
+    await guard.tryFinalize("manager", "agent_end");
+    expect(sendInternalManagerMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+
+    guard.beginTurn("manager", "recovery_nudge");
+    guard.noteRuntimeSessionEvent("manager", {
+      type: "tool_execution_start",
+      toolName: "speak_to_user",
+      toolCallId: "speak-recovery",
+      args: { text: "Recovered." },
+    });
+    guard.noteRuntimeSessionEvent("manager", {
+      type: "tool_execution_end",
+      toolName: "speak_to_user",
+      toolCallId: "speak-recovery",
+      result: { ok: true },
+      isError: false,
+    });
+    await guard.tryFinalize("manager", "agent_end");
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+
+    guard.beginTurn("manager", "worker_callback", { triggerPreview: "status: done\nsummary: second" });
+    await guard.tryFinalize("manager", "agent_end");
+
+    expect(sendInternalManagerMessage).toHaveBeenCalledTimes(2);
+    expect(emitConversationMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not emit duplicate recovery nudges when agent_end and idle finalizers both run", async () => {
     const emitConversationMessage = vi.fn();
     const guard = new ManagerNoOpGuard({
       now: () => "2026-06-03T00:00:00.000Z",
@@ -586,7 +647,7 @@ describe("ManagerNoOpGuard", () => {
     await guard.tryFinalize("manager", "agent_end");
     await guard.tryFinalize("manager", "idle");
 
-    expect(emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(emitConversationMessage).not.toHaveBeenCalled();
   });
 
   it("waits while queued input is pending before judging the current turn", async () => {

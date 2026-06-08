@@ -30,6 +30,8 @@ class FakeSession {
   isStreaming = true;
   promptCalls: string[] = [];
   steerCalls: string[] = [];
+  followUpCalls: string[] = [];
+  followUpImageCounts: number[] = [];
   abortCalls = 0;
   abortCompactionCalls = 0;
   compactCalls = 0;
@@ -79,6 +81,11 @@ class FakeSession {
 
   async steer(message: string): Promise<void> {
     this.steerCalls.push(message);
+  }
+
+  async followUp(message: string, images?: unknown[]): Promise<void> {
+    this.followUpCalls.push(message);
+    this.followUpImageCounts.push(images?.length ?? 0);
   }
 
   async sendUserMessage(): Promise<void> {}
@@ -371,6 +378,102 @@ describe("mid-turn context guard", () => {
     expect(forwardedEvents).toEqual([]);
   });
 
+  it("uses Pi followUp for explicit follow-up while busy and emits queued input start when it begins", async () => {
+    const forwardedEvents: any[] = [];
+    const { runtime, session } = createRuntime({
+      onSessionEvent: (event) => {
+        forwardedEvents.push(event);
+      }
+    });
+    session.isStreaming = true;
+
+    const receipt = await runtime.sendMessage("queued follow-up", "followUp");
+
+    expect(receipt.acceptedMode).toBe("followUp");
+    expect(session.followUpCalls).toEqual(["queued follow-up"]);
+    expect(session.steerCalls).toEqual([]);
+    expect(forwardedEvents).toEqual([]);
+
+    session.emit({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: "queued follow-up"
+      }
+    });
+    await flushPromptDispatch();
+
+    expect(forwardedEvents[0]).toMatchObject({
+      type: "queued_input_start",
+      deliveryId: receipt.deliveryId,
+      acceptedMode: "followUp",
+      requestedMode: "followUp",
+      message: {
+        text: "queued follow-up",
+        images: []
+      }
+    });
+    expect(forwardedEvents[1]).toMatchObject({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: "queued follow-up"
+      }
+    });
+  });
+
+  it("keeps explicit steer as steer while busy", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = true;
+
+    const receipt = await runtime.sendMessage("live steering", "steer");
+
+    expect(receipt.acceptedMode).toBe("steer");
+    expect(session.steerCalls).toEqual(["live steering"]);
+    expect(session.followUpCalls).toEqual([]);
+  });
+
+  it("keeps routine auto-delivery as steer while busy", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = true;
+
+    const receipt = await runtime.sendMessage("still checking logs", "auto");
+
+    expect(receipt.acceptedMode).toBe("steer");
+    expect(session.steerCalls).toEqual(["still checking logs"]);
+    expect(session.followUpCalls).toEqual([]);
+  });
+
+  it("does not infer followUp from worker callback headers in the Pi runtime", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = true;
+    const callbackText = 'SYSTEM: [workerCallback] {"fromAgentId":"worker-1","intent":"done"}\nstatus: done\nsummary: complete';
+
+    const receipt = await runtime.sendMessage(callbackText, "auto");
+
+    expect(receipt.acceptedMode).toBe("steer");
+    expect(session.steerCalls).toEqual([callbackText]);
+    expect(session.followUpCalls).toEqual([]);
+  });
+
+  it("passes normalized images to Pi followUp", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = true;
+    resizeImageIfNeededMock.mockImplementation(async (data: string) => ({
+      data: `resized:${data}`,
+      mimeType: "image/png"
+    }));
+
+    const receipt = await runtime.sendMessage({
+      text: "queued image follow-up",
+      images: [{ mimeType: "image/png", data: "raw-image-data" }]
+    }, "followUp");
+
+    expect(receipt.acceptedMode).toBe("followUp");
+    expect(session.followUpCalls).toEqual(["queued image follow-up"]);
+    expect(session.followUpImageCounts).toEqual([1]);
+  });
+
   it("prepareForSpecialistFallbackReplay includes queued follow-up turns", async () => {
     const { runtime, session } = createRuntime();
     session.isStreaming = false;
@@ -533,6 +636,46 @@ describe("mid-turn context guard", () => {
     expect(session.steerCalls).toEqual(["buffer-1", "buffer-2"]);
     expect((runtime as any).recoveryBufferedMessages).toHaveLength(0);
     expect(runtime.getPendingCount()).toBe(2);
+  });
+
+  it("flushRecoveryBufferedMessages preserves explicit followUp delivery mode after recovery ends", async () => {
+    const forwardedEvents: any[] = [];
+    const { runtime, session } = createRuntime({
+      onSessionEvent: (event) => forwardedEvents.push(event)
+    });
+    session.isStreaming = false;
+    (runtime as any).contextRecoveryInProgress = true;
+
+    const receipt = await runtime.sendMessage("buffered follow-up", "followUp");
+
+    expect(receipt.acceptedMode).toBe("followUp");
+    expect(session.followUpCalls).toEqual([]);
+    expect(session.steerCalls).toEqual([]);
+    expect((runtime as any).recoveryBufferedMessages[0]?.mode).toBe("followUp");
+    expect((runtime as any).pendingDeliveries[0]?.mode).toBe("followUp");
+
+    (runtime as any).contextRecoveryInProgress = false;
+    await (runtime as any).flushRecoveryBufferedMessages();
+
+    expect(session.followUpCalls).toEqual(["buffered follow-up"]);
+    expect(session.steerCalls).toEqual([]);
+
+    session.emit({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: "buffered follow-up"
+      }
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(forwardedEvents[0]).toMatchObject({
+      type: "queued_input_start",
+      deliveryId: receipt.deliveryId,
+      acceptedMode: "followUp",
+      requestedMode: "followUp"
+    });
   });
 
   it("recovery buffer applies a hard cap and drops oldest buffered deliveries", async () => {

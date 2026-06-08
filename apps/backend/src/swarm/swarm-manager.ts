@@ -1225,6 +1225,27 @@ type SwarmManagerOptions = {
   terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
 };
 
+function shouldRequestFollowUpForActionableWorkerCallback(options: {
+  inboundTurnTrigger: ReturnType<typeof shouldTrackInboundManagerTurn>;
+  requestedDelivery: RequestedDeliveryMode;
+  runtime: SwarmAgentRuntime;
+}): boolean {
+  return (
+    options.inboundTurnTrigger === "worker_callback" &&
+    options.requestedDelivery === "auto" &&
+    isRuntimeBusyOrPendingForFollowUp(options.runtime)
+  );
+}
+
+function isRuntimeBusyOrPendingForFollowUp(runtime: SwarmAgentRuntime): boolean {
+  return (
+    runtime.getStatus() === "streaming" ||
+    runtime.getPendingCount() > 0 ||
+    runtime.isInputDispatchPending?.() === true ||
+    runtime.isContextRecoveryActive?.() === true
+  );
+}
+
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
@@ -1369,7 +1390,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       logDebug: (message, details) => this.logDebug(message, details),
       emitConversationMessage: (event) => this.emitConversationMessage(event),
       sendInternalManagerMessage: (managerId, message) =>
-        this.sendMessage(managerId, managerId, message, "auto", { origin: "internal" }).then(() => undefined),
+        this.sendMessage(managerId, managerId, message, "auto", { origin: "internal" }),
       isManualStopPending: (managerId) =>
         this.pendingManualManagerStopNoticeTimersByAgentId.has(managerId),
       isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
@@ -4896,18 +4917,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       origin
     );
 
-    this.workerHealthService.markPendingWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
-
-    let receipt: SendMessageReceipt;
-    try {
-      receipt = await runtime.sendMessage(modelMessage, delivery);
-    } catch (error) {
-      await this.workerHealthService.handleFailedWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
-      throw error;
-    }
-
-    await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
-
     const inboundTurnTrigger = shouldTrackInboundManagerTurn({
       targetRole: target.role,
       senderRole: sender.role,
@@ -4915,20 +4924,73 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       message,
       internalDeliveryKind: options?.internalDeliveryKind,
     });
-    if (inboundTurnTrigger && shouldBeginManagerNoOpGuardForDelivery(receipt.acceptedMode)) {
-      this.managerNoOpGuard.beginTurn(target.agentId, inboundTurnTrigger, {
+    const runtimeDelivery: RequestedDeliveryMode = shouldRequestFollowUpForActionableWorkerCallback({
+      inboundTurnTrigger,
+      requestedDelivery: delivery,
+      runtime,
+    })
+      ? "followUp"
+      : delivery;
+    const runtimeMessageTextForGuard = extractRuntimeMessageText(modelMessage);
+    const provisionalPendingTurnId = inboundTurnTrigger && (
+      inboundTurnTrigger === "recovery_nudge" || runtimeDelivery === "followUp"
+    )
+      ? randomUUID()
+      : undefined;
+    if (provisionalPendingTurnId && inboundTurnTrigger) {
+      this.managerNoOpGuard.queuePendingTurn(target.agentId, {
+        pendingTurnId: provisionalPendingTurnId,
+        triggerKind: inboundTurnTrigger,
         fromWorkerAgentId: sender.role === "worker" ? sender.agentId : undefined,
         triggerPreview: message,
+        runtimeMessageText: runtimeMessageTextForGuard,
+        requestedDelivery: delivery,
+        acceptedMode: runtimeDelivery === "followUp" ? "followUp" : undefined,
       });
+    }
+
+    this.workerHealthService.markPendingWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+
+    let receipt: SendMessageReceipt;
+    try {
+      receipt = await runtime.sendMessage(modelMessage, runtimeDelivery);
+    } catch (error) {
+      if (provisionalPendingTurnId) {
+        this.managerNoOpGuard.removePendingTurn(target.agentId, provisionalPendingTurnId);
+      }
+      await this.workerHealthService.handleFailedWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+      throw error;
+    }
+
+    await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+
+    if (provisionalPendingTurnId) {
+      if (
+        shouldBeginManagerNoOpGuardForDelivery(receipt.acceptedMode) ||
+        shouldQueueManagerNoOpGuardForDelivery(receipt.acceptedMode)
+      ) {
+        this.managerNoOpGuard.updatePendingTurn(target.agentId, provisionalPendingTurnId, {
+          deliveryId: receipt.deliveryId,
+          requestedDelivery: delivery,
+          acceptedMode: receipt.acceptedMode,
+        });
+      } else {
+        this.managerNoOpGuard.removePendingTurn(target.agentId, provisionalPendingTurnId);
+      }
     } else if (inboundTurnTrigger && shouldQueueManagerNoOpGuardForDelivery(receipt.acceptedMode)) {
       this.managerNoOpGuard.queuePendingTurn(target.agentId, {
         triggerKind: inboundTurnTrigger,
         fromWorkerAgentId: sender.role === "worker" ? sender.agentId : undefined,
         triggerPreview: message,
-        runtimeMessageText: extractRuntimeMessageText(modelMessage),
+        runtimeMessageText: runtimeMessageTextForGuard,
         deliveryId: receipt.deliveryId,
         requestedDelivery: delivery,
         acceptedMode: receipt.acceptedMode,
+      });
+    } else if (inboundTurnTrigger && shouldBeginManagerNoOpGuardForDelivery(receipt.acceptedMode)) {
+      this.managerNoOpGuard.beginTurn(target.agentId, inboundTurnTrigger, {
+        fromWorkerAgentId: sender.role === "worker" ? sender.agentId : undefined,
+        triggerPreview: message,
       });
     }
 
@@ -4937,6 +4999,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       targetAgentId,
       origin,
       requestedDelivery: delivery,
+      runtimeDelivery: runtimeDelivery !== delivery ? runtimeDelivery : undefined,
+      deliveryId: receipt.deliveryId,
       acceptedMode: receipt.acceptedMode,
       textPreview: previewForLog(message),
       attachmentCount: attachments.length,
