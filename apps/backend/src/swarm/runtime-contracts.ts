@@ -185,6 +185,7 @@ export interface SwarmAgentRuntime {
   setPinnedContent?(content: string | undefined, options?: SetPinnedContentOptions): void | Promise<void>;
   isContextRecoveryInProgress?(): boolean;
   isContextRecoveryActive?(): boolean;
+  isInputDispatchPending?(): boolean;
   prepareForSpecialistFallbackReplay?(): Promise<SpecialistFallbackReplaySnapshot | undefined>;
   restorePreparedSpecialistFallbackReplay?(): Promise<void>;
 

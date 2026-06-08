@@ -7,7 +7,7 @@ import {
 } from "../../test-support/index.js";
 import type { AgentDescriptor, RuntimeCreationOptions, SwarmAgentRuntime, SwarmConfig } from "../types.js";
 import {
-  MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+  MANAGER_NOOP_DIAGNOSTIC_FINAL,
 } from "../manager-noop-guard.js";
 
 class TestSwarmManager extends TestSwarmManagerBase {
@@ -96,7 +96,7 @@ describe("SwarmManager manager no-op guard", () => {
     expect(managerRuntime.sendCalls.at(-1)?.message).toBe("SYSTEM: deployment status: done\nsummary: not a closeout");
   });
 
-  it("persists a system diagnostic and sends one recovery nudge after an empty manager worker-callback turn", async () => {
+  it("sends one internal recovery nudge after an empty manager worker-callback turn without a visible warning", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -113,15 +113,164 @@ describe("SwarmManager manager no-op guard", () => {
     await finalizeEmptyManagerTurn(manager);
 
     const history = manager.getConversationHistory("manager");
-    const diagnostic = history.find(
-      (entry) =>
-        entry.type === "conversation_message" &&
-        entry.role === "system" &&
-        entry.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
-    );
-    expect(diagnostic).toBeDefined();
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.role === "system" &&
+          entry.text.includes("no visible action"),
+      ),
+    ).toBe(false);
     expect(managerRuntime.sendCalls).toHaveLength(1);
     expect(String(managerRuntime.sendCalls[0]?.message)).toContain("SYSTEM: [Forge manager recovery]");
+  });
+
+  it("does not finalize a prompt-accepted recovery nudge before the runtime starts it", async () => {
+    const config = await makeTempConfig(8806);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Recovery Race Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    expect(managerRuntime).toBeDefined();
+    managerRuntime.sendCalls = [];
+
+    await manager.sendMessage(worker.agentId, "manager", "status: done\nsummary: trigger recovery nudge");
+    managerRuntime.sendCalls = [];
+
+    await finalizeEmptyManagerTurn(manager);
+    expect(managerRuntime.sendCalls).toHaveLength(1);
+    const recoveryRuntimeText = runtimeText(managerRuntime.sendCalls[0]!.message);
+
+    const managerDescriptor = manager.getAgent("manager");
+    expect(managerDescriptor).toBeDefined();
+    await manager.handleManagerStatusTransition({ ...managerDescriptor!, status: "idle" }, "idle", 0);
+
+    let history = manager.getConversationHistory("manager");
+    expect(
+      history.filter(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.role === "system" &&
+          entry.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
+      ),
+    ).toHaveLength(0);
+
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "message_start",
+      message: { role: "user", content: recoveryRuntimeText },
+    });
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "tool_execution_start",
+      toolName: "speak_to_user",
+      toolCallId: "speak-recovery",
+      args: { text: "Worker finished." },
+    });
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "tool_execution_end",
+      toolName: "speak_to_user",
+      toolCallId: "speak-recovery",
+      result: { ok: true },
+      isError: false,
+    });
+    await manager.handleRuntimeAgentEnd("manager");
+
+    history = manager.getConversationHistory("manager");
+    expect(
+      history.filter(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.role === "system" &&
+          entry.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("emits one final diagnostic when a prompt-accepted recovery nudge starts and no-ops", async () => {
+    const config = await makeTempConfig(8807);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Recovery No-op Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    expect(managerRuntime).toBeDefined();
+    managerRuntime.sendCalls = [];
+
+    await manager.sendMessage(worker.agentId, "manager", "status: done\nsummary: trigger recovery final");
+    managerRuntime.sendCalls = [];
+
+    await finalizeEmptyManagerTurn(manager);
+    expect(managerRuntime.sendCalls).toHaveLength(1);
+    const recoveryRuntimeText = runtimeText(managerRuntime.sendCalls[0]!.message);
+
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "message_start",
+      message: { role: "user", content: recoveryRuntimeText },
+    });
+    await finalizeEmptyManagerTurn(manager);
+
+    const history = manager.getConversationHistory("manager");
+    expect(
+      history.filter(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.role === "system" &&
+          entry.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
+      ),
+    ).toHaveLength(1);
+    expect(managerRuntime.sendCalls).toHaveLength(1);
+  });
+
+  it("tracks a recovery nudge that emits queued_input_start synchronously during sendMessage", async () => {
+    const config = await makeTempConfig(8808);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Sync Recovery Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    expect(managerRuntime).toBeDefined();
+    managerRuntime.sendCalls = [];
+
+    const sendMessageSpy = vi
+      .spyOn(managerRuntime, "sendMessage")
+      .mockImplementation(async (message, delivery = "auto") => {
+        managerRuntime.sendCalls.push({ message, delivery });
+        managerRuntime.nextDeliveryId += 1;
+        const deliveryId = `delivery-${managerRuntime.nextDeliveryId}`;
+        const text = runtimeText(message);
+        if (text.includes("SYSTEM: [Forge manager recovery]")) {
+          await manager.handleRuntimeSessionEvent("manager", {
+            type: "queued_input_start",
+            deliveryId,
+            message: { text },
+            acceptedMode: "prompt",
+            requestedMode: delivery,
+          });
+        }
+        return {
+          targetAgentId: "manager",
+          deliveryId,
+          acceptedMode: "prompt",
+        };
+      });
+
+    await manager.sendMessage(worker.agentId, "manager", "status: done\nsummary: trigger sync recovery");
+    managerRuntime.sendCalls = [];
+
+    await finalizeEmptyManagerTurn(manager);
+    await finalizeEmptyManagerTurn(manager);
+
+    const history = manager.getConversationHistory("manager");
+    expect(
+      history.filter(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.role === "system" &&
+          entry.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
+      ),
+    ).toHaveLength(1);
+
+    sendMessageSpy.mockRestore();
   });
 
   it("does not fire when the manager uses speak_to_user", async () => {
@@ -294,12 +443,12 @@ describe("SwarmManager manager no-op guard", () => {
         (entry) =>
           entry.type === "conversation_message" &&
           entry.role === "system" &&
-          entry.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+          entry.text.includes("no visible action"),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("does not begin a guard turn when a busy manager accepts worker callbacks as steer", async () => {
+  it("requests followUp for actionable worker callbacks to a busy manager and waits for queued input start", async () => {
     const config = await makeTempConfig(8798);
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -307,13 +456,97 @@ describe("SwarmManager manager no-op guard", () => {
     const worker = await manager.spawnAgent("manager", { agentId: "Queued Worker" });
     const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
     managerRuntime.busy = true;
+    managerRuntime.sendCalls = [];
 
     const receipt = await manager.sendMessage(
       worker.agentId,
       "manager",
       "status: done\nsummary: queued while manager busy",
     );
-    expect(receipt.acceptedMode).toBe("steer");
+    expect(receipt.acceptedMode).toBe("followUp");
+    expect(managerRuntime.sendCalls.at(-1)?.delivery).toBe("followUp");
+    const queuedRuntimeText = runtimeText(managerRuntime.sendCalls.at(-1)!.message);
+
+    await finalizeEmptyManagerTurn(manager);
+
+    let history = manager.getConversationHistory("manager");
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.role === "system" &&
+          entry.text.includes("no visible action"),
+      ),
+    ).toBe(false);
+
+    managerRuntime.busy = false;
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "queued_input_start",
+      deliveryId: receipt.deliveryId,
+      message: { text: queuedRuntimeText },
+      acceptedMode: "followUp",
+      requestedMode: "followUp",
+    });
+    await finalizeEmptyManagerTurn(manager);
+
+    history = manager.getConversationHistory("manager");
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.role === "system" &&
+          entry.text.includes("no visible action"),
+      ),
+    ).toBe(false);
+    expect(managerRuntime.sendCalls.at(0)?.delivery).toBe("followUp");
+    expect(String(managerRuntime.sendCalls.at(-1)?.message)).toContain("SYSTEM: [Forge manager recovery]");
+  });
+
+  it("activates the guard when followUp queued_input_start fires synchronously during worker callback send", async () => {
+    const config = await makeTempConfig(8811);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Sync Follow-up Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    managerRuntime.busy = true;
+    managerRuntime.sendCalls = [];
+
+    const sendMessageSpy = vi
+      .spyOn(managerRuntime, "sendMessage")
+      .mockImplementation(async (message, delivery = "auto") => {
+        managerRuntime.sendCalls.push({ message, delivery });
+        managerRuntime.nextDeliveryId += 1;
+        const deliveryId = `delivery-${managerRuntime.nextDeliveryId}`;
+        const text = runtimeText(message);
+        if (delivery === "followUp" && !text.includes("SYSTEM: [Forge manager recovery]")) {
+          await manager.handleRuntimeSessionEvent("manager", {
+            type: "queued_input_start",
+            deliveryId,
+            message: { text },
+            acceptedMode: "followUp",
+            requestedMode: delivery,
+          });
+        }
+        return {
+          targetAgentId: "manager",
+          deliveryId,
+          acceptedMode: text.includes("SYSTEM: [Forge manager recovery]")
+            ? "prompt"
+            : delivery === "followUp"
+              ? "followUp"
+              : "steer",
+        };
+      });
+
+    const receipt = await manager.sendMessage(
+      worker.agentId,
+      "manager",
+      "status: done\nsummary: sync follow-up start",
+    );
+
+    expect(receipt.acceptedMode).toBe("followUp");
+    expect(managerRuntime.sendCalls.at(0)?.delivery).toBe("followUp");
 
     await finalizeEmptyManagerTurn(manager);
 
@@ -323,9 +556,93 @@ describe("SwarmManager manager no-op guard", () => {
         (entry) =>
           entry.type === "conversation_message" &&
           entry.role === "system" &&
-          entry.text.includes("no visible action"),
+          entry.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
       ),
     ).toBe(false);
+    expect(String(managerRuntime.sendCalls.at(-1)?.message)).toContain("SYSTEM: [Forge manager recovery]");
+
+    sendMessageSpy.mockRestore();
+  });
+
+  it("requests followUp during prompt dispatch pending even while runtime status is idle", async () => {
+    const config = await makeTempConfig(8812);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Prompt Pending Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    managerRuntime.busy = false;
+    managerRuntime.inputDispatchPending = true;
+    managerRuntime.descriptor.status = "idle";
+    managerRuntime.sendCalls = [];
+
+    expect(managerRuntime.getStatus()).toBe("idle");
+    expect(managerRuntime.getPendingCount()).toBe(0);
+
+    const receipt = await manager.sendMessage(
+      worker.agentId,
+      "manager",
+      "status: done\nsummary: prompt dispatch is pending",
+    );
+    expect(receipt.acceptedMode).toBe("followUp");
+    expect(managerRuntime.sendCalls.at(-1)?.delivery).toBe("followUp");
+    const queuedRuntimeText = runtimeText(managerRuntime.sendCalls.at(-1)!.message);
+
+    await finalizeEmptyManagerTurn(manager);
+    expect(managerRuntime.sendCalls).toHaveLength(1);
+
+    managerRuntime.inputDispatchPending = false;
+    await manager.handleRuntimeSessionEvent("manager", {
+      type: "queued_input_start",
+      deliveryId: receipt.deliveryId,
+      message: { text: queuedRuntimeText },
+      acceptedMode: "followUp",
+      requestedMode: "followUp",
+    });
+    await finalizeEmptyManagerTurn(manager);
+
+    expect(String(managerRuntime.sendCalls.at(-1)?.message)).toContain("SYSTEM: [Forge manager recovery]");
+    const history = manager.getConversationHistory("manager");
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.role === "system" &&
+          entry.text === MANAGER_NOOP_DIAGNOSTIC_FINAL,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not upgrade non-actionable worker chatter, watchdog-style manager messages, or explicit steer", async () => {
+    const config = await makeTempConfig(8810);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const worker = await manager.spawnAgent("manager", { agentId: "Routine Worker" });
+    const managerRuntime = manager.runtimeByAgentId.get("manager") as FakeRuntime;
+    managerRuntime.busy = true;
+    managerRuntime.sendCalls = [];
+
+    const routineReceipt = await manager.sendMessage(worker.agentId, "manager", "still checking logs");
+    expect(routineReceipt.acceptedMode).toBe("steer");
+    expect(managerRuntime.sendCalls.at(-1)?.delivery).toBe("auto");
+
+    const steerReceipt = await manager.sendMessage(
+      worker.agentId,
+      "manager",
+      "status: done\nsummary: explicit steering",
+      "steer",
+    );
+    expect(steerReceipt.acceptedMode).toBe("steer");
+    expect(managerRuntime.sendCalls.at(-1)?.delivery).toBe("steer");
+
+    const watchdogReceipt = await manager.sendMessage(
+      "manager",
+      "manager",
+      "SYSTEM: Worker Routine Worker completed its turn without reporting back.",
+    );
+    expect(watchdogReceipt.acceptedMode).toBe("steer");
+    expect(managerRuntime.sendCalls.at(-1)?.delivery).toBe("auto");
   });
 
   it("guards queued follow-up callbacks only when their queued manager turn starts", async () => {
@@ -397,7 +714,7 @@ describe("SwarmManager manager no-op guard", () => {
         (entry) =>
           entry.type === "conversation_message" &&
           entry.role === "system" &&
-          entry.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+          entry.text.includes("no visible action"),
       ),
     ).toBe(false);
 
@@ -406,7 +723,7 @@ describe("SwarmManager manager no-op guard", () => {
       deliveryId: receipt.deliveryId,
       message: { text: queuedRuntimeText },
       acceptedMode: "followUp",
-      requestedMode: "auto",
+      requestedMode: "followUp",
     });
     await finalizeEmptyManagerTurn(manager);
 
@@ -416,9 +733,10 @@ describe("SwarmManager manager no-op guard", () => {
         (entry) =>
           entry.type === "conversation_message" &&
           entry.role === "system" &&
-          entry.text === MANAGER_NOOP_DIAGNOSTIC_WITH_NUDGE,
+          entry.text.includes("no visible action"),
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(String(managerRuntime.sendCalls.at(-1)?.message)).toContain("SYSTEM: [Forge manager recovery]");
 
     sendMessageSpy.mockRestore();
   });

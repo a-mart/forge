@@ -1269,7 +1269,7 @@ describe('SwarmManager', () => {
     expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: pre-tagged')
   })
 
-  it('accepts busy-runtime messages as steer regardless of requested delivery', async () => {
+  it('preserves explicit followUp delivery for busy-runtime messages and steers other queued messages', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1284,7 +1284,7 @@ describe('SwarmManager', () => {
     const steerReceipt = await manager.sendMessage('manager', worker.agentId, 'queued steer', 'steer')
 
     expect(autoReceipt.acceptedMode).toBe('steer')
-    expect(followUpReceipt.acceptedMode).toBe('steer')
+    expect(followUpReceipt.acceptedMode).toBe('followUp')
     expect(steerReceipt.acceptedMode).toBe('steer')
   })
 

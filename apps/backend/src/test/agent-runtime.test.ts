@@ -185,7 +185,7 @@ describe('AgentRuntime', () => {
     expect(JSON.stringify(diagnostics)).not.toContain('resp_secret')
   })
 
-  it('queues steer for all messages when runtime is busy', async () => {
+  it('uses explicit followUp delivery while runtime is busy and steers other queued messages', async () => {
     const session = new FakeSession()
 
     const runtime = new AgentRuntime({
@@ -203,13 +203,13 @@ describe('AgentRuntime', () => {
     const steerReceipt = await runtime.sendMessage('steer message', 'steer')
 
     expect(autoReceipt.acceptedMode).toBe('steer')
-    expect(followUpReceipt.acceptedMode).toBe('steer')
+    expect(followUpReceipt.acceptedMode).toBe('followUp')
     expect(steerReceipt.acceptedMode).toBe('steer')
-    expect(session.followUpCalls).toEqual([])
-    expect(session.steerCalls).toEqual(['auto message', 'explicit followup', 'steer message'])
+    expect(session.followUpCalls).toEqual(['explicit followup'])
+    expect(session.steerCalls).toEqual(['auto message', 'steer message'])
   })
 
-  it('queues steer while prompt dispatch is in progress', async () => {
+  it('uses explicit followUp delivery while prompt dispatch is in progress and steers auto messages', async () => {
     const session = new FakeSession()
     const deferred = createDeferred()
 
@@ -232,10 +232,10 @@ describe('AgentRuntime', () => {
 
     expect(first.acceptedMode).toBe('prompt')
     expect(second.acceptedMode).toBe('steer')
-    expect(third.acceptedMode).toBe('steer')
+    expect(third.acceptedMode).toBe('followUp')
     expect(session.promptCalls).toEqual(['first prompt'])
-    expect(session.followUpCalls).toEqual([])
-    expect(session.steerCalls).toEqual(['queued auto', 'queued followup'])
+    expect(session.followUpCalls).toEqual(['queued followup'])
+    expect(session.steerCalls).toEqual(['queued auto'])
 
     deferred.resolve()
     await Promise.resolve()
