@@ -63,13 +63,6 @@ export type RuntimeSessionEvent =
   | { type: "agent_end" }
   | { type: "turn_start" }
   | { type: "turn_end"; toolResults: unknown[] }
-  | {
-      type: "queued_input_start";
-      deliveryId: string;
-      message: RuntimeUserMessage;
-      acceptedMode: SendMessageReceipt["acceptedMode"];
-      requestedMode?: RequestedDeliveryMode;
-    }
   | { type: "message_start"; message: RuntimeSessionMessage }
   | { type: "message_update"; message: RuntimeSessionMessage }
   | { type: "message_end"; message: RuntimeSessionMessage }
@@ -185,7 +178,6 @@ export interface SwarmAgentRuntime {
   setPinnedContent?(content: string | undefined, options?: SetPinnedContentOptions): void | Promise<void>;
   isContextRecoveryInProgress?(): boolean;
   isContextRecoveryActive?(): boolean;
-  isInputDispatchPending?(): boolean;
   prepareForSpecialistFallbackReplay?(): Promise<SpecialistFallbackReplaySnapshot | undefined>;
   restorePreparedSpecialistFallbackReplay?(): Promise<void>;
 

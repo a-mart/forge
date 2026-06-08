@@ -577,13 +577,6 @@ export class ClaudeQuerySession {
         completion: createDeferred<void>()
       };
 
-      await this.emitSessionEvent({
-        type: "queued_input_start",
-        deliveryId: input.deliveryId,
-        message: input.message,
-        acceptedMode: input.acceptedMode,
-        requestedMode: input.requestedMode,
-      });
       await this.emitSessionEvent({ type: "agent_start" });
       await this.emitSessionEvent({ type: "turn_start" });
       await this.setInternalStatus("busy");

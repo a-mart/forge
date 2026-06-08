@@ -148,7 +148,6 @@ describe("runtime tool plan", () => {
       "kill_agent",
       "speak_to_user",
       "present_choices",
-      "task",
     ]);
   });
 

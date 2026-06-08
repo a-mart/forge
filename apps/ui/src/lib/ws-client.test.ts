@@ -239,71 +239,6 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
-  it('preserves manager no-op diagnostic system rows from history and live events', () => {
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
-    const snapshots: ReturnType<typeof client.getState>[] = []
-    client.subscribe((state) => {
-      snapshots.push(state)
-    })
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-
-    emitServerEvent(socket, {
-      type: 'ready',
-      serverTime: new Date().toISOString(),
-      subscribedAgentId: 'manager',
-    })
-
-    emitServerEvent(socket, {
-      type: 'conversation_history',
-      agentId: 'manager',
-      messages: [
-        {
-          type: 'conversation_message',
-          agentId: 'manager',
-          id: 'noop-history',
-          role: 'system',
-          text: 'Manager returned no visible action after a worker update.',
-          timestamp: new Date().toISOString(),
-          source: 'system',
-        },
-      ],
-    })
-
-    emitServerEvent(socket, {
-      type: 'conversation_message',
-      agentId: 'manager',
-      id: 'noop-live',
-      role: 'system',
-      text: 'Manager returned no visible action after a worker update. Forge sent an internal recovery nudge.',
-      timestamp: new Date().toISOString(),
-      source: 'system',
-    })
-
-    const messages = snapshots.at(-1)?.messages ?? []
-    expect(messages).toHaveLength(2)
-    expect(messages[0]).toMatchObject({
-      type: 'conversation_message',
-      id: 'noop-history',
-      role: 'system',
-      source: 'system',
-      text: 'Manager returned no visible action after a worker update.',
-    })
-    expect(messages[1]).toMatchObject({
-      type: 'conversation_message',
-      id: 'noop-live',
-      role: 'system',
-      source: 'system',
-      text: 'Manager returned no visible action after a worker update. Forge sent an internal recovery nudge.',
-    })
-
-    client.destroy()
-  })
-
   it('sends choice response and cancel commands', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
@@ -351,7 +286,7 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
-  it('suppresses cached task snapshots on session switch until a fresh snapshot arrives', () => {
+  it('ignores task snapshots on session switch while Active Work Plans are parked', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
 
     client.start()
@@ -387,15 +322,15 @@ describe('ManagerWsClient', () => {
     client.subscribeToAgent('session-b')
     emitServerEvent(socket, staleTaskSnapshot)
     emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
-    expect(client.getState().taskSnapshots['session-b']?.revision).toBe(1)
+    expect(client.getState().taskSnapshots).toEqual({})
     expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
 
     client.subscribeToAgent('session-a')
-    expect(client.getState().taskSnapshotLoadingSessionId).toBe('session-a')
+    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
 
     client.subscribeToAgent('session-b')
-    expect(client.getState().taskSnapshots['session-b']?.activeWorkPlan?.title).toBe('Stale cached plan')
-    expect(client.getState().taskSnapshotLoadingSessionId).toBe('session-b')
+    expect(client.getState().taskSnapshots).toEqual({})
+    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
 
     emitServerEvent(socket, {
       ...staleTaskSnapshot,
@@ -404,13 +339,13 @@ describe('ManagerWsClient', () => {
     })
     emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
-    expect(client.getState().taskSnapshots['session-b']?.revision).toBe(2)
+    expect(client.getState().taskSnapshots).toEqual({})
     expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
 
     client.destroy()
   })
 
-  it('clears task snapshots when Work Plans are disabled and restores them after re-enable', () => {
+  it('keeps task snapshots disabled even if Work Plans settings events try to re-enable them', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
     client.start()
@@ -429,8 +364,8 @@ describe('ManagerWsClient', () => {
     emitServerEvent(socket, snapshot)
     emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
 
-    expect(client.getState().taskSnapshots['manager']?.activeWorkPlan?.title).toBe('Active plan')
-    expect(client.getState().workPlansEnabled).toBe(true)
+    expect(client.getState().taskSnapshots).toEqual({})
+    expect(client.getState().workPlansEnabled).toBe(false)
 
     emitServerEvent(socket, {
       type: 'work_plans_settings_changed',
@@ -447,16 +382,16 @@ describe('ManagerWsClient', () => {
       updatedAt: new Date().toISOString(),
     })
 
-    expect(client.getState().workPlansEnabled).toBe(true)
+    expect(client.getState().workPlansEnabled).toBe(false)
     expect(client.getState().taskSnapshots).toEqual({})
-    expect(client.getState().taskSnapshotLoadingSessionId).toBe('manager')
+    expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
 
     emitServerEvent(socket, {
       ...snapshot,
       revision: 2,
     })
 
-    expect(client.getState().taskSnapshots['manager']?.revision).toBe(2)
+    expect(client.getState().taskSnapshots).toEqual({})
     expect(client.getState().taskSnapshotLoadingSessionId).toBeNull()
 
     client.destroy()

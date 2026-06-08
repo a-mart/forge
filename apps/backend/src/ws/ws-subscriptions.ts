@@ -302,6 +302,10 @@ export class WsSubscriptions {
   }
 
   resolveTaskSnapshotSessionAgentId(subscribedAgentId: string): string | undefined {
+    if (this.swarmManager.isWorkPlansEnabled?.() === false) {
+      return undefined;
+    }
+
     const descriptor = this.swarmManager.getAgent(subscribedAgentId);
     return descriptor?.role === "manager" ? descriptor.agentId : undefined;
   }

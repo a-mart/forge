@@ -249,7 +249,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
 
     this.promptDispatchPending = true;
     this.currentTurnReplayMessage = cloneRuntimeUserMessage(message);
-    this.schedulePromptDispatch(deliveryId, message, "prompt");
+    this.schedulePromptDispatch(message);
     return { targetAgentId: this.descriptor.agentId, deliveryId, acceptedMode: "prompt" };
   }
 
@@ -334,11 +334,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     return entryId;
   }
 
-  private async dispatchPrompt(
-    deliveryId: string,
-    message: RuntimeUserMessage,
-    acceptedMode: SendMessageReceipt["acceptedMode"],
-  ): Promise<void> {
+  private async dispatchPrompt(message: RuntimeUserMessage): Promise<void> {
     if (this.status === "terminated") {
       this.promptDispatchPending = false;
       this.currentTurnReplayMessage = undefined;
@@ -369,13 +365,6 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
         return;
       }
 
-      await this.emitPromptSessionEvents(active, [{
-        type: "queued_input_start",
-        deliveryId,
-        message,
-        acceptedMode,
-        requestedMode: "auto",
-      }]);
       await this.emitPromptSessionEvents(active, this.eventMapper.beginPrompt());
       if (this.shouldAbortPromptBeforeSend(active, token)) {
         return;
@@ -673,15 +662,11 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     if (!next) return;
     this.promptDispatchPending = true;
     this.currentTurnReplayMessage = cloneRuntimeUserMessage(next.message);
-    this.schedulePromptDispatch(next.deliveryId, next.message, "followUp");
+    this.schedulePromptDispatch(next.message);
   }
 
-  private schedulePromptDispatch(
-    deliveryId: string,
-    message: RuntimeUserMessage,
-    acceptedMode: SendMessageReceipt["acceptedMode"],
-  ): void {
-    void this.dispatchPrompt(deliveryId, message, acceptedMode).catch(async (error) => {
+  private schedulePromptDispatch(message: RuntimeUserMessage): void {
+    void this.dispatchPrompt(message).catch(async (error) => {
       await this.safeEmitRuntimeError(error);
       if (this.activePrompt === undefined) {
         this.promptDispatchPending = false;

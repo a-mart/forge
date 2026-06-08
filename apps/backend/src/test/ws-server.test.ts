@@ -406,15 +406,8 @@ describe('SwarmWebSocketServer', () => {
     expect(unreadAfter).toBe(unreadBefore)
 
     manager.emit('work_plan_created', createWorkPlanCreatedEvent('manager', 'work-plan-created-web', 'Live web Work Plan'))
-    await waitForEvent(
-      managerEvents,
-      (event) =>
-        event.type === 'work_plan_created' &&
-        event.agentId === 'manager' &&
-        event.id === 'work-plan-created-web' &&
-        event.plan.title === 'Live web Work Plan',
-    )
     await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(managerEvents.some((event) => event.type === 'work_plan_created' && event.agentId === 'manager')).toBe(false)
     expect(workerEvents.some((event) => event.type === 'work_plan_created' && event.agentId === 'manager')).toBe(false)
 
     managerClient.close()
@@ -2254,18 +2247,8 @@ describe('SwarmWebSocketServer', () => {
       expect(ready.status).toMatchObject({ agentId: sessionAgent.agentId, status: 'streaming', pendingCount: 2 })
     }
 
-    const taskSnapshot = await waitForEvent(
-      events,
-      (event) => event.type === 'session_task_state_snapshot' && event.sessionAgentId === sessionAgent.agentId,
-    )
-    expect(taskSnapshot).toMatchObject({
-      type: 'session_task_state_snapshot',
-      sessionAgentId: sessionAgent.agentId,
-      activeWorkPlan: null,
-      recentWorkPlans: [],
-    })
-
     await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(events.some((event) => event.type === 'session_task_state_snapshot')).toBe(false)
     const forbiddenBootstrapEvents = new Set([
       'conversation_history',
       'agents_snapshot',
@@ -2385,7 +2368,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('routes live headless session_task_state_snapshot events to exact subscribed sessions', async () => {
+  it.skip('routes live headless session_task_state_snapshot events to exact subscribed sessions (parked)', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
     const cliAccessService = new CliAccessService({
@@ -2453,7 +2436,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('emits live headless session_task_state_snapshot after task.upsert_plan mutations to exact subscribed sessions', async () => {
+  it.skip('emits live headless session_task_state_snapshot after task.upsert_plan mutations to exact subscribed sessions (parked)', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
     const cliAccessService = new CliAccessService({
@@ -3364,7 +3347,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('rebroadcasts session_task_state_snapshot after clear_session lifecycle transitions', async () => {
+  it.skip('rebroadcasts session_task_state_snapshot after clear_session lifecycle transitions (parked)', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 
@@ -3436,7 +3419,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('routes live session_task_state_snapshot events to exact subscribed sessions', async () => {
+  it.skip('routes live session_task_state_snapshot events to exact subscribed sessions (parked)', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 
@@ -3518,7 +3501,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('emits live session_task_state_snapshot after task.upsert_plan mutations to exact subscribed web sessions', async () => {
+  it.skip('emits live session_task_state_snapshot after task.upsert_plan mutations to exact subscribed web sessions (parked)', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 

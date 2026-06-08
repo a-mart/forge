@@ -115,16 +115,6 @@ function createCallbacks(): ClaudeQuerySessionCallbacks {
   };
 }
 
-function deferred<T = void>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((innerResolve, innerReject) => {
-    resolve = innerResolve;
-    reject = innerReject;
-  });
-  return { promise, resolve, reject };
-}
-
 describe("ClaudeQuerySession", () => {
   it("strips inherited Anthropic API keys while preserving the user's Claude config dir", async () => {
     const previousAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
@@ -503,83 +493,6 @@ describe("ClaudeQuerySession", () => {
     expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
     expect(callbacks.onStatusChange.mock.calls.at(-1)).toEqual(["agent-1", "idle", 0, undefined]);
 
-    await session.stop();
-  });
-
-  it("emits queued input start when a queued follow-up actually begins", async () => {
-    const callbacks = createCallbacks();
-    const firstRelease = deferred();
-    const secondRelease = deferred();
-    const secondQueuedInputStarted = deferred();
-    let promptCount = 0;
-
-    callbacks.onSessionEvent = vi.fn(async (event) => {
-      if (event.type === "queued_input_start" && event.acceptedMode === "followUp") {
-        secondQueuedInputStarted.resolve();
-      }
-    });
-
-    const sdk: ClaudeSdkModule = {
-      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
-        return createPromptAwareMockQueryHandle(
-          args.prompt,
-          { type: "system:init" },
-          undefined,
-          {
-            onPrompt: async (_message, pushEvent) => {
-              promptCount += 1;
-              await (promptCount === 1 ? firstRelease.promise : secondRelease.promise);
-              pushEvent({
-                type: "assistant",
-                message: {
-                  id: `assistant-${promptCount}`,
-                  content: [{ type: "text", text: "done" }]
-                }
-              });
-              pushEvent({ type: "result", subtype: "result" });
-            }
-          }
-        );
-      }) as unknown as ClaudeSdkModule["query"]
-    };
-
-    const session = new ClaudeQuerySession({
-      sdk,
-      config: {
-        model: "claude-test",
-        systemPrompt: "system",
-        cwd: process.cwd()
-      },
-      callbacks
-    });
-
-    await session.start();
-    const firstReceipt = await session.sendInput("first");
-    const secondReceipt = await session.sendInput("second", "followUp");
-
-    expect(firstReceipt.acceptedMode).toBe("prompt");
-    expect(secondReceipt.acceptedMode).toBe("followUp");
-    expect(callbacks.onSessionEvent).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "queued_input_start",
-        deliveryId: secondReceipt.deliveryId,
-      }),
-    );
-
-    firstRelease.resolve();
-    await secondQueuedInputStarted.promise;
-
-    expect(callbacks.onSessionEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "queued_input_start",
-        deliveryId: secondReceipt.deliveryId,
-        acceptedMode: "followUp",
-        message: expect.objectContaining({ text: "second" }),
-      }),
-    );
-
-    secondRelease.resolve();
-    await session.waitForIdle();
     await session.stop();
   });
 

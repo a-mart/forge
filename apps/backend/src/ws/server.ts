@@ -194,6 +194,7 @@ export class SwarmWebSocketServer {
 
   private readonly onWorkPlanCreated = (event: ServerEvent): void => {
     if (event.type !== "work_plan_created") return;
+    if (!this.swarmManager.isWorkPlansEnabled()) return;
     this.wsHandler.broadcastToSubscribed(event);
     this.cliWsHandler.broadcast(event);
   };
@@ -241,6 +242,7 @@ export class SwarmWebSocketServer {
 
   private readonly onSessionTaskStateSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_task_state_snapshot") return;
+    if (!this.swarmManager.isWorkPlansEnabled()) return;
     this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
     this.cliWsHandler.broadcast(event);
   };

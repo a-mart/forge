@@ -12,7 +12,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
   readSidebarModelIconsPref,
@@ -47,10 +46,6 @@ import {
   fetchCortexAutoReviewSettings,
   updateCortexAutoReviewSettings,
 } from '@/components/settings/cortex-auto-review-api'
-import {
-  fetchWorkPlansEnabled,
-  setWorkPlansEnabledApi,
-} from '@/components/settings/work-plans-api'
 import {
   fetchAvailableShells,
   updateTerminalShellSettings,
@@ -100,11 +95,6 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   const [cortexUpdating, setCortexUpdating] = useState(false)
   const [cortexLoadFailed, setCortexLoadFailed] = useState(false)
   const [cortexDisabled, setCortexDisabled] = useState(false)
-
-  const [workPlansEnabled, setWorkPlansEnabled] = useState(true)
-  const [workPlansLoading, setWorkPlansLoading] = useState(true)
-  const [workPlansUpdating, setWorkPlansUpdating] = useState(false)
-  const [workPlansError, setWorkPlansError] = useState<string | null>(null)
 
   // Terminal shell settings — Builder-only
   const [terminalShells, setTerminalShells] = useState<AvailableShellsResponse | null>(null)
@@ -221,49 +211,6 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
         setCortexError(err instanceof Error ? err.message : 'Could not load Cortex settings')
       })
   }, [cortexSource])
-
-  const workPlansSource = apiClient ?? wsUrl
-
-  useEffect(() => {
-    if (!isBuilder) return
-    let cancelled = false
-    setWorkPlansLoading(true)
-    setWorkPlansError(null)
-    void fetchWorkPlansEnabled(workPlansSource)
-      .then((enabled) => {
-        if (!cancelled) setWorkPlansEnabled(enabled)
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setWorkPlansError(err instanceof Error ? err.message : 'Could not load Active Work Plans setting')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setWorkPlansLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [isBuilder, workPlansSource])
-
-  const handleWorkPlansToggle = useCallback(
-    (checked: boolean) => {
-      if (workPlansUpdating) return
-      setWorkPlansUpdating(true)
-      setWorkPlansError(null)
-      void setWorkPlansEnabledApi(workPlansSource, checked)
-        .then(() => {
-          setWorkPlansEnabled(checked)
-        })
-        .catch((err) => {
-          setWorkPlansError(err instanceof Error ? err.message : 'Failed to update Active Work Plans setting')
-        })
-        .finally(() => {
-          setWorkPlansUpdating(false)
-        })
-    },
-    [workPlansSource, workPlansUpdating],
-  )
 
   const handleCortexToggle = useCallback(
     (enabled: boolean) => {
@@ -418,37 +365,6 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
               </SelectContent>
             </Select>
           </SettingsWithCTA>
-        </SettingsSection>
-      )}
-
-      {isBuilder && (
-        <SettingsSection
-          label="Active Work Plans"
-          description="Manager-owned coordination plans with the task tool, prompt guidance, and live chat progress UI."
-        >
-          <div className="flex items-center gap-3">
-            <Switch
-              id="work-plans-enabled-toggle"
-              checked={workPlansEnabled}
-              disabled={workPlansLoading || workPlansUpdating}
-              onCheckedChange={handleWorkPlansToggle}
-              aria-label="Enable Active Work Plans"
-            />
-            <Label htmlFor="work-plans-enabled-toggle" className="text-sm font-medium">
-              Enable Active Work Plans
-            </Label>
-            {workPlansUpdating ? (
-              <span className="text-xs text-muted-foreground">Saving…</span>
-            ) : null}
-          </div>
-          {!workPlansEnabled && !workPlansLoading ? (
-            <p className="mt-2 text-xs italic text-muted-foreground/70">
-              Active Work Plans are disabled. Managers will not receive the task tool or work-plan prompt guidance, and live plan UI is hidden.
-            </p>
-          ) : null}
-          {workPlansError ? (
-            <p className="mt-2 text-xs text-destructive">{workPlansError}</p>
-          ) : null}
         </SettingsSection>
       )}
 

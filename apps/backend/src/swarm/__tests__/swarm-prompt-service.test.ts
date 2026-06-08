@@ -8,9 +8,7 @@ import { writeProjectAgentRecord } from "../project-agent-storage.js";
 import { writeProjectAgentReferenceDoc } from "../reference-docs.js";
 import { writeReferenceDoc } from "../storage/asset-root-storage.js";
 import { SwarmPromptService } from "../swarm-prompt-service.js";
-import { createEmptySessionCoordinationState } from "../coordination/session-coordination-state.js";
 import { ACTIVE_WORK_PLANS_GUIDANCE_ENABLED } from "../coordination/work-plans-settings.js";
-import { getSessionTasksPath } from "../storage/data-paths.js";
 import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
 import {
@@ -269,98 +267,14 @@ describe("SwarmPromptService", () => {
     expect(refreshStats).toHaveBeenCalled();
   });
 
-  it("adds an Active Work Context preview section after the memory composite when session task state is relevant", async () => {
+  it("omits Active Work Context from prompt preview while Active Work Plans are parked", async () => {
     const { config } = await makeConfig();
-    const workRoot = join(config.paths.dataDir, "work-preview-active-work");
+    const workRoot = join(config.paths.dataDir, "work-preview-active-work-parked");
     await mkdir(workRoot, { recursive: true });
 
     const descriptor = createManagerDescriptor(config, workRoot);
-    const taskStatePath = getSessionTasksPath(config.paths.dataDir, descriptor.profileId, descriptor.agentId);
-    await mkdir(dirname(taskStatePath), { recursive: true });
-    await writeFile(taskStatePath, `${JSON.stringify({
-      ...createEmptySessionCoordinationState(),
-      revision: 1,
-      updatedAt: "2026-05-29T12:00:00.000Z",
-      workPlans: [
-        {
-          planId: "plan-1",
-          createdByAgentId: descriptor.agentId,
-          title: "Land WP7 formatter",
-          status: "active",
-          createdAt: "2026-05-29T12:00:00.000Z",
-          updatedAt: "2026-05-29T12:00:00.000Z",
-          revision: 1,
-          items: [
-            {
-              itemId: "item-1",
-              title: "Implement formatter",
-              status: "active",
-              workerLinks: [
-                {
-                  type: "worker",
-                  linkId: "link-1",
-                  agentId: "worker-1",
-                  label: "Backend Specialist",
-                  linkedAt: "2026-05-29T12:00:00.000Z"
-                }
-              ],
-              createdAt: "2026-05-29T12:00:00.000Z",
-              updatedAt: "2026-05-29T12:00:00.000Z"
-            }
-          ],
-          revisionNotes: [],
-          warnings: [],
-          mutationProvenance: []
-        }
-      ]
-    }, null, 2)}\n`, "utf8");
-
-    const service = createPromptServiceForDescriptor(config, descriptor);
-    const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
-    const labels = preview.sections.map((section) => section.label);
-    const activeWorkIndex = labels.indexOf("Active Work Context");
-
-    expect(activeWorkIndex).toBeGreaterThan(-1);
-    expect(labels[activeWorkIndex - 1]).toBe("Memory Composite");
-    expect(preview.sections[activeWorkIndex]?.content).toContain("# Active Work Context");
-    expect(preview.sections[activeWorkIndex]?.content).toContain("Current plan: Land WP7 formatter [active]");
-    expect(preview.sections[activeWorkIndex]?.content).toContain("latest known worker links: Backend Specialist (worker-1, latest known link)");
-    expect(preview.sections[activeWorkIndex]?.source).toBe("Generated from Active Work snapshot");
-    expect(preview.sections[activeWorkIndex]?.source).not.toContain(taskStatePath);
-    expect(preview.sections[activeWorkIndex]?.source).not.toContain("tasks.json");
-  });
-
-  it("omits Active Work Context from prompt preview when work plans are disabled", async () => {
-    const { config } = await makeConfig();
-    const workRoot = join(config.paths.dataDir, "work-preview-active-work-disabled");
-    await mkdir(workRoot, { recursive: true });
-
-    const descriptor = createManagerDescriptor(config, workRoot);
-    const taskStatePath = getSessionTasksPath(config.paths.dataDir, descriptor.profileId, descriptor.agentId);
-    await mkdir(dirname(taskStatePath), { recursive: true });
-    await writeFile(taskStatePath, `${JSON.stringify({
-      ...createEmptySessionCoordinationState(),
-      revision: 1,
-      updatedAt: "2026-05-29T12:00:00.000Z",
-      workPlans: [
-        {
-          planId: "plan-1",
-          createdByAgentId: descriptor.agentId,
-          title: "Should not appear in preview",
-          status: "active",
-          createdAt: "2026-05-29T12:00:00.000Z",
-          updatedAt: "2026-05-29T12:00:00.000Z",
-          revision: 1,
-          items: [],
-          revisionNotes: [],
-          warnings: [],
-          mutationProvenance: []
-        }
-      ]
-    }, null, 2)}\n`, "utf8");
-
     const service = createPromptServiceForDescriptor(config, descriptor, {
-      getWorkPlansEnabled: () => false,
+      getWorkPlansEnabled: () => true,
     });
     const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
     const labels = preview.sections.map((section) => section.label);
@@ -371,7 +285,7 @@ describe("SwarmPromptService", () => {
   });
 
   describe("resolved manager prompt Active Work Plans guidance", () => {
-    it("includes Active Work Plans and task tool guidance when work plans are enabled", async () => {
+    it("excludes Active Work Plans and task tool guidance while parked", async () => {
       const { config } = await makeConfig();
       const descriptor = createManagerDescriptor(config, repoRoot);
       const service = createPromptServiceForDescriptor(config, descriptor, {
@@ -380,25 +294,10 @@ describe("SwarmPromptService", () => {
 
       const resolved = await service.buildResolvedManagerPrompt(descriptor);
 
-      expect(resolved).toContain(ACTIVE_WORK_PLANS_GUIDANCE_ENABLED);
-      expect(resolved).toContain("Active Work Plans");
-      expect(resolved).toContain("`task` tool");
-      expect(resolved).not.toContain("$" + "{ACTIVE_WORK_PLANS_GUIDANCE}");
-    });
-
-    it("excludes Active Work Plans and task tool guidance when work plans are disabled", async () => {
-      const { config } = await makeConfig();
-      const descriptor = createManagerDescriptor(config, repoRoot);
-      const service = createPromptServiceForDescriptor(config, descriptor, {
-        getWorkPlansEnabled: () => false,
-      });
-
-      const resolved = await service.buildResolvedManagerPrompt(descriptor);
-
+      expect(ACTIVE_WORK_PLANS_GUIDANCE_ENABLED).toBe("");
       expect(resolved).not.toContain("Active Work Plans");
       expect(resolved).not.toContain("`task` tool");
       expect(resolved).not.toContain("task tool");
-      expect(resolved).not.toContain(ACTIVE_WORK_PLANS_GUIDANCE_ENABLED);
       expect(resolved).not.toContain("$" + "{ACTIVE_WORK_PLANS_GUIDANCE}");
       expect(resolved).toContain("Use `present_choices` for structured user decisions.");
     });

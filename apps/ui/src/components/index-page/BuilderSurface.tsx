@@ -36,7 +36,6 @@ import {
 import {
   chooseMostRecentSessionFallbackForDeletedTarget,
 } from '@/hooks/index-page/deleted-agent-fallback'
-import { fetchWorkPlansEnabled } from '@/components/settings/work-plans-api'
 import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
 import { useVisibleMessages } from '@/hooks/index-page/use-visible-messages'
@@ -122,21 +121,6 @@ export function BuilderSurface({
   useEffect(() => {
     reportBuilderConnected(state.connected)
   }, [state.connected])
-
-  useEffect(() => {
-    if (!state.connected) return
-    let cancelled = false
-    void fetchWorkPlansEnabled(wsUrl)
-      .then((enabled) => {
-        if (!cancelled) {
-          setState((prev) => ({ ...prev, workPlansEnabled: enabled }))
-        }
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [setState, state.connected, wsUrl])
 
   useEffect(() => {
     if (activeView !== 'archive') {
@@ -292,13 +276,7 @@ export function BuilderSurface({
     ) ?? null
   }, [activeManagerId, state.agents])
 
-  const activeWorkSnapshot =
-    state.workPlansEnabled &&
-    activeAgent?.role === 'manager' &&
-    activeManagerId &&
-    state.taskSnapshotLoadingSessionId !== activeManagerId
-      ? state.taskSnapshots[activeManagerId] ?? null
-      : null
+  const activeWorkSnapshot = null
 
   const terminalSessionAgentId = useMemo(() => {
     if (!activeAgent) {

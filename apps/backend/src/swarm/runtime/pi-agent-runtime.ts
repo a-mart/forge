@@ -47,21 +47,11 @@ import type {
 } from "../types.js";
 import { resizeImageIfNeeded } from "../image-utils.js";
 
-type QueuedDeliveryMode = "steer" | "followUp";
-
 interface PendingDelivery {
   deliveryId: string;
   messageKey: string;
   message: RuntimeUserMessage;
-  mode: "steer" | "followUp" | "recovery_buffer";
-  requestedMode?: RequestedDeliveryMode;
-}
-
-interface RecoveryBufferedDelivery {
-  deliveryId: string;
-  message: RuntimeUserMessage;
-  mode: QueuedDeliveryMode;
-  requestedMode: RequestedDeliveryMode;
+  mode: "steer" | "recovery_buffer";
 }
 
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
@@ -156,7 +146,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private readonly now: () => string;
   private readonly systemPrompt: string;
   private pendingDeliveries: PendingDelivery[] = [];
-  private readonly recoveryBufferedMessages: RecoveryBufferedDelivery[] = [];
+  private readonly recoveryBufferedMessages: Array<{ deliveryId: string; message: RuntimeUserMessage }> = [];
   private status: AgentStatus;
   private unsubscribe: (() => void) | undefined;
   private readonly inFlightPrompts = new Set<Promise<void>>();
@@ -252,10 +242,6 @@ export class AgentRuntime implements SwarmAgentRuntime {
     return this.contextRecoveryInProgress;
   }
 
-  isInputDispatchPending(): boolean {
-    return this.promptDispatchPending;
-  }
-
   async prepareForSpecialistFallbackReplay(): Promise<SpecialistFallbackReplaySnapshot | undefined> {
     const replayMessages = [
       ...this.currentTurnReplayMessages
@@ -290,7 +276,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   async sendMessage(
     input: RuntimeUserMessageInput,
-    requestedMode: RequestedDeliveryMode = "auto"
+    _requestedMode: RequestedDeliveryMode = "auto"
   ): Promise<SendMessageReceipt> {
     this.ensureNotTerminated();
     this.suppressSessionEventsUntilIdle = false;
@@ -299,11 +285,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const message = await prepareRuntimeUserMessageForDispatch(input);
 
     if (this.isContextRecoveryActive()) {
-      const queuedMode = resolveQueuedDeliveryMode(requestedMode);
       if (this.isContextRecoveryInProgress()) {
-        this.bufferMessageDuringRecovery(deliveryId, message, queuedMode, requestedMode);
+        this.bufferMessageDuringRecovery(deliveryId, message);
       } else {
-        await this.enqueueQueuedMessage(deliveryId, message, queuedMode, requestedMode);
+        await this.enqueueMessage(deliveryId, message);
       }
 
       this.noteActivity();
@@ -311,19 +296,18 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return {
         targetAgentId: this.descriptor.agentId,
         deliveryId,
-        acceptedMode: queuedMode
+        acceptedMode: "steer"
       };
     }
 
     if (this.session.isStreaming || this.promptDispatchPending) {
-      const queuedMode = resolveQueuedDeliveryMode(requestedMode);
-      await this.enqueueQueuedMessage(deliveryId, message, queuedMode, requestedMode);
+      await this.enqueueMessage(deliveryId, message);
       this.noteActivity();
       await this.emitStatus();
       return {
         targetAgentId: this.descriptor.agentId,
         deliveryId,
-        acceptedMode: queuedMode
+        acceptedMode: "steer"
       };
     }
 
@@ -723,25 +707,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     await this.session.prompt(text);
   }
 
-  private async enqueueQueuedMessage(
-    deliveryId: string,
-    message: RuntimeUserMessage,
-    mode: QueuedDeliveryMode,
-    requestedMode: RequestedDeliveryMode
-  ): Promise<void> {
-    if (mode === "followUp") {
-      await this.enqueueFollowUpMessage(deliveryId, message, requestedMode);
-      return;
-    }
-
-    await this.enqueueSteerMessage(deliveryId, message, requestedMode);
-  }
-
-  private async enqueueSteerMessage(
-    deliveryId: string,
-    message: RuntimeUserMessage,
-    requestedMode?: RequestedDeliveryMode
-  ): Promise<void> {
+  private async enqueueMessage(deliveryId: string, message: RuntimeUserMessage): Promise<void> {
     const images = toImageContent(message.images);
     await this.session.steer(message.text, images.length > 0 ? images : undefined);
 
@@ -749,57 +715,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
       deliveryId,
       messageKey: buildRuntimeMessageKey(message),
       message: cloneRuntimeUserMessage(message) ?? message,
-      mode: "steer",
-      requestedMode
+      mode: "steer"
     });
   }
 
-  private async enqueueFollowUpMessage(
-    deliveryId: string,
-    message: RuntimeUserMessage,
-    requestedMode: RequestedDeliveryMode
-  ): Promise<void> {
-    const images = toImageContent(message.images);
-    this.pendingDeliveries.push({
-      deliveryId,
-      messageKey: buildRuntimeMessageKey(message),
-      message: cloneRuntimeUserMessage(message) ?? message,
-      mode: "followUp",
-      requestedMode
-    });
-
-    try {
-      await this.sendFollowUpToSession(message.text, images);
-    } catch (error) {
-      this.removePendingDeliveryById(deliveryId);
-      throw error;
-    }
-  }
-
-  private async sendFollowUpToSession(text: string, images: ImageContent[]): Promise<void> {
-    const sessionWithFollowUp = this.session as AgentSession & {
-      followUp?: (message: string, images?: ImageContent[]) => Promise<void>;
-    };
-    const followUp = sessionWithFollowUp.followUp;
-    if (typeof followUp !== "function") {
-      const error = new Error("Pi AgentSession does not support followUp delivery");
-      this.logRuntimeError("steer_delivery", error, {
-        stage: "followup_unavailable",
-        textPreview: previewForLog(text),
-        imageCount: images.length
-      });
-      throw error;
-    }
-
-    await followUp.call(this.session, text, images.length > 0 ? images : undefined);
-  }
-
-  private bufferMessageDuringRecovery(
-    deliveryId: string,
-    message: RuntimeUserMessage,
-    mode: QueuedDeliveryMode,
-    requestedMode: RequestedDeliveryMode
-  ): void {
+  private bufferMessageDuringRecovery(deliveryId: string, message: RuntimeUserMessage): void {
     if (this.recoveryBufferedMessages.length >= MAX_RECOVERY_BUFFERED_MESSAGES) {
       const dropped = this.recoveryBufferedMessages.shift();
       if (dropped) {
@@ -812,13 +732,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     }
 
-    this.recoveryBufferedMessages.push({ deliveryId, message, mode, requestedMode });
+    this.recoveryBufferedMessages.push({ deliveryId, message });
     this.pendingDeliveries.push({
       deliveryId,
       messageKey: buildRuntimeMessageKey(message),
       message: cloneRuntimeUserMessage(message) ?? message,
-      mode: mode === "followUp" ? "followUp" : "recovery_buffer",
-      requestedMode
+      mode: "recovery_buffer"
     });
   }
 
@@ -832,18 +751,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
     for (const entry of buffered) {
       try {
         const images = toImageContent(entry.message.images);
-        if (entry.mode === "followUp") {
-          await this.sendFollowUpToSession(entry.message.text, images);
-        } else {
-          await this.session.steer(entry.message.text, images.length > 0 ? images : undefined);
-        }
+        await this.session.steer(entry.message.text, images.length > 0 ? images : undefined);
       } catch (error) {
         this.removePendingDeliveryById(entry.deliveryId);
         this.logRuntimeError("steer_delivery", error, {
           stage: "flush_recovery_buffer",
-          deliveryId: entry.deliveryId,
-          acceptedMode: entry.mode,
-          requestedMode: entry.requestedMode
+          deliveryId: entry.deliveryId
         });
       }
     }
@@ -862,10 +775,6 @@ export class AgentRuntime implements SwarmAgentRuntime {
         }
       }
       return;
-    }
-
-    if (event.type === "message_start" && event.message.role === "user") {
-      await this.handleRuntimeUserMessageStart(event.message as RuntimeSessionMessage);
     }
 
     const normalizedEvent = normalizeRuntimeSessionEvent(event);
@@ -923,8 +832,19 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (event.type === "message_end") {
       this.checkContextBudget();
+      return;
     }
 
+    if (event.type === "message_start" && event.message.role === "user") {
+      const key = extractMessageKeyFromRuntimeContent(event.message.content);
+      if (key !== undefined) {
+        const pendingMessage = this.consumePendingMessage(key);
+        if (pendingMessage) {
+          this.currentTurnReplayMessages.push(cloneRuntimeUserMessage(pendingMessage.message) ?? pendingMessage.message);
+        }
+        await this.emitStatus();
+      }
+    }
   }
 
   private checkContextBudget(): void {
@@ -1808,43 +1728,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     });
   }
 
-  private async handleRuntimeUserMessageStart(message: RuntimeSessionMessage): Promise<void> {
-    const key = extractMessageKeyFromRuntimeContent(message.content);
-    if (key === undefined) {
-      return;
-    }
-
-    const pendingMessage = this.consumePendingMessage(key);
-    if (!pendingMessage) {
-      await this.emitStatus();
-      return;
-    }
-
-    const replayMessage = cloneRuntimeUserMessage(pendingMessage.message) ?? pendingMessage.message;
-    if (pendingMessage.mode === "followUp") {
-      await this.emitQueuedInputStart(pendingMessage, replayMessage);
-    }
-
-    this.currentTurnReplayMessages.push(replayMessage);
-    await this.emitStatus();
-  }
-
   private consumePendingMessage(messageKey: string): PendingDelivery | undefined {
     return consumePendingDeliveryByMessageKey(this.pendingDeliveries, messageKey);
-  }
-
-  private async emitQueuedInputStart(delivery: PendingDelivery, message: RuntimeUserMessage): Promise<void> {
-    if (!this.callbacks.onSessionEvent) {
-      return;
-    }
-
-    await this.callbacks.onSessionEvent(this.descriptor.agentId, {
-      type: "queued_input_start",
-      deliveryId: delivery.deliveryId,
-      message: cloneRuntimeUserMessage(message) ?? message,
-      acceptedMode: "followUp",
-      ...(delivery.requestedMode ? { requestedMode: delivery.requestedMode } : {})
-    });
   }
 
   private removePendingDeliveryById(deliveryId: string): void {
@@ -2191,10 +2076,6 @@ function extractRuntimeMessageKeyFromSessionMessage(message: unknown): string | 
   }
 
   return extractMessageKeyFromRuntimeContent(candidate.content);
-}
-
-function resolveQueuedDeliveryMode(requestedMode: RequestedDeliveryMode): QueuedDeliveryMode {
-  return requestedMode === "followUp" ? "followUp" : "steer";
 }
 
 async function prepareRuntimeUserMessageForDispatch(

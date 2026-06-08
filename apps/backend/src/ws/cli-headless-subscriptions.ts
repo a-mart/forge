@@ -61,7 +61,9 @@ export class CliHeadlessSubscriptions {
 
     this.subscriptions.set(socket, targetAgent.agentId);
     this.send(socket, this.buildHeadlessReady(command, targetAgent));
-    this.send(socket, await this.swarmManager.getSessionTaskStateSnapshot(targetAgent.agentId));
+    if (this.swarmManager.isWorkPlansEnabled()) {
+      this.send(socket, await this.swarmManager.getSessionTaskStateSnapshot(targetAgent.agentId));
+    }
   }
 
   broadcast(event: ServerEvent): void {

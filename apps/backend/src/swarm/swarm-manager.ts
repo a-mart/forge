@@ -149,13 +149,6 @@ import {
   type WorkerStallState,
   type WorkerWatchdogState
 } from "./swarm-worker-health-service.js";
-import {
-  ManagerNoOpGuard,
-  shouldBeginManagerNoOpGuardForDelivery,
-  shouldQueueManagerNoOpGuardForDelivery,
-  shouldTrackInboundManagerTurn,
-} from "./manager-noop-guard.js";
-import { formatActionableWorkerCallbackRuntimeMessage } from "./worker-callback-message.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
 import type { ImportSkillOptions } from "./skills/skill-sharing-service.js";
 import {
@@ -193,10 +186,6 @@ import {
   ProjectAgentSharingService,
   type ExternalProjectAgentDeliveryAuthorization,
 } from "./project-agent-sharing-service.js";
-import {
-  copySessionWorkPlansForFork,
-  transitionSessionWorkPlansForLifecycle,
-} from "./coordination/work-plan-lifecycle.js";
 import { SessionCoordinationStore } from "./coordination/session-coordination-store.js";
 import {
   toWorkPlanServiceErrorDescriptor,
@@ -212,10 +201,7 @@ import {
   type TaskToolRecoverableErrorResult,
   type TaskToolResult,
 } from "./coordination/task-tool.js";
-import {
-  ACTIVE_WORK_PLANS_SKILL_HANDLE,
-  getWorkPlansEnabled,
-} from "./coordination/work-plans-settings.js";
+import { ACTIVE_WORK_PLANS_SKILL_HANDLE } from "./coordination/work-plans-settings.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import {
   assertRepoProjectAgentSourceAvailable,
@@ -1225,27 +1211,6 @@ type SwarmManagerOptions = {
   terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
 };
 
-function shouldRequestFollowUpForActionableWorkerCallback(options: {
-  inboundTurnTrigger: ReturnType<typeof shouldTrackInboundManagerTurn>;
-  requestedDelivery: RequestedDeliveryMode;
-  runtime: SwarmAgentRuntime;
-}): boolean {
-  return (
-    options.inboundTurnTrigger === "worker_callback" &&
-    options.requestedDelivery === "auto" &&
-    isRuntimeBusyOrPendingForFollowUp(options.runtime)
-  );
-}
-
-function isRuntimeBusyOrPendingForFollowUp(runtime: SwarmAgentRuntime): boolean {
-  return (
-    runtime.getStatus() === "streaming" ||
-    runtime.getPendingCount() > 0 ||
-    runtime.isInputDispatchPending?.() === true ||
-    runtime.isContextRecoveryActive?.() === true
-  );
-}
-
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
@@ -1289,7 +1254,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private agentsSnapshotVersion = 0;
   private profilesSnapshotVersion = 0;
   private readonly workerHealthService: SwarmWorkerHealthService;
-  private readonly managerNoOpGuard: ManagerNoOpGuard;
   private readonly specialistFallbackManager: SwarmSpecialistFallbackManager;
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly sidebarPerfRecorder: SidebarPerfRecorder;
@@ -1327,7 +1291,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   } | undefined;
   private readonly versioningService: VersioningMutationSink | undefined;
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
-  private workPlansEnabled = true;
+  private workPlansEnabled = false;
 
   constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
@@ -1384,16 +1348,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       isRuntimeInContextRecovery: (agentId) => this.isRuntimeInContextRecovery(agentId),
       isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
       logDebug: (message, details) => this.logDebug(message, details)
-    });
-    this.managerNoOpGuard = new ManagerNoOpGuard({
-      now: this.now,
-      logDebug: (message, details) => this.logDebug(message, details),
-      emitConversationMessage: (event) => this.emitConversationMessage(event),
-      sendInternalManagerMessage: (managerId, message) =>
-        this.sendMessage(managerId, managerId, message, "auto", { origin: "internal" }),
-      isManualStopPending: (managerId) =>
-        this.pendingManualManagerStopNoticeTimersByAgentId.has(managerId),
-      isRuntimeRecoveryActive: (agentId) => this.isRuntimeRecoveryActive(agentId),
     });
     this.specialistFallbackManager = new SwarmSpecialistFallbackManager({
       descriptors: this.descriptors,
@@ -2126,40 +2080,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async loadWorkPlansSettings(): Promise<void> {
-    this.workPlansEnabled = await getWorkPlansEnabled(this.config.paths.dataDir);
+    this.workPlansEnabled = false;
   }
 
   isWorkPlansEnabled(): boolean {
     return this.workPlansEnabled;
   }
 
-  async applyWorkPlansSettingsChange(enabled: boolean): Promise<void> {
-    this.workPlansEnabled = enabled;
-
-    const sessions = this.listAgents().filter((descriptor) => descriptor.role === "manager");
-    const results = await Promise.allSettled(
-      sessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "work_plans_settings_change")),
-    );
-
-    results.forEach((result, index) => {
-      if (result.status === "rejected") {
-        this.logDebug("work_plans:settings_change:recycle:error", {
-          agentId: sessions[index]?.agentId,
-          message: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        });
-      }
-    });
-
-    if (enabled) {
-      await this.rebroadcastSessionTaskStateSnapshots();
-    }
-  }
-
-  private async rebroadcastSessionTaskStateSnapshots(): Promise<void> {
-    const sessions = this.listAgents().filter((descriptor) => descriptor.role === "manager");
-    await Promise.allSettled(
-      sessions.map((session) => this.emitSessionTaskStateSnapshotForSession(session.agentId)),
-    );
+  async applyWorkPlansSettingsChange(_enabled: boolean): Promise<void> {
+    this.workPlansEnabled = false;
   }
 
   listAgents(): AgentDescriptor[] {
@@ -4617,57 +4546,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async transitionSessionWorkPlansForLifecycle(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    reason: "manual_stop" | "archived" | "conversation_cleared"
+    _descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    _reason: "manual_stop" | "archived" | "conversation_cleared"
   ): Promise<void> {
-    try {
-      const result = await transitionSessionWorkPlansForLifecycle({
-        dataDir: this.config.paths.dataDir,
-        profileId: descriptor.profileId,
-        sessionAgentId: descriptor.agentId,
-        actorAgentId: descriptor.agentId,
-        reason,
-      });
-      if (result !== "noop") {
-        await this.emitSessionTaskStateSnapshotForSession(descriptor.agentId);
-      }
-    } catch (error) {
-      this.logDebug("coordination:lifecycle_transition:error", {
-        agentId: descriptor.agentId,
-        profileId: descriptor.profileId,
-        reason,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    // Active Work Plans are parked on this rollback/test branch. Do not read,
+    // write, transition, or rebroadcast tasks.json during lifecycle changes.
   }
 
-  private async emitSessionTaskStateSnapshotForSession(sessionAgentId: string): Promise<void> {
-    this.emit("session_task_state_snapshot", await this.getSessionTaskStateSnapshot(sessionAgentId));
+  private async emitSessionTaskStateSnapshotForSession(_sessionAgentId: string): Promise<void> {
+    // Active Work Plans are parked on this rollback/test branch.
   }
 
   private async copySessionWorkPlansForFork(
-    sourceDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    forkedDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    fromMessageId?: string
+    _sourceDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    _forkedDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    _fromMessageId?: string
   ): Promise<void> {
-    try {
-      await copySessionWorkPlansForFork({
-        dataDir: this.config.paths.dataDir,
-        profileId: sourceDescriptor.profileId,
-        sourceSessionAgentId: sourceDescriptor.agentId,
-        targetSessionAgentId: forkedDescriptor.agentId,
-        fromMessageId,
-      });
-    } catch (error) {
-      this.logDebug("coordination:fork_copy:error", {
-        sourceAgentId: sourceDescriptor.agentId,
-        targetAgentId: forkedDescriptor.agentId,
-        profileId: sourceDescriptor.profileId,
-        fromMessageId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
+    // Active Work Plans are parked on this rollback/test branch. Do not copy tasks.json into forks.
   }
 
   private async copyPinnedMessagesForFork(
@@ -4901,106 +4796,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const watchdogTurnSeqAtDispatch = this.workerHealthService.getWorkerReportDispatchTurnSeq(sender, target);
 
-    const runtimeText = origin !== "user" && sender.role === "worker" && target.role === "manager"
-      ? formatActionableWorkerCallbackRuntimeMessage({
-          fromAgentId: sender.agentId,
-          message,
-        })
-      : message;
-
     const modelMessage = await this.prepareModelInboundMessage(
       targetAgentId,
       {
-        text: runtimeText,
+        text: message,
         attachments
       },
       origin
     );
 
-    const inboundTurnTrigger = shouldTrackInboundManagerTurn({
-      targetRole: target.role,
-      senderRole: sender.role,
-      origin,
-      message,
-      internalDeliveryKind: options?.internalDeliveryKind,
-    });
-    const runtimeDelivery: RequestedDeliveryMode = shouldRequestFollowUpForActionableWorkerCallback({
-      inboundTurnTrigger,
-      requestedDelivery: delivery,
-      runtime,
-    })
-      ? "followUp"
-      : delivery;
-    const runtimeMessageTextForGuard = extractRuntimeMessageText(modelMessage);
-    const provisionalPendingTurnId = inboundTurnTrigger && (
-      inboundTurnTrigger === "recovery_nudge" || runtimeDelivery === "followUp"
-    )
-      ? randomUUID()
-      : undefined;
-    if (provisionalPendingTurnId && inboundTurnTrigger) {
-      this.managerNoOpGuard.queuePendingTurn(target.agentId, {
-        pendingTurnId: provisionalPendingTurnId,
-        triggerKind: inboundTurnTrigger,
-        fromWorkerAgentId: sender.role === "worker" ? sender.agentId : undefined,
-        triggerPreview: message,
-        runtimeMessageText: runtimeMessageTextForGuard,
-        requestedDelivery: delivery,
-        acceptedMode: runtimeDelivery === "followUp" ? "followUp" : undefined,
-      });
-    }
-
     this.workerHealthService.markPendingWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
 
     let receipt: SendMessageReceipt;
     try {
-      receipt = await runtime.sendMessage(modelMessage, runtimeDelivery);
+      receipt = await runtime.sendMessage(modelMessage, delivery);
     } catch (error) {
-      if (provisionalPendingTurnId) {
-        this.managerNoOpGuard.removePendingTurn(target.agentId, provisionalPendingTurnId);
-      }
       await this.workerHealthService.handleFailedWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
       throw error;
     }
 
     await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
 
-    if (provisionalPendingTurnId) {
-      if (
-        shouldBeginManagerNoOpGuardForDelivery(receipt.acceptedMode) ||
-        shouldQueueManagerNoOpGuardForDelivery(receipt.acceptedMode)
-      ) {
-        this.managerNoOpGuard.updatePendingTurn(target.agentId, provisionalPendingTurnId, {
-          deliveryId: receipt.deliveryId,
-          requestedDelivery: delivery,
-          acceptedMode: receipt.acceptedMode,
-        });
-      } else {
-        this.managerNoOpGuard.removePendingTurn(target.agentId, provisionalPendingTurnId);
-      }
-    } else if (inboundTurnTrigger && shouldQueueManagerNoOpGuardForDelivery(receipt.acceptedMode)) {
-      this.managerNoOpGuard.queuePendingTurn(target.agentId, {
-        triggerKind: inboundTurnTrigger,
-        fromWorkerAgentId: sender.role === "worker" ? sender.agentId : undefined,
-        triggerPreview: message,
-        runtimeMessageText: runtimeMessageTextForGuard,
-        deliveryId: receipt.deliveryId,
-        requestedDelivery: delivery,
-        acceptedMode: receipt.acceptedMode,
-      });
-    } else if (inboundTurnTrigger && shouldBeginManagerNoOpGuardForDelivery(receipt.acceptedMode)) {
-      this.managerNoOpGuard.beginTurn(target.agentId, inboundTurnTrigger, {
-        fromWorkerAgentId: sender.role === "worker" ? sender.agentId : undefined,
-        triggerPreview: message,
-      });
-    }
-
     this.logDebug("agent:send_message", {
       fromAgentId,
       targetAgentId,
       origin,
       requestedDelivery: delivery,
-      runtimeDelivery: runtimeDelivery !== delivery ? runtimeDelivery : undefined,
-      deliveryId: receipt.deliveryId,
       acceptedMode: receipt.acceptedMode,
       textPreview: previewForLog(message),
       attachmentCount: attachments.length,
@@ -5194,7 +5015,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitConversationMessage(payload);
     if (source === "speak_to_user") {
-      this.managerNoOpGuard.noteVisibleOutput(agentId);
       this.markSessionActivity(agentId, payload.timestamp);
     }
 
@@ -8499,48 +8319,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.runtimeController.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId);
   }
 
-  noteManagerNoOpRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): void {
-    this.managerNoOpGuard.noteRuntimeSessionEvent(agentId, event);
-  }
-
-  suppressManagerNoOpGuard(agentId: string, reason: string): void {
-    this.managerNoOpGuard.suppress(agentId, reason);
-  }
-
-  async finalizeManagerNoOpGuard(
-    agentId: string,
-    source: "agent_end" | "idle",
-    options?: { pendingCount?: number },
-  ): Promise<void> {
-    try {
-      await this.managerNoOpGuard.tryFinalize(agentId, source, options);
-    } catch (error) {
-      this.logDebug(`manager:noop_guard:${source}_finalize_failed`, {
-        managerId: agentId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  async handleManagerStatusTransition(
-    descriptor: AgentDescriptor,
-    nextStatus: AgentStatus,
-    pendingCount: number,
-  ): Promise<void> {
-    await this.cortexService.handleManagerStatusTransition(descriptor, nextStatus, pendingCount);
-
-    if (descriptor.role === "manager" && nextStatus === "idle" && pendingCount === 0) {
-      try {
-        await this.managerNoOpGuard.tryFinalize(descriptor.agentId, "idle", { pendingCount });
-      } catch (error) {
-        this.logDebug("manager:noop_guard:idle_finalize_failed", {
-          managerId: descriptor.agentId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
-
   async queueVersionedToolMutation(
     descriptor: AgentDescriptor,
     mutation: VersioningMutation
@@ -8720,7 +8498,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private markPendingManualManagerStopNotice(agentId: string): void {
-    this.managerNoOpGuard.suppress(agentId, "manual_stop");
     this.clearPendingManualManagerStopNoticeTimer(agentId);
 
     const timer = setTimeout(() => {

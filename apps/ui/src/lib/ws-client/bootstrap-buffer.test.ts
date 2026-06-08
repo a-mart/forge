@@ -81,7 +81,7 @@ describe('BootstrapBuffer', () => {
   // Coalescing / effective state
   // ---------------------------------------------------------------------------
 
-  it('coalesces bootstrap events including task snapshots into a single state update', () => {
+  it('coalesces bootstrap events while ignoring parked task snapshots', () => {
     const { buffer, patches } = setup()
     buffer.begin('session-b')
 
@@ -117,7 +117,7 @@ describe('BootstrapBuffer', () => {
     expect(patches[0].subscribedAgentId).toBe('session-b')
     expect(patches[0].messages).toHaveLength(1)
     expect(patches[0].pendingChoiceIds?.has('choice-1')).toBe(true)
-    expect(patches[0].taskSnapshots?.['session-b']?.revision).toBe(3)
+    expect(patches[0].taskSnapshots).toEqual({})
     expect(patches[0].unreadCounts).toEqual({ 'session-c': 3 })
   })
 

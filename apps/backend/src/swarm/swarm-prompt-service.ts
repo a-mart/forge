@@ -3,13 +3,6 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { isRepoProjectAgentSource, type PromptPreviewResponse, type PromptPreviewSection, type SpecialistTargetSpace } from "@forge/protocol";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
-import { SessionCoordinationStore } from "./coordination/session-coordination-store.js";
-import { WorkPlanService } from "./coordination/work-plan-service.js";
-import {
-  ACTIVE_WORK_RUNTIME_CONTEXT_HEADER,
-  formatWorkPlanRuntimeContext,
-} from "./coordination/work-plan-runtime-context.js";
-import { resolveActiveWorkPlansGuidance } from "./coordination/work-plans-settings.js";
 import {
   getCommonKnowledgePath,
   getProfileMemoryPath,
@@ -673,52 +666,9 @@ export class SwarmPromptService {
   }
 
   private async getActiveWorkPromptPreviewSection(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    _descriptor: AgentDescriptor & { role: "manager"; profileId: string },
   ): Promise<PromptPreviewSection | undefined> {
-    if (this.options.getWorkPlansEnabled?.() === false) {
-      return undefined;
-    }
-
-    const snapshot = await this.loadSessionTaskStateSnapshot(descriptor).catch((error) => {
-      this.options.logDebug("prompt:preview:active_work:error", {
-        agentId: descriptor.agentId,
-        profileId: descriptor.profileId,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return undefined;
-    });
-
-    if (!snapshot) {
-      return undefined;
-    }
-
-    const context = formatWorkPlanRuntimeContext(snapshot);
-    if (!context) {
-      return undefined;
-    }
-
-    return {
-      label: ACTIVE_WORK_RUNTIME_CONTEXT_HEADER.slice(2),
-      source: "Generated from Active Work snapshot",
-      content: context.text,
-    };
-  }
-
-  private async loadSessionTaskStateSnapshot(
-    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-  ) {
-    return new WorkPlanService({
-      profileId: descriptor.profileId,
-      sessionAgentId: descriptor.agentId,
-      deps: {
-        store: new SessionCoordinationStore({
-          dataDir: this.options.config.paths.dataDir,
-          profileId: descriptor.profileId,
-          sessionAgentId: descriptor.agentId,
-        }),
-        listAgents: () => Array.from(this.options.descriptors.values()),
-      },
-    }).loadSnapshot();
+    return undefined;
   }
 
   async getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>> {
@@ -828,12 +778,8 @@ export class SwarmPromptService {
     };
   }
 
-  private resolveActiveWorkPlansGuidance(descriptor: AgentDescriptor): string {
-    if (descriptor.role !== "manager") {
-      return "";
-    }
-
-    return resolveActiveWorkPlansGuidance(this.options.getWorkPlansEnabled?.() !== false);
+  private resolveActiveWorkPlansGuidance(_descriptor: AgentDescriptor): string {
+    return "";
   }
 
   private buildRuntimePromptVariables(memoryFilePath: string): Record<string, string> {

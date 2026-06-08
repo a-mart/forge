@@ -125,29 +125,6 @@ function makeActiveWorkSnapshot(overrides: Partial<SessionTaskStateSnapshotEvent
   }
 }
 
-describe('MessageList system diagnostic rows', () => {
-  it('replays manager no-op diagnostics as normal non-assistant system messages', () => {
-    const onFeedbackVote = vi.fn().mockResolvedValue(undefined)
-    render([
-      {
-        type: 'conversation_message',
-        agentId: 'session-1',
-        id: 'noop-diagnostic-1',
-        role: 'system',
-        text: 'Manager returned no visible action after a worker update. Forge sent an internal recovery nudge.',
-        timestamp: now,
-        source: 'system',
-      },
-    ], { onFeedbackVote })
-
-    const systemNote = container.querySelector('[role="note"][aria-label="System message"]')
-    expect(systemNote).toBeTruthy()
-    expect(systemNote!.textContent).toContain('Manager returned no visible action after a worker update')
-    expect(container.querySelector('[aria-label="Thumbs up"]')).toBeNull()
-    expect(onFeedbackVote).not.toHaveBeenCalled()
-  })
-})
-
 describe('MessageList work_plan_created rows', () => {
   it('renders the creation receipt chronologically between adjacent conversation entries', () => {
     render([

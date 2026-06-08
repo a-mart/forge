@@ -8,7 +8,6 @@ import {
   buildCodexPluginScopedToolDefinitions,
   isCodexPluginWorkerDescriptor,
 } from "./codex-app-server/codex-plugin-scope-service.js";
-import { buildTaskTool } from "./coordination/task-tool.js";
 import {
   type AgentDescriptor,
   type MessageChannel,
@@ -602,7 +601,6 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         }
       },
     },
-    ...(host.isWorkPlansEnabled?.() === false ? [] : [buildTaskTool(host, descriptor)]),
   ];
 
   return [...shared, ...managerOnly];

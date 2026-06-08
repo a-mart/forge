@@ -1,7 +1,6 @@
-import { WORK_PLAN_MUTABLE_STATUSES, WORK_PLAN_TERMINAL_STATUSES, type WorkPlanLifecycleReason } from "@forge/protocol";
+import { WORK_PLAN_MUTABLE_STATUSES, type WorkPlanLifecycleReason } from "@forge/protocol";
 import {
   MAX_WORK_PLAN_MUTATION_PROVENANCE,
-  createEmptySessionCoordinationState,
   type WorkPlanRecord,
 } from "./session-coordination-state.js";
 import {
@@ -10,7 +9,6 @@ import {
 } from "./session-coordination-store.js";
 
 const NON_TERMINAL_WORK_PLAN_STATUSES = new Set<string>(WORK_PLAN_MUTABLE_STATUSES);
-const TERMINAL_WORK_PLAN_STATUSES = new Set<string>(WORK_PLAN_TERMINAL_STATUSES);
 const MANUAL_STOP_FINAL_SUMMARY = "Work stopped. Partial progress was preserved.";
 
 class NoWorkPlanLifecycleChangeError extends Error {
@@ -26,15 +24,6 @@ export interface WorkPlanLifecycleTransitionOptions {
   sessionAgentId: string;
   actorAgentId: string;
   reason: WorkPlanLifecycleReason;
-  now?: () => Date;
-}
-
-export interface WorkPlanForkCopyOptions {
-  dataDir: string;
-  profileId: string;
-  sourceSessionAgentId: string;
-  targetSessionAgentId: string;
-  fromMessageId?: string;
   now?: () => Date;
 }
 
@@ -82,45 +71,6 @@ export async function transitionSessionWorkPlansForLifecycle(
   }
 }
 
-export async function copySessionWorkPlansForFork(options: WorkPlanForkCopyOptions): Promise<boolean> {
-  if (options.fromMessageId) {
-    return false;
-  }
-
-  const sourceStore = new SessionCoordinationStore({
-    dataDir: options.dataDir,
-    profileId: options.profileId,
-    sessionAgentId: options.sourceSessionAgentId,
-    deps: options.now ? { now: options.now } : undefined,
-  });
-  const loaded = await sourceStore.load();
-  if (loaded.diagnostics.state === "unavailable") {
-    return false;
-  }
-
-  const terminalWorkPlans = loaded.state.workPlans
-    .filter((workPlan) => TERMINAL_WORK_PLAN_STATUSES.has(workPlan.status))
-    .map((workPlan) => createForkTerminalSummaryRecord(workPlan, options.targetSessionAgentId));
-  if (terminalWorkPlans.length === 0) {
-    return false;
-  }
-
-  const targetStore = new SessionCoordinationStore({
-    dataDir: options.dataDir,
-    profileId: options.profileId,
-    sessionAgentId: options.targetSessionAgentId,
-    deps: options.now ? { now: options.now } : undefined,
-  });
-
-  await targetStore.replace({
-    ...createEmptySessionCoordinationState(),
-    updatedAt: (options.now ?? (() => new Date()))().toISOString(),
-    workPlans: terminalWorkPlans,
-  });
-
-  return true;
-}
-
 function applyLifecycleTransition(
   workPlan: WorkPlanRecord,
   reason: WorkPlanLifecycleReason,
@@ -146,26 +96,4 @@ function applyLifecycleTransition(
       mutatedAt: timestamp,
     },
   ].slice(-MAX_WORK_PLAN_MUTATION_PROVENANCE);
-}
-
-function createForkTerminalSummaryRecord(
-  workPlan: WorkPlanRecord,
-  targetSessionAgentId: string,
-): WorkPlanRecord {
-  return {
-    planId: workPlan.planId,
-    createdByAgentId: targetSessionAgentId,
-    title: workPlan.title,
-    status: workPlan.status,
-    createdAt: workPlan.createdAt,
-    updatedAt: workPlan.updatedAt,
-    ...(workPlan.completedAt === undefined ? {} : { completedAt: workPlan.completedAt }),
-    revision: 1,
-    items: [],
-    revisionNotes: [],
-    warnings: [...workPlan.warnings],
-    ...(workPlan.finalSummary === undefined ? {} : { finalSummary: workPlan.finalSummary }),
-    ...(workPlan.lifecycle === undefined ? {} : { lifecycle: { ...workPlan.lifecycle } }),
-    mutationProvenance: [],
-  };
 }

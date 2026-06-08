@@ -185,7 +185,7 @@ describe('SwarmManager', () => {
   })
 
 
-  it('keeps worker-to-manager completion reporting on the generic send path with runtime callback labeling', async () => {
+  it('keeps worker-to-manager completion reporting on the generic send path', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -198,9 +198,7 @@ describe('SwarmManager', () => {
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: done', 'auto')
 
-    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
-      `SYSTEM: [workerCallback] {"fromAgentId":"${worker.agentId}","intent":"done"}\nstatus: done`,
-    )
+    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: status: done')
 
     const managerHistory = manager.getConversationHistory('manager')
     expect(
@@ -1269,7 +1267,7 @@ describe('SwarmManager', () => {
     expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: pre-tagged')
   })
 
-  it('preserves explicit followUp delivery for busy-runtime messages and steers other queued messages', async () => {
+  it('accepts busy-runtime messages as steer regardless of requested delivery', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1284,7 +1282,7 @@ describe('SwarmManager', () => {
     const steerReceipt = await manager.sendMessage('manager', worker.agentId, 'queued steer', 'steer')
 
     expect(autoReceipt.acceptedMode).toBe('steer')
-    expect(followUpReceipt.acceptedMode).toBe('followUp')
+    expect(followUpReceipt.acceptedMode).toBe('steer')
     expect(steerReceipt.acceptedMode).toBe('steer')
   })
 
