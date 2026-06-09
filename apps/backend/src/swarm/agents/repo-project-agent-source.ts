@@ -134,7 +134,7 @@ async function resolveCurrentWorkspaceSource(
     dataDir,
     settingsStore: new ProjectResourceSettingsStore(dataDir)
   });
-  const resolution = await resolver.resolve({
+  const resolution = await resolver.resolvePassive({
     profileId: scope.profileId,
     sessionAgentId: scope.descriptor.agentId,
     cwd: scope.descriptor.cwd

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   getProjectAgentBackupsDir,
   getProjectAgentConfigPath,
@@ -19,6 +19,9 @@ const projectAgentAnalysisMockState = vi.hoisted(() => ({
     systemPrompt: 'You are the release coordination manager.',
   })),
 }))
+const workspaceResolverMockState = vi.hoisted(() => ({
+  failNextResolvePassive: undefined as Error | undefined,
+}))
 
 vi.mock('../memory-merge.js', async () => {
   const actual = await vi.importActual<typeof import('../memory-merge.js')>('../memory-merge.js')
@@ -35,6 +38,26 @@ vi.mock('../project-agent-analysis.js', async () => {
     ...actual,
     analyzeSessionForPromotion: (...args: Parameters<typeof actual.analyzeSessionForPromotion>) =>
       projectAgentAnalysisMockState.analyzeSessionForPromotion(...args),
+  }
+})
+
+vi.mock('../project-workspace-resolver.js', async () => {
+  const actual = await vi.importActual<typeof import('../project-workspace-resolver.js')>('../project-workspace-resolver.js')
+  class MockProjectWorkspaceResolver extends actual.ProjectWorkspaceResolver {
+    override async resolvePassive(
+      ...args: Parameters<InstanceType<typeof actual.ProjectWorkspaceResolver>['resolvePassive']>
+    ): ReturnType<InstanceType<typeof actual.ProjectWorkspaceResolver>['resolvePassive']> {
+      const failure = workspaceResolverMockState.failNextResolvePassive
+      if (failure) {
+        workspaceResolverMockState.failNextResolvePassive = undefined
+        throw failure
+      }
+      return super.resolvePassive(...args)
+    }
+  }
+  return {
+    ...actual,
+    ProjectWorkspaceResolver: MockProjectWorkspaceResolver,
   }
 })
 
@@ -130,6 +153,10 @@ async function readJsonlFile<T>(path: string): Promise<T[]> {
 }
 
 describe('SwarmManager', () => {
+  afterEach(() => {
+    workspaceResolverMockState.failNextResolvePassive = undefined
+  })
+
   it('activates a repo project-agent definition by creating a backing session without local prompt/reference copies', async () => {
     const config = await makeTempConfig()
     execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
@@ -504,6 +531,58 @@ describe('SwarmManager', () => {
     expect(sourceRuntime?.sendCalls.length ?? 0).toBe(sendCallsAfterValidDelivery)
     expect(manager.notifiedProjectAgentProfileIds).toContain(target.profileId ?? target.agentId)
     await expect(manager.getProjectAgentExternalDirectory(target.profileId ?? target.agentId)).resolves.toEqual([])
+  })
+
+  it('sanitizes external sends when repo source workspace resolution fails', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Use for repository docs.',
+      prompt: 'Repo docs prompt',
+    })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const target = await manager.createManager('manager', { name: 'target', cwd: config.defaultCwd })
+    const result = await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+    })
+    await manager.setProjectAgentSharing(result.agentId, [target.profileId ?? target.agentId])
+    const liveState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    const sourceDescriptor = liveState.descriptors.get(result.agentId)
+    const source = sourceDescriptor?.projectAgent?.source
+    expect(source?.type).toBe('repo')
+    manager.notifiedProjectAgentProfileIds.length = 0
+
+    workspaceResolverMockState.failNextResolvePassive = new Error(
+      `EACCES: permission denied, scandir '${join(config.defaultCwd, '.forge', 'extensions')}' workspaceKey=${
+        source?.type === 'repo' ? source.workspaceKey : 'missing-workspace-key'
+      } forgeDirRealpath=${source?.type === 'repo' ? source.forgeDirRealpath : 'missing-forge-dir'}`,
+    )
+
+    let sendError: unknown
+    try {
+      await manager.sendMessage(target.agentId, result.agentId, 'resolver failure delivery', 'auto')
+    } catch (error) {
+      sendError = error
+    }
+
+    expect(sendError).toBeInstanceOf(Error)
+    const message = sendError instanceof Error ? sendError.message : String(sendError)
+    expect(message).toMatch(/Shared project agent @docs is unavailable because its repository source is unavailable/i)
+    expect(message).not.toContain(config.defaultCwd)
+    expect(message).not.toContain('.forge')
+    expect(message).not.toContain('forgeDirRealpath')
+    expect(message).not.toContain('workspaceKey')
+    if (source?.type === 'repo') {
+      expect(message).not.toContain(source.workspaceKey)
+      expect(message).not.toContain(source.forgeDirRealpath)
+    }
+    expect(manager.runtimeByAgentId.get(result.agentId)?.sendCalls.some((call) => call.message.includes('resolver failure delivery'))).toBe(false)
+    expect(manager.notifiedProjectAgentProfileIds).toContain(target.profileId ?? target.agentId)
   })
 
   it('notifies shared target profiles when repo source preflight live-syncs directory metadata', async () => {

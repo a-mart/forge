@@ -4202,11 +4202,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
     },
   ): Promise<void> {
-    const resolution = await this.resolveRepoProjectAgentSourceForDescriptor(descriptor);
+    let resolution: RepoProjectAgentSourceResolution | undefined;
     try {
+      resolution = await this.resolveRepoProjectAgentSourceForDescriptor(descriptor);
       assertRepoProjectAgentSourceAvailable(resolution);
     } catch {
-      await this.notifyUnavailableSharedRepoProjectAgentSource(descriptor, resolution);
+      if (resolution) {
+        await this.notifyUnavailableSharedRepoProjectAgentSource(descriptor, resolution);
+      } else {
+        await this.notifySharedProjectAgentTargetsChanged(descriptor.agentId);
+      }
       throw new Error(this.formatUnavailableSharedRepoProjectAgentSourceError(descriptor, resolution));
     }
   }
@@ -4230,10 +4235,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       role: "manager";
       projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
     },
-    resolution: RepoProjectAgentSourceResolution,
+    resolution?: RepoProjectAgentSourceResolution,
   ): string {
     const handle = descriptor.projectAgent.handle ? ` @${descriptor.projectAgent.handle}` : "";
-    return `Shared project agent${handle} is unavailable because its repository source is ${resolution.source.status}. Ask the source project to restore or refresh the repository project-agent definition.`;
+    const status = resolution?.source.status ?? "unavailable";
+    return `Shared project agent${handle} is unavailable because its repository source is ${status}. Ask the source project to restore or refresh the repository project-agent definition.`;
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {
