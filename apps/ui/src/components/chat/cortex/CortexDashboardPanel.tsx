@@ -22,6 +22,7 @@ interface CortexDashboardPanelProps {
   onOpenSession: (agentId: string) => void
   onOpenDiffViewer?: (initialState: DiffViewerInitialState) => void
   requestedTab?: { tab: DashboardTab; nonce: number } | null
+  onActiveTabChange?: (tab: DashboardTab) => void
 }
 
 interface CortexScanResponse {
@@ -71,6 +72,7 @@ export function CortexDashboardPanel({
   onOpenSession,
   onOpenDiffViewer,
   requestedTab,
+  onActiveTabChange,
 }: CortexDashboardPanelProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('knowledge')
   const [panelWidth, setPanelWidth] = useState(loadPersistedWidth)
@@ -104,8 +106,9 @@ export function CortexDashboardPanel({
   useEffect(() => {
     if (requestedTab) {
       setActiveTab(requestedTab.tab)
+      onActiveTabChange?.(requestedTab.tab)
     }
-  }, [requestedTab])
+  }, [onActiveTabChange, requestedTab])
 
   useEffect(() => {
     if (!isOpen) return
@@ -222,6 +225,7 @@ export function CortexDashboardPanel({
         onValueChange={(value) => {
           if (isDashboardTab(value)) {
             setActiveTab(value)
+            onActiveTabChange?.(value)
           }
         }}
         className="flex h-full flex-col gap-0"

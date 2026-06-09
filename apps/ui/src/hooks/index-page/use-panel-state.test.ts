@@ -188,6 +188,50 @@ describe('usePanelState', () => {
       expect(capturedRef.current!.panelState.cortexDashboardTabRequest!.tab).toBe('knowledge')
       expect(typeof capturedRef.current!.panelState.cortexDashboardTabRequest!.nonce).toBe('number')
     })
+
+    it('requesting cortex dashboard tab closes file browser', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.setArchetypeId('cortex')
+      })
+      act(() => {
+        capturedRef.current!.panelState.toggleFileBrowser()
+      })
+      act(() => {
+        capturedRef.current!.panelState.selectFileBrowserFile('/tmp/example.ts')
+      })
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(true)
+      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBe('/tmp/example.ts')
+
+      act(() => {
+        capturedRef.current!.panelState.requestCortexDashboardTab('schedules')
+      })
+
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(false)
+      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBeNull()
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
+    })
+
+    it('toggleCortexDashboardTab closes file browser when opening from rail', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.setArchetypeId('cortex')
+      })
+      act(() => {
+        capturedRef.current!.panelState.toggleFileBrowser()
+      })
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(true)
+
+      act(() => {
+        capturedRef.current!.panelState.toggleCortexDashboardTab('knowledge')
+      })
+
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(false)
+      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBeNull()
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
+    })
   })
 
   describe('keyboard shortcuts ignore form fields where applicable', () => {
@@ -271,7 +315,7 @@ describe('usePanelState', () => {
       textarea.remove()
     })
 
-    it('Ctrl+Shift+D is NOT ignored for form fields (no form field check in diff viewer shortcut)', () => {
+    it('Ctrl+Shift+D is ignored when target is an INPUT element', () => {
       render()
       expect(capturedRef.current!.panelState.isDiffViewerOpen).toBe(false)
 
@@ -289,8 +333,7 @@ describe('usePanelState', () => {
         window.dispatchEvent(event)
       })
 
-      // Diff viewer shortcut does NOT filter form fields, so it SHOULD toggle
-      expect(capturedRef.current!.panelState.isDiffViewerOpen).toBe(true)
+      expect(capturedRef.current!.panelState.isDiffViewerOpen).toBe(false)
 
       input.remove()
     })
@@ -324,6 +367,66 @@ describe('usePanelState', () => {
         capturedRef.current!.panelState.toggleFileBrowser()
       })
       expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(true)
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(false)
+    })
+
+    it('opening schedules tab closes file browser', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.toggleFileBrowser()
+      })
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(true)
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel('schedules')
+      })
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
+      expect(capturedRef.current!.panelState.artifactsPanelTab).toBe('schedules')
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(false)
+    })
+
+    it('toggling the same artifacts tab closes the panel', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel('artifacts')
+      })
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel('artifacts')
+      })
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(false)
+    })
+
+    it('switching from artifacts to schedules keeps the panel open', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel('artifacts')
+      })
+      expect(capturedRef.current!.panelState.artifactsPanelTab).toBe('artifacts')
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel('schedules')
+      })
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
+      expect(capturedRef.current!.panelState.artifactsPanelTab).toBe('schedules')
+    })
+
+    it('toggle without tab closes panel regardless of active tab', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel('schedules')
+      })
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
+      expect(capturedRef.current!.panelState.artifactsPanelTab).toBe('schedules')
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel()
+      })
       expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(false)
     })
 

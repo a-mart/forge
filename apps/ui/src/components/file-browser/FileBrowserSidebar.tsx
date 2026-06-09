@@ -27,6 +27,9 @@ interface FileBrowserSidebarProps {
   selectedFile: string | null
   projectResourceProfileId?: string | null
   projectResourceSessionAgentId?: string | null
+  desktopPlacement?: 'left' | 'right'
+  desktopOnly?: boolean
+  mobileOnly?: boolean
 }
 
 export function FileBrowserSidebar({
@@ -38,6 +41,9 @@ export function FileBrowserSidebar({
   selectedFile,
   projectResourceProfileId,
   projectResourceSessionAgentId,
+  desktopPlacement = 'right',
+  desktopOnly = false,
+  mobileOnly = false,
 }: FileBrowserSidebarProps) {
   const fileTreeRef = useRef<FileTreeHandle>(null)
   const [seedStatus, setSeedStatus] = useState<'idle' | 'saving' | 'success'>('idle')
@@ -74,11 +80,11 @@ export function FileBrowserSidebar({
   }, [rootListRefetchRef, fileCountRefetchRef, projectResourcesRefetchRef])
 
   const { width: sidebarWidth, isDragging: isSidebarDragging, handleRef: sidebarHandleRef } = useResizablePanel({
-    storageKey: 'forge-file-sidebar-width',
+    storageKey: desktopPlacement === 'left' ? 'forge-file-tree-width' : 'forge-file-sidebar-width',
     defaultWidth: 300,
     minWidth: 200,
     maxWidth: 500,
-    invertDelta: true,
+    invertDelta: desktopPlacement === 'right',
   })
 
   const repoName = rootList.data?.repoName ?? null
@@ -109,24 +115,22 @@ export function FileBrowserSidebar({
 
   return (
     <>
-      {/* Drag handle (left edge) */}
-      {isOpen && (
-        <div
-          ref={sidebarHandleRef}
-          className={cn(
-            'group relative h-full shrink-0 cursor-col-resize transition-colors',
-            isSidebarDragging ? 'bg-primary/40' : 'bg-transparent hover:bg-border',
-          )}
-          style={{ width: 6 }}
-        >
-          <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
-        </div>
-      )}
+      {/* Drag handle (left edge for right drawers) */}
+      {isOpen && desktopPlacement === 'right' ? (
+        <FileBrowserResizeHandle
+          handleRef={sidebarHandleRef}
+          isDragging={isSidebarDragging}
+          className={cn(desktopOnly && 'max-md:hidden', mobileOnly && 'md:hidden')}
+        />
+      ) : null}
 
       <div
         className={cn(
-          'flex h-full shrink-0 flex-col border-l border-border/80 bg-card/50',
+          'flex h-full shrink-0 flex-col bg-card/50',
+          desktopPlacement === 'left' ? 'md:border-r md:border-border/80' : 'md:border-l md:border-border/80',
           'transition-opacity duration-200 ease-out',
+          desktopOnly && 'max-md:hidden',
+          mobileOnly && 'md:hidden',
           isOpen
             ? 'max-md:fixed max-md:inset-0 max-md:z-40 max-md:w-full max-md:border-l-0 md:opacity-100'
             : 'w-0 opacity-0 overflow-hidden max-md:hidden',
@@ -254,6 +258,39 @@ export function FileBrowserSidebar({
         ) : null}
       </div>
     </div>
+
+      {/* Drag handle (right edge for left workspace panes) */}
+      {isOpen && desktopPlacement === 'left' ? (
+        <FileBrowserResizeHandle
+          handleRef={sidebarHandleRef}
+          isDragging={isSidebarDragging}
+          className={cn(desktopOnly && 'max-md:hidden', mobileOnly && 'md:hidden')}
+        />
+      ) : null}
     </>
+  )
+}
+
+function FileBrowserResizeHandle({
+  handleRef,
+  isDragging,
+  className,
+}: {
+  handleRef: (node: HTMLDivElement | null) => void
+  isDragging: boolean
+  className?: string
+}) {
+  return (
+    <div
+      ref={handleRef}
+      className={cn(
+        'group relative h-full shrink-0 cursor-col-resize transition-colors',
+        isDragging ? 'bg-primary/40' : 'bg-transparent hover:bg-border',
+        className,
+      )}
+      style={{ width: 6 }}
+    >
+      <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
+    </div>
   )
 }
