@@ -35,7 +35,8 @@ import type {
   SkillImportTarget,
   SkillInventoryEntry,
   SkillShareResponse,
-  ActivateRepoProjectAgentRequest
+  ActivateRepoProjectAgentRequest,
+  ProjectAgentExternalDirectoryEntry
 } from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import {
@@ -1610,7 +1611,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.refreshSessionMetaStatsBySessionId(sessionAgentId),
       getSessionsForProfile: (profileId) => this.getBuilderSessionsForProfile(profileId),
       getExternalProjectAgentDirectoryEntries: (profileId) =>
-        this.projectAgentSharingService.getExternalDirectoryEntries(profileId),
+        this.getSourceAwareExternalProjectAgentDirectoryEntries(profileId),
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
       resolveSpecialistRosterForManager: (manager, targetSpace) => this.resolveSpecialistRosterForManager(manager, targetSpace),
       resolveSkillRosterForDescriptor: (descriptor) => this.resolveSkillRosterForDescriptor(descriptor),
@@ -3677,6 +3678,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     });
 
+    await this.notifySharedProjectAgentTargetsChanged(result.agentId);
+
     return {
       ...result,
       projectAgent: cloneProjectAgentInfoValue(result.projectAgent) as NonNullable<AgentDescriptor["projectAgent"]>
@@ -4125,7 +4128,44 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (profile && isSystemProfile(profile)) {
       return [];
     }
-    return this.projectAgentSharingService.getExternalDirectoryEntries(profileId);
+    return this.getSourceAwareExternalProjectAgentDirectoryEntries(profileId);
+  }
+
+  private async getSourceAwareExternalProjectAgentDirectoryEntries(
+    profileId: string,
+  ): Promise<ProjectAgentExternalDirectoryEntry[]> {
+    const entries = this.projectAgentSharingService.getExternalDirectoryEntries(profileId);
+    const filteredEntries: ProjectAgentExternalDirectoryEntry[] = [];
+
+    for (const entry of entries) {
+      const sourceDescriptor = this.descriptors.get(entry.agentId);
+      if (!sourceDescriptor || sourceDescriptor.role !== "manager" || !isRepoProjectAgentSource(sourceDescriptor.projectAgent?.source)) {
+        filteredEntries.push(entry);
+        continue;
+      }
+
+      try {
+        const resolution = await resolveRepoProjectAgentSource({
+          descriptor: sourceDescriptor as AgentDescriptor & {
+            role: "manager";
+            profileId: string;
+            projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+          },
+          profileId: sourceDescriptor.profileId ?? sourceDescriptor.agentId,
+          handle: sourceDescriptor.projectAgent.handle,
+        }, { dataDir: this.config.paths.dataDir });
+        assertRepoProjectAgentSourceAvailable(resolution);
+        filteredEntries.push(entry);
+      } catch (error) {
+        this.logDebug("project_agent:external_directory:exclude_unavailable_repo_source", {
+          profileId,
+          sourceAgentId: entry.agentId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return filteredEntries;
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {
@@ -7576,6 +7616,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptorStoreAdapter.upsertDescriptorInLiveMaps(descriptor);
     await this.saveStore();
     this.emitAgentsSnapshot();
+    await Promise.allSettled([
+      this.notifyProjectAgentsChanged(descriptor.profileId ?? descriptor.agentId),
+      this.notifySharedProjectAgentTargetsChanged(descriptor.agentId),
+    ]);
   }
 
   async validateProjectAgentSourceForRead(agentId: string): Promise<void> {

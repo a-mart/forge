@@ -392,6 +392,114 @@ describe('SwarmManager', () => {
     expect(invalidContent).toContain('Project agents in this profile')
   })
 
+  it('filters shared repo-sourced project agents from external directories unless the source is valid', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Use for `[docs]`\u202E.',
+      prompt: 'Repo docs prompt',
+    })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const target = await manager.createManager('manager', { name: 'target', cwd: config.defaultCwd })
+    const result = await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+    })
+    const liveState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    liveState.descriptors.get(result.agentId)!.sessionLabel = 'Docs\nAgent'
+    await manager.setProjectAgentSharing(result.agentId, [target.profileId ?? target.agentId])
+
+    const validEntries = await manager.getProjectAgentExternalDirectory(target.profileId ?? target.agentId)
+    expect(validEntries).toHaveLength(1)
+    expect(validEntries[0]).toMatchObject({
+      agentId: result.agentId,
+      handle: 'manager/docs',
+      displayName: 'Docs Agent',
+      whenToUse: "Use for 'docs'.",
+      sourceProjectName: 'manager',
+      origin: 'external',
+    })
+    expect(JSON.stringify(validEntries[0])).not.toContain('forgeDirRealpath')
+    expect(JSON.stringify(validEntries[0])).not.toContain('workspaceKey')
+    expect(JSON.stringify(validEntries[0])).not.toContain('.forge')
+
+    await rm(join(config.defaultCwd, '.forge', 'project-agents', 'docs'), { recursive: true, force: true })
+    await expect(manager.getProjectAgentExternalDirectory(target.profileId ?? target.agentId)).resolves.toEqual([])
+
+    await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: '   ' })
+    await expect(manager.getProjectAgentExternalDirectory(target.profileId ?? target.agentId)).resolves.toEqual([])
+
+    const otherRepo = join(config.paths.dataDir, 'other-repo')
+    await mkdir(otherRepo, { recursive: true })
+    execFileSync('git', ['init'], { cwd: otherRepo, stdio: 'ignore' })
+    liveState.descriptors.get(result.agentId)!.cwd = otherRepo
+    await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: 'Repo docs prompt restored' })
+    await expect(manager.getProjectAgentExternalDirectory(target.profileId ?? target.agentId)).resolves.toEqual([])
+  })
+
+  it('notifies shared target profiles when repo source preflight live-syncs directory metadata', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Old repo docs blurb.',
+      prompt: 'Repo docs prompt v1',
+    })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const target = await manager.createManager('manager', { name: 'target', cwd: config.defaultCwd })
+    const result = await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+    })
+    await manager.setProjectAgentSharing(result.agentId, [target.profileId ?? target.agentId])
+    manager.notifiedProjectAgentProfileIds.length = 0
+
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Updated repo docs blurb.',
+      prompt: 'Repo docs prompt v2',
+    })
+    await manager.validateProjectAgentSourceForRead(result.agentId)
+
+    expect(manager.getAgent(result.agentId)?.projectAgent?.whenToUse).toBe('Updated repo docs blurb.')
+    expect(manager.notifiedProjectAgentProfileIds).toContain('manager')
+    expect(manager.notifiedProjectAgentProfileIds).toContain(target.profileId ?? target.agentId)
+  })
+
+  it('notifies existing shared target profiles after linking a local project agent to a repo source', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: 'Repo prompt' })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const target = await manager.createManager('manager', { name: 'target', cwd: config.defaultCwd })
+    const created = await manager.createSession('manager', { label: 'Docs' })
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Local docs',
+      systemPrompt: 'Local prompt',
+    })
+    await manager.setProjectAgentSharing(created.sessionAgent.agentId, [target.profileId ?? target.agentId])
+    manager.notifiedProjectAgentProfileIds.length = 0
+
+    await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'link',
+      targetAgentId: created.sessionAgent.agentId,
+    })
+
+    expect(manager.notifiedProjectAgentProfileIds).toContain(target.profileId ?? target.agentId)
+  })
+
   it('leaves local project agents unaffected by repo source preflights', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)

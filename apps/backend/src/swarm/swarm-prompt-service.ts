@@ -143,7 +143,7 @@ export interface SwarmPromptServiceOptions {
   refreshSessionMetaStats: (descriptor: AgentDescriptor) => Promise<void>;
   refreshSessionMetaStatsBySessionId: (sessionAgentId: string) => Promise<void>;
   getSessionsForProfile: (profileId: string) => AgentDescriptor[];
-  getExternalProjectAgentDirectoryEntries?: (profileId: string) => ProjectAgentDirectoryEntry[];
+  getExternalProjectAgentDirectoryEntries?: (profileId: string) => Promise<ProjectAgentDirectoryEntry[]> | ProjectAgentDirectoryEntry[];
   loadSpecialistRegistryModule: () => Promise<SpecialistRegistryModuleLike>;
   resolveSpecialistRosterForManager?: (
     manager: AgentDescriptor,
@@ -390,7 +390,10 @@ export class SwarmPromptService {
       });
     }
 
-    for (const entry of this.options.getExternalProjectAgentDirectoryEntries?.(profileId) ?? []) {
+    const externalEntries = await Promise.resolve(
+      this.options.getExternalProjectAgentDirectoryEntries?.(profileId) ?? [],
+    );
+    for (const entry of externalEntries) {
       entries.push({
         agentId: entry.agentId,
         displayName: entry.displayName,
