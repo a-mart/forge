@@ -2,6 +2,8 @@
 
 Forge collaboration mode adds multi-user access on top of the public Forge repo. This repository ships the collaboration server/runtime target, the full UI, protocol types, and the Docker/self-host path, so collaboration can be deployed from this repo end to end. Collaboration uses a dedicated auth database, a hidden system profile, and session-backed channel actors.
 
+Current collaboration backend, UI, protocol, Docker Compose, and project-tracking work uses the main repo at `/Users/adam/repos/middleman` as the source of truth. Do not use `/Users/adam/repos/forge-collab` for current collaboration development or Docker work; it is stale historical reference only. Durable collaboration project tracking lives in [project/](project/).
+
 ## Storage model
 
 | Item | Path | Notes |
@@ -141,4 +143,4 @@ The base URL changes the canonical browser origin used for invite links and cook
 | `FORGE_SECONDARY_COLLABORATION_AUTH_COOKIE_NAME` | Optional docker-compose secondary-service cookie-name override. Defaults to `forge_collab_secondary_session`. |
 | `FORGE_COLLABORATION_TRUSTED_ORIGINS` | Comma-separated Builder origins allowed in split deployment. Local docker-compose defaults this to `http://127.0.0.1:47188,http://127.0.0.1:47189`. |
 
-See [docs/CONFIGURATION.md](CONFIGURATION.md) for the broader environment variable reference.
+See [docs/CONFIGURATION.md](../CONFIGURATION.md) for the broader environment variable reference.
