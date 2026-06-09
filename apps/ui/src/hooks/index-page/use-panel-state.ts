@@ -3,6 +3,21 @@ import type { DashboardTab as CortexDashboardTab } from '@/components/chat/corte
 import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import type { ArtifactReference } from '@/lib/artifacts'
 
+export type ArtifactsPanelTab = 'artifacts' | 'schedules'
+
+function shouldIgnoreKeyboardShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT' ||
+    target.isContentEditable
+  )
+}
+
 interface UsePanelStateOptions {
   activeAgentId: string | null
   activeAgentArchetypeId?: string | null
@@ -14,6 +29,8 @@ export function usePanelState({
 }: UsePanelStateOptions) {
   const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
+  const [artifactsPanelTab, setArtifactsPanelTab] = useState<ArtifactsPanelTab>('artifacts')
+  const [cortexDashboardTab, setCortexDashboardTab] = useState<CortexDashboardTab>('knowledge')
   const [cortexDashboardTabRequest, setCortexDashboardTabRequest] = useState<{
     tab: CortexDashboardTab
     nonce: number
@@ -29,22 +46,33 @@ export function usePanelState({
   useEffect(() => {
     setActiveArtifact(null)
     setIsArtifactsPanelOpen(false)
+    setArtifactsPanelTab('artifacts')
+    setCortexDashboardTab('knowledge')
     setIsFileBrowserOpen(false)
     setSelectedFileBrowserFile(null)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
+
+  const closeFileBrowserForWorkspacePanel = useCallback(() => {
+    setIsFileBrowserOpen(false)
+    setSelectedFileBrowserFile(null)
+  }, [])
 
   useEffect(() => {
     if (!pendingCortexDashboardOpen || activeAgentArchetypeId !== 'cortex') {
       return
     }
 
+    closeFileBrowserForWorkspacePanel()
     setIsArtifactsPanelOpen(true)
     setPendingCortexDashboardOpen(false)
-  }, [activeAgentArchetypeId, pendingCortexDashboardOpen])
+  }, [activeAgentArchetypeId, closeFileBrowserForWorkspacePanel, pendingCortexDashboardOpen])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (shouldIgnoreKeyboardShortcutTarget(e.target)) {
+        return
+      }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         e.preventDefault()
         setIsDiffViewerOpen((previous) => !previous)
@@ -55,15 +83,27 @@ export function usePanelState({
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
-  const toggleArtifactsPanel = useCallback(() => {
-    setIsArtifactsPanelOpen((previous) => {
-      if (!previous) {
-        setIsFileBrowserOpen(false)
-        setSelectedFileBrowserFile(null)
+  const openArtifactsPanel = useCallback(
+    (tab: ArtifactsPanelTab = 'artifacts') => {
+      closeFileBrowserForWorkspacePanel()
+      setArtifactsPanelTab(tab)
+      setIsArtifactsPanelOpen(true)
+    },
+    [closeFileBrowserForWorkspacePanel],
+  )
+
+  const toggleArtifactsPanel = useCallback(
+    (tab?: ArtifactsPanelTab) => {
+      if (isArtifactsPanelOpen) {
+        if (tab === undefined || artifactsPanelTab === tab) {
+          setIsArtifactsPanelOpen(false)
+          return
+        }
       }
-      return !previous
-    })
-  }, [])
+      openArtifactsPanel(tab ?? 'artifacts')
+    },
+    [artifactsPanelTab, isArtifactsPanelOpen, openArtifactsPanel],
+  )
 
   const toggleFileBrowser = useCallback(() => {
     setIsFileBrowserOpen((previous) => {
@@ -78,13 +118,7 @@ export function usePanelState({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (
-        target?.tagName === 'INPUT' ||
-        target?.tagName === 'TEXTAREA' ||
-        target?.tagName === 'SELECT' ||
-        target?.isContentEditable
-      ) {
+      if (shouldIgnoreKeyboardShortcutTarget(e.target)) {
         return
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
@@ -97,10 +131,30 @@ export function usePanelState({
     return () => window.removeEventListener('keydown', handler)
   }, [toggleFileBrowser])
 
-  const requestCortexDashboardTab = useCallback((tab: CortexDashboardTab) => {
-    setPendingCortexDashboardOpen(true)
-    setCortexDashboardTabRequest({ tab, nonce: Date.now() })
+  const requestCortexDashboardTab = useCallback(
+    (tab: CortexDashboardTab) => {
+      closeFileBrowserForWorkspacePanel()
+      setPendingCortexDashboardOpen(true)
+      setCortexDashboardTab(tab)
+      setCortexDashboardTabRequest({ tab, nonce: Date.now() })
+    },
+    [closeFileBrowserForWorkspacePanel],
+  )
+
+  const handleCortexDashboardTabChange = useCallback((tab: CortexDashboardTab) => {
+    setCortexDashboardTab(tab)
   }, [])
+
+  const toggleCortexDashboardTab = useCallback(
+    (tab: CortexDashboardTab) => {
+      if (isArtifactsPanelOpen && cortexDashboardTab === tab) {
+        setIsArtifactsPanelOpen(false)
+        return
+      }
+      requestCortexDashboardTab(tab)
+    },
+    [cortexDashboardTab, isArtifactsPanelOpen, requestCortexDashboardTab],
+  )
 
   const openDiffViewer = useCallback((initialState: DiffViewerInitialState | null = null) => {
     setDiffViewerInitialState(initialState)
@@ -133,9 +187,15 @@ export function usePanelState({
     closeArtifact,
     isArtifactsPanelOpen,
     setIsArtifactsPanelOpen,
+    artifactsPanelTab,
+    setArtifactsPanelTab,
+    openArtifactsPanel,
     toggleArtifactsPanel,
+    cortexDashboardTab,
     cortexDashboardTabRequest,
     requestCortexDashboardTab,
+    toggleCortexDashboardTab,
+    handleCortexDashboardTabChange,
     isMobileSidebarOpen,
     setIsMobileSidebarOpen,
     isDiffViewerOpen,

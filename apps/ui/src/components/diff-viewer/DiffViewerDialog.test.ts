@@ -5,7 +5,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DiffViewerDialog } from './DiffViewerDialog'
+import { DiffViewerContent, DiffViewerDialog } from './DiffViewerDialog'
 
 const { invalidateGitCachesMock, hookCalls, STATUS_BY_TARGET, LOG_BY_TARGET, COMMIT_DETAILS } = vi.hoisted(() => ({
   invalidateGitCachesMock: vi.fn(),
@@ -311,6 +311,30 @@ afterEach(() => {
   })
 })
 
+function renderInlineContent(
+  props: {
+    active?: boolean
+    isCortex: boolean
+    agentId?: string | null
+  },
+) {
+  root = createRoot(container)
+
+  flushSync(() => {
+    root?.render(
+      createElement('div', { className: 'diff-viewer flex h-full flex-col' },
+        createElement(DiffViewerContent, {
+          active: props.active ?? true,
+          wsUrl: 'ws://localhost:47187',
+          agentId: props.agentId ?? 'agent-1',
+          isCortex: props.isCortex,
+          onClose: vi.fn(),
+        }),
+      ),
+    )
+  })
+}
+
 function renderDialog(
   props: {
     isCortex: boolean
@@ -361,6 +385,18 @@ function findOptionByText(text: string): HTMLElement {
   expect(option).toBeTruthy()
   return option as HTMLElement
 }
+
+describe('DiffViewerContent', () => {
+  it('renders the reusable changes surface without a dialog overlay', async () => {
+    renderInlineContent({ isCortex: false })
+    await flushEffects()
+
+    expect(queryByRole(document.body, 'dialog')).toBeNull()
+    expect(document.body.querySelector('[data-radix-dialog-overlay]')).toBeNull()
+    expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
+    expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
+  })
+})
 
 describe('DiffViewerDialog', () => {
   it('defaults Cortex sessions to History + versioning and renders enhanced summaries with badges', async () => {

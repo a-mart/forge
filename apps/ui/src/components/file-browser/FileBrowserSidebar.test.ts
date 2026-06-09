@@ -111,6 +111,20 @@ function renderSidebar(props: Partial<ComponentProps<typeof FileBrowserSidebar>>
   })
 }
 
+describe('FileBrowserSidebar layout placement', () => {
+  it('places the resize handle after the file tree pane for left workspace layout', () => {
+    renderSidebar({ desktopPlacement: 'left', desktopOnly: true })
+
+    const firstChild = container.firstElementChild
+    const secondChild = firstChild?.nextElementSibling
+
+    expect(firstChild?.getAttribute('aria-label')).toBe('File browser')
+    expect(secondChild?.className).toContain('cursor-col-resize')
+    expect(firstChild?.className).toContain('md:border-r')
+    expect(firstChild?.className).toContain('max-md:hidden')
+  })
+})
+
 describe('FileBrowserSidebar project resource scaffold action', () => {
   it('shows the seed action when scaffold entries are missing and reports success', async () => {
     renderSidebar()
