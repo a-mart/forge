@@ -179,6 +179,17 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     return resolveReadFileUrl(wsUrl, displayPath, artifact?.sourceAgentId ?? activeAgentId)
   }, [activeAgentId, artifact?.sourceAgentId, displayPath, isImage, wsUrl])
 
+  const handleNestedArtifactClick = useCallback(
+    (nextArtifact: ArtifactReference) => {
+      onArtifactClick?.({
+        ...nextArtifact,
+        sourceAgentId:
+          nextArtifact.sourceAgentId ?? artifact?.sourceAgentId ?? activeAgentId ?? undefined,
+      })
+    },
+    [activeAgentId, artifact?.sourceAgentId, onArtifactClick],
+  )
+
   if (!artifact && !isClosing) {
     return null
   }
@@ -361,13 +372,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
                     variant="document"
                     enableMermaid
                     artifactSourceAgentId={artifact?.sourceAgentId ?? activeAgentId}
-                    onArtifactClick={(nextArtifact) => {
-                      onArtifactClick?.({
-                        ...nextArtifact,
-                        sourceAgentId:
-                          nextArtifact.sourceAgentId ?? artifact?.sourceAgentId ?? activeAgentId ?? undefined,
-                      })
-                    }}
+                    onArtifactClick={handleNestedArtifactClick}
                   />
                 </article>
               ) : (
