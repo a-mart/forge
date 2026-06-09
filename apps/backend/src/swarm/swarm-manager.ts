@@ -206,7 +206,8 @@ import { ACTIVE_WORK_PLANS_SKILL_HANDLE } from "./coordination/work-plans-settin
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import {
   assertRepoProjectAgentSourceAvailable,
-  resolveRepoProjectAgentSource
+  resolveRepoProjectAgentSource,
+  type RepoProjectAgentSourceResolution
 } from "./agents/repo-project-agent-source.js";
 import { SessionActiveToolsState } from "./session-active-tools.js";
 import {
@@ -4145,16 +4146,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       try {
-        const resolution = await resolveRepoProjectAgentSource({
-          descriptor: sourceDescriptor as AgentDescriptor & {
-            role: "manager";
-            profileId: string;
-            projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
-          },
-          profileId: sourceDescriptor.profileId ?? sourceDescriptor.agentId,
-          handle: sourceDescriptor.projectAgent.handle,
-        }, { dataDir: this.config.paths.dataDir });
-        assertRepoProjectAgentSourceAvailable(resolution);
+        await this.assertRepoProjectAgentSourceAvailableForDirectory(sourceDescriptor as AgentDescriptor & {
+          role: "manager";
+          projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+        });
         filteredEntries.push(entry);
       } catch (error) {
         this.logDebug("project_agent:external_directory:exclude_unavailable_repo_source", {
@@ -4166,6 +4161,79 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return filteredEntries;
+  }
+
+  private async resolveRepoProjectAgentSourceForDescriptor(
+    descriptor: AgentDescriptor & {
+      role: "manager";
+      profileId?: string;
+      projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+    },
+  ): Promise<RepoProjectAgentSourceResolution> {
+    return resolveRepoProjectAgentSource({
+      descriptor: descriptor as AgentDescriptor & {
+        role: "manager";
+        profileId: string;
+        projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+      },
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      handle: descriptor.projectAgent.handle,
+    }, { dataDir: this.config.paths.dataDir });
+  }
+
+  private async assertRepoProjectAgentSourceAvailableForDirectory(
+    descriptor: AgentDescriptor & {
+      role: "manager";
+      projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+    },
+  ): Promise<void> {
+    const resolution = await this.resolveRepoProjectAgentSourceForDescriptor(descriptor);
+    try {
+      assertRepoProjectAgentSourceAvailable(resolution);
+    } catch (error) {
+      await this.notifyUnavailableSharedRepoProjectAgentSource(descriptor, resolution);
+      throw error;
+    }
+  }
+
+  private async assertRepoProjectAgentSourceAvailableForExternalDelivery(
+    descriptor: AgentDescriptor & {
+      role: "manager";
+      projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+    },
+  ): Promise<void> {
+    const resolution = await this.resolveRepoProjectAgentSourceForDescriptor(descriptor);
+    try {
+      assertRepoProjectAgentSourceAvailable(resolution);
+    } catch {
+      await this.notifyUnavailableSharedRepoProjectAgentSource(descriptor, resolution);
+      throw new Error(this.formatUnavailableSharedRepoProjectAgentSourceError(descriptor, resolution));
+    }
+  }
+
+  private async notifyUnavailableSharedRepoProjectAgentSource(
+    descriptor: AgentDescriptor & {
+      role: "manager";
+      projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+    },
+    resolution: RepoProjectAgentSourceResolution,
+  ): Promise<void> {
+    if (resolution.source.status === "valid") {
+      return;
+    }
+
+    await this.notifySharedProjectAgentTargetsChanged(descriptor.agentId);
+  }
+
+  private formatUnavailableSharedRepoProjectAgentSourceError(
+    descriptor: AgentDescriptor & {
+      role: "manager";
+      projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+    },
+    resolution: RepoProjectAgentSourceResolution,
+  ): string {
+    const handle = descriptor.projectAgent.handle ? ` @${descriptor.projectAgent.handle}` : "";
+    return `Shared project agent${handle} is unavailable because its repository source is ${resolution.source.status}. Ask the source project to restore or refresh the repository project-agent definition.`;
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {
@@ -6350,6 +6418,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return null;
     }
 
+    const sharedSourceDescriptor = this.descriptors.get(externalAuthorization.sourceAgentId);
+    if (
+      sharedSourceDescriptor?.role === "manager" &&
+      isRepoProjectAgentSource(sharedSourceDescriptor.projectAgent?.source)
+    ) {
+      await this.assertRepoProjectAgentSourceAvailableForExternalDelivery(sharedSourceDescriptor as AgentDescriptor & {
+        role: "manager";
+        projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+      });
+    }
+
     return {
       allowCrossProfile: true,
       allowContactReplyTarget: externalAuthorization.mode === "contact_reply",
@@ -7576,16 +7655,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    const resolution = await resolveRepoProjectAgentSource({
-      descriptor: descriptor as AgentDescriptor & {
+    const resolution = await this.resolveRepoProjectAgentSourceForDescriptor(descriptor as AgentDescriptor & {
+      role: "manager";
+      projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
+    });
+    let definition;
+    try {
+      definition = assertRepoProjectAgentSourceAvailable(resolution);
+    } catch (error) {
+      await this.notifyUnavailableSharedRepoProjectAgentSource(descriptor as AgentDescriptor & {
         role: "manager";
-        profileId: string;
         projectAgent: NonNullable<AgentDescriptor["projectAgent"]>;
-      },
-      profileId: descriptor.profileId ?? descriptor.agentId,
-      handle: descriptor.projectAgent.handle
-    }, { dataDir: this.config.paths.dataDir });
-    const definition = assertRepoProjectAgentSourceAvailable(resolution);
+      }, resolution);
+      throw error;
+    }
     const currentSource = descriptor.projectAgent.source;
     const signatureChanged = currentSource.signature !== definition.signature;
     const whenToUseChanged = descriptor.projectAgent.whenToUse !== definition.config.whenToUse;

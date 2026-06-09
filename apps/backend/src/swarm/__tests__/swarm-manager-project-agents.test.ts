@@ -441,6 +441,71 @@ describe('SwarmManager', () => {
     await expect(manager.getProjectAgentExternalDirectory(target.profileId ?? target.agentId)).resolves.toEqual([])
   })
 
+  it('blocks stale external sends to unavailable repo-sourced shared agents with sanitized errors and target notifications', async () => {
+    const config = await makeTempConfig()
+    execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
+    await createRepoProjectAgentDefinition(config.defaultCwd, {
+      definitionId: 'docs',
+      whenToUse: 'Use for repository docs.',
+      prompt: 'Repo docs prompt',
+    })
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const target = await manager.createManager('manager', { name: 'target', cwd: config.defaultCwd })
+    const result = await manager.activateRepoProjectAgent({
+      profileId: 'manager',
+      sessionAgentId: 'manager',
+      definitionId: 'docs',
+      mode: 'create',
+    })
+    await manager.setProjectAgentSharing(result.agentId, [target.profileId ?? target.agentId])
+
+    await manager.sendMessage(target.agentId, result.agentId, 'valid external delivery', 'auto')
+    const sourceRuntime = manager.runtimeByAgentId.get(result.agentId)
+    expect(sourceRuntime?.sendCalls.at(-1)?.message).toContain('valid external delivery')
+    const sendCallsAfterValidDelivery = sourceRuntime?.sendCalls.length ?? 0
+
+    await rm(join(config.defaultCwd, '.forge', 'project-agents', 'docs'), { recursive: true, force: true })
+    manager.notifiedProjectAgentProfileIds.length = 0
+
+    let sendError: unknown
+    try {
+      await manager.sendMessage(target.agentId, result.agentId, 'stale external delivery', 'auto')
+    } catch (error) {
+      sendError = error
+    }
+
+    expect(sendError).toBeInstanceOf(Error)
+    const message = sendError instanceof Error ? sendError.message : String(sendError)
+    expect(message).toMatch(/Shared project agent @docs is unavailable because its repository source is missing/i)
+    expect(message).not.toContain(config.defaultCwd)
+    expect(message).not.toContain('.forge')
+    expect(message).not.toContain('forgeDirRealpath')
+    expect(message).not.toContain('workspaceKey')
+    expect(sourceRuntime?.sendCalls.length ?? 0).toBe(sendCallsAfterValidDelivery)
+    expect(manager.notifiedProjectAgentProfileIds).toContain(target.profileId ?? target.agentId)
+
+    await createRepoProjectAgentDefinition(config.defaultCwd, { definitionId: 'docs', prompt: '   ' })
+    manager.notifiedProjectAgentProfileIds.length = 0
+    let invalidError: unknown
+    try {
+      await manager.sendMessage(target.agentId, result.agentId, 'invalid external delivery', 'auto')
+    } catch (error) {
+      invalidError = error
+    }
+
+    expect(invalidError).toBeInstanceOf(Error)
+    const invalidMessage = invalidError instanceof Error ? invalidError.message : String(invalidError)
+    expect(invalidMessage).toMatch(/Shared project agent @docs is unavailable because its repository source is invalid/i)
+    expect(invalidMessage).not.toContain(config.defaultCwd)
+    expect(invalidMessage).not.toContain('.forge')
+    expect(invalidMessage).not.toContain('forgeDirRealpath')
+    expect(invalidMessage).not.toContain('workspaceKey')
+    expect(sourceRuntime?.sendCalls.length ?? 0).toBe(sendCallsAfterValidDelivery)
+    expect(manager.notifiedProjectAgentProfileIds).toContain(target.profileId ?? target.agentId)
+    await expect(manager.getProjectAgentExternalDirectory(target.profileId ?? target.agentId)).resolves.toEqual([])
+  })
+
   it('notifies shared target profiles when repo source preflight live-syncs directory metadata', async () => {
     const config = await makeTempConfig()
     execFileSync('git', ['init'], { cwd: config.defaultCwd, stdio: 'ignore' })
