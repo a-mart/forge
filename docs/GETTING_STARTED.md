@@ -102,15 +102,17 @@ Agents can include Mermaid diagrams in their responses using standard markdown c
 
 You can pin important messages to preserve them through compaction. Hover over any user or assistant message and click the pin icon. Pinned messages show an amber indicator and are guaranteed to survive when the context window is summarized. See [Smart Compaction](#8-reliability--continuity) for details.
 
-### File Browser
+### Workspace Rail and File Browser
 
-The left sidebar has a file browser pointed at your project directory. It's read-only for browsing, but the Files panel also has a scaffold action that can create a starter `.forge/` tree and README without overwriting existing files. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer.
+On desktop, Forge uses a left activity rail for workspace actions like Files, Changes/Git, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with a resizable file tree and file preview pane. Desktop header workspace buttons are hidden behind the rail; mobile keeps the header/drawer workspace actions.
+
+The file browser is read-only for browsing, but the Files panel also has a scaffold action that can create a starter `.forge/` tree and README without overwriting existing files. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer.
 
 > **Editor preference:** By default, files open in VS Code. You can change this to Cursor (or other editors) in **Settings**.
 
 ### Git View
 
-Below the file browser, there's a Git view. Think GitHub Desktop built into Forge. Full commit history, diff viewer for any commit, branch information.
+Desktop Changes/Git opens inline in the workspace content area from the rail, not as a modal overlay. Think GitHub Desktop built into Forge. Full commit history, diff viewer for any commit, branch information.
 
 Currently read-only (you can't switch branches or make commits from the UI), but you won't need to. Your agents handle git operations. The view is there so you can inspect what they've done.
 
@@ -128,7 +130,7 @@ Quick at-a-glance view of parallel work in progress. Codex app-server sidecars a
 
 ### Artifacts Panel
 
-When agents create plans, design documents, or other working files that aren't part of your repository, they show up in an artifacts panel in the sidebar. Click any artifact to view it inline. This is where implementation plans, review documents, and other intermediate work products end up.
+When agents create plans, design documents, or other working files that aren't part of your repository, they show up in an artifacts panel in the sidebar. On desktop, the rail opens Artifacts or Schedules in the left activity-pane slot with one selected surface at a time, with no internal Artifacts/Schedules tab switcher on that path. Click any artifact to view it inline. This is where implementation plans, review documents, and other intermediate work products end up.
 
 ### Schedules
 

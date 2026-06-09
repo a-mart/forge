@@ -6,7 +6,7 @@ The main view has three parts:
 
 - **Sidebar** (left) for navigating managers, profiles, and sessions.
 - **Message area** (center) showing the conversation transcript.
-- **Panels** (right/bottom) for artifacts, terminals, and file browsing.
+- **Desktop workspace rail** (left edge of the workspace) for Files, Changes/Git, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with resizable tree and preview panes; Changes/Git opens inline in the workspace content area; Artifacts and Schedules each open a single left activity-pane surface. Mobile keeps the header/drawer workspace behavior.
 
 ## Streaming and status
 
@@ -36,4 +36,4 @@ The matching header control opens an anchored Active Work popover with an explic
 
 ## Header controls
 
-The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count badge opens the pinned-message navigator/popover, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted.
+The chat header still shows the pin count badge, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted. Desktop workspace buttons now live behind the activity rail instead of the header; mobile keeps the header workspace actions.
