@@ -514,6 +514,11 @@ const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_PROFILE_ID = "cortex";
 const CORTEX_DISPLAY_NAME = "Cortex";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
+// Terminal worker reports get their own prefix: the manager prompt teaches the
+// model that `SYSTEM:` messages are non-actionable context, which is the wrong
+// frame for a final report that requires closing the loop with the user.
+const WORKER_REPORT_MESSAGE_PREFIX = "WORKER REPORT: ";
+const TERMINAL_WORKER_REPORT_BODY_PATTERN = /^status:\s*(?:done|partial|blocked)\b/i;
 const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this specific project/profile.
 
 Cortex may already have captured durable cross-project user defaults such as preferred name, technical level, and response preferences.
@@ -4970,8 +4975,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     let text = input.text;
 
     if (origin !== "user") {
-      if (text.trim().length > 0 && !/^system:/i.test(text.trimStart())) {
-        text = `${INTERNAL_MODEL_MESSAGE_PREFIX}${text}`;
+      const trimmedStart = text.trimStart();
+      if (text.trim().length > 0 && !/^(?:system|worker report):/i.test(trimmedStart)) {
+        text = TERMINAL_WORKER_REPORT_BODY_PATTERN.test(trimmedStart)
+          ? `${WORKER_REPORT_MESSAGE_PREFIX}${text}`
+          : `${INTERNAL_MODEL_MESSAGE_PREFIX}${text}`;
       }
     }
 

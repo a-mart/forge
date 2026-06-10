@@ -55,6 +55,8 @@ interface PendingDelivery {
 }
 
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
+const MAX_EMPTY_TURN_RESAMPLES = 2;
+const TERMINAL_WORKER_REPORT_PATTERN = /^(?:SYSTEM|WORKER REPORT):\s*status:\s*(?:done|partial|blocked)\b/i;
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
 const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;
@@ -164,6 +166,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
   private suppressSessionEventsUntilIdle = false;
   private lastActivityAtMs = Date.now();
+  private emptyTurnResampleState: { triggerText: string; attempts: number } | undefined;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -797,6 +800,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (event.type === "agent_end") {
       this.currentTurnReplayMessages = [];
+      if (this.maybeResampleEmptyTerminalReportTurn()) {
+        return;
+      }
+      this.emptyTurnResampleState = undefined;
       if (this.status !== "terminated") {
         await this.updateStatus("idle");
       }
@@ -1700,6 +1707,64 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
   }
 
+  /**
+   * gpt-5.x managers intermittently answer a worker's terminal report with a
+   * whitespace-only turn (no tool calls, stopReason "stop"), leaving the user
+   * with no update. The turn is side-effect free, so drop it together with the
+   * triggering report from the in-memory context and re-dispatch the same
+   * report for a fresh sample. Bounded per report by MAX_EMPTY_TURN_RESAMPLES;
+   * on exhaustion the turn end proceeds normally and manager:silent_turn is
+   * logged for observability.
+   */
+  private maybeResampleEmptyTerminalReportTurn(): boolean {
+    if (this.descriptor.role !== "manager" || this.status === "terminated") {
+      return false;
+    }
+    if (this.isContextRecoveryActive() || this.session.isCompacting || this.pendingDeliveries.length > 0) {
+      return false;
+    }
+
+    const messages = this.getSessionAgentMessages();
+    const assistantMessage = messages[messages.length - 1];
+    const triggerMessage = messages[messages.length - 2];
+    if (!assistantMessage || !triggerMessage || assistantMessage.role !== "assistant" || triggerMessage.role !== "user") {
+      return false;
+    }
+    if (assistantMessage.stopReason !== "stop" || !isSilentAssistantMessage(assistantMessage)) {
+      return false;
+    }
+
+    const triggerText = extractTextFromMessageRecord(triggerMessage);
+    if (!TERMINAL_WORKER_REPORT_PATTERN.test(triggerText)) {
+      return false;
+    }
+
+    const previousAttempts =
+      this.emptyTurnResampleState?.triggerText === triggerText ? this.emptyTurnResampleState.attempts : 0;
+    if (previousAttempts >= MAX_EMPTY_TURN_RESAMPLES) {
+      console.error(`[swarm][${this.now()}] manager:silent_turn`, {
+        runtime: "pi",
+        agentId: this.descriptor.agentId,
+        resampleAttempts: previousAttempts,
+        triggerPreview: previewForLog(triggerText)
+      });
+      return false;
+    }
+
+    this.emptyTurnResampleState = { triggerText, attempts: previousAttempts + 1 };
+    this.replaceSessionAgentMessages(messages.slice(0, -2));
+    this.closeStaleOpenAICodexWebSocketSession("empty_turn_resample");
+    console.warn(`[swarm][${this.now()}] manager:empty_turn_resample`, {
+      runtime: "pi",
+      agentId: this.descriptor.agentId,
+      attempt: previousAttempts + 1,
+      maxAttempts: MAX_EMPTY_TURN_RESAMPLES,
+      triggerPreview: previewForLog(triggerText)
+    });
+    this.dispatchPrompt({ text: triggerText });
+    return true;
+  }
+
   private getSessionAgentMessages(): Array<Record<string, any>> {
     const state = this.session.state as { messages?: unknown[] } | undefined;
     if (Array.isArray(state?.messages)) {
@@ -2047,6 +2112,55 @@ function cloneRuntimeUserMessage(message: RuntimeUserMessage | undefined): Runti
     text: message.text,
     images: message.images?.map((image) => ({ ...image })) ?? []
   };
+}
+
+function isSilentAssistantMessage(message: Record<string, any>): boolean {
+  const content = message.content;
+  if (typeof content === "string") {
+    return content.trim().length === 0;
+  }
+  if (!Array.isArray(content)) {
+    return content === undefined || content === null;
+  }
+
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const type = (block as { type?: unknown }).type;
+    if (type === "toolCall" || type === "tool_use") {
+      return false;
+    }
+    if (type === "text") {
+      const text = (block as { text?: unknown }).text;
+      if (typeof text === "string" && text.trim().length > 0) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function extractTextFromMessageRecord(message: Record<string, any>): string {
+  const content = message.content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((block) => {
+      if (!block || typeof block !== "object" || (block as { type?: unknown }).type !== "text") {
+        return "";
+      }
+      const text = (block as { text?: unknown }).text;
+      return typeof text === "string" ? text : "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
 }
 
 function isRecordLikeMessage(message: unknown): message is Record<string, any> {

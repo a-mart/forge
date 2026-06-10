@@ -127,6 +127,7 @@ describe("ArchiveLastUsedHydrator", () => {
       legacyUserMessage("2026-05-20T00:00:00.000Z", "Please investigate the archive view."),
       legacyUserMessage("2026-05-21T00:00:00.000Z", "SYSTEM: Runtime bootstrap context."),
       legacyUserMessage("2026-05-22T00:00:00.000Z", "Fix the regression."),
+      legacyUserMessage("2026-05-23T00:00:00.000Z", "WORKER REPORT: status: done\nsummary: archive fix verified."),
     ]);
     const sessions = new Map([["session-1", session({ sessionFile: file })]]);
     const hydrator = new ArchiveLastUsedHydrator({
