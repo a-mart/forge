@@ -279,6 +279,16 @@ Same-day change (this section's fix, v2):
 
 Next rungs if `silent_turn` still fires (evidence-gated, in order): patch pi-ai/pi-coding-agent to support `tool_choice: "required"` on the recovery turn (hard non-empty guarantee, manager remains the author; both vendored packages need the option threaded — verified not currently exposed), then one-turn model switch for the recovery turn. Raw-report relay to the user is rejected as a product violation (manager is the single user-facing voice).
 
+### 9.2 Upstream research + replay-history contamination fix (same day)
+
+Pi runtime status: Forge pins `@mariozechner/pi-ai`/`pi-coding-agent` **0.71.1** (May 1) with local patches; upstream renamed to `earendil-works/pi` with packages `@earendil-works/pi-*`, now **0.79.1** (Jun 9). Nothing in 0.71.1→0.79.1 targets empty final answers (codex commits are transport/retry; adjacent: non-empty system prompt fix 0.73.1, synthetic/duplicate Codex replay-ID hardening May 28 re #5148, developer-role compat Jun 7). Upgrading is hygiene, not a cure; it also requires migrating package scope and re-basing the local patch — parked until the experiments below have data.
+
+**Contamination finding (fixed, `81efd9a5`)**: the Apr 18 local pi-ai patch (`bc462356`, "fix xAI empty content rejection on tool-call-only messages") inserted a synthetic `" "` assistant message into replayed Responses history for **every** tool-call-only assistant turn — the comment said xAI but the condition was unscoped, so it applied to openai-codex too. Most manager turns are tool-only, so every gpt-5.5 manager request showed the model a history in which "it" frequently responded with a lone space — and the observed failure emits exactly a lone-space commentary. The patch landed five days before gpt-5.5 adoption, so gpt-5.5 was never observed with clean history. Not the origin (gpt-5.4 empties predate Apr 18) but a prime amplifier suspect. Fix: gated on `isXaiResponsesModel`; functionally verified against the installed package (codex tool-only turns replay as bare `function_call` items; xAI keeps its placeholder).
+
+External corroboration that this is request-shape-sensitive, not purely model-side: NousResearch/hermes-agent#5736 (openai-codex on gpt-5.x returns empty `response.output` in their agent loop while minimal direct calls work; unresolved) and OpenAI community reports of gpt-5.x Responses returning 200s with empty/reasoning-only output.
+
+**Measurement**: the `manager:empty_turn_resample` / `manager:silent_turn` logs are the A/B counter. Compare resample frequency before/after the daemon restart that picks up `81efd9a5`. If empties effectively vanish, contamination was the dominant amplifier; if they persist at ~18%, escalate per the rungs above and consider a minimal repro for an upstream/OpenAI report.
+
 ## 10. Reproducing the Forensics
 
 ```bash
