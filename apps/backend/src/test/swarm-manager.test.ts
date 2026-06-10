@@ -198,7 +198,7 @@ describe('SwarmManager', () => {
 
     await manager.sendMessage(worker.agentId, 'manager', 'status: done', 'auto')
 
-    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: status: done')
+    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('WORKER REPORT: status: done')
 
     const managerHistory = manager.getConversationHistory('manager')
     expect(
@@ -1265,6 +1265,9 @@ describe('SwarmManager', () => {
     const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
     expect(workerRuntime).toBeDefined()
     expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: pre-tagged')
+
+    await manager.sendMessage('manager', worker.agentId, 'WORKER REPORT: status: done', 'auto')
+    expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('WORKER REPORT: status: done')
   })
 
   it('accepts busy-runtime messages as steer regardless of requested delivery', async () => {
