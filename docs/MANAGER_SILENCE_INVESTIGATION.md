@@ -289,7 +289,24 @@ External corroboration that this is request-shape-sensitive, not purely model-si
 
 **Measurement**: the `manager:empty_turn_resample` / `manager:silent_turn` logs are the A/B counter. Compare resample frequency before/after the daemon restart that picks up `81efd9a5`. If empties effectively vanish, contamination was the dominant amplifier; if they persist at ~18%, escalate per the rungs above and consider a minimal repro for an upstream/OpenAI report.
 
-## 10. Reproducing the Forensics
+## 10. Root Cause — Confirmed by Controlled Replay (2026-06-10 evening)
+
+The definitive experiment (`apps/backend/scripts/replay-empty-turn.ts`): rebuild the exact model-visible context of a failing turn from the session file (`buildSessionContext`, compaction-aware, leaf = the 20:31:32 `WORKER REPORT` message in mammo-sch), attach the real manager tool schemas and resolved system prompt, and send it through the production `streamOpenAICodexResponses` path with the daemon's own credentials. Then bisect.
+
+| Variant | Context | Result |
+|---|---|---|
+| baseline (×2) | 221 messages, **53 whitespace-only assistant messages (24%)**, 6 tools | **EMPTY — identical to production** (commentary `" "`, empty final, 12 tokens, deterministic) |
+| plain-prefix (`SYSTEM:`/`WORKER REPORT:` stripped) | 53 empties | EMPTY |
+| no-tools | 53 empties | EMPTY |
+| **strip-empty** (only the 53 silent messages removed) | **0 empties** | **`speak_to_user` with a correct, complete production summary (235 tokens)** |
+
+**Root cause: a self-reinforcing imitation loop.** gpt-5.x occasionally emits an empty turn (the baseline quirk, ~10% on fresh context). pi replays every assistant message verbatim — including the empty ones — so each silence becomes part of the model's visible "own behavior," raising the probability of the next. Sessions decay monotonically toward mute; mature sessions reach per-context determinism (3/3 identical empties at 18:49 and 20:31; even a user "?" failed once at 24% contamination). This explains the W17→W19 rate climb (accumulation), why prods worked early and degraded late, why compaction didn't help (the retained tail carried the empties), why the Apr 18 synthetic `" "` placeholders correlated (same mechanism, synthetic source), and the gpt-vs-claude gap (claude rarely seeds the loop).
+
+**Fix (`4d9c11d8`)**: in the pi-ai patch, `convertResponsesMessages` now drops assistant messages with no tool calls and no non-whitespace text (including their reasoning items) from replay. The session file keeps the full historical record; only the model-visible context is cleaned — so **every existing session, including heavily poisoned ones, heals on its next request** with no history rewrite. Verified end-to-end: the same 221-message poisoned context produces a full `speak_to_user` production summary through the production code path. Unit-verified: real text and tool-only turns preserved, xAI placeholder behavior intact, no orphaned reasoning items.
+
+**Defense in depth retained**: the resample ladder (§9.1) stays as the safety net for the residual fresh-context quirk — now genuinely effective, since retries no longer fight a poisoned context — and `manager:silent_turn` remains the canary. Expected steady state: resamples rare, silent_turn ≈ 0. Upstream note: this affects any pi-based agent running gpt-5.x on the Responses API; worth filing against earendil-works/pi with the bisection table.
+
+## 11. Reproducing the Forensics
 
 ```bash
 S=~/.forge/profiles/rapa-teams-gateway/sessions/mammo-sch
