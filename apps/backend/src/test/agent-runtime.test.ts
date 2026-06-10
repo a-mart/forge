@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
-import { AgentRuntime } from '../swarm/agent-runtime.js'
+import { AgentRuntime, EMPTY_TURN_REDELIVERY_DIRECTIVE } from '../swarm/agent-runtime.js'
 import type { AgentDescriptor } from '../swarm/types.js'
 
 const openAICodexResponsesMockState = vi.hoisted(() => ({
@@ -1116,15 +1116,17 @@ describe('manager empty-turn retry after worker terminal report', () => {
   function makeRuntime(options: { descriptor?: AgentDescriptor } = {}) {
     const session = new FakeSession()
     const onAgentEnd = vi.fn()
+    const onRuntimeError = vi.fn()
     const runtime = new AgentRuntime({
       descriptor: options.descriptor ?? makeManagerDescriptor(),
       session: session as any,
       callbacks: {
         onStatusChange: () => {},
         onAgentEnd,
+        onRuntimeError,
       },
     })
-    return { session, runtime, onAgentEnd }
+    return { session, runtime, onAgentEnd, onRuntimeError }
   }
 
   it('resamples an empty turn that follows a terminal worker report', async () => {
@@ -1158,6 +1160,64 @@ describe('manager empty-turn retry after worker terminal report', () => {
     await waitForCondition(() => session.promptCalls.length === 1)
 
     expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).toHaveBeenCalledWith('fake-session-id')
+  })
+
+  it('escalates the final resample with the redelivery directive', async () => {
+    const { session, runtime } = makeRuntime()
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+    expect(session.promptCalls[0]).toBe(TERMINAL_CALLBACK)
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 2)
+
+    expect(session.promptCalls[1]).toBe(`${TERMINAL_CALLBACK}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`)
+  })
+
+  it('counts an empty turn after the escalated redelivery toward the same budget', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 2)
+
+    // The escalated redelivery itself comes back empty: history now holds the
+    // directive-appended report. It must key to the same budget and stop.
+    session.state.messages = [
+      userMessage(`${TERMINAL_CALLBACK}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`),
+      emptyAssistantMessage(),
+    ]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toHaveLength(2)
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits a silent_turn runtime notice when resamples are exhausted', async () => {
+    const { session, runtime, onRuntimeError } = makeRuntime()
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+      await (runtime as any).handleEvent({ type: 'agent_end' })
+      await waitForCondition(() => session.promptCalls.length === attempt)
+    }
+    expect(onRuntimeError).not.toHaveBeenCalled()
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(onRuntimeError).toHaveBeenCalledTimes(1)
+    const [agentId, event] = onRuntimeError.mock.calls[0]
+    expect(agentId).toBe('manager-1')
+    expect(event.phase).toBe('silent_turn')
+    expect(event.details?.userFacingMessage).toContain('did not produce a response')
   })
 
   it('gives up after two resamples and reports the turn end', async () => {

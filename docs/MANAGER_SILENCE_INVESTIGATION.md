@@ -265,6 +265,20 @@ Shipped on branch `cc/clever-tu-b007ea` — the minimal-complexity variant of R2
 
 **Rollout note**: the dev daemon runs from the *main* repo working tree via tsx. This change takes effect only after it is merged into that working tree and the backend is restarted. Claude SDK and Cursor runtimes are unchanged (measured rates there were marginal); the fix targets the Pi runtime where gpt-5.x managers live.
 
+### 9.1 Field result, same day — resampling alone is insufficient; escalation added
+
+First live test (daemon restarted 13:29 on the merged fix): at 18:49:31 UTC the `mammo-production-execution-readiness` worker delivered a decision-heavy 8.3k-char verdict (`WORKER REPORT: status: done … NEEDS_MINIMAL_PROD_EXECUTOR`). The manager went empty; the resample fired **exactly as designed** — identical report re-dispatched at 18:49:34 and 18:49:37 — and the model returned **three identical empty turns ~3 s apart**, then a clean capped give-up. (The 18:41 routine report minutes earlier got an immediate `speak_to_user`.)
+
+Conclusion: **the empty response is deterministic per context**, not an 18%-per-draw coin flip. The historical 18% means "18% of contexts induce silence"; within such a context, re-rolling identical input re-rolls nothing. The corroborating contrast was in the logs all along: terse user-register prods ("update?", "you still aren't giving updates!") are 8-for-8 — *different input*, not another draw — while the June guard's SYSTEM-register tool-instructions failed 7/16. The recovery input's register is the operative variable.
+
+Same-day change (this section's fix, v2):
+
+- **Escalating redelivery**: resample #1 stays verbatim (free, covers stochastic cases). The final resample appends `EMPTY_TURN_REDELIVERY_DIRECTIVE` — "The user is waiting on this outcome and has not been updated. Send them the update with speak_to_user now." — new tokens (defeats determinism) in the register that has never failed. The manager still authors the user-facing message; raw worker output is never shown to the user.
+- **Loop-safe budgeting**: the retry budget is keyed on the directive-stripped report text, so an empty answer to the escalated redelivery exhausts the budget rather than resetting it.
+- **Visible exhaustion**: on give-up the runtime emits a `silent_turn` runtime-error event (new phase) with a `userFacingMessage`, which the error projector renders as a system notice in the conversation feed ("⚠️ The manager processed a worker's final report but did not produce a response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."). Previously this only went to a console nobody reads.
+
+Next rungs if `silent_turn` still fires (evidence-gated, in order): patch pi-ai/pi-coding-agent to support `tool_choice: "required"` on the recovery turn (hard non-empty guarantee, manager remains the author; both vendored packages need the option threaded — verified not currently exposed), then one-turn model switch for the recovery turn. Raw-report relay to the user is rejected as a product violation (manager is the single user-facing voice).
+
 ## 10. Reproducing the Forensics
 
 ```bash

@@ -57,6 +57,12 @@ interface PendingDelivery {
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
 const MAX_EMPTY_TURN_RESAMPLES = 2;
 const TERMINAL_WORKER_REPORT_PATTERN = /^(?:SYSTEM|WORKER REPORT):\s*status:\s*(?:done|partial|blocked)\b/i;
+// Appended to the final resample. Empty turns proved deterministic for a given
+// context (identical input -> identical silence), while terse user-register
+// prods have always broken through; this line perturbs the tokens AND supplies
+// that register. Exported for tests.
+export const EMPTY_TURN_REDELIVERY_DIRECTIVE =
+  "The user is waiting on this outcome and has not been updated. Send them the update with speak_to_user now.";
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
 const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;
@@ -800,7 +806,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (event.type === "agent_end") {
       this.currentTurnReplayMessages = [];
-      if (this.maybeResampleEmptyTerminalReportTurn()) {
+      if (await this.maybeResampleEmptyTerminalReportTurn()) {
         return;
       }
       this.emptyTurnResampleState = undefined;
@@ -1711,12 +1717,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
    * gpt-5.x managers intermittently answer a worker's terminal report with a
    * whitespace-only turn (no tool calls, stopReason "stop"), leaving the user
    * with no update. The turn is side-effect free, so drop it together with the
-   * triggering report from the in-memory context and re-dispatch the same
-   * report for a fresh sample. Bounded per report by MAX_EMPTY_TURN_RESAMPLES;
-   * on exhaustion the turn end proceeds normally and manager:silent_turn is
-   * logged for observability.
+   * triggering report from the in-memory context and re-dispatch the report.
+   * The empty response is deterministic for a given context, so attempts
+   * escalate: the first resample re-sends the report verbatim, the final one
+   * appends EMPTY_TURN_REDELIVERY_DIRECTIVE (new tokens, user-register demand).
+   * Budget is keyed on the directive-stripped report text so an empty answer
+   * to the escalated redelivery exhausts the budget instead of resetting it.
+   * On exhaustion the turn end proceeds normally and a silent_turn runtime
+   * notice is emitted so the silence is visible in the conversation feed.
    */
-  private maybeResampleEmptyTerminalReportTurn(): boolean {
+  private async maybeResampleEmptyTerminalReportTurn(): Promise<boolean> {
     if (this.descriptor.role !== "manager" || this.status === "terminated") {
       return false;
     }
@@ -1734,34 +1744,49 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    const triggerText = extractTextFromMessageRecord(triggerMessage);
-    if (!TERMINAL_WORKER_REPORT_PATTERN.test(triggerText)) {
+    const reportText = stripEmptyTurnRedeliveryDirective(extractTextFromMessageRecord(triggerMessage));
+    if (!TERMINAL_WORKER_REPORT_PATTERN.test(reportText)) {
       return false;
     }
 
     const previousAttempts =
-      this.emptyTurnResampleState?.triggerText === triggerText ? this.emptyTurnResampleState.attempts : 0;
+      this.emptyTurnResampleState?.triggerText === reportText ? this.emptyTurnResampleState.attempts : 0;
     if (previousAttempts >= MAX_EMPTY_TURN_RESAMPLES) {
       console.error(`[swarm][${this.now()}] manager:silent_turn`, {
         runtime: "pi",
         agentId: this.descriptor.agentId,
         resampleAttempts: previousAttempts,
-        triggerPreview: previewForLog(triggerText)
+        triggerPreview: previewForLog(reportText)
+      });
+      await this.reportRuntimeError({
+        phase: "silent_turn",
+        message: "Manager produced no response to a worker's final report",
+        details: {
+          resampleAttempts: previousAttempts,
+          triggerPreview: previewForLog(reportText),
+          userFacingMessage:
+            "⚠️ The manager processed a worker's final report but did not produce a response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."
+        }
       });
       return false;
     }
 
-    this.emptyTurnResampleState = { triggerText, attempts: previousAttempts + 1 };
+    const attempt = previousAttempts + 1;
+    const escalate = attempt >= MAX_EMPTY_TURN_RESAMPLES;
+    this.emptyTurnResampleState = { triggerText: reportText, attempts: attempt };
     this.replaceSessionAgentMessages(messages.slice(0, -2));
     this.closeStaleOpenAICodexWebSocketSession("empty_turn_resample");
     console.warn(`[swarm][${this.now()}] manager:empty_turn_resample`, {
       runtime: "pi",
       agentId: this.descriptor.agentId,
-      attempt: previousAttempts + 1,
+      attempt,
       maxAttempts: MAX_EMPTY_TURN_RESAMPLES,
-      triggerPreview: previewForLog(triggerText)
+      escalated: escalate,
+      triggerPreview: previewForLog(reportText)
     });
-    this.dispatchPrompt({ text: triggerText });
+    this.dispatchPrompt({
+      text: escalate ? `${reportText}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}` : reportText
+    });
     return true;
   }
 
@@ -2140,6 +2165,11 @@ function isSilentAssistantMessage(message: Record<string, any>): boolean {
   }
 
   return true;
+}
+
+function stripEmptyTurnRedeliveryDirective(text: string): string {
+  const suffix = `\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`;
+  return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
 }
 
 function extractTextFromMessageRecord(message: Record<string, any>): string {
