@@ -85,8 +85,8 @@ index 3081455..f48eddb 100644
 +            // xAI's Responses-compatible endpoint rejects assistant/tool-call turns that omit
 +            // the assistant message item entirely. Mirror the chat-completions fix by inserting
 +            // a non-empty placeholder assistant message before the function_call items when the
-+            // turn has tools but no text content.
-+            if (hasToolCalls && !hasAssistantMessage) {
++            // turn has tools but no text. xAI-scoped: Codex accepts tool-only turns natively.
++            if (isXaiResponsesModel && hasToolCalls && !hasAssistantMessage) {
 +                const firstFunctionCallIndex = output.findIndex((item) => item.type === "function_call");
 +                output.splice(firstFunctionCallIndex >= 0 ? firstFunctionCallIndex : output.length, 0, {
 +                    type: "message",
