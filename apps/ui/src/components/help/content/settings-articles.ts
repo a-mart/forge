@@ -8,6 +8,7 @@ import settingsExtensionsContent from './articles/settings/settings-extensions.m
 import settingsGeneralContent from './articles/settings/settings-general.md?raw'
 import settingsIntegrationsContent from './articles/settings/settings-integrations.md?raw'
 import settingsNotificationsContent from './articles/settings/settings-notifications.md?raw'
+import settingsObservabilityContent from './articles/settings/settings-observability.md?raw'
 import settingsOauthContent from './articles/settings/settings-oauth.md?raw'
 import settingsPromptsContent from './articles/settings/settings-prompts.md?raw'
 import settingsSkillsContent from './articles/settings/settings-skills.md?raw'
@@ -21,7 +22,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-general',
     title: 'General Settings',
     category: 'settings',
-    summary: 'Appearance, editor choice, Cortex auto-review, and experimental feature toggles.',
+    summary: 'Appearance, editor choice, Cortex auto-review, and links to diagnostic settings.',
     content: settingsGeneralContent,
     keywords: [
       'theme',
@@ -40,8 +41,11 @@ export const settingsArticles: HelpArticle[] = [
       'provider usage',
       'subscription',
       'usage monitoring',
+      'observability',
+      'phoenix',
+      'diagnostics',
     ],
-    relatedIds: ['settings-theme', 'settings-editor', 'settings-about'],
+    relatedIds: ['settings-theme', 'settings-editor', 'settings-observability', 'settings-about'],
     contextKeys: ['settings.general'],
   },
   {
@@ -98,6 +102,28 @@ export const settingsArticles: HelpArticle[] = [
     ],
     relatedIds: ['settings-oauth'],
     contextKeys: ['settings.auth'],
+  },
+  {
+    id: 'settings-observability',
+    title: 'Phoenix Observability',
+    category: 'settings',
+    summary: 'Export local Forge traces to Arize Phoenix with redaction, caps, and capture controls.',
+    content: settingsObservabilityContent,
+    keywords: [
+      'observability',
+      'phoenix',
+      'arize',
+      'otlp',
+      'traces',
+      'protobuf',
+      'redaction',
+      'privacy',
+      'diagnostics',
+      'export',
+      'span',
+    ],
+    relatedIds: ['settings-general', 'settings-about'],
+    contextKeys: ['settings.observability'],
   },
   {
     id: 'settings-oauth',

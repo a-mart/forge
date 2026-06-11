@@ -93,6 +93,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
 | **Voice/transcription** | `ws/routes/transcription-routes.ts` | `lib/voice-transcription-client.ts` | Voice input and transcription |
 | **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |
+| **Phoenix observability** | `observability/`, `ws/http/routes/phoenix-observability-routes.ts` | `components/settings/SettingsObservability.tsx` | Builder-only Arize Phoenix tracing over loopback OTLP HTTP/protobuf. Settings live under Settings → Observability and persist to `shared/config/phoenix-observability.json`. Rich traces cover runtime, prompt, LLM, tool, delivery, lifecycle, error, and feedback paths with redaction, caps, capture toggles, and fail-open export safeguards. Collaboration runtime uses the no-op/fail-closed facade and does not export traces. Live Phoenix/golden-trace and Electron package/preflight validation remain user-owned gates. |
 | **Daemon management** | `reboot/`, `scripts/prod-daemon*.mjs` | — | Production process lifecycle (start, restart, PID tracking) |
 | **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
 | **Repo-root .forge project resources** | `.forge/skills/`, `.forge/specialists/`, `.forge/reference/`, `.forge/extensions/`, `.forge/pi/extensions/`, `.forge/pi/settings.json` | Repo-scoped resources that live in the repository root. Passive text resources stay visible if executable trust is denied; only executable surfaces are gated. Do not introduce split `.forge/manager` or `.forge/worker` trees in v1. See [docs/PROJECT_RESOURCES.md](docs/PROJECT_RESOURCES.md) |
@@ -163,6 +164,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   │   ├── mobile-notification-prefs.json # Mobile push preferences
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
+│   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
 │   │   └── integrations/                  # Telegram integration configs
 │   ├── cache/
 │   │   ├── generated/

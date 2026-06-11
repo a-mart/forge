@@ -54,6 +54,14 @@ The OpenAI Codex Responses transport settings above apply to normal Codex model 
 
 Settings → General includes a Builder-only, default-on **Enable Active Work Plans** toggle backed by `shared/config/work-plans.json`. When enabled, managers get the `task` tool, the Active Work skill/guidance/context, and the live Active Work UI. When disabled, those live surfaces are hidden and runtimes recycle or defer recycle as needed; historical read-only Work Plan receipts remain visible.
 
+### Phoenix Observability
+
+Settings → Observability configures Builder-only Arize Phoenix tracing. Settings persist in `shared/config/phoenix-observability.json`. Export uses OTLP HTTP/protobuf to a local Phoenix traces endpoint, defaulting to `http://127.0.0.1:6006/v1/traces`.
+
+V1 only accepts loopback `http://` endpoints: `localhost`, `127.0.0.0/8`, or `::1`, with a path ending in `/v1/traces`. Embedded credentials, query strings, and fragments are rejected. Rich capture can include runtime, prompt, LLM, tool, delivery, lifecycle, error, and feedback spans. Capture toggles, redaction, identifier/path modes, extra redaction patterns, and content/attribute caps control what is attached to spans.
+
+Collaboration runtime is unsupported in V1. It uses the no-op/fail-closed observability facade and does not write Phoenix settings or export traces.
+
 ### Collaboration
 
 | Variable | Default | Description |
@@ -112,6 +120,7 @@ All persistent state lives in a single data directory:
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
 │   │   ├── work-plans.json                # Builder-only default-on Active Work Plans toggle
+│   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
 │   │   └── integrations/      # Shared integration configs
 │   ├── cache/                 # Regenerable/ephemeral
 │   │   ├── generated/

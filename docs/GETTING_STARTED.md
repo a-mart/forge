@@ -516,6 +516,12 @@ You can see exactly what Forge is telling your agents to do, and you can edit th
 
 Right now these are text snippets for commonly used prompts. Functional slash commands (that execute actions rather than expand text) are coming.
 
+### Observability
+
+**Settings → Observability** configures the Builder-only Arize Phoenix exporter. Forge sends OTLP HTTP/protobuf traces to a local loopback endpoint, defaulting to `http://127.0.0.1:6006/v1/traces`. Rich capture can include runtime, prompt, LLM, tool, delivery, lifecycle, error, and feedback spans. Use the capture toggles, redaction settings, and content caps to control what goes into Phoenix.
+
+Collaboration mode is not supported in V1. It uses a no-op/fail-closed observability facade and does not export traces.
+
 ### Editor Preference
 
 Under **Settings**, you can change the default editor for "Open in editor" on files. Options include VS Code and Cursor.

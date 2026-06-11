@@ -1,4 +1,4 @@
-General Settings is the main preferences pane. It covers appearance, editor integration, experimental features, and the Cortex auto-review schedule.
+General Settings is the main preferences pane. It covers appearance, editor integration, sidebar preferences, Active Work Plans, telemetry, and the Cortex auto-review schedule. Diagnostic export controls live in **Settings > Observability**.
 
 ## Appearance
 
@@ -39,6 +39,10 @@ Collab Settings also include members and invites, plus password management, all 
 Collaboration channels are session-backed and can carry per-channel instructions and reference docs. Channel guidance is labeled **Additional instructions**.
 
 The Collaboration status panel reflects the configured collaboration connection/backend, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
+
+## Observability
+
+Open **Settings > Observability** to export Builder-only Forge traces to a local Arize Phoenix OTLP endpoint. That pane includes status, test export, capture toggles, and privacy controls.
 
 ## System
 
