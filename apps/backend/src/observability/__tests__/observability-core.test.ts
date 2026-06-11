@@ -439,6 +439,158 @@ describe('PhoenixOtlpExporter', () => {
     expect(serializedTools).not.toContain('DUPLICATE_HOOK')
   })
 
+  it('correlates manager turns when runtime callback tokens drift from the pending input token', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeCreated({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      status: 'ready',
+      activeTools: [{ name: 'speak_to_user', description: 'Publish response', jsonSchema: { type: 'object' } }],
+    })
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      rootSource: 'user_input',
+      runtimeInput: 'runtime user text',
+    })
+
+    const startResult = exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      event: { type: 'message_start', message: { role: 'assistant', content: '' } },
+    })
+    expect(startResult.correlationMisses).toBe(0)
+    expect(startResult.started).toBe(2)
+
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      event: {
+        type: 'message_end',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Done' }] },
+        meta: { provider: 'openai-codex', modelId: 'gpt-5.4', usage: { input: 5, output: 2, total: 7 } },
+      },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      event: { type: 'tool_execution_start', toolName: 'speak_to_user', toolCallId: 'tool-1', args: { text: 'Done' } },
+    })
+
+    const sideEffectResult = exporter.recordToolSideEffect({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      toolName: 'speak_to_user',
+      toolCallId: 'tool-1',
+      phase: 'side_effect',
+      input: { text: 'Done' },
+      output: { targetContext: { channel: 'web' } },
+      userVisible: true,
+    })
+    expect(sideEffectResult.correlationMisses).toBe(0)
+
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      event: { type: 'tool_execution_end', toolName: 'speak_to_user', toolCallId: 'tool-1', result: { published: true }, isError: false },
+    })
+    const endResult = exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    expect(endResult.correlationMisses).toBe(0)
+
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    expect(spans.some((entry) => entry.name === 'forge.session.turn')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.runtime.turn')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.llm.call')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.tool.speak_to_user')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.user.output')).toBe(true)
+  })
+
+  it('closes active Pi turns on agent_end when turn_end is missing', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 8,
+      rootSource: 'user_input',
+      runtimeInput: 'live manager turn',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 8,
+      event: { type: 'message_start', message: { role: 'assistant', content: '' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 8,
+      event: {
+        type: 'message_end',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'fallback close' }] },
+        meta: { provider: 'openai-codex', modelId: 'gpt-5.4' },
+      },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 8,
+      event: { type: 'tool_execution_start', toolName: 'speak_to_user', toolCallId: 'tool-fallback', args: { text: 'fallback close' } },
+    })
+
+    const endResult = exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 8,
+      event: { type: 'agent_end' },
+    })
+    expect(endResult.ended).toBe(4)
+    expect(endResult.correlationMisses).toBe(0)
+
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    expect(spans.some((entry) => entry.name === 'forge.session.turn')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.runtime.turn')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.llm.call')).toBe(true)
+    const tool = spans.find((entry) => entry.name === 'forge.tool.speak_to_user')
+    expect(tool?.attributes['forge.correlation_status']).toBe('runtime_agent_ended_without_turn_end')
+  })
+
   it('exports dedicated agent delivery spans under the top-level parent root and marks unresolved fallback', async () => {
     const spanExporter = new MockExporter()
     const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }

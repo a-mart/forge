@@ -483,6 +483,14 @@ export class PhoenixOtlpExporter {
       if (event.type === "turn_end") {
         const turn = this.getActiveTurn(input.agentId, input.runtimeToken);
         if (!turn) {
+          const pending = this.consumePendingInput(input.agentId, input.runtimeToken);
+          if (pending) {
+            const syntheticTurn = this.startRuntimeTurn(input, pending);
+            result.started += 1;
+            this.endRuntimeTurn(syntheticTurn, event.meta, event.toolResults);
+            result.ended += 2;
+            return result;
+          }
           result.correlationMisses += 1;
           return result;
         }
@@ -495,6 +503,37 @@ export class PhoenixOtlpExporter {
         result.ended += this.closeActiveToolsForTurn(turn, "runtime_turn_ended");
         this.endRuntimeTurn(turn, event.meta, event.toolResults);
         result.ended += 2;
+        return result;
+      }
+
+      if (event.type === "agent_end") {
+        const turn = this.getActiveTurn(input.agentId, input.runtimeToken);
+        if (turn) {
+          const reason = "runtime_agent_ended_without_turn_end";
+          if (turn.llm) {
+            turn.llm.span.setAttribute("forge.correlation_status", reason);
+            this.endLlmCall(turn.llm, turn, input);
+            turn.llm = undefined;
+            result.ended += 1;
+          }
+          result.ended += this.closeActiveToolsForTurn(turn, reason, false);
+          turn.turnSpan.setAttribute("forge.duration_ms", Date.now() - turn.startedAtMs);
+          turn.turnSpan.setAttribute("forge.correlation_status", reason);
+          turn.turnSpan.setStatus({ code: SpanStatusCode.OK });
+          turn.turnSpan.end();
+          turn.rootSpan.setAttribute("forge.correlation_status", reason);
+          this.endRetainedRootSpan(turn.rootTurnId, { code: SpanStatusCode.OK });
+          this.activeTurnsByAgentToken.delete(buildAgentTokenKey(turn.agentId, turn.runtimeToken));
+          result.ended += 2;
+          return result;
+        }
+
+        const pending = this.consumePendingInput(input.agentId, input.runtimeToken);
+        if (pending) {
+          pending.rootSpan.setAttribute("forge.correlation_status", "runtime_agent_ended_without_runtime_events");
+          this.endRetainedRootSpan(pending.rootTurnId, { code: SpanStatusCode.OK });
+          result.ended += 1;
+        }
         return result;
       }
     } catch {
@@ -1057,15 +1096,15 @@ export class PhoenixOtlpExporter {
     for (const [name, value] of Object.entries(attrs)) {
       tool.span.setAttribute(name, value);
     }
-    tool.span.setStatus(isError || reason ? { code: SpanStatusCode.ERROR, message: reason ?? "tool_error" } : { code: SpanStatusCode.OK });
+    tool.span.setStatus(isError ? { code: SpanStatusCode.ERROR, message: reason ?? "tool_error" } : { code: SpanStatusCode.OK });
     tool.span.end();
   }
 
-  private closeActiveToolsForTurn(turn: ActiveRuntimeTurn, reason: string): number {
+  private closeActiveToolsForTurn(turn: ActiveRuntimeTurn, reason: string, isError = true): number {
     let ended = 0;
     for (const tool of Array.from(this.activeToolSpansByAgentTokenToolCall.values())) {
       if (tool.agentId === turn.agentId && tool.runtimeToken === turn.runtimeToken) {
-        this.endToolCall(tool, tool.output ?? { status: reason }, true, reason);
+        this.endToolCall(tool, tool.output ?? { status: reason }, isError, reason);
         ended += 1;
       }
     }
@@ -1073,7 +1112,15 @@ export class PhoenixOtlpExporter {
   }
 
   private getActiveToolCall(agentId: string, runtimeToken: number | undefined, toolCallId: string): ActiveToolCall | undefined {
-    return this.activeToolSpansByAgentTokenToolCall.get(buildToolCallKey(agentId, runtimeToken, toolCallId));
+    const exact = this.activeToolSpansByAgentTokenToolCall.get(buildToolCallKey(agentId, runtimeToken, toolCallId));
+    if (exact) {
+      return exact;
+    }
+
+    const matches = Array.from(this.activeToolSpansByAgentTokenToolCall.values()).filter(
+      (tool) => tool.agentId === agentId && tool.toolCallId === toolCallId,
+    );
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   private findActiveToolCallForParentTool(input: { agentId: string; runtimeToken?: number; toolCallId: string }): ActiveToolCall | undefined {
@@ -1151,21 +1198,42 @@ export class PhoenixOtlpExporter {
   }
 
   private getActiveTurn(agentId: string, runtimeToken?: number): ActiveRuntimeTurn | undefined {
-    return this.activeTurnsByAgentToken.get(buildAgentTokenKey(agentId, runtimeToken));
+    const exact = this.activeTurnsByAgentToken.get(buildAgentTokenKey(agentId, runtimeToken));
+    if (exact) {
+      return exact;
+    }
+
+    const matches = Array.from(this.activeTurnsByAgentToken.values()).filter((turn) => turn.agentId === agentId);
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   private consumePendingInput(agentId: string, runtimeToken?: number, runtimeMessageContent?: unknown): PendingRuntimeInput | undefined {
     const queue = this.pendingInputsByAgentId.get(agentId);
     if (!queue || queue.length === 0) return undefined;
-    const index = queue.findIndex((candidate) => {
-      if (candidate.runtimeToken !== undefined && runtimeToken !== undefined && candidate.runtimeToken !== runtimeToken) {
-        return false;
-      }
+
+    const contentMatches = (candidate: PendingRuntimeInput): boolean => {
       if (runtimeMessageContent === undefined) return true;
       const expected = stringifyForMatch(candidate.runtimeInput);
       const actual = stringifyForMatch(runtimeMessageContent);
       return !expected || !actual || actual.includes(expected) || expected.includes(actual);
+    };
+
+    let index = queue.findIndex((candidate) => {
+      if (candidate.runtimeToken !== undefined && runtimeToken !== undefined && candidate.runtimeToken !== runtimeToken) {
+        return false;
+      }
+      return contentMatches(candidate);
     });
+
+    if (index < 0) {
+      const fallbackCandidates = queue
+        .map((candidate, candidateIndex) => ({ candidate, candidateIndex }))
+        .filter(({ candidate }) => contentMatches(candidate));
+      if (fallbackCandidates.length === 1) {
+        index = fallbackCandidates[0].candidateIndex;
+      }
+    }
+
     if (index < 0) return undefined;
     const [pending] = queue.splice(index, 1);
     if (queue.length === 0) this.pendingInputsByAgentId.delete(agentId);
