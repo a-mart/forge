@@ -22,6 +22,7 @@ import type {
   ObservabilityRuntimeInputCompletion,
   ObservabilityRuntimeInputHandle,
   ObservabilityRuntimeInputInput,
+  ObservabilityRuntimeErrorInput,
   ObservabilityRuntimeSessionEventInput,
   ObservabilityRuntimeTarget,
   ObservabilityToolSideEffectInput,
@@ -170,7 +171,7 @@ export class ObservabilityService implements ObservabilityFacade {
   }
 
   recordPromptResolved(input: ObservabilityPromptResolvedInput): void {
-    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.settings.capture.prompts || !this.exporter) {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || this.settings.contentMode === "metadata_only" || !this.settings.capture.prompts || !this.exporter) {
       return;
     }
 
@@ -189,7 +190,7 @@ export class ObservabilityService implements ObservabilityFacade {
     }
 
     try {
-      const exportInput = this.settings.capture.prompts
+      const exportInput = this.settings.contentMode !== "metadata_only" && this.settings.capture.prompts
         ? input
         : { ...input, finalSystemPrompt: undefined, startupSystemPromptOverride: undefined };
       this.exporter.recordRuntimeCreated(exportInput);
@@ -266,6 +267,19 @@ export class ObservabilityService implements ObservabilityFacade {
     }
   }
 
+  recordRuntimeError(input: ObservabilityRuntimeErrorInput): void {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
+      return;
+    }
+
+    try {
+      const result = this.exporter.recordRuntimeError(input);
+      this.applySpanRecordResult(result);
+    } catch (error) {
+      this.recordError(error);
+    }
+  }
+
   recordToolSideEffect(input: ObservabilityToolSideEffectInput): void {
     if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
       return;
@@ -292,10 +306,16 @@ export class ObservabilityService implements ObservabilityFacade {
     }
   }
 
-  recordFeedback(_event: FeedbackSubmitEvent): void {
-    // Package 1 adds the shared injection seam. Rich feedback annotation export is Package 7.
-    if (!this.isBuilderRuntime() || !this.settings?.enabled) {
+  recordFeedback(event: FeedbackSubmitEvent): void {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
       return;
+    }
+
+    try {
+      const result = this.exporter.recordFeedback(event);
+      this.applySpanRecordResult(result);
+    } catch (error) {
+      this.recordError(error);
     }
   }
 

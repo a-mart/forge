@@ -583,6 +583,7 @@ export class SwarmRuntimeController {
       return;
     }
 
+    this.recordObservabilityRuntimeError(agentId, runtimeToken, error);
     await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
   }
 
@@ -624,6 +625,37 @@ export class SwarmRuntimeController {
     }
 
     await this.finalizeWorkerIdleTurn(agentId, descriptor, "agent_end");
+  }
+
+  private recordObservabilityRuntimeError(agentId: string, runtimeToken: number | undefined, error: RuntimeErrorEvent): void {
+    const descriptor = this.descriptors.get(agentId);
+    const observability = this.host.getObservabilityService?.();
+    if (!descriptor || !observability) {
+      return;
+    }
+
+    observability.recordRuntimeError({
+      agentId,
+      managerId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
+      profileId: descriptor.profileId,
+      role: descriptor.role,
+      runtimeType: descriptor.model.provider === "claude-sdk"
+        ? "claude-sdk"
+        : descriptor.model.provider === "cursor-sdk"
+          ? "cursor-sdk"
+          : "pi",
+      runtimeToken,
+      agentName: descriptor.displayName,
+      phase: error.phase,
+      message: error.message,
+      stack: error.stack,
+      details: error.details,
+      metadata: {
+        modelProvider: descriptor.model.provider,
+        modelId: descriptor.model.modelId,
+        status: descriptor.status,
+      },
+    });
   }
 
   private shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {

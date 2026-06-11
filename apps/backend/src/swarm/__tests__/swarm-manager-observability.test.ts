@@ -7,6 +7,7 @@ import type {
   ObservabilityRuntimeInputCompletion,
   ObservabilityRuntimeInputHandle,
   ObservabilityRuntimeInputInput,
+  ObservabilityRuntimeErrorInput,
   ObservabilityRuntimeSessionEventInput,
   ObservabilityToolSideEffectInput,
   ObservabilityAgentDeliveryInput,
@@ -78,6 +79,7 @@ class RecordingObservability implements ObservabilityFacade {
     this.calls.push(`event:${input.event.type}`)
     this.sessionEvents.push(input)
   }
+  recordRuntimeError(_input: ObservabilityRuntimeErrorInput): void {}
   recordToolSideEffect(_input: ObservabilityToolSideEffectInput): void {}
   recordAgentDelivery(input: ObservabilityAgentDeliveryInput): void {
     this.calls.push('recordAgentDelivery')

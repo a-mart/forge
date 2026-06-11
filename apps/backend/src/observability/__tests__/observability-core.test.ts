@@ -1024,6 +1024,99 @@ describe('PhoenixOtlpExporter', () => {
     expect(spans.filter((entry) => entry.name === 'forge.llm.call')).toHaveLength(1)
   })
 
+  it('exports runtime lifecycle, runtime error, and feedback annotation spans', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      rootSource: 'user_input',
+      runtimeInput: 'please retry if needed',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      event: { type: 'turn_start' },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      event: { type: 'auto_retry_start', attempt: 1, maxAttempts: 2, delayMs: 10, errorMessage: 'rate limited' },
+    })
+    exporter.recordRuntimeError({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      runtimeType: 'pi',
+      runtimeToken: 4,
+      phase: 'prompt_start',
+      message: 'runtime failed',
+      details: { reason: 'test' },
+    })
+    exporter.recordFeedback({
+      id: 'feedback-1',
+      createdAt: '2026-06-10T00:00:00.000Z',
+      profileId: 'profile-1',
+      sessionId: 'manager-1',
+      scope: 'message',
+      targetId: 'message-1',
+      value: 'down',
+      reasonCodes: ['accuracy'],
+      comment: 'wrong answer',
+      channel: 'web',
+      actor: 'user',
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    expect(spans.some((entry) => entry.name === 'forge.runtime.lifecycle')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.runtime.error')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.feedback.annotation')).toBe(true)
+    expect(String(spans.find((entry) => entry.name === 'forge.feedback.annotation')?.attributes['input.value'])).toContain('wrong answer')
+  })
+
+  it('omits feedback comments when feedback comment capture is disabled', async () => {
+    const spanExporter = new MockExporter()
+    const defaults = createDefaultPhoenixObservabilitySettings()
+    const settings = {
+      ...defaults,
+      enabled: true,
+      capture: { ...defaults.capture, feedbackComments: false },
+    }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordFeedback({
+      id: 'feedback-1',
+      createdAt: '2026-06-10T00:00:00.000Z',
+      profileId: 'profile-1',
+      sessionId: 'manager-1',
+      scope: 'message',
+      targetId: 'message-1',
+      value: 'comment',
+      reasonCodes: [],
+      comment: 'private feedback comment',
+      channel: 'web',
+      actor: 'user',
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const serialized = JSON.stringify(spanExporter.batches.flat().map((span) => span.attributes))
+    expect(serialized).not.toContain('private feedback comment')
+  })
+
   it('fully redacts runtime-created path metadata when pathMode is redacted', async () => {
     const spanExporter = new MockExporter()
     const settings = {

@@ -58,12 +58,13 @@ describe('SettingsLayout', () => {
   it('shows all tabs when availableTabs is omitted', () => {
     renderLayout({})
 
-    // Desktop nav should have 14 items (all tabs including Repository Resources and CLI Access)
+    // Desktop nav should have 15 items (all tabs including Repository Resources, CLI Access, and Observability)
     const desktopNav = container.querySelector('nav.hidden')
     const buttons = desktopNav?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(14)
+    expect(buttons.length).toBe(15)
     const labels = Array.from(buttons).map(btn => btn.textContent?.trim())
     expect(labels).toContain('Repository Resources')
+    expect(labels).toContain('Observability')
   })
 
   it('filters tabs to only availableTabs when provided', () => {

@@ -45,6 +45,7 @@ describe('createBuilderSettingsTarget', () => {
     expect(target.availableTabs).toContain('specialists')
     expect(target.availableTabs).toContain('slash-commands')
     expect(target.availableTabs).toContain('extensions')
+    expect(target.availableTabs).toContain('observability')
     expect(target.availableTabs).toContain('collaboration')
     expect(target.availableTabs).toContain('about')
   })
@@ -66,6 +67,7 @@ describe('createCollabSettingsTarget', () => {
     const target = createCollabSettingsTarget('wss://collab.example.com')
 
     expect(target.availableTabs).not.toContain('notifications')
+    expect(target.availableTabs).not.toContain('observability')
   })
 
   it('includes admin-visible collab tabs', () => {

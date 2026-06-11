@@ -197,6 +197,7 @@ function createFakeObservability(): ObservabilityFacade & { recordFeedback: Retu
     cancelRuntimeInput: vi.fn(),
     recordRuntimeInput: vi.fn(() => undefined),
     recordRuntimeSessionEvent: vi.fn(),
+    recordRuntimeError: vi.fn(),
     recordToolSideEffect: vi.fn(),
     recordAgentDelivery: vi.fn(),
     recordFeedback: vi.fn<[FeedbackSubmitEvent], void>(),

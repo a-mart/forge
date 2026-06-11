@@ -4,7 +4,7 @@ import { BasicTracerProvider, type SpanExporter } from "@opentelemetry/sdk-trace
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { SEMRESATTRS_PROJECT_NAME, SemanticConventions } from "@arizeai/openinference-semantic-conventions";
-import type { PhoenixObservabilitySettings } from "@forge/protocol";
+import type { FeedbackSubmitEvent, PhoenixObservabilitySettings } from "@forge/protocol";
 import type { RuntimeModelCallMeta } from "../swarm/runtime-contracts.js";
 import {
   DEFAULT_PHOENIX_PROJECT_NAME,
@@ -19,6 +19,7 @@ import { ObservabilityRedactor, type RedactionStats } from "./observability-reda
 import type {
   ObservabilityPromptResolvedInput,
   ObservabilityRuntimeCreatedInput,
+  ObservabilityRuntimeErrorInput,
   ObservabilityRuntimeInputCompletion,
   ObservabilityRuntimeInputHandle,
   ObservabilityRuntimeInputInput,
@@ -64,6 +65,18 @@ export interface ToolSideEffectRecordResult {
 }
 
 export interface AgentDeliveryRecordResult {
+  started: number;
+  ended: number;
+  correlationMisses: number;
+}
+
+export interface RuntimeErrorRecordResult {
+  started: number;
+  ended: number;
+  correlationMisses: number;
+}
+
+export interface FeedbackRecordResult {
   started: number;
   ended: number;
   correlationMisses: number;
@@ -158,7 +171,17 @@ export class PhoenixOtlpExporter {
     validatePhoenixEndpoint(options.settings.endpoint);
     this.endpoint = options.settings.endpoint;
     this.projectName = sanitizePhoenixProjectName(options.settings.projectName) || DEFAULT_PHOENIX_PROJECT_NAME;
-    this.capture = options.settings.capture;
+    this.capture = options.settings.contentMode === "metadata_only"
+      ? {
+          prompts: false,
+          modelInputs: false,
+          modelOutputs: false,
+          toolInputs: false,
+          toolResults: false,
+          feedbackComments: false,
+          imageData: false,
+        }
+      : options.settings.capture;
     this.redactor = new ObservabilityRedactor(options.settings.privacy);
 
     const resource = resourceFromAttributes({ [SEMRESATTRS_PROJECT_NAME]: this.projectName });
@@ -190,7 +213,7 @@ export class PhoenixOtlpExporter {
   recordPromptResolved(input: ObservabilityPromptResolvedInput): void {
     const attributes: OtelAttributes = buildCommonOpenInferenceAttributes({
       spanKind: "PROMPT",
-      input: input.prompt,
+      input: this.capture.prompts ? input.prompt : undefined,
       sessionId: input.managerId ?? input.agentId,
       userId: input.profileId,
       metadata: {
@@ -216,7 +239,7 @@ export class PhoenixOtlpExporter {
   recordRuntimeCreated(input: ObservabilityRuntimeCreatedInput): void {
     const attributes: OtelAttributes = buildCommonOpenInferenceAttributes({
       spanKind: input.role === "worker" ? "AGENT" : "CHAIN",
-      input: input.finalSystemPrompt,
+      input: this.capture.prompts ? input.finalSystemPrompt : undefined,
       output: input.status,
       sessionId: input.managerId ?? input.agentId,
       userId: input.profileId,
@@ -231,7 +254,7 @@ export class PhoenixOtlpExporter {
         modelId: input.modelId,
         reasoningLevel: input.reasoningLevel,
         archetypeId: input.archetypeId,
-        startupSystemPromptOverride: input.startupSystemPromptOverride,
+        startupSystemPromptOverride: this.capture.prompts ? input.startupSystemPromptOverride : undefined,
         mcpServers: input.mcpServers,
       },
       tags: ["forge", "phoenix", "runtime", input.runtimeType],
@@ -447,6 +470,16 @@ export class PhoenixOtlpExporter {
         return result;
       }
 
+      if (
+        event.type === "auto_compaction_start" ||
+        event.type === "auto_compaction_end" ||
+        event.type === "auto_retry_start" ||
+        event.type === "auto_retry_end"
+      ) {
+        this.recordRuntimeLifecycleEvent(input, event, result);
+        return result;
+      }
+
       if (event.type === "turn_end") {
         const turn = this.getActiveTurn(input.agentId, input.runtimeToken);
         if (!turn) {
@@ -468,6 +501,101 @@ export class PhoenixOtlpExporter {
       // Observability must never affect runtime projection.
     } finally {
       result.correlationEvictions = this.correlationEvictions - evictionsBefore;
+    }
+    return result;
+  }
+
+  recordRuntimeError(input: ObservabilityRuntimeErrorInput): RuntimeErrorRecordResult {
+    const result: RuntimeErrorRecordResult = { started: 0, ended: 0, correlationMisses: 0 };
+    try {
+      const turn = this.getActiveTurn(input.agentId, input.runtimeToken);
+      const parentSpan = turn?.turnSpan;
+      const attributes = buildCommonOpenInferenceAttributes({
+        spanKind: "CHAIN",
+        input: input.message,
+        output: input.details,
+        sessionId: input.managerId ?? input.agentId,
+        userId: input.profileId,
+        metadata: {
+          event: "runtime_error",
+          rootTurnId: turn?.rootTurnId,
+          parentRootTurnId: turn?.parentRootTurnId,
+          runtimeToken: input.runtimeToken,
+          runtimeType: input.runtimeType,
+          role: input.role,
+          phase: input.phase,
+          stack: input.stack,
+          details: input.details,
+          correlationStatus: parentSpan ? "resolved" : "unresolved",
+          ...input.metadata,
+        },
+        tags: ["forge", "phoenix", "runtime_error", input.phase],
+        agentName: input.agentName ?? input.agentId,
+        graphNodeId: input.agentId,
+        graphNodeParentId: input.managerId,
+      }, this.redactor);
+      assertOtelPrimitiveAttributes(attributes);
+      const span = this.provider.getTracer("forge-phoenix").startSpan(
+        "forge.runtime.error",
+        { kind: SpanKind.INTERNAL, attributes },
+        parentSpan ? trace.setSpan(ROOT_CONTEXT, parentSpan) : ROOT_CONTEXT,
+      );
+      span.setStatus({ code: SpanStatusCode.ERROR, message: input.phase });
+      span.end();
+      result.started += 1;
+      result.ended += 1;
+      if (turn) {
+        result.ended += this.countOpenSpansForTurn(turn);
+        this.closeActiveTurn(turn, `runtime_error:${input.phase}`);
+        this.activeTurnsByAgentToken.delete(buildAgentTokenKey(turn.agentId, turn.runtimeToken));
+      } else {
+        result.correlationMisses += 1;
+      }
+    } catch {
+      // Observability must never affect runtime error handling.
+    }
+    return result;
+  }
+
+  recordFeedback(event: FeedbackSubmitEvent): FeedbackRecordResult {
+    const result: FeedbackRecordResult = { started: 0, ended: 0, correlationMisses: 0 };
+    try {
+      const capturedComment = this.capture.feedbackComments ? event.comment : undefined;
+      const attributes = buildCommonOpenInferenceAttributes({
+        spanKind: "EVALUATOR",
+        input: capturedComment,
+        output: event.value,
+        sessionId: event.sessionId,
+        userId: event.profileId,
+        metadata: {
+          event: "feedback_annotation",
+          eventId: event.id,
+          scope: event.scope,
+          targetId: event.targetId,
+          value: event.value,
+          clearKind: event.clearKind,
+          reasonCodes: event.reasonCodes,
+          channel: event.channel,
+          actor: event.actor,
+          createdAt: event.createdAt,
+          hasComment: event.comment.trim().length > 0,
+        },
+        tags: ["forge", "phoenix", "feedback", event.scope, event.value],
+        graphNodeId: event.targetId,
+        graphNodeParentId: event.sessionId,
+      }, this.redactor);
+      assertOtelPrimitiveAttributes(attributes);
+      const span = this.provider.getTracer("forge-phoenix").startSpan(
+        "forge.feedback.annotation",
+        { kind: SpanKind.INTERNAL, attributes },
+        ROOT_CONTEXT,
+      );
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
+      result.started += 1;
+      result.ended += 1;
+    } catch {
+      // Observability must never affect feedback submission.
     }
     return result;
   }
@@ -599,6 +727,57 @@ export class PhoenixOtlpExporter {
       // Observability must never affect delivery.
     }
     return result;
+  }
+
+  private recordRuntimeLifecycleEvent(
+    input: ObservabilityRuntimeSessionEventInput,
+    event: Extract<ObservabilityRuntimeSessionEventInput["event"],
+      | { type: "auto_compaction_start" }
+      | { type: "auto_compaction_end" }
+      | { type: "auto_retry_start" }
+      | { type: "auto_retry_end" }
+    >,
+    result: RuntimeSessionEventRecordResult,
+  ): void {
+    const turn = this.getActiveTurn(input.agentId, input.runtimeToken);
+    const isError =
+      (event.type === "auto_compaction_end" && event.aborted) ||
+      (event.type === "auto_retry_end" && !event.success);
+    const attributes = buildCommonOpenInferenceAttributes({
+      spanKind: "CHAIN",
+      input: event,
+      output: event.type.endsWith("_end") ? event : undefined,
+      sessionId: input.managerId ?? input.agentId,
+      userId: input.profileId,
+      metadata: {
+        event: "runtime_lifecycle",
+        lifecycleType: event.type,
+        rootTurnId: turn?.rootTurnId,
+        parentRootTurnId: turn?.parentRootTurnId,
+        runtimeToken: input.runtimeToken,
+        runtimeType: input.runtimeType,
+        role: input.role,
+        correlationStatus: turn ? "resolved" : "unresolved",
+        ...input.metadata,
+      },
+      tags: ["forge", "phoenix", "runtime_lifecycle", event.type],
+      agentName: input.agentName ?? input.agentId,
+      graphNodeId: input.agentId,
+      graphNodeParentId: input.managerId,
+    }, this.redactor);
+    assertOtelPrimitiveAttributes(attributes);
+    const span = this.provider.getTracer("forge-phoenix").startSpan(
+      "forge.runtime.lifecycle",
+      { kind: SpanKind.INTERNAL, attributes },
+      turn ? trace.setSpan(ROOT_CONTEXT, turn.turnSpan) : ROOT_CONTEXT,
+    );
+    span.setStatus(isError ? { code: SpanStatusCode.ERROR, message: event.type } : { code: SpanStatusCode.OK });
+    span.end();
+    result.started += 1;
+    result.ended += 1;
+    if (!turn) {
+      result.correlationMisses += 1;
+    }
   }
 
   private exportChildSideEffectSpan(
@@ -1277,6 +1456,19 @@ export class PhoenixOtlpExporter {
   private closePendingInput(pending: PendingRuntimeInput, reason: string): void {
     pending.rootSpan.setAttribute("forge.correlation_status", reason);
     this.endRetainedRootSpan(pending.rootTurnId, { code: SpanStatusCode.ERROR, message: reason });
+  }
+
+  private countOpenSpansForTurn(turn: ActiveRuntimeTurn): number {
+    let count = 2; // runtime turn + retained root
+    if (turn.llm) {
+      count += 1;
+    }
+    for (const tool of this.activeToolSpansByAgentTokenToolCall.values()) {
+      if (tool.agentId === turn.agentId && tool.runtimeToken === turn.runtimeToken) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   private closeActiveTurn(turn: ActiveRuntimeTurn, reason: string): void {
