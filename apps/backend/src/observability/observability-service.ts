@@ -199,7 +199,7 @@ export class ObservabilityService implements ObservabilityFacade {
   }
 
   beginRuntimeInput(input: ObservabilityRuntimeInputInput): ObservabilityRuntimeInputHandle | undefined {
-    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.settings.capture.modelInputs || !this.exporter) {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
       return undefined;
     }
 

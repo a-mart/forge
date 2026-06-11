@@ -314,6 +314,224 @@ describe('PhoenixOtlpExporter', () => {
     expect(String(llm?.attributes['llm.input_messages'])).toContain('runtime user text with guidance')
   })
 
+  it('omits image bytes by default while preserving image summaries', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 9,
+      rootSource: 'user_input',
+      runtimeInput: { text: 'inspect image', images: [{ data: 'BASE64_SECRET_IMAGE_BYTES', mimeType: 'image/png' }] },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 9,
+      event: { type: 'message_start', message: { role: 'user', content: 'inspect image' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 9,
+      event: { type: 'message_start', message: { role: 'assistant', content: '' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 9,
+      event: {
+        type: 'message_end',
+        message: { role: 'assistant', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'BASE64_SECRET_OUTPUT' } }] },
+        meta: {
+          provider: 'openai-codex',
+          modelId: 'gpt-5.4',
+          requestMessages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'BASE64_SECRET_REQUEST' } }] }],
+        },
+      },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 9,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const serialized = JSON.stringify(spanExporter.batches.flat().map((span) => span.attributes))
+    expect(serialized).not.toContain('BASE64_SECRET')
+    expect(serialized).toContain('image/png data omitted')
+  })
+
+  it('omits runtime input and LLM request messages when model input capture is disabled', async () => {
+    const spanExporter = new MockExporter()
+    const base = createDefaultPhoenixObservabilitySettings()
+    const settings = { ...base, enabled: true, capture: { ...base.capture, modelInputs: false } }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 12,
+      rootSource: 'user_input',
+      originalInput: 'SECRET_VISIBLE_INPUT',
+      runtimeInput: 'SECRET_RUNTIME_INPUT',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 12,
+      event: { type: 'message_start', message: { role: 'user', content: 'SECRET_RUNTIME_INPUT' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 12,
+      event: {
+        type: 'message_end',
+        message: { role: 'assistant', content: 'ok' },
+        meta: { provider: 'openai-codex', modelId: 'gpt-5.4', requestMessages: [{ role: 'user', content: 'SECRET_REQUEST_MESSAGES' }] },
+      },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 12,
+      event: {
+        type: 'turn_end',
+        toolResults: [],
+        meta: { provider: 'openai-codex', modelId: 'gpt-5.4', requestMessages: [{ role: 'user', content: 'SECRET_TURN_REQUEST_MESSAGES' }] },
+      },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const serialized = JSON.stringify(spanExporter.batches.flat().map((span) => span.attributes))
+    expect(serialized).not.toContain('SECRET_VISIBLE_INPUT')
+    expect(serialized).not.toContain('SECRET_RUNTIME_INPUT')
+    expect(serialized).not.toContain('SECRET_REQUEST_MESSAGES')
+    expect(serialized).not.toContain('SECRET_TURN_REQUEST_MESSAGES')
+    const llm = spanExporter.batches.flat().find((entry) => entry.name === 'forge.llm.call')
+    expect(llm?.attributes['llm.input_messages']).toBeUndefined()
+  })
+
+  it('omits assistant output content when model output capture is disabled', async () => {
+    const spanExporter = new MockExporter()
+    const base = createDefaultPhoenixObservabilitySettings()
+    const settings = { ...base, enabled: true, capture: { ...base.capture, modelOutputs: false } }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 10,
+      rootSource: 'user_input',
+      runtimeInput: 'hello',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 10,
+      event: { type: 'message_start', message: { role: 'user', content: 'hello' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 10,
+      event: { type: 'message_end', message: { role: 'assistant', content: 'SECRET_ASSISTANT_OUTPUT' }, meta: { provider: 'openai-codex', modelId: 'gpt-5.4' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 10,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const llm = spanExporter.batches.flat().find((entry) => entry.name === 'forge.llm.call')
+    expect(llm).toBeDefined()
+    expect(llm?.attributes['output.value']).toBeUndefined()
+    expect(JSON.stringify(llm?.attributes)).not.toContain('SECRET_ASSISTANT_OUTPUT')
+  })
+
+  it('merges provider metadata from turn_end into the final LLM span', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'cursor-sdk',
+      runtimeToken: 11,
+      rootSource: 'internal_agent_message',
+      runtimeInput: 'run cursor task',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'cursor-sdk',
+      runtimeToken: 11,
+      event: { type: 'message_start', message: { role: 'user', content: 'run cursor task' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'cursor-sdk',
+      runtimeToken: 11,
+      event: { type: 'message_end', message: { role: 'assistant', content: 'done' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'cursor-sdk',
+      runtimeToken: 11,
+      event: {
+        type: 'turn_end',
+        toolResults: [],
+        meta: {
+          provider: 'cursor-sdk',
+          modelId: 'composer-2.5',
+          providerRequestId: 'run-123',
+          stopReason: 'FINISHED',
+          usage: { input: 20, output: 5, total: 25 },
+          requestPayloadFidelity: 'delta_only',
+        },
+      },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const llm = spanExporter.batches.flat().find((entry) => entry.name === 'forge.llm.call')
+    expect(llm?.attributes['llm.provider']).toBe('cursor-sdk')
+    expect(llm?.attributes['llm.model_name']).toBe('composer-2.5')
+    expect(llm?.attributes['llm.token_count.prompt']).toBe(20)
+    expect(llm?.attributes['llm.token_count.completion']).toBe(5)
+    expect(llm?.attributes['llm.finish_reason']).toBe('FINISHED')
+    expect(llm?.attributes['forge.provider_request_id']).toBeDefined()
+  })
+
   it('evicts pending runtime-input correlations when per-agent caps are exceeded', async () => {
     const spanExporter = new MockExporter()
     const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }

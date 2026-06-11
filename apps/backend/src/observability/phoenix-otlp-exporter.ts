@@ -77,6 +77,8 @@ interface ActiveLlmCall {
   span: Span;
   startedAtMs: number;
   firstUpdateAtMs?: number;
+  output?: unknown;
+  meta?: RuntimeModelCallMeta;
 }
 
 interface RuntimeToolCacheEntry {
@@ -97,6 +99,7 @@ export class PhoenixOtlpExporter {
   private readonly processor: CountingBatchSpanProcessor;
   private readonly endpoint: string;
   private readonly projectName: string;
+  private readonly capture: PhoenixObservabilitySettings["capture"];
   private readonly redactor: ObservabilityRedactor;
   private readonly runtimeToolsByAgentToken = new Map<string, RuntimeToolCacheEntry>();
   private readonly pendingInputsByAgentId = new Map<string, PendingRuntimeInput[]>();
@@ -107,6 +110,7 @@ export class PhoenixOtlpExporter {
     validatePhoenixEndpoint(options.settings.endpoint);
     this.endpoint = options.settings.endpoint;
     this.projectName = sanitizePhoenixProjectName(options.settings.projectName) || DEFAULT_PHOENIX_PROJECT_NAME;
+    this.capture = options.settings.capture;
     this.redactor = new ObservabilityRedactor(options.settings.privacy);
 
     const resource = resourceFromAttributes({ [SEMRESATTRS_PROJECT_NAME]: this.projectName });
@@ -201,9 +205,11 @@ export class PhoenixOtlpExporter {
     this.evictCorrelationState();
     const rootTurnId = input.rootTurnId ?? randomUUID();
     const tracer = this.provider.getTracer("forge-phoenix");
+    const capturedOriginalInput = this.captureInput(input.originalInput);
+    const capturedRuntimeInput = this.captureInput(input.runtimeInput);
     const attributes = buildCommonOpenInferenceAttributes({
       spanKind: input.role === "worker" ? "AGENT" : "CHAIN",
-      input: input.originalInput ?? input.runtimeInput,
+      input: capturedOriginalInput ?? capturedRuntimeInput,
       sessionId: input.managerId ?? input.targetAgentId,
       userId: input.profileId,
       metadata: {
@@ -220,7 +226,7 @@ export class PhoenixOtlpExporter {
         acceptedMode: input.acceptedMode,
         sourceChannel: input.sourceChannel,
         requestPayloadFidelity: input.requestPayloadFidelity ?? "delta_only",
-        runtimeInput: input.runtimeInput,
+        runtimeInput: capturedRuntimeInput,
         correlationStatus: "pending_runtime_start",
       },
       tags: ["forge", "phoenix", "root", input.rootSource],
@@ -317,8 +323,13 @@ export class PhoenixOtlpExporter {
 
       if (event.type === "message_start" && event.message.role === "assistant") {
         const turn = this.ensureActiveTurn(input, result);
-        if (!turn || turn.llm) {
+        if (!turn) {
           return result;
+        }
+        if (turn.llm) {
+          this.endLlmCall(turn.llm, turn, input);
+          turn.llm = undefined;
+          result.ended += 1;
         }
         turn.llm = this.startLlmCall(input, turn);
         result.started += 1;
@@ -344,9 +355,8 @@ export class PhoenixOtlpExporter {
           turn.llm = llm;
           result.started += 1;
         }
-        this.endLlmCall(llm, turn, input, event.message.content, event.meta);
-        turn.llm = undefined;
-        result.ended += 1;
+        llm.output = event.message.content;
+        llm.meta = mergeRuntimeModelCallMeta(llm.meta, event.meta);
         return result;
       }
 
@@ -357,7 +367,8 @@ export class PhoenixOtlpExporter {
           return result;
         }
         if (turn.llm) {
-          this.endLlmCall(turn.llm, turn, input, undefined, event.meta);
+          turn.llm.meta = mergeRuntimeModelCallMeta(turn.llm.meta, event.meta);
+          this.endLlmCall(turn.llm, turn, input);
           turn.llm = undefined;
           result.ended += 1;
         }
@@ -419,7 +430,7 @@ export class PhoenixOtlpExporter {
     const parentContext = trace.setSpan(ROOT_CONTEXT, pending.rootSpan);
     const attributes = buildCommonOpenInferenceAttributes({
       spanKind: input.role === "worker" ? "AGENT" : "CHAIN",
-      input: pending.runtimeInput,
+      input: this.captureInput(pending.runtimeInput),
       sessionId: input.managerId ?? input.agentId,
       userId: input.profileId,
       metadata: {
@@ -470,7 +481,7 @@ export class PhoenixOtlpExporter {
     const parentContext = trace.setSpan(ROOT_CONTEXT, turn.turnSpan);
     const attributes = buildCommonOpenInferenceAttributes({
       spanKind: "LLM",
-      input: turn.runtimeInput,
+      input: this.captureInput(turn.runtimeInput),
       sessionId: input.managerId ?? input.agentId,
       userId: input.profileId,
       metadata: {
@@ -503,9 +514,8 @@ export class PhoenixOtlpExporter {
     llm: ActiveLlmCall,
     turn: ActiveRuntimeTurn,
     input: ObservabilityRuntimeSessionEventInput,
-    output: unknown,
-    meta: RuntimeModelCallMeta | undefined,
   ): void {
+    const meta = llm.meta;
     const attrs: OtelAttributes = {
       ...buildModelCallAttributes({
         modelId: meta?.responseModelId ?? meta?.modelId,
@@ -516,13 +526,17 @@ export class PhoenixOtlpExporter {
         costUsd: meta?.costUsd,
       }, this.redactor),
     };
-    attrs[SemanticConventions.OUTPUT_VALUE] = this.redactor.sanitizeAttributeValue(output ?? "");
-    attrs[SemanticConventions.OUTPUT_MIME_TYPE] = "application/json";
+    const capturedOutput = this.captureOutput(llm.output ?? "");
+    if (capturedOutput !== undefined) {
+      attrs[SemanticConventions.OUTPUT_VALUE] = this.redactor.sanitizeAttributeValue(capturedOutput);
+      attrs[SemanticConventions.OUTPUT_MIME_TYPE] = "application/json";
+    }
     attrs["forge.duration_ms"] = meta?.durationMs ?? (Date.now() - llm.startedAtMs);
     if (meta?.providerRequestId) attrs["forge.provider_request_id"] = this.redactor.redactIdentifier(meta.providerRequestId);
     if (meta?.api) attrs["forge.provider_api"] = this.redactor.sanitizeLabel(meta.api);
     if (meta?.requestPayloadFidelity) attrs["forge.request_payload_fidelity"] = meta.requestPayloadFidelity;
-    if (meta?.requestMessages !== undefined) attrs[SemanticConventions.LLM_INPUT_MESSAGES] = this.redactor.sanitizeAttributeValue(meta.requestMessages);
+    const capturedRequestMessages = this.captureInput(meta?.requestMessages);
+    if (capturedRequestMessages !== undefined) attrs[SemanticConventions.LLM_INPUT_MESSAGES] = this.redactor.sanitizeAttributeValue(capturedRequestMessages);
     if (meta?.metadata) attrs["metadata"] = this.redactor.sanitizeAttributeValue({ rootTurnId: turn.rootTurnId, ...input.metadata, ...meta.metadata });
     assertOtelPrimitiveAttributes(attrs);
     for (const [key, value] of Object.entries(attrs)) llm.span.setAttribute(key, value);
@@ -537,7 +551,7 @@ export class PhoenixOtlpExporter {
       rootTurnId: turn.rootTurnId,
       parentRootTurnId: turn.parentRootTurnId,
       toolResultCount: toolResults.length,
-      ...(meta && typeof meta === "object" ? { turnMeta: meta } : {}),
+      ...(meta && typeof meta === "object" ? { turnMeta: this.captureModelCallMetaForMetadata(meta) } : {}),
     }));
     turn.turnSpan.setStatus({ code: SpanStatusCode.OK });
     turn.turnSpan.end();
@@ -779,6 +793,32 @@ export class PhoenixOtlpExporter {
     this.pendingInputsByAgentId.clear();
   }
 
+  private captureInput(value: unknown): unknown {
+    if (!this.capture.modelInputs) {
+      return undefined;
+    }
+    return this.capture.imageData ? value : stripRuntimeImageData(value);
+  }
+
+  private captureOutput(value: unknown): unknown {
+    if (!this.capture.modelOutputs) {
+      return undefined;
+    }
+    return this.capture.imageData ? value : stripRuntimeImageData(value);
+  }
+
+  private captureModelCallMetaForMetadata(meta: unknown): unknown {
+    if (!meta || typeof meta !== "object") {
+      return meta;
+    }
+    const record = { ...(meta as Record<string, unknown>) };
+    if (!this.capture.modelInputs) {
+      delete record.requestMessages;
+      delete record.request_messages;
+    }
+    return this.capture.imageData ? record : stripRuntimeImageData(record);
+  }
+
   private exportOneShotSpan(name: string, attributes: OtelAttributes): void {
     try {
       assertOtelPrimitiveAttributes(attributes);
@@ -817,6 +857,89 @@ export class PhoenixOtlpExporter {
       correlationEvictions: this.correlationEvictions,
     };
   }
+}
+
+function mergeRuntimeModelCallMeta(
+  current: RuntimeModelCallMeta | undefined,
+  next: RuntimeModelCallMeta | undefined,
+): RuntimeModelCallMeta | undefined {
+  if (!current) return next;
+  if (!next) return current;
+  return {
+    ...current,
+    ...next,
+    provider: next.provider ?? current.provider,
+    api: next.api ?? current.api,
+    modelId: next.modelId ?? current.modelId,
+    responseModelId: next.responseModelId ?? current.responseModelId,
+    providerRequestId: next.providerRequestId ?? current.providerRequestId,
+    stopReason: next.stopReason ?? current.stopReason,
+    durationMs: next.durationMs ?? current.durationMs,
+    usage: next.usage ?? current.usage,
+    costUsd: next.costUsd ?? current.costUsd,
+    requestPayloadFidelity: next.requestPayloadFidelity ?? current.requestPayloadFidelity,
+    requestMessages: next.requestMessages ?? current.requestMessages,
+    invocationParameters: next.invocationParameters ?? current.invocationParameters,
+    metadata: current.metadata || next.metadata ? { ...current.metadata, ...next.metadata } : undefined,
+  };
+}
+
+function stripRuntimeImageData(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripRuntimeImageData(entry));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (key === "images" && Array.isArray(entry)) {
+      output[key] = entry.map((image) => summarizeImagePayload(image));
+      continue;
+    }
+    if (key === "data" && typeof entry === "string" && looksLikeImagePayloadContainer(record)) {
+      output[key] = summarizeImageData(record, entry);
+      continue;
+    }
+    if (key === "source" && entry && typeof entry === "object" && looksLikeImagePayloadContainer(entry as Record<string, unknown>)) {
+      output[key] = summarizeImagePayload(entry);
+      continue;
+    }
+    output[key] = stripRuntimeImageData(entry);
+  }
+  return output;
+}
+
+function summarizeImagePayload(value: unknown): unknown {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (key === "data" && typeof entry === "string") {
+      output[key] = summarizeImageData(record, entry);
+    } else {
+      output[key] = stripRuntimeImageData(entry);
+    }
+  }
+  return output;
+}
+
+function looksLikeImagePayloadContainer(record: Record<string, unknown>): boolean {
+  const mimeType = record.mimeType ?? record.mediaType ?? record.media_type;
+  return typeof mimeType === "string" && mimeType.toLowerCase().startsWith("image/")
+    || record.type === "base64"
+    || record.type === "image"
+    || record.type === "input_image";
+}
+
+function summarizeImageData(record: Record<string, unknown>, data: string): string {
+  const mimeType = record.mimeType ?? record.mediaType ?? record.media_type;
+  const label = typeof mimeType === "string" ? mimeType : "image";
+  return `[${label} data omitted; ${data.length} chars]`;
 }
 
 function buildAgentTokenKey(agentId: string, runtimeToken?: number): string {
