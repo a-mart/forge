@@ -8,6 +8,7 @@ import {
   type FeedbackSubmitEvent,
   type FeedbackSubmitValue
 } from "@forge/protocol";
+import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { getProfilesDir, getSessionFeedbackPath, getSessionsDir } from "./data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
 
@@ -22,7 +23,11 @@ export interface FeedbackAcrossSessionsOptions extends FeedbackListOptions {
 }
 
 export class FeedbackService {
-  constructor(private readonly dataDir: string) {}
+  private readonly observability: ObservabilityFacade | undefined;
+
+  constructor(private readonly dataDir: string, options?: { observability?: ObservabilityFacade }) {
+    this.observability = options?.observability;
+  }
 
   async submitFeedback(
     event: Omit<FeedbackSubmitEvent, "id" | "createdAt">
@@ -43,6 +48,12 @@ export class FeedbackService {
     await writeFeedbackEventsFile(feedbackPath, nextEvents);
 
     await this.updateSessionFeedbackMeta(submitted.profileId, submitted.sessionId, submitted.createdAt);
+
+    try {
+      this.observability?.recordFeedback(submitted);
+    } catch {
+      // Observability must never make feedback persistence fail.
+    }
 
     return submitted;
   }

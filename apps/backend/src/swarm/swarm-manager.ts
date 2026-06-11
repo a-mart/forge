@@ -44,6 +44,7 @@ import {
   COLLABORATION_PROFILE_ID,
 } from "../collaboration/constants.js";
 
+import type { ObservabilityFacade } from "../observability/observability-types.js";
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import {
   FileBackedPromptRegistry,
@@ -1210,6 +1211,7 @@ interface DescriptorStoreAdapter {
 type SwarmManagerOptions = {
   now?: () => string;
   versioningService?: VersioningMutationSink;
+  observability?: ObservabilityFacade;
   codexAppServerService?: CodexAppServerService;
   codexAppServerServiceOptions?: CodexAppServerServiceOptions;
   /** Stop-only seam for preserved sidecars; defaults to CodexAppServerService.interruptTurn(). */
@@ -1297,6 +1299,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     restoreProfileTerminals: (profileId: string) => Promise<unknown>;
   } | undefined;
   private readonly versioningService: VersioningMutationSink | undefined;
+  private readonly observability: ObservabilityFacade | undefined;
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
   private workPlansEnabled = false;
 
@@ -1311,6 +1314,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     this.now = options?.now ?? nowIso;
     this.versioningService = options?.versioningService;
+    this.observability = options?.observability;
     const resourcesDir = this.config.paths.resourcesDir ?? this.config.paths.rootDir;
     this.promptRegistry = new FileBackedPromptRegistry({
       dataDir: this.config.paths.dataDir,
@@ -6260,6 +6264,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   getConfig(): SwarmConfig {
     return this.config;
+  }
+
+  getObservabilityService(): ObservabilityFacade | undefined {
+    return this.observability;
   }
 
   getVersioningService(): VersioningMutationSink | undefined {

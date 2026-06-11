@@ -46,6 +46,9 @@ import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
+import { ObservabilityService } from "../observability/observability-service.js";
+import type { ObservabilityFacade } from "../observability/observability-types.js";
+import { FeedbackService } from "../swarm/feedback-service.js";
 
 import {
   authenticateCliWebSocketRequest,
@@ -74,6 +77,7 @@ import { createMobileRoutes } from "./http/routes/mobile-routes.js";
 import { createModelConfigRoutes } from "./http/routes/model-config-routes.js";
 import { createOpenRouterRoutes } from "./http/routes/openrouter-routes.js";
 import { createProjectResourceRoutes } from "./http/routes/project-resource-routes.js";
+import { createPhoenixObservabilityRoutes } from "./http/routes/phoenix-observability-routes.js";
 import { createPromptRoutes } from "./http/routes/prompt-routes.js";
 import { createSchedulerRoutes } from "./http/routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/settings-routes.js";
@@ -125,6 +129,8 @@ export class SwarmWebSocketServer {
   private readonly statsService: StatsService;
   private readonly tokenAnalyticsService: TokenAnalyticsService;
   private readonly telemetryService: TelemetryService | null;
+  private readonly observabilityService: ObservabilityFacade;
+  private readonly feedbackService: FeedbackService;
   private readonly collaborationSettingsService: CollaborationSettingsService | null;
   private readonly collaborationReadinessService: CollaborationReadinessRequestService | null;
   private readonly httpRoutes: HttpRoute[];
@@ -362,6 +368,8 @@ export class SwarmWebSocketServer {
     collaborationReadinessService?: CollaborationReadinessRequestService;
     cliAccessService?: CliAccessService;
     notificationSettingsService?: NotificationSettingsService;
+    observabilityService?: ObservabilityFacade;
+    feedbackService?: FeedbackService;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -391,6 +399,15 @@ export class SwarmWebSocketServer {
             runtimeConfig: this.terminalRuntimeConfig,
           })
         : null;
+    this.observabilityService =
+      options.observabilityService ??
+      new ObservabilityService({
+        dataDir: this.swarmManager.getConfig().paths.dataDir,
+        runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+      });
+    this.feedbackService =
+      options.feedbackService ??
+      new FeedbackService(this.swarmManager.getConfig().paths.dataDir, { observability: this.observabilityService });
     this.unreadTracker =
       options.unreadTracker ??
       new UnreadTracker({
@@ -435,6 +452,7 @@ export class SwarmWebSocketServer {
       unreadTracker: this.unreadTracker,
       perf: this.swarmManager.getSidebarPerfRecorder(),
       collaborationReadinessService: options.collaborationReadinessService ?? undefined,
+      feedbackService: this.feedbackService,
     });
     this.cliWsHandler = new CliWsHandler(this.swarmManager);
     wsHandlerRef = this.wsHandler;
@@ -489,7 +507,13 @@ export class SwarmWebSocketServer {
       }),
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
-      ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
+      ...createFeedbackRoutes({ swarmManager: this.swarmManager, feedbackService: this.feedbackService }),
+      ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
+        ? createPhoenixObservabilityRoutes({
+            observabilityService: this.observabilityService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+          })
+        : []),
       ...createCortexRoutes({ swarmManager: this.swarmManager, cortexEnabled }),
       ...createCortexAutoReviewRoutes({
         settingsService: this.cortexAutoReviewSettingsService,
