@@ -354,6 +354,8 @@ function createMockPiSession() {
   return {
     bindExtensions: vi.fn(async () => undefined),
     getActiveToolNames: vi.fn(() => []),
+    getAllTools: vi.fn(() => []),
+    getToolDefinition: vi.fn(() => undefined),
     setActiveToolsByName: vi.fn(),
     subscribe: vi.fn(() => () => undefined),
     prompt: vi.fn(async () => undefined),
@@ -624,6 +626,15 @@ describe("RuntimeFactory", () => {
     setupPiModel();
     const piSession = createMockPiSession();
     piSession.systemPrompt = "final pi system prompt";
+    piSession.getActiveToolNames.mockReturnValue(["extension_search", "send_message_to_agent"]);
+    piSession.getAllTools.mockReturnValue([
+      {
+        name: "extension_search",
+        description: "Search from extension",
+        parameters: { type: "object", properties: { q: { type: "string" } } },
+        source: "project-local",
+      },
+    ]);
     piCodingAgentMockState.createAgentSession.mockResolvedValue({
       session: piSession,
       extensionsResult: { extensions: [], errors: [] },
@@ -658,7 +669,15 @@ describe("RuntimeFactory", () => {
       runtimeToken: 42,
       status: "ready",
       finalSystemPrompt: "final pi system prompt",
-      activeTools: expect.arrayContaining([expect.objectContaining({ name: "send_message_to_agent" })]),
+      activeTools: expect.arrayContaining([
+        expect.objectContaining({ name: "send_message_to_agent" }),
+        expect.objectContaining({
+          name: "extension_search",
+          description: "Search from extension",
+          jsonSchema: { type: "object", properties: { q: { type: "string" } } },
+          source: "project-local",
+        }),
+      ]),
     }));
   });
 

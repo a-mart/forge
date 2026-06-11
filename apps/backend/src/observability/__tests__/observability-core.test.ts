@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CountingBatchSpanProcessor } from '../counting-batch-span-processor.js'
 import { ObservabilityRedactor } from '../observability-redaction.js'
 import { createDefaultPhoenixObservabilitySettings } from '../observability-settings.js'
+import { PhoenixOtlpExporter } from '../phoenix-otlp-exporter.js'
 import {
   assertOtelPrimitiveAttributes,
   buildCommonOpenInferenceAttributes,
@@ -111,6 +112,142 @@ describe('ObservabilityRedactor', () => {
     expect(redactor.redactPath('c:\\users\\adam\\.forge\\auth.json')).toBe('~\\.forge\\auth.json')
     expect(redactor.redactPath('C:/USERS/ADAM/.forge/auth.json')).toBe('~/.forge/auth.json')
     expect(redactor.redactPath('C:\\Users\\Adam\\.forge\\auth.json')).toBe('~\\.forge\\auth.json')
+  })
+
+  it('sanitizes path-bearing metadata centrally according to pathMode', () => {
+    const settings = createDefaultPhoenixObservabilitySettings()
+    const redactor = new ObservabilityRedactor(settings.privacy)
+    const value = redactor.sanitizeAttributeValue({
+      cwd: '/Users/adam/repos/middleman-phoenix-observability',
+      memoryFile: '/Users/adam/.forge/profiles/profile-1/memory.md',
+      stateRoot: 'C:\\Users\\Adam\\.forge\\cursor-state',
+      ordinary: 'not-a-path-value',
+    })
+
+    expect(value).not.toContain('/Users/adam')
+    expect(value).not.toContain('C:\\Users\\Adam')
+    expect(value).toContain('middleman-phoenix-observability#')
+    expect(value).toContain('memory.md#')
+    expect(value).toContain('cursor-state#')
+    expect(value).toContain('not-a-path-value')
+    expect(redactor.getStats().redactionMatches).toBeGreaterThanOrEqual(3)
+  })
+
+  it('fully redacts path-bearing metadata when pathMode is redacted', () => {
+    const settings = createDefaultPhoenixObservabilitySettings()
+    const redactor = new ObservabilityRedactor({ ...settings.privacy, pathMode: 'redacted' })
+    const value = redactor.sanitizeAttributeValue({
+      cwd: '/Users/adam/repos/middleman-phoenix-observability',
+      memoryFile: '/Users/adam/.forge/profiles/profile-1/memory.md',
+      stateRoot: 'C:\\Users\\Adam\\.forge\\cursor-state',
+    })
+
+    expect(value).not.toContain('/Users/adam')
+    expect(value).not.toContain('C:\\Users\\Adam')
+    expect(value.match(/\[REDACTED_PATH\]/g)).toHaveLength(3)
+  })
+})
+
+describe('PhoenixOtlpExporter', () => {
+  it('does not export raw runtime-created path metadata under default path mode', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordPromptResolved({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'worker',
+      runtimeType: 'cursor-sdk',
+      runtimeToken: 7,
+      source: 'runtime_final',
+      prompt: 'runtime prompt',
+      cwd: '/Users/adam/repos/middleman-phoenix-observability',
+      metadata: { memoryFile: '/Users/adam/.forge/profiles/profile-1/memory.md' },
+    })
+    exporter.recordRuntimeCreated({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'worker',
+      runtimeType: 'cursor-sdk',
+      runtimeToken: 7,
+      status: 'ready',
+      cwd: '/Users/adam/repos/middleman-phoenix-observability',
+      modelProvider: 'cursor-sdk',
+      modelId: 'composer-2.5',
+      finalSystemPrompt: 'runtime prompt',
+      metadata: {
+        memoryFile: '/Users/adam/.forge/profiles/profile-1/memory.md',
+        stateRoot: 'C:\\Users\\Adam\\.forge\\cursor-state',
+      },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const span = spanExporter.batches.flat().find((entry) => entry.name === 'forge.runtime.create')
+    expect(span).toBeDefined()
+    const metadata = String(span?.attributes.metadata)
+    expect(metadata).not.toContain('/Users/adam')
+    expect(metadata).not.toContain('C:\\Users\\Adam')
+    expect(metadata).toContain('middleman-phoenix-observability#')
+    expect(metadata).toContain('memory.md#')
+    expect(metadata).toContain('cursor-state#')
+    const promptSpan = spanExporter.batches.flat().find((entry) => entry.name === 'forge.prompt.resolve')
+    const promptMetadata = String(promptSpan?.attributes.metadata)
+    expect(promptMetadata).not.toContain('/Users/adam')
+    expect(promptMetadata).toContain('middleman-phoenix-observability#')
+    expect(promptMetadata).toContain('memory.md#')
+  })
+
+  it('fully redacts runtime-created path metadata when pathMode is redacted', async () => {
+    const spanExporter = new MockExporter()
+    const settings = {
+      ...createDefaultPhoenixObservabilitySettings(),
+      enabled: true,
+      privacy: { ...createDefaultPhoenixObservabilitySettings().privacy, pathMode: 'redacted' as const },
+    }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordPromptResolved({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'worker',
+      runtimeType: 'cursor-sdk',
+      runtimeToken: 7,
+      source: 'runtime_final',
+      prompt: 'runtime prompt',
+      cwd: '/Users/adam/repos/middleman-phoenix-observability',
+      metadata: { memoryFile: '/Users/adam/.forge/profiles/profile-1/memory.md' },
+    })
+    exporter.recordRuntimeCreated({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'worker',
+      runtimeType: 'cursor-sdk',
+      runtimeToken: 7,
+      status: 'ready',
+      cwd: '/Users/adam/repos/middleman-phoenix-observability',
+      metadata: {
+        memoryFile: '/Users/adam/.forge/profiles/profile-1/memory.md',
+        stateRoot: 'C:\\Users\\Adam\\.forge\\cursor-state',
+      },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const span = spanExporter.batches.flat().find((entry) => entry.name === 'forge.runtime.create')
+    const metadata = String(span?.attributes.metadata)
+    expect(metadata).not.toContain('/Users/adam')
+    expect(metadata).not.toContain('C:\\Users\\Adam')
+    expect(metadata.match(/\[REDACTED_PATH\]/g)).toHaveLength(3)
+    const promptSpan = spanExporter.batches.flat().find((entry) => entry.name === 'forge.prompt.resolve')
+    const promptMetadata = String(promptSpan?.attributes.metadata)
+    expect(promptMetadata).not.toContain('/Users/adam')
+    expect(promptMetadata.match(/\[REDACTED_PATH\]/g)).toHaveLength(2)
   })
 })
 

@@ -128,13 +128,27 @@ export class ObservabilityRedactor {
     return this.redactAndCap(value, this.privacy.maxAttributeChars).value;
   }
 
-  private redactSensitiveObjectFields(value: unknown, depth = 0, stats: { redactionMatches: number } = { redactionMatches: 0 }): unknown {
-    if (!this.privacy.redactionEnabled || depth > 20) {
+  private redactSensitiveObjectFields(
+    value: unknown,
+    depth = 0,
+    stats: { redactionMatches: number } = { redactionMatches: 0 },
+    keyHint?: string,
+  ): unknown {
+    if (depth > 20) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      if (keyHint && isPathFieldName(keyHint) && looksLikePath(value)) {
+        stats.redactionMatches += 1;
+        return this.redactPath(value);
+      }
+
       return value;
     }
 
     if (Array.isArray(value)) {
-      return value.map((entry) => this.redactSensitiveObjectFields(entry, depth + 1, stats));
+      return value.map((entry) => this.redactSensitiveObjectFields(entry, depth + 1, stats, keyHint));
     }
 
     if (!value || typeof value !== "object") {
@@ -143,13 +157,13 @@ export class ObservabilityRedactor {
 
     const result: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      if (SECRET_FIELD_NAMES.has(normalizeFieldName(key))) {
+      if (this.privacy.redactionEnabled && SECRET_FIELD_NAMES.has(normalizeFieldName(key))) {
         stats.redactionMatches += 1;
         result[key] = "[REDACTED]";
         continue;
       }
 
-      result[key] = this.redactSensitiveObjectFields(entry, depth + 1, stats);
+      result[key] = this.redactSensitiveObjectFields(entry, depth + 1, stats, key);
     }
 
     return result;
@@ -201,6 +215,31 @@ function capString(value: string, maxChars: number): { value: string; truncated:
 
 function normalizeFieldName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+}
+
+function isPathFieldName(value: string): boolean {
+  const normalized = normalizeFieldName(value);
+  return normalized === "cwd" ||
+    normalized.endsWith("path") ||
+    normalized.endsWith("paths") ||
+    normalized.endsWith("file") ||
+    normalized.endsWith("files") ||
+    normalized.endsWith("dir") ||
+    normalized.endsWith("dirs") ||
+    normalized.endsWith("directory") ||
+    normalized.endsWith("directories") ||
+    normalized.endsWith("root") ||
+    normalized.endsWith("roots");
+}
+
+function looksLikePath(value: string): boolean {
+  return value.startsWith("~") ||
+    value.startsWith("/") ||
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    value.includes("/") ||
+    value.includes("\\");
 }
 
 function redactHomePath(value: string): string {
