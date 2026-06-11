@@ -484,6 +484,35 @@ describe('PhoenixOtlpExporter', () => {
       source: 'internal',
       metadata: { parentRootSemantics: 'top_level_root_turn' },
     })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'pi',
+      runtimeToken: 52,
+      event: { type: 'message_start', message: { role: 'user', content: 'worker task' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 51,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    exporter.recordAgentDelivery({
+      fromAgentId: 'worker-1',
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      rootTurnId: 'worker-report-root',
+      parentRootTurnId: managerRoot.rootTurnId,
+      message: 'worker report after manager turn ended',
+      runtimeInput: 'worker report runtime input',
+      requestedDelivery: 'auto',
+      acceptedMode: 'prompt',
+      deliveryId: 'delivery-worker-report',
+      source: 'internal',
+      metadata: { parentRootSemantics: 'top_level_root_turn', report: true },
+    })
     const projectRoot = exporter.beginRuntimeInput({
       targetAgentId: 'project-agent-1',
       managerId: 'project-agent-1',
@@ -492,7 +521,7 @@ describe('PhoenixOtlpExporter', () => {
       rootSource: 'project_agent',
       rootTurnId: 'project-agent-child-root',
       parentRootTurnId: managerRoot.rootTurnId,
-      runtimeInput: 'project runtime message',
+      runtimeInput: 'project runtime message after parent turn ended',
     })
     exporter.recordAgentDelivery({
       fromAgentId: 'manager-1',
@@ -500,11 +529,11 @@ describe('PhoenixOtlpExporter', () => {
       managerId: 'project-agent-1',
       rootTurnId: projectRoot.rootTurnId,
       parentRootTurnId: managerRoot.rootTurnId,
-      message: 'project visible message',
-      runtimeInput: 'project runtime message',
+      message: 'project visible message after parent turn ended',
+      runtimeInput: 'project runtime message after parent turn ended',
       requestedDelivery: 'auto',
       acceptedMode: 'prompt',
-      deliveryId: 'delivery-project',
+      deliveryId: 'delivery-project-after-end',
       source: 'project_agent',
       metadata: { projectAgentExternal: false, parentRootSemantics: 'top_level_root_turn' },
     })
@@ -518,29 +547,25 @@ describe('PhoenixOtlpExporter', () => {
     })
     exporter.cancelRuntimeInput(workerRoot, 'test_done')
     exporter.cancelRuntimeInput(projectRoot, 'test_done')
-    exporter.recordRuntimeSessionEvent({
-      agentId: 'manager-1',
-      managerId: 'manager-1',
-      runtimeType: 'pi',
-      runtimeToken: 51,
-      event: { type: 'turn_end', toolResults: [] },
-    })
     await exporter.forceFlush()
     await exporter.shutdown()
 
     const spans = spanExporter.batches.flat()
     const managerRootSpan = spans.find((entry) => entry.name === 'forge.session.turn' && String(entry.attributes['input.value']).includes('top-level user request'))
     const deliverySpans = spans.filter((entry) => entry.name === 'forge.agent.delivery')
-    expect(deliverySpans).toHaveLength(3)
+    expect(deliverySpans).toHaveLength(4)
     const resolved = deliverySpans.filter((entry) => String(entry.attributes.metadata).includes('top_level_root_turn'))
-    expect(resolved).toHaveLength(2)
+    expect(resolved).toHaveLength(3)
     expect(resolved.every((entry) => entry.parentSpanContext?.spanId === managerRootSpan?.spanContext().spanId)).toBe(true)
+    expect(resolved.some((entry) => String(entry.attributes.metadata).includes('resolved_retained_root'))).toBe(true)
+    expect(resolved.some((entry) => String(entry.attributes.metadata).includes('delivery-worker-report'))).toBe(true)
+    expect(resolved.some((entry) => String(entry.attributes.metadata).includes('delivery-project-after-end'))).toBe(true)
     const unresolved = deliverySpans.find((entry) => String(entry.attributes.metadata).includes('unresolved'))
     expect(unresolved?.parentSpanContext).toBeUndefined()
     expect(String(unresolved?.attributes.metadata)).toContain('delivery-orphan')
   })
 
-  it('exports agent delivery child spans from send-message side effects', async () => {
+  it('exports one send-message delivery span parented under the active tool correlation context', async () => {
     const spanExporter = new MockExporter()
     const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
     const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
@@ -579,6 +604,19 @@ describe('PhoenixOtlpExporter', () => {
       output: { targetAgentId: 'worker-1', deliveryId: 'delivery-1', acceptedMode: 'prompt' },
       metadata: { targetAgentId: 'worker-1', deliveryId: 'delivery-1', acceptedMode: 'prompt' },
     })
+    exporter.recordAgentDelivery({
+      fromAgentId: 'manager-1',
+      targetAgentId: 'worker-1',
+      managerId: 'manager-1',
+      rootTurnId: 'worker-delivery-root',
+      message: 'do work',
+      runtimeInput: 'do work',
+      requestedDelivery: 'auto',
+      acceptedMode: 'prompt',
+      deliveryId: 'delivery-1',
+      source: 'internal',
+      parentTool: { agentId: 'manager-1', runtimeToken: 41, toolCallId: 'deliver-1', toolName: 'send_message_to_agent' },
+    })
     exporter.recordRuntimeSessionEvent({
       agentId: 'manager-1',
       managerId: 'manager-1',
@@ -598,10 +636,13 @@ describe('PhoenixOtlpExporter', () => {
 
     const spans = spanExporter.batches.flat()
     const tool = spans.find((entry) => entry.name === 'forge.tool.send_message_to_agent')
-    const delivery = spans.find((entry) => entry.name === 'forge.agent.delivery')
+    const deliveries = spans.filter((entry) => entry.name === 'forge.agent.delivery')
+    expect(deliveries).toHaveLength(1)
+    const delivery = deliveries[0]
     expect(delivery?.parentSpanContext?.spanId).toBe(tool?.spanContext().spanId)
     expect(String(delivery?.attributes.metadata)).toContain('agent_delivery')
     expect(String(delivery?.attributes.metadata)).toContain('acceptedMode')
+    expect(String(delivery?.attributes.metadata)).toContain('resolved_tool')
   })
 
   it('honors tool input/result capture toggles', async () => {

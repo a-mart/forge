@@ -1645,7 +1645,14 @@ describe("RuntimeFactory", () => {
         sessionCwd: managerCwd,
         agentCwd: workerCwd,
       }),
-      undefined
+      undefined,
+      {
+        observabilityParentTool: {
+          agentId: "worker-1",
+          toolCallId: "tool-context",
+          toolName: "send_message_to_agent",
+        },
+      }
     );
   });
 

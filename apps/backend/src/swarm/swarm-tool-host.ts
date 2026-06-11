@@ -39,7 +39,15 @@ export interface SwarmToolHost {
     fromAgentId: string,
     targetAgentId: string,
     message: string,
-    delivery?: RequestedDeliveryMode
+    delivery?: RequestedDeliveryMode,
+    options?: {
+      observabilityParentTool?: {
+        agentId: string;
+        runtimeToken?: number;
+        toolCallId: string;
+        toolName?: string;
+      };
+    }
   ): Promise<SendMessageReceipt>;
   createSessionFromAgent(
     creatorAgentId: string,

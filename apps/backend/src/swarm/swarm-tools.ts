@@ -309,7 +309,14 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           descriptor.agentId,
           parsed.targetAgentId,
           parsed.message,
-          parsed.delivery
+          parsed.delivery,
+          {
+            observabilityParentTool: {
+              agentId: descriptor.agentId,
+              toolCallId: _toolCallId,
+              toolName: "send_message_to_agent",
+            },
+          }
         );
         recordToolSideEffect(host, descriptor, {
           toolName: "send_message_to_agent",

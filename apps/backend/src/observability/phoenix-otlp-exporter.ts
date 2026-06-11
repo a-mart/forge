@@ -75,6 +75,16 @@ interface PendingRuntimeInput extends ObservabilityRuntimeInputInput {
   createdAtMs: number;
 }
 
+interface RetainedRootSpan {
+  rootTurnId: string;
+  rootSpan: Span;
+  createdAtMs: number;
+  lastReferencedAtMs: number;
+  ended: boolean;
+  evicted?: boolean;
+  evictionReason?: string;
+}
+
 interface ActiveRuntimeTurn {
   rootTurnId: string;
   parentRootTurnId?: string;
@@ -117,10 +127,14 @@ interface RuntimeToolCacheEntry {
 
 const PENDING_RUNTIME_INPUT_TTL_MS = 5 * 60 * 1000;
 const ACTIVE_RUNTIME_TURN_TTL_MS = 30 * 60 * 1000;
+const RETAINED_ROOT_SPAN_TTL_MS = 30 * 60 * 1000;
+const EVICTED_ROOT_TTL_MS = 10 * 60 * 1000;
 const RUNTIME_TOOL_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_PENDING_INPUTS_PER_AGENT = 16;
 const MAX_PENDING_INPUT_AGENTS = 128;
 const MAX_ACTIVE_TURNS = 256;
+const MAX_RETAINED_ROOT_SPANS = 4096;
+const MAX_EVICTED_ROOT_IDS = 512;
 const MAX_ACTIVE_TOOL_SPANS = 1024;
 const MAX_RUNTIME_TOOL_CACHE_ENTRIES = 512;
 
@@ -134,6 +148,8 @@ export class PhoenixOtlpExporter {
   private readonly runtimeToolsByAgentToken = new Map<string, RuntimeToolCacheEntry>();
   private readonly pendingInputsByAgentId = new Map<string, PendingRuntimeInput[]>();
   private readonly activeTurnsByAgentToken = new Map<string, ActiveRuntimeTurn>();
+  private readonly retainedRootSpansByRootTurnId = new Map<string, RetainedRootSpan>();
+  private readonly evictedRootIdsByRootTurnId = new Map<string, { reason: string; evictedAtMs: number }>();
   private readonly activeToolSpansByAgentTokenToolCall = new Map<string, ActiveToolCall>();
   private readonly toolEnrichmentSeenByAgentTokenToolPhase = new Set<string>();
   private correlationEvictions = 0;
@@ -268,6 +284,13 @@ export class PhoenixOtlpExporter {
     }, this.redactor);
     assertOtelPrimitiveAttributes(attributes);
     const rootSpan = tracer.startSpan("forge.session.turn", { kind: SpanKind.INTERNAL, attributes }, ROOT_CONTEXT);
+    this.retainedRootSpansByRootTurnId.set(rootTurnId, {
+      rootTurnId,
+      rootSpan,
+      createdAtMs: Date.now(),
+      lastReferencedAtMs: Date.now(),
+      ended: false,
+    });
 
     const pending: PendingRuntimeInput = {
       ...input,
@@ -495,11 +518,6 @@ export class PhoenixOtlpExporter {
       if (input.isError === true) {
         tool.span.setAttribute("forge.side_effect_error", true);
       }
-      if (input.toolName === "send_message_to_agent" || input.metadata?.targetAgentId !== undefined) {
-        this.exportChildSideEffectSpan("forge.agent.delivery", tool, input, "agent_delivery");
-        result.started += 1;
-        result.ended += 1;
-      }
       if (input.userVisible === true || (input.phase === "side_effect" && input.toolName === "speak_to_user")) {
         this.exportChildSideEffectSpan("forge.user.output", tool, input, "user_output");
         result.started += 1;
@@ -514,9 +532,20 @@ export class PhoenixOtlpExporter {
   recordAgentDelivery(input: ObservabilityAgentDeliveryInput): AgentDeliveryRecordResult {
     const result: AgentDeliveryRecordResult = { started: 0, ended: 0, correlationMisses: 0 };
     try {
+      const parentTool = input.parentTool
+        ? this.findActiveToolCallForParentTool(input.parentTool)
+        : undefined;
       const parentRootTurnId = input.parentRootTurnId ?? input.rootTurnId;
-      const parentSpan = parentRootTurnId ? this.findRootSpanByRootTurnId(parentRootTurnId) : undefined;
-      const correlationStatus = parentSpan ? "resolved" : "unresolved";
+      const rootLookup = parentRootTurnId ? this.findRootSpanByRootTurnId(parentRootTurnId) : undefined;
+      const evictedRoot = parentRootTurnId ? this.evictedRootIdsByRootTurnId.get(parentRootTurnId) : undefined;
+      const parentSpan = parentTool?.span ?? rootLookup?.rootSpan;
+      const correlationStatus = parentTool
+        ? "resolved_tool"
+        : parentSpan
+          ? (rootLookup?.ended ? "resolved_retained_root" : "resolved")
+          : evictedRoot
+            ? "evicted_parent_root"
+            : "unresolved";
       const capturedMessage = this.captureInput(input.message);
       const capturedRuntimeInput = this.captureInput(input.runtimeInput);
       const attributes = buildCommonOpenInferenceAttributes({
@@ -531,6 +560,7 @@ export class PhoenixOtlpExporter {
           parentRootTurnId: input.parentRootTurnId,
           attachmentRootTurnId: parentRootTurnId,
           correlationStatus,
+          evictedRootReason: evictedRoot?.reason,
           fromAgentId: input.fromAgentId,
           targetAgentId: input.targetAgentId,
           requestedDelivery: input.requestedDelivery,
@@ -538,6 +568,7 @@ export class PhoenixOtlpExporter {
           deliveryId: input.deliveryId,
           source: input.source,
           runtimeInput: capturedRuntimeInput,
+          parentTool: input.parentTool,
           ...input.metadata,
         },
         tags: ["forge", "phoenix", "agent_delivery", input.source ?? "agent_message"],
@@ -557,7 +588,7 @@ export class PhoenixOtlpExporter {
         { kind: SpanKind.INTERNAL, attributes },
         parentSpan ? trace.setSpan(ROOT_CONTEXT, parentSpan) : ROOT_CONTEXT,
       );
-      span.setStatus(parentSpan ? { code: SpanStatusCode.OK } : { code: SpanStatusCode.ERROR, message: "unresolved_parent_root" });
+      span.setStatus(parentSpan ? { code: SpanStatusCode.OK } : { code: SpanStatusCode.ERROR, message: evictedRoot ? "evicted_parent_root" : "unresolved_parent_root" });
       span.end();
       result.started += 1;
       result.ended += 1;
@@ -866,6 +897,19 @@ export class PhoenixOtlpExporter {
     return this.activeToolSpansByAgentTokenToolCall.get(buildToolCallKey(agentId, runtimeToken, toolCallId));
   }
 
+  private findActiveToolCallForParentTool(input: { agentId: string; runtimeToken?: number; toolCallId: string }): ActiveToolCall | undefined {
+    const exact = this.getActiveToolCall(input.agentId, input.runtimeToken, input.toolCallId);
+    if (exact || input.runtimeToken !== undefined) {
+      return exact;
+    }
+    for (const tool of this.activeToolSpansByAgentTokenToolCall.values()) {
+      if (tool.agentId === input.agentId && tool.toolCallId === input.toolCallId) {
+        return tool;
+      }
+    }
+    return undefined;
+  }
+
   private endLlmCall(
     llm: ActiveLlmCall,
     turn: ActiveRuntimeTurn,
@@ -911,8 +955,7 @@ export class PhoenixOtlpExporter {
     }));
     turn.turnSpan.setStatus({ code: SpanStatusCode.OK });
     turn.turnSpan.end();
-    turn.rootSpan.setStatus({ code: SpanStatusCode.OK });
-    turn.rootSpan.end();
+    this.endRetainedRootSpan(turn.rootTurnId, { code: SpanStatusCode.OK });
     this.activeTurnsByAgentToken.delete(buildAgentTokenKey(turn.agentId, turn.runtimeToken));
   }
 
@@ -975,12 +1018,33 @@ export class PhoenixOtlpExporter {
     return undefined;
   }
 
-  private findRootSpanByRootTurnId(rootTurnId: string): Span | undefined {
+  private findRootSpanByRootTurnId(rootTurnId: string): RetainedRootSpan | undefined {
+    const retained = this.retainedRootSpansByRootTurnId.get(rootTurnId);
+    if (retained) {
+      retained.lastReferencedAtMs = Date.now();
+      return retained;
+    }
     const pending = this.findPendingInput(rootTurnId);
     if (pending) {
-      return pending.rootSpan;
+      return {
+        rootTurnId,
+        rootSpan: pending.rootSpan,
+        createdAtMs: pending.createdAtMs,
+        lastReferencedAtMs: Date.now(),
+        ended: false,
+      };
     }
-    return this.findActiveTurnByRootTurnId(rootTurnId)?.rootSpan;
+    const turn = this.findActiveTurnByRootTurnId(rootTurnId);
+    if (turn) {
+      return {
+        rootTurnId,
+        rootSpan: turn.rootSpan,
+        createdAtMs: turn.startedAtMs,
+        lastReferencedAtMs: Date.now(),
+        ended: false,
+      };
+    }
+    return undefined;
   }
 
   private findActiveTurnByRootTurnId(rootTurnId: string): ActiveRuntimeTurn | undefined {
@@ -1037,6 +1101,18 @@ export class PhoenixOtlpExporter {
       }
     }
 
+    for (const [rootTurnId, retained] of this.retainedRootSpansByRootTurnId.entries()) {
+      if (retained.ended && nowMs - retained.lastReferencedAtMs > RETAINED_ROOT_SPAN_TTL_MS) {
+        this.evictRetainedRootSpan(rootTurnId, retained, "retained_root_ttl_evicted", nowMs);
+      }
+    }
+
+    for (const [rootTurnId, evicted] of this.evictedRootIdsByRootTurnId.entries()) {
+      if (nowMs - evicted.evictedAtMs > EVICTED_ROOT_TTL_MS) {
+        this.evictedRootIdsByRootTurnId.delete(rootTurnId);
+      }
+    }
+
     for (const [key, entry] of this.runtimeToolsByAgentToken.entries()) {
       if (nowMs - entry.updatedAtMs > RUNTIME_TOOL_CACHE_TTL_MS) {
         this.runtimeToolsByAgentToken.delete(key);
@@ -1046,6 +1122,8 @@ export class PhoenixOtlpExporter {
 
     this.enforceGlobalPendingInputCaps();
     this.enforceActiveTurnCaps();
+    this.enforceRetainedRootSpanCaps(nowMs);
+    this.enforceEvictedRootIdCaps();
     this.enforceActiveToolSpanCaps();
     this.enforceRuntimeToolCacheCaps();
   }
@@ -1107,6 +1185,30 @@ export class PhoenixOtlpExporter {
     }
   }
 
+  private enforceRetainedRootSpanCaps(nowMs = Date.now()): void {
+    while (this.retainedRootSpansByRootTurnId.size > MAX_RETAINED_ROOT_SPANS) {
+      const oldestEntry = Array.from(this.retainedRootSpansByRootTurnId.entries())
+        .filter((entry) => entry[1].ended)
+        .sort((left, right) => left[1].lastReferencedAtMs - right[1].lastReferencedAtMs)[0];
+      if (!oldestEntry) {
+        return;
+      }
+      const [rootTurnId, retained] = oldestEntry;
+      this.evictRetainedRootSpan(rootTurnId, retained, "retained_root_cap_evicted", nowMs);
+    }
+  }
+
+  private enforceEvictedRootIdCaps(): void {
+    while (this.evictedRootIdsByRootTurnId.size > MAX_EVICTED_ROOT_IDS) {
+      const oldestEntry = Array.from(this.evictedRootIdsByRootTurnId.entries())
+        .sort((left, right) => left[1].evictedAtMs - right[1].evictedAtMs)[0];
+      if (!oldestEntry) {
+        return;
+      }
+      this.evictedRootIdsByRootTurnId.delete(oldestEntry[0]);
+    }
+  }
+
   private enforceActiveToolSpanCaps(): void {
     while (this.activeToolSpansByAgentTokenToolCall.size > MAX_ACTIVE_TOOL_SPANS) {
       const oldestEntry = Array.from(this.activeToolSpansByAgentTokenToolCall.entries())
@@ -1133,6 +1235,36 @@ export class PhoenixOtlpExporter {
     }
   }
 
+  private endRetainedRootSpan(rootTurnId: string, status: { code: SpanStatusCode; message?: string }): void {
+    const retained = this.retainedRootSpansByRootTurnId.get(rootTurnId);
+    if (!retained) {
+      return;
+    }
+    if (retained.ended) {
+      return;
+    }
+    retained.rootSpan.setStatus(status);
+    retained.rootSpan.end();
+    retained.ended = true;
+    retained.lastReferencedAtMs = Date.now();
+  }
+
+  private evictRetainedRootSpan(rootTurnId: string, retained: RetainedRootSpan, reason: string, nowMs = Date.now()): void {
+    this.retainedRootSpansByRootTurnId.delete(rootTurnId);
+    retained.evicted = true;
+    retained.evictionReason = reason;
+    retained.rootSpan.setAttribute("forge.retained_root_status", reason);
+    if (!retained.ended) {
+      retained.rootSpan.setAttribute("forge.correlation_status", reason);
+      retained.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
+      retained.rootSpan.end();
+      retained.ended = true;
+    }
+    this.evictedRootIdsByRootTurnId.set(rootTurnId, { reason, evictedAtMs: nowMs });
+    this.correlationEvictions += 1;
+    this.enforceEvictedRootIdCaps();
+  }
+
   private clearToolEnrichmentSeen(agentId: string, runtimeToken: number | undefined, toolCallId: string): void {
     const prefix = `${buildToolCallKey(agentId, runtimeToken, toolCallId)}:`;
     for (const key of Array.from(this.toolEnrichmentSeenByAgentTokenToolPhase)) {
@@ -1144,8 +1276,7 @@ export class PhoenixOtlpExporter {
 
   private closePendingInput(pending: PendingRuntimeInput, reason: string): void {
     pending.rootSpan.setAttribute("forge.correlation_status", reason);
-    pending.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
-    pending.rootSpan.end();
+    this.endRetainedRootSpan(pending.rootTurnId, { code: SpanStatusCode.ERROR, message: reason });
   }
 
   private closeActiveTurn(turn: ActiveRuntimeTurn, reason: string): void {
@@ -1160,8 +1291,7 @@ export class PhoenixOtlpExporter {
     turn.turnSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
     turn.turnSpan.end();
     turn.rootSpan.setAttribute("forge.correlation_status", reason);
-    turn.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
-    turn.rootSpan.end();
+    this.endRetainedRootSpan(turn.rootTurnId, { code: SpanStatusCode.ERROR, message: reason });
   }
 
   private closeOpenCorrelationSpans(reason: string): void {
@@ -1180,19 +1310,29 @@ export class PhoenixOtlpExporter {
       turn.turnSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
       turn.turnSpan.end();
       turn.rootSpan.setAttribute("forge.correlation_status", reason);
-      turn.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
-      turn.rootSpan.end();
+      this.endRetainedRootSpan(turn.rootTurnId, { code: SpanStatusCode.ERROR, message: reason });
     }
     this.activeTurnsByAgentToken.clear();
 
     for (const queue of this.pendingInputsByAgentId.values()) {
       for (const pending of queue) {
         pending.rootSpan.setAttribute("forge.correlation_status", reason);
-        pending.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
-        pending.rootSpan.end();
+        this.endRetainedRootSpan(pending.rootTurnId, { code: SpanStatusCode.ERROR, message: reason });
       }
     }
     this.pendingInputsByAgentId.clear();
+
+    for (const [rootTurnId, retained] of this.retainedRootSpansByRootTurnId.entries()) {
+      retained.rootSpan.setAttribute("forge.retained_root_status", reason);
+      if (!retained.ended) {
+        retained.rootSpan.setAttribute("forge.correlation_status", reason);
+        retained.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
+        retained.rootSpan.end();
+        retained.ended = true;
+      }
+      this.evictedRootIdsByRootTurnId.set(rootTurnId, { reason, evictedAtMs: Date.now() });
+    }
+    this.retainedRootSpansByRootTurnId.clear();
   }
 
   private captureInput(value: unknown): unknown {

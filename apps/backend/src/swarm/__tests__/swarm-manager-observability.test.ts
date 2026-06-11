@@ -120,6 +120,36 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
     }
   })
 
+  it('records tool-correlated send-message delivery once with parent tool context', async () => {
+    const handle = await createTempConfig({ prefix: 'forge-observability-tool-delivery-' })
+    try {
+      const observability = new RecordingObservability()
+      const manager = new TestSwarmManager(handle.config, { observability })
+      const descriptor = await bootWithDefaultManager(manager, handle.config)
+      observability.deliveries.length = 0
+
+      const worker = await manager.spawnAgent(descriptor.agentId, { agentId: 'worker-tool-delivery' })
+      await manager.sendMessage(descriptor.agentId, worker.agentId, 'worker task from tool', 'auto', {
+        observabilityParentTool: {
+          agentId: descriptor.agentId,
+          toolCallId: 'tool-call-1',
+          toolName: 'send_message_to_agent',
+        },
+      })
+
+      const deliveries = observability.deliveries.filter((entry) => entry.deliveryId === 'delivery-1')
+      expect(deliveries).toHaveLength(1)
+      expect(deliveries[0]?.parentTool).toMatchObject({
+        agentId: descriptor.agentId,
+        toolCallId: 'tool-call-1',
+        toolName: 'send_message_to_agent',
+      })
+      expect(deliveries[0]?.parentTool).toBeDefined()
+    } finally {
+      await handle.cleanup()
+    }
+  })
+
   it('records direct manager-to-worker delivery spans with top-level parent root semantics', async () => {
     const handle = await createTempConfig({ prefix: 'forge-observability-delivery-' })
     try {

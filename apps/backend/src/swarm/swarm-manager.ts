@@ -4834,6 +4834,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       origin?: "user" | "internal";
       attachments?: ConversationAttachment[];
       internalDeliveryKind?: "codex_plugin_bootstrap" | "bootstrap" | "agent_creator_bootstrap";
+      observabilityParentTool?: {
+        agentId: string;
+        runtimeToken?: number;
+        toolCallId: string;
+        toolName?: string;
+      };
     }
   ): Promise<SendMessageReceipt> {
     const sender = this.descriptors.get(fromAgentId);
@@ -4962,6 +4968,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         delivery,
         receipt,
         source: "project_agent",
+        parentTool: this.resolveObservabilityParentTool(options?.observabilityParentTool),
         metadata: {
           projectAgentExternal: projectAgentDeliveryAuthorization.allowCrossProfile,
           fromProfileId: senderProfileId,
@@ -5082,6 +5089,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       delivery,
       receipt,
       source: origin === "internal" ? "internal" : "agent_message",
+      parentTool: this.resolveObservabilityParentTool(options?.observabilityParentTool),
       metadata: {
         attachmentCount: attachments.length,
         rootSource,
@@ -6471,6 +6479,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return "pi";
   }
 
+  private resolveObservabilityParentTool(input: {
+    agentId: string;
+    runtimeToken?: number;
+    toolCallId: string;
+    toolName?: string;
+  } | undefined): { agentId: string; runtimeToken?: number; toolCallId: string; toolName?: string } | undefined {
+    if (!input) {
+      return undefined;
+    }
+    return {
+      ...input,
+      runtimeToken: input.runtimeToken ?? this.runtimeController.getRuntimeToken(input.agentId),
+    };
+  }
+
   private recordObservabilityAgentDelivery(input: {
     sender: AgentDescriptor;
     target: AgentDescriptor;
@@ -6481,6 +6504,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     delivery: RequestedDeliveryMode;
     receipt: SendMessageReceipt;
     source: "agent_message" | "project_agent" | "internal";
+    parentTool?: {
+      agentId: string;
+      runtimeToken?: number;
+      toolCallId: string;
+      toolName?: string;
+    };
     metadata?: Record<string, unknown>;
   }): void {
     if (!this.observability) {
@@ -6502,6 +6531,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       acceptedMode: input.receipt.acceptedMode,
       deliveryId: input.receipt.deliveryId,
       source: input.source,
+      parentTool: input.parentTool,
       metadata: {
         senderRole: input.sender.role,
         targetRole: input.target.role,

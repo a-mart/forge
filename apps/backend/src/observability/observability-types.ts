@@ -161,6 +161,12 @@ export interface ObservabilityAgentDeliveryInput {
   acceptedMode?: string;
   deliveryId?: string;
   source?: "agent_message" | "project_agent" | "internal" | "tool_side_effect";
+  parentTool?: {
+    agentId: string;
+    runtimeToken?: number;
+    toolCallId: string;
+    toolName?: string;
+  };
   metadata?: Record<string, unknown>;
 }
 
