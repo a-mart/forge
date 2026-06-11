@@ -13,8 +13,15 @@ import type {
   ObservabilityAgentDeliveryInput,
 } from '../../observability/observability-types.js'
 import { createDefaultPhoenixObservabilitySettings } from '../../observability/observability-settings.js'
+import type { RuntimeSessionEvent } from '../runtime-contracts.js'
 import { createTempConfig } from '../../test-support/temp-config.js'
 import { TestSwarmManager, bootWithDefaultManager } from '../../test-support/swarm-manager-harness.js'
+
+type RuntimeControllerForTest = {
+  allocateRuntimeToken(agentId: string): number
+  getRuntimeToken(agentId: string): number | undefined
+  handleRuntimeSessionEvent(runtimeToken: number, agentId: string, event: RuntimeSessionEvent): Promise<boolean>
+}
 
 class RecordingObservability implements ObservabilityFacade {
   readonly calls: string[] = []
@@ -103,8 +110,12 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       observability.deliveries.length = 0
       const runtime = manager.runtimeByAgentId.get(descriptor.agentId)
       if (!runtime) throw new Error('expected test runtime')
+      const runtimeController = (manager as unknown as { runtimeController: RuntimeControllerForTest }).runtimeController
+      runtimeController.allocateRuntimeToken(descriptor.agentId)
       runtime.onSendMessage = async () => {
-        await manager.handleRuntimeSessionEvent(descriptor.agentId, { type: 'turn_start' })
+        const runtimeToken = runtimeController.getRuntimeToken(descriptor.agentId)
+        if (runtimeToken === undefined) throw new Error('expected runtime token')
+        await runtimeController.handleRuntimeSessionEvent(runtimeToken, descriptor.agentId, { type: 'turn_start' })
       }
 
       await manager.dispatchRuntimeUserMessage({
@@ -116,6 +127,8 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       expect(observability.calls.indexOf('beginRuntimeInput')).toBeLessThan(observability.calls.indexOf('event:turn_start'))
       expect(observability.calls).toContain('completeRuntimeInput')
       expect(observability.runtimeInputs[0]).toMatchObject({ targetAgentId: descriptor.agentId, rootSource: 'user_input' })
+      expect(observability.sessionEvents[0]?.runtimeToken).toBe(observability.runtimeInputs[0]?.runtimeToken)
+      expect(observability.sessionEvents[0]?.runtimeToken).toBeTypeOf('number')
       expect(observability.completions[0]).toMatchObject({ acceptedMode: 'prompt', deliveryId: 'delivery-1' })
     } finally {
       await handle.cleanup()

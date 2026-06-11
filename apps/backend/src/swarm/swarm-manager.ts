@@ -6450,6 +6450,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.observability;
   }
 
+  onAcceptedRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.applyInboundTurnContextRuntimeEvent(agentId, event);
+    this.recordObservabilityRuntimeSessionEvent(agentId, runtimeToken, event);
+  }
+
   private recordObservabilityRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || !this.observability) {
@@ -8793,15 +8798,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentIdOrEvent: string | RuntimeSessionEvent,
     maybeEvent?: RuntimeSessionEvent
   ): Promise<void> {
-    const invokedWithExplicitToken = typeof runtimeTokenOrAgentId === "number";
-    const agentId = invokedWithExplicitToken ? (agentIdOrEvent as string) : runtimeTokenOrAgentId;
-    const event = invokedWithExplicitToken ? maybeEvent : (agentIdOrEvent as RuntimeSessionEvent);
-
-    const accepted = await this.runtimeController.handleRuntimeSessionEvent(runtimeTokenOrAgentId, agentIdOrEvent, maybeEvent);
-    if (accepted && event) {
-      this.applyInboundTurnContextRuntimeEvent(agentId, event);
-      this.recordObservabilityRuntimeSessionEvent(agentId, invokedWithExplicitToken ? runtimeTokenOrAgentId : undefined, event);
-    }
+    await this.runtimeController.handleRuntimeSessionEvent(runtimeTokenOrAgentId, agentIdOrEvent, maybeEvent);
   }
 
   async handleRuntimeError(

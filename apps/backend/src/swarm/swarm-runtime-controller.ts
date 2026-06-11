@@ -137,6 +137,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
     source: "agent_end" | "status_idle" | "deferred"
   ): Promise<void>;
   isRuntimeRecoveryActive(agentId: string): boolean;
+  onAcceptedRuntimeSessionEvent?(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void;
   incrementSessionCompactionCount(
     profileId: string,
     sessionId: string,
@@ -560,6 +561,7 @@ export class SwarmRuntimeController {
     }
 
     await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
+    this.host.onAcceptedRuntimeSessionEvent?.(agentId, runtimeToken, event);
     return true;
   }
 

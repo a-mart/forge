@@ -531,6 +531,120 @@ describe('PhoenixOtlpExporter', () => {
     expect(spans.some((entry) => entry.name === 'forge.user.output')).toBe(true)
   })
 
+  it('correlates a completed manager turn when Pi runtime events drift from the pending runtime token', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-token-drift',
+      managerId: 'manager-token-drift',
+      runtimeType: 'pi',
+      runtimeToken: 1,
+      rootSource: 'user_input',
+      runtimeInput: 'testing token drift',
+    })
+
+    const startResult = exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-token-drift',
+      managerId: 'manager-token-drift',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'turn_start' },
+    })
+    expect(startResult.correlationMisses).toBe(0)
+    expect(startResult.started).toBe(1)
+
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-token-drift',
+      managerId: 'manager-token-drift',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'message_start', message: { role: 'assistant', content: '' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-token-drift',
+      managerId: 'manager-token-drift',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: {
+        type: 'message_end',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Yep, I’m here.' }] },
+        meta: { provider: 'openai-codex', modelId: 'gpt-5.4' },
+      },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-token-drift',
+      managerId: 'manager-token-drift',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'tool_execution_start', toolName: 'speak_to_user', toolCallId: 'speak-1', args: { text: 'Yep, I’m here.' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-token-drift',
+      managerId: 'manager-token-drift',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'tool_execution_end', toolName: 'speak_to_user', toolCallId: 'speak-1', result: { published: true }, isError: false },
+    })
+    const endResult = exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-token-drift',
+      managerId: 'manager-token-drift',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    expect(endResult.correlationMisses).toBe(0)
+
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    expect(spans.some((entry) => entry.name === 'forge.session.turn')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.runtime.turn')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.llm.call')).toBe(true)
+    expect(spans.some((entry) => entry.name === 'forge.tool.speak_to_user')).toBe(true)
+  })
+
+  it('does not correlate pending runtime input across agents when runtime tokens are missing', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-a',
+      managerId: 'manager-a',
+      runtimeType: 'pi',
+      runtimeToken: 1,
+      rootSource: 'user_input',
+      runtimeInput: 'same text',
+    })
+
+    const missResult = exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-b',
+      managerId: 'manager-b',
+      runtimeType: 'pi',
+      event: { type: 'turn_start' },
+    })
+    expect(missResult.started).toBe(0)
+    expect(missResult.correlationMisses).toBe(1)
+
+    const closeResult = exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-a',
+      managerId: 'manager-a',
+      runtimeType: 'pi',
+      runtimeToken: 1,
+      event: { type: 'agent_end' },
+    })
+    expect(closeResult.correlationMisses).toBe(0)
+
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    expect(spans.some((entry) => entry.name === 'forge.runtime.turn')).toBe(false)
+  })
+
   it('closes active Pi turns on agent_end when turn_end is missing', async () => {
     const spanExporter = new MockExporter()
     const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
