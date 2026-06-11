@@ -19,6 +19,8 @@ import type {
   ObservabilityFacade,
   ObservabilityPromptResolvedInput,
   ObservabilityRuntimeCreatedInput,
+  ObservabilityRuntimeInputCompletion,
+  ObservabilityRuntimeInputHandle,
   ObservabilityRuntimeInputInput,
   ObservabilityRuntimeSessionEventInput,
   ObservabilityRuntimeTarget,
@@ -114,7 +116,7 @@ export class ObservabilityService implements ObservabilityFacade {
       contentTruncations: correlationCounters.contentTruncations + (exporterStatus?.redactionStats.contentTruncations ?? 0),
       redactionMatches: correlationCounters.redactionMatches + (exporterStatus?.redactionStats.redactionMatches ?? 0),
       correlationMisses: correlationCounters.correlationMisses,
-      correlationEvictions: correlationCounters.correlationEvictions,
+      correlationEvictions: correlationCounters.correlationEvictions + (exporterStatus?.correlationEvictions ?? 0),
     };
 
     return {
@@ -196,19 +198,48 @@ export class ObservabilityService implements ObservabilityFacade {
     }
   }
 
-  recordRuntimeInput(input: ObservabilityRuntimeInputInput): string | undefined {
+  beginRuntimeInput(input: ObservabilityRuntimeInputInput): ObservabilityRuntimeInputHandle | undefined {
     if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.settings.capture.modelInputs || !this.exporter) {
       return undefined;
     }
 
     try {
-      const rootTurnId = this.exporter.recordRuntimeInput(input);
+      const handle = this.exporter.beginRuntimeInput(input);
       this.correlator.incrementSpanStarted();
-      return rootTurnId;
+      return handle;
     } catch (error) {
       this.recordError(error);
       return undefined;
     }
+  }
+
+  completeRuntimeInput(handle: ObservabilityRuntimeInputHandle | undefined, patch: ObservabilityRuntimeInputCompletion): void {
+    if (!handle || !this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
+      return;
+    }
+
+    try {
+      this.exporter.completeRuntimeInput(handle, patch);
+    } catch (error) {
+      this.recordError(error);
+    }
+  }
+
+  cancelRuntimeInput(handle: ObservabilityRuntimeInputHandle | undefined, reason: string): void {
+    if (!handle || !this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
+      return;
+    }
+
+    try {
+      const ended = this.exporter.cancelRuntimeInput(handle, reason);
+      for (let index = 0; index < ended; index += 1) this.correlator.incrementSpanEnded();
+    } catch (error) {
+      this.recordError(error);
+    }
+  }
+
+  recordRuntimeInput(input: ObservabilityRuntimeInputInput): string | undefined {
+    return this.beginRuntimeInput(input)?.rootTurnId;
   }
 
   recordRuntimeSessionEvent(input: ObservabilityRuntimeSessionEventInput): void {
@@ -227,6 +258,7 @@ export class ObservabilityService implements ObservabilityFacade {
       if (result.correlationMisses > 0) {
         for (let index = 0; index < result.correlationMisses; index += 1) this.correlator.recordCorrelationMiss();
       }
+      // Exporter-owned correlation evictions are exposed through exporter status counters.
     } catch (error) {
       this.recordError(error);
     }

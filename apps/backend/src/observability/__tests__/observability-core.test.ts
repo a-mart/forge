@@ -314,6 +314,51 @@ describe('PhoenixOtlpExporter', () => {
     expect(String(llm?.attributes['llm.input_messages'])).toContain('runtime user text with guidance')
   })
 
+  it('evicts pending runtime-input correlations when per-agent caps are exceeded', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    for (let index = 0; index < 17; index += 1) {
+      exporter.beginRuntimeInput({
+        targetAgentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken: 1,
+        rootSource: 'user_input',
+        runtimeInput: `pending ${index}`,
+      })
+    }
+
+    expect(exporter.getStatus().correlationEvictions).toBe(1)
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 1,
+      event: { type: 'message_start', message: { role: 'user', content: 'pending 0' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 1,
+      event: { type: 'message_start', message: { role: 'user', content: 'pending 16' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 1,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    expect(spans.some((entry) => entry.attributes['forge.correlation_status'] === 'pending_runtime_input_agent_cap_evicted')).toBe(true)
+  })
+
   it('does not let a stale runtime token consume a pending runtime input', async () => {
     const spanExporter = new MockExporter()
     const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }

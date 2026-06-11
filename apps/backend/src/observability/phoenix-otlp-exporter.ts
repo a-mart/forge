@@ -19,6 +19,8 @@ import { ObservabilityRedactor, type RedactionStats } from "./observability-reda
 import type {
   ObservabilityPromptResolvedInput,
   ObservabilityRuntimeCreatedInput,
+  ObservabilityRuntimeInputCompletion,
+  ObservabilityRuntimeInputHandle,
   ObservabilityRuntimeInputInput,
   ObservabilityRuntimeSessionEventInput,
   ObservabilityToolDefinition,
@@ -36,6 +38,7 @@ export interface PhoenixOtlpExporterStatus {
   projectName: string;
   counters: CountingBatchSpanProcessorCounters;
   redactionStats: RedactionStats;
+  correlationEvictions: number;
 }
 
 export interface PhoenixOtlpExporterOptions {
@@ -48,6 +51,7 @@ export interface RuntimeSessionEventRecordResult {
   started: number;
   ended: number;
   correlationMisses: number;
+  correlationEvictions: number;
 }
 
 interface PendingRuntimeInput extends ObservabilityRuntimeInputInput {
@@ -58,6 +62,7 @@ interface PendingRuntimeInput extends ObservabilityRuntimeInputInput {
 
 interface ActiveRuntimeTurn {
   rootTurnId: string;
+  parentRootTurnId?: string;
   rootSpan: Span;
   turnSpan: Span;
   agentId: string;
@@ -74,15 +79,29 @@ interface ActiveLlmCall {
   firstUpdateAtMs?: number;
 }
 
+interface RuntimeToolCacheEntry {
+  tools: ObservabilityToolDefinition[];
+  updatedAtMs: number;
+}
+
+const PENDING_RUNTIME_INPUT_TTL_MS = 5 * 60 * 1000;
+const ACTIVE_RUNTIME_TURN_TTL_MS = 30 * 60 * 1000;
+const RUNTIME_TOOL_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const MAX_PENDING_INPUTS_PER_AGENT = 16;
+const MAX_PENDING_INPUT_AGENTS = 128;
+const MAX_ACTIVE_TURNS = 256;
+const MAX_RUNTIME_TOOL_CACHE_ENTRIES = 512;
+
 export class PhoenixOtlpExporter {
   private readonly provider: BasicTracerProvider;
   private readonly processor: CountingBatchSpanProcessor;
   private readonly endpoint: string;
   private readonly projectName: string;
   private readonly redactor: ObservabilityRedactor;
-  private readonly runtimeToolsByAgentToken = new Map<string, ObservabilityToolDefinition[]>();
+  private readonly runtimeToolsByAgentToken = new Map<string, RuntimeToolCacheEntry>();
   private readonly pendingInputsByAgentId = new Map<string, PendingRuntimeInput[]>();
   private readonly activeTurnsByAgentToken = new Map<string, ActiveRuntimeTurn>();
+  private correlationEvictions = 0;
 
   constructor(options: PhoenixOtlpExporterOptions) {
     validatePhoenixEndpoint(options.settings.endpoint);
@@ -171,14 +190,16 @@ export class PhoenixOtlpExporter {
     if (input.activeTools && input.activeTools.length > 0) {
       const tools = [...input.activeTools];
       attributes[SemanticConventions.LLM_TOOLS] = this.redactor.sanitizeAttributeValue(tools);
-      this.runtimeToolsByAgentToken.set(buildAgentTokenKey(input.agentId, input.runtimeToken), tools);
+      this.runtimeToolsByAgentToken.set(buildAgentTokenKey(input.agentId, input.runtimeToken), { tools, updatedAtMs: Date.now() });
+      this.evictCorrelationState();
     }
 
     this.exportOneShotSpan("forge.runtime.create", attributes);
   }
 
-  recordRuntimeInput(input: ObservabilityRuntimeInputInput): string {
-    const rootTurnId = randomUUID();
+  beginRuntimeInput(input: ObservabilityRuntimeInputInput): ObservabilityRuntimeInputHandle {
+    this.evictCorrelationState();
+    const rootTurnId = input.rootTurnId ?? randomUUID();
     const tracer = this.provider.getTracer("forge-phoenix");
     const attributes = buildCommonOpenInferenceAttributes({
       spanKind: input.role === "worker" ? "AGENT" : "CHAIN",
@@ -189,6 +210,7 @@ export class PhoenixOtlpExporter {
         ...input.metadata,
         event: "runtime_input",
         rootTurnId,
+        parentRootTurnId: input.parentRootTurnId,
         rootSource: input.rootSource,
         runtimeType: input.runtimeType,
         runtimeToken: input.runtimeToken,
@@ -214,16 +236,70 @@ export class PhoenixOtlpExporter {
       rootTurnId,
       rootSpan,
       createdAtMs: Date.now(),
-      activeTools: input.activeTools ?? this.runtimeToolsByAgentToken.get(buildAgentTokenKey(input.targetAgentId, input.runtimeToken)),
+      activeTools: input.activeTools ?? this.runtimeToolsByAgentToken.get(buildAgentTokenKey(input.targetAgentId, input.runtimeToken))?.tools,
     };
     const queue = this.pendingInputsByAgentId.get(input.targetAgentId) ?? [];
     queue.push(pending);
     this.pendingInputsByAgentId.set(input.targetAgentId, queue);
-    return rootTurnId;
+    this.enforcePendingInputCaps(input.targetAgentId);
+    return { rootTurnId, targetAgentId: input.targetAgentId, runtimeToken: input.runtimeToken };
+  }
+
+  completeRuntimeInput(handle: ObservabilityRuntimeInputHandle | undefined, patch: ObservabilityRuntimeInputCompletion): void {
+    if (!handle) {
+      return;
+    }
+    const pending = this.findPendingInput(handle.rootTurnId);
+    const turn = this.findActiveTurnByRootTurnId(handle.rootTurnId);
+    const span = pending?.rootSpan ?? turn?.rootSpan;
+    if (!span) {
+      return;
+    }
+    if (patch.acceptedMode !== undefined) {
+      span.setAttribute("forge.accepted_mode", this.redactor.sanitizeLabel(patch.acceptedMode));
+    }
+    if (patch.deliveryId !== undefined) {
+      span.setAttribute("forge.delivery_id", this.redactor.redactIdentifier(patch.deliveryId));
+    }
+    if (patch.metadata !== undefined) {
+      span.setAttribute("forge.dispatch_metadata", this.redactor.sanitizeAttributeValue({
+        rootTurnId: handle.rootTurnId,
+        acceptedMode: patch.acceptedMode,
+        deliveryId: patch.deliveryId,
+        ...patch.metadata,
+      }));
+    }
+    if (pending && patch.acceptedMode !== undefined) {
+      pending.acceptedMode = patch.acceptedMode;
+    }
+  }
+
+  cancelRuntimeInput(handle: ObservabilityRuntimeInputHandle | undefined, reason: string): number {
+    if (!handle) {
+      return 0;
+    }
+    const pending = this.removePendingInputByRootTurnId(handle.rootTurnId);
+    if (pending) {
+      this.closePendingInput(pending, reason);
+      return 1;
+    }
+    const turn = this.removeActiveTurnByRootTurnId(handle.rootTurnId);
+    if (turn) {
+      const ended = 1 + (turn.llm ? 1 : 0) + 1;
+      this.closeActiveTurn(turn, reason);
+      return ended;
+    }
+    return 0;
+  }
+
+  recordRuntimeInput(input: ObservabilityRuntimeInputInput): string {
+    return this.beginRuntimeInput(input).rootTurnId;
   }
 
   recordRuntimeSessionEvent(input: ObservabilityRuntimeSessionEventInput): RuntimeSessionEventRecordResult {
-    const result: RuntimeSessionEventRecordResult = { started: 0, ended: 0, correlationMisses: 0 };
+    const evictionsBefore = this.correlationEvictions;
+    this.evictCorrelationState();
+    const result: RuntimeSessionEventRecordResult = { started: 0, ended: 0, correlationMisses: 0, correlationEvictions: 0 };
     const event = input.event;
     try {
       if (event.type === "turn_start" || (event.type === "message_start" && event.message.role === "user")) {
@@ -291,6 +367,8 @@ export class PhoenixOtlpExporter {
       }
     } catch {
       // Observability must never affect runtime projection.
+    } finally {
+      result.correlationEvictions = this.correlationEvictions - evictionsBefore;
     }
     return result;
   }
@@ -347,6 +425,7 @@ export class PhoenixOtlpExporter {
       metadata: {
         event: "runtime_turn",
         rootTurnId: pending.rootTurnId,
+        parentRootTurnId: pending.parentRootTurnId,
         rootSource: pending.rootSource,
         runtimeType: input.runtimeType ?? pending.runtimeType,
         runtimeToken: input.runtimeToken,
@@ -367,6 +446,7 @@ export class PhoenixOtlpExporter {
     );
     const turn: ActiveRuntimeTurn = {
       rootTurnId: pending.rootTurnId,
+      parentRootTurnId: pending.parentRootTurnId,
       rootSpan: pending.rootSpan,
       turnSpan,
       agentId: input.agentId,
@@ -375,7 +455,14 @@ export class PhoenixOtlpExporter {
       runtimeInput: pending.runtimeInput,
       activeTools: pending.activeTools,
     };
-    this.activeTurnsByAgentToken.set(buildAgentTokenKey(input.agentId, input.runtimeToken), turn);
+    const key = buildAgentTokenKey(input.agentId, input.runtimeToken);
+    const existing = this.activeTurnsByAgentToken.get(key);
+    if (existing) {
+      this.closeActiveTurn(existing, "superseded_by_new_turn");
+      this.correlationEvictions += 1;
+    }
+    this.activeTurnsByAgentToken.set(key, turn);
+    this.enforceActiveTurnCaps();
     return turn;
   }
 
@@ -389,6 +476,7 @@ export class PhoenixOtlpExporter {
       metadata: {
         event: "llm_call",
         rootTurnId: turn.rootTurnId,
+        parentRootTurnId: turn.parentRootTurnId,
         runtimeToken: input.runtimeToken,
         runtimeType: input.runtimeType,
         role: input.role,
@@ -447,6 +535,7 @@ export class PhoenixOtlpExporter {
     turn.turnSpan.setAttribute("metadata", this.redactor.sanitizeAttributeValue({
       event: "runtime_turn_end",
       rootTurnId: turn.rootTurnId,
+      parentRootTurnId: turn.parentRootTurnId,
       toolResultCount: toolResults.length,
       ...(meta && typeof meta === "object" ? { turnMeta: meta } : {}),
     }));
@@ -489,6 +578,179 @@ export class PhoenixOtlpExporter {
     const [pending] = queue.splice(index, 1);
     if (queue.length === 0) this.pendingInputsByAgentId.delete(agentId);
     return pending;
+  }
+
+  private findPendingInput(rootTurnId: string): PendingRuntimeInput | undefined {
+    for (const queue of this.pendingInputsByAgentId.values()) {
+      const pending = queue.find((candidate) => candidate.rootTurnId === rootTurnId);
+      if (pending) {
+        return pending;
+      }
+    }
+    return undefined;
+  }
+
+  private removePendingInputByRootTurnId(rootTurnId: string): PendingRuntimeInput | undefined {
+    for (const [agentId, queue] of this.pendingInputsByAgentId.entries()) {
+      const index = queue.findIndex((candidate) => candidate.rootTurnId === rootTurnId);
+      if (index < 0) {
+        continue;
+      }
+      const [pending] = queue.splice(index, 1);
+      if (queue.length === 0) {
+        this.pendingInputsByAgentId.delete(agentId);
+      }
+      return pending;
+    }
+    return undefined;
+  }
+
+  private findActiveTurnByRootTurnId(rootTurnId: string): ActiveRuntimeTurn | undefined {
+    for (const turn of this.activeTurnsByAgentToken.values()) {
+      if (turn.rootTurnId === rootTurnId) {
+        return turn;
+      }
+    }
+    return undefined;
+  }
+
+  private removeActiveTurnByRootTurnId(rootTurnId: string): ActiveRuntimeTurn | undefined {
+    for (const [key, turn] of this.activeTurnsByAgentToken.entries()) {
+      if (turn.rootTurnId !== rootTurnId) {
+        continue;
+      }
+      this.activeTurnsByAgentToken.delete(key);
+      return turn;
+    }
+    return undefined;
+  }
+
+  private evictCorrelationState(nowMs = Date.now()): void {
+    for (const [agentId, queue] of this.pendingInputsByAgentId.entries()) {
+      const retained: PendingRuntimeInput[] = [];
+      for (const pending of queue) {
+        if (nowMs - pending.createdAtMs > PENDING_RUNTIME_INPUT_TTL_MS) {
+          this.closePendingInput(pending, "pending_runtime_input_ttl_evicted");
+          this.correlationEvictions += 1;
+        } else {
+          retained.push(pending);
+        }
+      }
+      if (retained.length > 0) {
+        this.pendingInputsByAgentId.set(agentId, retained);
+      } else {
+        this.pendingInputsByAgentId.delete(agentId);
+      }
+    }
+
+    for (const [key, turn] of this.activeTurnsByAgentToken.entries()) {
+      if (nowMs - turn.startedAtMs > ACTIVE_RUNTIME_TURN_TTL_MS) {
+        this.activeTurnsByAgentToken.delete(key);
+        this.closeActiveTurn(turn, "active_runtime_turn_ttl_evicted");
+        this.correlationEvictions += 1;
+      }
+    }
+
+    for (const [key, entry] of this.runtimeToolsByAgentToken.entries()) {
+      if (nowMs - entry.updatedAtMs > RUNTIME_TOOL_CACHE_TTL_MS) {
+        this.runtimeToolsByAgentToken.delete(key);
+        this.correlationEvictions += 1;
+      }
+    }
+
+    this.enforceGlobalPendingInputCaps();
+    this.enforceActiveTurnCaps();
+    this.enforceRuntimeToolCacheCaps();
+  }
+
+  private enforcePendingInputCaps(agentId: string): void {
+    const queue = this.pendingInputsByAgentId.get(agentId);
+    if (queue) {
+      while (queue.length > MAX_PENDING_INPUTS_PER_AGENT) {
+        const pending = queue.shift();
+        if (pending) {
+          this.closePendingInput(pending, "pending_runtime_input_agent_cap_evicted");
+          this.correlationEvictions += 1;
+        }
+      }
+      if (queue.length === 0) {
+        this.pendingInputsByAgentId.delete(agentId);
+      }
+    }
+    this.enforceGlobalPendingInputCaps();
+  }
+
+  private enforceGlobalPendingInputCaps(): void {
+    while (this.pendingInputsByAgentId.size > MAX_PENDING_INPUT_AGENTS) {
+      const oldest = this.findOldestPendingInput();
+      if (!oldest) {
+        return;
+      }
+      const pending = this.removePendingInputByRootTurnId(oldest.rootTurnId);
+      if (pending) {
+        this.closePendingInput(pending, "pending_runtime_input_global_cap_evicted");
+        this.correlationEvictions += 1;
+      }
+    }
+  }
+
+  private findOldestPendingInput(): PendingRuntimeInput | undefined {
+    let oldest: PendingRuntimeInput | undefined;
+    for (const queue of this.pendingInputsByAgentId.values()) {
+      for (const pending of queue) {
+        if (!oldest || pending.createdAtMs < oldest.createdAtMs) {
+          oldest = pending;
+        }
+      }
+    }
+    return oldest;
+  }
+
+  private enforceActiveTurnCaps(): void {
+    while (this.activeTurnsByAgentToken.size > MAX_ACTIVE_TURNS) {
+      const oldestEntry = Array.from(this.activeTurnsByAgentToken.entries())
+        .sort((left, right) => left[1].startedAtMs - right[1].startedAtMs)[0];
+      if (!oldestEntry) {
+        return;
+      }
+      const [key, turn] = oldestEntry;
+      this.activeTurnsByAgentToken.delete(key);
+      this.closeActiveTurn(turn, "active_runtime_turn_cap_evicted");
+      this.correlationEvictions += 1;
+    }
+  }
+
+  private enforceRuntimeToolCacheCaps(): void {
+    while (this.runtimeToolsByAgentToken.size > MAX_RUNTIME_TOOL_CACHE_ENTRIES) {
+      const oldestEntry = Array.from(this.runtimeToolsByAgentToken.entries())
+        .sort((left, right) => left[1].updatedAtMs - right[1].updatedAtMs)[0];
+      if (!oldestEntry) {
+        return;
+      }
+      this.runtimeToolsByAgentToken.delete(oldestEntry[0]);
+      this.correlationEvictions += 1;
+    }
+  }
+
+  private closePendingInput(pending: PendingRuntimeInput, reason: string): void {
+    pending.rootSpan.setAttribute("forge.correlation_status", reason);
+    pending.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
+    pending.rootSpan.end();
+  }
+
+  private closeActiveTurn(turn: ActiveRuntimeTurn, reason: string): void {
+    if (turn.llm) {
+      turn.llm.span.setAttribute("forge.correlation_status", reason);
+      turn.llm.span.setStatus({ code: SpanStatusCode.ERROR, message: reason });
+      turn.llm.span.end();
+      turn.llm = undefined;
+    }
+    turn.turnSpan.setAttribute("forge.correlation_status", reason);
+    turn.turnSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
+    turn.turnSpan.end();
+    turn.rootSpan.setAttribute("forge.correlation_status", reason);
+    turn.rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: reason });
+    turn.rootSpan.end();
   }
 
   private closeOpenCorrelationSpans(reason: string): void {
@@ -552,6 +814,7 @@ export class PhoenixOtlpExporter {
       projectName: this.projectName,
       counters: this.processor.getCounters(),
       redactionStats: this.redactor.getStats(),
+      correlationEvictions: this.correlationEvictions,
     };
   }
 }

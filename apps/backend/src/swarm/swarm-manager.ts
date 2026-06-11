@@ -44,7 +44,7 @@ import {
   COLLABORATION_PROFILE_ID,
 } from "../collaboration/constants.js";
 
-import type { ObservabilityFacade } from "../observability/observability-types.js";
+import type { ObservabilityFacade, ObservabilityRuntimeInputHandle, ObservabilityRootSource } from "../observability/observability-types.js";
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import {
   FileBackedPromptRegistry,
@@ -446,11 +446,18 @@ interface PendingCodexPluginSpawnContext {
 }
 
 interface PendingInboundTurnContext {
-  source: PreparedInboundConversationPayload["source"];
+  source: PreparedInboundConversationPayload["source"] | "agent_message";
+  rootTurnId?: string;
+  parentRootTurnId?: string;
   runtimeMessageText?: string;
   projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
   codexMcpToolGate?: CodexMcpToolGateEvaluation;
   codexPluginDelegationContext?: CodexPluginDelegationTurnContext;
+}
+
+interface ActiveObservabilityRootContext {
+  rootTurnId: string;
+  parentRootTurnId?: string;
 }
 
 interface ExternalProjectAgentTurnContext {
@@ -1257,6 +1264,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingCodexPluginSpawnByInput = new WeakMap<SpawnAgentInput, PendingCodexPluginSpawnContext>();
   private readonly pendingCodexPluginInitialTaskByWorkerId = new Map<string, string>();
   private readonly activeExternalProjectAgentTurnByAgentId = new Map<string, ExternalProjectAgentTurnContext>();
+  private readonly activeObservabilityRootByAgentId = new Map<string, ActiveObservabilityRootContext>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
   private pendingAgentsSnapshotEmit = false;
@@ -4832,9 +4840,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         fromProfileId: senderProfileId,
         fromProjectName: this.profiles.get(senderProfileId)?.displayName ?? senderProfileId,
       };
+      const runtimeMessageText = formatProjectAgentRuntimeMessage(projectAgentContext, message);
+      const parentRootTurnId = this.getActiveObservabilityRootTurnId(sender.agentId);
+      const observabilityInput = this.beginObservabilityRuntimeInput({
+        target,
+        rootSource: "project_agent",
+        originalInput: message,
+        runtimeInput: runtimeMessageText,
+        parentRootTurnId,
+        requestedDelivery: delivery,
+        metadata: {
+          fromAgentId,
+          targetAgentId,
+          projectAgentExternal: projectAgentDeliveryAuthorization.allowCrossProfile,
+        },
+      });
       const rollbackInboundTurnContext = this.enqueueInboundTurnContext(target.agentId, {
         source: "project_agent_input",
-        runtimeMessageText: formatProjectAgentRuntimeMessage(projectAgentContext, message),
+        rootTurnId: observabilityInput?.rootTurnId,
+        parentRootTurnId,
+        runtimeMessageText,
         codexMcpToolGate: this.buildCodexMcpToolTurnGate(
           target as AgentDescriptor & { role: "manager" },
           { channel: "web" },
@@ -4867,22 +4892,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         );
       } catch (error) {
         rollbackInboundTurnContext();
+        this.cancelObservabilityRuntimeInput(observabilityInput, "project_agent_dispatch_failed");
         throw error;
       }
 
       const { receipt, inboundPayload } = deliveryResult;
-      this.recordObservabilityRuntimeInput({
-        target,
-        rootSource: "project_agent",
-        originalInput: message,
-        runtimeInput: inboundPayload.runtimeText,
-        requestedDelivery: delivery,
-        acceptedMode: receipt.acceptedMode,
-        metadata: {
-          fromAgentId,
-          targetAgentId,
-          projectAgentExternal: projectAgentDeliveryAuthorization.allowCrossProfile,
-        },
+      this.completeObservabilityRuntimeInput(observabilityInput, receipt, {
+        fromAgentId,
+        targetAgentId,
+        projectAgentExternal: projectAgentDeliveryAuthorization.allowCrossProfile,
       });
       await this.appendPreparedInboundConversationPayload(target, {
         text: inboundPayload.text,
@@ -4943,33 +4961,50 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.workerHealthService.markPendingWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
 
-    let receipt: SendMessageReceipt;
-    try {
-      receipt = await runtime.sendMessage(modelMessage, delivery);
-    } catch (error) {
-      await this.workerHealthService.handleFailedWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
-      throw error;
-    }
-
-    await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
-
-    this.recordObservabilityRuntimeInput({
+    const rootSource = classifyObservabilityRootSource({
+      origin,
+      fromAgentId,
+      targetAgentId,
+      internalDeliveryKind: options?.internalDeliveryKind,
+    });
+    const parentRootTurnId = this.getActiveObservabilityRootTurnId(sender.agentId);
+    const observabilityInput = this.beginObservabilityRuntimeInput({
       target,
-      rootSource: classifyObservabilityRootSource({
-        origin,
-        fromAgentId,
-        targetAgentId,
-        internalDeliveryKind: options?.internalDeliveryKind,
-      }),
+      rootSource,
       originalInput: message,
       runtimeInput: modelMessage,
+      parentRootTurnId,
       requestedDelivery: delivery,
-      acceptedMode: receipt.acceptedMode,
       metadata: {
         fromAgentId,
         targetAgentId,
         attachmentCount: attachments.length,
       },
+    });
+    const rollbackObservabilityInboundContext = observabilityInput
+      ? this.enqueueInboundTurnContext(target.agentId, {
+          source: "agent_message",
+          rootTurnId: observabilityInput.rootTurnId,
+          parentRootTurnId,
+          runtimeMessageText: extractRuntimeMessageText(modelMessage),
+        })
+      : undefined;
+
+    let receipt: SendMessageReceipt;
+    try {
+      receipt = await runtime.sendMessage(modelMessage, delivery);
+    } catch (error) {
+      rollbackObservabilityInboundContext?.();
+      this.cancelObservabilityRuntimeInput(observabilityInput, "runtime_send_message_failed");
+      await this.workerHealthService.handleFailedWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+      throw error;
+    }
+
+    await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+    this.completeObservabilityRuntimeInput(observabilityInput, receipt, {
+      fromAgentId,
+      targetAgentId,
+      attachmentCount: attachments.length,
     });
 
     this.logDebug("agent:send_message", {
@@ -5923,7 +5958,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceContext: MessageSourceContext,
     messageText: string,
     codexClassification: ReturnType<typeof classifyCodexUserMessage>,
-    inboundSource: PendingInboundTurnContext["source"] = "user_input",
+    inboundSource: PreparedInboundConversationPayload["source"] = "user_input",
   ): CodexMcpToolGateEvaluation {
     const surfaceGate = evaluateCodexMcpToolGate({
       manager,
@@ -6218,8 +6253,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
             "user_input",
           )
         : undefined;
+    const observabilityInput = this.beginObservabilityRuntimeInput({
+      target,
+      rootSource: "user_input",
+      originalInput: text,
+      runtimeInput: runtimeMessage,
+      visibleMessageId,
+      requestedDelivery: "steer",
+      sourceChannel: sourceContext.channel,
+      metadata: {
+        attachmentCount: persistedAttachmentCount,
+        codexPluginDelegation: Boolean(codexPluginDelegationContext),
+        collaboration: Boolean(collaborationAuthor),
+      },
+    });
     const rollbackInboundTurnContext = this.enqueueInboundTurnContext(managerContextId, {
       source: "user_input",
+      rootTurnId: observabilityInput?.rootTurnId,
       runtimeMessageText: extractRuntimeMessageText(runtimeMessage),
       codexMcpToolGate,
       codexPluginDelegationContext,
@@ -6227,20 +6277,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     try {
       const receipt = await managerRuntime.sendMessage(runtimeMessage, "steer");
-      this.recordObservabilityRuntimeInput({
-        target,
-        rootSource: "user_input",
-        originalInput: text,
-        runtimeInput: runtimeMessage,
-        visibleMessageId,
-        requestedDelivery: "steer",
-        acceptedMode: receipt.acceptedMode,
-        sourceChannel: sourceContext.channel,
-        metadata: {
-          attachmentCount: persistedAttachmentCount,
-          codexPluginDelegation: Boolean(codexPluginDelegationContext),
-          collaboration: Boolean(collaborationAuthor),
-        },
+      this.completeObservabilityRuntimeInput(observabilityInput, receipt, {
+        attachmentCount: persistedAttachmentCount,
+        codexPluginDelegation: Boolean(codexPluginDelegationContext),
+        collaboration: Boolean(collaborationAuthor),
       });
       if (codexMcpToolGate) {
         this.codexMcpToolTurnGateByManagerId.set(managerContextId, codexMcpToolGate);
@@ -6259,6 +6299,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       });
     } catch (error) {
       rollbackInboundTurnContext();
+      this.cancelObservabilityRuntimeInput(observabilityInput, "manager_user_dispatch_failed");
       this.logDebug("manager:user_message_dispatch_error", {
         managerContextId,
         targetAgentId: managerContextId,
@@ -6349,22 +6390,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return "pi";
   }
 
-  private recordObservabilityRuntimeInput(input: {
+  private beginObservabilityRuntimeInput(input: {
     target: AgentDescriptor;
-    rootSource: "user_input" | "project_agent" | "bootstrap" | "agent_creator_bootstrap" | "codex_plugin_bootstrap" | "cortex" | "internal_self_send" | "internal_agent_message" | "collaboration_excluded" | "internal_other";
+    rootSource: ObservabilityRootSource;
     originalInput?: unknown;
     runtimeInput: unknown;
+    rootTurnId?: string;
+    parentRootTurnId?: string;
     visibleMessageId?: string;
     requestedDelivery?: RequestedDeliveryMode;
     acceptedMode?: string;
     sourceChannel?: string;
     metadata?: Record<string, unknown>;
-  }): void {
+  }): ObservabilityRuntimeInputHandle | undefined {
     if (!this.observability) {
-      return;
+      return undefined;
     }
 
-    this.observability.recordRuntimeInput({
+    const handle = this.observability.beginRuntimeInput({
       targetAgentId: input.target.agentId,
       managerId: input.target.role === "manager" ? input.target.agentId : input.target.managerId,
       profileId: input.target.profileId,
@@ -6374,6 +6417,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       rootSource: input.rootSource,
       originalInput: input.originalInput,
       runtimeInput: input.runtimeInput,
+      rootTurnId: input.rootTurnId,
+      parentRootTurnId: input.parentRootTurnId,
       requestPayloadFidelity: "delta_only",
       visibleMessageId: input.visibleMessageId,
       requestedDelivery: input.requestedDelivery,
@@ -6386,6 +6431,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         ...input.metadata,
       },
     });
+    if (handle) {
+      this.activeObservabilityRootByAgentId.set(input.target.agentId, {
+        rootTurnId: handle.rootTurnId,
+        parentRootTurnId: input.parentRootTurnId,
+      });
+    }
+    return handle;
+  }
+
+  private completeObservabilityRuntimeInput(
+    handle: ObservabilityRuntimeInputHandle | undefined,
+    receipt: SendMessageReceipt,
+    metadata?: Record<string, unknown>,
+  ): void {
+    this.observability?.completeRuntimeInput(handle, {
+      acceptedMode: receipt.acceptedMode,
+      deliveryId: receipt.deliveryId,
+      metadata,
+    });
+  }
+
+  private cancelObservabilityRuntimeInput(handle: ObservabilityRuntimeInputHandle | undefined, reason: string): void {
+    if (handle && this.activeObservabilityRootByAgentId.get(handle.targetAgentId)?.rootTurnId === handle.rootTurnId) {
+      this.activeObservabilityRootByAgentId.delete(handle.targetAgentId);
+    }
+    this.observability?.cancelRuntimeInput(handle, reason);
   }
 
   getVersioningService(): VersioningMutationSink | undefined {
@@ -6450,6 +6521,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (event.type === "message_start" && extractRole(event.message) === "user") {
       const nextContext = this.dequeueInboundTurnContextForRuntimeMessage(agentId, event.message);
 
+      if (nextContext?.rootTurnId) {
+        this.activeObservabilityRootByAgentId.set(agentId, {
+          rootTurnId: nextContext.rootTurnId,
+          parentRootTurnId: nextContext.parentRootTurnId,
+        });
+      } else if (nextContext) {
+        this.activeObservabilityRootByAgentId.delete(agentId);
+      }
+
       const externalProjectAgentContext = nextContext?.source === "project_agent_input" && nextContext.projectAgentContext?.external
         ? {
             fromAgentId: nextContext.projectAgentContext.fromAgentId,
@@ -6491,6 +6571,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (event.type === "turn_end" || event.type === "agent_end") {
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
+      this.activeObservabilityRootByAgentId.delete(agentId);
       this.codexMcpToolTurnGateByManagerId.delete(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
     }
@@ -6498,6 +6579,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private getActiveExternalProjectAgentTurn(agentId: string): ExternalProjectAgentTurnContext | undefined {
     return this.activeExternalProjectAgentTurnByAgentId.get(agentId);
+  }
+
+  private getActiveObservabilityRootTurnId(agentId: string): string | undefined {
+    const direct = this.activeObservabilityRootByAgentId.get(agentId);
+    if (direct) {
+      return direct.parentRootTurnId ?? direct.rootTurnId;
+    }
+    const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "worker") {
+      const managerRoot = this.activeObservabilityRootByAgentId.get(descriptor.managerId);
+      return managerRoot?.parentRootTurnId ?? managerRoot?.rootTurnId;
+    }
+    return undefined;
   }
 
   private assertExternalProjectAgentTurnCapabilityAllowed(

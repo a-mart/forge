@@ -15,6 +15,9 @@ export interface ObservabilityFacade {
   testConnection(patch?: PhoenixObservabilitySettingsPatch): Promise<PhoenixObservabilityTestResponse>;
   recordPromptResolved(input: ObservabilityPromptResolvedInput): void;
   recordRuntimeCreated(input: ObservabilityRuntimeCreatedInput): void;
+  beginRuntimeInput(input: ObservabilityRuntimeInputInput): ObservabilityRuntimeInputHandle | undefined;
+  completeRuntimeInput(handle: ObservabilityRuntimeInputHandle | undefined, patch: ObservabilityRuntimeInputCompletion): void;
+  cancelRuntimeInput(handle: ObservabilityRuntimeInputHandle | undefined, reason: string): void;
   recordRuntimeInput(input: ObservabilityRuntimeInputInput): string | undefined;
   recordRuntimeSessionEvent(input: ObservabilityRuntimeSessionEventInput): void;
   recordFeedback(event: FeedbackSubmitEvent): void;
@@ -77,6 +80,18 @@ export type ObservabilityRootSource =
   | "collaboration_excluded"
   | "internal_other";
 
+export interface ObservabilityRuntimeInputHandle {
+  rootTurnId: string;
+  targetAgentId: string;
+  runtimeToken?: number;
+}
+
+export interface ObservabilityRuntimeInputCompletion {
+  acceptedMode?: string;
+  deliveryId?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface ObservabilityRuntimeInputInput {
   targetAgentId: string;
   managerId?: string;
@@ -87,6 +102,8 @@ export interface ObservabilityRuntimeInputInput {
   rootSource: ObservabilityRootSource;
   originalInput?: unknown;
   runtimeInput: unknown;
+  rootTurnId?: string;
+  parentRootTurnId?: string;
   requestPayloadFidelity?: "full" | "partial" | "delta_only" | "unavailable";
   visibleMessageId?: string;
   requestedDelivery?: string;
