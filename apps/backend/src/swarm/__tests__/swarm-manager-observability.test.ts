@@ -8,6 +8,7 @@ import type {
   ObservabilityRuntimeInputHandle,
   ObservabilityRuntimeInputInput,
   ObservabilityRuntimeSessionEventInput,
+  ObservabilityToolSideEffectInput,
 } from '../../observability/observability-types.js'
 import { createDefaultPhoenixObservabilitySettings } from '../../observability/observability-settings.js'
 import { createTempConfig } from '../../test-support/temp-config.js'
@@ -74,6 +75,7 @@ class RecordingObservability implements ObservabilityFacade {
     this.calls.push(`event:${input.event.type}`)
     this.sessionEvents.push(input)
   }
+  recordToolSideEffect(_input: ObservabilityToolSideEffectInput): void {}
   recordFeedback(): void {}
   async shutdown(): Promise<void> {}
 }

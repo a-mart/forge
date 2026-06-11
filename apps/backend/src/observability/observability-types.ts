@@ -20,6 +20,7 @@ export interface ObservabilityFacade {
   cancelRuntimeInput(handle: ObservabilityRuntimeInputHandle | undefined, reason: string): void;
   recordRuntimeInput(input: ObservabilityRuntimeInputInput): string | undefined;
   recordRuntimeSessionEvent(input: ObservabilityRuntimeSessionEventInput): void;
+  recordToolSideEffect(input: ObservabilityToolSideEffectInput): void;
   recordFeedback(event: FeedbackSubmitEvent): void;
   shutdown(options?: { timeoutMs?: number }): Promise<void>;
 }
@@ -123,6 +124,24 @@ export interface ObservabilityRuntimeSessionEventInput {
   runtimeToken?: number;
   agentName?: string;
   event: RuntimeSessionEvent;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ObservabilityToolSideEffectInput {
+  agentId: string;
+  managerId?: string;
+  profileId?: string;
+  role?: string;
+  runtimeType?: ObservabilityRuntimeType;
+  runtimeToken?: number;
+  agentName?: string;
+  toolName: string;
+  toolCallId: string;
+  phase: "before" | "after" | "side_effect";
+  input?: unknown;
+  output?: unknown;
+  isError?: boolean;
+  userVisible?: boolean;
   metadata?: Record<string, unknown>;
 }
 

@@ -24,6 +24,7 @@ import type {
   ObservabilityRuntimeInputInput,
   ObservabilityRuntimeSessionEventInput,
   ObservabilityRuntimeTarget,
+  ObservabilityToolSideEffectInput,
 } from "./observability-types.js";
 
 export interface ObservabilityServiceOptions {
@@ -259,6 +260,27 @@ export class ObservabilityService implements ObservabilityFacade {
         for (let index = 0; index < result.correlationMisses; index += 1) this.correlator.recordCorrelationMiss();
       }
       // Exporter-owned correlation evictions are exposed through exporter status counters.
+    } catch (error) {
+      this.recordError(error);
+    }
+  }
+
+  recordToolSideEffect(input: ObservabilityToolSideEffectInput): void {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
+      return;
+    }
+
+    try {
+      const result = this.exporter.recordToolSideEffect(input);
+      if (result.started > 0) {
+        for (let index = 0; index < result.started; index += 1) this.correlator.incrementSpanStarted();
+      }
+      if (result.ended > 0) {
+        for (let index = 0; index < result.ended; index += 1) this.correlator.incrementSpanEnded();
+      }
+      if (result.correlationMisses > 0) {
+        for (let index = 0; index < result.correlationMisses; index += 1) this.correlator.recordCorrelationMiss();
+      }
     } catch (error) {
       this.recordError(error);
     }

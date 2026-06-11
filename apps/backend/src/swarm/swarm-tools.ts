@@ -100,6 +100,14 @@ function sortAgentsForList(left: AgentDescriptor, right: AgentDescriptor): numbe
   return left.agentId.localeCompare(right.agentId);
 }
 
+function recordToolSideEffect(
+  host: SwarmToolHost,
+  descriptor: AgentDescriptor,
+  event: Parameters<NonNullable<SwarmToolHost["recordToolSideEffect"]>>[1],
+): void {
+  host.recordToolSideEffect?.(descriptor.agentId, event);
+}
+
 function compactPath(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
   if (normalized.length === 0 || normalized === "/") {
@@ -303,6 +311,18 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           parsed.message,
           parsed.delivery
         );
+        recordToolSideEffect(host, descriptor, {
+          toolName: "send_message_to_agent",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: parsed,
+          output: receipt,
+          metadata: {
+            targetAgentId: parsed.targetAgentId,
+            acceptedMode: receipt.acceptedMode,
+            deliveryId: receipt.deliveryId,
+          },
+        });
 
         return {
           content: [
@@ -405,6 +425,19 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         };
 
         const spawned = await host.spawnAgent(descriptor.agentId, spawnInput);
+        recordToolSideEffect(host, descriptor, {
+          toolName: "spawn_agent",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: spawnInput,
+          output: { agentId: spawned.agentId, role: spawned.role, displayName: spawned.displayName },
+          metadata: {
+            spawnedAgentId: spawned.agentId,
+            specialist: spawnInput.specialist,
+            modelProvider: spawned.model.provider,
+            modelId: spawned.model.modelId,
+          },
+        });
 
         return {
           content: [
@@ -468,6 +501,17 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           "speak_to_user",
           parsed.target
         );
+        recordToolSideEffect(host, descriptor, {
+          toolName: "speak_to_user",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: parsed,
+          output: published,
+          userVisible: true,
+          metadata: {
+            targetChannel: published.targetContext.channel,
+          },
+        });
 
         return {
           content: [
@@ -571,6 +615,16 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             })),
           };
 
+          recordToolSideEffect(host, descriptor, {
+            toolName: "present_choices",
+            toolCallId: _toolCallId,
+            phase: "side_effect",
+            input: parsed,
+            output: details,
+            userVisible: true,
+            metadata: { status: "answered" },
+          });
+
           return {
             content: [
               {
@@ -586,6 +640,16 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
               status: "cancelled",
               reason: error.reason,
             };
+            recordToolSideEffect(host, descriptor, {
+              toolName: "present_choices",
+              toolCallId: _toolCallId,
+              phase: "side_effect",
+              input: parsed,
+              output: details,
+              isError: true,
+              userVisible: true,
+              metadata: { status: "cancelled" },
+            });
             return {
               content: [
                 {

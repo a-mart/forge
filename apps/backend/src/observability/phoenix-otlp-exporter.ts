@@ -24,10 +24,12 @@ import type {
   ObservabilityRuntimeInputInput,
   ObservabilityRuntimeSessionEventInput,
   ObservabilityToolDefinition,
+  ObservabilityToolSideEffectInput,
 } from "./observability-types.js";
 import {
   buildCommonOpenInferenceAttributes,
   buildModelCallAttributes,
+  buildToolAttributes,
   assertOtelPrimitiveAttributes,
   type OtelAttributes,
 } from "./openinference-attributes.js";
@@ -52,6 +54,12 @@ export interface RuntimeSessionEventRecordResult {
   ended: number;
   correlationMisses: number;
   correlationEvictions: number;
+}
+
+export interface ToolSideEffectRecordResult {
+  started: number;
+  ended: number;
+  correlationMisses: number;
 }
 
 interface PendingRuntimeInput extends ObservabilityRuntimeInputInput {
@@ -81,6 +89,20 @@ interface ActiveLlmCall {
   meta?: RuntimeModelCallMeta;
 }
 
+interface ActiveToolCall {
+  span: Span;
+  rootTurnId: string;
+  agentId: string;
+  runtimeToken?: number;
+  toolCallId: string;
+  toolName: string;
+  startedAtMs: number;
+  updateCount: number;
+  input?: unknown;
+  output?: unknown;
+  isError?: boolean;
+}
+
 interface RuntimeToolCacheEntry {
   tools: ObservabilityToolDefinition[];
   updatedAtMs: number;
@@ -92,6 +114,7 @@ const RUNTIME_TOOL_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_PENDING_INPUTS_PER_AGENT = 16;
 const MAX_PENDING_INPUT_AGENTS = 128;
 const MAX_ACTIVE_TURNS = 256;
+const MAX_ACTIVE_TOOL_SPANS = 1024;
 const MAX_RUNTIME_TOOL_CACHE_ENTRIES = 512;
 
 export class PhoenixOtlpExporter {
@@ -104,6 +127,7 @@ export class PhoenixOtlpExporter {
   private readonly runtimeToolsByAgentToken = new Map<string, RuntimeToolCacheEntry>();
   private readonly pendingInputsByAgentId = new Map<string, PendingRuntimeInput[]>();
   private readonly activeTurnsByAgentToken = new Map<string, ActiveRuntimeTurn>();
+  private readonly activeToolSpansByAgentTokenToolCall = new Map<string, ActiveToolCall>();
   private correlationEvictions = 0;
 
   constructor(options: PhoenixOtlpExporterOptions) {
@@ -360,6 +384,38 @@ export class PhoenixOtlpExporter {
         return result;
       }
 
+      if (event.type === "tool_execution_start") {
+        const turn = this.ensureActiveTurn(input, result);
+        if (!turn) {
+          return result;
+        }
+        if (this.startToolCall(input, turn, event) !== undefined) {
+          result.started += 1;
+        }
+        return result;
+      }
+
+      if (event.type === "tool_execution_update") {
+        const tool = this.getActiveToolCall(input.agentId, input.runtimeToken, event.toolCallId);
+        if (tool) {
+          this.updateToolCall(tool, event.partialResult);
+        } else {
+          result.correlationMisses += 1;
+        }
+        return result;
+      }
+
+      if (event.type === "tool_execution_end") {
+        const tool = this.getActiveToolCall(input.agentId, input.runtimeToken, event.toolCallId);
+        if (tool) {
+          this.endToolCall(tool, event.result, event.isError);
+          result.ended += 1;
+        } else {
+          result.correlationMisses += 1;
+        }
+        return result;
+      }
+
       if (event.type === "turn_end") {
         const turn = this.getActiveTurn(input.agentId, input.runtimeToken);
         if (!turn) {
@@ -372,6 +428,7 @@ export class PhoenixOtlpExporter {
           turn.llm = undefined;
           result.ended += 1;
         }
+        result.ended += this.closeActiveToolsForTurn(turn, "runtime_turn_ended");
         this.endRuntimeTurn(turn, event.meta, event.toolResults);
         result.ended += 2;
         return result;
@@ -382,6 +439,98 @@ export class PhoenixOtlpExporter {
       result.correlationEvictions = this.correlationEvictions - evictionsBefore;
     }
     return result;
+  }
+
+  recordToolSideEffect(input: ObservabilityToolSideEffectInput): ToolSideEffectRecordResult {
+    const result: ToolSideEffectRecordResult = { started: 0, ended: 0, correlationMisses: 0 };
+    try {
+      const tool = this.getActiveToolCall(input.agentId, input.runtimeToken, input.toolCallId);
+      if (!tool) {
+        result.correlationMisses += 1;
+        return result;
+      }
+      const attrs: OtelAttributes = {
+        "forge.tool_phase": input.phase,
+        "forge.user_visible": input.userVisible === true || tool.toolName === "speak_to_user",
+      };
+      const capturedInput = this.captureToolInput(input.input);
+      const capturedOutput = this.captureToolResult(input.output);
+      if (capturedInput !== undefined) {
+        attrs[SemanticConventions.INPUT_VALUE] = this.redactor.sanitizeAttributeValue(capturedInput);
+        attrs[SemanticConventions.INPUT_MIME_TYPE] = "application/json";
+      }
+      if (capturedOutput !== undefined) {
+        attrs[SemanticConventions.OUTPUT_VALUE] = this.redactor.sanitizeAttributeValue(capturedOutput);
+        attrs[SemanticConventions.OUTPUT_MIME_TYPE] = "application/json";
+      }
+      if (input.metadata) {
+        attrs[SemanticConventions.METADATA] = this.redactor.sanitizeAttributeValue({
+          rootTurnId: tool.rootTurnId,
+          runtimeToken: input.runtimeToken,
+          toolName: input.toolName,
+          ...input.metadata,
+        });
+      }
+      assertOtelPrimitiveAttributes(attrs);
+      tool.span.addEvent(`forge.tool.${input.phase}`, attrs);
+      if (input.userVisible === true) {
+        tool.span.setAttribute("forge.user_visible", true);
+      }
+      if (input.isError === true) {
+        tool.span.setAttribute("forge.side_effect_error", true);
+      }
+      if (input.toolName === "send_message_to_agent" || input.metadata?.targetAgentId !== undefined) {
+        this.exportChildSideEffectSpan("forge.agent.delivery", tool, input, "agent_delivery");
+        result.started += 1;
+        result.ended += 1;
+      }
+      if (input.userVisible === true || input.toolName === "speak_to_user") {
+        this.exportChildSideEffectSpan("forge.user.output", tool, input, "user_output");
+        result.started += 1;
+        result.ended += 1;
+      }
+    } catch {
+      // Observability must never affect tool execution.
+    }
+    return result;
+  }
+
+  private exportChildSideEffectSpan(
+    spanName: "forge.agent.delivery" | "forge.user.output",
+    tool: ActiveToolCall,
+    input: ObservabilityToolSideEffectInput,
+    eventName: "agent_delivery" | "user_output",
+  ): void {
+    const childInput = input.input !== undefined ? this.captureToolInput(input.input) : undefined;
+    const childOutput = input.output !== undefined ? this.captureToolResult(input.output) : undefined;
+    const attributes = buildCommonOpenInferenceAttributes({
+      spanKind: "CHAIN",
+      input: childInput,
+      output: childOutput,
+      sessionId: input.managerId ?? input.agentId,
+      userId: input.profileId,
+      metadata: {
+        event: eventName,
+        rootTurnId: tool.rootTurnId,
+        runtimeToken: input.runtimeToken,
+        toolName: input.toolName,
+        toolCallId: input.toolCallId,
+        userVisible: input.userVisible === true || input.toolName === "speak_to_user",
+        ...input.metadata,
+      },
+      tags: ["forge", "phoenix", eventName],
+      agentName: input.agentName ?? input.agentId,
+      graphNodeId: input.agentId,
+      graphNodeParentId: input.managerId,
+    }, this.redactor);
+    assertOtelPrimitiveAttributes(attributes);
+    const span = this.provider.getTracer("forge-phoenix").startSpan(
+      spanName,
+      { kind: SpanKind.INTERNAL, attributes },
+      trace.setSpan(ROOT_CONTEXT, tool.span),
+    );
+    span.setStatus(input.isError ? { code: SpanStatusCode.ERROR, message: "tool_side_effect_error" } : { code: SpanStatusCode.OK });
+    span.end();
   }
 
   async exportSmokeSpan(): Promise<void> {
@@ -508,6 +657,137 @@ export class PhoenixOtlpExporter {
       parentContext,
     );
     return { span, startedAtMs: Date.now() };
+  }
+
+  private startToolCall(
+    input: ObservabilityRuntimeSessionEventInput,
+    turn: ActiveRuntimeTurn,
+    event: Extract<ObservabilityRuntimeSessionEventInput["event"], { type: "tool_execution_start" }>,
+  ): ActiveToolCall | undefined {
+    const key = buildToolCallKey(input.agentId, input.runtimeToken, event.toolCallId);
+    const existing = this.activeToolSpansByAgentTokenToolCall.get(key);
+    if (existing) {
+      existing.span.addEvent("forge.tool.duplicate_start", {
+        "forge.tool_name": this.redactor.sanitizeLabel(event.toolName),
+      });
+      return undefined;
+    }
+
+    const definition = findToolDefinition(turn.activeTools, event.toolName);
+    const capturedArgs = this.captureToolInput(event.args);
+    const attributes: OtelAttributes = {
+      ...buildCommonOpenInferenceAttributes({
+        spanKind: "TOOL",
+        input: capturedArgs,
+        sessionId: input.managerId ?? input.agentId,
+        userId: input.profileId,
+        metadata: {
+          event: "tool_execution",
+          rootTurnId: turn.rootTurnId,
+          parentRootTurnId: turn.parentRootTurnId,
+          runtimeToken: input.runtimeToken,
+          runtimeType: input.runtimeType,
+          role: input.role,
+          correlationStatus: "resolved",
+          ...input.metadata,
+        },
+        tags: ["forge", "phoenix", "tool", event.toolName],
+        agentName: input.agentName ?? input.agentId,
+        graphNodeId: input.agentId,
+        graphNodeParentId: input.managerId,
+      }, this.redactor),
+      ...buildToolAttributes({
+        name: event.toolName,
+        description: definition?.description,
+        parameters: capturedArgs,
+        jsonSchema: definition?.jsonSchema,
+      }, this.redactor),
+      [SemanticConventions.TOOL_CALL_ID]: this.redactor.redactIdentifier(event.toolCallId),
+      "forge.runtime_token": input.runtimeToken ?? "unknown",
+      "forge.user_visible": event.toolName === "speak_to_user",
+    };
+    if (definition?.source) {
+      attributes["forge.tool_source"] = this.redactor.sanitizeLabel(definition.source);
+    }
+    assertOtelPrimitiveAttributes(attributes);
+    const span = this.provider.getTracer("forge-phoenix").startSpan(
+      `forge.tool.${event.toolName}`,
+      { kind: SpanKind.INTERNAL, attributes },
+      trace.setSpan(ROOT_CONTEXT, turn.turnSpan),
+    );
+    const tool: ActiveToolCall = {
+      span,
+      rootTurnId: turn.rootTurnId,
+      agentId: input.agentId,
+      runtimeToken: input.runtimeToken,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      startedAtMs: Date.now(),
+      updateCount: 0,
+      input: event.args,
+    };
+    this.activeToolSpansByAgentTokenToolCall.set(key, tool);
+    this.enforceActiveToolSpanCaps();
+    return tool;
+  }
+
+  private updateToolCall(tool: ActiveToolCall, partialResult: unknown): void {
+    tool.updateCount += 1;
+    const captured = this.captureToolResult(partialResult);
+    const attrs: OtelAttributes = {
+      "forge.tool_update_count": tool.updateCount,
+    };
+    if (captured !== undefined) {
+      attrs[SemanticConventions.OUTPUT_VALUE] = this.redactor.sanitizeAttributeValue(captured);
+      attrs[SemanticConventions.OUTPUT_MIME_TYPE] = "application/json";
+    }
+    assertOtelPrimitiveAttributes(attrs);
+    tool.span.addEvent("forge.tool.update", attrs);
+  }
+
+  private endToolCall(tool: ActiveToolCall, result: unknown, isError: boolean, reason?: string): void {
+    const key = buildToolCallKey(tool.agentId, tool.runtimeToken, tool.toolCallId);
+    this.activeToolSpansByAgentTokenToolCall.delete(key);
+    tool.output = result;
+    tool.isError = isError;
+    const attrs: OtelAttributes = {
+      "forge.duration_ms": Date.now() - tool.startedAtMs,
+      "forge.tool_update_count": tool.updateCount,
+      "forge.user_visible": tool.toolName === "speak_to_user",
+    };
+    const capturedResult = this.captureToolResult(result);
+    if (capturedResult !== undefined) {
+      attrs[SemanticConventions.OUTPUT_VALUE] = this.redactor.sanitizeAttributeValue(capturedResult);
+      attrs[SemanticConventions.OUTPUT_MIME_TYPE] = "application/json";
+    }
+    const capturedInput = this.captureToolInput(tool.input);
+    if (capturedInput !== undefined) {
+      attrs[SemanticConventions.TOOL_PARAMETERS] = this.redactor.sanitizeAttributeValue(capturedInput);
+    }
+    if (reason) {
+      attrs["forge.correlation_status"] = reason;
+    }
+    assertOtelPrimitiveAttributes(attrs);
+    for (const [name, value] of Object.entries(attrs)) {
+      tool.span.setAttribute(name, value);
+    }
+    tool.span.setStatus(isError || reason ? { code: SpanStatusCode.ERROR, message: reason ?? "tool_error" } : { code: SpanStatusCode.OK });
+    tool.span.end();
+  }
+
+  private closeActiveToolsForTurn(turn: ActiveRuntimeTurn, reason: string): number {
+    let ended = 0;
+    for (const tool of Array.from(this.activeToolSpansByAgentTokenToolCall.values())) {
+      if (tool.agentId === turn.agentId && tool.runtimeToken === turn.runtimeToken) {
+        this.endToolCall(tool, tool.output ?? { status: reason }, true, reason);
+        ended += 1;
+      }
+    }
+    return ended;
+  }
+
+  private getActiveToolCall(agentId: string, runtimeToken: number | undefined, toolCallId: string): ActiveToolCall | undefined {
+    return this.activeToolSpansByAgentTokenToolCall.get(buildToolCallKey(agentId, runtimeToken, toolCallId));
   }
 
   private endLlmCall(
@@ -665,6 +945,14 @@ export class PhoenixOtlpExporter {
       }
     }
 
+    for (const [key, tool] of this.activeToolSpansByAgentTokenToolCall.entries()) {
+      if (nowMs - tool.startedAtMs > ACTIVE_RUNTIME_TURN_TTL_MS) {
+        this.activeToolSpansByAgentTokenToolCall.delete(key);
+        this.endToolCall(tool, tool.output ?? { status: "active_tool_span_ttl_evicted" }, true, "active_tool_span_ttl_evicted");
+        this.correlationEvictions += 1;
+      }
+    }
+
     for (const [key, entry] of this.runtimeToolsByAgentToken.entries()) {
       if (nowMs - entry.updatedAtMs > RUNTIME_TOOL_CACHE_TTL_MS) {
         this.runtimeToolsByAgentToken.delete(key);
@@ -674,6 +962,7 @@ export class PhoenixOtlpExporter {
 
     this.enforceGlobalPendingInputCaps();
     this.enforceActiveTurnCaps();
+    this.enforceActiveToolSpanCaps();
     this.enforceRuntimeToolCacheCaps();
   }
 
@@ -734,6 +1023,20 @@ export class PhoenixOtlpExporter {
     }
   }
 
+  private enforceActiveToolSpanCaps(): void {
+    while (this.activeToolSpansByAgentTokenToolCall.size > MAX_ACTIVE_TOOL_SPANS) {
+      const oldestEntry = Array.from(this.activeToolSpansByAgentTokenToolCall.entries())
+        .sort((left, right) => left[1].startedAtMs - right[1].startedAtMs)[0];
+      if (!oldestEntry) {
+        return;
+      }
+      const [key, tool] = oldestEntry;
+      this.activeToolSpansByAgentTokenToolCall.delete(key);
+      this.endToolCall(tool, tool.output ?? { status: "active_tool_span_cap_evicted" }, true, "active_tool_span_cap_evicted");
+      this.correlationEvictions += 1;
+    }
+  }
+
   private enforceRuntimeToolCacheCaps(): void {
     while (this.runtimeToolsByAgentToken.size > MAX_RUNTIME_TOOL_CACHE_ENTRIES) {
       const oldestEntry = Array.from(this.runtimeToolsByAgentToken.entries())
@@ -753,6 +1056,7 @@ export class PhoenixOtlpExporter {
   }
 
   private closeActiveTurn(turn: ActiveRuntimeTurn, reason: string): void {
+    this.closeActiveToolsForTurn(turn, reason);
     if (turn.llm) {
       turn.llm.span.setAttribute("forge.correlation_status", reason);
       turn.llm.span.setStatus({ code: SpanStatusCode.ERROR, message: reason });
@@ -768,6 +1072,11 @@ export class PhoenixOtlpExporter {
   }
 
   private closeOpenCorrelationSpans(reason: string): void {
+    for (const tool of Array.from(this.activeToolSpansByAgentTokenToolCall.values())) {
+      this.endToolCall(tool, tool.output ?? { status: reason }, true, reason);
+    }
+    this.activeToolSpansByAgentTokenToolCall.clear();
+
     for (const turn of this.activeTurnsByAgentToken.values()) {
       if (turn.llm) {
         turn.llm.span.setAttribute("forge.correlation_status", reason);
@@ -802,6 +1111,20 @@ export class PhoenixOtlpExporter {
 
   private captureOutput(value: unknown): unknown {
     if (!this.capture.modelOutputs) {
+      return undefined;
+    }
+    return this.capture.imageData ? value : stripRuntimeImageData(value);
+  }
+
+  private captureToolInput(value: unknown): unknown {
+    if (!this.capture.toolInputs) {
+      return undefined;
+    }
+    return this.capture.imageData ? value : stripRuntimeImageData(value);
+  }
+
+  private captureToolResult(value: unknown): unknown {
+    if (!this.capture.toolResults) {
       return undefined;
     }
     return this.capture.imageData ? value : stripRuntimeImageData(value);
@@ -944,6 +1267,17 @@ function summarizeImageData(record: Record<string, unknown>, data: string): stri
 
 function buildAgentTokenKey(agentId: string, runtimeToken?: number): string {
   return `${agentId}:${runtimeToken ?? "unknown"}`;
+}
+
+function buildToolCallKey(agentId: string, runtimeToken: number | undefined, toolCallId: string): string {
+  return `${buildAgentTokenKey(agentId, runtimeToken)}:${toolCallId}`;
+}
+
+function findToolDefinition(
+  tools: ObservabilityToolDefinition[] | undefined,
+  toolName: string,
+): ObservabilityToolDefinition | undefined {
+  return tools?.find((tool) => tool.name === toolName);
 }
 
 function stringifyForMatch(value: unknown): string | undefined {

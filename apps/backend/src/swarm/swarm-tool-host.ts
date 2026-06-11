@@ -12,6 +12,17 @@ import type { CodexCatalogSnapshot, CodexMcpToolCallResult } from "./codex-app-s
 import type { CodexPluginScopeRuntimeView } from "./codex-app-server/codex-plugin-scope-service.js";
 import type { TaskToolInput, TaskToolResult } from "./coordination/task-tool.js";
 
+export interface SwarmToolSideEffectEvent {
+  toolName: string;
+  toolCallId: string;
+  phase: "before" | "after" | "side_effect";
+  input?: unknown;
+  output?: unknown;
+  isError?: boolean;
+  userVisible?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
 export interface SwarmToolHost {
   listAgents(): AgentDescriptor[];
   getWorkerActivity(agentId: string): {
@@ -65,6 +76,7 @@ export interface SwarmToolHost {
     toolCallId: string,
     input: TaskToolInput,
   ): Promise<TaskToolResult>;
+  recordToolSideEffect?(callerAgentId: string, event: SwarmToolSideEffectEvent): void;
   isWorkPlansEnabled?(): boolean;
   listCodexMcpTools?(managerAgentId: string): Promise<CodexCatalogSnapshot>;
   callCodexMcpTool?(

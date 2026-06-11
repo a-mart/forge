@@ -314,6 +314,226 @@ describe('PhoenixOtlpExporter', () => {
     expect(String(llm?.attributes['llm.input_messages'])).toContain('runtime user text with guidance')
   })
 
+  it('exports runtime tool spans once and isolates reused tool ids by runtime token', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    for (const runtimeToken of [21, 22]) {
+      exporter.recordRuntimeCreated({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        status: 'ready',
+        activeTools: [{ name: 'speak_to_user', description: 'Publish response', jsonSchema: { type: 'object' } }],
+      })
+      exporter.recordRuntimeInput({
+        targetAgentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        rootSource: 'user_input',
+        runtimeInput: `turn ${runtimeToken}`,
+      })
+      exporter.recordRuntimeSessionEvent({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        event: { type: 'message_start', message: { role: 'user', content: `turn ${runtimeToken}` } },
+      })
+      exporter.recordRuntimeSessionEvent({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        event: { type: 'tool_execution_start', toolName: 'speak_to_user', toolCallId: 'tool-1', args: { text: `hello ${runtimeToken}` } },
+      })
+      exporter.recordRuntimeSessionEvent({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        event: { type: 'tool_execution_start', toolName: 'speak_to_user', toolCallId: 'tool-1', args: { text: 'duplicate ignored' } },
+      })
+      exporter.recordRuntimeSessionEvent({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        event: { type: 'tool_execution_update', toolName: 'speak_to_user', toolCallId: 'tool-1', partialResult: { queued: true } },
+      })
+      exporter.recordToolSideEffect({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        toolName: 'speak_to_user',
+        toolCallId: 'tool-1',
+        phase: 'side_effect',
+        input: { text: `hello ${runtimeToken}` },
+        output: { targetContext: { channel: 'web' } },
+        userVisible: true,
+        metadata: { targetChannel: 'web' },
+      })
+      exporter.recordRuntimeSessionEvent({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        event: { type: 'tool_execution_end', toolName: 'speak_to_user', toolCallId: 'tool-1', result: { published: true }, isError: false },
+      })
+      exporter.recordRuntimeSessionEvent({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        event: { type: 'turn_end', toolResults: [] },
+      })
+    }
+
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    const tools = spans.filter((entry) => entry.name === 'forge.tool.speak_to_user')
+    expect(tools).toHaveLength(2)
+    expect(tools.every((entry) => entry.parentSpanContext?.spanId)).toBe(true)
+    expect(tools.every((entry) => entry.attributes['openinference.span.kind'] === 'TOOL')).toBe(true)
+    expect(tools.every((entry) => entry.attributes['tool.name'] === 'speak_to_user')).toBe(true)
+    expect(tools.every((entry) => entry.attributes['tool.json_schema'] === '{"type":"object"}')).toBe(true)
+    expect(tools.every((entry) => entry.attributes['forge.user_visible'] === true)).toBe(true)
+    expect(tools.every((entry) => entry.events.some((event) => event.name === 'forge.tool.side_effect'))).toBe(true)
+    const userOutputs = spans.filter((entry) => entry.name === 'forge.user.output')
+    expect(userOutputs).toHaveLength(2)
+    expect(userOutputs.every((entry) => tools.some((tool) => tool.spanContext().spanId === entry.parentSpanContext?.spanId))).toBe(true)
+    expect(JSON.stringify(tools.map((entry) => entry.attributes))).not.toContain('duplicate ignored')
+  })
+
+  it('exports agent delivery child spans from send-message side effects', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 41,
+      rootSource: 'user_input',
+      runtimeInput: 'delegate',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 41,
+      event: { type: 'message_start', message: { role: 'user', content: 'delegate' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 41,
+      event: { type: 'tool_execution_start', toolName: 'send_message_to_agent', toolCallId: 'deliver-1', args: { targetAgentId: 'worker-1', message: 'do work' } },
+    })
+    exporter.recordToolSideEffect({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 41,
+      toolName: 'send_message_to_agent',
+      toolCallId: 'deliver-1',
+      phase: 'side_effect',
+      input: { targetAgentId: 'worker-1', message: 'do work' },
+      output: { targetAgentId: 'worker-1', deliveryId: 'delivery-1', acceptedMode: 'prompt' },
+      metadata: { targetAgentId: 'worker-1', deliveryId: 'delivery-1', acceptedMode: 'prompt' },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 41,
+      event: { type: 'tool_execution_end', toolName: 'send_message_to_agent', toolCallId: 'deliver-1', result: { targetAgentId: 'worker-1' }, isError: false },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 41,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    const tool = spans.find((entry) => entry.name === 'forge.tool.send_message_to_agent')
+    const delivery = spans.find((entry) => entry.name === 'forge.agent.delivery')
+    expect(delivery?.parentSpanContext?.spanId).toBe(tool?.spanContext().spanId)
+    expect(String(delivery?.attributes.metadata)).toContain('agent_delivery')
+    expect(String(delivery?.attributes.metadata)).toContain('acceptedMode')
+  })
+
+  it('honors tool input/result capture toggles', async () => {
+    const spanExporter = new MockExporter()
+    const base = createDefaultPhoenixObservabilitySettings()
+    const settings = { ...base, enabled: true, capture: { ...base.capture, toolInputs: false, toolResults: false } }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      rootSource: 'internal_agent_message',
+      runtimeInput: 'run tool',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      event: { type: 'message_start', message: { role: 'user', content: 'run tool' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      event: { type: 'tool_execution_start', toolName: 'bash', toolCallId: 'tool-secret', args: { command: 'SECRET_COMMAND' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      event: { type: 'tool_execution_end', toolName: 'bash', toolCallId: 'tool-secret', result: { stdout: 'SECRET_RESULT' }, isError: false },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'pi',
+      runtimeToken: 31,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const tool = spanExporter.batches.flat().find((entry) => entry.name === 'forge.tool.bash')
+    expect(tool).toBeDefined()
+    expect(JSON.stringify(tool?.attributes)).not.toContain('SECRET_COMMAND')
+    expect(JSON.stringify(tool?.attributes)).not.toContain('SECRET_RESULT')
+    expect(tool?.attributes['input.value']).toBeUndefined()
+    expect(tool?.attributes['output.value']).toBeUndefined()
+    expect(tool?.attributes['tool.parameters']).toBeUndefined()
+  })
+
   it('omits image bytes by default while preserving image summaries', async () => {
     const spanExporter = new MockExporter()
     const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }

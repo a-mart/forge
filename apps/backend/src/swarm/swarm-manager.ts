@@ -269,7 +269,7 @@ import type {
   SetPinnedContentOptions,
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
-import type { SwarmToolHost } from "./swarm-tool-host.js";
+import type { SwarmToolHost, SwarmToolSideEffectEvent } from "./swarm-tool-host.js";
 import type {
   AgentMessageEvent,
   AgentContextUsage,
@@ -2251,6 +2251,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  recordToolSideEffect(callerAgentId: string, event: SwarmToolSideEffectEvent): void {
+    const descriptor = this.descriptors.get(callerAgentId);
+    if (!descriptor || !this.observability) {
+      return;
+    }
+
+    this.observability.recordToolSideEffect({
+      agentId: descriptor.agentId,
+      managerId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
+      profileId: descriptor.profileId,
+      role: descriptor.role,
+      runtimeType: this.getObservabilityRuntimeType(descriptor),
+      runtimeToken: this.runtimeController.getRuntimeToken(descriptor.agentId),
+      agentName: descriptor.displayName,
+      ...event,
+      metadata: {
+        modelProvider: descriptor.model.provider,
+        modelId: descriptor.model.modelId,
+        ...event.metadata,
+      },
+    });
+  }
+
   async runTaskTool(
     callerAgentId: string,
     _toolCallId: string,
@@ -2292,11 +2315,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           profileId: descriptor.profileId,
           sessionAgentId: descriptor.agentId,
         });
-        return {
-          action: "get",
+        const toolResult = {
+          action: "get" as const,
           stateRevision: result.stateRevision,
           snapshot: result.snapshot,
         };
+        this.recordToolSideEffect(callerAgentId, {
+          toolName: "task",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: normalizedInput,
+          output: toolResult,
+          metadata: { action: normalizedInput.action },
+        });
+        return toolResult;
       }
 
       const mutationResult = await this.runTaskToolMutation(service, descriptor, normalizedInput);
@@ -2321,7 +2353,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           error: error instanceof Error ? error.message : String(error),
         });
       });
-      return {
+      const toolResult = {
         action: mutationResult.action,
         stateRevision: mutationResult.stateRevision,
         planId: mutationResult.planId,
@@ -2331,10 +2363,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         ...(mutationResult.updatedItemId ? { updatedItemId: mutationResult.updatedItemId } : {}),
         ...(mutationResult.linkedItemId ? { linkedItemId: mutationResult.linkedItemId } : {}),
       };
+      this.recordToolSideEffect(callerAgentId, {
+        toolName: "task",
+        toolCallId: _toolCallId,
+        phase: "side_effect",
+        input: normalizedInput,
+        output: toolResult,
+        metadata: { action: normalizedInput.action, planId: mutationResult.planId },
+      });
+      return toolResult;
     } catch (error) {
       const taskInput = normalizedInput ?? input;
       const recoverableResult = await this.toRecoverableTaskToolResult(service, error, taskInput);
       if (recoverableResult) {
+        this.recordToolSideEffect(callerAgentId, {
+          toolName: "task",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: taskInput,
+          output: recoverableResult,
+          isError: true,
+          metadata: { action: this.getTaskToolResultAction(taskInput), recoverable: true },
+        });
         return recoverableResult;
       }
       throw new Error(this.mapTaskToolErrorMessage(error, taskInput));
