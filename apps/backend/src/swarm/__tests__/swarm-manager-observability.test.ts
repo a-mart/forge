@@ -9,6 +9,7 @@ import type {
   ObservabilityRuntimeInputInput,
   ObservabilityRuntimeSessionEventInput,
   ObservabilityToolSideEffectInput,
+  ObservabilityAgentDeliveryInput,
 } from '../../observability/observability-types.js'
 import { createDefaultPhoenixObservabilitySettings } from '../../observability/observability-settings.js'
 import { createTempConfig } from '../../test-support/temp-config.js'
@@ -19,6 +20,7 @@ class RecordingObservability implements ObservabilityFacade {
   readonly runtimeInputs: ObservabilityRuntimeInputInput[] = []
   readonly completions: ObservabilityRuntimeInputCompletion[] = []
   readonly sessionEvents: ObservabilityRuntimeSessionEventInput[] = []
+  readonly deliveries: ObservabilityAgentDeliveryInput[] = []
   private nextRoot = 0
 
   async initialize(): Promise<void> {}
@@ -57,9 +59,10 @@ class RecordingObservability implements ObservabilityFacade {
   recordRuntimeCreated(_input: ObservabilityRuntimeCreatedInput): void {}
   beginRuntimeInput(input: ObservabilityRuntimeInputInput): ObservabilityRuntimeInputHandle {
     this.calls.push('beginRuntimeInput')
-    this.runtimeInputs.push(input)
     this.nextRoot += 1
-    return { rootTurnId: `root-${this.nextRoot}`, targetAgentId: input.targetAgentId, runtimeToken: input.runtimeToken }
+    const handle = { rootTurnId: `root-${this.nextRoot}`, targetAgentId: input.targetAgentId, runtimeToken: input.runtimeToken }
+    this.runtimeInputs.push({ ...input, rootTurnId: handle.rootTurnId })
+    return handle
   }
   completeRuntimeInput(_handle: ObservabilityRuntimeInputHandle | undefined, patch: ObservabilityRuntimeInputCompletion): void {
     this.calls.push('completeRuntimeInput')
@@ -76,6 +79,10 @@ class RecordingObservability implements ObservabilityFacade {
     this.sessionEvents.push(input)
   }
   recordToolSideEffect(_input: ObservabilityToolSideEffectInput): void {}
+  recordAgentDelivery(input: ObservabilityAgentDeliveryInput): void {
+    this.calls.push('recordAgentDelivery')
+    this.deliveries.push(input)
+  }
   recordFeedback(): void {}
   async shutdown(): Promise<void> {}
 }
@@ -91,6 +98,7 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       observability.runtimeInputs.length = 0
       observability.completions.length = 0
       observability.sessionEvents.length = 0
+      observability.deliveries.length = 0
       const runtime = manager.runtimeByAgentId.get(descriptor.agentId)
       if (!runtime) throw new Error('expected test runtime')
       runtime.onSendMessage = async () => {
@@ -107,6 +115,43 @@ describe('SwarmManager Phoenix observability dispatch correlation', () => {
       expect(observability.calls).toContain('completeRuntimeInput')
       expect(observability.runtimeInputs[0]).toMatchObject({ targetAgentId: descriptor.agentId, rootSource: 'user_input' })
       expect(observability.completions[0]).toMatchObject({ acceptedMode: 'prompt', deliveryId: 'delivery-1' })
+    } finally {
+      await handle.cleanup()
+    }
+  })
+
+  it('records direct manager-to-worker delivery spans with top-level parent root semantics', async () => {
+    const handle = await createTempConfig({ prefix: 'forge-observability-delivery-' })
+    try {
+      const observability = new RecordingObservability()
+      const manager = new TestSwarmManager(handle.config, { observability })
+      const descriptor = await bootWithDefaultManager(manager, handle.config)
+      observability.calls.length = 0
+      observability.runtimeInputs.length = 0
+      observability.completions.length = 0
+      observability.sessionEvents.length = 0
+      observability.deliveries.length = 0
+
+      await manager.dispatchRuntimeUserMessage({
+        targetAgentId: descriptor.agentId,
+        text: 'delegate this',
+        sourceContext: { channel: 'web' },
+      })
+      const userRoot = observability.runtimeInputs[0]?.rootTurnId
+      const worker = await manager.spawnAgent(descriptor.agentId, { agentId: 'worker-one' })
+      await manager.sendMessage(descriptor.agentId, worker.agentId, 'worker task', 'auto')
+
+      const delivery = observability.deliveries.find((entry) => entry.targetAgentId === worker.agentId)
+      expect(delivery).toMatchObject({
+        fromAgentId: descriptor.agentId,
+        targetAgentId: worker.agentId,
+        requestedDelivery: 'auto',
+        acceptedMode: 'prompt',
+        source: 'internal',
+        parentRootTurnId: userRoot,
+      })
+      expect(delivery?.rootTurnId).not.toBe(userRoot)
+      expect(delivery?.metadata?.parentRootSemantics).toBe('top_level_root_turn')
     } finally {
       await handle.cleanup()
     }

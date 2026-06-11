@@ -25,6 +25,7 @@ import type {
   ObservabilityRuntimeSessionEventInput,
   ObservabilityRuntimeTarget,
   ObservabilityToolSideEffectInput,
+  ObservabilityAgentDeliveryInput,
 } from "./observability-types.js";
 
 export interface ObservabilityServiceOptions {
@@ -272,15 +273,20 @@ export class ObservabilityService implements ObservabilityFacade {
 
     try {
       const result = this.exporter.recordToolSideEffect(input);
-      if (result.started > 0) {
-        for (let index = 0; index < result.started; index += 1) this.correlator.incrementSpanStarted();
-      }
-      if (result.ended > 0) {
-        for (let index = 0; index < result.ended; index += 1) this.correlator.incrementSpanEnded();
-      }
-      if (result.correlationMisses > 0) {
-        for (let index = 0; index < result.correlationMisses; index += 1) this.correlator.recordCorrelationMiss();
-      }
+      this.applySpanRecordResult(result);
+    } catch (error) {
+      this.recordError(error);
+    }
+  }
+
+  recordAgentDelivery(input: ObservabilityAgentDeliveryInput): void {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
+      return;
+    }
+
+    try {
+      const result = this.exporter.recordAgentDelivery(input);
+      this.applySpanRecordResult(result);
     } catch (error) {
       this.recordError(error);
     }
@@ -313,6 +319,18 @@ export class ObservabilityService implements ObservabilityFacade {
         timer.unref?.();
       }),
     ]).catch((error) => this.recordError(error));
+  }
+
+  private applySpanRecordResult(result: { started?: number; ended?: number; correlationMisses?: number }): void {
+    if ((result.started ?? 0) > 0) {
+      for (let index = 0; index < (result.started ?? 0); index += 1) this.correlator.incrementSpanStarted();
+    }
+    if ((result.ended ?? 0) > 0) {
+      for (let index = 0; index < (result.ended ?? 0); index += 1) this.correlator.incrementSpanEnded();
+    }
+    if ((result.correlationMisses ?? 0) > 0) {
+      for (let index = 0; index < (result.correlationMisses ?? 0); index += 1) this.correlator.recordCorrelationMiss();
+    }
   }
 
   private async configureExporter(

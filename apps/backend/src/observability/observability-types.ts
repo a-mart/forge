@@ -21,6 +21,7 @@ export interface ObservabilityFacade {
   recordRuntimeInput(input: ObservabilityRuntimeInputInput): string | undefined;
   recordRuntimeSessionEvent(input: ObservabilityRuntimeSessionEventInput): void;
   recordToolSideEffect(input: ObservabilityToolSideEffectInput): void;
+  recordAgentDelivery(input: ObservabilityAgentDeliveryInput): void;
   recordFeedback(event: FeedbackSubmitEvent): void;
   shutdown(options?: { timeoutMs?: number }): Promise<void>;
 }
@@ -142,6 +143,24 @@ export interface ObservabilityToolSideEffectInput {
   output?: unknown;
   isError?: boolean;
   userVisible?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ObservabilityAgentDeliveryInput {
+  fromAgentId: string;
+  targetAgentId: string;
+  managerId?: string;
+  profileId?: string;
+  sourceAgentName?: string;
+  targetAgentName?: string;
+  rootTurnId?: string;
+  parentRootTurnId?: string;
+  message?: unknown;
+  runtimeInput?: unknown;
+  requestedDelivery?: string;
+  acceptedMode?: string;
+  deliveryId?: string;
+  source?: "agent_message" | "project_agent" | "internal" | "tool_side_effect";
   metadata?: Record<string, unknown>;
 }
 

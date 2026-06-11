@@ -371,6 +371,30 @@ describe('PhoenixOtlpExporter', () => {
         runtimeToken,
         toolName: 'speak_to_user',
         toolCallId: 'tool-1',
+        phase: 'before',
+        input: { text: `hello ${runtimeToken}` },
+        output: { input: { text: `hello ${runtimeToken}` } },
+        metadata: { source: 'forge_extension_hook' },
+      })
+      exporter.recordToolSideEffect({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        toolName: 'speak_to_user',
+        toolCallId: 'tool-1',
+        phase: 'before',
+        input: { text: 'DUPLICATE_HOOK_INPUT' },
+        output: { input: { text: 'DUPLICATE_HOOK_OUTPUT' } },
+        metadata: { source: 'forge_pi_tool_bridge' },
+      })
+      exporter.recordToolSideEffect({
+        agentId: 'manager-1',
+        managerId: 'manager-1',
+        runtimeType: 'pi',
+        runtimeToken,
+        toolName: 'speak_to_user',
+        toolCallId: 'tool-1',
         phase: 'side_effect',
         input: { text: `hello ${runtimeToken}` },
         output: { targetContext: { channel: 'web' } },
@@ -404,11 +428,116 @@ describe('PhoenixOtlpExporter', () => {
     expect(tools.every((entry) => entry.attributes['tool.name'] === 'speak_to_user')).toBe(true)
     expect(tools.every((entry) => entry.attributes['tool.json_schema'] === '{"type":"object"}')).toBe(true)
     expect(tools.every((entry) => entry.attributes['forge.user_visible'] === true)).toBe(true)
+    expect(tools.every((entry) => entry.events.some((event) => event.name === 'forge.tool.before'))).toBe(true)
+    expect(tools.every((entry) => entry.events.some((event) => event.name === 'forge.tool.duplicate_enrichment'))).toBe(true)
     expect(tools.every((entry) => entry.events.some((event) => event.name === 'forge.tool.side_effect'))).toBe(true)
     const userOutputs = spans.filter((entry) => entry.name === 'forge.user.output')
     expect(userOutputs).toHaveLength(2)
     expect(userOutputs.every((entry) => tools.some((tool) => tool.spanContext().spanId === entry.parentSpanContext?.spanId))).toBe(true)
-    expect(JSON.stringify(tools.map((entry) => entry.attributes))).not.toContain('duplicate ignored')
+    const serializedTools = JSON.stringify(tools.map((entry) => ({ attributes: entry.attributes, events: entry.events })))
+    expect(serializedTools).not.toContain('duplicate ignored')
+    expect(serializedTools).not.toContain('DUPLICATE_HOOK')
+  })
+
+  it('exports dedicated agent delivery spans under the top-level parent root and marks unresolved fallback', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    const managerRoot = exporter.beginRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 51,
+      rootSource: 'user_input',
+      runtimeInput: 'top-level user request',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 51,
+      event: { type: 'message_start', message: { role: 'user', content: 'top-level user request' } },
+    })
+    const workerRoot = exporter.beginRuntimeInput({
+      targetAgentId: 'worker-1',
+      managerId: 'manager-1',
+      role: 'worker',
+      runtimeType: 'pi',
+      runtimeToken: 52,
+      rootSource: 'internal_agent_message',
+      rootTurnId: 'worker-child-root',
+      parentRootTurnId: managerRoot.rootTurnId,
+      runtimeInput: 'worker task',
+    })
+    exporter.recordAgentDelivery({
+      fromAgentId: 'manager-1',
+      targetAgentId: 'worker-1',
+      managerId: 'manager-1',
+      rootTurnId: workerRoot.rootTurnId,
+      parentRootTurnId: managerRoot.rootTurnId,
+      message: 'visible worker task',
+      runtimeInput: 'worker task',
+      requestedDelivery: 'auto',
+      acceptedMode: 'prompt',
+      deliveryId: 'delivery-worker',
+      source: 'internal',
+      metadata: { parentRootSemantics: 'top_level_root_turn' },
+    })
+    const projectRoot = exporter.beginRuntimeInput({
+      targetAgentId: 'project-agent-1',
+      managerId: 'project-agent-1',
+      runtimeType: 'pi',
+      runtimeToken: 53,
+      rootSource: 'project_agent',
+      rootTurnId: 'project-agent-child-root',
+      parentRootTurnId: managerRoot.rootTurnId,
+      runtimeInput: 'project runtime message',
+    })
+    exporter.recordAgentDelivery({
+      fromAgentId: 'manager-1',
+      targetAgentId: 'project-agent-1',
+      managerId: 'project-agent-1',
+      rootTurnId: projectRoot.rootTurnId,
+      parentRootTurnId: managerRoot.rootTurnId,
+      message: 'project visible message',
+      runtimeInput: 'project runtime message',
+      requestedDelivery: 'auto',
+      acceptedMode: 'prompt',
+      deliveryId: 'delivery-project',
+      source: 'project_agent',
+      metadata: { projectAgentExternal: false, parentRootSemantics: 'top_level_root_turn' },
+    })
+    exporter.recordAgentDelivery({
+      fromAgentId: 'orphan-1',
+      targetAgentId: 'worker-2',
+      message: 'orphan task',
+      requestedDelivery: 'auto',
+      deliveryId: 'delivery-orphan',
+      source: 'internal',
+    })
+    exporter.cancelRuntimeInput(workerRoot, 'test_done')
+    exporter.cancelRuntimeInput(projectRoot, 'test_done')
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 51,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    const managerRootSpan = spans.find((entry) => entry.name === 'forge.session.turn' && String(entry.attributes['input.value']).includes('top-level user request'))
+    const deliverySpans = spans.filter((entry) => entry.name === 'forge.agent.delivery')
+    expect(deliverySpans).toHaveLength(3)
+    const resolved = deliverySpans.filter((entry) => String(entry.attributes.metadata).includes('top_level_root_turn'))
+    expect(resolved).toHaveLength(2)
+    expect(resolved.every((entry) => entry.parentSpanContext?.spanId === managerRootSpan?.spanContext().spanId)).toBe(true)
+    const unresolved = deliverySpans.find((entry) => String(entry.attributes.metadata).includes('unresolved'))
+    expect(unresolved?.parentSpanContext).toBeUndefined()
+    expect(String(unresolved?.attributes.metadata)).toContain('delivery-orphan')
   })
 
   it('exports agent delivery child spans from send-message side effects', async () => {

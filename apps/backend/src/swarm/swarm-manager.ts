@@ -4952,6 +4952,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         targetAgentId,
         projectAgentExternal: projectAgentDeliveryAuthorization.allowCrossProfile,
       });
+      this.recordObservabilityAgentDelivery({
+        sender,
+        target,
+        rootTurnId: observabilityInput?.rootTurnId,
+        parentRootTurnId,
+        message,
+        runtimeInput: runtimeMessageText,
+        delivery,
+        receipt,
+        source: "project_agent",
+        metadata: {
+          projectAgentExternal: projectAgentDeliveryAuthorization.allowCrossProfile,
+          fromProfileId: senderProfileId,
+          targetProfileId: target.profileId,
+        },
+      });
       await this.appendPreparedInboundConversationPayload(target, {
         text: inboundPayload.text,
         runtimeText: inboundPayload.runtimeText,
@@ -5055,6 +5071,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       fromAgentId,
       targetAgentId,
       attachmentCount: attachments.length,
+    });
+    this.recordObservabilityAgentDelivery({
+      sender,
+      target,
+      rootTurnId: observabilityInput?.rootTurnId,
+      parentRootTurnId,
+      message,
+      runtimeInput: modelMessage,
+      delivery,
+      receipt,
+      source: origin === "internal" ? "internal" : "agent_message",
+      metadata: {
+        attachmentCount: attachments.length,
+        rootSource,
+      },
     });
 
     this.logDebug("agent:send_message", {
@@ -6438,6 +6469,46 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.model.provider === "claude-sdk") return "claude-sdk";
     if (descriptor.model.provider === "cursor-sdk") return "cursor-sdk";
     return "pi";
+  }
+
+  private recordObservabilityAgentDelivery(input: {
+    sender: AgentDescriptor;
+    target: AgentDescriptor;
+    rootTurnId?: string;
+    parentRootTurnId?: string;
+    message?: unknown;
+    runtimeInput?: unknown;
+    delivery: RequestedDeliveryMode;
+    receipt: SendMessageReceipt;
+    source: "agent_message" | "project_agent" | "internal";
+    metadata?: Record<string, unknown>;
+  }): void {
+    if (!this.observability) {
+      return;
+    }
+
+    this.observability.recordAgentDelivery({
+      fromAgentId: input.sender.agentId,
+      targetAgentId: input.target.agentId,
+      managerId: input.target.role === "manager" ? input.target.agentId : input.target.managerId,
+      profileId: input.target.profileId,
+      sourceAgentName: input.sender.displayName,
+      targetAgentName: input.target.displayName,
+      rootTurnId: input.rootTurnId,
+      parentRootTurnId: input.parentRootTurnId,
+      message: input.message,
+      runtimeInput: input.runtimeInput,
+      requestedDelivery: input.delivery,
+      acceptedMode: input.receipt.acceptedMode,
+      deliveryId: input.receipt.deliveryId,
+      source: input.source,
+      metadata: {
+        senderRole: input.sender.role,
+        targetRole: input.target.role,
+        parentRootSemantics: input.parentRootTurnId ? "top_level_root_turn" : "self_root_turn",
+        ...input.metadata,
+      },
+    });
   }
 
   private beginObservabilityRuntimeInput(input: {

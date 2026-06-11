@@ -1,11 +1,15 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import type { ToolAfterResultEnvelope } from "./forge-extension-types.js";
+import type { SwarmToolHost } from "./swarm-tool-host.js";
+import type { AgentDescriptor } from "./types.js";
 
 interface WrapForgeToolsWithExtensionHooksOptions {
   tools: ToolDefinition[];
   forgeExtensionHost: ForgeExtensionHost;
   bindingToken: string;
+  host?: SwarmToolHost;
+  descriptor?: AgentDescriptor;
 }
 
 export function wrapForgeToolsWithExtensionHooks(
@@ -27,6 +31,14 @@ function wrapForgeToolWithExtensionHooks(
         toolCallId,
         input: cloneStructured(originalInput)
       });
+      recordExtensionToolHook(options, tool.name, toolCallId, "before", originalInput, beforeResult);
+
+      if (beforeResult?.block === true) {
+        recordExtensionToolHook(options, tool.name, toolCallId, "after", originalInput, {
+          ok: false,
+          error: beforeResult.reason?.trim() || `Tool ${tool.name} was blocked by a Forge extension.`,
+        }, true);
+      }
 
       if (beforeResult?.block === true) {
         throw new Error(beforeResult.reason?.trim() || `Tool ${tool.name} was blocked by a Forge extension.`);
@@ -36,24 +48,55 @@ function wrapForgeToolWithExtensionHooks(
 
       try {
         const result = await tool.execute(toolCallId, executedInput, ...rest);
+        const afterResult = buildSuccessEnvelope(result);
         await options.forgeExtensionHost.dispatchToolAfter(options.bindingToken, {
           toolName: tool.name,
           toolCallId,
           input: cloneStructured(executedInput),
-          result: buildSuccessEnvelope(result)
+          result: afterResult
         });
+        recordExtensionToolHook(options, tool.name, toolCallId, "after", executedInput, afterResult);
         return result;
       } catch (error) {
+        const afterResult = buildFailureEnvelope(error);
         await options.forgeExtensionHost.dispatchToolAfter(options.bindingToken, {
           toolName: tool.name,
           toolCallId,
           input: cloneStructured(executedInput),
-          result: buildFailureEnvelope(error)
+          result: afterResult
         });
+        recordExtensionToolHook(options, tool.name, toolCallId, "after", executedInput, afterResult, true);
         throw error;
       }
     }
   };
+}
+
+function recordExtensionToolHook(
+  options: Omit<WrapForgeToolsWithExtensionHooksOptions, "tools">,
+  toolName: string,
+  toolCallId: string,
+  phase: "before" | "after",
+  input: Record<string, unknown>,
+  output?: unknown,
+  isError = false,
+): void {
+  if (!options.host || !options.descriptor) {
+    return;
+  }
+
+  options.host.recordToolSideEffect?.(options.descriptor.agentId, {
+    toolName,
+    toolCallId,
+    phase,
+    input,
+    output,
+    isError,
+    metadata: {
+      source: "forge_extension_hook",
+      bindingToken: options.bindingToken,
+    },
+  });
 }
 
 function normalizeToolInput(value: unknown): Record<string, unknown> {

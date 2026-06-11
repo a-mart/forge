@@ -184,7 +184,9 @@ export class PiRuntimeCreator {
       forgePiToolBridgeFactory: planForgePiToolBridgeFactory({
         forgeExtensionHost: this.deps.forgeExtensionHost,
         preparedForgeBindings,
-        baseSwarmTools
+        baseSwarmTools,
+        host: this.deps.host,
+        descriptor
       })
     });
     const resourcePlan = planPiResourceLoaderOptions({

@@ -25,6 +25,7 @@ import type {
   ObservabilityRuntimeSessionEventInput,
   ObservabilityToolDefinition,
   ObservabilityToolSideEffectInput,
+  ObservabilityAgentDeliveryInput,
 } from "./observability-types.js";
 import {
   buildCommonOpenInferenceAttributes,
@@ -57,6 +58,12 @@ export interface RuntimeSessionEventRecordResult {
 }
 
 export interface ToolSideEffectRecordResult {
+  started: number;
+  ended: number;
+  correlationMisses: number;
+}
+
+export interface AgentDeliveryRecordResult {
   started: number;
   ended: number;
   correlationMisses: number;
@@ -128,6 +135,7 @@ export class PhoenixOtlpExporter {
   private readonly pendingInputsByAgentId = new Map<string, PendingRuntimeInput[]>();
   private readonly activeTurnsByAgentToken = new Map<string, ActiveRuntimeTurn>();
   private readonly activeToolSpansByAgentTokenToolCall = new Map<string, ActiveToolCall>();
+  private readonly toolEnrichmentSeenByAgentTokenToolPhase = new Set<string>();
   private correlationEvictions = 0;
 
   constructor(options: PhoenixOtlpExporterOptions) {
@@ -449,6 +457,14 @@ export class PhoenixOtlpExporter {
         result.correlationMisses += 1;
         return result;
       }
+      const enrichmentKey = buildToolEnrichmentKey(input.agentId, input.runtimeToken, input.toolCallId, input.phase);
+      if (this.toolEnrichmentSeenByAgentTokenToolPhase.has(enrichmentKey)) {
+        tool.span.addEvent("forge.tool.duplicate_enrichment", {
+          "forge.tool_phase": input.phase,
+        });
+        return result;
+      }
+      this.toolEnrichmentSeenByAgentTokenToolPhase.add(enrichmentKey);
       const attrs: OtelAttributes = {
         "forge.tool_phase": input.phase,
         "forge.user_visible": input.userVisible === true || tool.toolName === "speak_to_user",
@@ -484,13 +500,72 @@ export class PhoenixOtlpExporter {
         result.started += 1;
         result.ended += 1;
       }
-      if (input.userVisible === true || input.toolName === "speak_to_user") {
+      if (input.userVisible === true || (input.phase === "side_effect" && input.toolName === "speak_to_user")) {
         this.exportChildSideEffectSpan("forge.user.output", tool, input, "user_output");
         result.started += 1;
         result.ended += 1;
       }
     } catch {
       // Observability must never affect tool execution.
+    }
+    return result;
+  }
+
+  recordAgentDelivery(input: ObservabilityAgentDeliveryInput): AgentDeliveryRecordResult {
+    const result: AgentDeliveryRecordResult = { started: 0, ended: 0, correlationMisses: 0 };
+    try {
+      const parentRootTurnId = input.parentRootTurnId ?? input.rootTurnId;
+      const parentSpan = parentRootTurnId ? this.findRootSpanByRootTurnId(parentRootTurnId) : undefined;
+      const correlationStatus = parentSpan ? "resolved" : "unresolved";
+      const capturedMessage = this.captureInput(input.message);
+      const capturedRuntimeInput = this.captureInput(input.runtimeInput);
+      const attributes = buildCommonOpenInferenceAttributes({
+        spanKind: "CHAIN",
+        input: capturedMessage,
+        output: capturedRuntimeInput,
+        sessionId: input.managerId ?? input.targetAgentId,
+        userId: input.profileId,
+        metadata: {
+          event: "agent_delivery",
+          rootTurnId: input.rootTurnId,
+          parentRootTurnId: input.parentRootTurnId,
+          attachmentRootTurnId: parentRootTurnId,
+          correlationStatus,
+          fromAgentId: input.fromAgentId,
+          targetAgentId: input.targetAgentId,
+          requestedDelivery: input.requestedDelivery,
+          acceptedMode: input.acceptedMode,
+          deliveryId: input.deliveryId,
+          source: input.source,
+          runtimeInput: capturedRuntimeInput,
+          ...input.metadata,
+        },
+        tags: ["forge", "phoenix", "agent_delivery", input.source ?? "agent_message"],
+        agentName: input.sourceAgentName ?? input.fromAgentId,
+        graphNodeId: input.targetAgentId,
+        graphNodeParentId: input.fromAgentId,
+      }, this.redactor);
+      if (input.deliveryId) {
+        attributes["forge.delivery_id"] = this.redactor.redactIdentifier(input.deliveryId);
+      }
+      if (input.acceptedMode) {
+        attributes["forge.accepted_mode"] = this.redactor.sanitizeLabel(input.acceptedMode);
+      }
+      assertOtelPrimitiveAttributes(attributes);
+      const span = this.provider.getTracer("forge-phoenix").startSpan(
+        "forge.agent.delivery",
+        { kind: SpanKind.INTERNAL, attributes },
+        parentSpan ? trace.setSpan(ROOT_CONTEXT, parentSpan) : ROOT_CONTEXT,
+      );
+      span.setStatus(parentSpan ? { code: SpanStatusCode.OK } : { code: SpanStatusCode.ERROR, message: "unresolved_parent_root" });
+      span.end();
+      result.started += 1;
+      result.ended += 1;
+      if (!parentSpan) {
+        result.correlationMisses += 1;
+      }
+    } catch {
+      // Observability must never affect delivery.
     }
     return result;
   }
@@ -748,6 +823,7 @@ export class PhoenixOtlpExporter {
   private endToolCall(tool: ActiveToolCall, result: unknown, isError: boolean, reason?: string): void {
     const key = buildToolCallKey(tool.agentId, tool.runtimeToken, tool.toolCallId);
     this.activeToolSpansByAgentTokenToolCall.delete(key);
+    this.clearToolEnrichmentSeen(tool.agentId, tool.runtimeToken, tool.toolCallId);
     tool.output = result;
     tool.isError = isError;
     const attrs: OtelAttributes = {
@@ -899,6 +975,14 @@ export class PhoenixOtlpExporter {
     return undefined;
   }
 
+  private findRootSpanByRootTurnId(rootTurnId: string): Span | undefined {
+    const pending = this.findPendingInput(rootTurnId);
+    if (pending) {
+      return pending.rootSpan;
+    }
+    return this.findActiveTurnByRootTurnId(rootTurnId)?.rootSpan;
+  }
+
   private findActiveTurnByRootTurnId(rootTurnId: string): ActiveRuntimeTurn | undefined {
     for (const turn of this.activeTurnsByAgentToken.values()) {
       if (turn.rootTurnId === rootTurnId) {
@@ -1046,6 +1130,15 @@ export class PhoenixOtlpExporter {
       }
       this.runtimeToolsByAgentToken.delete(oldestEntry[0]);
       this.correlationEvictions += 1;
+    }
+  }
+
+  private clearToolEnrichmentSeen(agentId: string, runtimeToken: number | undefined, toolCallId: string): void {
+    const prefix = `${buildToolCallKey(agentId, runtimeToken, toolCallId)}:`;
+    for (const key of Array.from(this.toolEnrichmentSeenByAgentTokenToolPhase)) {
+      if (key.startsWith(prefix)) {
+        this.toolEnrichmentSeenByAgentTokenToolPhase.delete(key);
+      }
     }
   }
 
@@ -1271,6 +1364,10 @@ function buildAgentTokenKey(agentId: string, runtimeToken?: number): string {
 
 function buildToolCallKey(agentId: string, runtimeToken: number | undefined, toolCallId: string): string {
   return `${buildAgentTokenKey(agentId, runtimeToken)}:${toolCallId}`;
+}
+
+function buildToolEnrichmentKey(agentId: string, runtimeToken: number | undefined, toolCallId: string, phase: string): string {
+  return `${buildToolCallKey(agentId, runtimeToken, toolCallId)}:${phase}`;
 }
 
 function findToolDefinition(
