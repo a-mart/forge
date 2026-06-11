@@ -1,6 +1,15 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
+
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@forge/protocol": resolve(__dirname, "../../packages/protocol/src/index.ts"),
+    },
+  },
   test: {
     environment: "node",
     include: [
@@ -9,6 +18,7 @@ export default defineConfig({
       "src/scheduler/**/*.test.ts",
       "src/swarm/__tests__/**/*.test.ts",
       "src/swarm/specialists/__tests__/**/*.test.ts",
+      "src/observability/__tests__/**/*.test.ts",
       "src/telemetry/__tests__/**/*.test.ts",
       "src/terminal/__tests__/**/*.test.ts",
       "src/utils/__tests__/**/*.test.ts",

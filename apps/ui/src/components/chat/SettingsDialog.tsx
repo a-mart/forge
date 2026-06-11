@@ -17,6 +17,7 @@ import { SettingsSlashCommands } from '@/components/settings/SettingsSlashComman
 import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
 import { SettingsAbout } from '@/components/settings/SettingsAbout'
 import { SettingsCliAccess } from '@/components/settings/SettingsCliAccess'
+import { SettingsObservability } from '@/components/settings/SettingsObservability'
 import { SettingsCollaboration } from '@/components/settings/SettingsCollaboration'
 import type { AgentDescriptor, ManagerProfile, TelegramStatusEvent } from '@forge/protocol'
 
@@ -175,6 +176,7 @@ export function SettingsPanel({
       )}
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} apiClient={apiClient} />}
       {activeTab === 'cli-access' && <SettingsCliAccess wsUrl={wsUrl} apiClient={apiClient} />}
+      {activeTab === 'observability' && <SettingsObservability apiClient={apiClient} />}
       {activeTab === 'collaboration' && (
         <SettingsCollaboration
           wsUrl={wsUrl}

@@ -7,6 +7,7 @@ import { normalizeRuntimeError, normalizeRuntimeUserMessage } from "../runtime-u
 import type {
   RuntimeSessionEvent,
   RuntimeShutdownOptions,
+  RuntimeTurnMeta,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
   SmartCompactOptions,
@@ -432,7 +433,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
             backgroundScope.markCompleted();
             await backgroundScope.runWithAttribution(() => this.raceContainedBackgroundFailure(
               backgroundScope,
-              this.emitPromptSessionEvents(active, this.eventMapper.completePrompt())
+              this.emitPromptSessionEvents(active, this.eventMapper.completePrompt(this.buildCursorTurnMeta(active)))
             ));
           }
           break;
@@ -519,6 +520,34 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     active.terminalStatus = this.eventMapper.getTerminalStatus() ?? active.terminalStatus ?? null;
     active.providerStatus = active.terminalStatus ?? active.providerStatus ?? null;
     active.runStatus = readStatus(active.run) ?? active.runStatus ?? null;
+  }
+
+  private buildCursorTurnMeta(active: ActivePromptState): RuntimeTurnMeta | undefined {
+    const usage = active.cursorUsage;
+    const run = active.run;
+    const meta: RuntimeTurnMeta = {
+      provider: CURSOR_SDK_PROVIDER_ID,
+      modelId: this.model.id,
+      usage: usage ? { ...usage } : undefined,
+      providerRequestId: run?.id,
+      outcome: active.outcome,
+      stopReason: active.terminalStatus ?? active.providerStatus ?? active.runStatus ?? active.waitStatus ?? undefined,
+      requestPayloadFidelity: "delta_only",
+      invocationParameters: {
+        reasoningLevel: resolveCursorReasoningLevelSent(this.model),
+      },
+      metadata: {
+        sdkAgentId: run?.agentId ?? this.sdkAgent.agentId ?? null,
+        providerStatus: active.providerStatus ?? null,
+        runStatus: active.runStatus ?? null,
+        waitStatus: active.waitStatus ?? null,
+        terminalStatus: active.terminalStatus ?? null,
+      },
+    };
+    if (!usage && !run && !meta.stopReason) {
+      return undefined;
+    }
+    return meta;
   }
 
   private persistCapturedCursorUsage(active: ActivePromptState): void {

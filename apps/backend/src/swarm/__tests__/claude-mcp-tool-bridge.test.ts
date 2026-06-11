@@ -435,7 +435,19 @@ describe("claude-mcp-tool-bridge", () => {
       delivery: "steer"
     });
 
-    expect(host.sendMessage).toHaveBeenCalledWith(manager.agentId, "worker-1", "please investigate", "steer");
+    expect(host.sendMessage).toHaveBeenCalledWith(
+      manager.agentId,
+      "worker-1",
+      "please investigate",
+      "steer",
+      {
+        observabilityParentTool: {
+          agentId: manager.agentId,
+          toolCallId: expect.any(String),
+          toolName: "send_message_to_agent",
+        },
+      },
+    );
     expect(result.content[0].text).toContain("Queued message for worker-1");
     expect(result.content[1].text).toContain("[details]");
   });

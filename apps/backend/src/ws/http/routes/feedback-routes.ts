@@ -8,9 +8,9 @@ const SESSION_FEEDBACK_ENDPOINT_PATTERN = /^\/api\/v1\/profiles\/([^/]+)\/sessio
 const SESSION_FEEDBACK_STATE_ENDPOINT_PATTERN = /^\/api\/v1\/profiles\/([^/]+)\/sessions\/([^/]+)\/feedback\/state$/;
 const FEEDBACK_QUERY_ENDPOINT_PATH = "/api/v1/feedback";
 
-export function createFeedbackRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
+export function createFeedbackRoutes(options: { swarmManager: SwarmManager; feedbackService?: FeedbackService }): HttpRoute[] {
   const { swarmManager } = options;
-  const feedbackService = new FeedbackService(swarmManager.getConfig().paths.dataDir);
+  const feedbackService = options.feedbackService ?? new FeedbackService(swarmManager.getConfig().paths.dataDir);
 
   return [
     {

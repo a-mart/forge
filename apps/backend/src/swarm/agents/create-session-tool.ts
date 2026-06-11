@@ -53,13 +53,22 @@ export function buildCreateSessionTool(
         initialMessage?: string;
       };
 
-      const result = await host.createSessionFromAgent(descriptor.agentId, {
+      const input = {
         sessionName: parsed.sessionName,
         cwd: parsed.cwd,
         model: parsed.model,
         reasoningLevel: parsed.reasoningLevel,
         systemPrompt: parsed.systemPrompt,
         initialMessage: parsed.initialMessage
+      };
+      const result = await host.createSessionFromAgent(descriptor.agentId, input);
+      host.recordToolSideEffect?.(descriptor.agentId, {
+        toolName: "create_session",
+        toolCallId: _toolCallId,
+        phase: "side_effect",
+        input,
+        output: result,
+        metadata: { sessionAgentId: result.sessionAgentId, profileId: result.profileId },
       });
 
       const message = `Session "${result.sessionLabel}" created successfully (agentId: ${result.sessionAgentId}). Use send_message_to_agent to direct it.`;

@@ -23,6 +23,32 @@ describe("cursor-sdk-event-mapper", () => {
     ]);
   });
 
+  it("attaches provider metadata to turn_end at prompt completion", () => {
+    const mapper = new CursorSdkEventMapper();
+    mapper.beginPrompt();
+
+    expect(mapper.completePrompt({
+      provider: "cursor-sdk",
+      modelId: "composer-2.5",
+      usage: { input: 10, output: 4, total: 14 },
+      providerRequestId: "run-1",
+      stopReason: "FINISHED",
+    })).toEqual([
+      {
+        type: "turn_end",
+        toolResults: [],
+        meta: {
+          provider: "cursor-sdk",
+          modelId: "composer-2.5",
+          usage: { input: 10, output: 4, total: 14 },
+          providerRequestId: "run-1",
+          stopReason: "FINISHED",
+        }
+      },
+      { type: "agent_end" }
+    ]);
+  });
+
   it("maps and dedupes tool calls from stream messages", () => {
     const mapper = new CursorSdkEventMapper();
     mapper.beginPrompt();

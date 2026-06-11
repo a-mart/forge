@@ -37,7 +37,9 @@ export function planRuntimeTools(options: PlanRuntimeToolsOptions): RuntimeToolP
     ? wrapForgeToolsWithExtensionHooks({
         tools: baseSwarmTools,
         forgeExtensionHost: options.forgeExtensionHost,
-        bindingToken: options.preparedForgeBindings.bindingToken
+        bindingToken: options.preparedForgeBindings.bindingToken,
+        host: options.host,
+        descriptor: options.descriptor
       })
     : baseSwarmTools;
 
@@ -48,12 +50,16 @@ export function planForgePiToolBridgeFactory(options: {
   forgeExtensionHost: ForgeExtensionHost;
   preparedForgeBindings?: ForgePreparedRuntimeBindings | null;
   baseSwarmTools: readonly ToolDefinition[];
+  host?: SwarmToolHost;
+  descriptor?: AgentDescriptor;
 }): ExtensionFactory | undefined {
   return options.preparedForgeBindings
     ? buildForgePiToolBridgeExtensionFactory({
         forgeExtensionHost: options.forgeExtensionHost,
         bindingToken: options.preparedForgeBindings.bindingToken,
-        skippedToolNames: options.baseSwarmTools.map((tool) => tool.name)
+        skippedToolNames: options.baseSwarmTools.map((tool) => tool.name),
+        host: options.host,
+        descriptor: options.descriptor
       })
     : undefined;
 }

@@ -40,6 +40,7 @@ import type {
 import { withManagerTimeout } from "./swarm-manager-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
+import type { ObservabilityFacade } from "../observability/observability-types.js";
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
@@ -74,6 +75,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   secretsEnvService: {
     getCredentialPoolService(): CredentialPoolService;
   };
+  getObservabilityService?(): ObservabilityFacade | undefined;
   cortexService: {
     handleManagerStatusTransition(
       descriptor: AgentDescriptor,
@@ -199,6 +201,7 @@ export class SwarmRuntimeController {
       getPiModelsJsonPath: () => this.host.getPiModelsJsonPathOrThrow(),
       getAgentDescriptor: (agentId) => this.host.descriptors.get(agentId),
       getCredentialPoolService: () => this.host.secretsEnvService.getCredentialPoolService(),
+      observability: this.host.getObservabilityService?.(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {
           await this.refreshSessionMetaStatsBySessionId(descriptor.managerId, sessionFile);
@@ -540,7 +543,7 @@ export class SwarmRuntimeController {
     runtimeTokenOrAgentId: number | string,
     agentIdOrEvent: string | RuntimeSessionEvent,
     maybeEvent?: RuntimeSessionEvent
-  ): Promise<void> {
+  ): Promise<boolean> {
     const invokedWithExplicitToken = typeof runtimeTokenOrAgentId === "number";
     const runtimeToken = invokedWithExplicitToken ? runtimeTokenOrAgentId : undefined;
     const agentId = invokedWithExplicitToken
@@ -549,14 +552,15 @@ export class SwarmRuntimeController {
     const event = invokedWithExplicitToken ? maybeEvent : (agentIdOrEvent as RuntimeSessionEvent);
 
     if (!event) {
-      return;
+      return false;
     }
 
     if (this.runtimeCallbackGate.shouldIgnoreRuntimeSessionEvent(agentId, runtimeToken, event.type)) {
-      return;
+      return false;
     }
 
     await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
+    return true;
   }
 
   async handleRuntimeError(
@@ -579,6 +583,7 @@ export class SwarmRuntimeController {
       return;
     }
 
+    this.recordObservabilityRuntimeError(agentId, runtimeToken, error);
     await this.getRuntimeErrorProjector().projectError({ agentId, runtimeToken, error });
   }
 
@@ -620,6 +625,37 @@ export class SwarmRuntimeController {
     }
 
     await this.finalizeWorkerIdleTurn(agentId, descriptor, "agent_end");
+  }
+
+  private recordObservabilityRuntimeError(agentId: string, runtimeToken: number | undefined, error: RuntimeErrorEvent): void {
+    const descriptor = this.descriptors.get(agentId);
+    const observability = this.host.getObservabilityService?.();
+    if (!descriptor || !observability) {
+      return;
+    }
+
+    observability.recordRuntimeError({
+      agentId,
+      managerId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
+      profileId: descriptor.profileId,
+      role: descriptor.role,
+      runtimeType: descriptor.model.provider === "claude-sdk"
+        ? "claude-sdk"
+        : descriptor.model.provider === "cursor-sdk"
+          ? "cursor-sdk"
+          : "pi",
+      runtimeToken,
+      agentName: descriptor.displayName,
+      phase: error.phase,
+      message: error.message,
+      stack: error.stack,
+      details: error.details,
+      metadata: {
+        modelProvider: descriptor.model.provider,
+        modelId: descriptor.model.modelId,
+        status: descriptor.status,
+      },
+    });
   }
 
   private shouldSuppressWorkerIdleFinalization(descriptor: AgentDescriptor): boolean {

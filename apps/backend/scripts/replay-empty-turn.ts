@@ -17,7 +17,6 @@ import { homedir } from "node:os";
 import { buildSessionContext } from "@mariozechner/pi-coding-agent";
 // Subpath export maps to dist/providers/openai-codex-responses.js, which also
 // exports the stream function used by production.
-// eslint-disable-next-line import/no-unresolved
 import { streamOpenAICodexResponses } from "@mariozechner/pi-ai/openai-codex-responses";
 import { buildSwarmTools } from "../src/swarm/swarm-tools.js";
 import type { AgentDescriptor } from "../src/swarm/types.js";

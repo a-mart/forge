@@ -1,3 +1,4 @@
+import type { ObservabilityFacade } from "../../../observability/observability-types.js";
 import { ClaudeAgentRuntime } from "../../claude-agent-runtime.js";
 import { ClaudeAuthResolver } from "../../claude-auth-resolver.js";
 import { createClaudeMcpToolBridge } from "../../claude-mcp-tool-bridge.js";
@@ -18,6 +19,7 @@ import type {
   SwarmConfig
 } from "../../types.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
+import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planClaudeRuntimePrompt } from "../runtime-prompt-plan.js";
 import { planRuntimeEnv } from "../runtime-resource-plan.js";
 import { planRuntimeTools } from "../runtime-tool-plan.js";
@@ -27,6 +29,7 @@ interface ClaudeRuntimeCreatorDependencies {
   forgeExtensionHost: ForgeExtensionHost;
   config: SwarmConfig;
   logDebug: (message: string, details?: unknown) => void;
+  observability?: ObservabilityFacade;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
@@ -155,6 +158,23 @@ export class ClaudeRuntimeCreator {
       activeTools: swarmTools.map((tool) => tool.name),
       allowedTools: mcpBridge.allowedTools,
       systemPromptPreview: previewForLog(claudeSystemPrompt, 240)
+    });
+
+    recordRuntimePromptAndCreation({
+      observability: this.deps.observability,
+      descriptor,
+      runtimeToken,
+      runtimeType: "claude-sdk",
+      forgeResolvedPrompt: systemPrompt,
+      finalSystemPrompt: claudeSystemPrompt,
+      startupSystemPromptOverride: promptPlan.startupSystemPromptOverride,
+      activeTools: summarizeRuntimeTools(swarmTools),
+      mcpServers: [mcpBridge.serverName],
+      metadata: {
+        allowedTools: mcpBridge.allowedTools,
+        memoryFile: memoryResources.memoryContextFile.path,
+        projectExecutablesTrusted: projectExecutableTrustPlan.trusted,
+      },
     });
 
     if (preparedForgeBindings) {
