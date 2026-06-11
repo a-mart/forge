@@ -269,6 +269,7 @@ function createFactory(
     forgeExtensionHost?: ForgeExtensionHost;
     getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
     getCredentialPoolService?: () => any;
+    observability?: any;
     getMemoryRuntimeResources?: (descriptor: AgentDescriptor) => Promise<{
       memoryContextFile: { path: string; content: string };
       additionalSkillPaths: string[];
@@ -319,6 +320,7 @@ function createFactory(
     getPiModelsJsonPath: () => projectionPath,
     getAgentDescriptor: overrides.getAgentDescriptor,
     getCredentialPoolService: overrides.getCredentialPoolService,
+    observability: overrides.observability,
     getMemoryRuntimeResources: overrides.getMemoryRuntimeResources ?? (async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),
@@ -615,6 +617,49 @@ describe("RuntimeFactory", () => {
     expect(loaderOptions.additionalSkillPaths).toEqual([profileSkillPath]);
     expect(loaderOptions.additionalSkillPaths).not.toContain(join(rootDir, "data", "profiles", "profile-1", "pi", "skills"));
     expect(loaderOptions.skillsOverride).toBeUndefined();
+  });
+
+  it("records Pi runtime prompt and creation observability metadata", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    setupPiModel();
+    const piSession = createMockPiSession();
+    piSession.systemPrompt = "final pi system prompt";
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: piSession,
+      extensionsResult: { extensions: [], errors: [] },
+    });
+    const observability = {
+      recordPromptResolved: vi.fn(),
+      recordRuntimeCreated: vi.fn(),
+    };
+    const factory = createFactory(rootDir, { observability });
+    const descriptor = createDescriptor(rootDir, { displayName: "Backend Worker" });
+
+    await factory.createRuntimeForDescriptor(descriptor, "resolved Forge prompt", 42);
+
+    expect(observability.recordPromptResolved).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: "worker-1",
+      managerId: "manager-1",
+      profileId: "profile-1",
+      runtimeType: "pi",
+      runtimeToken: 42,
+      source: "forge_resolved",
+      prompt: "resolved Forge prompt",
+      modelProvider: "openai-codex",
+      modelId: "gpt-5.4-mini",
+    }));
+    expect(observability.recordPromptResolved).toHaveBeenCalledWith(expect.objectContaining({
+      source: "runtime_final",
+      prompt: "final pi system prompt",
+    }));
+    expect(observability.recordRuntimeCreated).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: "worker-1",
+      runtimeType: "pi",
+      runtimeToken: 42,
+      status: "ready",
+      finalSystemPrompt: "final pi system prompt",
+      activeTools: expect.arrayContaining([expect.objectContaining({ name: "send_message_to_agent" })]),
+    }));
   });
 
   it("surfaces Claude SDK installation guidance when the native runtime is unavailable", async () => {

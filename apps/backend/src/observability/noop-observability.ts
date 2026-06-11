@@ -5,7 +5,12 @@ import type {
   PhoenixObservabilityStatus,
   PhoenixObservabilityTestResponse,
 } from "@forge/protocol";
-import type { ObservabilityFacade, ObservabilityRuntimeTarget } from "./observability-types.js";
+import type {
+  ObservabilityFacade,
+  ObservabilityPromptResolvedInput,
+  ObservabilityRuntimeCreatedInput,
+  ObservabilityRuntimeTarget,
+} from "./observability-types.js";
 import { createDefaultPhoenixObservabilitySettings } from "./observability-settings.js";
 
 export function createNoopObservabilityFacade(runtimeTarget: ObservabilityRuntimeTarget = "builder"): ObservabilityFacade {
@@ -30,6 +35,8 @@ export function createNoopObservabilityFacade(runtimeTarget: ObservabilityRuntim
         error: "Phoenix observability is not available in this runtime.",
       };
     },
+    recordPromptResolved(_input: ObservabilityPromptResolvedInput): void {},
+    recordRuntimeCreated(_input: ObservabilityRuntimeCreatedInput): void {},
     recordFeedback(_event: FeedbackSubmitEvent): void {},
     async shutdown(): Promise<void> {},
   };

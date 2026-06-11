@@ -2,7 +2,7 @@ import { ROOT_CONTEXT, SpanKind, SpanStatusCode, trace } from "@opentelemetry/ap
 import { BasicTracerProvider, type SpanExporter } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { SEMRESATTRS_PROJECT_NAME } from "@arizeai/openinference-semantic-conventions";
+import { SEMRESATTRS_PROJECT_NAME, SemanticConventions } from "@arizeai/openinference-semantic-conventions";
 import type { PhoenixObservabilitySettings } from "@forge/protocol";
 import {
   DEFAULT_PHOENIX_PROJECT_NAME,
@@ -14,7 +14,8 @@ import {
   type CountingBatchSpanProcessorCounters,
 } from "./counting-batch-span-processor.js";
 import { ObservabilityRedactor, type RedactionStats } from "./observability-redaction.js";
-import { buildCommonOpenInferenceAttributes } from "./openinference-attributes.js";
+import type { ObservabilityPromptResolvedInput, ObservabilityRuntimeCreatedInput } from "./observability-types.js";
+import { buildCommonOpenInferenceAttributes, assertOtelPrimitiveAttributes, type OtelAttributes } from "./openinference-attributes.js";
 
 export interface PhoenixOtlpExporterStatus {
   active: boolean;
@@ -69,6 +70,65 @@ export class PhoenixOtlpExporter {
     this.provider.getTracer("forge-phoenix", options.version);
   }
 
+  recordPromptResolved(input: ObservabilityPromptResolvedInput): void {
+    const attributes: OtelAttributes = buildCommonOpenInferenceAttributes({
+      spanKind: "PROMPT",
+      input: input.prompt,
+      sessionId: input.managerId ?? input.agentId,
+      userId: input.profileId,
+      metadata: {
+        ...input.metadata,
+        event: "prompt_resolved",
+        source: input.source,
+        runtimeType: input.runtimeType,
+        runtimeToken: input.runtimeToken,
+        role: input.role,
+        cwd: input.cwd,
+        modelProvider: input.modelProvider,
+        modelId: input.modelId,
+      },
+      tags: ["forge", "phoenix", "prompt", input.runtimeType],
+      agentName: input.agentName ?? input.agentId,
+      graphNodeId: input.agentId,
+      graphNodeParentId: input.managerId,
+    }, this.redactor);
+
+    this.exportOneShotSpan("forge.prompt.resolve", attributes);
+  }
+
+  recordRuntimeCreated(input: ObservabilityRuntimeCreatedInput): void {
+    const attributes: OtelAttributes = buildCommonOpenInferenceAttributes({
+      spanKind: input.role === "worker" ? "AGENT" : "CHAIN",
+      input: input.finalSystemPrompt,
+      output: input.status,
+      sessionId: input.managerId ?? input.agentId,
+      userId: input.profileId,
+      metadata: {
+        ...input.metadata,
+        event: "runtime_created",
+        runtimeType: input.runtimeType,
+        runtimeToken: input.runtimeToken,
+        role: input.role,
+        cwd: input.cwd,
+        modelProvider: input.modelProvider,
+        modelId: input.modelId,
+        reasoningLevel: input.reasoningLevel,
+        archetypeId: input.archetypeId,
+        startupSystemPromptOverride: input.startupSystemPromptOverride,
+        mcpServers: input.mcpServers,
+      },
+      tags: ["forge", "phoenix", "runtime", input.runtimeType],
+      agentName: input.agentName ?? input.agentId,
+      graphNodeId: input.agentId,
+      graphNodeParentId: input.managerId,
+    }, this.redactor);
+    if (input.activeTools && input.activeTools.length > 0) {
+      attributes[SemanticConventions.LLM_TOOLS] = this.redactor.sanitizeAttributeValue(input.activeTools);
+    }
+
+    this.exportOneShotSpan("forge.runtime.create", attributes);
+  }
+
   async exportSmokeSpan(): Promise<void> {
     const tracer = this.provider.getTracer("forge-phoenix");
     const rootSpan = tracer.startSpan(
@@ -108,6 +168,25 @@ export class PhoenixOtlpExporter {
     const afterFlush = this.processor.getCounters();
     if (afterFlush.exportFailed > beforeFlush.exportFailed || afterFlush.droppedQueueFull > beforeFlush.droppedQueueFull) {
       throw new Error(afterFlush.lastErrorMessage ?? "Phoenix test span export failed.");
+    }
+  }
+
+  private exportOneShotSpan(name: string, attributes: OtelAttributes): void {
+    try {
+      assertOtelPrimitiveAttributes(attributes);
+      const tracer = this.provider.getTracer("forge-phoenix");
+      const span = tracer.startSpan(
+        name,
+        {
+          kind: SpanKind.INTERNAL,
+          attributes,
+        },
+        ROOT_CONTEXT,
+      );
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
+    } catch {
+      // Observability export must never affect Forge runtime behavior.
     }
   }
 

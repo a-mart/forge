@@ -40,6 +40,7 @@ import type {
 import { withManagerTimeout } from "./swarm-manager-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
 import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
+import type { ObservabilityFacade } from "../observability/observability-types.js";
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
@@ -74,6 +75,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   secretsEnvService: {
     getCredentialPoolService(): CredentialPoolService;
   };
+  getObservabilityService?(): ObservabilityFacade | undefined;
   cortexService: {
     handleManagerStatusTransition(
       descriptor: AgentDescriptor,
@@ -199,6 +201,7 @@ export class SwarmRuntimeController {
       getPiModelsJsonPath: () => this.host.getPiModelsJsonPathOrThrow(),
       getAgentDescriptor: (agentId) => this.host.descriptors.get(agentId),
       getCredentialPoolService: () => this.host.secretsEnvService.getCredentialPoolService(),
+      observability: this.host.getObservabilityService?.(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {
           await this.refreshSessionMetaStatsBySessionId(descriptor.managerId, sessionFile);

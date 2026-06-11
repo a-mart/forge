@@ -15,7 +15,12 @@ import {
   sanitizePhoenixProjectName,
   validatePhoenixEndpoint,
 } from "./observability-settings.js";
-import type { ObservabilityFacade, ObservabilityRuntimeTarget } from "./observability-types.js";
+import type {
+  ObservabilityFacade,
+  ObservabilityPromptResolvedInput,
+  ObservabilityRuntimeCreatedInput,
+  ObservabilityRuntimeTarget,
+} from "./observability-types.js";
 
 export interface ObservabilityServiceOptions {
   dataDir: string;
@@ -155,6 +160,37 @@ export class ObservabilityService implements ObservabilityFacade {
         status: this.getStatus(),
         error: error instanceof Error ? error.message : String(error),
       };
+    }
+  }
+
+  recordPromptResolved(input: ObservabilityPromptResolvedInput): void {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.settings.capture.prompts || !this.exporter) {
+      return;
+    }
+
+    try {
+      this.exporter.recordPromptResolved(input);
+      this.correlator.incrementSpanStarted();
+      this.correlator.incrementSpanEnded();
+    } catch (error) {
+      this.recordError(error);
+    }
+  }
+
+  recordRuntimeCreated(input: ObservabilityRuntimeCreatedInput): void {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
+      return;
+    }
+
+    try {
+      const exportInput = this.settings.capture.prompts
+        ? input
+        : { ...input, finalSystemPrompt: undefined, startupSystemPromptOverride: undefined };
+      this.exporter.recordRuntimeCreated(exportInput);
+      this.correlator.incrementSpanStarted();
+      this.correlator.incrementSpanEnded();
+    } catch (error) {
+      this.recordError(error);
     }
   }
 

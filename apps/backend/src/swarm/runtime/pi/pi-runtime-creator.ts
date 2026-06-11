@@ -5,6 +5,7 @@ import {
   type RuntimeExtensionSource
 } from "@forge/protocol";
 import type { Model, Transport } from "@mariozechner/pi-ai";
+import type { ObservabilityFacade } from "../../../observability/observability-types.js";
 import {
   AuthStorage,
   DefaultResourceLoader,
@@ -46,6 +47,7 @@ import type {
 } from "../../types.js";
 import { planPiRuntimePrompt } from "../runtime-prompt-plan.js";
 import { planPiResourceLoaderOptions, planRuntimeResourcePaths } from "../runtime-resource-plan.js";
+import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "../runtime-tool-plan.js";
 
 interface PiRuntimeCreatorDependencies {
@@ -56,6 +58,7 @@ interface PiRuntimeCreatorDependencies {
   logDebug: (message: string, details?: unknown) => void;
   getPiModelsJsonPath: () => string;
   getCredentialPoolService?: () => CredentialPoolService;
+  observability?: ObservabilityFacade;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
@@ -323,9 +326,26 @@ export class PiRuntimeCreator {
     this.deps.logDebug("runtime:create:ready", {
       runtime: "pi",
       agentId: descriptor.agentId,
-      activeTools: session.getActiveToolNames(),
+      activeTools: activeToolNames,
       systemPromptPreview: previewForLog(session.systemPrompt, 240),
       containsSpeakToUserRule: descriptor.role === "manager" ? session.systemPrompt.includes("speak_to_user") : undefined
+    });
+
+    recordRuntimePromptAndCreation({
+      observability: this.deps.observability,
+      descriptor,
+      runtimeToken,
+      runtimeType: "pi",
+      forgeResolvedPrompt: systemPrompt,
+      finalSystemPrompt: session.systemPrompt,
+      activeTools: summarizeRuntimeTools(swarmTools, { activeToolNames }),
+      metadata: {
+        thinkingLevel,
+        agentDir: runtimeAgentDir,
+        memoryFile: memoryResources.memoryContextFile.path,
+        projectExecutablesTrusted: projectExecutableTrustPlan.trusted,
+        pooledCredentialProvider: pooledCredentialId ? descriptor.model.provider : undefined,
+      },
     });
 
     const runtime = new AgentRuntime({
