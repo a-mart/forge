@@ -186,9 +186,5 @@ export interface ObservabilityAgentDeliveryInput {
   metadata?: Record<string, unknown>;
 }
 
-export interface ObservabilityRecordFeedbackInput {
-  event: FeedbackSubmitEvent;
-}
-
 export type ObservabilityRuntimeTarget = PhoenixObservabilityStatus["runtimeTarget"];
 export type ObservabilityRuntimeType = "pi" | "claude-sdk" | "cursor-sdk";

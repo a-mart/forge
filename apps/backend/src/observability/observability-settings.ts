@@ -187,15 +187,6 @@ export function validatePhoenixEndpoint(endpoint: string): URL {
   return parsed;
 }
 
-export function isLoopbackEndpoint(endpoint: string): boolean {
-  try {
-    validatePhoenixEndpoint(endpoint);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function normalizeCaptureSettings(value: unknown, fallback: PhoenixObservabilityCaptureSettings): PhoenixObservabilityCaptureSettings {
   const record = isRecord(value) ? value : {};
   return {
