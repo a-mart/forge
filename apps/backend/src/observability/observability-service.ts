@@ -6,6 +6,7 @@ import type {
   PhoenixObservabilityStatus,
   PhoenixObservabilityTestResponse,
 } from "@forge/protocol";
+import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import { PhoenixOtlpExporter } from "./phoenix-otlp-exporter.js";
 import { ObservabilityCorrelator } from "./observability-correlator.js";
 import {
@@ -36,6 +37,11 @@ export class ObservabilityService implements ObservabilityFacade {
   }
 
   async initialize(): Promise<void> {
+    if (!this.isBuilderRuntime()) {
+      this.settings = this.getDefaultStatusSettings();
+      return;
+    }
+
     try {
       this.settings = await this.settingsService.load();
       await this.configureExporter(this.settings, { throwOnFailure: false });
@@ -45,6 +51,10 @@ export class ObservabilityService implements ObservabilityFacade {
   }
 
   async getSettings(): Promise<PhoenixObservabilitySettings> {
+    if (!this.isBuilderRuntime()) {
+      return cloneSettings(this.getDefaultStatusSettings());
+    }
+
     if (!this.settings) {
       this.settings = await this.settingsService.getSettings();
     }
@@ -53,10 +63,33 @@ export class ObservabilityService implements ObservabilityFacade {
   }
 
   async updateSettings(patch: PhoenixObservabilitySettingsPatch): Promise<PhoenixObservabilitySettings> {
-    const next = await this.settingsService.updateSettings(patch);
-    this.settings = next;
-    await this.configureExporter(next, { throwOnFailure: true });
-    return cloneSettings(next);
+    if (!this.isBuilderRuntime()) {
+      throw new Error("Phoenix observability is only available in Builder runtime.");
+    }
+
+    const current = await this.getSettings();
+    const candidate = normalizePhoenixObservabilitySettings(patch, current);
+    validatePhoenixEndpoint(candidate.endpoint);
+
+    let nextExporter: PhoenixOtlpExporter | null = null;
+    try {
+      if (candidate.enabled) {
+        nextExporter = this.createExporter(candidate);
+      }
+
+      const next = await this.settingsService.updateSettings(candidate);
+      const oldExporter = this.exporter;
+      this.exporter = nextExporter;
+      this.settings = next;
+      this.lastErrorAt = null;
+      this.lastErrorMessage = null;
+      await oldExporter?.shutdown().catch((error) => this.recordError(error));
+      return cloneSettings(next);
+    } catch (error) {
+      await nextExporter?.shutdown().catch((shutdownError) => this.recordError(shutdownError));
+      this.recordError(error);
+      throw error;
+    }
   }
 
   getStatus(): PhoenixObservabilityStatus {
@@ -71,8 +104,8 @@ export class ObservabilityService implements ObservabilityFacade {
       droppedQueueFull: processorCounters?.droppedQueueFull ?? 0,
       exportSucceeded: processorCounters?.exportSucceeded ?? 0,
       exportFailed: processorCounters?.exportFailed ?? 0,
-      contentTruncations: correlationCounters.contentTruncations,
-      redactionMatches: correlationCounters.redactionMatches,
+      contentTruncations: correlationCounters.contentTruncations + (exporterStatus?.redactionStats.contentTruncations ?? 0),
+      redactionMatches: correlationCounters.redactionMatches + (exporterStatus?.redactionStats.redactionMatches ?? 0),
       correlationMisses: correlationCounters.correlationMisses,
       correlationEvictions: correlationCounters.correlationEvictions,
     };
@@ -95,6 +128,14 @@ export class ObservabilityService implements ObservabilityFacade {
   }
 
   async testConnection(patch?: PhoenixObservabilitySettingsPatch): Promise<PhoenixObservabilityTestResponse> {
+    if (!this.isBuilderRuntime()) {
+      return {
+        ok: false,
+        status: this.getStatus(),
+        error: "Phoenix observability is only available in Builder runtime.",
+      };
+    }
+
     const base = await this.getSettings();
     const candidate = patch ? normalizePhoenixObservabilitySettings(patch, base) : base;
 
@@ -119,7 +160,7 @@ export class ObservabilityService implements ObservabilityFacade {
 
   recordFeedback(_event: FeedbackSubmitEvent): void {
     // Package 1 adds the shared injection seam. Rich feedback annotation export is Package 7.
-    if (!this.settings?.enabled) {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled) {
       return;
     }
   }
@@ -154,7 +195,7 @@ export class ObservabilityService implements ObservabilityFacade {
     this.exporter = null;
     await oldExporter?.shutdown().catch((error) => this.recordError(error));
 
-    if (!settings.enabled) {
+    if (!this.isBuilderRuntime() || !settings.enabled) {
       return;
     }
 
@@ -169,6 +210,10 @@ export class ObservabilityService implements ObservabilityFacade {
         throw error;
       }
     }
+  }
+
+  private isBuilderRuntime(): boolean {
+    return isBuilderRuntimeTarget(this.options.runtimeTarget);
   }
 
   private createExporter(settings: PhoenixObservabilitySettings): PhoenixOtlpExporter {

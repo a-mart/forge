@@ -16,11 +16,13 @@ import {
   extractProvidersUsed
 } from "./telemetry/telemetry-payload.js";
 import { TelemetryService } from "./telemetry/telemetry-service.js";
+import { createNoopObservabilityFacade } from "./observability/noop-observability.js";
 import { ObservabilityService } from "./observability/observability-service.js";
+import type { ObservabilityFacade } from "./observability/observability-types.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
-import { isCollaborationServerRuntimeTarget } from "./runtime-target.js";
+import { isBuilderRuntimeTarget, isCollaborationServerRuntimeTarget } from "./runtime-target.js";
 import { FeedbackService } from "./swarm/feedback-service.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
 import { seedBuiltins } from "./swarm/specialists/specialist-registry.js";
@@ -70,10 +72,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   const logger = createLogger(options.logger);
 
   const runtimeLock = acquireRuntimeLock(config.paths.dataDir);
-  const observabilityService = new ObservabilityService({
-    dataDir: config.paths.dataDir,
-    runtimeTarget: config.runtimeTarget,
-  });
+  const observabilityService: ObservabilityFacade = isBuilderRuntimeTarget(config.runtimeTarget)
+    ? new ObservabilityService({
+        dataDir: config.paths.dataDir,
+        runtimeTarget: config.runtimeTarget,
+      })
+    : createNoopObservabilityFacade(config.runtimeTarget);
 
   // Ensure the lock is released even on unclean exits (Ctrl+C, crashes, SIGTERM)
   const emergencyRelease = () => {
@@ -435,7 +439,7 @@ class BackendServer implements StartedServer {
 
   private readonly swarmManager: SwarmManager;
   private readonly versioningService: EmbeddedGitVersioningService;
-  private readonly observabilityService: ObservabilityService;
+  private readonly observabilityService: ObservabilityFacade;
   private readonly integrationRegistry: IntegrationRegistryService;
   private readonly wsServer: SwarmWebSocketServer;
   private readonly queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
@@ -452,7 +456,7 @@ class BackendServer implements StartedServer {
     config: SwarmConfig;
     swarmManager: SwarmManager;
     versioningService: EmbeddedGitVersioningService;
-    observabilityService: ObservabilityService;
+    observabilityService: ObservabilityFacade;
     integrationRegistry: IntegrationRegistryService;
     wsServer: SwarmWebSocketServer;
     queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;

@@ -65,23 +65,23 @@ export function buildCommonOpenInferenceAttributes(
   setSanitized(attrs, SemanticConventions.OUTPUT_VALUE, input.output, redactor);
   setString(attrs, SemanticConventions.INPUT_MIME_TYPE, input.inputMimeType ?? MimeType.TEXT);
   setString(attrs, SemanticConventions.OUTPUT_MIME_TYPE, input.outputMimeType ?? MimeType.TEXT);
-  setString(attrs, SemanticConventions.SESSION_ID, input.sessionId);
-  setString(attrs, SemanticConventions.USER_ID, input.userId);
+  setIdentifier(attrs, SemanticConventions.SESSION_ID, input.sessionId, redactor);
+  setIdentifier(attrs, SemanticConventions.USER_ID, input.userId, redactor);
   setSanitized(attrs, SemanticConventions.METADATA, input.metadata, redactor);
   setSanitized(attrs, SemanticConventions.TAG_TAGS, input.tags, redactor);
-  setString(attrs, SemanticConventions.AGENT_NAME, input.agentName);
-  setString(attrs, SemanticConventions.GRAPH_NODE_ID, input.graphNodeId);
-  setString(attrs, SemanticConventions.GRAPH_NODE_NAME, input.graphNodeName);
-  setString(attrs, SemanticConventions.GRAPH_NODE_PARENT_ID, input.graphNodeParentId);
+  setDisplayName(attrs, SemanticConventions.AGENT_NAME, input.agentName, redactor);
+  setIdentifier(attrs, SemanticConventions.GRAPH_NODE_ID, input.graphNodeId, redactor);
+  setDisplayName(attrs, SemanticConventions.GRAPH_NODE_NAME, input.graphNodeName, redactor);
+  setIdentifier(attrs, SemanticConventions.GRAPH_NODE_PARENT_ID, input.graphNodeParentId, redactor);
 
   return attrs;
 }
 
 export function buildModelCallAttributes(input: ModelCallAttributeInput, redactor: ObservabilityRedactor): OtelAttributes {
   const attrs: OtelAttributes = {};
-  setString(attrs, SemanticConventions.LLM_MODEL_NAME, input.modelId);
-  setString(attrs, SemanticConventions.LLM_PROVIDER, input.provider);
-  setString(attrs, SemanticConventions.LLM_FINISH_REASON, input.finishReason);
+  setSanitizedString(attrs, SemanticConventions.LLM_MODEL_NAME, input.modelId, redactor);
+  setSanitizedString(attrs, SemanticConventions.LLM_PROVIDER, input.provider, redactor);
+  setSanitizedString(attrs, SemanticConventions.LLM_FINISH_REASON, input.finishReason, redactor);
   setSanitized(attrs, SemanticConventions.LLM_INVOCATION_PARAMETERS, input.invocationParameters, redactor);
 
   setNumber(attrs, SemanticConventions.LLM_TOKEN_COUNT_PROMPT, input.usage?.input);
@@ -102,8 +102,8 @@ export function buildModelCallAttributes(input: ModelCallAttributeInput, redacto
 
 export function buildToolAttributes(input: ToolAttributeInput, redactor: ObservabilityRedactor): OtelAttributes {
   const attrs: OtelAttributes = {};
-  setString(attrs, SemanticConventions.TOOL_NAME, input.name);
-  setString(attrs, SemanticConventions.TOOL_DESCRIPTION, input.description);
+  setSanitizedString(attrs, SemanticConventions.TOOL_NAME, input.name, redactor);
+  setSanitizedString(attrs, SemanticConventions.TOOL_DESCRIPTION, input.description, redactor);
   setSanitized(attrs, SemanticConventions.TOOL_PARAMETERS, input.parameters, redactor);
   setSanitized(attrs, SemanticConventions.TOOL_JSON_SCHEMA, input.jsonSchema, redactor);
   return attrs;
@@ -137,6 +137,30 @@ function setString(attrs: OtelAttributes, key: string, value: string | undefined
   }
 
   attrs[key] = value;
+}
+
+function setIdentifier(attrs: OtelAttributes, key: string, value: string | undefined, redactor: ObservabilityRedactor): void {
+  if (value === undefined || value.length === 0) {
+    return;
+  }
+
+  attrs[key] = redactor.redactIdentifier(value);
+}
+
+function setDisplayName(attrs: OtelAttributes, key: string, value: string | undefined, redactor: ObservabilityRedactor): void {
+  if (value === undefined || value.length === 0) {
+    return;
+  }
+
+  attrs[key] = redactor.sanitizeDisplayName(value);
+}
+
+function setSanitizedString(attrs: OtelAttributes, key: string, value: string | undefined, redactor: ObservabilityRedactor): void {
+  if (value === undefined || value.length === 0) {
+    return;
+  }
+
+  attrs[key] = redactor.sanitizeLabel(value);
 }
 
 function setNumber(attrs: OtelAttributes, key: string, value: number | undefined): void {

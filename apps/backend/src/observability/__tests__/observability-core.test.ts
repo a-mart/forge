@@ -91,9 +91,10 @@ describe('ObservabilityRedactor', () => {
     expect(result.stats.contentTruncations).toBe(1)
   })
 
-  it('redacts paths according to basename-and-hash mode', () => {
+  it('redacts POSIX and Windows paths according to basename-and-hash mode', () => {
     const redactor = new ObservabilityRedactor()
     expect(redactor.redactPath('/Users/adam/.forge/auth.json')).toMatch(/^auth\.json#[a-f0-9]{16}$/)
+    expect(redactor.redactPath('C:\\Users\\Adam\\.forge\\auth.json')).toMatch(/^auth\.json#[a-f0-9]{16}$/)
   })
 })
 
@@ -124,8 +125,31 @@ describe('OpenInference attributes', () => {
     }
 
     expect(() => assertOtelPrimitiveAttributes(attrs)).not.toThrow()
-    expect(attrs['session.id']).toBe('session-1')
+    expect(attrs['session.id']).toMatch(/^[a-f0-9]{16}$/)
+    expect(attrs['session.id']).not.toBe('session-1')
+    expect(attrs['user.id']).not.toBe('profile-1')
+    expect(attrs['agent.name']).toMatch(/^display#[a-f0-9]{16}$/)
+    expect(attrs['agent.name']).not.toBe('Manager')
+    expect(attrs['graph.node.id']).not.toBe('manager-1')
     expect(attrs['llm.token_count.total']).toBe(14)
     expect(attrs['tool.json_schema']).toBe('{"type":"object"}')
+  })
+
+  it('sanitizes and caps model and tool strings while tracking redaction stats', () => {
+    const settings = createDefaultPhoenixObservabilitySettings()
+    const redactor = new ObservabilityRedactor({ ...settings.privacy, maxAttributeChars: 120 })
+    const attrs = {
+      ...buildModelCallAttributes({
+        modelId: `sk-1234567890abcdef ${Array.from({ length: 20 }, (_, index) => `model segment ${index}`).join(' ')}`,
+        provider: 'openai',
+      }, redactor),
+      ...buildToolAttributes({ name: `tool ${Array.from({ length: 20 }, (_, index) => `segment ${index}`).join(' ')}` }, redactor),
+    }
+
+    expect(attrs['llm.model_name']).toContain('[REDACTED]')
+    expect(attrs['llm.model_name']).toContain('[TRUNCATED')
+    expect(String(attrs['tool.name'])).toContain('[TRUNCATED')
+    expect(redactor.getStats().redactionMatches).toBeGreaterThan(0)
+    expect(redactor.getStats().contentTruncations).toBeGreaterThan(0)
   })
 })

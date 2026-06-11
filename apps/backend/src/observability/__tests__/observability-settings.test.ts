@@ -62,6 +62,8 @@ describe('validatePhoenixEndpoint', () => {
       'http://10.0.0.1:6006/v1/traces',
       'http://example.com:6006/v1/traces',
       'http://user:pass@127.0.0.1:6006/v1/traces',
+      'http://127.0.0.1:6006/v1/traces?token=secret',
+      'http://127.0.0.1:6006/v1/traces#token',
       'http://127.0.0.1:6006/',
     ]) {
       expect(() => validatePhoenixEndpoint(endpoint), endpoint).toThrow()

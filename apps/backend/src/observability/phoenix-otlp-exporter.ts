@@ -13,7 +13,7 @@ import {
   CountingBatchSpanProcessor,
   type CountingBatchSpanProcessorCounters,
 } from "./counting-batch-span-processor.js";
-import { ObservabilityRedactor } from "./observability-redaction.js";
+import { ObservabilityRedactor, type RedactionStats } from "./observability-redaction.js";
 import { buildCommonOpenInferenceAttributes } from "./openinference-attributes.js";
 
 export interface PhoenixOtlpExporterStatus {
@@ -21,6 +21,7 @@ export interface PhoenixOtlpExporterStatus {
   endpoint: string;
   projectName: string;
   counters: CountingBatchSpanProcessorCounters;
+  redactionStats: RedactionStats;
 }
 
 export interface PhoenixOtlpExporterOptions {
@@ -124,6 +125,7 @@ export class PhoenixOtlpExporter {
       endpoint: this.endpoint,
       projectName: this.projectName,
       counters: this.processor.getCounters(),
+      redactionStats: this.redactor.getStats(),
     };
   }
 }

@@ -4,10 +4,16 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { PhoenixObservabilitySettings, PhoenixObservabilitySettingsPatch, PhoenixObservabilityStatus, PhoenixObservabilityTestResponse } from '@forge/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  P0HttpRouteFakeSwarmManager as FakeSwarmManager,
+  createP0HttpRouteManagerDescriptor as createManagerDescriptor,
+  makeP0HttpRouteTempConfig as makeTempConfig,
+} from '../../../../test-support/ws-integration-harness.js'
 import { ObservabilityService } from '../../../../observability/observability-service.js'
 import type { ObservabilityFacade } from '../../../../observability/observability-types.js'
 import { createDefaultPhoenixObservabilitySettings } from '../../../../observability/observability-settings.js'
 import { sendJson } from '../../../http-utils.js'
+import { SwarmWebSocketServer } from '../../../server.js'
 import { createPhoenixObservabilityRoutes } from '../phoenix-observability-routes.js'
 import type { HttpRoute } from '../../shared/http-route.js'
 
@@ -55,6 +61,35 @@ describe('createPhoenixObservabilityRoutes', () => {
     const response = await fetch(`${server.baseUrl}/api/phoenix-observability/status`)
 
     expect(response.status).toBe(404)
+  })
+
+  it('SwarmWebSocketServer fallback uses an explicit no-op facade instead of owning a real service', async () => {
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+    try {
+      const getResponse = await fetch(`http://${config.host}:${config.port}/api/phoenix-observability/settings`)
+      const getBody = await getResponse.json() as { status: PhoenixObservabilityStatus }
+      expect(getResponse.status).toBe(200)
+      expect(getBody.status.exporter.configured).toBe(false)
+
+      const putResponse = await fetch(`http://${config.host}:${config.port}/api/phoenix-observability/settings`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:6006/v1/traces' }),
+      })
+      expect(putResponse.status).toBe(400)
+      await expect(putResponse.json()).resolves.toMatchObject({ error: expect.stringContaining('not available') })
+    } finally {
+      await server.stop()
+    }
   })
 
   it('invokes testConnection only for explicit POST test requests', async () => {

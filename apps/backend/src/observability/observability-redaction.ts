@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { basename, win32 } from "node:path";
 import type { PhoenixObservabilityPrivacySettings } from "@forge/protocol";
 import { createDefaultPhoenixObservabilitySettings } from "./observability-settings.js";
 
@@ -47,6 +47,10 @@ const BUILTIN_REDACTION_PATTERNS = [
 
 export class ObservabilityRedactor {
   private readonly patterns: RegExp[];
+  private readonly stats: RedactionStats = {
+    redactionMatches: 0,
+    contentTruncations: 0,
+  };
 
   constructor(private readonly privacy: PhoenixObservabilityPrivacySettings = createDefaultPhoenixObservabilitySettings().privacy) {
     this.patterns = [
@@ -59,12 +63,16 @@ export class ObservabilityRedactor {
     const serialized = stringifyForExport(this.redactSensitiveObjectFields(value));
     const redacted = this.privacy.redactionEnabled ? this.applyStringRedactions(serialized) : { value: serialized, matches: 0 };
     const capped = capString(redacted.value, maxChars);
+    const stats = {
+      redactionMatches: redacted.matches,
+      contentTruncations: capped.truncated ? 1 : 0,
+    };
+    this.stats.redactionMatches += stats.redactionMatches;
+    this.stats.contentTruncations += stats.contentTruncations;
+
     return {
       value: capped.value,
-      stats: {
-        redactionMatches: redacted.matches,
-        contentTruncations: capped.truncated ? 1 : 0,
-      },
+      stats,
       originalLength: serialized.length,
       exportedLength: capped.value.length,
       truncated: capped.truncated,
@@ -88,7 +96,23 @@ export class ObservabilityRedactor {
       return "[REDACTED_PATH]";
     }
 
-    return `${basename(value)}#${stableHash(value)}`;
+    return `${crossPlatformBasename(value)}#${stableHash(value)}`;
+  }
+
+  sanitizeDisplayName(value: string): string {
+    if (this.privacy.includeDisplayNames) {
+      return this.redactAndCap(value, this.privacy.maxAttributeChars).value;
+    }
+
+    return `display#${stableHash(value)}`;
+  }
+
+  sanitizeLabel(value: string): string {
+    return this.redactAndCap(value, this.privacy.maxAttributeChars).value;
+  }
+
+  getStats(): RedactionStats {
+    return { ...this.stats };
   }
 
   sanitizeAttributeValue(value: unknown): string | number | boolean | string[] {
@@ -178,10 +202,20 @@ function normalizeFieldName(value: string): string {
 }
 
 function redactHomePath(value: string): string {
-  const home = process.env.HOME;
-  if (!home) {
-    return value;
+  let next = value;
+  for (const homePath of [process.env.HOME, process.env.USERPROFILE]) {
+    if (!homePath) {
+      continue;
+    }
+
+    next = next.split(homePath).join("~");
+    next = next.split(homePath.replaceAll("\\", "/")).join("~");
+    next = next.split(homePath.replaceAll("/", "\\")).join("~");
   }
 
-  return value.split(home).join("~");
+  return next;
+}
+
+function crossPlatformBasename(value: string): string {
+  return value.includes("\\") ? win32.basename(value) : basename(value);
 }

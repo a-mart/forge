@@ -159,6 +159,10 @@ export function validatePhoenixEndpoint(endpoint: string): URL {
     throw new Error("Phoenix endpoint must not include embedded credentials.");
   }
 
+  if (parsed.search || parsed.hash) {
+    throw new Error("Phoenix endpoint must not include query strings or fragments.");
+  }
+
   if (!isLoopbackHost(parsed.hostname)) {
     throw new Error("Phoenix endpoint must use a loopback host: localhost, 127.0.0.0/8, or ::1.");
   }

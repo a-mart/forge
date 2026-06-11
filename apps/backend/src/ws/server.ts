@@ -46,7 +46,7 @@ import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
-import { ObservabilityService } from "../observability/observability-service.js";
+import { createNoopObservabilityFacade } from "../observability/noop-observability.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
 
@@ -401,10 +401,7 @@ export class SwarmWebSocketServer {
         : null;
     this.observabilityService =
       options.observabilityService ??
-      new ObservabilityService({
-        dataDir: this.swarmManager.getConfig().paths.dataDir,
-        runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
-      });
+      createNoopObservabilityFacade(this.swarmManager.getConfig().runtimeTarget);
     this.feedbackService =
       options.feedbackService ??
       new FeedbackService(this.swarmManager.getConfig().paths.dataDir, { observability: this.observabilityService });
