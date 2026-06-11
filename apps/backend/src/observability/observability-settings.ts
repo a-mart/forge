@@ -39,7 +39,7 @@ export class PhoenixObservabilitySettingsService {
     }
 
     const parsed = JSON.parse(raw) as unknown;
-    this.settings = normalizePhoenixObservabilitySettings(parsed, null);
+    this.settings = sanitizeLoadedPhoenixObservabilitySettings(normalizePhoenixObservabilitySettings(parsed, null));
     return cloneSettings(this.settings);
   }
 
@@ -128,6 +128,19 @@ export function normalizePhoenixObservabilitySettings(
     export: normalizeExportSettings(value.export, fallback.export),
     updatedAt: normalizeOptionalString(value.updatedAt) ?? fallback.updatedAt,
   };
+}
+
+export function sanitizeLoadedPhoenixObservabilitySettings(settings: PhoenixObservabilitySettings): PhoenixObservabilitySettings {
+  try {
+    validatePhoenixEndpoint(settings.endpoint);
+    return cloneSettings(settings);
+  } catch {
+    return {
+      ...cloneSettings(settings),
+      enabled: false,
+      endpoint: DEFAULT_PHOENIX_ENDPOINT,
+    };
+  }
 }
 
 export function sanitizePhoenixProjectName(value: unknown): string {

@@ -1,5 +1,5 @@
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CountingBatchSpanProcessor } from '../counting-batch-span-processor.js'
 import { ObservabilityRedactor } from '../observability-redaction.js'
 import { createDefaultPhoenixObservabilitySettings } from '../observability-settings.js'
@@ -9,6 +9,10 @@ import {
   buildModelCallAttributes,
   buildToolAttributes,
 } from '../openinference-attributes.js'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 class MockExporter implements SpanExporter {
   readonly batches: ReadableSpan[][] = []
@@ -88,6 +92,8 @@ describe('ObservabilityRedactor', () => {
 
     expect(result.value).toContain('[REDACTED]')
     expect(result.value).toContain('[TRUNCATED')
+    expect(result.stats.redactionMatches).toBeGreaterThanOrEqual(2)
+    expect(redactor.getStats().redactionMatches).toBeGreaterThanOrEqual(2)
     expect(result.stats.contentTruncations).toBe(1)
   })
 
@@ -95,6 +101,16 @@ describe('ObservabilityRedactor', () => {
     const redactor = new ObservabilityRedactor()
     expect(redactor.redactPath('/Users/adam/.forge/auth.json')).toMatch(/^auth\.json#[a-f0-9]{16}$/)
     expect(redactor.redactPath('C:\\Users\\Adam\\.forge\\auth.json')).toMatch(/^auth\.json#[a-f0-9]{16}$/)
+  })
+
+  it('redacts Windows USERPROFILE paths case-insensitively in raw path mode', () => {
+    vi.stubEnv('USERPROFILE', 'C:\\Users\\Adam')
+    const settings = createDefaultPhoenixObservabilitySettings()
+    const redactor = new ObservabilityRedactor({ ...settings.privacy, pathMode: 'raw' })
+
+    expect(redactor.redactPath('c:\\users\\adam\\.forge\\auth.json')).toBe('~\\.forge\\auth.json')
+    expect(redactor.redactPath('C:/USERS/ADAM/.forge/auth.json')).toBe('~/.forge/auth.json')
+    expect(redactor.redactPath('C:\\Users\\Adam\\.forge\\auth.json')).toBe('~\\.forge\\auth.json')
   })
 })
 

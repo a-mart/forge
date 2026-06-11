@@ -53,6 +53,36 @@ describe('ObservabilityService', () => {
     expect(service.getStatus()).toMatchObject({ enabled: false, runtimeTarget: 'collaboration-server', exporter: { configured: false } })
   })
 
+  it('sanitizes invalid persisted endpoints on startup and does not configure exporter', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'forge-observability-service-'))
+    const settingsPath = getPhoenixObservabilitySettingsPath(dataDir)
+    await mkdir(dirname(settingsPath), { recursive: true })
+    await writeFile(settingsPath, JSON.stringify({
+      ...createDefaultPhoenixObservabilitySettings(),
+      enabled: true,
+      endpoint: 'http://127.0.0.1:6006/v1/traces?token=secret',
+    }), 'utf8')
+    let exporterConstructed = false
+    const service = new ObservabilityService({
+      dataDir,
+      runtimeTarget: 'builder',
+      exporterFactory: () => {
+        exporterConstructed = true
+        throw new Error('must not construct')
+      },
+    })
+
+    await service.initialize()
+    const settings = await service.getSettings()
+    const status = service.getStatus()
+
+    expect(exporterConstructed).toBe(false)
+    expect(settings).toMatchObject({ enabled: false, endpoint: 'http://127.0.0.1:6006/v1/traces' })
+    expect(JSON.stringify(settings)).not.toContain('token=secret')
+    expect(JSON.stringify(status)).not.toContain('token=secret')
+    expect(status).toMatchObject({ enabled: false, exporter: { configured: false, endpoint: 'http://127.0.0.1:6006/v1/traces' } })
+  })
+
   it('provides an explicit no-op facade for non-owner tests and standalone construction', async () => {
     const facade = createNoopObservabilityFacade('collaboration-server')
 

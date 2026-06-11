@@ -1,5 +1,5 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import { getPhoenixObservabilitySettingsPath } from '../../swarm/data-paths.js'
@@ -20,6 +20,25 @@ describe('PhoenixObservabilitySettingsService', () => {
     expect(settings.contentMode).toBe('rich')
     expect(settings.endpoint).toBe('http://127.0.0.1:6006/v1/traces')
     await expect(readFile(getPhoenixObservabilitySettingsPath(dataDir), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('sanitizes invalid persisted endpoints without echoing token-bearing URLs', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'forge-phoenix-settings-'))
+    const settingsPath = getPhoenixObservabilitySettingsPath(dataDir)
+    await mkdir(dirname(settingsPath), { recursive: true })
+    await writeFile(settingsPath, JSON.stringify({
+      enabled: true,
+      endpoint: 'http://127.0.0.1:6006/v1/traces?token=secret',
+      projectName: 'persisted-project',
+    }), 'utf8')
+    const service = new PhoenixObservabilitySettingsService(dataDir)
+
+    const settings = await service.getSettings()
+
+    expect(settings.enabled).toBe(false)
+    expect(settings.endpoint).toBe('http://127.0.0.1:6006/v1/traces')
+    expect(JSON.stringify(settings)).not.toContain('token=secret')
+    expect(settings.projectName).toBe('persisted-project')
   })
 
   it('persists normalized non-secret settings', async () => {

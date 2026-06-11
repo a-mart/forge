@@ -60,11 +60,12 @@ export class ObservabilityRedactor {
   }
 
   redactAndCap(value: unknown, maxChars = this.privacy.maxContentChars): RedactedValue {
-    const serialized = stringifyForExport(this.redactSensitiveObjectFields(value));
+    const objectFieldStats = { redactionMatches: 0 };
+    const serialized = stringifyForExport(this.redactSensitiveObjectFields(value, 0, objectFieldStats));
     const redacted = this.privacy.redactionEnabled ? this.applyStringRedactions(serialized) : { value: serialized, matches: 0 };
     const capped = capString(redacted.value, maxChars);
     const stats = {
-      redactionMatches: redacted.matches,
+      redactionMatches: objectFieldStats.redactionMatches + redacted.matches,
       contentTruncations: capped.truncated ? 1 : 0,
     };
     this.stats.redactionMatches += stats.redactionMatches;
@@ -127,13 +128,13 @@ export class ObservabilityRedactor {
     return this.redactAndCap(value, this.privacy.maxAttributeChars).value;
   }
 
-  private redactSensitiveObjectFields(value: unknown, depth = 0): unknown {
+  private redactSensitiveObjectFields(value: unknown, depth = 0, stats: { redactionMatches: number } = { redactionMatches: 0 }): unknown {
     if (!this.privacy.redactionEnabled || depth > 20) {
       return value;
     }
 
     if (Array.isArray(value)) {
-      return value.map((entry) => this.redactSensitiveObjectFields(entry, depth + 1));
+      return value.map((entry) => this.redactSensitiveObjectFields(entry, depth + 1, stats));
     }
 
     if (!value || typeof value !== "object") {
@@ -143,11 +144,12 @@ export class ObservabilityRedactor {
     const result: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
       if (SECRET_FIELD_NAMES.has(normalizeFieldName(key))) {
+        stats.redactionMatches += 1;
         result[key] = "[REDACTED]";
         continue;
       }
 
-      result[key] = this.redactSensitiveObjectFields(entry, depth + 1);
+      result[key] = this.redactSensitiveObjectFields(entry, depth + 1, stats);
     }
 
     return result;
@@ -203,17 +205,36 @@ function normalizeFieldName(value: string): string {
 
 function redactHomePath(value: string): string {
   let next = value;
-  for (const homePath of [process.env.HOME, process.env.USERPROFILE]) {
+  for (const homePath of [process.env.USERPROFILE, process.env.HOME]) {
     if (!homePath) {
       continue;
     }
 
-    next = next.split(homePath).join("~");
-    next = next.split(homePath.replaceAll("\\", "/")).join("~");
-    next = next.split(homePath.replaceAll("/", "\\")).join("~");
+    const variants = createHomePathVariants(homePath);
+
+    for (const variant of variants) {
+      if (!variant) {
+        continue;
+      }
+
+      next = next.replace(new RegExp(escapeRegExp(variant), "gi"), "~");
+    }
   }
 
   return next;
+}
+
+function createHomePathVariants(homePath: string): Set<string> {
+  const variants = new Set([homePath, homePath.replaceAll("\\", "/")]);
+  if (homePath.includes("\\") || /^[A-Za-z]:/.test(homePath)) {
+    variants.add(homePath.replaceAll("/", "\\"));
+  }
+
+  return variants;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function crossPlatformBasename(value: string): string {
