@@ -543,7 +543,7 @@ export class SwarmRuntimeController {
     runtimeTokenOrAgentId: number | string,
     agentIdOrEvent: string | RuntimeSessionEvent,
     maybeEvent?: RuntimeSessionEvent
-  ): Promise<void> {
+  ): Promise<boolean> {
     const invokedWithExplicitToken = typeof runtimeTokenOrAgentId === "number";
     const runtimeToken = invokedWithExplicitToken ? runtimeTokenOrAgentId : undefined;
     const agentId = invokedWithExplicitToken
@@ -552,14 +552,15 @@ export class SwarmRuntimeController {
     const event = invokedWithExplicitToken ? maybeEvent : (agentIdOrEvent as RuntimeSessionEvent);
 
     if (!event) {
-      return;
+      return false;
     }
 
     if (this.runtimeCallbackGate.shouldIgnoreRuntimeSessionEvent(agentId, runtimeToken, event.type)) {
-      return;
+      return false;
     }
 
     await this.getRuntimeEventProjector().projectEvent({ agentId, runtimeToken, event });
+    return true;
   }
 
   async handleRuntimeError(

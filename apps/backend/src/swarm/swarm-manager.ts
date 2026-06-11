@@ -4775,7 +4775,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options?: {
       origin?: "user" | "internal";
       attachments?: ConversationAttachment[];
-      internalDeliveryKind?: "codex_plugin_bootstrap";
+      internalDeliveryKind?: "codex_plugin_bootstrap" | "bootstrap" | "agent_creator_bootstrap";
     }
   ): Promise<SendMessageReceipt> {
     const sender = this.descriptors.get(fromAgentId);
@@ -4871,6 +4871,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       const { receipt, inboundPayload } = deliveryResult;
+      this.recordObservabilityRuntimeInput({
+        target,
+        rootSource: "project_agent",
+        originalInput: message,
+        runtimeInput: inboundPayload.runtimeText,
+        requestedDelivery: delivery,
+        acceptedMode: receipt.acceptedMode,
+        metadata: {
+          fromAgentId,
+          targetAgentId,
+          projectAgentExternal: projectAgentDeliveryAuthorization.allowCrossProfile,
+        },
+      });
       await this.appendPreparedInboundConversationPayload(target, {
         text: inboundPayload.text,
         runtimeText: inboundPayload.runtimeText,
@@ -4939,6 +4952,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
+
+    this.recordObservabilityRuntimeInput({
+      target,
+      rootSource: classifyObservabilityRootSource({
+        origin,
+        fromAgentId,
+        targetAgentId,
+        internalDeliveryKind: options?.internalDeliveryKind,
+      }),
+      originalInput: message,
+      runtimeInput: modelMessage,
+      requestedDelivery: delivery,
+      acceptedMode: receipt.acceptedMode,
+      metadata: {
+        fromAgentId,
+        targetAgentId,
+        attachmentCount: attachments.length,
+      },
+    });
 
     this.logDebug("agent:send_message", {
       fromAgentId,
@@ -5415,6 +5447,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sourceContext,
       runtimeAttachments,
       Math.max(0, Math.trunc(options.persistedAttachmentCount ?? runtimeAttachments.length)),
+      undefined,
       options.delivery,
       options.collaborationAuthor,
     );
@@ -5514,6 +5547,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sourceContext,
       appendedMessage.runtimeAttachments,
       appendedMessage.persistedAttachments.length,
+      appendedMessage.event.id,
       options?.delivery,
       undefined,
       codexClassification,
@@ -5535,7 +5569,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options: {
       origin?: "user" | "internal";
       attachments?: ConversationAttachment[];
-      internalDeliveryKind?: "codex_plugin_bootstrap";
+      internalDeliveryKind?: "codex_plugin_bootstrap" | "bootstrap" | "agent_creator_bootstrap";
     } | undefined,
   ): void {
     if (isCodexPluginWorkerDescriptor(sender)) {
@@ -6062,6 +6096,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceContext: MessageSourceContext,
     runtimeAttachments: ConversationAttachment[],
     persistedAttachmentCount: number,
+    visibleMessageId?: string,
     delivery?: RequestedDeliveryMode,
     collaborationAuthor?: CollaborationAuthor,
     codexClassification: ReturnType<typeof classifyCodexUserMessage> = { kind: "none" },
@@ -6192,6 +6227,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     try {
       const receipt = await managerRuntime.sendMessage(runtimeMessage, "steer");
+      this.recordObservabilityRuntimeInput({
+        target,
+        rootSource: "user_input",
+        originalInput: text,
+        runtimeInput: runtimeMessage,
+        visibleMessageId,
+        requestedDelivery: "steer",
+        acceptedMode: receipt.acceptedMode,
+        sourceChannel: sourceContext.channel,
+        metadata: {
+          attachmentCount: persistedAttachmentCount,
+          codexPluginDelegation: Boolean(codexPluginDelegationContext),
+          collaboration: Boolean(collaborationAuthor),
+        },
+      });
       if (codexMcpToolGate) {
         this.codexMcpToolTurnGateByManagerId.set(managerContextId, codexMcpToolGate);
       }
@@ -6268,6 +6318,74 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   getObservabilityService(): ObservabilityFacade | undefined {
     return this.observability;
+  }
+
+  private recordObservabilityRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || !this.observability) {
+      return;
+    }
+
+    this.observability.recordRuntimeSessionEvent({
+      agentId,
+      managerId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
+      profileId: descriptor.profileId,
+      role: descriptor.role,
+      runtimeType: this.getObservabilityRuntimeType(descriptor),
+      runtimeToken,
+      agentName: descriptor.displayName,
+      event,
+      metadata: {
+        modelProvider: descriptor.model.provider,
+        modelId: descriptor.model.modelId,
+        status: descriptor.status,
+      },
+    });
+  }
+
+  private getObservabilityRuntimeType(descriptor: AgentDescriptor): "pi" | "claude-sdk" | "cursor-sdk" {
+    if (descriptor.model.provider === "claude-sdk") return "claude-sdk";
+    if (descriptor.model.provider === "cursor-sdk") return "cursor-sdk";
+    return "pi";
+  }
+
+  private recordObservabilityRuntimeInput(input: {
+    target: AgentDescriptor;
+    rootSource: "user_input" | "project_agent" | "bootstrap" | "agent_creator_bootstrap" | "codex_plugin_bootstrap" | "cortex" | "internal_self_send" | "internal_agent_message" | "collaboration_excluded" | "internal_other";
+    originalInput?: unknown;
+    runtimeInput: unknown;
+    visibleMessageId?: string;
+    requestedDelivery?: RequestedDeliveryMode;
+    acceptedMode?: string;
+    sourceChannel?: string;
+    metadata?: Record<string, unknown>;
+  }): void {
+    if (!this.observability) {
+      return;
+    }
+
+    this.observability.recordRuntimeInput({
+      targetAgentId: input.target.agentId,
+      managerId: input.target.role === "manager" ? input.target.agentId : input.target.managerId,
+      profileId: input.target.profileId,
+      role: input.target.role,
+      runtimeType: this.getObservabilityRuntimeType(input.target),
+      runtimeToken: this.runtimeController.getRuntimeToken(input.target.agentId),
+      rootSource: input.rootSource,
+      originalInput: input.originalInput,
+      runtimeInput: input.runtimeInput,
+      requestPayloadFidelity: "delta_only",
+      visibleMessageId: input.visibleMessageId,
+      requestedDelivery: input.requestedDelivery,
+      acceptedMode: input.acceptedMode,
+      sourceChannel: input.sourceChannel,
+      agentName: input.target.displayName,
+      metadata: {
+        modelProvider: input.target.model.provider,
+        modelId: input.target.model.modelId,
+        ...input.metadata,
+      },
+    });
   }
 
   getVersioningService(): VersioningMutationSink | undefined {
@@ -6938,7 +7056,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE
       );
       await this.sendMessage(managerId, managerId, bootstrapMessage, "auto", {
-        origin: "internal"
+        origin: "internal",
+        internalDeliveryKind: "bootstrap"
       });
       this.logDebug("manager:bootstrap_message:sent", { managerId });
     } catch (error) {
@@ -6965,7 +7084,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       await this.sendMessage(sessionAgentId, sessionAgentId, contextText, "auto", {
-        origin: "internal"
+        origin: "internal",
+        internalDeliveryKind: "agent_creator_bootstrap"
       });
       this.logDebug("agent_creator:context:injected", {
         sessionAgentId,
@@ -8432,11 +8552,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const agentId = invokedWithExplicitToken ? (agentIdOrEvent as string) : runtimeTokenOrAgentId;
     const event = invokedWithExplicitToken ? maybeEvent : (agentIdOrEvent as RuntimeSessionEvent);
 
-    if (event) {
+    const accepted = await this.runtimeController.handleRuntimeSessionEvent(runtimeTokenOrAgentId, agentIdOrEvent, maybeEvent);
+    if (accepted && event) {
       this.applyInboundTurnContextRuntimeEvent(agentId, event);
+      this.recordObservabilityRuntimeSessionEvent(agentId, invokedWithExplicitToken ? runtimeTokenOrAgentId : undefined, event);
     }
-
-    await this.runtimeController.handleRuntimeSessionEvent(runtimeTokenOrAgentId, agentIdOrEvent, maybeEvent);
   }
 
   async handleRuntimeError(
@@ -9146,6 +9266,30 @@ function collectPropagationFailures(
     }
   });
   return failures;
+}
+
+function classifyObservabilityRootSource(input: {
+  origin: "user" | "internal";
+  fromAgentId: string;
+  targetAgentId: string;
+  internalDeliveryKind?: "codex_plugin_bootstrap" | "bootstrap" | "agent_creator_bootstrap";
+}): "user_input" | "bootstrap" | "agent_creator_bootstrap" | "codex_plugin_bootstrap" | "internal_self_send" | "internal_agent_message" {
+  if (input.origin === "user") {
+    return "user_input";
+  }
+  if (input.internalDeliveryKind === "codex_plugin_bootstrap") {
+    return "codex_plugin_bootstrap";
+  }
+  if (input.internalDeliveryKind === "bootstrap") {
+    return "bootstrap";
+  }
+  if (input.internalDeliveryKind === "agent_creator_bootstrap") {
+    return "agent_creator_bootstrap";
+  }
+  if (input.fromAgentId === input.targetAgentId) {
+    return "internal_self_send";
+  }
+  return "internal_agent_message";
 }
 
 function hasExistingExecutableSurface(resolution: { repoRootResources: { forgeExtensionsDir?: string; piExtensionsDir?: string; piSettingsPath?: string }; legacyExecutableSurfaces: Array<{ path: string; activeToday?: boolean }> }): boolean {

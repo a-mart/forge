@@ -19,6 +19,8 @@ import type {
   ObservabilityFacade,
   ObservabilityPromptResolvedInput,
   ObservabilityRuntimeCreatedInput,
+  ObservabilityRuntimeInputInput,
+  ObservabilityRuntimeSessionEventInput,
   ObservabilityRuntimeTarget,
 } from "./observability-types.js";
 
@@ -189,6 +191,42 @@ export class ObservabilityService implements ObservabilityFacade {
       this.exporter.recordRuntimeCreated(exportInput);
       this.correlator.incrementSpanStarted();
       this.correlator.incrementSpanEnded();
+    } catch (error) {
+      this.recordError(error);
+    }
+  }
+
+  recordRuntimeInput(input: ObservabilityRuntimeInputInput): string | undefined {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.settings.capture.modelInputs || !this.exporter) {
+      return undefined;
+    }
+
+    try {
+      const rootTurnId = this.exporter.recordRuntimeInput(input);
+      this.correlator.incrementSpanStarted();
+      return rootTurnId;
+    } catch (error) {
+      this.recordError(error);
+      return undefined;
+    }
+  }
+
+  recordRuntimeSessionEvent(input: ObservabilityRuntimeSessionEventInput): void {
+    if (!this.isBuilderRuntime() || !this.settings?.enabled || !this.exporter) {
+      return;
+    }
+
+    try {
+      const result = this.exporter.recordRuntimeSessionEvent(input);
+      if (result.started > 0) {
+        for (let index = 0; index < result.started; index += 1) this.correlator.incrementSpanStarted();
+      }
+      if (result.ended > 0) {
+        for (let index = 0; index < result.ended; index += 1) this.correlator.incrementSpanEnded();
+      }
+      if (result.correlationMisses > 0) {
+        for (let index = 0; index < result.correlationMisses; index += 1) this.correlator.recordCorrelationMiss();
+      }
     } catch (error) {
       this.recordError(error);
     }

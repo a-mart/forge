@@ -9,6 +9,8 @@ import type {
   ObservabilityFacade,
   ObservabilityPromptResolvedInput,
   ObservabilityRuntimeCreatedInput,
+  ObservabilityRuntimeInputInput,
+  ObservabilityRuntimeSessionEventInput,
   ObservabilityRuntimeTarget,
 } from "./observability-types.js";
 import { createDefaultPhoenixObservabilitySettings } from "./observability-settings.js";
@@ -37,6 +39,8 @@ export function createNoopObservabilityFacade(runtimeTarget: ObservabilityRuntim
     },
     recordPromptResolved(_input: ObservabilityPromptResolvedInput): void {},
     recordRuntimeCreated(_input: ObservabilityRuntimeCreatedInput): void {},
+    recordRuntimeInput(_input: ObservabilityRuntimeInputInput): string | undefined { return undefined; },
+    recordRuntimeSessionEvent(_input: ObservabilityRuntimeSessionEventInput): void {},
     recordFeedback(_event: FeedbackSubmitEvent): void {},
     async shutdown(): Promise<void> {},
   };

@@ -28,6 +28,7 @@ import type {
   RuntimeCodexTransportDebugStats,
   RuntimeImageAttachment,
   RuntimeErrorEvent,
+  RuntimeModelCallMeta,
   RuntimeSessionEvent,
   RuntimeSessionMessage,
   RuntimeUserMessage,
@@ -786,7 +787,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    const normalizedEvent = normalizeRuntimeSessionEvent(event);
+    const normalizedEvent = normalizeRuntimeSessionEvent(event, this.session);
     if (this.callbacks.onSessionEvent && normalizedEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, normalizedEvent);
     }
@@ -2321,7 +2322,62 @@ function getPooledProviderLabel(provider: string | undefined): string {
   }
 }
 
-function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionEvent | null {
+function extractPiModelCallMeta(message: unknown, session?: AgentSession): { meta: RuntimeModelCallMeta } | Record<string, never> {
+  if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "assistant") {
+    return {};
+  }
+
+  const record = message as {
+    provider?: unknown;
+    api?: unknown;
+    model?: unknown;
+    responseModel?: unknown;
+    responseId?: unknown;
+    stopReason?: unknown;
+    usage?: unknown;
+    timestamp?: unknown;
+  };
+  const usage = normalizePiUsage(record.usage);
+  const meta: RuntimeModelCallMeta = {
+    ...(usage ? { usage: usage.usage, costUsd: usage.costUsd } : {}),
+    provider: readString(record.provider),
+    api: readString(record.api),
+    modelId: readString(record.model),
+    responseModelId: readString(record.responseModel),
+    providerRequestId: readString(record.responseId),
+    stopReason: readString(record.stopReason),
+    requestPayloadFidelity: session?.messages ? "partial" : "unavailable",
+    requestMessages: session?.messages ? session.messages.slice(-24) : undefined,
+    metadata: typeof record.timestamp === "number" ? { providerTimestamp: record.timestamp } : undefined,
+  };
+  return { meta };
+}
+
+function normalizePiUsage(value: unknown): { usage: RuntimeModelCallMeta["usage"]; costUsd?: RuntimeModelCallMeta["costUsd"] } | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const cost = value && typeof record.cost === "object" && record.cost !== null ? record.cost as Record<string, unknown> : undefined;
+  return {
+    usage: {
+      input: readNumber(record.input),
+      output: readNumber(record.output),
+      cacheRead: readNumber(record.cacheRead),
+      cacheWrite: readNumber(record.cacheWrite),
+      total: readNumber(record.totalTokens),
+    },
+    costUsd: cost ? {
+      input: readNumber(cost.input),
+      output: readNumber(cost.output),
+      cacheRead: readNumber(cost.cacheRead),
+      cacheWrite: readNumber(cost.cacheWrite),
+      total: readNumber(cost.total),
+    } : undefined,
+  };
+}
+
+function normalizeRuntimeSessionEvent(event: AgentSessionEvent, session?: AgentSession): RuntimeSessionEvent | null {
   switch (event.type) {
     case "agent_start":
     case "agent_end":
@@ -2336,10 +2392,16 @@ function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionE
 
     case "message_start":
     case "message_update":
-    case "message_end":
       return {
         type: event.type,
         message: event.message as RuntimeSessionMessage
+      };
+
+    case "message_end":
+      return {
+        type: "message_end",
+        message: event.message as RuntimeSessionMessage,
+        ...extractPiModelCallMeta(event.message, session)
       };
 
     case "tool_execution_start":

@@ -5,6 +5,7 @@ import type {
   PhoenixObservabilityStatus,
   PhoenixObservabilityTestResponse,
 } from "@forge/protocol";
+import type { RuntimeSessionEvent } from "../swarm/runtime-contracts.js";
 
 export interface ObservabilityFacade {
   initialize(): Promise<void>;
@@ -14,6 +15,8 @@ export interface ObservabilityFacade {
   testConnection(patch?: PhoenixObservabilitySettingsPatch): Promise<PhoenixObservabilityTestResponse>;
   recordPromptResolved(input: ObservabilityPromptResolvedInput): void;
   recordRuntimeCreated(input: ObservabilityRuntimeCreatedInput): void;
+  recordRuntimeInput(input: ObservabilityRuntimeInputInput): string | undefined;
+  recordRuntimeSessionEvent(input: ObservabilityRuntimeSessionEventInput): void;
   recordFeedback(event: FeedbackSubmitEvent): void;
   shutdown(options?: { timeoutMs?: number }): Promise<void>;
 }
@@ -60,6 +63,50 @@ export interface ObservabilityToolDefinition {
   description?: string;
   jsonSchema?: unknown;
   source?: string;
+}
+
+export type ObservabilityRootSource =
+  | "user_input"
+  | "project_agent"
+  | "bootstrap"
+  | "agent_creator_bootstrap"
+  | "codex_plugin_bootstrap"
+  | "cortex"
+  | "internal_self_send"
+  | "internal_agent_message"
+  | "collaboration_excluded"
+  | "internal_other";
+
+export interface ObservabilityRuntimeInputInput {
+  targetAgentId: string;
+  managerId?: string;
+  profileId?: string;
+  role?: string;
+  runtimeType?: ObservabilityRuntimeType;
+  runtimeToken?: number;
+  rootSource: ObservabilityRootSource;
+  originalInput?: unknown;
+  runtimeInput: unknown;
+  requestPayloadFidelity?: "full" | "partial" | "delta_only" | "unavailable";
+  visibleMessageId?: string;
+  requestedDelivery?: string;
+  acceptedMode?: string;
+  sourceChannel?: string;
+  agentName?: string;
+  activeTools?: ObservabilityToolDefinition[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface ObservabilityRuntimeSessionEventInput {
+  agentId: string;
+  managerId?: string;
+  profileId?: string;
+  role?: string;
+  runtimeType?: ObservabilityRuntimeType;
+  runtimeToken?: number;
+  agentName?: string;
+  event: RuntimeSessionEvent;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ObservabilityRecordFeedbackInput {

@@ -201,6 +201,176 @@ describe('PhoenixOtlpExporter', () => {
     expect(promptMetadata).toContain('memory.md#')
   })
 
+  it('exports root runtime turn and child LLM spans with provider metadata', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeCreated({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'manager',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      status: 'ready',
+      activeTools: [{ name: 'speak_to_user', description: 'Reply to user', jsonSchema: { type: 'object' } }],
+    })
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'manager',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      rootSource: 'user_input',
+      originalInput: 'visible user text',
+      runtimeInput: 'runtime user text with guidance',
+      visibleMessageId: 'message-1',
+      requestedDelivery: 'steer',
+      acceptedMode: 'prompt',
+      sourceChannel: 'web',
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'manager',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      event: { type: 'message_start', message: { role: 'user', content: 'runtime user text with guidance' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'manager',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      event: { type: 'message_start', message: { role: 'assistant', content: '' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'manager',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      event: { type: 'message_update', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'manager',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      event: {
+        type: 'message_end',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'hi there' }] },
+        meta: {
+          provider: 'openai-codex',
+          modelId: 'gpt-5.4',
+          responseModelId: 'gpt-5.4-actual',
+          stopReason: 'stop',
+          providerRequestId: 'resp-123',
+          usage: { input: 10, output: 4, cacheRead: 2, total: 16 },
+          costUsd: { total: 0.01 },
+          requestPayloadFidelity: 'partial',
+          requestMessages: [{ role: 'user', content: 'runtime user text with guidance' }],
+        },
+      },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      profileId: 'profile-1',
+      role: 'manager',
+      runtimeType: 'pi',
+      runtimeToken: 3,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    const root = spans.find((entry) => entry.name === 'forge.session.turn')
+    const turn = spans.find((entry) => entry.name === 'forge.runtime.turn')
+    const llm = spans.find((entry) => entry.name === 'forge.llm.call')
+    expect(root).toBeDefined()
+    expect(turn?.parentSpanContext?.spanId).toBe(root?.spanContext().spanId)
+    expect(llm?.parentSpanContext?.spanId).toBe(turn?.spanContext().spanId)
+    expect(root?.attributes['session.id']).toBeDefined()
+    expect(llm?.attributes['llm.model_name']).toBe('gpt-5.4-actual')
+    expect(llm?.attributes['llm.provider']).toBe('openai-codex')
+    expect(llm?.attributes['llm.token_count.prompt']).toBe(10)
+    expect(llm?.attributes['llm.token_count.completion']).toBe(4)
+    expect(llm?.attributes['llm.token_count.prompt_details.cache_read']).toBe(2)
+    expect(llm?.attributes['llm.token_count.total']).toBe(16)
+    expect(llm?.attributes['llm.cost.total']).toBe(0.01)
+    expect(llm?.attributes['llm.finish_reason']).toBe('stop')
+    expect(llm?.attributes['llm.tools']).toContain('speak_to_user')
+    expect(llm?.attributes['forge.ttft_ms']).toEqual(expect.any(Number))
+    expect(String(llm?.attributes['llm.input_messages'])).toContain('runtime user text with guidance')
+  })
+
+  it('does not let a stale runtime token consume a pending runtime input', async () => {
+    const spanExporter = new MockExporter()
+    const settings = { ...createDefaultPhoenixObservabilitySettings(), enabled: true }
+    const exporter = new PhoenixOtlpExporter({ settings, spanExporter })
+
+    exporter.recordRuntimeInput({
+      targetAgentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      rootSource: 'user_input',
+      runtimeInput: 'fresh turn',
+    })
+    expect(exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 1,
+      event: { type: 'message_start', message: { role: 'user', content: 'fresh turn' } },
+    }).correlationMisses).toBe(0)
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'message_start', message: { role: 'user', content: 'fresh turn' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'message_start', message: { role: 'assistant', content: '' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'message_end', message: { role: 'assistant', content: 'ok' } },
+    })
+    exporter.recordRuntimeSessionEvent({
+      agentId: 'manager-1',
+      managerId: 'manager-1',
+      runtimeType: 'pi',
+      runtimeToken: 2,
+      event: { type: 'turn_end', toolResults: [] },
+    })
+    await exporter.forceFlush()
+    await exporter.shutdown()
+
+    const spans = spanExporter.batches.flat()
+    expect(spans.filter((entry) => entry.name === 'forge.session.turn')).toHaveLength(1)
+    expect(spans.filter((entry) => entry.name === 'forge.runtime.turn')).toHaveLength(1)
+    expect(spans.filter((entry) => entry.name === 'forge.llm.call')).toHaveLength(1)
+  })
+
   it('fully redacts runtime-created path metadata when pathMode is redacted', async () => {
     const spanExporter = new MockExporter()
     const settings = {

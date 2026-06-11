@@ -1,4 +1,4 @@
-import type { RuntimeSessionEvent } from "../../runtime-contracts.js";
+import type { RuntimeSessionEvent, RuntimeTurnMeta } from "../../runtime-contracts.js";
 
 export interface CursorSdkEventMapperOptions {
   debug?: boolean;
@@ -22,7 +22,7 @@ export class CursorSdkEventMapper {
     return [{ type: "agent_start" }, { type: "turn_start" }];
   }
 
-  completePrompt(): RuntimeSessionEvent[] {
+  completePrompt(meta?: RuntimeTurnMeta): RuntimeSessionEvent[] {
     const events: RuntimeSessionEvent[] = [];
     if (this.assistantMessageStarted) {
       events.push({
@@ -36,7 +36,8 @@ export class CursorSdkEventMapper {
 
     events.push({
       type: "turn_end",
-      toolResults: this.completedToolResults.map((result) => structuredClone(result))
+      toolResults: this.completedToolResults.map((result) => structuredClone(result)),
+      ...(meta ? { meta } : {})
     });
     events.push({ type: "agent_end" });
     this.resetTurnState();
