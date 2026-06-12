@@ -72,6 +72,10 @@ export class GitCli {
           return normalized;
         }
 
+        if (isExecTimeout(error, normalized)) {
+          throw new Error(`git ${args.join(" ")} timed out`);
+        }
+
         if (attempt < 3 && isTransientGitFailure(normalized)) {
           await delay(attempt * 100);
           continue;
@@ -100,7 +104,7 @@ export function normalizeGitCommandError(
   let classification: GitCommandErrorClassification = "unknown";
   if (result.exitCode === 0) {
     classification = "success";
-  } else if (haystack.includes("timed out") || haystack.includes("etimedout")) {
+  } else if (isTimeoutResult(haystack, result.exitCode)) {
     classification = "timeout";
   } else if (
     haystack.includes("not a git repository") ||
@@ -153,11 +157,11 @@ function normalizeExecError(error: unknown): GitCliResult {
       signal?: string;
     };
 
-    const stderr =
-      typed.stderr ??
-      (typed.killed && typed.signal === "SIGTERM"
+    const stderr = typed.stderr?.trim().length
+      ? typed.stderr
+      : isExecTimeout(error, { stdout: "", stderr: "", exitCode: 1 })
         ? "git command timed out"
-        : String(error));
+        : String(error);
 
     return {
       stdout: typed.stdout ?? "",
@@ -171,6 +175,35 @@ function normalizeExecError(error: unknown): GitCliResult {
     stderr: String(error),
     exitCode: 1
   };
+}
+
+function isExecTimeout(error: unknown, normalized: GitCliResult): boolean {
+  if (typeof error === "object" && error !== null) {
+    const typed = error as {
+      killed?: boolean;
+      signal?: string;
+      code?: string | number;
+    };
+
+    if (typed.killed && typed.signal === "SIGTERM") {
+      return true;
+    }
+
+    if (typed.code === "ETIMEDOUT") {
+      return true;
+    }
+  }
+
+  return isTimeoutResult(`${normalized.stderr}\n${normalized.stdout}`.toLowerCase(), normalized.exitCode);
+}
+
+function isTimeoutResult(haystack: string, exitCode: number): boolean {
+  return (
+    haystack.includes("timed out") ||
+    haystack.includes("etimedout") ||
+    exitCode === -1 ||
+    exitCode === 124
+  );
 }
 
 function isTransientGitFailure(result: GitCliResult): boolean {
