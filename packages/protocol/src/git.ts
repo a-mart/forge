@@ -263,8 +263,23 @@ export interface GitPullRequestListResult extends GitRepoMetadata {
   recentlyClosed: GitPullRequestSummary[]
   currentBranchPullRequest: GitPullRequestSummary | null
   providerStatus: GitHostedProviderStatus
+  listError?: GitPullRequestListError | null
   context: GitSourceContextRef
   notInitialized?: boolean
+}
+
+export type GitPullRequestListErrorCode =
+  | 'not_found'
+  | 'rate_limit'
+  | 'timeout'
+  | 'network'
+  | 'auth'
+  | 'permission'
+  | 'unknown'
+
+export interface GitPullRequestListError {
+  code: GitPullRequestListErrorCode
+  message: string
 }
 
 export interface GitPullRequestCheckSummary {

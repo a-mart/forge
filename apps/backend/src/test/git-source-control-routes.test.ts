@@ -549,6 +549,35 @@ describe("git-source-control-routes", () => {
     expect(payload.recentlyClosed).toHaveLength(1);
     expect(payload.open[0]?.isCurrentBranch).toBe(true);
     expect(payload.currentBranchPullRequest?.number).toBe(428);
+    expect(payload.listError).toBeNull();
+  });
+
+  it("returns listError for PR list rate-limit failures", async () => {
+    const server = await createPullRequestTestServer({ ghAuth: "ok", listFailure: "rate_limit" });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests?agentId=alpha--s1`);
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitPullRequestListResult;
+    expect(payload.listError?.code).toBe("rate_limit");
+    expect(payload.open).toEqual([]);
+    expect(payload.recentlyClosed).toEqual([]);
+    expect(payload.providerStatus.authenticated).toBe(true);
+    expect(payload.providerStatus.available).toBe(true);
+  });
+
+  it("returns listError for PR list timeout/network failures", async () => {
+    const timeoutServer = await createPullRequestTestServer({ ghAuth: "ok", listFailure: "timeout" });
+    const timeoutResponse = await fetch(`${timeoutServer.baseUrl}/api/git/pull-requests?agentId=alpha--s1`);
+    expect(timeoutResponse.status).toBe(200);
+    const timeoutPayload = (await timeoutResponse.json()) as GitPullRequestListResult;
+    expect(timeoutPayload.listError?.code).toBe("timeout");
+
+    const networkServer = await createPullRequestTestServer({ ghAuth: "ok", listFailure: "network" });
+    const networkResponse = await fetch(`${networkServer.baseUrl}/api/git/pull-requests?agentId=alpha--s1`);
+    expect(networkResponse.status).toBe(200);
+    const networkPayload = (await networkResponse.json()) as GitPullRequestListResult;
+    expect(networkPayload.listError?.code).toBe("network");
   });
 
   it("returns pull request detail for a selected number", async () => {
@@ -995,6 +1024,7 @@ async function createPullRequestTestServer(options: {
   ghBinary?: string;
   branch?: string;
   detailFailure?: "not_found" | "rate_limit" | "timeout" | "auth" | "permission";
+  listFailure?: "rate_limit" | "timeout" | "network" | "permission";
   ghTimeoutMs?: number;
 }): Promise<TestServer> {
   const root = await mkdtemp(join(tmpdir(), "git-source-control-pr-"));
@@ -1004,7 +1034,8 @@ async function createPullRequestTestServer(options: {
   await execGit(mainDir, ["remote", "add", "origin", "git@github.com:a-mart/forge.git"]);
 
   const fakeGhPath =
-    options.ghBinary ?? (await createFakeGhScript(root, options.ghAuth, options.detailFailure));
+    options.ghBinary ??
+    (await createFakeGhScript(root, options.ghAuth, options.detailFailure, options.listFailure));
   const mainRealPath = await realpath(mainDir);
   const descriptors = [createManagerSession("alpha", "alpha--s1")];
   descriptors[0]!.cwd = mainRealPath;
@@ -1064,7 +1095,8 @@ async function createPullRequestTestServer(options: {
 async function createFakeGhScript(
   root: string,
   auth: "ok" | "fail",
-  detailFailure?: "not_found" | "rate_limit" | "timeout" | "auth" | "permission"
+  detailFailure?: "not_found" | "rate_limit" | "timeout" | "auth" | "permission",
+  listFailure?: "rate_limit" | "timeout" | "network" | "permission"
 ): Promise<string> {
   const fakeGhPath = join(root, "fake-gh");
   const openJson = JSON.stringify([
@@ -1142,6 +1174,23 @@ if (command.startsWith("auth status")) {
 }
 
 if (command.includes("pr list") && command.includes("--state open")) {
+  const listFailure = ${JSON.stringify(listFailure ?? null)};
+  if (listFailure === "rate_limit") {
+    process.stderr.write("API rate limit exceeded for user\\n");
+    process.exit(1);
+  }
+  if (listFailure === "timeout") {
+    process.stderr.write("gh command timed out.\\n");
+    process.exit(1);
+  }
+  if (listFailure === "network") {
+    process.stderr.write("error connecting to api.github.com: network unavailable\\n");
+    process.exit(1);
+  }
+  if (listFailure === "permission") {
+    process.stderr.write("HTTP 403: Resource not accessible by integration\\n");
+    process.exit(1);
+  }
   process.stdout.write(${JSON.stringify(openJson)});
   process.exit(0);
 }

@@ -333,6 +333,23 @@ export function PullRequestsTab({
     )
   }
 
+  if (data?.listError) {
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="max-w-md space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
+          <div className="flex items-center gap-2 font-medium text-foreground">
+            <AlertCircle className="size-4 text-destructive" />
+            Could not load pull requests
+          </div>
+          <p className="text-muted-foreground">{data.listError.message}</p>
+          <p className="text-xs text-muted-foreground">
+            GitHub CLI is configured, but the pull request list request failed. Try refresh or check GitHub access.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const hasAnyPullRequests = (data?.open.length ?? 0) > 0 || (data?.recentlyClosed.length ?? 0) > 0
 
   return (

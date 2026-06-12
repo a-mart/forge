@@ -271,17 +271,23 @@ export function DiffViewerContent({
           className="flex h-7 shrink-0 items-center border-t border-border/60 bg-card/80 px-3 text-xs text-muted-foreground"
           aria-live="polite"
         >
-          <span>{pullRequestsQuery.data?.open.length ?? 0} open</span>
-          <span className="mx-1.5 opacity-40">·</span>
-          <span>{pullRequestsQuery.data?.recentlyClosed.length ?? 0} recently closed</span>
-          {pullRequestsQuery.data?.currentBranchPullRequest ? (
+          {pullRequestsQuery.data?.listError ? (
+            <span className="truncate text-destructive">Pull request list unavailable</span>
+          ) : (
             <>
+              <span>{pullRequestsQuery.data?.open.length ?? 0} open</span>
               <span className="mx-1.5 opacity-40">·</span>
-              <span className="truncate">
-                Current branch PR #{pullRequestsQuery.data.currentBranchPullRequest.number}
-              </span>
+              <span>{pullRequestsQuery.data?.recentlyClosed.length ?? 0} recently closed</span>
+              {pullRequestsQuery.data?.currentBranchPullRequest ? (
+                <>
+                  <span className="mx-1.5 opacity-40">·</span>
+                  <span className="truncate">
+                    Current branch PR #{pullRequestsQuery.data.currentBranchPullRequest.number}
+                  </span>
+                </>
+              ) : null}
             </>
-          ) : null}
+          )}
         </div>
       ) : historyStatus ? (
         <div

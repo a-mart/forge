@@ -5,6 +5,7 @@ import type {
   GitHostedProviderStatus,
   GitPullRequestCheckSummary,
   GitPullRequestDetail,
+  GitPullRequestListError,
   GitPullRequestListResult,
   GitPullRequestState,
   GitPullRequestSummary,
@@ -242,11 +243,11 @@ export class GitHostedProviderService {
       const failure = classifyGhFailure(openRaw, closedRaw);
       return {
         ...baseResult,
+        listError: toListError(failure),
         providerStatus: {
           ...providerStatus,
-          available: true,
           authenticated: failure.code === "auth" ? false : providerStatus.authenticated,
-          message: failure.message
+          message: failure.code === "auth" ? failure.message : providerStatus.message
         }
       };
     }
@@ -262,7 +263,8 @@ export class GitHostedProviderService {
       ...baseResult,
       open,
       recentlyClosed,
-      currentBranchPullRequest
+      currentBranchPullRequest,
+      listError: null
     };
   }
 
@@ -815,6 +817,13 @@ export function classifyGhFailure(...results: GhExecResult[]): GitHostedProvider
   }
 
   return new GitHostedProviderError("GitHub pull request request failed.", 502, "unknown");
+}
+
+function toListError(failure: GitHostedProviderError): GitPullRequestListError {
+  return {
+    code: failure.code,
+    message: failure.message
+  };
 }
 
 function normalizeExecError(error: unknown): GhExecResult {

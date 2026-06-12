@@ -125,6 +125,7 @@ describe('PullRequestsTab', () => {
         open: [],
         recentlyClosed: [],
         currentBranchPullRequest: null,
+        listError: null,
         providerStatus: {
           provider: 'github',
           available: true,
@@ -140,6 +141,35 @@ describe('PullRequestsTab', () => {
     })
 
     expect(getByText(container, /No pull requests found/i)).toBeTruthy()
+  })
+
+  it('shows list failure guidance instead of empty state when gh list fails', () => {
+    renderTab({
+      data: {
+        open: [],
+        recentlyClosed: [],
+        currentBranchPullRequest: null,
+        listError: {
+          code: 'rate_limit',
+          message: 'GitHub rate limit reached. Try again later.',
+        },
+        providerStatus: {
+          provider: 'github',
+          available: true,
+          authenticated: true,
+          remoteUrl: 'git@github.com:a-mart/forge.git',
+        },
+        repoName: 'forge',
+        repoRoot: '/repo/forge',
+        repoKind: 'workspace',
+        repoLabel: 'Workspace',
+        context: { repoTarget: 'workspace' },
+      },
+    })
+
+    expect(getByText(container, /Could not load pull requests/i)).toBeTruthy()
+    expect(getByText(container, /GitHub rate limit reached/i)).toBeTruthy()
+    expect(() => getByText(container, /No pull requests found/i)).toThrow()
   })
 
   it('shows query error state', () => {

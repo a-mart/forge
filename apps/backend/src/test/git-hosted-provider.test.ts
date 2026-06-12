@@ -286,6 +286,58 @@ describe("GitHostedProviderService", () => {
     expect(error.httpStatus).toBe(504);
     expect(error.code).toBe("timeout");
   });
+
+  it("surfaces PR list rate-limit failures as listError instead of a false empty state", async () => {
+    const { fakeGhPath, repoDir } = await createFakeGhFixture({
+      branch: "main",
+      auth: "ok",
+      openJson: "[]",
+      closedJson: "[]",
+      openListFailure: "rate_limit"
+    });
+
+    const service = new GitHostedProviderService({ ghBinary: fakeGhPath });
+    const context = createContext({ cwd: repoDir, remoteSetup: true });
+    const result = await service.listPullRequests(context);
+
+    expect(result.listError?.code).toBe("rate_limit");
+    expect(result.open).toEqual([]);
+    expect(result.recentlyClosed).toEqual([]);
+    expect(result.providerStatus.authenticated).toBe(true);
+    expect(result.providerStatus.available).toBe(true);
+  });
+
+  it("surfaces PR list timeout and network failures as listError", async () => {
+    const timeoutFixture = await createFakeGhFixture({
+      branch: "main",
+      auth: "ok",
+      openJson: "[]",
+      closedJson: "[]",
+      openListFailure: "timeout"
+    });
+
+    const timeoutService = new GitHostedProviderService({ ghBinary: timeoutFixture.fakeGhPath });
+    const timeoutContext = createContext({ cwd: timeoutFixture.repoDir, remoteSetup: true });
+    const timeoutResult = await timeoutService.listPullRequests(timeoutContext);
+
+    expect(timeoutResult.listError?.code).toBe("timeout");
+    expect(timeoutResult.providerStatus.authenticated).toBe(true);
+
+    const networkFixture = await createFakeGhFixture({
+      branch: "main",
+      auth: "ok",
+      openJson: "[]",
+      closedJson: "[]",
+      openListFailure: "network"
+    });
+
+    const networkService = new GitHostedProviderService({ ghBinary: networkFixture.fakeGhPath });
+    const networkContext = createContext({ cwd: networkFixture.repoDir, remoteSetup: true });
+    const networkResult = await networkService.listPullRequests(networkContext);
+
+    expect(networkResult.listError?.code).toBe("network");
+    expect(networkResult.providerStatus.authenticated).toBe(true);
+  });
 });
 
 function createContext(options: {
@@ -308,6 +360,7 @@ async function createFakeGhFixture(options: {
   openJson: string;
   closedJson: string;
   detailJson?: string;
+  openListFailure?: "rate_limit" | "timeout" | "network" | "permission";
 }): Promise<{ fakeGhPath: string; repoDir: string }> {
   const root = await mkdtemp(join(tmpdir(), "git-hosted-provider-"));
   const repoDir = join(root, "repo");
@@ -334,6 +387,23 @@ if (command.startsWith("auth status")) {
 }
 
 if (command.includes("pr list") && command.includes("--state open")) {
+  const openListFailure = ${JSON.stringify(options.openListFailure ?? null)};
+  if (openListFailure === "rate_limit") {
+    process.stderr.write("API rate limit exceeded for user\\n");
+    process.exit(1);
+  }
+  if (openListFailure === "timeout") {
+    process.stderr.write("gh command timed out.\\n");
+    process.exit(1);
+  }
+  if (openListFailure === "network") {
+    process.stderr.write("error connecting to api.github.com: network unavailable\\n");
+    process.exit(1);
+  }
+  if (openListFailure === "permission") {
+    process.stderr.write("HTTP 403: Resource not accessible by integration\\n");
+    process.exit(1);
+  }
   process.stdout.write(${JSON.stringify(options.openJson)});
   process.exit(0);
 }
