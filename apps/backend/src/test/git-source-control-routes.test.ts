@@ -261,6 +261,37 @@ describe("git-source-control-routes", () => {
     expect(await readFile(join(server.mainDir, "ignored.txt"), "utf8")).toBe("local ignored\n");
   });
 
+  it("rejects switching branches when an ignored local file conflicts with tracked target directory contents", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    await writeFile(join(server.mainDir, ".gitignore"), "dist\n", "utf8");
+    await execGit(server.mainDir, ["add", ".gitignore"]);
+    await execGit(server.mainDir, ["commit", "-m", "ignore local dist path"]);
+    await execGit(server.mainDir, ["switch", "-c", "release/ignored-parent-target"]);
+    await mkdir(join(server.mainDir, "dist"), { recursive: true });
+    await writeFile(join(server.mainDir, "dist", "a.txt"), "target tracked child\n", "utf8");
+    await execGit(server.mainDir, ["add", "-f", "dist/a.txt"]);
+    await execGit(server.mainDir, ["commit", "-m", "track ignored target child"]);
+    await execGit(server.mainDir, ["switch", "main"]);
+    await writeFile(join(server.mainDir, "dist"), "local ignored file\n", "utf8");
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/switch-branch", {
+      agentId: "alpha--s1",
+      branch: "release/ignored-parent-target",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("ignored local files");
+    expect(mutation.payload.errors.join(" ")).toContain("dist");
+    expect(await readFile(join(server.mainDir, "dist"), "utf8")).toBe("local ignored file\n");
+  });
+
   it("rejects switching to a branch checked out in another worktree", async () => {
     const server = await createSourceControlTestServer({
       descriptors: [createManagerSession("alpha", "alpha--s1")]
@@ -373,6 +404,38 @@ describe("git-source-control-routes", () => {
     expect(await readFile(join(server.mainDir, "ignored.txt"), "utf8")).toBe("local ignored\n");
   });
 
+  it("rejects creating a branch from a start point when an ignored local file conflicts with tracked target directory contents", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    await writeFile(join(server.mainDir, ".gitignore"), "dist\n", "utf8");
+    await execGit(server.mainDir, ["add", ".gitignore"]);
+    await execGit(server.mainDir, ["commit", "-m", "ignore local dist path"]);
+    await execGit(server.mainDir, ["switch", "-c", "release/ignored-start-dir"]);
+    await mkdir(join(server.mainDir, "dist"), { recursive: true });
+    await writeFile(join(server.mainDir, "dist", "a.txt"), "start tracked child\n", "utf8");
+    await execGit(server.mainDir, ["add", "-f", "dist/a.txt"]);
+    await execGit(server.mainDir, ["commit", "-m", "track ignored start child"]);
+    await execGit(server.mainDir, ["switch", "main"]);
+    await writeFile(join(server.mainDir, "dist"), "local ignored file\n", "utf8");
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/create-branch", {
+      agentId: "alpha--s1",
+      branch: "feature/from-ignored-start-dir",
+      startPoint: "release/ignored-start-dir",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("ignored local files");
+    expect(mutation.payload.errors.join(" ")).toContain("dist");
+    expect(await readFile(join(server.mainDir, "dist"), "utf8")).toBe("local ignored file\n");
+  });
+
   it("fetches from a local bare remote", async () => {
     const server = await createRemoteBackedTestServer();
 
@@ -437,6 +500,41 @@ describe("git-source-control-routes", () => {
     expect(mutation.payload.errors.join(" ")).toContain("ignored local files");
     expect(mutation.payload.errors.join(" ")).toContain("ignored.txt");
     expect(await readFile(join(server.mainDir, "ignored.txt"), "utf8")).toBe("local ignored\n");
+  });
+
+  it("rejects fast-forward pull when an ignored local file conflicts with tracked upstream directory contents", async () => {
+    const server = await createRemoteBackedTestServer();
+
+    await writeFile(join(server.mainDir, ".gitignore"), "dist\n", "utf8");
+    await execGit(server.mainDir, ["add", ".gitignore"]);
+    await execGit(server.mainDir, ["commit", "-m", "ignore local dist path"]);
+    await execGit(server.mainDir, ["push", "origin", "main"]);
+
+    const remoteCloneDir = join(server.root, "remote-clobber-dir");
+    await execGit(server.root, ["clone", join(server.root, "origin.git"), remoteCloneDir]);
+    await execGit(remoteCloneDir, ["config", "user.name", "Forge Test"]);
+    await execGit(remoteCloneDir, ["config", "user.email", "forge-test@example.com"]);
+    await mkdir(join(remoteCloneDir, "dist"), { recursive: true });
+    await writeFile(join(remoteCloneDir, "dist", "a.txt"), "remote tracked child\n", "utf8");
+    await execGit(remoteCloneDir, ["add", "-f", "dist/a.txt"]);
+    await execGit(remoteCloneDir, ["commit", "-m", "remote tracks ignored child"]);
+    await execGit(remoteCloneDir, ["push", "origin", "main"]);
+    await writeFile(join(server.mainDir, "dist"), "local ignored file\n", "utf8");
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPullResult>(server, "/api/git/pull-ff-only", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.fastForward).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("ignored local files");
+    expect(mutation.payload.errors.join(" ")).toContain("dist");
+    expect(await readFile(join(server.mainDir, "dist"), "utf8")).toBe("local ignored file\n");
   });
 
   it("rejects fast-forward pull when the branch has diverged", async () => {

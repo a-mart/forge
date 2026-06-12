@@ -59,6 +59,16 @@ interface AgentCwdEntry {
   summary: GitWorktreeAgentSummary;
 }
 
+interface IgnoredOverwriteTarget {
+  ref: string;
+  refLabel: string;
+  actionLabel: string;
+}
+
+type GitPathInspectionResult =
+  | { ok: true; paths: string[] }
+  | { ok: false; message: string };
+
 const IGNORED_OVERWRITE_PATH_LIMIT = 8;
 
 export class GitSourceControlService {
@@ -761,16 +771,22 @@ export class GitSourceControlService {
     }
 
     const ignoredPaths = await this.listIgnoredUntrackedPaths(git);
-    if (ignoredPaths.length === 0) {
+    if (!ignoredPaths.ok) {
+      return createIgnoredOverwriteInspectionIssue(target, ignoredPaths.message);
+    }
+    if (ignoredPaths.paths.length === 0) {
       return null;
     }
 
     const targetTreePaths = await this.listTargetTreePaths(git, target.ref);
-    if (targetTreePaths.length === 0) {
+    if (!targetTreePaths.ok) {
+      return createIgnoredOverwriteInspectionIssue(target, targetTreePaths.message);
+    }
+    if (targetTreePaths.paths.length === 0) {
       return null;
     }
 
-    const conflicts = findIgnoredTargetTreeConflicts(ignoredPaths, targetTreePaths);
+    const conflicts = findIgnoredTargetTreeConflicts(ignoredPaths.paths, targetTreePaths.paths);
     if (conflicts.length === 0) {
       return null;
     }
@@ -790,7 +806,7 @@ export class GitSourceControlService {
       startPoint?: string;
       remote?: string;
     }
-  ): Promise<{ ref: string; refLabel: string; actionLabel: string } | null> {
+  ): Promise<IgnoredOverwriteTarget | null> {
     if (options.action === "switch-branch") {
       const ref = options.targetBranch?.trim();
       if (!ref || !(await verifyResolvableGitRef(git, ref))) {
@@ -833,7 +849,7 @@ export class GitSourceControlService {
     return null;
   }
 
-  private async listIgnoredUntrackedPaths(git: GitCli): Promise<string[]> {
+  private async listIgnoredUntrackedPaths(git: GitCli): Promise<GitPathInspectionResult> {
     const pathSet = new Set<string>();
     const commands = [
       ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
@@ -843,7 +859,10 @@ export class GitSourceControlService {
     for (const args of commands) {
       const result = await git.run(args, { allowFailure: true });
       if (result.exitCode !== 0) {
-        continue;
+        return {
+          ok: false,
+          message: formatGitInspectionFailure(args, result.stderr || result.stdout)
+        };
       }
 
       for (const path of parseNulSeparatedGitPaths(result.stdout)) {
@@ -851,18 +870,20 @@ export class GitSourceControlService {
       }
     }
 
-    return [...pathSet];
+    return { ok: true, paths: [...pathSet] };
   }
 
-  private async listTargetTreePaths(git: GitCli, ref: string): Promise<string[]> {
-    const result = await git.run(["ls-tree", "-r", "--name-only", "-z", "--", ref], {
-      allowFailure: true
-    });
+  private async listTargetTreePaths(git: GitCli, ref: string): Promise<GitPathInspectionResult> {
+    const args = ["ls-tree", "-r", "--name-only", "-z", "--", ref];
+    const result = await git.run(args, { allowFailure: true });
     if (result.exitCode !== 0) {
-      return [];
+      return {
+        ok: false,
+        message: formatGitInspectionFailure(args, result.stderr || result.stdout)
+      };
     }
 
-    return parseNulSeparatedGitPaths(result.stdout);
+    return { ok: true, paths: parseNulSeparatedGitPaths(result.stdout) };
   }
 
   private async validateMutationRequest(
@@ -1052,17 +1073,41 @@ function normalizeGitPath(path: string): string {
   return path.replace(/^\.\//, "").replace(/\\/g, "/");
 }
 
+function createIgnoredOverwriteInspectionIssue(
+  target: IgnoredOverwriteTarget,
+  reason: string
+): GitPreflightIssue {
+  return {
+    code: "ignored_overwrite_inspection_failed",
+    message: `${target.actionLabel} is blocked because Forge could not inspect ignored local files against ${target.refLabel}: ${reason}. Inspect the repository in a terminal and retry.`,
+    severity: "block"
+  };
+}
+
+function formatGitInspectionFailure(args: string[], message: string): string {
+  const trimmed = message.trim();
+  const excerpt = trimmed.length > 180 ? `${trimmed.slice(0, 180)}…` : trimmed;
+  return `git ${args.join(" ")} failed${excerpt.length > 0 ? ` (${excerpt})` : ""}`;
+}
+
 function findIgnoredTargetTreeConflicts(
   ignoredPaths: string[],
   targetTreePaths: string[]
 ): string[] {
-  const ignoredFiles = new Set(ignoredPaths.filter((path) => !path.endsWith("/")));
+  const ignoredFilePaths = ignoredPaths.filter((path) => !path.endsWith("/"));
+  const ignoredFiles = new Set(ignoredFilePaths);
   const ignoredDirectories = ignoredPaths.filter((path) => path.endsWith("/"));
   const conflicts = new Set<string>();
 
   for (const targetPath of targetTreePaths) {
     if (ignoredFiles.has(targetPath)) {
       conflicts.add(targetPath);
+      continue;
+    }
+
+    const conflictingIgnoredFile = findIgnoredFileParentConflict(targetPath, ignoredFiles);
+    if (conflictingIgnoredFile) {
+      conflicts.add(conflictingIgnoredFile);
       continue;
     }
 
@@ -1076,6 +1121,23 @@ function findIgnoredTargetTreeConflicts(
   }
 
   return [...conflicts].sort((left, right) => left.localeCompare(right));
+}
+
+function findIgnoredFileParentConflict(
+  targetPath: string,
+  ignoredFiles: Set<string>
+): string | null {
+  let separatorIndex = targetPath.indexOf("/");
+  while (separatorIndex !== -1) {
+    const parentPath = targetPath.slice(0, separatorIndex);
+    if (ignoredFiles.has(parentPath)) {
+      return parentPath;
+    }
+
+    separatorIndex = targetPath.indexOf("/", separatorIndex + 1);
+  }
+
+  return null;
 }
 
 function formatBoundedPathList(paths: string[]): string {
