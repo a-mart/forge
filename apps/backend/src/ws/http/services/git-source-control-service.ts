@@ -8,16 +8,22 @@ import type {
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { GitCli } from "../../../versioning/git-cli.js";
 import {
-  createWorktreeId,
-  normalizePathForComparison,
+  isPathContainedInRoot,
   parseWorktreeListPorcelain,
   readPorcelainStatus,
   resolveCurrentBranch,
   resolveHeadSha,
-  resolveRepoRoot
+  resolveMainWorktreeIdentity,
+  resolveWorktreeIdentity,
+  tryNormalizePathForComparison
 } from "../../../versioning/git-source-control-helpers.js";
 import type { GitSourceControlContext } from "../shared/route-helpers.js";
 import { GitDiffService } from "./git-diff-service.js";
+
+interface AgentCwdEntry {
+  normalizedCwd: string;
+  summary: GitWorktreeAgentSummary;
+}
 
 export class GitSourceControlService {
   private readonly diffService = new GitDiffService();
@@ -47,32 +53,54 @@ export class GitSourceControlService {
     }
 
     const parsedEntries = parseWorktreeListPorcelain(listResult.stdout);
-    const repoRoot = await resolveRepoRoot(baseGit);
+    const mainIdentity = await resolveMainWorktreeIdentity(parsedEntries);
+    const repoRoot = mainIdentity?.path ?? context.baseCwd;
     const repoName = basename(repoRoot);
     const currentContextPath = await resolveContextPath(context);
-    const agentsByWorktreePath = await buildAgentIndex(swarmManager);
+    const agentEntries = await collectAgentEntries(swarmManager);
 
     const worktrees: GitWorktreeSummary[] = [];
     for (const entry of parsedEntries) {
-      const normalizedPath = await normalizePathForComparison(entry.path);
-      const worktreeId = createWorktreeId(normalizedPath);
-      const worktreeGit = new GitCli({ cwd: normalizedPath });
+      const identity = await resolveWorktreeIdentity(entry.path, {
+        forceInaccessible: entry.isPrunable
+      });
+      const isStale = entry.isPrunable || !identity.accessible;
+
+      if (isStale) {
+        worktrees.push({
+          id: identity.id,
+          path: identity.path,
+          repoRoot,
+          branch: entry.branch,
+          headSha: entry.headSha,
+          isMainWorktree: mainIdentity?.id === identity.id,
+          isCurrentContext: false,
+          locked: entry.isLocked || undefined,
+          prunable: true,
+          dirty: false,
+          dirtySummary: { filesChanged: 0, insertions: 0, deletions: 0 },
+          activeAgents: []
+        });
+        continue;
+      }
+
+      const worktreeGit = new GitCli({ cwd: identity.path });
       const porcelain = await readPorcelainStatus(worktreeGit);
-      const dirtySummary = await this.resolveDirtySummary(normalizedPath, porcelain);
+      const dirtySummary = await this.resolveDirtySummary(identity.path, porcelain);
       const branch = entry.branch ?? (await resolveCurrentBranch(worktreeGit));
       const headSha = entry.headSha ?? (await resolveHeadSha(worktreeGit));
-      const activeAgents = agentsByWorktreePath.get(normalizedPath) ?? [];
+      const activeAgents = findActiveAgentsForWorktree(agentEntries, identity.path);
 
       worktrees.push({
-        id: worktreeId,
-        path: normalizedPath,
+        id: identity.id,
+        path: identity.path,
         repoRoot,
         branch,
         headSha,
-        isMainWorktree: normalizedPath === repoRoot,
-        isCurrentContext: normalizedPath === currentContextPath,
+        isMainWorktree: mainIdentity?.id === identity.id,
+        isCurrentContext: identity.path === currentContextPath,
         locked: entry.isLocked || undefined,
-        prunable: entry.isPrunable || undefined,
+        prunable: undefined,
         dirty: porcelain.trim().length > 0,
         dirtySummary,
         activeAgents
@@ -110,45 +138,51 @@ export class GitSourceControlService {
   }
 }
 
-async function resolveContextPath(context: GitSourceControlContext): Promise<string> {
+async function resolveContextPath(context: GitSourceControlContext): Promise<string | null> {
   if (context.worktreePath) {
-    return normalizePathForComparison(context.worktreePath);
+    const normalized = await tryNormalizePathForComparison(context.worktreePath);
+    return normalized.path;
   }
 
-  return normalizePathForComparison(context.cwd);
+  const normalized = await tryNormalizePathForComparison(context.cwd);
+  return normalized.path;
 }
 
-async function buildAgentIndex(
-  swarmManager: SwarmManager
-): Promise<Map<string, GitWorktreeAgentSummary[]>> {
-  const index = new Map<string, GitWorktreeAgentSummary[]>();
+async function collectAgentEntries(swarmManager: SwarmManager): Promise<AgentCwdEntry[]> {
+  const entries: AgentCwdEntry[] = [];
 
   for (const descriptor of swarmManager.listAgents()) {
     if (!descriptor.cwd || descriptor.cwd.trim().length === 0) {
       continue;
     }
 
-    let normalizedCwd: string;
-    try {
-      normalizedCwd = await normalizePathForComparison(descriptor.cwd);
-    } catch {
+    const normalized = await tryNormalizePathForComparison(descriptor.cwd);
+    if (!normalized.accessible) {
       continue;
     }
 
     const role = descriptor.role === "worker" ? "worker" : "manager";
-    const summary: GitWorktreeAgentSummary = {
-      agentId: descriptor.agentId,
-      displayName: descriptor.displayName,
-      role,
-      status: descriptor.status
-    };
-
-    const existing = index.get(normalizedCwd) ?? [];
-    existing.push(summary);
-    index.set(normalizedCwd, existing);
+    entries.push({
+      normalizedCwd: normalized.path,
+      summary: {
+        agentId: descriptor.agentId,
+        displayName: descriptor.displayName,
+        role,
+        status: descriptor.status
+      }
+    });
   }
 
-  return index;
+  return entries;
+}
+
+function findActiveAgentsForWorktree(
+  agentEntries: AgentCwdEntry[],
+  worktreePath: string
+): GitWorktreeAgentSummary[] {
+  return agentEntries
+    .filter((entry) => isPathContainedInRoot(entry.normalizedCwd, worktreePath))
+    .map((entry) => entry.summary);
 }
 
 function toContextRef(context: GitSourceControlContext): GitSourceContextRef {

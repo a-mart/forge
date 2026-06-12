@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { GitCli } from "./git-cli.js";
 
 const RECORD_SEPARATOR = "\0";
@@ -16,17 +16,81 @@ export interface ParsedWorktreeEntry {
   prunableReason?: string;
 }
 
-export function createWorktreeId(normalizedPath: string): string {
-  return createHash("sha256").update(normalizedPath).digest("hex").slice(0, 16);
+export interface WorktreeIdentity {
+  id: string;
+  path: string;
+  accessible: boolean;
+}
+
+export function createWorktreeId(stablePathKey: string): string {
+  return createHash("sha256").update(stablePathKey).digest("hex").slice(0, 16);
+}
+
+export function resolveStableWorktreePathKey(reportedPath: string): string {
+  return resolve(reportedPath);
 }
 
 export async function normalizePathForComparison(path: string): Promise<string> {
   return realpath(resolve(path));
 }
 
-export async function resolveRepoRoot(git: GitCli): Promise<string> {
-  const result = await git.run(["rev-parse", "--show-toplevel"]);
-  return normalizePathForComparison(result.stdout.trim());
+export async function tryNormalizePathForComparison(
+  path: string
+): Promise<{ path: string; accessible: true } | { path: string; accessible: false }> {
+  try {
+    return {
+      path: await normalizePathForComparison(path),
+      accessible: true
+    };
+  } catch {
+    return {
+      path: resolveStableWorktreePathKey(path),
+      accessible: false
+    };
+  }
+}
+
+export async function resolveWorktreeIdentity(
+  reportedPath: string,
+  options?: { forceInaccessible?: boolean }
+): Promise<WorktreeIdentity> {
+  if (options?.forceInaccessible) {
+    const path = resolveStableWorktreePathKey(reportedPath);
+    return {
+      id: createWorktreeId(path),
+      path,
+      accessible: false
+    };
+  }
+
+  const normalized = await tryNormalizePathForComparison(reportedPath);
+  return {
+    id: createWorktreeId(normalized.path),
+    path: normalized.path,
+    accessible: normalized.accessible
+  };
+}
+
+export function isPathContainedInRoot(childPath: string, rootPath: string): boolean {
+  if (childPath === rootPath) {
+    return true;
+  }
+
+  const prefix = rootPath.endsWith(sep) ? rootPath : `${rootPath}${sep}`;
+  return childPath.startsWith(prefix);
+}
+
+export async function resolveMainWorktreeIdentity(
+  entries: ParsedWorktreeEntry[]
+): Promise<WorktreeIdentity | null> {
+  const firstEntry = entries[0];
+  if (!firstEntry) {
+    return null;
+  }
+
+  return resolveWorktreeIdentity(firstEntry.path, {
+    forceInaccessible: firstEntry.isPrunable
+  });
 }
 
 export async function resolveHeadSha(git: GitCli): Promise<string | null> {
@@ -188,10 +252,18 @@ export async function resolveWorktreePathById(
   }
 
   for (const entry of parseWorktreeListPorcelain(listResult.stdout)) {
-    const normalizedPath = await normalizePathForComparison(entry.path);
-    if (createWorktreeId(normalizedPath) === worktreeId) {
-      return normalizedPath;
+    const identity = await resolveWorktreeIdentity(entry.path, {
+      forceInaccessible: entry.isPrunable
+    });
+    if (identity.id !== worktreeId) {
+      continue;
     }
+
+    if (!identity.accessible || entry.isPrunable) {
+      return null;
+    }
+
+    return identity.path;
   }
 
   return null;

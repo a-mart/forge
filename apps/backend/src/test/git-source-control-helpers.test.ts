@@ -4,7 +4,9 @@ import {
   createWorktreeId,
   hasUnmergedPorcelain,
   isDirtyPorcelain,
-  parseWorktreeListPorcelain
+  isPathContainedInRoot,
+  parseWorktreeListPorcelain,
+  resolveStableWorktreePathKey
 } from "../versioning/git-source-control-helpers.js";
 
 describe("git-source-control-helpers", () => {
@@ -53,6 +55,11 @@ describe("git-source-control-helpers", () => {
     expect(first).toBe(second);
   });
 
+  it("creates stable ids for reported paths when realpath is unavailable", () => {
+    const stableKey = resolveStableWorktreePathKey("/tmp/missing-worktree");
+    expect(createWorktreeId(stableKey)).toHaveLength(16);
+  });
+
   it("computes deterministic status hashes", () => {
     const porcelain = " M apps/backend/src/ws/server.ts\n?? notes.txt\n";
     expect(computeStatusHash(porcelain)).toHaveLength(16);
@@ -64,5 +71,12 @@ describe("git-source-control-helpers", () => {
     expect(isDirtyPorcelain("?? new.txt\n")).toBe(true);
     expect(hasUnmergedPorcelain("UU conflict.txt\n")).toBe(true);
     expect(hasUnmergedPorcelain(" M clean-edit.txt\n")).toBe(false);
+  });
+
+  it("matches agent cwd containment with separator boundaries", () => {
+    expect(isPathContainedInRoot("/repo/main", "/repo/main")).toBe(true);
+    expect(isPathContainedInRoot("/repo/main/apps/backend", "/repo/main")).toBe(true);
+    expect(isPathContainedInRoot("/repo/main-backup", "/repo/main")).toBe(false);
+    expect(isPathContainedInRoot("/repo/other", "/repo/main")).toBe(false);
   });
 });
