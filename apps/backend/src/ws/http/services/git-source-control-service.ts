@@ -91,6 +91,18 @@ export class GitSourceControlService {
     number: number,
     request: Omit<GitPullRequestMergeRequest, "agentId" | "repoTarget" | "worktreeId">
   ): Promise<GitPullRequestMergeResult> {
+    if (context.repoKind !== "workspace") {
+      return {
+        success: false,
+        number,
+        method: request.method,
+        errors: ["Pull request merge is only available for workspace repositories."],
+        warnings: [],
+        errorCode: "versioning_blocked",
+        invalidateCaches: false
+      };
+    }
+
     return this.hostedProvider.mergePullRequest(context, number, request);
   }
 

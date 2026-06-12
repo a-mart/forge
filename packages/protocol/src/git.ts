@@ -310,7 +310,6 @@ export interface GitPullRequestMergeRequest {
   worktreeId?: string
   method: GitPullRequestMergeMethod
   expectedHeadSha: string
-  deleteBranchAfterMerge?: boolean
   acknowledgeCheckFailures?: boolean
 }
 
@@ -323,7 +322,7 @@ export type GitPullRequestMergeErrorCode =
   | 'checks_blocked'
   | 'checks_pending'
   | 'method_not_allowed'
-  | 'branch_delete_unsafe'
+  | 'versioning_blocked'
   | 'auth'
   | 'permission'
   | 'rate_limit'
@@ -340,7 +339,7 @@ export interface GitPullRequestMergeResult {
   mergeCommitSha?: string | null
   state?: GitPullRequestState
   providerUrl?: string
-  branchDeleted?: boolean
+  submitted?: boolean
   errors: string[]
   warnings: string[]
   errorCode?: GitPullRequestMergeErrorCode

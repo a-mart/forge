@@ -6,6 +6,8 @@ import {
   GitHostedProviderService,
   aggregateCheckStatusFromRollup,
   classifyGhFailure,
+  buildMergeGhArgs,
+  buildMergeResultFromGhSuccess,
   classifyMergeGhFailure,
   evaluateMergePreflight,
   matchesCurrentBranchPullRequest,
@@ -366,6 +368,31 @@ describe("GitHostedProviderService", () => {
     expect(mergeCalls[0]).toContain("--squash");
     expect(mergeCalls[0]).toContain("--match-head-commit");
     expect(mergeCalls[0]).toContain("abc123def456");
+    expect(mergeCalls[0]).not.toContain("--delete-branch");
+    expect(mergeCalls[0]).not.toContain("--admin");
+  });
+
+  it("reports submitted state when gh succeeds but refreshed detail remains open", async () => {
+    const { fakeGhPath, repoDir } = await createFakeGhFixture({
+      branch: "main",
+      auth: "ok",
+      openJson: "[]",
+      closedJson: "[]",
+      mergeBehavior: "submitted"
+    });
+
+    const service = new GitHostedProviderService({ ghBinary: fakeGhPath });
+    const context = createContext({ cwd: repoDir, remoteSetup: true });
+    const result = await service.mergePullRequest(context, 428, {
+      method: "squash",
+      expectedHeadSha: "abc123def456"
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.submitted).toBe(true);
+    expect(result.state).toBe("open");
+    expect(result.mergedAt).toBeUndefined();
+    expect(result.warnings.join(" ")).toContain("still open");
   });
 
   it("returns stale head error when gh merge rejects modified head", async () => {
@@ -413,7 +440,6 @@ describe("GitHostedProviderService", () => {
 
     const blocked = evaluateMergePreflight(detail, "squash", {
       expectedHeadSha: "abc123",
-      deleteBranchAfterMerge: false,
       acknowledgeCheckFailures: false
     });
     expect(blocked.allowed).toBe(false);
@@ -421,10 +447,65 @@ describe("GitHostedProviderService", () => {
 
     const allowed = evaluateMergePreflight(detail, "squash", {
       expectedHeadSha: "abc123",
-      deleteBranchAfterMerge: false,
       acknowledgeCheckFailures: true
     });
     expect(allowed.allowed).toBe(true);
+  });
+
+  it("builds merge gh args without delete-branch or admin flags", () => {
+    const args = buildMergeGhArgs(
+      { owner: "a-mart", repo: "forge", remoteUrl: "git@github.com:a-mart/forge.git" },
+      428,
+      "squash",
+      "abc123def456"
+    );
+
+    expect(args).toEqual([
+      "pr",
+      "merge",
+      "428",
+      "--repo",
+      "a-mart/forge",
+      "--squash",
+      "--match-head-commit",
+      "abc123def456"
+    ]);
+    expect(args.some((arg) => arg.includes("delete-branch") || arg === "--admin")).toBe(false);
+  });
+
+  it("does not synthesize mergedAt when refreshed detail is still open", () => {
+    const detail = {
+      number: 428,
+      title: "PR",
+      state: "open" as const,
+      author: "adam",
+      createdAt: "2026-06-10T10:00:00Z",
+      updatedAt: "2026-06-12T09:00:00Z",
+      headRef: "feature/x",
+      baseRef: "main",
+      isDraft: false,
+      isCurrentBranch: false,
+      body: "",
+      mergeable: true,
+      checks: [],
+      changedFiles: 1,
+      additions: 1,
+      deletions: 0,
+      headSha: "abc123",
+      providerUrl: "https://github.com/a-mart/forge/pull/428"
+    };
+
+    const result = buildMergeResultFromGhSuccess({
+      number: 428,
+      method: "squash",
+      preflightWarnings: [],
+      fallbackDetail: detail,
+      refreshedDetail: detail
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.submitted).toBe(true);
+    expect(result.mergedAt).toBeUndefined();
   });
 
   it("maps gh merge stale head failures", () => {
@@ -490,7 +571,13 @@ async function createFakeGhFixture(options: {
   closedJson: string;
   detailJson?: string;
   openListFailure?: "rate_limit" | "timeout" | "network" | "permission";
-  mergeBehavior?: "success" | "stale_head";
+  mergeBehavior?: "success" | "stale_head" | "submitted";
+  mergeFailure?: "auth" | "permission";
+  repoMergeSettings?: {
+    mergeCommitAllowed: boolean;
+    squashMergeAllowed: boolean;
+    rebaseMergeAllowed: boolean;
+  };
 }): Promise<{ fakeGhPath: string; repoDir: string; readMergeCalls: () => Promise<string[]> }> {
   const root = await mkdtemp(join(tmpdir(), "git-hosted-provider-"));
   const repoDir = join(root, "repo");
@@ -541,6 +628,14 @@ async function createFakeGhFixture(options: {
     headRefOid: "abc123def456"
   });
 
+  const repoMergeSettingsJson = JSON.stringify(
+    options.repoMergeSettings ?? {
+      mergeCommitAllowed: true,
+      squashMergeAllowed: true,
+      rebaseMergeAllowed: true
+    }
+  );
+
   await writeFile(
     fakeGhPath,
     `#!/usr/bin/env node
@@ -563,11 +658,7 @@ if (command.startsWith("auth status")) {
 }
 
 if (command.startsWith("repo view")) {
-  process.stdout.write(JSON.stringify({
-    mergeCommitAllowed: true,
-    squashMergeAllowed: true,
-    rebaseMergeAllowed: true
-  }));
+  process.stdout.write(${JSON.stringify(repoMergeSettingsJson)});
   process.exit(0);
 }
 
@@ -617,6 +708,15 @@ if (command.startsWith("pr view")) {
 if (command.startsWith("pr merge")) {
   fs.appendFileSync(${JSON.stringify(mergeLogPath)}, command + "\\n");
   const mergeBehavior = ${JSON.stringify(options.mergeBehavior ?? null)};
+  const mergeFailure = ${JSON.stringify(options.mergeFailure ?? null)};
+  if (mergeFailure === "auth") {
+    process.stderr.write("HTTP 401: Bad credentials\\n");
+    process.exit(1);
+  }
+  if (mergeFailure === "permission") {
+    process.stderr.write("HTTP 403: Resource not accessible by integration\\n");
+    process.exit(1);
+  }
   if (mergeBehavior === "stale_head") {
     process.stderr.write("Head branch was modified. Review and try again.\\n");
     process.exit(1);

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -716,6 +716,191 @@ describe("git-source-control-routes", () => {
     expect(payload.success).toBe(false);
     expect(payload.errorCode).toBe("provider_unavailable");
   });
+
+  it("rejects versioning repo merge requests without invoking gh", async () => {
+    const server = await createVersioningMutationTestServer();
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests/428/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "cortex--s1",
+        repoTarget: "versioning",
+        method: "squash",
+        expectedHeadSha: "abc123def456"
+      })
+    });
+
+    expect(response.status).toBe(409);
+    const payload = (await response.json()) as GitPullRequestMergeResult;
+    expect(payload.success).toBe(false);
+    expect(payload.errorCode).toBe("versioning_blocked");
+    expect(payload.errors.join(" ")).toContain("workspace");
+  });
+
+  it("allows merge when pending checks are explicitly acknowledged", async () => {
+    const server = await createPullRequestTestServer({
+      ghAuth: "ok",
+      detailCheckStatus: "pending",
+      mergeBehavior: "success"
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests/428/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha--s1",
+        method: "squash",
+        expectedHeadSha: "abc123def456",
+        acknowledgeCheckFailures: true
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as GitPullRequestMergeResult;
+    expect(payload.success).toBe(true);
+    expect(payload.state).toBe("merged");
+  });
+
+  it("returns 409 when merge method is not allowed for the repository", async () => {
+    const server = await createPullRequestTestServer({
+      ghAuth: "ok",
+      repoMergeSettings: {
+        mergeCommitAllowed: false,
+        squashMergeAllowed: true,
+        rebaseMergeAllowed: false
+      }
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests/428/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha--s1",
+        method: "merge",
+        expectedHeadSha: "abc123def456"
+      })
+    });
+
+    expect(response.status).toBe(409);
+    const payload = (await response.json()) as GitPullRequestMergeResult;
+    expect(payload.success).toBe(false);
+    expect(payload.errorCode).toBe("method_not_allowed");
+  });
+
+  it("returns submitted state when gh accepts merge but PR remains open", async () => {
+    const server = await createPullRequestTestServer({
+      ghAuth: "ok",
+      mergeBehavior: "submitted"
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests/428/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha--s1",
+        method: "squash",
+        expectedHeadSha: "abc123def456"
+      })
+    });
+
+    expect(response.status).toBe(409);
+    const payload = (await response.json()) as GitPullRequestMergeResult;
+    expect(payload.success).toBe(false);
+    expect(payload.submitted).toBe(true);
+    expect(payload.state).toBe("open");
+    expect(payload.mergedAt).toBeUndefined();
+  });
+
+  it("maps auth and permission failures from gh merge commands", async () => {
+    const authServer = await createPullRequestTestServer({
+      ghAuth: "ok",
+      mergeFailure: "auth"
+    });
+    const authResponse = await fetch(`${authServer.baseUrl}/api/git/pull-requests/428/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha--s1",
+        method: "squash",
+        expectedHeadSha: "abc123def456"
+      })
+    });
+    expect(authResponse.status).toBe(401);
+    const authPayload = (await authResponse.json()) as GitPullRequestMergeResult;
+    expect(authPayload.errorCode).toBe("auth");
+
+    const permissionServer = await createPullRequestTestServer({
+      ghAuth: "ok",
+      mergeFailure: "permission"
+    });
+    const permissionResponse = await fetch(`${permissionServer.baseUrl}/api/git/pull-requests/428/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha--s1",
+        method: "squash",
+        expectedHeadSha: "abc123def456"
+      })
+    });
+    expect(permissionResponse.status).toBe(403);
+    const permissionPayload = (await permissionResponse.json()) as GitPullRequestMergeResult;
+    expect(permissionPayload.errorCode).toBe("permission");
+  });
+
+  it("never passes delete-branch or admin flags to gh merge", async () => {
+    const root = await mkdtemp(join(tmpdir(), "git-source-control-pr-merge-argv-"));
+    const fakeGhPath = await createFakeGhScript(root, "ok", undefined, undefined, {
+      mergeBehavior: "success"
+    });
+    const mainDir = join(root, "main");
+    await mkdir(mainDir, { recursive: true });
+    await initGitRepo(mainDir, "README.md", "# repo\n", "initial commit");
+    await execGit(mainDir, ["remote", "add", "origin", "git@github.com:a-mart/forge.git"]);
+    const mainRealPath = await realpath(mainDir);
+    const descriptors = [createManagerSession("alpha", "alpha--s1")];
+    descriptors[0]!.cwd = mainRealPath;
+    const descriptorById = new Map(descriptors.map((descriptor) => [descriptor.agentId, descriptor]));
+    const swarmManager = {
+      getConfig: () => ({ paths: { dataDir: join(root, "unused-data") } }),
+      getAgent: (agentId: string) => descriptorById.get(agentId),
+      listAgents: () => descriptors
+    } as unknown as SwarmManager;
+    const routes = createGitSourceControlRoutes({
+      swarmManager,
+      hostedProviderOptions: { ghBinary: fakeGhPath }
+    });
+    const server = createServer((request, response) => {
+      void handleRouteRequest(routes, request, response);
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Unable to determine test server address.");
+    }
+
+    await fetch(`http://127.0.0.1:${address.port}/api/git/pull-requests/428/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "alpha--s1",
+        method: "squash",
+        expectedHeadSha: "abc123def456",
+        deleteBranchAfterMerge: true
+      })
+    });
+
+    const mergeLog = await readFile(join(root, "merge-calls.log"), "utf8");
+    expect(mergeLog).not.toContain("--delete-branch");
+    expect(mergeLog).not.toContain("--admin");
+
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    await rm(root, { recursive: true, force: true });
+  });
 });
 
 async function createSourceControlTestServer(options: {
@@ -1111,8 +1296,14 @@ async function createPullRequestTestServer(options: {
   detailFailure?: "not_found" | "rate_limit" | "timeout" | "auth" | "permission";
   listFailure?: "rate_limit" | "timeout" | "network" | "permission";
   ghTimeoutMs?: number;
-  mergeBehavior?: "success" | "stale_head";
+  mergeBehavior?: "success" | "stale_head" | "submitted";
   detailCheckStatus?: "success" | "failure" | "pending";
+  mergeFailure?: "auth" | "permission";
+  repoMergeSettings?: {
+    mergeCommitAllowed: boolean;
+    squashMergeAllowed: boolean;
+    rebaseMergeAllowed: boolean;
+  };
 }): Promise<TestServer> {
   const root = await mkdtemp(join(tmpdir(), "git-source-control-pr-"));
   const mainDir = join(root, "main");
@@ -1124,7 +1315,9 @@ async function createPullRequestTestServer(options: {
     options.ghBinary ??
     (await createFakeGhScript(root, options.ghAuth, options.detailFailure, options.listFailure, {
       mergeBehavior: options.mergeBehavior,
-      detailCheckStatus: options.detailCheckStatus
+      detailCheckStatus: options.detailCheckStatus,
+      mergeFailure: options.mergeFailure,
+      repoMergeSettings: options.repoMergeSettings
     }));
   const mainRealPath = await realpath(mainDir);
   const descriptors = [createManagerSession("alpha", "alpha--s1")];
@@ -1188,13 +1381,26 @@ async function createFakeGhScript(
   detailFailure?: "not_found" | "rate_limit" | "timeout" | "auth" | "permission",
   listFailure?: "rate_limit" | "timeout" | "network" | "permission",
   options: {
-    mergeBehavior?: "success" | "stale_head";
+    mergeBehavior?: "success" | "stale_head" | "submitted";
     detailCheckStatus?: "success" | "failure" | "pending";
+    mergeFailure?: "auth" | "permission";
+    repoMergeSettings?: {
+      mergeCommitAllowed: boolean;
+      squashMergeAllowed: boolean;
+      rebaseMergeAllowed: boolean;
+    };
   } = {}
 ): Promise<string> {
   const fakeGhPath = join(root, "fake-gh");
   const mergeLogPath = join(root, "merge-calls.log");
   const viewCountPath = join(root, "view-count.log");
+  const repoMergeSettingsJson = JSON.stringify(
+    options.repoMergeSettings ?? {
+      mergeCommitAllowed: true,
+      squashMergeAllowed: true,
+      rebaseMergeAllowed: true
+    }
+  );
   const openJson = JSON.stringify([
     {
       number: 428,
@@ -1298,11 +1504,7 @@ if (command.startsWith("auth status")) {
 }
 
 if (command.startsWith("repo view")) {
-  process.stdout.write(JSON.stringify({
-    mergeCommitAllowed: true,
-    squashMergeAllowed: true,
-    rebaseMergeAllowed: true
-  }));
+  process.stdout.write(${JSON.stringify(repoMergeSettingsJson)});
   process.exit(0);
 }
 
@@ -1373,6 +1575,15 @@ if (command.startsWith("pr view")) {
 if (command.startsWith("pr merge")) {
   fs.appendFileSync(${JSON.stringify(mergeLogPath)}, command + "\\n");
   const mergeBehavior = ${JSON.stringify(options.mergeBehavior ?? null)};
+  const mergeFailure = ${JSON.stringify(options.mergeFailure ?? null)};
+  if (mergeFailure === "auth") {
+    process.stderr.write("HTTP 401: Bad credentials\\n");
+    process.exit(1);
+  }
+  if (mergeFailure === "permission") {
+    process.stderr.write("HTTP 403: Resource not accessible by integration\\n");
+    process.exit(1);
+  }
   if (mergeBehavior === "stale_head") {
     process.stderr.write("Head branch was modified. Review and try again.\\n");
     process.exit(1);

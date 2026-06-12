@@ -428,7 +428,6 @@ export function PullRequestsTab({
   const handleConfirmMerge = useCallback(
     async (options: {
       method: 'squash' | 'merge' | 'rebase'
-      deleteBranchAfterMerge: boolean
       acknowledgeCheckFailures: boolean
     }) => {
       if (!agentId || !detailQuery.data || selectedNumber == null) {
@@ -445,12 +444,26 @@ export function PullRequestsTab({
           worktreeId: worktreeId ?? undefined,
           method: options.method,
           expectedHeadSha: detailQuery.data.headSha,
-          deleteBranchAfterMerge: options.deleteBranchAfterMerge,
           acknowledgeCheckFailures: options.acknowledgeCheckFailures,
         })
 
+        if (result.submitted && !result.success) {
+          setMergeDialogOpen(false)
+          setMergeSuccessMessage(
+            `Merge request submitted for pull request #${result.number} using ${options.method}. GitHub reports it is still open.`,
+          )
+          invalidateGitCaches({ agentId, repoTarget })
+          await Promise.all([refetch(), detailQuery.refetch()])
+          onMergeComplete?.()
+          return
+        }
+
         if (!result.success) {
-          setMergeError(result.errors.join(' ') || 'Pull request merge failed.')
+          const message =
+            result.errors.join(' ') ||
+            result.warnings.join(' ') ||
+            'Pull request merge failed.'
+          setMergeError(message)
           if (result.detail) {
             await detailQuery.refetch()
           }
@@ -459,7 +472,7 @@ export function PullRequestsTab({
 
         setMergeDialogOpen(false)
         setMergeSuccessMessage(
-          `Merged pull request #${result.number} using ${options.method}${result.branchDeleted ? ' and deleted the head branch' : ''}.`,
+          `Merged pull request #${result.number} using ${options.method}.`,
         )
         invalidateGitCaches({ agentId, repoTarget })
         await Promise.all([refetch(), detailQuery.refetch()])

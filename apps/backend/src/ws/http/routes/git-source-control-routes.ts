@@ -335,7 +335,6 @@ export function createGitSourceControlRoutes(options: {
           const payload = await service.mergePullRequest(context, number, {
             method: body.method,
             expectedHeadSha: body.expectedHeadSha,
-            deleteBranchAfterMerge: body.deleteBranchAfterMerge,
             acknowledgeCheckFailures: body.acknowledgeCheckFailures
           });
           sendJson(response, resolveMergeHttpStatus(payload), payload as unknown as Record<string, unknown>);
@@ -601,7 +600,6 @@ function parsePullRequestMergeRequest(body: unknown): GitPullRequestMergeRequest
     worktreeId,
     method,
     expectedHeadSha,
-    deleteBranchAfterMerge: record.deleteBranchAfterMerge === true,
     acknowledgeCheckFailures: record.acknowledgeCheckFailures === true
   };
 }
@@ -637,6 +635,8 @@ function resolveMergeHttpStatus(payload: {
       return 503;
     case "provider_unavailable":
       return 503;
+    case "versioning_blocked":
+      return 409;
     default:
       return 409;
   }

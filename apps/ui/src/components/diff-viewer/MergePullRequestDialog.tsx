@@ -9,7 +9,6 @@ interface MergePullRequestDialogProps {
   mergeError?: string | null
   onConfirm: (options: {
     method: GitPullRequestMergeMethod
-    deleteBranchAfterMerge: boolean
     acknowledgeCheckFailures: boolean
   }) => void
   onCancel: () => void
@@ -45,7 +44,6 @@ export function MergePullRequestDialog({
   onCancel,
 }: MergePullRequestDialogProps) {
   const [method, setMethod] = useState<GitPullRequestMergeMethod>(() => defaultMergeMethod(pullRequest))
-  const [deleteBranchAfterMerge, setDeleteBranchAfterMerge] = useState(false)
   const [acknowledgeCheckFailures, setAcknowledgeCheckFailures] = useState(false)
 
   const allowedMethods = pullRequest?.allowedMergeMethods ?? ['squash', 'merge', 'rebase']
@@ -74,9 +72,6 @@ export function MergePullRequestDialog({
     if (!allowedMethods.includes(method)) {
       reasons.push(`Merge method "${method}" is not allowed for this repository.`)
     }
-    if (deleteBranchAfterMerge && pullRequest.isForkPullRequest) {
-      reasons.push('Deleting the head branch is not supported for fork pull requests.')
-    }
     if (checkIssues && !acknowledgeCheckFailures) {
       if (pullRequest.checkStatus === 'failure') {
         reasons.push('Checks are failing. Confirm merge anyway to continue.')
@@ -86,7 +81,7 @@ export function MergePullRequestDialog({
     }
 
     return reasons
-  }, [acknowledgeCheckFailures, allowedMethods, checkIssues, deleteBranchAfterMerge, method, pullRequest])
+  }, [acknowledgeCheckFailures, allowedMethods, checkIssues, method, pullRequest])
 
   const warnings = useMemo(() => {
     const items: string[] = []
@@ -110,7 +105,7 @@ export function MergePullRequestDialog({
     <GitMutationConfirmDialog
       open={open}
       title={`Merge pull request #${pullRequest.number}?`}
-      description={`This will merge ${pullRequest.headRef} into ${pullRequest.baseRef} on GitHub using the selected merge method. Forge re-checks the latest PR head commit before sending the merge.`}
+      description={`This will submit a ${mergeMethodLabel(method).toLowerCase()} for ${pullRequest.headRef} into ${pullRequest.baseRef} on GitHub. Forge re-checks the latest PR head commit before sending the merge. Branch cleanup is deferred to a future release.`}
       warnings={warnings}
       blockedReasons={blockedReasons}
       confirmLabel="Merge pull request"
@@ -118,7 +113,6 @@ export function MergePullRequestDialog({
       onConfirm={() =>
         onConfirm({
           method,
-          deleteBranchAfterMerge,
           acknowledgeCheckFailures,
         })
       }
@@ -154,17 +148,6 @@ export function MergePullRequestDialog({
                 I understand checks are {pullRequest.checkStatus === 'failure' ? 'failing' : 'pending'} and want to
                 attempt merge anyway.
               </span>
-            </label>
-          ) : null}
-          {!pullRequest.isForkPullRequest ? (
-            <label className="flex items-start gap-2 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={deleteBranchAfterMerge}
-                onChange={(event) => setDeleteBranchAfterMerge(event.target.checked)}
-              />
-              <span>Delete the head branch on GitHub after merge (optional).</span>
             </label>
           ) : null}
           <p className="font-mono text-[11px] text-muted-foreground">Head SHA: {pullRequest.headSha}</p>
