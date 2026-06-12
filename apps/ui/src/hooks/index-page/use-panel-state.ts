@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { DashboardTab as CortexDashboardTab } from '@/components/chat/cortex/CortexDashboardPanel'
 import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
+import { invalidateFileBrowserCaches } from '@/components/file-browser/use-file-browser-queries'
 import type { ArtifactReference } from '@/lib/artifacts'
 
 export type ArtifactsPanelTab = 'artifacts' | 'schedules'
@@ -138,6 +139,8 @@ export function usePanelState({
 
   const clearFileBrowserWorktreeContext = useCallback(() => {
     setFileBrowserWorktreeContext(null)
+    setSelectedFileBrowserFile(null)
+    invalidateFileBrowserCaches()
   }, [])
 
   useEffect(() => {

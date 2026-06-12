@@ -7,15 +7,19 @@ interface ImagePreviewProps {
   wsUrl: string
   filePath: string
   agentId: string
+  worktreeId?: string | null
 }
 
-export function ImagePreview({ wsUrl, filePath, agentId }: ImagePreviewProps) {
+export function ImagePreview({ wsUrl, filePath, agentId, worktreeId = null }: ImagePreviewProps) {
   const [loadError, setLoadError] = useState(false)
 
   const imageUrl = useMemo(() => {
     const params = new URLSearchParams({ path: filePath, agentId })
+    if (worktreeId) {
+      params.set('worktreeId', worktreeId)
+    }
     return resolveApiEndpoint(wsUrl, `/api/read-file?${params.toString()}`)
-  }, [wsUrl, filePath, agentId])
+  }, [wsUrl, filePath, agentId, worktreeId])
 
   const fileName = filePath.split('/').pop() ?? 'Image'
 

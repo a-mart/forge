@@ -296,6 +296,36 @@ describe("file routes", () => {
     expect(invalidResponse.status).toBe(400);
   });
 
+  it("reads image bytes from main vs linked worktree through GET /api/read-file", async () => {
+    const harness = await createWorktreeFileBrowserHarness();
+    const mainImagePath = join(harness.mainDir, "logo-main.png");
+    const linkedImagePath = join(harness.secondaryDir, "logo-linked.png");
+    await writeFile(mainImagePath, Buffer.from("main-image-bytes"));
+    await writeFile(linkedImagePath, Buffer.from("linked-image-bytes"));
+
+    const sessionResponse = await fetch(
+      `${harness.server.baseUrl}/api/read-file?agentId=manager-1&path=${encodeURIComponent("logo-main.png")}`,
+    );
+    expect(sessionResponse.status).toBe(200);
+    await expect(sessionResponse.arrayBuffer()).resolves.toEqual(Buffer.from("main-image-bytes").buffer);
+
+    const linkedResponse = await fetch(
+      `${harness.server.baseUrl}/api/read-file?agentId=manager-1&worktreeId=${harness.secondaryWorktreeId}&path=${encodeURIComponent("logo-linked.png")}`,
+    );
+    expect(linkedResponse.status).toBe(200);
+    await expect(linkedResponse.arrayBuffer()).resolves.toEqual(Buffer.from("linked-image-bytes").buffer);
+
+    const wrongWorktreeResponse = await fetch(
+      `${harness.server.baseUrl}/api/read-file?agentId=manager-1&worktreeId=${harness.secondaryWorktreeId}&path=${encodeURIComponent("logo-main.png")}`,
+    );
+    expect(wrongWorktreeResponse.status).toBe(404);
+
+    const invalidWorktreeResponse = await fetch(
+      `${harness.server.baseUrl}/api/read-file?agentId=manager-1&worktreeId=deadbeefdeadbeef&path=${encodeURIComponent("logo-linked.png")}`,
+    );
+    expect(invalidWorktreeResponse.status).toBe(400);
+  });
+
   it("rejects read-file symlinks that resolve outside allowed roots", async () => {
     const harness = await createFileRouteHarness();
     const outsideDir = await mkdtemp(join(tmpdir(), "file-routes-symlink-outside-"));

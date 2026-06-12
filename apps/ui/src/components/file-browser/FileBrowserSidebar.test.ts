@@ -59,8 +59,16 @@ vi.mock('./use-file-browser-queries', () => ({
   invalidateFileBrowserCaches: () => fileBrowserQueriesMock.invalidateFileBrowserCaches(),
 }))
 
+const fileTreeMock = vi.hoisted(() => ({
+  renderCount: 0,
+  FileTree: vi.fn(() => {
+    fileTreeMock.renderCount += 1
+    return createElement('div', { 'data-testid': 'file-tree' }, 'file tree')
+  }),
+}))
+
 vi.mock('./FileTree', () => ({
-  FileTree: () => createElement('div', { 'data-testid': 'file-tree' }, 'file tree'),
+  FileTree: fileTreeMock.FileTree,
 }))
 
 let container: HTMLDivElement
@@ -69,6 +77,8 @@ let root: Root | null = null
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  fileTreeMock.renderCount = 0
+  fileTreeMock.FileTree.mockClear()
   fileBrowserQueriesMock.projectResourcesSnapshot = {
     ...fileBrowserQueriesMock.projectResourcesSnapshot,
     profileId: 'profile-a',
@@ -161,5 +171,63 @@ describe('FileBrowserSidebar project resource scaffold action', () => {
     await flushPromises()
 
     expect(queryByText(container, 'Created .forge project resources.')).toBeNull()
+  })
+})
+
+describe('FileBrowserSidebar worktree context', () => {
+  it('shows linked worktree banner when worktree context is selected', () => {
+    renderSidebar({
+      worktreeContext: {
+        worktreeId: 'feature-linked',
+        worktreePath: '/repo/middleman-feature',
+        branch: 'feature/worktree-test',
+        repoRoot: '/repo/middleman',
+      },
+    })
+
+    expect(getByText(container, 'Browsing linked worktree')).toBeTruthy()
+    expect(getByText(container, '/repo/middleman-feature')).toBeTruthy()
+  })
+
+  it('calls clear handler when switching back to session context', () => {
+    const onClearWorktreeContext = vi.fn()
+    renderSidebar({
+      selectedFile: 'linked-only.txt',
+      worktreeContext: {
+        worktreeId: 'feature-linked',
+        worktreePath: '/repo/middleman-feature',
+        branch: 'feature/worktree-test',
+        repoRoot: '/repo/middleman',
+      },
+      onClearWorktreeContext,
+    })
+
+    fireEvent.click(getByText(container, 'Use session'))
+    expect(onClearWorktreeContext).toHaveBeenCalledTimes(1)
+  })
+
+  it('remounts the file tree when agent or worktree context changes', () => {
+    renderSidebar({
+      worktreeContext: {
+        worktreeId: 'feature-linked',
+        worktreePath: '/repo/middleman-feature',
+        branch: 'feature/worktree-test',
+        repoRoot: '/repo/middleman',
+      },
+    })
+    expect(fileTreeMock.renderCount).toBe(1)
+
+    renderSidebar({
+      worktreeContext: {
+        worktreeId: 'feature-other',
+        worktreePath: '/repo/middleman-other',
+        branch: 'feature/other',
+        repoRoot: '/repo/middleman',
+      },
+    })
+    expect(fileTreeMock.renderCount).toBe(2)
+
+    renderSidebar({ agentId: 'session-b' })
+    expect(fileTreeMock.renderCount).toBe(3)
   })
 })

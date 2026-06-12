@@ -91,6 +91,7 @@ interface FileContentViewerProps {
   isLoading: boolean
   error: string | null
   onNavigateToDirectory: (dirPath: string) => void
+  worktreeId?: string | null
 }
 
 interface FileViewerInfo {
@@ -111,6 +112,7 @@ export function FileContentViewer({
   isLoading,
   error,
   onNavigateToDirectory,
+  worktreeId = null,
 }: FileContentViewerProps) {
   const [wordWrap, setWordWrap] = useState(readWordWrapPreference)
   const [markdownRaw, setMarkdownRaw] = useState(readMarkdownRawPreference)
@@ -183,7 +185,13 @@ export function FileContentViewer({
           onToggleWordWrap={handleToggleWordWrap}
           onNavigateToDirectory={onNavigateToDirectory}
         />
-        <ImagePreview key={`${agentId}:${filePath}`} wsUrl={wsUrl} filePath={filePath} agentId={agentId} />
+        <ImagePreview
+          key={`${agentId}:${worktreeId ?? 'session'}:${filePath}`}
+          wsUrl={wsUrl}
+          filePath={filePath}
+          agentId={agentId}
+          worktreeId={worktreeId}
+        />
       </div>
     )
   }

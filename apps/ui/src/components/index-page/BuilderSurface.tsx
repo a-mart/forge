@@ -1344,8 +1344,9 @@ export function BuilderSurface({
         branch: worktree.branch,
         repoRoot: worktree.repoRoot,
       })
+      setIsDiffViewerOpen(false)
     },
-    [handleBrowseWorktreeFiles],
+    [handleBrowseWorktreeFiles, setIsDiffViewerOpen],
   )
 
   useEffect(() => {
@@ -1953,6 +1954,7 @@ export function BuilderSurface({
           wsUrl,
           agentId: activeAgentId,
           isCortex: isDiffViewerCortexSession,
+          onBrowseWorktreeFiles: handleBrowseWorktreeFromSourceControl,
           initialRepoTarget: diffViewerInitialState?.initialRepoTarget,
           initialTab: diffViewerInitialState?.initialTab,
           initialSha: diffViewerInitialState?.initialSha,

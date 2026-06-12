@@ -412,6 +412,12 @@ vi.mock('./use-diff-queries', () => ({
       refetch: vi.fn(),
     }
   },
+  useGitPullRequests: () => ({
+    data: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
   invalidateGitCaches: invalidateGitCachesMock,
   fetchGitOrigin: vi.fn(),
   switchGitBranch: vi.fn(),
@@ -565,6 +571,7 @@ function renderDialog(
     initialSha?: string | null
     initialFile?: string | null
     initialQuickFilter?: 'all' | 'shared-knowledge' | 'profile-memory' | 'reference-docs' | 'prompt-overrides'
+    onBrowseWorktreeFiles?: ReturnType<typeof vi.fn>
   },
 ) {
   root = createRoot(container)
@@ -577,6 +584,7 @@ function renderDialog(
         wsUrl: 'ws://localhost:47187',
         agentId: props.agentId ?? 'agent-1',
         isCortex: props.isCortex,
+        onBrowseWorktreeFiles: props.onBrowseWorktreeFiles,
         initialRepoTarget: props.initialRepoTarget,
         initialTab: props.initialTab,
         initialSha: props.initialSha,
@@ -684,6 +692,21 @@ describe('DiffViewerDialog', () => {
 
     fireEvent.click(getByRole(document.body, 'button', { name: 'Worktrees' }))
     await flushEffects()
+    fireEvent.click(getAllByRole(document.body, 'button', { name: 'Browse files' })[1])
+
+    expect(onBrowseWorktreeFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'feature-linked',
+        path: '/repo/middleman-feature',
+      }),
+    )
+  })
+
+  it('invokes modal browse callback for a worktree', async () => {
+    const onBrowseWorktreeFiles = vi.fn()
+    renderDialog({ isCortex: false, initialTab: 'worktrees', onBrowseWorktreeFiles })
+    await flushEffects()
+
     fireEvent.click(getAllByRole(document.body, 'button', { name: 'Browse files' })[1])
 
     expect(onBrowseWorktreeFiles).toHaveBeenCalledWith(

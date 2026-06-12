@@ -285,6 +285,7 @@ export function FileBrowserSidebar({
           </div>
         ) : gatedAgentId ? (
           <FileTree
+            key={`${gatedAgentId}:${worktreeId ?? 'session'}`}
             ref={fileTreeRef}
             wsUrl={wsUrl}
             agentId={gatedAgentId}

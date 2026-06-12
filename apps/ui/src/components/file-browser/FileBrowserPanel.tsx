@@ -138,6 +138,7 @@ export function FileBrowserPanel({
               isLoading={fileContent.isLoading}
               error={fileContent.error}
               onNavigateToDirectory={onNavigateToDirectory}
+              worktreeId={worktreeId}
             />
           ) : null}
         </div>
