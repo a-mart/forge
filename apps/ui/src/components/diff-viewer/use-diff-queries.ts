@@ -98,12 +98,14 @@ function parseGitQueryKey(
 /*  Follows the same staleTime / refetchOnWindowFocus semantics       */
 /* ------------------------------------------------------------------ */
 
-interface QueryResult<T> {
+export interface QueryResult<T> {
   data: T | null
   isLoading: boolean
   error: string | null
   refetch: () => void
 }
+
+export type GitWorktreesQueryResult = QueryResult<GitWorktreeListResult>
 
 // Simple in-memory cache shared across hooks
 const queryCache = new Map<string, { data: unknown; fetchedAt: number }>()
@@ -236,9 +238,10 @@ export function useGitWorktrees(
   wsUrl: string,
   agentId: string | null,
   repoTarget: GitRepoTarget,
-  refreshToken = 0,
+  options: { enabled?: boolean } = {},
 ) {
-  const queryKey = buildGitQueryKey('git:worktrees', agentId, repoTarget, null, refreshToken)
+  const enabled = options.enabled ?? !!agentId
+  const queryKey = buildGitQueryKey('git:worktrees', agentId, repoTarget, null)
   const fetchFn = useCallback(
     () =>
       fetchGitApi<GitWorktreeListResult>(
@@ -250,7 +253,7 @@ export function useGitWorktrees(
   )
 
   return useSimpleQuery<GitWorktreeListResult>(queryKey, fetchFn, {
-    enabled: !!agentId,
+    enabled: enabled && !!agentId,
     staleTime: 10_000,
     refetchOnWindowFocus: true,
   })

@@ -65,6 +65,7 @@ export function DiffViewerContent({
   const [activeTab, setActiveTab] = useState<DiffTab>(defaultTab)
   const [repoTarget, setRepoTarget] = useState<GitRepoTarget>(defaultRepoTarget)
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null)
+  const [selectedWorktreeSummary, setSelectedWorktreeSummary] = useState<GitWorktreeSummary | null>(null)
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusInfo | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
   const prevActiveRef = useRef(active)
@@ -79,6 +80,7 @@ export function DiffViewerContent({
       setActiveTab(defaultTab)
       setRepoTarget(defaultRepoTarget)
       setSelectedWorktreeId(null)
+      setSelectedWorktreeSummary(null)
       setHistoryStatus(null)
     }
 
@@ -89,35 +91,42 @@ export function DiffViewerContent({
   useEffect(() => {
     setHistoryStatus(null)
     setSelectedWorktreeId(null)
+    setSelectedWorktreeSummary(null)
   }, [repoTarget])
 
   const effectiveWorktreeId = repoTarget === 'workspace' ? selectedWorktreeId : null
+  const shouldLoadWorktrees =
+    active && !!agentId && repoTarget === 'workspace' && activeTab === 'worktrees'
   const statusQuery = useGitStatus(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId)
-  const worktreesQuery = useGitWorktrees(wsUrl, active ? agentId : null, repoTarget, refreshToken)
+  const worktreesQuery = useGitWorktrees(wsUrl, active ? agentId : null, repoTarget, {
+    enabled: shouldLoadWorktrees,
+  })
 
   const handleRefresh = useCallback(() => {
     invalidateGitCaches({ agentId, repoTarget })
     setRefreshToken((previous) => previous + 1)
     statusQuery.refetch()
-  }, [agentId, repoTarget, statusQuery])
+    if (activeTab === 'worktrees') {
+      worktreesQuery.refetch()
+    }
+  }, [activeTab, agentId, repoTarget, statusQuery, worktreesQuery])
 
   const handleRepoTargetChange = useCallback((nextTarget: GitRepoTarget) => {
     setRepoTarget(nextTarget)
     setSelectedWorktreeId(null)
+    setSelectedWorktreeSummary(null)
     setHistoryStatus(null)
   }, [])
 
-  const sessionWorktree =
-    worktreesQuery.data?.worktrees.find((worktree) => worktree.isCurrentContext) ?? null
-  const selectedWorktree =
-    worktreesQuery.data?.worktrees.find((worktree) => worktree.id === selectedWorktreeId) ?? null
-  const contextWorktree = selectedWorktree ?? sessionWorktree
-  const worktreeCount = worktreesQuery.data?.worktrees.length ?? null
+  const contextWorktree = selectedWorktreeSummary
+  const worktreeCount =
+    activeTab === 'worktrees' ? (worktreesQuery.data?.worktrees.length ?? null) : null
   const changesViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:changes`
   const historyViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:history`
 
   const handleSelectWorktreeContext = useCallback((worktree: GitWorktreeSummary) => {
     setSelectedWorktreeId(worktree.id)
+    setSelectedWorktreeSummary(worktree)
     setActiveTab('changes')
     setHistoryStatus(null)
   }, [])
@@ -146,7 +155,7 @@ export function DiffViewerContent({
         currentWorktreePath={contextWorktree?.path ?? null}
         worktreeCount={worktreeCount}
         selectedWorktreeId={selectedWorktreeId}
-        isRefreshing={statusQuery.isLoading || worktreesQuery.isLoading}
+        isRefreshing={statusQuery.isLoading || (shouldLoadWorktrees && worktreesQuery.isLoading)}
         onRefresh={handleRefresh}
         onClose={onClose}
       />
@@ -182,10 +191,8 @@ export function DiffViewerContent({
           />
         ) : activeTab === 'worktrees' ? (
           <WorktreesView
-            wsUrl={wsUrl}
             agentId={active ? agentId : null}
-            repoTarget={repoTarget}
-            refreshToken={refreshToken}
+            worktreesQuery={worktreesQuery}
             selectedWorktreeId={selectedWorktreeId}
             onSelectWorktreeContext={handleSelectWorktreeContext}
             onBrowseWorktree={handleBrowseWorktree}
@@ -213,9 +220,7 @@ export function DiffViewerContent({
           {contextWorktree ? (
             <>
               <span className="mx-1.5 opacity-40">·</span>
-              <span className="truncate">
-                {selectedWorktree ? 'Selected' : 'Session'}: {contextWorktree.path}
-              </span>
+              <span className="truncate">Selected: {contextWorktree.path}</span>
             </>
           ) : null}
         </div>

@@ -21,7 +21,7 @@ const {
     status: [] as Array<{ agentId: string | null; repoTarget: string; worktreeId?: string | null }>,
     diff: [] as Array<{ agentId: string | null; repoTarget: string; file: string | null }>,
     log: [] as Array<{ agentId: string | null; repoTarget: string; limit: number; offset: number }>,
-    worktrees: [] as Array<{ agentId: string | null; repoTarget: string }>,
+    worktrees: [] as Array<{ agentId: string | null; repoTarget: string; enabled?: boolean }>,
     commitDetail: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null }>,
     commitDiff: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null; file: string | null }>,
   },
@@ -264,8 +264,22 @@ vi.mock('./use-diff-queries', () => ({
       refetch: vi.fn(),
     }
   },
-  useGitWorktrees: (_wsUrl: string, agentId: string | null, repoTarget: 'workspace' | 'versioning') => {
-    hookCalls.worktrees.push({ agentId, repoTarget })
+  useGitWorktrees: (
+    _wsUrl: string,
+    agentId: string | null,
+    repoTarget: 'workspace' | 'versioning',
+    options?: { enabled?: boolean },
+  ) => {
+    const enabled = options?.enabled ?? !!agentId
+    hookCalls.worktrees.push({ agentId, repoTarget, enabled })
+    if (!enabled) {
+      return {
+        data: null,
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      }
+    }
     const status = STATUS_BY_TARGET[repoTarget]
     const error = WORKTREE_ERROR_BY_TARGET[repoTarget]
     return {
@@ -581,6 +595,17 @@ describe('DiffViewerDialog', () => {
     expect(queryByRole(document.body, 'group', { name: 'Repository target' })).toBeNull()
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
     expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
+    expect(hookCalls.worktrees.filter((call) => call.enabled !== false)).toHaveLength(0)
+  })
+
+  it('loads worktree inventory only when the Worktrees tab is active', async () => {
+    renderDialog({ isCortex: false })
+    await flushEffects()
+    expect(hookCalls.worktrees.every((call) => call.enabled === false)).toBe(true)
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Worktrees' }))
+    await flushEffects()
+    expect(hookCalls.worktrees.some((call) => call.enabled !== false)).toBe(true)
   })
 
   it('renders the read-only Worktrees tab with current, locked, dirty, and active-agent state', async () => {

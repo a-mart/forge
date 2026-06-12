@@ -1,16 +1,14 @@
 import { GitBranch, GitCommit, HardDrive, Lock, RefreshCw, ShieldAlert, Users } from 'lucide-react'
-import type { GitRepoTarget, GitWorktreeListResult, GitWorktreeSummary } from '@forge/protocol'
+import type { GitWorktreeListResult, GitWorktreeSummary } from '@forge/protocol'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-import { useGitWorktrees } from './use-diff-queries'
+import type { GitWorktreesQueryResult } from './use-diff-queries'
 
 interface WorktreesViewProps {
-  wsUrl: string
   agentId: string | null
-  repoTarget: GitRepoTarget
-  refreshToken: number
+  worktreesQuery: GitWorktreesQueryResult
   selectedWorktreeId?: string | null
   onSelectWorktreeContext: (worktree: GitWorktreeSummary) => void
   onBrowseWorktree: (worktree: GitWorktreeSummary) => void
@@ -167,15 +165,12 @@ function WorktreeCard({
 }
 
 export function WorktreesView({
-  wsUrl,
   agentId,
-  repoTarget,
-  refreshToken,
+  worktreesQuery,
   selectedWorktreeId,
   onSelectWorktreeContext,
   onBrowseWorktree,
 }: WorktreesViewProps) {
-  const worktreesQuery = useGitWorktrees(wsUrl, agentId, repoTarget, refreshToken)
   const payload: GitWorktreeListResult | null = worktreesQuery.data
 
   if (!agentId) {
