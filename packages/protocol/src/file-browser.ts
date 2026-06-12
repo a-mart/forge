@@ -1,8 +1,17 @@
+import type { GitSourceContextKind } from './git.js'
+
 export interface FileEntry {
   name: string
   type: 'file' | 'directory'
   size?: number
   extension?: string
+}
+
+export interface FileBrowserSourceContext {
+  kind: Extract<GitSourceContextKind, 'workspace' | 'worktree'>
+  worktreeId?: string
+  worktreePath?: string
+  isSessionCwd: boolean
 }
 
 export interface FileListResult {
@@ -12,6 +21,7 @@ export interface FileListResult {
   isGitRepo?: boolean
   repoName?: string
   branch?: string | null
+  context?: FileBrowserSourceContext
 }
 
 export interface FileCountResult {

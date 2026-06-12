@@ -11,7 +11,9 @@ interface WorktreesViewProps {
   agentId: string | null
   repoTarget: GitRepoTarget
   refreshToken: number
-  onOpenCurrentWorktree: () => void
+  selectedWorktreeId?: string | null
+  onSelectWorktreeContext: (worktree: GitWorktreeSummary) => void
+  onBrowseWorktree: (worktree: GitWorktreeSummary) => void
 }
 
 function formatShortSha(sha: string | null): string {
@@ -44,7 +46,7 @@ function WorktreeStateBadges({ worktree }: { worktree: GitWorktreeSummary }) {
       </Badge>
       {worktree.isCurrentContext ? (
         <Badge variant="outline" className="h-5 rounded-sm border-primary/40 px-1.5 text-[10px] text-primary">
-          Current
+          Session CWD
         </Badge>
       ) : null}
       {worktree.isMainWorktree ? (
@@ -73,16 +75,23 @@ function WorktreeStateBadges({ worktree }: { worktree: GitWorktreeSummary }) {
 
 function WorktreeCard({
   worktree,
-  onOpenCurrentWorktree,
+  selectedWorktreeId,
+  onSelectWorktreeContext,
+  onBrowseWorktree,
 }: {
   worktree: GitWorktreeSummary
-  onOpenCurrentWorktree: () => void
+  selectedWorktreeId?: string | null
+  onSelectWorktreeContext: (worktree: GitWorktreeSummary) => void
+  onBrowseWorktree: (worktree: GitWorktreeSummary) => void
 }) {
+  const isSelectedContext = selectedWorktreeId === worktree.id
+  const canUseWorktree = !worktree.prunable
+
   return (
     <article
       className={cn(
         'rounded-lg border border-border/70 bg-card/60 p-3 transition-colors',
-        worktree.isCurrentContext && 'border-primary/40 bg-primary/5',
+        (worktree.isCurrentContext || isSelectedContext) && 'border-primary/40 bg-primary/5',
       )}
     >
       <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -124,11 +133,15 @@ function WorktreeCard({
           <Button
             type="button"
             size="sm"
-            variant="secondary"
+            variant={isSelectedContext ? 'default' : 'secondary'}
             className="h-7 text-xs"
-            onClick={onOpenCurrentWorktree}
-            disabled={!worktree.isCurrentContext}
-            title={worktree.isCurrentContext ? 'Open Changes for this context' : 'Opening another worktree context is planned for a later phase'}
+            onClick={() => onSelectWorktreeContext(worktree)}
+            disabled={!canUseWorktree}
+            title={
+              canUseWorktree
+                ? 'View Changes/History for this worktree without changing chat CWD'
+                : 'Prunable worktrees cannot be selected'
+            }
           >
             Open Source Control
           </Button>
@@ -137,8 +150,13 @@ function WorktreeCard({
             size="sm"
             variant="outline"
             className="h-7 text-xs"
-            disabled
-            title="Browsing alternate worktrees is planned for the file-browser bridge phase"
+            disabled={!canUseWorktree}
+            onClick={() => onBrowseWorktree(worktree)}
+            title={
+              canUseWorktree
+                ? 'Browse files in this worktree without changing chat CWD'
+                : 'Prunable worktrees cannot be browsed'
+            }
           >
             Browse files
           </Button>
@@ -153,7 +171,9 @@ export function WorktreesView({
   agentId,
   repoTarget,
   refreshToken,
-  onOpenCurrentWorktree,
+  selectedWorktreeId,
+  onSelectWorktreeContext,
+  onBrowseWorktree,
 }: WorktreesViewProps) {
   const worktreesQuery = useGitWorktrees(wsUrl, agentId, repoTarget, refreshToken)
   const payload: GitWorktreeListResult | null = worktreesQuery.data
@@ -201,7 +221,7 @@ export function WorktreesView({
           <div>
             <h2 className="text-sm font-semibold text-foreground">Worktrees</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Read-only inventory for this repository. Actions that would switch, create, or remove worktrees are intentionally unavailable in this phase.
+              Read-only inventory and browsing. Selecting a worktree updates Source Control and Files context only; chat session CWD stays unchanged.
             </p>
           </div>
           {payload ? (
@@ -222,7 +242,9 @@ export function WorktreesView({
               <WorktreeCard
                 key={worktree.id}
                 worktree={worktree}
-                onOpenCurrentWorktree={onOpenCurrentWorktree}
+                selectedWorktreeId={selectedWorktreeId}
+                onSelectWorktreeContext={onSelectWorktreeContext}
+                onBrowseWorktree={onBrowseWorktree}
               />
             ))
           )}

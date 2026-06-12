@@ -18,7 +18,7 @@ const {
 } = vi.hoisted(() => ({
   invalidateGitCachesMock: vi.fn(),
   hookCalls: {
-    status: [] as Array<{ agentId: string | null; repoTarget: string }>,
+    status: [] as Array<{ agentId: string | null; repoTarget: string; worktreeId?: string | null }>,
     diff: [] as Array<{ agentId: string | null; repoTarget: string; file: string | null }>,
     log: [] as Array<{ agentId: string | null; repoTarget: string; limit: number; offset: number }>,
     worktrees: [] as Array<{ agentId: string | null; repoTarget: string }>,
@@ -250,8 +250,13 @@ const {
 }))
 
 vi.mock('./use-diff-queries', () => ({
-  useGitStatus: (_wsUrl: string, agentId: string | null, repoTarget: 'workspace' | 'versioning') => {
-    hookCalls.status.push({ agentId, repoTarget })
+  useGitStatus: (
+    _wsUrl: string,
+    agentId: string | null,
+    repoTarget: 'workspace' | 'versioning',
+    worktreeId?: string | null,
+  ) => {
+    hookCalls.status.push({ agentId, repoTarget, worktreeId: worktreeId ?? null })
     return {
       data: agentId ? STATUS_BY_TARGET[repoTarget] : null,
       isLoading: false,
@@ -460,6 +465,32 @@ function renderInlineContent(
   })
 }
 
+function renderInlineContentWithBrowse(
+  props: {
+    active?: boolean
+    isCortex: boolean
+    agentId?: string | null
+    onBrowseWorktreeFiles: ReturnType<typeof vi.fn>
+  },
+) {
+  root = createRoot(container)
+
+  flushSync(() => {
+    root?.render(
+      createElement('div', { className: 'diff-viewer flex h-full flex-col' },
+        createElement(DiffViewerContent, {
+          active: props.active ?? true,
+          wsUrl: 'ws://localhost:47187',
+          agentId: props.agentId ?? 'agent-1',
+          isCortex: props.isCortex,
+          onClose: vi.fn(),
+          onBrowseWorktreeFiles: props.onBrowseWorktreeFiles,
+        }),
+      ),
+    )
+  })
+}
+
 function renderDialog(
   props: {
     isCortex: boolean
@@ -557,16 +588,48 @@ describe('DiffViewerDialog', () => {
     await flushEffects()
 
     expect(getByRole(document.body, 'button', { name: 'Worktrees' }).getAttribute('aria-pressed')).toBe('true')
-    expect(getByText(document.body, 'Read-only inventory for this repository. Actions that would switch, create, or remove worktrees are intentionally unavailable in this phase.')).toBeTruthy()
+    expect(getByText(document.body, 'Read-only inventory and browsing. Selecting a worktree updates Source Control and Files context only; chat session CWD stays unchanged.')).toBeTruthy()
     expect(getByText(document.body, '/repo/middleman')).toBeTruthy()
     expect(getByText(document.body, '/repo/middleman-feature')).toBeTruthy()
-    expect(getByText(document.body, 'Current')).toBeTruthy()
+    expect(getByText(document.body, 'Session CWD')).toBeTruthy()
     expect(getByText(document.body, 'Main')).toBeTruthy()
     expect(getByText(document.body, '2 files +11 -1')).toBeTruthy()
     expect(getByText(document.body, '1 active')).toBeTruthy()
     expect(getByText(document.body, 'Builder · manager · idle')).toBeTruthy()
     expect(getByText(document.body, 'Locked')).toBeTruthy()
-    expect(getAllByRole(document.body, 'button', { name: 'Browse files' }).every((button) => button.hasAttribute('disabled'))).toBe(true)
+    const browseButtons = getAllByRole(document.body, 'button', { name: 'Browse files' })
+    expect(browseButtons).toHaveLength(2)
+    expect(browseButtons.every((button) => !button.hasAttribute('disabled'))).toBe(true)
+  })
+
+  it('invokes browse callback for a worktree', async () => {
+    const onBrowseWorktreeFiles = vi.fn()
+    renderInlineContentWithBrowse({ isCortex: false, onBrowseWorktreeFiles })
+    await flushEffects()
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Worktrees' }))
+    await flushEffects()
+    fireEvent.click(getAllByRole(document.body, 'button', { name: 'Browse files' })[1])
+
+    expect(onBrowseWorktreeFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'feature-linked',
+        path: '/repo/middleman-feature',
+      }),
+    )
+  })
+
+  it('selects alternate worktree context for Changes and passes worktreeId to status hook', async () => {
+    renderInlineContent({ isCortex: false })
+    await flushEffects()
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Worktrees' }))
+    await flushEffects()
+    fireEvent.click(getAllByRole(document.body, 'button', { name: 'Open Source Control' })[1])
+    await flushEffects()
+
+    expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
+    expect(hookCalls.status.at(-1)?.worktreeId).toBe('feature-linked')
   })
 
   it('renders Worktrees empty and error states without leaving read-only mode', async () => {

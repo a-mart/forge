@@ -28,6 +28,32 @@ async function fetchFileBrowserApi<T>(
   return fetchJson<T>(wsUrl, `${path}?${searchParams.toString()}`)
 }
 
+function buildFileBrowserParams(
+  agentId: string,
+  extraParams: Record<string, string> = {},
+  worktreeId?: string | null,
+): Record<string, string> {
+  const params: Record<string, string> = {
+    agentId,
+    ...extraParams,
+  }
+
+  if (worktreeId) {
+    params.worktreeId = worktreeId
+  }
+
+  return params
+}
+
+function buildFileBrowserQueryKey(
+  scope: string,
+  agentId: string | null,
+  worktreeId: string | null | undefined,
+  ...parts: string[]
+): string {
+  return `${scope}:${agentId ?? ''}:${worktreeId ?? ''}:${parts.join(':')}`
+}
+
 async function fetchJson<T>(
   wsUrl: string,
   path: string,
@@ -152,15 +178,17 @@ export function useDirectoryListing(
   wsUrl: string,
   agentId: string | null,
   dirPath: string,
+  worktreeId?: string | null,
 ) {
-  const queryKey = `files:list:${agentId ?? ''}:${dirPath}`
+  const queryKey = buildFileBrowserQueryKey('files:list', agentId, worktreeId, dirPath)
   const fetchFn = useCallback(
     () =>
-      fetchFileBrowserApi<FileListResult>(wsUrl, '/api/files/list', {
-        agentId: agentId!,
-        path: dirPath,
-      }),
-    [wsUrl, agentId, dirPath],
+      fetchFileBrowserApi<FileListResult>(
+        wsUrl,
+        '/api/files/list',
+        buildFileBrowserParams(agentId!, { path: dirPath }, worktreeId),
+      ),
+    [wsUrl, agentId, dirPath, worktreeId],
   )
 
   return useSimpleQuery<FileListResult>(queryKey, fetchFn, {
@@ -169,14 +197,20 @@ export function useDirectoryListing(
   })
 }
 
-export function useFileCount(wsUrl: string, agentId: string | null) {
-  const queryKey = `files:count:${agentId ?? ''}`
+export function useFileCount(
+  wsUrl: string,
+  agentId: string | null,
+  worktreeId?: string | null,
+) {
+  const queryKey = buildFileBrowserQueryKey('files:count', agentId, worktreeId)
   const fetchFn = useCallback(
     () =>
-      fetchFileBrowserApi<FileCountResult>(wsUrl, '/api/files/count', {
-        agentId: agentId!,
-      }),
-    [wsUrl, agentId],
+      fetchFileBrowserApi<FileCountResult>(
+        wsUrl,
+        '/api/files/count',
+        buildFileBrowserParams(agentId!, {}, worktreeId),
+      ),
+    [wsUrl, agentId, worktreeId],
   )
 
   return useSimpleQuery<FileCountResult>(queryKey, fetchFn, {
@@ -190,16 +224,24 @@ export function useFileSearch(
   agentId: string | null,
   query: string,
   limit = 50,
+  worktreeId?: string | null,
 ) {
-  const queryKey = `files:search:${agentId ?? ''}:${query}:${limit}`
+  const queryKey = buildFileBrowserQueryKey('files:search', agentId, worktreeId, query, String(limit))
   const fetchFn = useCallback(
     () =>
-      fetchFileBrowserApi<FileSearchResult>(wsUrl, '/api/files/search', {
-        agentId: agentId!,
-        query,
-        limit: String(limit),
-      }),
-    [wsUrl, agentId, query, limit],
+      fetchFileBrowserApi<FileSearchResult>(
+        wsUrl,
+        '/api/files/search',
+        buildFileBrowserParams(
+          agentId!,
+          {
+            query,
+            limit: String(limit),
+          },
+          worktreeId,
+        ),
+      ),
+    [wsUrl, agentId, query, limit, worktreeId],
   )
 
   return useSimpleQuery<FileSearchResult>(queryKey, fetchFn, {
@@ -245,15 +287,17 @@ export function useFileContent(
   wsUrl: string,
   agentId: string | null,
   filePath: string | null,
+  worktreeId?: string | null,
 ) {
-  const queryKey = `files:content:${agentId ?? ''}:${filePath ?? ''}`
+  const queryKey = buildFileBrowserQueryKey('files:content', agentId, worktreeId, filePath ?? '')
   const fetchFn = useCallback(
     () =>
-      fetchFileBrowserApi<FileContentResult>(wsUrl, '/api/files/content', {
-        agentId: agentId!,
-        path: filePath!,
-      }),
-    [wsUrl, agentId, filePath],
+      fetchFileBrowserApi<FileContentResult>(
+        wsUrl,
+        '/api/files/content',
+        buildFileBrowserParams(agentId!, { path: filePath! }, worktreeId),
+      ),
+    [wsUrl, agentId, filePath, worktreeId],
   )
 
   return useSimpleQuery<FileContentResult>(queryKey, fetchFn, {

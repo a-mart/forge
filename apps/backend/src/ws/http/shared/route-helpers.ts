@@ -18,6 +18,29 @@ export interface GitSourceControlContext extends GitRepoContext {
   worktreePath?: string;
 }
 
+export async function resolveReadOnlyGitContext(
+  swarmManager: SwarmManager,
+  agentId: string,
+  repoTarget: GitRepoTarget = "workspace",
+  worktreeId?: string
+): Promise<GitSourceControlContext> {
+  const normalizedWorktreeId = worktreeId?.trim();
+
+  if (normalizedWorktreeId) {
+    if (repoTarget === "versioning") {
+      throw new Error("worktreeId is not supported for repoTarget=versioning.");
+    }
+
+    return resolveGitSourceControlContext(swarmManager, agentId, repoTarget, normalizedWorktreeId);
+  }
+
+  const baseContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+  return {
+    ...baseContext,
+    baseCwd: baseContext.cwd
+  };
+}
+
 export async function resolveGitSourceControlContext(
   swarmManager: SwarmManager,
   agentId: string,

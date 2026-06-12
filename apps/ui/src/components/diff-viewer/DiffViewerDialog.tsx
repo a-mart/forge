@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import type { GitRepoTarget } from '@forge/protocol'
+import type { GitRepoTarget, GitWorktreeSummary } from '@forge/protocol'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { DiffDialogHeader, type DiffTab } from './DiffDialogHeader'
@@ -33,6 +33,7 @@ interface DiffViewerContentProps extends DiffViewerInitialState {
   agentId: string | null
   isCortex: boolean
   onClose: () => void
+  onBrowseWorktreeFiles?: (worktree: GitWorktreeSummary) => void
 }
 
 function getDefaultRepoTarget(isCortex: boolean): GitRepoTarget {
@@ -54,6 +55,7 @@ export function DiffViewerContent({
   initialSha,
   initialFile,
   initialQuickFilter,
+  onBrowseWorktreeFiles,
 }: DiffViewerContentProps) {
   const defaultTab = useMemo(() => initialTab ?? getDefaultTab(isCortex), [initialTab, isCortex])
   const defaultRepoTarget = useMemo(
@@ -62,6 +64,7 @@ export function DiffViewerContent({
   )
   const [activeTab, setActiveTab] = useState<DiffTab>(defaultTab)
   const [repoTarget, setRepoTarget] = useState<GitRepoTarget>(defaultRepoTarget)
+  const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null)
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusInfo | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
   const prevActiveRef = useRef(active)
@@ -75,6 +78,7 @@ export function DiffViewerContent({
     if (opened || contextChanged) {
       setActiveTab(defaultTab)
       setRepoTarget(defaultRepoTarget)
+      setSelectedWorktreeId(null)
       setHistoryStatus(null)
     }
 
@@ -84,9 +88,11 @@ export function DiffViewerContent({
 
   useEffect(() => {
     setHistoryStatus(null)
+    setSelectedWorktreeId(null)
   }, [repoTarget])
 
-  const statusQuery = useGitStatus(wsUrl, active ? agentId : null, repoTarget)
+  const effectiveWorktreeId = repoTarget === 'workspace' ? selectedWorktreeId : null
+  const statusQuery = useGitStatus(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId)
   const worktreesQuery = useGitWorktrees(wsUrl, active ? agentId : null, repoTarget, refreshToken)
 
   const handleRefresh = useCallback(() => {
@@ -97,14 +103,33 @@ export function DiffViewerContent({
 
   const handleRepoTargetChange = useCallback((nextTarget: GitRepoTarget) => {
     setRepoTarget(nextTarget)
+    setSelectedWorktreeId(null)
     setHistoryStatus(null)
   }, [])
 
-  const summary = statusQuery.data?.summary ?? { filesChanged: 0, insertions: 0, deletions: 0 }
-  const currentWorktree = worktreesQuery.data?.worktrees.find((worktree) => worktree.isCurrentContext) ?? null
+  const sessionWorktree =
+    worktreesQuery.data?.worktrees.find((worktree) => worktree.isCurrentContext) ?? null
+  const selectedWorktree =
+    worktreesQuery.data?.worktrees.find((worktree) => worktree.id === selectedWorktreeId) ?? null
+  const contextWorktree = selectedWorktree ?? sessionWorktree
   const worktreeCount = worktreesQuery.data?.worktrees.length ?? null
-  const changesViewKey = `${agentId ?? 'none'}:${repoTarget}:changes`
-  const historyViewKey = `${agentId ?? 'none'}:${repoTarget}:history`
+  const changesViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:changes`
+  const historyViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:history`
+
+  const handleSelectWorktreeContext = useCallback((worktree: GitWorktreeSummary) => {
+    setSelectedWorktreeId(worktree.id)
+    setActiveTab('changes')
+    setHistoryStatus(null)
+  }, [])
+
+  const handleBrowseWorktree = useCallback(
+    (worktree: GitWorktreeSummary) => {
+      onBrowseWorktreeFiles?.(worktree)
+    },
+    [onBrowseWorktreeFiles],
+  )
+
+  const summary = statusQuery.data?.summary ?? { filesChanged: 0, insertions: 0, deletions: 0 }
 
   return (
     <>
@@ -117,9 +142,10 @@ export function DiffViewerContent({
         showRepoSelector={isCortex}
         repoLabel={statusQuery.data?.repoLabel ?? null}
         repoName={statusQuery.data?.repoName ?? null}
-        branch={statusQuery.data?.branch ?? currentWorktree?.branch ?? null}
-        currentWorktreePath={currentWorktree?.path ?? null}
+        branch={statusQuery.data?.branch ?? contextWorktree?.branch ?? null}
+        currentWorktreePath={contextWorktree?.path ?? null}
         worktreeCount={worktreeCount}
+        selectedWorktreeId={selectedWorktreeId}
         isRefreshing={statusQuery.isLoading || worktreesQuery.isLoading}
         onRefresh={handleRefresh}
         onClose={onClose}
@@ -133,6 +159,7 @@ export function DiffViewerContent({
             wsUrl={wsUrl}
             agentId={agentId}
             repoTarget={repoTarget}
+            worktreeId={effectiveWorktreeId}
             status={statusQuery.data}
             isStatusLoading={statusQuery.isLoading}
             statusError={statusQuery.error}
@@ -146,6 +173,7 @@ export function DiffViewerContent({
             wsUrl={wsUrl}
             agentId={active ? agentId : null}
             repoTarget={repoTarget}
+            worktreeId={effectiveWorktreeId}
             onStatusChange={setHistoryStatus}
             refreshToken={refreshToken}
             initialSha={initialSha}
@@ -158,7 +186,9 @@ export function DiffViewerContent({
             agentId={active ? agentId : null}
             repoTarget={repoTarget}
             refreshToken={refreshToken}
-            onOpenCurrentWorktree={() => setActiveTab('changes')}
+            selectedWorktreeId={selectedWorktreeId}
+            onSelectWorktreeContext={handleSelectWorktreeContext}
+            onBrowseWorktree={handleBrowseWorktree}
           />
         ) : (
           <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
@@ -180,10 +210,12 @@ export function DiffViewerContent({
           aria-live="polite"
         >
           <span>{worktreeCount ?? 0} {(worktreeCount ?? 0) === 1 ? 'worktree' : 'worktrees'}</span>
-          {currentWorktree ? (
+          {contextWorktree ? (
             <>
               <span className="mx-1.5 opacity-40">·</span>
-              <span className="truncate">Current: {currentWorktree.path}</span>
+              <span className="truncate">
+                {selectedWorktree ? 'Selected' : 'Session'}: {contextWorktree.path}
+              </span>
             </>
           ) : null}
         </div>

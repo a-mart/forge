@@ -41,10 +41,15 @@ function buildGitRequestParams(
   agentId: string,
   repoTarget: GitRepoTarget,
   extraParams: Record<string, string | number | null | undefined> = {},
+  worktreeId?: string | null,
 ): Record<string, string> {
   const params: Record<string, string> = {
     agentId,
     repoTarget,
+  }
+
+  if (worktreeId) {
+    params.worktreeId = worktreeId
   }
 
   for (const [key, value] of Object.entries(extraParams)) {
@@ -59,9 +64,10 @@ function buildGitQueryKey(
   scope: string,
   agentId: string | null,
   repoTarget: GitRepoTarget,
+  worktreeId?: string | null,
   ...parts: Array<string | number | null>
 ): string {
-  return JSON.stringify([scope, agentId ?? '', repoTarget, ...parts.map((part) => part ?? '')])
+  return JSON.stringify([scope, agentId ?? '', repoTarget, worktreeId ?? '', ...parts.map((part) => part ?? '')])
 }
 
 function parseGitQueryKey(
@@ -202,11 +208,21 @@ function useSimpleQuery<T>(
 /*  Public hooks                                                      */
 /* ------------------------------------------------------------------ */
 
-export function useGitStatus(wsUrl: string, agentId: string | null, repoTarget: GitRepoTarget) {
-  const queryKey = buildGitQueryKey('git:status', agentId, repoTarget)
+export function useGitStatus(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  worktreeId?: string | null,
+) {
+  const queryKey = buildGitQueryKey('git:status', agentId, repoTarget, worktreeId)
   const fetchFn = useCallback(
-    () => fetchGitApi<GitStatusResult>(wsUrl, '/api/git/status', buildGitRequestParams(agentId!, repoTarget)),
-    [wsUrl, agentId, repoTarget],
+    () =>
+      fetchGitApi<GitStatusResult>(
+        wsUrl,
+        '/api/git/status',
+        buildGitRequestParams(agentId!, repoTarget, {}, worktreeId),
+      ),
+    [wsUrl, agentId, repoTarget, worktreeId],
   )
 
   return useSimpleQuery<GitStatusResult>(queryKey, fetchFn, {
@@ -222,7 +238,7 @@ export function useGitWorktrees(
   repoTarget: GitRepoTarget,
   refreshToken = 0,
 ) {
-  const queryKey = buildGitQueryKey('git:worktrees', agentId, repoTarget, refreshToken)
+  const queryKey = buildGitQueryKey('git:worktrees', agentId, repoTarget, null, refreshToken)
   const fetchFn = useCallback(
     () =>
       fetchGitApi<GitWorktreeListResult>(
@@ -240,16 +256,22 @@ export function useGitWorktrees(
   })
 }
 
-export function useGitDiff(wsUrl: string, agentId: string | null, repoTarget: GitRepoTarget, file: string | null) {
-  const queryKey = buildGitQueryKey('git:diff', agentId, repoTarget, file)
+export function useGitDiff(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  file: string | null,
+  worktreeId?: string | null,
+) {
+  const queryKey = buildGitQueryKey('git:diff', agentId, repoTarget, worktreeId, file)
   const fetchFn = useCallback(
     () =>
       fetchGitApi<GitDiffResult>(
         wsUrl,
         '/api/git/diff',
-        buildGitRequestParams(agentId!, repoTarget, { file: file! }),
+        buildGitRequestParams(agentId!, repoTarget, { file: file! }, worktreeId),
       ),
-    [wsUrl, agentId, repoTarget, file],
+    [wsUrl, agentId, repoTarget, file, worktreeId],
   )
 
   return useSimpleQuery<GitDiffResult>(queryKey, fetchFn, {
@@ -264,19 +286,25 @@ export function useGitLog(
   repoTarget: GitRepoTarget,
   limit: number,
   offset: number,
+  worktreeId?: string | null,
 ) {
-  const queryKey = buildGitQueryKey('git:log', agentId, repoTarget, limit, offset)
+  const queryKey = buildGitQueryKey('git:log', agentId, repoTarget, worktreeId, limit, offset)
   const fetchFn = useCallback(
     () =>
       fetchGitApi<GitLogResult>(
         wsUrl,
         '/api/git/log',
-        buildGitRequestParams(agentId!, repoTarget, {
-          limit,
-          offset,
-        }),
+        buildGitRequestParams(
+          agentId!,
+          repoTarget,
+          {
+            limit,
+            offset,
+          },
+          worktreeId,
+        ),
       ),
-    [wsUrl, agentId, repoTarget, limit, offset],
+    [wsUrl, agentId, repoTarget, limit, offset, worktreeId],
   )
 
   return useSimpleQuery<GitLogResult>(queryKey, fetchFn, {
@@ -290,16 +318,17 @@ export function useGitCommitDetail(
   agentId: string | null,
   repoTarget: GitRepoTarget,
   sha: string | null,
+  worktreeId?: string | null,
 ) {
-  const queryKey = buildGitQueryKey('git:commit', agentId, repoTarget, sha)
+  const queryKey = buildGitQueryKey('git:commit', agentId, repoTarget, worktreeId, sha)
   const fetchFn = useCallback(
     () =>
       fetchGitApi<GitCommitDetail>(
         wsUrl,
         '/api/git/commit',
-        buildGitRequestParams(agentId!, repoTarget, { sha: sha! }),
+        buildGitRequestParams(agentId!, repoTarget, { sha: sha! }, worktreeId),
       ),
-    [wsUrl, agentId, repoTarget, sha],
+    [wsUrl, agentId, repoTarget, sha, worktreeId],
   )
 
   return useSimpleQuery<GitCommitDetail>(queryKey, fetchFn, {
@@ -314,19 +343,25 @@ export function useGitCommitDiff(
   repoTarget: GitRepoTarget,
   sha: string | null,
   file: string | null,
+  worktreeId?: string | null,
 ) {
-  const queryKey = buildGitQueryKey('git:commit-diff', agentId, repoTarget, sha, file)
+  const queryKey = buildGitQueryKey('git:commit-diff', agentId, repoTarget, worktreeId, sha, file)
   const fetchFn = useCallback(
     () =>
       fetchGitApi<GitDiffResult>(
         wsUrl,
         '/api/git/commit-diff',
-        buildGitRequestParams(agentId!, repoTarget, {
-          sha: sha!,
-          file: file!,
-        }),
+        buildGitRequestParams(
+          agentId!,
+          repoTarget,
+          {
+            sha: sha!,
+            file: file!,
+          },
+          worktreeId,
+        ),
       ),
-    [wsUrl, agentId, repoTarget, sha, file],
+    [wsUrl, agentId, repoTarget, sha, file, worktreeId],
   )
 
   return useSimpleQuery<GitDiffResult>(queryKey, fetchFn, {

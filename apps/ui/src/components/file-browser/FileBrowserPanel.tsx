@@ -18,6 +18,7 @@ interface FileBrowserPanelProps {
   filePath: string | null
   onClose: () => void
   onNavigateToDirectory: (dirPath: string) => void
+  worktreeId?: string | null
   desktopOnly?: boolean
   mobileOnly?: boolean
   resizeHandlePlacement?: 'left' | 'right'
@@ -29,6 +30,7 @@ export function FileBrowserPanel({
   filePath,
   onClose,
   onNavigateToDirectory,
+  worktreeId = null,
   desktopOnly = false,
   mobileOnly = false,
   resizeHandlePlacement = 'left',
@@ -36,7 +38,7 @@ export function FileBrowserPanel({
   const gatedAgentId = filePath ? agentId : null
 
   // Fetch root listing for cwd (re-uses cache from sidebar)
-  const rootList = useDirectoryListing(wsUrl, gatedAgentId, '')
+  const rootList = useDirectoryListing(wsUrl, gatedAgentId, '', worktreeId)
   const cwd = rootList.data?.cwd ?? ''
 
   // Only fetch file content for non-image files
@@ -48,6 +50,7 @@ export function FileBrowserPanel({
     wsUrl,
     gatedAgentId,
     shouldFetchContent ? filePath : null,
+    worktreeId,
   )
 
   const viewerInfo = useFileViewerInfo(filePath, fileContent.data)

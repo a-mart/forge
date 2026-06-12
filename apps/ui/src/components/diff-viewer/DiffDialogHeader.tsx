@@ -23,6 +23,7 @@ interface DiffDialogHeaderProps {
   branch: string | null
   currentWorktreePath?: string | null
   worktreeCount?: number | null
+  selectedWorktreeId?: string | null
   isRefreshing: boolean
   onRefresh: () => void
   onClose: () => void
@@ -39,6 +40,7 @@ export function DiffDialogHeader({
   branch,
   currentWorktreePath,
   worktreeCount,
+  selectedWorktreeId,
   isRefreshing,
   onRefresh,
   onClose,
@@ -47,6 +49,11 @@ export function DiffDialogHeader({
   const versioningLabel = repoTarget === 'versioning' ? (repoLabel ?? 'Cortex Knowledge') : 'Cortex Knowledge'
 
   const worktreeLabel = currentWorktreePath ? formatPathLabel(currentWorktreePath) : null
+  const worktreeChipTitle = currentWorktreePath
+    ? selectedWorktreeId
+      ? `Selected worktree: ${currentWorktreePath} (chat session CWD unchanged)`
+      : currentWorktreePath
+    : undefined
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/60 bg-card px-3">
@@ -111,9 +118,14 @@ export function DiffDialogHeader({
       ) : null}
 
       {worktreeLabel ? (
-        <span className="hidden max-w-44 items-center gap-1 truncate rounded-md border border-border/60 bg-muted/25 px-1.5 py-1 text-xs text-muted-foreground lg:inline-flex" title={currentWorktreePath ?? undefined}>
+        <span className={cn(
+          'hidden max-w-44 items-center gap-1 truncate rounded-md border px-1.5 py-1 text-xs lg:inline-flex',
+          selectedWorktreeId
+            ? 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+            : 'border-border/60 bg-muted/25 text-muted-foreground',
+        )} title={worktreeChipTitle}>
           <HardDrive className="size-3 shrink-0" />
-          <span className="truncate">{worktreeLabel}</span>
+          <span className="truncate">{selectedWorktreeId ? `Selected · ${worktreeLabel}` : worktreeLabel}</span>
           {typeof worktreeCount === 'number' && worktreeCount > 1 ? (
             <span className="text-[10px] text-muted-foreground/70">+{worktreeCount - 1}</span>
           ) : null}
