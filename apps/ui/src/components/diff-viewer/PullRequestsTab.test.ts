@@ -197,7 +197,9 @@ function renderTab(options: {
   flushSync(() => {
     root?.render(
       createElement(PullRequestsTab, {
+        wsUrl: 'ws://127.0.0.1:47187',
         agentId: 'alpha--s1',
+        repoTarget: 'workspace',
         currentBranch: options.currentBranch ?? 'main',
         pullRequestsQuery: query,
       }),

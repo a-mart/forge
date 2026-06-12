@@ -298,4 +298,52 @@ export interface GitPullRequestDetail extends GitPullRequestSummary {
   additions: number
   deletions: number
   headSha: string
+  isForkPullRequest?: boolean
+  allowedMergeMethods?: GitPullRequestMergeMethod[]
+}
+
+export type GitPullRequestMergeMethod = 'squash' | 'merge' | 'rebase'
+
+export interface GitPullRequestMergeRequest {
+  agentId: string
+  repoTarget?: GitRepoTarget
+  worktreeId?: string
+  method: GitPullRequestMergeMethod
+  expectedHeadSha: string
+  deleteBranchAfterMerge?: boolean
+  acknowledgeCheckFailures?: boolean
+}
+
+export type GitPullRequestMergeErrorCode =
+  | 'not_found'
+  | 'stale_head'
+  | 'not_mergeable'
+  | 'draft'
+  | 'closed'
+  | 'checks_blocked'
+  | 'checks_pending'
+  | 'method_not_allowed'
+  | 'branch_delete_unsafe'
+  | 'auth'
+  | 'permission'
+  | 'rate_limit'
+  | 'timeout'
+  | 'network'
+  | 'provider_unavailable'
+  | 'unknown'
+
+export interface GitPullRequestMergeResult {
+  success: boolean
+  number: number
+  method: GitPullRequestMergeMethod
+  mergedAt?: string | null
+  mergeCommitSha?: string | null
+  state?: GitPullRequestState
+  providerUrl?: string
+  branchDeleted?: boolean
+  errors: string[]
+  warnings: string[]
+  errorCode?: GitPullRequestMergeErrorCode
+  detail?: GitPullRequestDetail
+  invalidateCaches?: boolean
 }

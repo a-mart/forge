@@ -12,6 +12,8 @@ import type {
   GitPullFfOnlyRequest,
   GitPullRequestDetail,
   GitPullRequestListResult,
+  GitPullRequestMergeRequest,
+  GitPullRequestMergeResult,
   GitPullResult,
   GitRepoTarget,
   GitStatusResult,
@@ -572,6 +574,14 @@ export async function pullGitFfOnly(
   request: GitPullFfOnlyRequest,
 ): Promise<GitPullResult> {
   return postGitApi<GitPullResult>(wsUrl, '/api/git/pull-ff-only', request)
+}
+
+export async function mergeGitPullRequest(
+  wsUrl: string,
+  number: number,
+  request: GitPullRequestMergeRequest,
+): Promise<GitPullRequestMergeResult> {
+  return postGitApi<GitPullRequestMergeResult>(wsUrl, `/api/git/pull-requests/${number}/merge`, request)
 }
 
 /** Invalidate mutable git caches. Commit caches remain immutable. */

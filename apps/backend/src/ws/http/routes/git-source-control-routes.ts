@@ -2,6 +2,8 @@ import type {
   GitCreateBranchRequest,
   GitFetchRequest,
   GitPullFfOnlyRequest,
+  GitPullRequestMergeMethod,
+  GitPullRequestMergeRequest,
   GitRepoTarget,
   GitSwitchBranchRequest
 } from "@forge/protocol";
@@ -300,6 +302,56 @@ export function createGitSourceControlRoutes(options: {
           sendJson(response, resolveHttpStatusCode(message), { error: message });
         }
       }
+    },
+    {
+      methods: GIT_POST_METHODS,
+      matches: (pathname) => /^\/api\/git\/pull-requests\/\d+\/merge$/.test(pathname),
+      handle: async (request, response) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, GIT_POST_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "POST") {
+          applyCorsHeaders(request, response, GIT_POST_METHODS);
+          response.setHeader("Allow", GIT_POST_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyCorsHeaders(request, response, GIT_POST_METHODS);
+
+        try {
+          const number = parsePullRequestMergeNumber(request.url ?? "");
+          const body = parsePullRequestMergeRequest(await readJsonBody(request));
+          const context = await resolveGitSourceControlContext(
+            swarmManager,
+            body.agentId,
+            body.repoTarget ?? "workspace",
+            body.worktreeId
+          );
+          const payload = await service.mergePullRequest(context, number, {
+            method: body.method,
+            expectedHeadSha: body.expectedHeadSha,
+            deleteBranchAfterMerge: body.deleteBranchAfterMerge,
+            acknowledgeCheckFailures: body.acknowledgeCheckFailures
+          });
+          sendJson(response, resolveMergeHttpStatus(payload), payload as unknown as Record<string, unknown>);
+        } catch (error) {
+          if (error instanceof GitHostedProviderError) {
+            sendJson(response, error.httpStatus, {
+              error: error.message,
+              code: error.code
+            });
+            return;
+          }
+
+          const message = error instanceof Error ? error.message : "Git source-control request failed.";
+          sendJson(response, resolveHttpStatusCode(message), { error: message });
+        }
+      }
     }
   ];
 }
@@ -497,12 +549,97 @@ function parsePullRequestNumber(pathname: string): number {
     throw new Error("Invalid pull request number.");
   }
 
-  const number = Number.parseInt(match[1]!, 10);
+  return parsePositivePullRequestNumber(match[1]!);
+}
+
+function parsePullRequestMergeNumber(url: string): number {
+  const pathname = new URL(url, "http://127.0.0.1").pathname;
+  const match = /^\/api\/git\/pull-requests\/(\d+)\/merge$/.exec(pathname);
+  if (!match) {
+    throw new Error("Invalid pull request merge path.");
+  }
+
+  return parsePositivePullRequestNumber(match[1]!);
+}
+
+function parsePositivePullRequestNumber(rawValue: string): number {
+  const number = Number.parseInt(rawValue, 10);
   if (!Number.isFinite(number) || number <= 0) {
     throw new Error("Invalid pull request number.");
   }
 
   return number;
+}
+
+function parsePullRequestMergeRequest(body: unknown): GitPullRequestMergeRequest {
+  if (!body || typeof body !== "object") {
+    throw new Error("Request body must be a JSON object.");
+  }
+
+  const record = body as Record<string, unknown>;
+  const agentId = typeof record.agentId === "string" ? record.agentId.trim() : "";
+  if (agentId.length === 0) {
+    throw new Error("agentId must be a non-empty string.");
+  }
+
+  const expectedHeadSha =
+    typeof record.expectedHeadSha === "string" ? record.expectedHeadSha.trim() : "";
+  if (expectedHeadSha.length === 0) {
+    throw new Error("expectedHeadSha must be a non-empty string.");
+  }
+
+  const method = parseMergeMethod(record.method);
+  const repoTarget = parseOptionalRepoTarget(record.repoTarget);
+  const worktreeId =
+    typeof record.worktreeId === "string" && record.worktreeId.trim().length > 0
+      ? record.worktreeId.trim()
+      : undefined;
+
+  return {
+    agentId,
+    repoTarget,
+    worktreeId,
+    method,
+    expectedHeadSha,
+    deleteBranchAfterMerge: record.deleteBranchAfterMerge === true,
+    acknowledgeCheckFailures: record.acknowledgeCheckFailures === true
+  };
+}
+
+function parseMergeMethod(value: unknown): GitPullRequestMergeMethod {
+  if (value !== "squash" && value !== "merge" && value !== "rebase") {
+    throw new Error("method must be one of: squash, merge, rebase.");
+  }
+
+  return value;
+}
+
+function resolveMergeHttpStatus(payload: {
+  success: boolean;
+  errorCode?: string;
+}): number {
+  if (payload.success) {
+    return 200;
+  }
+
+  switch (payload.errorCode) {
+    case "not_found":
+      return 404;
+    case "auth":
+      return 401;
+    case "permission":
+      return 403;
+    case "rate_limit":
+      return 429;
+    case "timeout":
+      return 504;
+    case "network":
+      return 503;
+    case "provider_unavailable":
+      return 503;
+    default:
+      return 409;
+  }
 }
 
 function parseOptionalRepoTarget(value: unknown): GitRepoTarget | undefined {

@@ -6,7 +6,10 @@ import {
   GitHostedProviderService,
   aggregateCheckStatusFromRollup,
   classifyGhFailure,
+  classifyMergeGhFailure,
+  evaluateMergePreflight,
   matchesCurrentBranchPullRequest,
+  parseAllowedMergeMethods,
   parseCheckSummariesFromRollup,
   parseGitHubRepoFromRemoteUrl
 } from "../ws/http/services/git-hosted-provider.js";
@@ -338,6 +341,132 @@ describe("GitHostedProviderService", () => {
     expect(networkResult.listError?.code).toBe("network");
     expect(networkResult.providerStatus.authenticated).toBe(true);
   });
+
+  it("merges pull requests with method and match-head-commit via fake gh", async () => {
+    const { fakeGhPath, repoDir, readMergeCalls } = await createFakeGhFixture({
+      branch: "main",
+      auth: "ok",
+      openJson: "[]",
+      closedJson: "[]",
+      mergeBehavior: "success"
+    });
+
+    const service = new GitHostedProviderService({ ghBinary: fakeGhPath });
+    const context = createContext({ cwd: repoDir, remoteSetup: true });
+    const result = await service.mergePullRequest(context, 428, {
+      method: "squash",
+      expectedHeadSha: "abc123def456"
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.method).toBe("squash");
+    expect(result.state).toBe("merged");
+    const mergeCalls = await readMergeCalls();
+    expect(mergeCalls).toHaveLength(1);
+    expect(mergeCalls[0]).toContain("--squash");
+    expect(mergeCalls[0]).toContain("--match-head-commit");
+    expect(mergeCalls[0]).toContain("abc123def456");
+  });
+
+  it("returns stale head error when gh merge rejects modified head", async () => {
+    const { fakeGhPath, repoDir } = await createFakeGhFixture({
+      branch: "main",
+      auth: "ok",
+      openJson: "[]",
+      closedJson: "[]",
+      mergeBehavior: "stale_head"
+    });
+
+    const service = new GitHostedProviderService({ ghBinary: fakeGhPath });
+    const context = createContext({ cwd: repoDir, remoteSetup: true });
+    const result = await service.mergePullRequest(context, 428, {
+      method: "merge",
+      expectedHeadSha: "abc123def456"
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("stale_head");
+  });
+
+  it("blocks merge when checks are failing unless explicitly acknowledged", async () => {
+    const detail = {
+      number: 428,
+      title: "PR",
+      state: "open" as const,
+      author: "adam",
+      createdAt: "2026-06-10T10:00:00Z",
+      updatedAt: "2026-06-12T09:00:00Z",
+      headRef: "feature/x",
+      baseRef: "main",
+      isDraft: false,
+      isCurrentBranch: false,
+      checkStatus: "failure" as const,
+      body: "",
+      mergeable: true,
+      checks: [],
+      changedFiles: 1,
+      additions: 1,
+      deletions: 0,
+      headSha: "abc123",
+      allowedMergeMethods: ["squash", "merge", "rebase"] as const
+    };
+
+    const blocked = evaluateMergePreflight(detail, "squash", {
+      expectedHeadSha: "abc123",
+      deleteBranchAfterMerge: false,
+      acknowledgeCheckFailures: false
+    });
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.errorCode).toBe("checks_blocked");
+
+    const allowed = evaluateMergePreflight(detail, "squash", {
+      expectedHeadSha: "abc123",
+      deleteBranchAfterMerge: false,
+      acknowledgeCheckFailures: true
+    });
+    expect(allowed.allowed).toBe(true);
+  });
+
+  it("maps gh merge stale head failures", () => {
+    const failure = classifyMergeGhFailure({
+      stdout: "",
+      stderr: "Head branch was modified. Review and try again.",
+      exitCode: 1
+    });
+
+    expect(failure.code).toBe("stale_head");
+  });
+
+  it("parses allowed merge methods from repo view json", () => {
+    expect(
+      parseAllowedMergeMethods(
+        JSON.stringify({
+          mergeCommitAllowed: false,
+          squashMergeAllowed: true,
+          rebaseMergeAllowed: true
+        })
+      )
+    ).toEqual(["squash", "rebase"]);
+  });
+
+  it("degrades merge when gh auth fails", async () => {
+    const { fakeGhPath, repoDir } = await createFakeGhFixture({
+      branch: "main",
+      auth: "fail",
+      openJson: "[]",
+      closedJson: "[]"
+    });
+
+    const service = new GitHostedProviderService({ ghBinary: fakeGhPath });
+    const context = createContext({ cwd: repoDir, remoteSetup: true });
+    const result = await service.mergePullRequest(context, 428, {
+      method: "squash",
+      expectedHeadSha: "abc123def456"
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("provider_unavailable");
+  });
 });
 
 function createContext(options: {
@@ -361,14 +490,61 @@ async function createFakeGhFixture(options: {
   closedJson: string;
   detailJson?: string;
   openListFailure?: "rate_limit" | "timeout" | "network" | "permission";
-}): Promise<{ fakeGhPath: string; repoDir: string }> {
+  mergeBehavior?: "success" | "stale_head";
+}): Promise<{ fakeGhPath: string; repoDir: string; readMergeCalls: () => Promise<string[]> }> {
   const root = await mkdtemp(join(tmpdir(), "git-hosted-provider-"));
   const repoDir = join(root, "repo");
   const fakeGhPath = join(root, "fake-gh");
+  const mergeLogPath = join(root, "merge-calls.log");
+  const viewCountPath = join(root, "view-count.log");
+  const defaultDetailJson = JSON.stringify({
+    number: 428,
+    title: "Enhanced Source Control workspace",
+    state: "OPEN",
+    author: { login: "adam" },
+    createdAt: "2026-06-10T10:00:00Z",
+    updatedAt: "2026-06-12T09:00:00Z",
+    headRefName: "feature/git-source-control-workspace",
+    baseRefName: "main",
+    isDraft: false,
+    url: "https://github.com/a-mart/forge/pull/428",
+    body: "Read-only PR detail body",
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "APPROVED",
+    statusCheckRollup: [{ state: "SUCCESS", status: "COMPLETED", conclusion: "SUCCESS" }],
+    changedFiles: 7,
+    additions: 184,
+    deletions: 39,
+    headRefOid: "abc123def456"
+  });
+  const mergedDetailJson = JSON.stringify({
+    number: 428,
+    title: "Enhanced Source Control workspace",
+    state: "MERGED",
+    author: { login: "adam" },
+    createdAt: "2026-06-10T10:00:00Z",
+    updatedAt: "2026-06-12T10:00:00Z",
+    mergedAt: "2026-06-12T10:00:00Z",
+    headRefName: "feature/git-source-control-workspace",
+    baseRefName: "main",
+    isDraft: false,
+    url: "https://github.com/a-mart/forge/pull/428",
+    body: "Read-only PR detail body",
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "APPROVED",
+    statusCheckRollup: [{ state: "SUCCESS", status: "COMPLETED", conclusion: "SUCCESS" }],
+    changedFiles: 7,
+    additions: 184,
+    deletions: 39,
+    headRefOid: "abc123def456"
+  });
 
   await writeFile(
     fakeGhPath,
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const args = process.argv.slice(2);
 const command = args.join(" ");
 
@@ -383,6 +559,15 @@ if (command.startsWith("auth status")) {
     process.exit(1);
   }
   process.stdout.write("github.com\\n  ✓ Logged in\\n");
+  process.exit(0);
+}
+
+if (command.startsWith("repo view")) {
+  process.stdout.write(JSON.stringify({
+    mergeCommitAllowed: true,
+    squashMergeAllowed: true,
+    rebaseMergeAllowed: true
+  }));
   process.exit(0);
 }
 
@@ -414,7 +599,29 @@ if (command.includes("pr list") && command.includes("--state closed")) {
 }
 
 if (command.startsWith("pr view")) {
-  process.stdout.write(${JSON.stringify(options.detailJson ?? "{}")});
+  let viewCount = 0;
+  try {
+    viewCount = Number(fs.readFileSync(${JSON.stringify(viewCountPath)}, "utf8"));
+  } catch {}
+  viewCount += 1;
+  fs.writeFileSync(${JSON.stringify(viewCountPath)}, String(viewCount));
+  const mergedViews = ${JSON.stringify(options.mergeBehavior === "success")};
+  if (mergedViews && viewCount > 1) {
+    process.stdout.write(${JSON.stringify(mergedDetailJson)});
+    process.exit(0);
+  }
+  process.stdout.write(${JSON.stringify(options.detailJson ?? defaultDetailJson)});
+  process.exit(0);
+}
+
+if (command.startsWith("pr merge")) {
+  fs.appendFileSync(${JSON.stringify(mergeLogPath)}, command + "\\n");
+  const mergeBehavior = ${JSON.stringify(options.mergeBehavior ?? null)};
+  if (mergeBehavior === "stale_head") {
+    process.stderr.write("Head branch was modified. Review and try again.\\n");
+    process.exit(1);
+  }
+  process.stdout.write("Merged pull request a-mart/forge#428\\n");
   process.exit(0);
 }
 
@@ -428,7 +635,7 @@ process.exit(1);
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execFileAsync = promisify(execFile);
-  const { mkdir, writeFile: writeRepoFile } = await import("node:fs/promises");
+  const { mkdir, readFile, writeFile: writeRepoFile } = await import("node:fs/promises");
 
   await mkdir(repoDir, { recursive: true });
   await execFileAsync("git", ["init", "-b", options.branch], { cwd: repoDir });
@@ -439,5 +646,19 @@ process.exit(1);
     cwd: repoDir
   });
 
-  return { fakeGhPath, repoDir };
+  return {
+    fakeGhPath,
+    repoDir,
+    readMergeCalls: async () => {
+      try {
+        const contents = await readFile(mergeLogPath, "utf8");
+        return contents
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+      } catch {
+        return [];
+      }
+    }
+  };
 }

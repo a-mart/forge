@@ -14,6 +14,8 @@ import type {
   GitHostedProviderStatus,
   GitPullRequestDetail,
   GitPullRequestListResult,
+  GitPullRequestMergeRequest,
+  GitPullRequestMergeResult,
   GitSourceContextRef,
   GitSwitchBranchRequest,
   GitWorktreeAgentSummary,
@@ -82,6 +84,14 @@ export class GitSourceControlService {
     number: number
   ): Promise<GitPullRequestDetail | null> {
     return this.hostedProvider.getPullRequestDetail(context, number);
+  }
+
+  async mergePullRequest(
+    context: GitSourceControlContext,
+    number: number,
+    request: Omit<GitPullRequestMergeRequest, "agentId" | "repoTarget" | "worktreeId">
+  ): Promise<GitPullRequestMergeResult> {
+    return this.hostedProvider.mergePullRequest(context, number, request);
   }
 
   async listWorktrees(

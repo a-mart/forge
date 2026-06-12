@@ -239,9 +239,16 @@ export function DiffViewerContent({
           />
         ) : (
           <PullRequestsTab
+            wsUrl={wsUrl}
             agentId={active ? agentId : null}
+            repoTarget={repoTarget}
+            worktreeId={effectiveWorktreeId}
             currentBranch={statusQuery.data?.branch ?? contextWorktree?.branch ?? null}
             pullRequestsQuery={pullRequestsQuery}
+            onMergeComplete={() => {
+              pullRequestsQuery.refetch()
+              branchesQuery.refetch()
+            }}
           />
         )}
       </div>

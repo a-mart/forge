@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -16,6 +17,7 @@ interface GitMutationConfirmDialogProps {
   blockedReasons?: string[]
   confirmLabel: string
   isSubmitting?: boolean
+  extraContent?: ReactNode
   onConfirm: () => void
   onCancel: () => void
 }
@@ -28,6 +30,7 @@ export function GitMutationConfirmDialog({
   blockedReasons = [],
   confirmLabel,
   isSubmitting = false,
+  extraContent,
   onConfirm,
   onCancel,
 }: GitMutationConfirmDialogProps) {
@@ -42,6 +45,7 @@ export function GitMutationConfirmDialog({
         <AlertDialogDescription asChild>
           <div className="space-y-3 text-sm text-muted-foreground">
             <p>{description}</p>
+            {extraContent}
             {warnings.length > 0 ? (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-100">
                 <p className="font-medium">Warnings</p>

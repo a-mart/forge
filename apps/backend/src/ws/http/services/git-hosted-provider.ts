@@ -7,6 +7,9 @@ import type {
   GitPullRequestDetail,
   GitPullRequestListError,
   GitPullRequestListResult,
+  GitPullRequestMergeErrorCode,
+  GitPullRequestMergeMethod,
+  GitPullRequestMergeResult,
   GitPullRequestState,
   GitPullRequestSummary,
   GitSourceContextRef
@@ -65,6 +68,12 @@ const PR_DETAIL_JSON_FIELDS = [
   "deletions",
   "changedFiles",
   "headRefOid"
+].join(",");
+
+const REPO_MERGE_SETTINGS_FIELDS = [
+  "mergeCommitAllowed",
+  "squashMergeAllowed",
+  "rebaseMergeAllowed"
 ].join(",");
 
 export interface GitHubRepoIdentity {
@@ -126,6 +135,12 @@ interface RawGhStatusCheckRollup {
   conclusion?: string;
   name?: string;
   detailsUrl?: string;
+}
+
+interface RawGhRepoMergeSettings {
+  mergeCommitAllowed?: boolean;
+  squashMergeAllowed?: boolean;
+  rebaseMergeAllowed?: boolean;
 }
 
 interface RawGhPullRequest {
@@ -312,6 +327,7 @@ export class GitHostedProviderService {
     }
 
     const summary = toPullRequestSummary(parsed, currentBranch, repo);
+    const allowedMergeMethods = await this.resolveAllowedMergeMethods(repo);
     return {
       ...summary,
       body: typeof parsed.body === "string" ? parsed.body : "",
@@ -322,8 +338,168 @@ export class GitHostedProviderService {
       changedFiles: parsed.changedFiles ?? 0,
       additions: parsed.additions ?? 0,
       deletions: parsed.deletions ?? 0,
-      headSha: parsed.headRefOid ?? ""
+      headSha: parsed.headRefOid ?? "",
+      isForkPullRequest: parsed.isCrossRepository === true,
+      allowedMergeMethods
     };
+  }
+
+  async mergePullRequest(
+    context: GitSourceControlContext,
+    number: number,
+    request: {
+      method: GitPullRequestMergeMethod;
+      expectedHeadSha: string;
+      deleteBranchAfterMerge?: boolean;
+      acknowledgeCheckFailures?: boolean;
+    }
+  ): Promise<GitPullRequestMergeResult> {
+    const providerStatus = await this.buildProviderStatus(context);
+    if (
+      context.notInitialized ||
+      !providerStatus.available ||
+      !providerStatus.authenticated ||
+      !providerStatus.remoteUrl
+    ) {
+      return createMergeFailureResult(number, request.method, {
+        code: "provider_unavailable",
+        message:
+          providerStatus.message ??
+          "GitHub pull request merge is unavailable for this repository context.",
+        errors: [
+          providerStatus.message ??
+            "Install and authenticate GitHub CLI (`gh auth login`) before merging pull requests."
+        ]
+      });
+    }
+
+    const repo = parseGitHubRepoFromRemoteUrl(providerStatus.remoteUrl);
+    if (!repo) {
+      return createMergeFailureResult(number, request.method, {
+        code: "provider_unavailable",
+        message: "Pull request merge requires a GitHub remote.",
+        errors: ["Pull request merge requires a GitHub remote."]
+      });
+    }
+
+    let detail: GitPullRequestDetail;
+    try {
+      const fetched = await this.getPullRequestDetail(context, number);
+      if (!fetched) {
+        return createMergeFailureResult(number, request.method, {
+          code: "not_found",
+          message: "Pull request was not found.",
+          errors: ["Pull request was not found."]
+        });
+      }
+
+      detail = fetched;
+    } catch (error) {
+      if (error instanceof GitHostedProviderError) {
+        return createMergeFailureResult(number, request.method, {
+          code: mapProviderErrorToMergeCode(error.code),
+          message: error.message,
+          errors: [error.message]
+        });
+      }
+
+      throw error;
+    }
+
+    const expectedHeadSha = request.expectedHeadSha.trim();
+    if (expectedHeadSha.length === 0) {
+      throw new Error("expectedHeadSha must be a non-empty string.");
+    }
+
+    const preflight = evaluateMergePreflight(detail, request.method, {
+      expectedHeadSha,
+      deleteBranchAfterMerge: request.deleteBranchAfterMerge === true,
+      acknowledgeCheckFailures: request.acknowledgeCheckFailures === true
+    });
+    if (!preflight.allowed) {
+      return {
+        success: false,
+        number,
+        method: request.method,
+        errors: preflight.errors,
+        warnings: preflight.warnings,
+        errorCode: preflight.errorCode,
+        detail,
+        invalidateCaches: false
+      };
+    }
+
+    const mergeArgs = [
+      "pr",
+      "merge",
+      String(number),
+      "--repo",
+      `${repo.owner}/${repo.repo}`,
+      mergeMethodFlag(request.method),
+      "--match-head-commit",
+      detail.headSha
+    ];
+
+    if (request.deleteBranchAfterMerge === true) {
+      mergeArgs.push("--delete-branch");
+    }
+
+    const mergeResult = await this.runGh(mergeArgs);
+    if (mergeResult.exitCode !== 0) {
+      const failure = classifyMergeGhFailure(mergeResult);
+      return {
+        success: false,
+        number,
+        method: request.method,
+        errors: [failure.message],
+        warnings: preflight.warnings,
+        errorCode: failure.code,
+        detail,
+        invalidateCaches: false
+      };
+    }
+
+    let refreshedDetail: GitPullRequestDetail | undefined;
+    try {
+      refreshedDetail = (await this.getPullRequestDetail(context, number)) ?? undefined;
+    } catch {
+      refreshedDetail = undefined;
+    }
+
+    return {
+      success: true,
+      number,
+      method: request.method,
+      mergedAt: refreshedDetail?.mergedAt ?? new Date().toISOString(),
+      state: refreshedDetail?.state ?? "merged",
+      providerUrl: refreshedDetail?.providerUrl ?? detail.providerUrl,
+      branchDeleted: request.deleteBranchAfterMerge === true,
+      errors: [],
+      warnings: preflight.warnings,
+      detail: refreshedDetail ?? {
+        ...detail,
+        state: "merged",
+        mergedAt: detail.mergedAt ?? new Date().toISOString()
+      },
+      invalidateCaches: true
+    };
+  }
+
+  private async resolveAllowedMergeMethods(
+    repo: GitHubRepoIdentity
+  ): Promise<GitPullRequestMergeMethod[]> {
+    const result = await this.runGh([
+      "repo",
+      "view",
+      `${repo.owner}/${repo.repo}`,
+      "--json",
+      REPO_MERGE_SETTINGS_FIELDS
+    ]);
+    if (result.exitCode !== 0) {
+      return ["squash", "merge", "rebase"];
+    }
+
+    return parseAllowedMergeMethods(result.stdout);
   }
 
   private buildListResultShell(
@@ -864,5 +1040,276 @@ function toContextRef(context: GitSourceControlContext): GitSourceContextRef {
   return {
     repoTarget: context.repoTarget,
     worktreeId: context.worktreeId
+  };
+}
+
+export interface MergePreflightEvaluation {
+  allowed: boolean;
+  errors: string[];
+  warnings: string[];
+  errorCode?: GitPullRequestMergeErrorCode;
+}
+
+export function evaluateMergePreflight(
+  detail: GitPullRequestDetail,
+  method: GitPullRequestMergeMethod,
+  options: {
+    expectedHeadSha: string;
+    deleteBranchAfterMerge: boolean;
+    acknowledgeCheckFailures: boolean;
+  }
+): MergePreflightEvaluation {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  if (detail.state !== "open") {
+    return {
+      allowed: false,
+      errors: [`Pull request #${detail.number} is ${detail.state} and cannot be merged.`],
+      warnings,
+      errorCode: "closed"
+    };
+  }
+
+  if (detail.isDraft) {
+    return {
+      allowed: false,
+      errors: ["Draft pull requests cannot be merged."],
+      warnings,
+      errorCode: "draft"
+    };
+  }
+
+  if (detail.headSha.trim().length === 0) {
+    return {
+      allowed: false,
+      errors: ["Pull request head commit is unavailable. Refresh and try again."],
+      warnings,
+      errorCode: "unknown"
+    };
+  }
+
+  if (detail.headSha !== options.expectedHeadSha.trim()) {
+    return {
+      allowed: false,
+      errors: [
+        "Pull request head commit changed since you opened merge confirmation. Refresh and try again."
+      ],
+      warnings,
+      errorCode: "stale_head"
+    };
+  }
+
+  if (detail.mergeable === false) {
+    return {
+      allowed: false,
+      errors: [
+        detail.mergeBlockedReason
+          ? `Pull request is not mergeable: ${detail.mergeBlockedReason}.`
+          : "Pull request is not mergeable."
+      ],
+      warnings,
+      errorCode: "not_mergeable"
+    };
+  }
+
+  const allowedMethods = detail.allowedMergeMethods ?? ["squash", "merge", "rebase"];
+  if (!allowedMethods.includes(method)) {
+    return {
+      allowed: false,
+      errors: [`Merge method "${method}" is not allowed for this repository.`],
+      warnings,
+      errorCode: "method_not_allowed"
+    };
+  }
+
+  if (options.deleteBranchAfterMerge && detail.isForkPullRequest) {
+    return {
+      allowed: false,
+      errors: ["Deleting the head branch is not supported for fork pull requests."],
+      warnings,
+      errorCode: "branch_delete_unsafe"
+    };
+  }
+
+  if (detail.checkStatus === "failure" && !options.acknowledgeCheckFailures) {
+    return {
+      allowed: false,
+      errors: ["Checks are failing. Review the check summary or confirm merge anyway if GitHub policy allows."],
+      warnings,
+      errorCode: "checks_blocked"
+    };
+  }
+
+  if (detail.checkStatus === "pending" && !options.acknowledgeCheckFailures) {
+    return {
+      allowed: false,
+      errors: ["Checks are still pending. Wait for completion or confirm merge anyway if GitHub policy allows."],
+      warnings,
+      errorCode: "checks_pending"
+    };
+  }
+
+  if (detail.checkStatus === "failure" && options.acknowledgeCheckFailures) {
+    warnings.push("Proceeding despite failing checks. GitHub branch protection may still block the merge.");
+  }
+
+  if (detail.checkStatus === "pending" && options.acknowledgeCheckFailures) {
+    warnings.push("Proceeding while checks are pending. GitHub branch protection may still block the merge.");
+  }
+
+  if (detail.mergeBlockedReason) {
+    warnings.push(`GitHub reports merge state: ${detail.mergeBlockedReason}.`);
+  }
+
+  return {
+    allowed: true,
+    errors,
+    warnings
+  };
+}
+
+export function parseAllowedMergeMethods(stdout: string): GitPullRequestMergeMethod[] {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) {
+    return ["squash", "merge", "rebase"];
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as RawGhRepoMergeSettings;
+    const methods: GitPullRequestMergeMethod[] = [];
+    if (parsed.squashMergeAllowed !== false) {
+      methods.push("squash");
+    }
+    if (parsed.mergeCommitAllowed !== false) {
+      methods.push("merge");
+    }
+    if (parsed.rebaseMergeAllowed !== false) {
+      methods.push("rebase");
+    }
+
+    return methods.length > 0 ? methods : ["squash", "merge", "rebase"];
+  } catch {
+    return ["squash", "merge", "rebase"];
+  }
+}
+
+export function classifyMergeGhFailure(result: GhExecResult): {
+  code: GitPullRequestMergeErrorCode;
+  message: string;
+} {
+  const providerError = classifyGhFailure(result);
+  const normalized = `${result.stderr}\n${result.stdout}`.toLowerCase();
+
+  if (
+    normalized.includes("head branch was modified") ||
+    normalized.includes("head branch is out of date") ||
+    normalized.includes("match-head-commit")
+  ) {
+    return {
+      code: "stale_head",
+      message: "Pull request head commit changed before merge completed. Refresh and try again."
+    };
+  }
+
+  if (
+    normalized.includes("required status check") ||
+    normalized.includes("checks have not passed") ||
+    normalized.includes("review required")
+  ) {
+    return {
+      code: "checks_blocked",
+      message: providerError.message
+    };
+  }
+
+  if (normalized.includes("not mergeable") || normalized.includes("merge conflict")) {
+    return {
+      code: "not_mergeable",
+      message: providerError.message
+    };
+  }
+
+  if (normalized.includes("squash merge") && normalized.includes("not allowed")) {
+    return {
+      code: "method_not_allowed",
+      message: providerError.message
+    };
+  }
+
+  if (normalized.includes("merge commit") && normalized.includes("not allowed")) {
+    return {
+      code: "method_not_allowed",
+      message: providerError.message
+    };
+  }
+
+  if (normalized.includes("rebase merge") && normalized.includes("not allowed")) {
+    return {
+      code: "method_not_allowed",
+      message: providerError.message
+    };
+  }
+
+  return {
+    code: mapProviderErrorToMergeCode(providerError.code),
+    message: providerError.message
+  };
+}
+
+function mergeMethodFlag(method: GitPullRequestMergeMethod): string {
+  if (method === "squash") {
+    return "--squash";
+  }
+
+  if (method === "rebase") {
+    return "--rebase";
+  }
+
+  return "--merge";
+}
+
+function mapProviderErrorToMergeCode(
+  code: GitHostedProviderErrorCode
+): GitPullRequestMergeErrorCode {
+  if (code === "not_found") {
+    return "not_found";
+  }
+  if (code === "auth") {
+    return "auth";
+  }
+  if (code === "permission") {
+    return "permission";
+  }
+  if (code === "rate_limit") {
+    return "rate_limit";
+  }
+  if (code === "timeout") {
+    return "timeout";
+  }
+  if (code === "network") {
+    return "network";
+  }
+
+  return "unknown";
+}
+
+function createMergeFailureResult(
+  number: number,
+  method: GitPullRequestMergeMethod,
+  options: {
+    code: GitPullRequestMergeErrorCode;
+    message: string;
+    errors: string[];
+  }
+): GitPullRequestMergeResult {
+  return {
+    success: false,
+    number,
+    method,
+    errors: options.errors,
+    warnings: [],
+    errorCode: options.code,
+    invalidateCaches: false
   };
 }
