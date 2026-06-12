@@ -123,6 +123,34 @@ describe('SourceControlBranchActions', () => {
     })
   })
 
+  it('shows blocking mutation-preflight issues inside the confirmation dialog', async () => {
+    fetchMutationPreflightMock.mockResolvedValue({
+      allowed: false,
+      issues: [
+        {
+          code: 'ignored_untracked_would_be_overwritten',
+          message: 'Fast-forward pull from "origin/main" would overwrite ignored local files: "ignored.txt".',
+          severity: 'block',
+        },
+      ],
+      currentBranch: 'main',
+      currentHead: 'abc123',
+      statusHash: 'status123',
+    })
+
+    renderActions({ isDirty: false })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(getByText(document.body, 'Fast-forward pull from "origin/main" would overwrite ignored local files: "ignored.txt".')).toBeTruthy()
+    })
+
+    expect((getByRole(document.body, 'button', { name: 'Pull fast-forward' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('passes worktreeId and expected guards in mutation requests', async () => {
     pullGitFfOnlyMock.mockResolvedValue({
       success: true,

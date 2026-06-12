@@ -509,12 +509,14 @@ export async function fetchMutationPreflight(
     worktreeId?: string
     action: 'fetch' | 'switch-branch' | 'create-branch' | 'pull-ff-only'
     targetBranch?: string
+    startPoint?: string
     remote?: string
   },
 ): Promise<GitMutationPreflight> {
   const searchParams = buildGitRequestParams(params.agentId, params.repoTarget, {
     action: params.action,
     targetBranch: params.targetBranch,
+    startPoint: params.startPoint,
     remote: params.remote,
   }, params.worktreeId)
 

@@ -51,6 +51,7 @@ export function SourceControlBranchActions({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [fetchState, setFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [preflightWarnings, setPreflightWarnings] = useState<string[]>([])
+  const [preflightBlockedReasons, setPreflightBlockedReasons] = useState<string[]>([])
   const [actionWarning, setActionWarning] = useState<string | null>(null)
 
   const branchData = branchesQuery.data
@@ -91,6 +92,7 @@ export function SourceControlBranchActions({
   useEffect(() => {
     if (!pendingMutation || !agentId) {
       setPreflightWarnings([])
+      setPreflightBlockedReasons([])
       return
     }
 
@@ -113,6 +115,7 @@ export function SourceControlBranchActions({
           : pendingMutation.kind === 'create'
             ? pendingMutation.branch
             : undefined,
+      startPoint: pendingMutation.kind === 'create' ? pendingMutation.startPoint : undefined,
       remote: pendingMutation.kind === 'pull' ? 'origin' : undefined,
     })
       .then((preflight) => {
@@ -125,10 +128,16 @@ export function SourceControlBranchActions({
             .filter((issue) => issue.severity === 'warn')
             .map((issue) => issue.message),
         )
+        setPreflightBlockedReasons(
+          preflight.issues
+            .filter((issue) => issue.severity === 'block')
+            .map((issue) => issue.message),
+        )
       })
       .catch(() => {
         if (!cancelled) {
           setPreflightWarnings([])
+          setPreflightBlockedReasons([])
         }
       })
 
@@ -184,6 +193,8 @@ export function SourceControlBranchActions({
       return
     }
 
+    setActionError(null)
+    setActionWarning(null)
     setPendingMutation({ kind: 'switch', branch: branch.name })
     setBranchMenuOpen(false)
   }, [])
@@ -194,6 +205,8 @@ export function SourceControlBranchActions({
       return
     }
 
+    setActionError(null)
+    setActionWarning(null)
     setPendingMutation({
       kind: 'create',
       branch: trimmed,
@@ -256,6 +269,7 @@ export function SourceControlBranchActions({
       setNewBranchName('')
       setCreateFromRemote(null)
       setPreflightWarnings([])
+      setPreflightBlockedReasons([])
       invalidateAfterMutation()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Git action failed.')
@@ -278,12 +292,14 @@ export function SourceControlBranchActions({
         title: `Switch to ${pendingMutation.branch}?`,
         description: `${worktreeCopy} Forge will switch only when the worktree is clean and no active agents block the operation.`,
         confirmLabel: 'Switch branch',
-        blockedReasons: [
+        blockedReasons: uniqueStrings([
           ...(isDirty ? ['The worktree has uncommitted changes.'] : []),
           ...(branchData.branches.find((branch) => branch.name === pendingMutation.branch)?.isCheckedOutInAnotherWorktree
             ? [`${pendingMutation.branch} is checked out in another worktree.`]
             : []),
-        ],
+          ...preflightBlockedReasons,
+          ...(actionError ? [actionError] : []),
+        ]),
         warnings: preflightWarnings,
       }
     }
@@ -295,7 +311,11 @@ export function SourceControlBranchActions({
           ? `${worktreeCopy} A new local branch will be created from ${pendingMutation.startPoint}.`
           : `${worktreeCopy} A new local branch will be created from the current HEAD.`,
         confirmLabel: 'Create branch',
-        blockedReasons: isDirty ? ['The worktree has uncommitted changes.'] : [],
+        blockedReasons: uniqueStrings([
+          ...(isDirty ? ['The worktree has uncommitted changes.'] : []),
+          ...preflightBlockedReasons,
+          ...(actionError ? [actionError] : []),
+        ]),
         warnings: preflightWarnings,
       }
     }
@@ -304,10 +324,23 @@ export function SourceControlBranchActions({
       title: 'Fast-forward pull?',
       description: `${worktreeCopy} Forge will fetch origin and merge only when a fast-forward is possible. Merge commits and autostash are never used.`,
       confirmLabel: 'Pull fast-forward',
-      blockedReasons: pullBlockedReasons,
+      blockedReasons: uniqueStrings([
+        ...pullBlockedReasons,
+        ...preflightBlockedReasons,
+        ...(actionError ? [actionError] : []),
+      ]),
       warnings: preflightWarnings,
     }
-  }, [branchData, isDirty, pendingMutation, preflightWarnings, pullBlockedReasons, selectedWorktreePath])
+  }, [
+    actionError,
+    branchData,
+    isDirty,
+    pendingMutation,
+    preflightBlockedReasons,
+    preflightWarnings,
+    pullBlockedReasons,
+    selectedWorktreePath,
+  ])
 
   if (mutationsDisabled) {
     return null
@@ -413,7 +446,11 @@ export function SourceControlBranchActions({
           variant="outline"
           size="sm"
           className="h-7 px-2 text-xs"
-          onClick={() => setPendingMutation({ kind: 'pull' })}
+          onClick={() => {
+            setActionError(null)
+            setActionWarning(null)
+            setPendingMutation({ kind: 'pull' })
+          }}
           disabled={pullBlockedReasons.length > 0}
           title={pullBlockedReasons[0]}
         >
@@ -449,4 +486,8 @@ export function SourceControlBranchActions({
       ) : null}
     </>
   )
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values))
 }

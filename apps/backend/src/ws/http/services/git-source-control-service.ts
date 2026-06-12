@@ -59,6 +59,8 @@ interface AgentCwdEntry {
   summary: GitWorktreeAgentSummary;
 }
 
+const IGNORED_OVERWRITE_PATH_LIMIT = 8;
+
 export class GitSourceControlService {
   private readonly diffService = new GitDiffService();
   private readonly hostedProvider: GitHostedProviderService;
@@ -326,6 +328,7 @@ export class GitSourceControlService {
     options: {
       action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only";
       targetBranch?: string;
+      startPoint?: string;
       remote?: string;
     }
   ): Promise<GitMutationPreflight> {
@@ -436,6 +439,11 @@ export class GitSourceControlService {
           severity: "block"
         });
       }
+    }
+
+    const ignoredOverwriteIssue = await this.collectIgnoredOverwritePreflightIssue(git, options);
+    if (ignoredOverwriteIssue) {
+      issues.push(ignoredOverwriteIssue);
     }
 
     if (options.action === "pull-ff-only") {
@@ -582,9 +590,15 @@ export class GitSourceControlService {
       throw new Error(`Invalid branch name: ${branch}`);
     }
 
+    const startPoint = request.startPoint?.trim();
+    if (startPoint && !(await verifyResolvableGitRef(git, startPoint))) {
+      throw new Error(`Invalid startPoint: ${startPoint}`);
+    }
+
     const preflight = await this.validateMutationRequest(swarmManager, context, request, {
       action: "create-branch",
-      targetBranch: branch
+      targetBranch: branch,
+      startPoint
     });
     if (!preflight.allowed) {
       return this.createBlockedMutationResult(context, preflight);
@@ -602,11 +616,6 @@ export class GitSourceControlService {
         statusSummary: await this.readStatusSummary(context.cwd),
         invalidateCaches: false
       };
-    }
-
-    const startPoint = request.startPoint?.trim();
-    if (startPoint && !(await verifyResolvableGitRef(git, startPoint))) {
-      throw new Error(`Invalid startPoint: ${startPoint}`);
     }
 
     const createArgs = startPoint
@@ -686,6 +695,27 @@ export class GitSourceControlService {
       };
     }
 
+    const postFetchIgnoredOverwriteIssue = await this.collectIgnoredOverwritePreflightIssue(git, {
+      action: "pull-ff-only",
+      remote
+    });
+    if (postFetchIgnoredOverwriteIssue) {
+      const blocked = this.createBlockedMutationResult(context, {
+        ...preflight,
+        allowed: false,
+        currentBranch: await resolveCurrentBranch(git),
+        currentHead: await resolveHeadSha(git),
+        statusHash: computeStatusHash(await readPorcelainStatus(git)),
+        issues: [...preflight.issues, postFetchIgnoredOverwriteIssue]
+      }, remote);
+      return {
+        ...blocked,
+        remote,
+        upstream: upstream.ref,
+        fastForward: false
+      };
+    }
+
     const mergeResult = await git.run(["merge", "--ff-only", "@{u}"], { allowFailure: true });
     if (mergeResult.exitCode !== 0) {
       const failed = this.createFailedMutationResult(
@@ -714,6 +744,125 @@ export class GitSourceControlService {
       upstream: upstream.ref,
       fastForward: true
     };
+  }
+
+  private async collectIgnoredOverwritePreflightIssue(
+    git: GitCli,
+    options: {
+      action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only";
+      targetBranch?: string;
+      startPoint?: string;
+      remote?: string;
+    }
+  ): Promise<GitPreflightIssue | null> {
+    const target = await this.resolveIgnoredOverwriteTarget(git, options);
+    if (!target) {
+      return null;
+    }
+
+    const ignoredPaths = await this.listIgnoredUntrackedPaths(git);
+    if (ignoredPaths.length === 0) {
+      return null;
+    }
+
+    const targetTreePaths = await this.listTargetTreePaths(git, target.ref);
+    if (targetTreePaths.length === 0) {
+      return null;
+    }
+
+    const conflicts = findIgnoredTargetTreeConflicts(ignoredPaths, targetTreePaths);
+    if (conflicts.length === 0) {
+      return null;
+    }
+
+    return {
+      code: "ignored_untracked_would_be_overwritten",
+      message: `${target.actionLabel} would overwrite ignored local files that are tracked in ${target.refLabel}: ${formatBoundedPathList(conflicts)}. Move or remove these ignored files before continuing.`,
+      severity: "block"
+    };
+  }
+
+  private async resolveIgnoredOverwriteTarget(
+    git: GitCli,
+    options: {
+      action: "fetch" | "switch-branch" | "create-branch" | "pull-ff-only";
+      targetBranch?: string;
+      startPoint?: string;
+      remote?: string;
+    }
+  ): Promise<{ ref: string; refLabel: string; actionLabel: string } | null> {
+    if (options.action === "switch-branch") {
+      const ref = options.targetBranch?.trim();
+      if (!ref || !(await verifyResolvableGitRef(git, ref))) {
+        return null;
+      }
+
+      return {
+        ref,
+        refLabel: `branch "${ref}"`,
+        actionLabel: `Switching to branch "${ref}"`
+      };
+    }
+
+    if (options.action === "create-branch") {
+      const ref = options.startPoint?.trim();
+      if (!ref || !(await verifyResolvableGitRef(git, ref))) {
+        return null;
+      }
+
+      return {
+        ref,
+        refLabel: `start point "${ref}"`,
+        actionLabel: `Creating a branch from "${ref}"`
+      };
+    }
+
+    if (options.action === "pull-ff-only") {
+      const upstream = await resolveUpstream(git);
+      if (!upstream || !(await verifyResolvableGitRef(git, upstream.ref))) {
+        return null;
+      }
+
+      return {
+        ref: upstream.ref,
+        refLabel: `upstream "${upstream.ref}"`,
+        actionLabel: `Fast-forward pull from "${upstream.ref}"`
+      };
+    }
+
+    return null;
+  }
+
+  private async listIgnoredUntrackedPaths(git: GitCli): Promise<string[]> {
+    const pathSet = new Set<string>();
+    const commands = [
+      ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+      ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]
+    ];
+
+    for (const args of commands) {
+      const result = await git.run(args, { allowFailure: true });
+      if (result.exitCode !== 0) {
+        continue;
+      }
+
+      for (const path of parseNulSeparatedGitPaths(result.stdout)) {
+        pathSet.add(path);
+      }
+    }
+
+    return [...pathSet];
+  }
+
+  private async listTargetTreePaths(git: GitCli, ref: string): Promise<string[]> {
+    const result = await git.run(["ls-tree", "-r", "--name-only", "-z", "--", ref], {
+      allowFailure: true
+    });
+    if (result.exitCode !== 0) {
+      return [];
+    }
+
+    return parseNulSeparatedGitPaths(result.stdout);
   }
 
   private async validateMutationRequest(
@@ -890,6 +1039,49 @@ export class GitSourceControlService {
     const status = await this.diffService.getStatus(cwd);
     return status.summary;
   }
+}
+
+function parseNulSeparatedGitPaths(output: string): string[] {
+  return output
+    .split("\0")
+    .filter((entry) => entry.length > 0)
+    .map((entry) => normalizeGitPath(entry));
+}
+
+function normalizeGitPath(path: string): string {
+  return path.replace(/^\.\//, "").replace(/\\/g, "/");
+}
+
+function findIgnoredTargetTreeConflicts(
+  ignoredPaths: string[],
+  targetTreePaths: string[]
+): string[] {
+  const ignoredFiles = new Set(ignoredPaths.filter((path) => !path.endsWith("/")));
+  const ignoredDirectories = ignoredPaths.filter((path) => path.endsWith("/"));
+  const conflicts = new Set<string>();
+
+  for (const targetPath of targetTreePaths) {
+    if (ignoredFiles.has(targetPath)) {
+      conflicts.add(targetPath);
+      continue;
+    }
+
+    for (const ignoredDirectory of ignoredDirectories) {
+      const directoryWithoutSlash = ignoredDirectory.slice(0, -1);
+      if (targetPath === directoryWithoutSlash || targetPath.startsWith(ignoredDirectory)) {
+        conflicts.add(targetPath);
+        break;
+      }
+    }
+  }
+
+  return [...conflicts].sort((left, right) => left.localeCompare(right));
+}
+
+function formatBoundedPathList(paths: string[]): string {
+  const shown = paths.slice(0, IGNORED_OVERWRITE_PATH_LIMIT).map((path) => `"${path}"`);
+  const remaining = paths.length - shown.length;
+  return remaining > 0 ? `${shown.join(", ")} and ${remaining} more` : shown.join(", ");
 }
 
 async function resolveContextPath(context: GitSourceControlContext): Promise<string | null> {

@@ -130,6 +130,7 @@ export function createGitSourceControlRoutes(options: {
           const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
           const action = parsePreflightAction(requestUrl.searchParams.get("action"));
           const targetBranch = optionalTrimmedQuery(requestUrl.searchParams.get("targetBranch"));
+          const startPoint = optionalTrimmedQuery(requestUrl.searchParams.get("startPoint"));
           const remote = optionalTrimmedQuery(requestUrl.searchParams.get("remote"));
           const context = await resolveGitSourceControlContext(
             swarmManager,
@@ -140,6 +141,7 @@ export function createGitSourceControlRoutes(options: {
           const payload = await service.buildMutationPreflight(swarmManager, context, {
             action,
             targetBranch,
+            startPoint,
             remote
           });
           sendJson(response, 200, payload as unknown as Record<string, unknown>);
