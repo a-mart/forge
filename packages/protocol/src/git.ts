@@ -106,3 +106,160 @@ export interface GitCommitDetail {
   metadata?: GitCommitMetadata | null
   notInitialized?: boolean
 }
+
+// --- Source Control workspace (additive; existing repoTarget=workspace defaults unchanged) ---
+
+export type GitSourceContextKind = 'workspace' | 'versioning' | 'worktree'
+
+export interface GitSourceContextRef {
+  repoTarget: GitRepoTarget
+  worktreeId?: string
+}
+
+export interface GitWorktreeAgentSummary {
+  agentId: string
+  displayName: string
+  role: 'manager' | 'worker'
+  status: string
+}
+
+export interface GitWorktreeSummary {
+  id: string
+  path: string
+  repoRoot: string
+  branch: string | null
+  headSha: string | null
+  isMainWorktree: boolean
+  isCurrentContext: boolean
+  locked?: boolean
+  prunable?: boolean
+  dirty: boolean
+  dirtySummary: { filesChanged: number; insertions: number; deletions: number }
+  activeAgents: GitWorktreeAgentSummary[]
+}
+
+export interface GitWorktreeListResult extends GitRepoMetadata {
+  worktrees: GitWorktreeSummary[]
+  context: GitSourceContextRef
+  notInitialized?: boolean
+}
+
+export type GitBranchKind = 'local' | 'remote' | 'current'
+
+export interface GitBranchSummary {
+  name: string
+  kind: GitBranchKind
+  headSha: string | null
+  upstream?: string | null
+  ahead?: number
+  behind?: number
+  isCheckedOutInAnotherWorktree?: boolean
+}
+
+export interface GitBranchListResult extends GitRepoMetadata {
+  branches: GitBranchSummary[]
+  currentBranch: string | null
+  context: GitSourceContextRef
+  notInitialized?: boolean
+}
+
+export type GitPreflightIssueSeverity = 'block' | 'warn'
+
+export interface GitPreflightIssue {
+  code: string
+  message: string
+  severity: GitPreflightIssueSeverity
+}
+
+export interface GitMutationPreflight {
+  allowed: boolean
+  issues: GitPreflightIssue[]
+  currentBranch: string | null
+  currentHead: string | null
+  statusHash: string | null
+}
+
+export interface GitMutationResult extends GitRepoMetadata {
+  success: boolean
+  context: GitSourceContextRef
+  currentBranch: string | null
+  currentHead: string | null
+  warnings: string[]
+  errors: string[]
+  statusSummary: { filesChanged: number; insertions: number; deletions: number }
+  invalidateCaches: boolean
+}
+
+export interface GitFetchResult extends GitMutationResult {
+  remote: string
+}
+
+export interface GitPullResult extends GitMutationResult {
+  remote: string
+  upstream: string
+  fastForward: boolean
+}
+
+export type GitHostedProviderKind = 'github' | 'none'
+
+export interface GitHostedProviderStatus {
+  provider: GitHostedProviderKind
+  available: boolean
+  authenticated: boolean
+  remoteUrl: string | null
+  message?: string
+}
+
+export type GitPullRequestState = 'open' | 'closed' | 'merged'
+
+export interface GitPullRequestSummary {
+  number: number
+  title: string
+  state: GitPullRequestState
+  author: string
+  createdAt: string
+  updatedAt: string
+  headRef: string
+  baseRef: string
+  isDraft: boolean
+  isCurrentBranch: boolean
+  providerUrl?: string
+}
+
+export interface GitPullRequestCheckSummary {
+  name: string
+  status: 'pending' | 'success' | 'failure' | 'neutral'
+  url?: string
+}
+
+export interface GitPullRequestDetail extends GitPullRequestSummary {
+  body: string
+  mergeable: boolean | null
+  mergeBlockedReason?: string
+  checks: GitPullRequestCheckSummary[]
+  reviewDecision?: string | null
+  changedFiles: number
+  additions: number
+  deletions: number
+  headSha: string
+}
+
+export type GitPullRequestMergeMethod = 'squash' | 'merge' | 'rebase'
+
+export interface GitPullRequestMergeRequest {
+  agentId: string
+  repoTarget?: GitRepoTarget
+  worktreeId?: string
+  method: GitPullRequestMergeMethod
+  expectedHead: string
+  deleteBranchAfterMerge?: boolean
+}
+
+export interface GitPullRequestMergeResult {
+  success: boolean
+  number: number
+  merged: boolean
+  message?: string
+  providerUrl?: string
+  errors: string[]
+}
