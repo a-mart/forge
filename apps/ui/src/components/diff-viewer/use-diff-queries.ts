@@ -5,9 +5,12 @@ import type {
   GitDiffResult,
   GitFetchRequest,
   GitFetchResult,
+  GitHostedProviderStatus,
   GitLogResult,
   GitMutationResult,
   GitPullFfOnlyRequest,
+  GitPullRequestDetail,
+  GitPullRequestListResult,
   GitPullResult,
   GitRepoTarget,
   GitStatusResult,
@@ -16,6 +19,8 @@ import type {
 } from '@forge/protocol'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+
+export type GitPullRequestsQueryResult = ReturnType<typeof useGitPullRequests>
 
 export type {
   GitBranchListResult,
@@ -316,6 +321,96 @@ export function useGitWorktrees(
   })
 }
 
+export function useGitProviderStatus(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  worktreeId?: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  const enabled = options.enabled ?? !!agentId
+  const queryKey = buildGitQueryKey('git:provider-status', agentId, repoTarget, worktreeId)
+  const fetchFn = useCallback(
+    () =>
+      fetchGitApi<GitHostedProviderStatus>(
+        wsUrl,
+        '/api/git/provider/status',
+        buildGitRequestParams(agentId!, repoTarget, {}, worktreeId),
+      ),
+    [wsUrl, agentId, repoTarget, worktreeId],
+  )
+
+  return useSimpleQuery<GitHostedProviderStatus>(queryKey, fetchFn, {
+    enabled: enabled && !!agentId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  })
+}
+
+export function useGitPullRequests(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  worktreeId?: string | null,
+  options: { enabled?: boolean; closedLimit?: number } = {},
+) {
+  const enabled = options.enabled ?? !!agentId
+  const queryKey = buildGitQueryKey(
+    'git:pull-requests',
+    agentId,
+    repoTarget,
+    worktreeId,
+    options.closedLimit ?? 10,
+  )
+  const fetchFn = useCallback(
+    () =>
+      fetchGitApi<GitPullRequestListResult>(
+        wsUrl,
+        '/api/git/pull-requests',
+        buildGitRequestParams(
+          agentId!,
+          repoTarget,
+          { closedLimit: options.closedLimit ?? 10 },
+          worktreeId,
+        ),
+      ),
+    [wsUrl, agentId, repoTarget, worktreeId, options.closedLimit],
+  )
+
+  return useSimpleQuery<GitPullRequestListResult>(queryKey, fetchFn, {
+    enabled: enabled && !!agentId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  })
+}
+
+export function useGitPullRequestDetail(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  number: number | null,
+  worktreeId?: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  const enabled = (options.enabled ?? !!agentId) && number != null
+  const queryKey = buildGitQueryKey('git:pull-request-detail', agentId, repoTarget, worktreeId, number)
+  const fetchFn = useCallback(
+    () =>
+      fetchGitApi<GitPullRequestDetail>(
+        wsUrl,
+        `/api/git/pull-requests/${number}`,
+        buildGitRequestParams(agentId!, repoTarget, {}, worktreeId),
+      ),
+    [wsUrl, agentId, repoTarget, number, worktreeId],
+  )
+
+  return useSimpleQuery<GitPullRequestDetail>(queryKey, fetchFn, {
+    enabled: enabled && !!agentId && number != null,
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
+  })
+}
+
 export function useGitDiff(
   wsUrl: string,
   agentId: string | null,
@@ -470,6 +565,9 @@ export function invalidateGitCaches(options?: { agentId?: string | null; repoTar
       parsed.scope !== 'git:status' &&
       parsed.scope !== 'git:branches' &&
       parsed.scope !== 'git:worktrees' &&
+      parsed.scope !== 'git:pull-requests' &&
+      parsed.scope !== 'git:provider-status' &&
+      parsed.scope !== 'git:pull-request-detail' &&
       parsed.scope !== 'git:diff' &&
       parsed.scope !== 'git:log'
     ) {

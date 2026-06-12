@@ -11,6 +11,9 @@ import type {
   GitPreflightIssue,
   GitPullFfOnlyRequest,
   GitPullResult,
+  GitHostedProviderStatus,
+  GitPullRequestDetail,
+  GitPullRequestListResult,
   GitSourceContextRef,
   GitSwitchBranchRequest,
   GitWorktreeAgentSummary,
@@ -42,6 +45,10 @@ import {
 } from "../../../versioning/git-source-control-helpers.js";
 import type { GitSourceControlContext } from "../shared/route-helpers.js";
 import { GitDiffService } from "./git-diff-service.js";
+import {
+  GitHostedProviderService,
+  type GitHostedProviderOptions
+} from "./git-hosted-provider.js";
 
 interface AgentCwdEntry {
   normalizedCwd: string;
@@ -50,6 +57,30 @@ interface AgentCwdEntry {
 
 export class GitSourceControlService {
   private readonly diffService = new GitDiffService();
+  private readonly hostedProvider: GitHostedProviderService;
+
+  constructor(options: { hostedProvider?: GitHostedProviderService; hostedProviderOptions?: GitHostedProviderOptions } = {}) {
+    this.hostedProvider =
+      options.hostedProvider ?? new GitHostedProviderService(options.hostedProviderOptions);
+  }
+
+  async getProviderStatus(context: GitSourceControlContext): Promise<GitHostedProviderStatus> {
+    return this.hostedProvider.getProviderStatus(context);
+  }
+
+  async listPullRequests(
+    context: GitSourceControlContext,
+    options: { openLimit?: number; closedLimit?: number } = {}
+  ): Promise<GitPullRequestListResult> {
+    return this.hostedProvider.listPullRequests(context, options);
+  }
+
+  async getPullRequestDetail(
+    context: GitSourceControlContext,
+    number: number
+  ): Promise<GitPullRequestDetail | null> {
+    return this.hostedProvider.getPullRequestDetail(context, number);
+  }
 
   async listWorktrees(
     swarmManager: SwarmManager,

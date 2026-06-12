@@ -8,9 +8,16 @@ import { DiffStatusBar } from './DiffStatusBar'
 import { ChangesView } from './ChangesView'
 import { HistoryView, type HistoryStatusInfo } from './HistoryView'
 import { WorktreesView } from './WorktreesView'
+import { PullRequestsTab } from './PullRequestsTab'
 import type { KnowledgeQuickFilterId } from './knowledge-surface'
 import { SourceControlBranchActions } from './SourceControlBranchActions'
-import { useGitBranches, useGitStatus, useGitWorktrees, invalidateGitCaches } from './use-diff-queries'
+import {
+  useGitBranches,
+  useGitPullRequests,
+  useGitStatus,
+  useGitWorktrees,
+  invalidateGitCaches,
+} from './use-diff-queries'
 
 export interface DiffViewerInitialState {
   initialRepoTarget?: GitRepoTarget
@@ -26,6 +33,7 @@ interface DiffViewerDialogProps extends DiffViewerInitialState {
   wsUrl: string
   agentId: string | null
   isCortex: boolean
+  onBrowseWorktreeFiles?: (worktree: GitWorktreeSummary) => void
 }
 
 interface DiffViewerContentProps extends DiffViewerInitialState {
@@ -98,12 +106,17 @@ export function DiffViewerContent({
   const effectiveWorktreeId = repoTarget === 'workspace' ? selectedWorktreeId : null
   const shouldLoadWorktrees =
     active && !!agentId && repoTarget === 'workspace' && activeTab === 'worktrees'
+  const shouldLoadPullRequests =
+    active && !!agentId && repoTarget === 'workspace' && activeTab === 'pull-requests'
   const statusQuery = useGitStatus(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId)
   const branchesQuery = useGitBranches(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId, {
     enabled: active && !!agentId && repoTarget === 'workspace',
   })
   const worktreesQuery = useGitWorktrees(wsUrl, active ? agentId : null, repoTarget, {
     enabled: shouldLoadWorktrees,
+  })
+  const pullRequestsQuery = useGitPullRequests(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId, {
+    enabled: shouldLoadPullRequests,
   })
 
   const handleRefresh = useCallback(() => {
@@ -114,7 +127,10 @@ export function DiffViewerContent({
     if (activeTab === 'worktrees') {
       worktreesQuery.refetch()
     }
-  }, [activeTab, agentId, branchesQuery, repoTarget, statusQuery, worktreesQuery])
+    if (activeTab === 'pull-requests') {
+      pullRequestsQuery.refetch()
+    }
+  }, [activeTab, agentId, branchesQuery, pullRequestsQuery, repoTarget, statusQuery, worktreesQuery])
 
   const handleRepoTargetChange = useCallback((nextTarget: GitRepoTarget) => {
     setRepoTarget(nextTarget)
@@ -163,7 +179,8 @@ export function DiffViewerContent({
         isRefreshing={
           statusQuery.isLoading ||
           branchesQuery.isLoading ||
-          (shouldLoadWorktrees && worktreesQuery.isLoading)
+          (shouldLoadWorktrees && worktreesQuery.isLoading) ||
+          (shouldLoadPullRequests && pullRequestsQuery.isLoading)
         }
         onRefresh={handleRefresh}
         onClose={onClose}
@@ -221,9 +238,11 @@ export function DiffViewerContent({
             onBrowseWorktree={handleBrowseWorktree}
           />
         ) : (
-          <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
-            Pull request browsing is planned for a later Source Control phase. No PR or GitHub mutations are available here yet.
-          </div>
+          <PullRequestsTab
+            agentId={active ? agentId : null}
+            currentBranch={statusQuery.data?.branch ?? contextWorktree?.branch ?? null}
+            pullRequestsQuery={pullRequestsQuery}
+          />
         )}
       </div>
 
@@ -252,7 +271,17 @@ export function DiffViewerContent({
           className="flex h-7 shrink-0 items-center border-t border-border/60 bg-card/80 px-3 text-xs text-muted-foreground"
           aria-live="polite"
         >
-          Pull requests are read-only placeholder content in this phase.
+          <span>{pullRequestsQuery.data?.open.length ?? 0} open</span>
+          <span className="mx-1.5 opacity-40">·</span>
+          <span>{pullRequestsQuery.data?.recentlyClosed.length ?? 0} recently closed</span>
+          {pullRequestsQuery.data?.currentBranchPullRequest ? (
+            <>
+              <span className="mx-1.5 opacity-40">·</span>
+              <span className="truncate">
+                Current branch PR #{pullRequestsQuery.data.currentBranchPullRequest.number}
+              </span>
+            </>
+          ) : null}
         </div>
       ) : historyStatus ? (
         <div
@@ -291,6 +320,7 @@ export function DiffViewerDialog({
   initialSha,
   initialFile,
   initialQuickFilter,
+  onBrowseWorktreeFiles,
 }: DiffViewerDialogProps) {
   const handleClose = useCallback(() => {
     onOpenChange(false)
@@ -327,6 +357,7 @@ export function DiffViewerDialog({
             agentId={agentId}
             isCortex={isCortex}
             onClose={handleClose}
+            onBrowseWorktreeFiles={onBrowseWorktreeFiles}
             initialRepoTarget={initialRepoTarget}
             initialTab={initialTab}
             initialSha={initialSha}

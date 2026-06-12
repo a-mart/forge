@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,9 @@ import type {
   GitBranchListResult,
   GitFetchResult,
   GitMutationResult,
+  GitHostedProviderStatus,
+  GitPullRequestDetail,
+  GitPullRequestListResult,
   GitPullResult,
   GitWorktreeListResult
 } from "@forge/protocol";
@@ -372,6 +375,59 @@ describe("git-source-control-routes", () => {
     expect(mutation.payload.success).toBe(false);
     expect(mutation.payload.errors.join(" ")).toContain("uncommitted changes");
   });
+
+  it("returns degraded provider status when gh is unavailable", async () => {
+    const server = await createPullRequestTestServer({
+      ghAuth: "ok",
+      ghBinary: "/definitely/missing/gh"
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/provider/status?agentId=alpha--s1`);
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitHostedProviderStatus;
+    expect(payload.provider).toBe("github");
+    expect(payload.available).toBe(false);
+    expect(payload.authenticated).toBe(false);
+  });
+
+  it("returns unauthenticated provider status from fake gh auth failure", async () => {
+    const server = await createPullRequestTestServer({ ghAuth: "fail" });
+
+    const response = await fetch(`${server.baseUrl}/api/git/provider/status?agentId=alpha--s1`);
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitHostedProviderStatus;
+    expect(payload.provider).toBe("github");
+    expect(payload.available).toBe(true);
+    expect(payload.authenticated).toBe(false);
+    expect(payload.message).toContain("gh auth login");
+  });
+
+  it("lists open and recently closed pull requests with current branch highlight", async () => {
+    const server = await createPullRequestTestServer({ ghAuth: "ok", branch: "feature/git-source-control-workspace" });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests?agentId=alpha--s1&closedLimit=5`);
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitPullRequestListResult;
+    expect(payload.open).toHaveLength(1);
+    expect(payload.recentlyClosed).toHaveLength(1);
+    expect(payload.open[0]?.isCurrentBranch).toBe(true);
+    expect(payload.currentBranchPullRequest?.number).toBe(428);
+  });
+
+  it("returns pull request detail for a selected number", async () => {
+    const server = await createPullRequestTestServer({ ghAuth: "ok" });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests/428?agentId=alpha--s1`);
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitPullRequestDetail;
+    expect(payload.number).toBe(428);
+    expect(payload.mergeable).toBe(true);
+    expect(payload.checks.length).toBeGreaterThan(0);
+  });
 });
 
 async function createSourceControlTestServer(options: {
@@ -533,10 +589,16 @@ function createWorker(
   };
 }
 
-async function initGitRepo(cwd: string, relativePath: string, content: string, message: string): Promise<void> {
+async function initGitRepo(
+  cwd: string,
+  relativePath: string,
+  content: string,
+  message: string,
+  branch = "main"
+): Promise<void> {
   await mkdir(join(cwd, dirnameSafe(relativePath)), { recursive: true });
   await writeFile(join(cwd, relativePath), content, "utf8");
-  await execGit(cwd, ["init", "-b", "main"]);
+  await execGit(cwd, ["init", "-b", branch]);
   await execGit(cwd, ["config", "user.name", "Forge Test"]);
   await execGit(cwd, ["config", "user.email", "forge-test@example.com"]);
   await execGit(cwd, ["add", relativePath]);
@@ -680,4 +742,169 @@ async function revParse(cwd: string, ref: string): Promise<string> {
     encoding: "utf8"
   });
   return result.stdout.trim();
+}
+
+async function createPullRequestTestServer(options: {
+  ghAuth: "ok" | "fail";
+  ghBinary?: string;
+  branch?: string;
+}): Promise<TestServer> {
+  const root = await mkdtemp(join(tmpdir(), "git-source-control-pr-"));
+  const mainDir = join(root, "main");
+  await mkdir(mainDir, { recursive: true });
+  await initGitRepo(mainDir, "README.md", "# repo\n", "initial commit", options.branch ?? "main");
+  await execGit(mainDir, ["remote", "add", "origin", "git@github.com:a-mart/forge.git"]);
+
+  const fakeGhPath = options.ghBinary ?? (await createFakeGhScript(root, options.ghAuth));
+  const mainRealPath = await realpath(mainDir);
+  const descriptors = [createManagerSession("alpha", "alpha--s1")];
+  descriptors[0]!.cwd = mainRealPath;
+
+  const descriptorById = new Map(descriptors.map((descriptor) => [descriptor.agentId, descriptor]));
+  const swarmManager = {
+    getConfig: () => ({ paths: { dataDir: join(root, "unused-data") } }),
+    getAgent: (agentId: string) => descriptorById.get(agentId),
+    listAgents: () => descriptors
+  } as unknown as SwarmManager;
+
+  const routes = createGitSourceControlRoutes({
+    swarmManager,
+    hostedProviderOptions: { ghBinary: fakeGhPath }
+  });
+  const server = createServer((request, response) => {
+    void handleRouteRequest(routes, request, response);
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine test server address.");
+  }
+
+  const testServer: TestServer = {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    root,
+    mainDir: mainRealPath,
+    secondaryDir: mainRealPath,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  activeServers.push(testServer);
+  return testServer;
+}
+
+async function createFakeGhScript(root: string, auth: "ok" | "fail"): Promise<string> {
+  const fakeGhPath = join(root, "fake-gh");
+  const openJson = JSON.stringify([
+    {
+      number: 428,
+      title: "Enhanced Source Control workspace",
+      state: "OPEN",
+      author: { login: "adam" },
+      createdAt: "2026-06-10T10:00:00Z",
+      updatedAt: "2026-06-12T09:00:00Z",
+      headRefName: "feature/git-source-control-workspace",
+      baseRefName: "main",
+      isDraft: false,
+      url: "https://github.com/a-mart/forge/pull/428",
+      statusCheckRollup: { state: "SUCCESS" },
+      reviewDecision: "APPROVED"
+    }
+  ]);
+  const closedJson = JSON.stringify([
+    {
+      number: 417,
+      title: "Archive recency cleanup",
+      state: "MERGED",
+      author: { login: "backend-specialist" },
+      createdAt: "2026-06-01T10:00:00Z",
+      updatedAt: "2026-06-02T10:00:00Z",
+      mergedAt: "2026-06-02T10:00:00Z",
+      headRefName: "fix/archive-recency",
+      baseRefName: "main",
+      isDraft: false,
+      url: "https://github.com/a-mart/forge/pull/417",
+      statusCheckRollup: { state: "SUCCESS" }
+    }
+  ]);
+  const detailJson = JSON.stringify({
+    number: 428,
+    title: "Enhanced Source Control workspace",
+    state: "OPEN",
+    author: { login: "adam" },
+    createdAt: "2026-06-10T10:00:00Z",
+    updatedAt: "2026-06-12T09:00:00Z",
+    headRefName: "feature/git-source-control-workspace",
+    baseRefName: "main",
+    isDraft: false,
+    url: "https://github.com/a-mart/forge/pull/428",
+    body: "Read-only PR detail body",
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "APPROVED",
+    statusCheckRollup: [{ state: "SUCCESS", status: "UI typecheck" }],
+    changedFiles: 7,
+    additions: 184,
+    deletions: 39,
+    headRefOid: "abc123def456"
+  });
+
+  await writeFile(
+    fakeGhPath,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const command = args.join(" ");
+
+if (command === "--version") {
+  process.stdout.write("gh version 2.67.0\\n");
+  process.exit(0);
+}
+
+if (command.startsWith("auth status")) {
+  if (${JSON.stringify(auth)} === "fail") {
+    process.stderr.write("You are not logged into any GitHub hosts\\n");
+    process.exit(1);
+  }
+  process.stdout.write("github.com\\n  ✓ Logged in\\n");
+  process.exit(0);
+}
+
+if (command.includes("pr list") && command.includes("--state open")) {
+  process.stdout.write(${JSON.stringify(openJson)});
+  process.exit(0);
+}
+
+if (command.includes("pr list") && command.includes("--state closed")) {
+  process.stdout.write(${JSON.stringify(closedJson)});
+  process.exit(0);
+}
+
+if (command.startsWith("pr view")) {
+  process.stdout.write(${JSON.stringify(detailJson)});
+  process.exit(0);
+}
+
+process.stderr.write("unexpected gh args: " + command + "\\n");
+process.exit(1);
+`,
+    "utf8"
+  );
+  await chmod(fakeGhPath, 0o755);
+  return fakeGhPath;
 }

@@ -247,11 +247,24 @@ export interface GitPullRequestSummary {
   author: string
   createdAt: string
   updatedAt: string
+  closedAt?: string | null
+  mergedAt?: string | null
   headRef: string
   baseRef: string
   isDraft: boolean
   isCurrentBranch: boolean
+  checkStatus?: 'pending' | 'success' | 'failure' | 'neutral' | null
+  reviewDecision?: string | null
   providerUrl?: string
+}
+
+export interface GitPullRequestListResult extends GitRepoMetadata {
+  open: GitPullRequestSummary[]
+  recentlyClosed: GitPullRequestSummary[]
+  currentBranchPullRequest: GitPullRequestSummary | null
+  providerStatus: GitHostedProviderStatus
+  context: GitSourceContextRef
+  notInitialized?: boolean
 }
 
 export interface GitPullRequestCheckSummary {
