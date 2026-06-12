@@ -26,10 +26,11 @@ import {
   collectBranchesCheckedOutInOtherWorktrees,
   computeStatusHash,
   detectInProgressGitOperation,
-  hasUnmergedPorcelain,
+  hasUnmergedConflicts,
   isBlockingAgentStatus,
   isDirtyPorcelain,
   isPathContainedInRoot,
+  isValidGitRemoteNameShape,
   listRemoteNames,
   parseWorktreeListPorcelain,
   readPorcelainStatus,
@@ -41,7 +42,8 @@ import {
   resolveUpstream,
   resolveWorktreeIdentity,
   tryNormalizePathForComparison,
-  validateBranchName
+  validateBranchName,
+  verifyResolvableGitRef
 } from "../../../versioning/git-source-control-helpers.js";
 import type { GitSourceControlContext } from "../shared/route-helpers.js";
 import { GitDiffService } from "./git-diff-service.js";
@@ -357,7 +359,7 @@ export class GitSourceControlService {
       });
     }
 
-    if (hasUnmergedPorcelain(porcelain)) {
+    if (await hasUnmergedConflicts(git)) {
       issues.push({
         code: "unmerged_conflicts",
         message: "Unresolved merge conflicts must be resolved before this action can continue.",
@@ -432,13 +434,21 @@ export class GitSourceControlService {
     }
 
     if (options.remote) {
-      const remotes = await listRemoteNames(baseGit);
-      if (!remotes.includes(options.remote)) {
+      if (!isValidGitRemoteNameShape(options.remote)) {
         issues.push({
-          code: "unknown_remote",
-          message: `Remote "${options.remote}" was not found. Available remotes: ${remotes.join(", ") || "none"}.`,
+          code: "invalid_remote",
+          message: `Remote "${options.remote}" is not a valid Git remote name.`,
           severity: "block"
         });
+      } else {
+        const remotes = await listRemoteNames(baseGit);
+        if (!remotes.includes(options.remote)) {
+          issues.push({
+            code: "unknown_remote",
+            message: `Remote "${options.remote}" was not found. Available remotes: ${remotes.join(", ") || "none"}.`,
+            severity: "block"
+          });
+        }
       }
     }
 
@@ -457,6 +467,10 @@ export class GitSourceControlService {
     request: GitFetchRequest
   ): Promise<GitFetchResult> {
     const remote = request.remote?.trim() || "origin";
+    if (!isValidGitRemoteNameShape(remote)) {
+      throw new Error(`Invalid remote name: ${remote}`);
+    }
+
     const preflight = await this.validateMutationRequest(
       swarmManager,
       context,
@@ -468,7 +482,7 @@ export class GitSourceControlService {
     }
 
     const git = new GitCli({ cwd: context.cwd });
-    const fetchResult = await git.run(["fetch", remote], { allowFailure: true, timeoutMs: 120_000 });
+    const fetchResult = await git.run(["fetch", "--", remote], { allowFailure: true, timeoutMs: 120_000 });
     if (fetchResult.exitCode !== 0) {
       return this.createFailedMutationResult(context, fetchResult.stderr || fetchResult.stdout, remote);
     }
@@ -519,7 +533,7 @@ export class GitSourceControlService {
       };
     }
 
-    const switchResult = await git.run(["switch", branch], { allowFailure: true });
+    const switchResult = await git.run(["switch", "--", branch], { allowFailure: true });
     if (switchResult.exitCode !== 0) {
       return this.createFailedMutationResult(context, switchResult.stderr || switchResult.stdout);
     }
@@ -569,7 +583,13 @@ export class GitSourceControlService {
     }
 
     const startPoint = request.startPoint?.trim();
-    const createArgs = startPoint ? ["switch", "-c", branch, startPoint] : ["switch", "-c", branch];
+    if (startPoint && !(await verifyResolvableGitRef(git, startPoint))) {
+      throw new Error(`Invalid startPoint: ${startPoint}`);
+    }
+
+    const createArgs = startPoint
+      ? ["switch", "-c", branch, "--", startPoint]
+      : ["switch", "-c", branch];
     const createResult = await git.run(createArgs, { allowFailure: true });
     if (createResult.exitCode !== 0) {
       return this.createFailedMutationResult(context, createResult.stderr || createResult.stdout);
@@ -588,6 +608,10 @@ export class GitSourceControlService {
     request: GitPullFfOnlyRequest
   ): Promise<GitPullResult> {
     const remote = request.remote?.trim() || "origin";
+    if (!isValidGitRemoteNameShape(remote)) {
+      throw new Error(`Invalid remote name: ${remote}`);
+    }
+
     const preflight = await this.validateMutationRequest(swarmManager, context, request, {
       action: "pull-ff-only",
       remote
@@ -625,7 +649,7 @@ export class GitSourceControlService {
       };
     }
 
-    const fetchResult = await git.run(["fetch", remote], { allowFailure: true, timeoutMs: 120_000 });
+    const fetchResult = await git.run(["fetch", "--", remote], { allowFailure: true, timeoutMs: 120_000 });
     if (fetchResult.exitCode !== 0) {
       const failed = this.createFailedMutationResult(
         context,

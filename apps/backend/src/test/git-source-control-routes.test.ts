@@ -359,6 +359,140 @@ describe("git-source-control-routes", () => {
     expect(mutation.payload.fastForward).toBe(false);
   });
 
+  it("rejects option-like remote names for fetch", async () => {
+    const server = await createRemoteBackedTestServer();
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitFetchResult>(server, "/api/git/fetch", {
+      agentId: "alpha--s1",
+      remote: "--all",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(400);
+    expect((mutation.payload as { error?: string }).error ?? mutation.payload.errors?.join(" ")).toContain(
+      "Invalid remote"
+    );
+  });
+
+  it("rejects option-like startPoint values for create-branch", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/create-branch", {
+      agentId: "alpha--s1",
+      branch: "feature/safe-branch",
+      startPoint: "--discard-changes",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(400);
+    expect((mutation.payload as { error?: string }).error ?? "").toContain("Invalid startPoint");
+  });
+
+  it("rejects fetch when an AA unmerged conflict is present", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    await writeFile(join(server.mainDir, "shared.txt"), "base\n", "utf8");
+    await execGit(server.mainDir, ["add", "shared.txt"]);
+    await execGit(server.mainDir, ["commit", "-m", "add shared"]);
+    await execGit(server.mainDir, ["checkout", "-b", "side"]);
+    await writeFile(join(server.mainDir, "both.txt"), "side\n", "utf8");
+    await execGit(server.mainDir, ["add", "both.txt"]);
+    await execGit(server.mainDir, ["commit", "-m", "side adds both"]);
+    await execGit(server.mainDir, ["checkout", "main"]);
+    await writeFile(join(server.mainDir, "both.txt"), "main\n", "utf8");
+    await execGit(server.mainDir, ["add", "both.txt"]);
+    await execGit(server.mainDir, ["commit", "-m", "main adds both"]);
+    await execGit(server.mainDir, ["merge", "side"], { allowFailure: true });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitFetchResult>(server, "/api/git/fetch", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("Unresolved merge conflicts");
+  });
+
+  it("rejects stale status hash mutations", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/switch-branch", {
+      agentId: "alpha--s1",
+      branch: "feature/worktree-test",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: "stale-status-hash"
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.errors.join(" ")).toContain("status changed");
+  });
+
+  it("rejects unknown remote names for pull", async () => {
+    const server = await createRemoteBackedTestServer();
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPullResult>(server, "/api/git/pull-ff-only", {
+      agentId: "alpha--s1",
+      remote: "upstream",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.errors.join(" ")).toContain("not found");
+  });
+
+  it("rejects versioning repo mutations", async () => {
+    const server = await createVersioningMutationTestServer();
+
+    const branches = await fetchBranches(server, "cortex--s1", { repoTarget: "versioning" });
+    const mutation = await postMutation<GitFetchResult>(server, "/api/git/fetch", {
+      agentId: "cortex--s1",
+      repoTarget: "versioning",
+      remote: "origin",
+      expectedHead: branches.currentHead ?? "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      expectedStatusHash: branches.statusHash ?? "0000000000000000"
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.errors.join(" ")).toContain("versioning");
+  });
+
+  it("exposes idle-agent warnings from mutation preflight", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [
+        createManagerSession("alpha", "alpha--s1"),
+        createWorker("alpha-worker", "alpha--s1", { status: "idle" })
+      ]
+    });
+
+    await execGit(server.mainDir, ["branch", "release/test"]);
+    const response = await fetch(
+      `${server.baseUrl}/api/git/mutation-preflight?agentId=alpha--s1&action=switch-branch&targetBranch=release/test`
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as { issues: Array<{ code: string; severity: string }> };
+    expect(payload.issues.some((issue) => issue.code === "idle_agents_attached" && issue.severity === "warn")).toBe(
+      true
+    );
+  });
+
   it("rejects fast-forward pull on a dirty worktree", async () => {
     const server = await createRemoteBackedTestServer({ aheadOnRemote: true });
 
@@ -611,21 +745,93 @@ function dirnameSafe(relativePath: string): string {
   return index === -1 ? "." : normalized.slice(0, index);
 }
 
-async function execGit(cwd: string, args: string[]): Promise<void> {
-  await execFileAsync("git", args, {
-    cwd,
-    encoding: "utf8"
+async function execGit(
+  cwd: string,
+  args: string[],
+  options: { allowFailure?: boolean } = {}
+): Promise<void> {
+  try {
+    await execFileAsync("git", args, {
+      cwd,
+      encoding: "utf8"
+    });
+  } catch (error) {
+    if (options.allowFailure) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function createVersioningMutationTestServer(): Promise<TestServer> {
+  const root = await mkdtemp(join(tmpdir(), "git-source-control-versioning-"));
+  const dataDir = join(root, "forge-data");
+  await mkdir(dataDir, { recursive: true });
+  await initGitRepo(dataDir, "common.md", "# knowledge\n", "initial knowledge");
+
+  const dataRealPath = await realpath(dataDir);
+  const descriptors = [
+    createManagerSession("cortex", "cortex--s1", { profileId: "cortex", cwd: dataRealPath })
+  ];
+  const descriptorById = new Map(descriptors.map((descriptor) => [descriptor.agentId, descriptor]));
+
+  const swarmManager = {
+    getConfig: () => ({ paths: { dataDir: dataRealPath } }),
+    getAgent: (agentId: string) => descriptorById.get(agentId),
+    listAgents: () => descriptors
+  } as unknown as SwarmManager;
+
+  const routes = createGitSourceControlRoutes({ swarmManager });
+  const server = createServer((request, response) => {
+    void handleRouteRequest(routes, request, response);
   });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine test server address.");
+  }
+
+  const testServer: TestServer = {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    root,
+    mainDir: dataRealPath,
+    secondaryDir: dataRealPath,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  activeServers.push(testServer);
+  return testServer;
 }
 
 async function fetchBranches(
   server: TestServer,
   agentId: string,
-  options: { worktreeId?: string } = {}
+  options: { worktreeId?: string; repoTarget?: string } = {}
 ): Promise<GitBranchListResult> {
   const params = new URLSearchParams({ agentId });
   if (options.worktreeId) {
     params.set("worktreeId", options.worktreeId);
+  }
+  if (options.repoTarget) {
+    params.set("repoTarget", options.repoTarget);
   }
 
   const response = await fetch(`${server.baseUrl}/api/git/branches?${params.toString()}`);

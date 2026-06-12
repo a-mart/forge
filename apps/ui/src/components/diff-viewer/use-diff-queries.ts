@@ -7,6 +7,7 @@ import type {
   GitFetchResult,
   GitHostedProviderStatus,
   GitLogResult,
+  GitMutationPreflight,
   GitMutationResult,
   GitPullFfOnlyRequest,
   GitPullRequestDetail,
@@ -523,6 +524,26 @@ export function useGitCommitDiff(
     enabled: !!agentId && !!sha && !!file,
     staleTime: Number.MAX_SAFE_INTEGER,
   })
+}
+
+export async function fetchMutationPreflight(
+  wsUrl: string,
+  params: {
+    agentId: string
+    repoTarget: GitRepoTarget
+    worktreeId?: string
+    action: 'fetch' | 'switch-branch' | 'create-branch' | 'pull-ff-only'
+    targetBranch?: string
+    remote?: string
+  },
+): Promise<GitMutationPreflight> {
+  const searchParams = buildGitRequestParams(params.agentId, params.repoTarget, {
+    action: params.action,
+    targetBranch: params.targetBranch,
+    remote: params.remote,
+  }, params.worktreeId)
+
+  return fetchGitApi<GitMutationPreflight>(wsUrl, '/api/git/mutation-preflight', searchParams)
 }
 
 export async function fetchGitOrigin(

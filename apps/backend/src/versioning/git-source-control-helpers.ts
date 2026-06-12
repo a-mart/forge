@@ -169,14 +169,64 @@ export function isDirtyPorcelain(porcelain: string): boolean {
   return porcelain.trim().length > 0;
 }
 
+const UNMERGED_PORCELAIN_STATUSES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+
 export function hasUnmergedPorcelain(porcelain: string): boolean {
   return porcelain.split("\n").some((line) => {
     if (line.length < 2) {
       return false;
     }
 
-    return line[0] === "U" || line[1] === "U";
+    const status = line.slice(0, 2);
+    return UNMERGED_PORCELAIN_STATUSES.has(status) || status.includes("U");
   });
+}
+
+export async function hasUnmergedConflicts(git: GitCli): Promise<boolean> {
+  const diffResult = await git.run(["diff", "--name-only", "--diff-filter=U"], {
+    allowFailure: true
+  });
+  if (diffResult.exitCode === 0 && diffResult.stdout.trim().length > 0) {
+    return true;
+  }
+
+  const porcelain = await readPorcelainStatus(git);
+  return hasUnmergedPorcelain(porcelain);
+}
+
+const GIT_REMOTE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function isValidGitRemoteNameShape(remote: string): boolean {
+  const trimmed = remote.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  if (trimmed.startsWith("-")) {
+    return false;
+  }
+
+  if (/[\s\x00-\x1f\x7f]/.test(trimmed)) {
+    return false;
+  }
+
+  return GIT_REMOTE_NAME_PATTERN.test(trimmed);
+}
+
+export function isOptionLikeGitRef(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length === 0 || trimmed.startsWith("-");
+}
+
+export async function verifyResolvableGitRef(git: GitCli, ref: string): Promise<boolean> {
+  if (isOptionLikeGitRef(ref)) {
+    return false;
+  }
+
+  const result = await git.run(["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], {
+    allowFailure: true
+  });
+  return result.exitCode === 0;
 }
 
 export function parseWorktreeListPorcelain(output: string): ParsedWorktreeEntry[] {

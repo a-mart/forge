@@ -99,6 +99,51 @@ export function createGitSourceControlRoutes(options: {
         }
       }
     },
+    {
+      methods: GIT_GET_METHODS,
+      matches: (pathname) => pathname === "/api/git/mutation-preflight",
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, GIT_GET_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "GET") {
+          applyCorsHeaders(request, response, GIT_GET_METHODS);
+          response.setHeader("Allow", GIT_GET_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyCorsHeaders(request, response, GIT_GET_METHODS);
+
+        try {
+          const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+          const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
+          const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
+          const action = parsePreflightAction(requestUrl.searchParams.get("action"));
+          const targetBranch = optionalTrimmedQuery(requestUrl.searchParams.get("targetBranch"));
+          const remote = optionalTrimmedQuery(requestUrl.searchParams.get("remote"));
+          const context = await resolveGitSourceControlContext(
+            swarmManager,
+            agentId,
+            repoTarget,
+            worktreeId
+          );
+          const payload = await service.buildMutationPreflight(swarmManager, context, {
+            action,
+            targetBranch,
+            remote
+          });
+          sendJson(response, 200, payload as unknown as Record<string, unknown>);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Git source-control request failed.";
+          sendJson(response, resolveHttpStatusCode(message), { error: message });
+        }
+      }
+    },
     createMutationRoute(swarmManager, {
       endpoint: "/api/git/fetch",
       methods: GIT_POST_METHODS,
@@ -296,6 +341,26 @@ function createMutationRoute<T extends { agentId: string; repoTarget?: GitRepoTa
       }
     }
   };
+}
+
+type PreflightAction = "fetch" | "switch-branch" | "create-branch" | "pull-ff-only";
+
+function parsePreflightAction(rawValue: string | null): PreflightAction {
+  if (rawValue === null || rawValue.trim().length === 0) {
+    throw new Error("action must be one of: fetch, switch-branch, create-branch, pull-ff-only.");
+  }
+
+  const action = rawValue.trim();
+  if (
+    action !== "fetch" &&
+    action !== "switch-branch" &&
+    action !== "create-branch" &&
+    action !== "pull-ff-only"
+  ) {
+    throw new Error("action must be one of: fetch, switch-branch, create-branch, pull-ff-only.");
+  }
+
+  return action;
 }
 
 function parseMutationBase(body: unknown): {

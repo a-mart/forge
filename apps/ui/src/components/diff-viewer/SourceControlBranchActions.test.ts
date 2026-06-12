@@ -9,11 +9,13 @@ import { SourceControlBranchActions } from './SourceControlBranchActions'
 
 const {
   fetchGitOriginMock,
+  fetchMutationPreflightMock,
   switchGitBranchMock,
   pullGitFfOnlyMock,
   invalidateGitCachesMock,
 } = vi.hoisted(() => ({
   fetchGitOriginMock: vi.fn(),
+  fetchMutationPreflightMock: vi.fn(),
   switchGitBranchMock: vi.fn(),
   pullGitFfOnlyMock: vi.fn(),
   invalidateGitCachesMock: vi.fn(),
@@ -21,6 +23,7 @@ const {
 
 vi.mock('./use-diff-queries', () => ({
   fetchGitOrigin: fetchGitOriginMock,
+  fetchMutationPreflight: fetchMutationPreflightMock,
   switchGitBranch: switchGitBranchMock,
   createGitBranch: vi.fn(),
   pullGitFfOnly: pullGitFfOnlyMock,
@@ -55,9 +58,11 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   fetchGitOriginMock.mockReset()
+  fetchMutationPreflightMock.mockReset()
   switchGitBranchMock.mockReset()
   pullGitFfOnlyMock.mockReset()
   invalidateGitCachesMock.mockReset()
+  fetchMutationPreflightMock.mockResolvedValue({ issues: [], allowed: true })
 })
 
 afterEach(() => {
@@ -91,9 +96,64 @@ describe('SourceControlBranchActions', () => {
     expect(getByText(document.body, 'Fast-forward pull?')).toBeTruthy()
     expect(getByRole(document.body, 'button', { name: 'Pull fast-forward' })).toBeTruthy()
   })
+
+  it('shows idle attached-session warnings from mutation preflight', async () => {
+    fetchMutationPreflightMock.mockResolvedValue({
+      allowed: true,
+      issues: [
+        {
+          code: 'idle_agents_attached',
+          message: 'Idle sessions are attached to this worktree (Builder).',
+          severity: 'warn',
+        },
+      ],
+      currentBranch: 'main',
+      currentHead: 'abc123',
+      statusHash: 'status123',
+    })
+
+    renderActions({ isDirty: false })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(getByText(document.body, 'Idle sessions are attached to this worktree (Builder).')).toBeTruthy()
+    })
+  })
+
+  it('passes worktreeId and expected guards in mutation requests', async () => {
+    pullGitFfOnlyMock.mockResolvedValue({
+      success: true,
+      warnings: ['Idle sessions are attached to this worktree (Builder).'],
+      errors: [],
+    })
+
+    renderActions({ isDirty: false, worktreeId: 'feature-linked' })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+    })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Pull fast-forward' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(pullGitFfOnlyMock).toHaveBeenCalledWith('ws://127.0.0.1:47187', {
+        agentId: 'agent-1',
+        repoTarget: 'workspace',
+        worktreeId: 'feature-linked',
+        expectedHead: 'abc123',
+        expectedStatusHash: 'status123',
+        remote: 'origin',
+      })
+    })
+  })
 })
 
-function renderActions(options: { isDirty: boolean }) {
+function renderActions(options: { isDirty: boolean; worktreeId?: string }) {
   root = createRoot(container)
   flushSync(() => {
     root!.render(
@@ -101,6 +161,7 @@ function renderActions(options: { isDirty: boolean }) {
         wsUrl: 'ws://127.0.0.1:47187',
         agentId: 'agent-1',
         repoTarget: 'workspace',
+        worktreeId: options.worktreeId,
         branchesQuery: {
           data: branchData,
           isLoading: false,

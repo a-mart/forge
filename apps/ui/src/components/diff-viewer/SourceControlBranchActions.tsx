@@ -1,6 +1,6 @@
 import type { GitBranchSummary } from '@forge/protocol'
 import { ArrowDown, ChevronDown, GitBranch, Plus, RefreshCw } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -9,6 +9,7 @@ import { GitMutationConfirmDialog } from './GitMutationConfirmDialog'
 import {
   createGitBranch,
   fetchGitOrigin,
+  fetchMutationPreflight,
   invalidateGitCaches,
   pullGitFfOnly,
   switchGitBranch,
@@ -49,6 +50,8 @@ export function SourceControlBranchActions({
   const [actionError, setActionError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [fetchState, setFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [preflightWarnings, setPreflightWarnings] = useState<string[]>([])
+  const [actionWarning, setActionWarning] = useState<string | null>(null)
 
   const branchData = branchesQuery.data
   const mutationsDisabled = repoTarget === 'versioning' || !agentId || !branchData?.currentHead || !branchData.statusHash
@@ -85,6 +88,55 @@ export function SourceControlBranchActions({
     return reasons
   }, [aheadBehind.behind, branchData?.remotes, isDirty])
 
+  useEffect(() => {
+    if (!pendingMutation || !agentId) {
+      setPreflightWarnings([])
+      return
+    }
+
+    const action =
+      pendingMutation.kind === 'switch'
+        ? 'switch-branch'
+        : pendingMutation.kind === 'create'
+          ? 'create-branch'
+          : 'pull-ff-only'
+
+    let cancelled = false
+    void fetchMutationPreflight(wsUrl, {
+      agentId,
+      repoTarget,
+      worktreeId: worktreeId ?? undefined,
+      action,
+      targetBranch:
+        pendingMutation.kind === 'switch'
+          ? pendingMutation.branch
+          : pendingMutation.kind === 'create'
+            ? pendingMutation.branch
+            : undefined,
+      remote: pendingMutation.kind === 'pull' ? 'origin' : undefined,
+    })
+      .then((preflight) => {
+        if (cancelled) {
+          return
+        }
+
+        setPreflightWarnings(
+          preflight.issues
+            .filter((issue) => issue.severity === 'warn')
+            .map((issue) => issue.message),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreflightWarnings([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [agentId, pendingMutation, repoTarget, worktreeId, wsUrl])
+
   const invalidateAfterMutation = useCallback(() => {
     invalidateGitCaches({ agentId, repoTarget })
     invalidateFileBrowserCaches()
@@ -98,6 +150,7 @@ export function SourceControlBranchActions({
 
     setFetchState('loading')
     setActionError(null)
+    setActionWarning(null)
 
     try {
       const result = await fetchGitOrigin(wsUrl, {
@@ -116,6 +169,9 @@ export function SourceControlBranchActions({
       }
 
       setFetchState('success')
+      if (result.warnings.length > 0) {
+        setActionWarning(result.warnings.join(' '))
+      }
       invalidateAfterMutation()
     } catch (error) {
       setFetchState('error')
@@ -153,6 +209,7 @@ export function SourceControlBranchActions({
 
     setIsSubmitting(true)
     setActionError(null)
+    setActionWarning(null)
 
     const baseRequest = {
       agentId,
@@ -191,9 +248,14 @@ export function SourceControlBranchActions({
         return
       }
 
+      if (result.warnings.length > 0) {
+        setActionWarning(result.warnings.join(' '))
+      }
+
       setPendingMutation(null)
       setNewBranchName('')
       setCreateFromRemote(null)
+      setPreflightWarnings([])
       invalidateAfterMutation()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Git action failed.')
@@ -222,7 +284,7 @@ export function SourceControlBranchActions({
             ? [`${pendingMutation.branch} is checked out in another worktree.`]
             : []),
         ],
-        warnings: [],
+        warnings: preflightWarnings,
       }
     }
 
@@ -234,7 +296,7 @@ export function SourceControlBranchActions({
           : `${worktreeCopy} A new local branch will be created from the current HEAD.`,
         confirmLabel: 'Create branch',
         blockedReasons: isDirty ? ['The worktree has uncommitted changes.'] : [],
-        warnings: [],
+        warnings: preflightWarnings,
       }
     }
 
@@ -243,9 +305,9 @@ export function SourceControlBranchActions({
       description: `${worktreeCopy} Forge will fetch origin and merge only when a fast-forward is possible. Merge commits and autostash are never used.`,
       confirmLabel: 'Pull fast-forward',
       blockedReasons: pullBlockedReasons,
-      warnings: [],
+      warnings: preflightWarnings,
     }
-  }, [branchData, isDirty, pendingMutation, pullBlockedReasons, selectedWorktreePath])
+  }, [branchData, isDirty, pendingMutation, preflightWarnings, pullBlockedReasons, selectedWorktreePath])
 
   if (mutationsDisabled) {
     return null
@@ -363,6 +425,10 @@ export function SourceControlBranchActions({
       {actionError ? (
         <span className="hidden max-w-48 truncate text-[11px] text-red-500 lg:inline" title={actionError}>
           {actionError}
+        </span>
+      ) : actionWarning ? (
+        <span className="hidden max-w-48 truncate text-[11px] text-amber-600 lg:inline" title={actionWarning}>
+          {actionWarning}
         </span>
       ) : fetchState === 'success' ? (
         <span className="hidden text-[11px] text-emerald-500 lg:inline">Fetched origin</span>

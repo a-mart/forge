@@ -4,7 +4,9 @@ import {
   createWorktreeId,
   hasUnmergedPorcelain,
   isDirtyPorcelain,
+  isOptionLikeGitRef,
   isPathContainedInRoot,
+  isValidGitRemoteNameShape,
   parseWorktreeListPorcelain,
   resolveStableWorktreePathKey
 } from "../versioning/git-source-control-helpers.js";
@@ -71,6 +73,21 @@ describe("git-source-control-helpers", () => {
     expect(isDirtyPorcelain("?? new.txt\n")).toBe(true);
     expect(hasUnmergedPorcelain("UU conflict.txt\n")).toBe(true);
     expect(hasUnmergedPorcelain(" M clean-edit.txt\n")).toBe(false);
+  });
+
+  it("detects full unmerged porcelain variants", () => {
+    for (const status of ["DD", "AU", "UD", "UA", "DU", "AA", "UU"] as const) {
+      expect(hasUnmergedPorcelain(`${status} conflict.txt\n`)).toBe(true);
+    }
+  });
+
+  it("rejects option-like git refs and invalid remote names", () => {
+    expect(isOptionLikeGitRef("--discard-changes")).toBe(true);
+    expect(isOptionLikeGitRef("main")).toBe(false);
+    expect(isValidGitRemoteNameShape("origin")).toBe(true);
+    expect(isValidGitRemoteNameShape("--all")).toBe(false);
+    expect(isValidGitRemoteNameShape("bad remote")).toBe(false);
+    expect(isValidGitRemoteNameShape("-origin")).toBe(false);
   });
 
   it("matches agent cwd containment with separator boundaries", () => {
