@@ -32,6 +32,9 @@ const PR_LIST_JSON_FIELDS = [
   "baseRefName",
   "isDraft",
   "url",
+  "isCrossRepository",
+  "headRepositoryOwner",
+  "headRepository",
   "statusCheckRollup",
   "reviewDecision"
 ].join(",");
@@ -49,6 +52,9 @@ const PR_DETAIL_JSON_FIELDS = [
   "baseRefName",
   "isDraft",
   "url",
+  "isCrossRepository",
+  "headRepositoryOwner",
+  "headRepository",
   "body",
   "mergeable",
   "mergeStateStatus",
@@ -71,10 +77,32 @@ export interface GitHostedProviderOptions {
   timeoutMs?: number;
 }
 
+export type GitHostedProviderErrorCode =
+  | "not_found"
+  | "rate_limit"
+  | "timeout"
+  | "network"
+  | "auth"
+  | "permission"
+  | "unknown";
+
+export class GitHostedProviderError extends Error {
+  readonly httpStatus: number;
+  readonly code: GitHostedProviderErrorCode;
+
+  constructor(message: string, httpStatus: number, code: GitHostedProviderErrorCode) {
+    super(message);
+    this.name = "GitHostedProviderError";
+    this.httpStatus = httpStatus;
+    this.code = code;
+  }
+}
+
 interface GhExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  timedOut?: boolean;
 }
 
 interface RawGhAuthor {
@@ -82,9 +110,21 @@ interface RawGhAuthor {
   name?: string;
 }
 
+interface RawGhHeadRepositoryOwner {
+  login?: string;
+}
+
+interface RawGhHeadRepository {
+  name?: string;
+  owner?: RawGhHeadRepositoryOwner;
+}
+
 interface RawGhStatusCheckRollup {
   state?: string;
   status?: string;
+  conclusion?: string;
+  name?: string;
+  detailsUrl?: string;
 }
 
 interface RawGhPullRequest {
@@ -99,6 +139,9 @@ interface RawGhPullRequest {
   headRefName?: string;
   baseRefName?: string;
   isDraft?: boolean;
+  isCrossRepository?: boolean;
+  headRepositoryOwner?: RawGhHeadRepositoryOwner;
+  headRepository?: RawGhHeadRepository;
   url?: string;
   body?: string;
   mergeable?: string | boolean;
@@ -110,6 +153,15 @@ interface RawGhPullRequest {
   changedFiles?: number;
   headRefOid?: string;
 }
+
+type CheckStatus = NonNullable<GitPullRequestSummary["checkStatus"]>;
+
+const CHECK_STATUS_SEVERITY: Record<CheckStatus, number> = {
+  failure: 3,
+  pending: 2,
+  success: 1,
+  neutral: 0
+};
 
 export class GitHostedProviderService {
   private readonly ghBinary: string;
@@ -187,20 +239,20 @@ export class GitHostedProviderService {
     ]);
 
     if (openRaw.exitCode !== 0 || closedRaw.exitCode !== 0) {
-      const message = normalizeGhFailureMessage(openRaw, closedRaw);
+      const failure = classifyGhFailure(openRaw, closedRaw);
       return {
         ...baseResult,
         providerStatus: {
           ...providerStatus,
           available: true,
-          authenticated: false,
-          message
+          authenticated: failure.code === "auth" ? false : providerStatus.authenticated,
+          message: failure.message
         }
       };
     }
 
-    const open = parseGhPullRequestList(openRaw.stdout, currentBranch);
-    const recentlyClosed = parseGhPullRequestList(closedRaw.stdout, currentBranch);
+    const open = parseGhPullRequestList(openRaw.stdout, currentBranch, repo);
+    const recentlyClosed = parseGhPullRequestList(closedRaw.stdout, currentBranch, repo);
     const currentBranchPullRequest =
       open.find((entry) => entry.isCurrentBranch) ??
       recentlyClosed.find((entry) => entry.isCurrentBranch) ??
@@ -245,15 +297,19 @@ export class GitHostedProviderService {
     ]);
 
     if (result.exitCode !== 0) {
-      throw new Error(normalizeGhFailureMessage(result));
+      throw classifyGhFailure(result);
     }
 
     const parsed = parseGhPullRequestJson(result.stdout);
     if (!parsed) {
-      return null;
+      throw new GitHostedProviderError(
+        "GitHub pull request response was empty or invalid.",
+        502,
+        "unknown"
+      );
     }
 
-    const summary = toPullRequestSummary(parsed, currentBranch);
+    const summary = toPullRequestSummary(parsed, currentBranch, repo);
     return {
       ...summary,
       body: typeof parsed.body === "string" ? parsed.body : "",
@@ -362,8 +418,7 @@ export class GitHostedProviderService {
         exitCode: 0
       };
     } catch (error) {
-      const normalized = normalizeExecError(error);
-      return normalized;
+      return normalizeExecError(error);
     }
   }
 }
@@ -391,6 +446,75 @@ export function parseGitHubRepoFromRemoteUrl(remoteUrl: string): GitHubRepoIdent
   return null;
 }
 
+export function aggregateCheckStatusFromRollup(
+  rollup: RawGhPullRequest["statusCheckRollup"]
+): GitPullRequestSummary["checkStatus"] {
+  const entries = normalizeRollupEntries(rollup);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  let best: CheckStatus | null = null;
+  let bestSeverity = -1;
+
+  for (const entry of entries) {
+    const status = classifyCheckEntryStatus(entry);
+    if (!status) {
+      continue;
+    }
+
+    const severity = CHECK_STATUS_SEVERITY[status];
+    if (severity > bestSeverity) {
+      best = status;
+      bestSeverity = severity;
+    }
+  }
+
+  return best;
+}
+
+export function parseCheckSummariesFromRollup(
+  rollup: RawGhPullRequest["statusCheckRollup"]
+): GitPullRequestCheckSummary[] {
+  return parseCheckSummaries(rollup);
+}
+
+export function matchesCurrentBranchPullRequest(
+  entry: Pick<
+    RawGhPullRequest,
+    "headRefName" | "isCrossRepository" | "headRepositoryOwner" | "headRepository"
+  >,
+  currentBranch: string | null,
+  originRepo: GitHubRepoIdentity | null
+): boolean {
+  const normalizedBranch = normalizeBranchName(currentBranch);
+  const normalizedHead = normalizeBranchName(entry.headRefName ?? "");
+  if (normalizedBranch.length === 0 || normalizedHead.length === 0) {
+    return false;
+  }
+
+  if (normalizedBranch !== normalizedHead) {
+    return false;
+  }
+
+  if (entry.isCrossRepository === true) {
+    const headOwner =
+      entry.headRepositoryOwner?.login?.toLowerCase() ??
+      entry.headRepository?.owner?.login?.toLowerCase();
+    const headRepo = entry.headRepository?.name?.toLowerCase();
+    if (!originRepo || !headOwner || !headRepo) {
+      return false;
+    }
+
+    return (
+      headOwner === originRepo.owner.toLowerCase() &&
+      headRepo === originRepo.repo.toLowerCase()
+    );
+  }
+
+  return true;
+}
+
 function stripGitSuffix(value: string): string {
   return value.replace(/\.git$/i, "");
 }
@@ -406,10 +530,14 @@ async function resolveOriginRemoteUrl(cwd: string): Promise<string | null> {
   return remoteUrl.length > 0 ? remoteUrl : null;
 }
 
-function parseGhPullRequestList(stdout: string, currentBranch: string | null): GitPullRequestSummary[] {
+function parseGhPullRequestList(
+  stdout: string,
+  currentBranch: string | null,
+  originRepo: GitHubRepoIdentity
+): GitPullRequestSummary[] {
   const entries = parseGhPullRequestArray(stdout);
   return entries
-    .map((entry) => toPullRequestSummary(entry, currentBranch))
+    .map((entry) => toPullRequestSummary(entry, currentBranch, originRepo))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
@@ -451,11 +579,10 @@ function parseGhPullRequestJson(stdout: string): RawGhPullRequest | null {
 
 function toPullRequestSummary(
   entry: RawGhPullRequest,
-  currentBranch: string | null
+  currentBranch: string | null,
+  originRepo: GitHubRepoIdentity | null
 ): GitPullRequestSummary {
   const headRef = entry.headRefName ?? "unknown";
-  const normalizedBranch = normalizeBranchName(currentBranch);
-  const normalizedHead = normalizeBranchName(headRef);
 
   return {
     number: entry.number ?? 0,
@@ -469,11 +596,8 @@ function toPullRequestSummary(
     headRef,
     baseRef: entry.baseRefName ?? "unknown",
     isDraft: entry.isDraft === true,
-    isCurrentBranch:
-      normalizedBranch.length > 0 &&
-      normalizedHead.length > 0 &&
-      normalizedBranch === normalizedHead,
-    checkStatus: normalizeCheckStatus(entry.statusCheckRollup),
+    isCurrentBranch: matchesCurrentBranchPullRequest(entry, currentBranch, originRepo),
+    checkStatus: aggregateCheckStatusFromRollup(entry.statusCheckRollup),
     reviewDecision: entry.reviewDecision ?? null,
     providerUrl: entry.url
   };
@@ -503,63 +627,93 @@ function normalizeBranchName(branch: string | null): string {
   return branch.replace(/^refs\/heads\//, "").trim();
 }
 
-function normalizeCheckStatus(
+function normalizeRollupEntries(
   rollup: RawGhPullRequest["statusCheckRollup"]
-): GitPullRequestSummary["checkStatus"] {
-  const state = extractRollupState(rollup);
-  if (!state) {
-    return null;
+): RawGhStatusCheckRollup[] {
+  if (!rollup) {
+    return [];
   }
 
-  const normalized = state.toUpperCase();
-  if (normalized.includes("PENDING") || normalized.includes("IN_PROGRESS") || normalized === "QUEUED") {
+  return Array.isArray(rollup) ? rollup : [rollup];
+}
+
+function classifyCheckEntryStatus(entry: RawGhStatusCheckRollup): CheckStatus | null {
+  const status = (entry.status ?? "").toUpperCase();
+  const state = (entry.state ?? "").toUpperCase();
+  const conclusion = (entry.conclusion ?? "").toUpperCase();
+
+  if (
+    status === "QUEUED" ||
+    status === "IN_PROGRESS" ||
+    status === "PENDING" ||
+    state === "PENDING" ||
+    state === "EXPECTED" ||
+    state === "REQUESTED"
+  ) {
     return "pending";
   }
 
-  if (normalized.includes("FAIL") || normalized.includes("ERROR")) {
+  if (status === "COMPLETED" || state === "COMPLETED") {
+    if (
+      conclusion === "FAILURE" ||
+      conclusion === "ACTION_REQUIRED" ||
+      conclusion === "TIMED_OUT" ||
+      conclusion === "CANCELLED" ||
+      conclusion === "STARTUP_FAILURE"
+    ) {
+      return "failure";
+    }
+
+    if (conclusion === "SUCCESS") {
+      return "success";
+    }
+
+    if (conclusion === "NEUTRAL" || conclusion === "SKIPPED" || conclusion === "STALE") {
+      return "neutral";
+    }
+  }
+
+  if (
+    state.includes("FAIL") ||
+    state.includes("ERROR") ||
+    conclusion.includes("FAIL") ||
+    conclusion.includes("ERROR")
+  ) {
     return "failure";
   }
 
-  if (normalized.includes("SUCCESS") || normalized === "COMPLETED") {
+  if (state.includes("SUCCESS") || conclusion === "SUCCESS") {
     return "success";
   }
 
-  return "neutral";
-}
-
-function extractRollupState(
-  rollup: RawGhPullRequest["statusCheckRollup"]
-): string | null {
-  if (!rollup) {
-    return null;
+  if (state.length > 0 || conclusion.length > 0 || status.length > 0) {
+    return "neutral";
   }
 
-  if (Array.isArray(rollup)) {
-    return rollup.map((entry) => entry.state ?? entry.status ?? "").find(Boolean) ?? null;
-  }
-
-  return rollup.state ?? rollup.status ?? null;
+  return null;
 }
 
 function parseCheckSummaries(
   rollup: RawGhPullRequest["statusCheckRollup"]
 ): GitPullRequestCheckSummary[] {
-  if (!rollup) {
-    return [];
-  }
-
-  const entries = Array.isArray(rollup) ? rollup : [rollup];
-  return entries
+  return normalizeRollupEntries(rollup)
     .map((entry, index) => {
-      const status = normalizeCheckStatus(entry);
+      const status = classifyCheckEntryStatus(entry);
       if (!status) {
         return null;
       }
 
-      return {
-        name: entry.state ?? entry.status ?? `Check ${index + 1}`,
+      const name = entry.name?.trim() || `Check ${index + 1}`;
+      const summary: GitPullRequestCheckSummary = {
+        name,
         status
-      } satisfies GitPullRequestCheckSummary;
+      };
+
+      if (entry.detailsUrl && entry.detailsUrl.trim().length > 0) {
+        summary.url = entry.detailsUrl.trim();
+      }
+
+      return summary;
     })
     .filter((entry): entry is GitPullRequestCheckSummary => entry !== null);
 }
@@ -594,8 +748,16 @@ function parseMergeBlockedReason(entry: RawGhPullRequest): string | undefined {
   return undefined;
 }
 
-function normalizeGhFailureMessage(...results: GhExecResult[]): string {
+export function classifyGhFailure(...results: GhExecResult[]): GitHostedProviderError {
   for (const result of results) {
+    if (result.exitCode === 0 && !result.timedOut) {
+      continue;
+    }
+
+    if (result.timedOut) {
+      return new GitHostedProviderError("GitHub CLI request timed out.", 504, "timeout");
+    }
+
     const stderr = result.stderr.trim();
     const stdout = result.stdout.trim();
     const combined = stderr || stdout;
@@ -604,22 +766,55 @@ function normalizeGhFailureMessage(...results: GhExecResult[]): string {
     }
 
     const normalized = combined.toLowerCase();
-    if (normalized.includes("not logged in") || normalized.includes("auth")) {
-      return "Run `gh auth login` to connect GitHub pull requests.";
+
+    if (normalized.includes("timed out") || normalized.includes("timeout")) {
+      return new GitHostedProviderError("GitHub CLI request timed out.", 504, "timeout");
     }
 
-    if (normalized.includes("rate limit")) {
-      return "GitHub rate limit reached. Try again later.";
+    if (normalized.includes("rate limit") || normalized.includes("api rate limit")) {
+      return new GitHostedProviderError("GitHub rate limit reached. Try again later.", 429, "rate_limit");
     }
 
-    if (normalized.includes("could not resolve") || normalized.includes("not found")) {
-      return "GitHub repository or pull request was not found.";
+    if (
+      normalized.includes("not found") ||
+      normalized.includes("could not resolve") ||
+      normalized.includes("no pull requests found") ||
+      normalized.includes("pull request not found")
+    ) {
+      return new GitHostedProviderError("GitHub repository or pull request was not found.", 404, "not_found");
     }
 
-    return combined.split("\n")[0] ?? combined;
+    if (
+      normalized.includes("not logged in") ||
+      normalized.includes("authentication") ||
+      normalized.includes("bad credentials") ||
+      normalized.includes("401")
+    ) {
+      return new GitHostedProviderError("Run `gh auth login` to connect GitHub pull requests.", 401, "auth");
+    }
+
+    if (
+      normalized.includes("permission denied") ||
+      normalized.includes("forbidden") ||
+      normalized.includes("403")
+    ) {
+      return new GitHostedProviderError("GitHub denied access to this pull request.", 403, "permission");
+    }
+
+    if (
+      normalized.includes("network") ||
+      normalized.includes("econnrefused") ||
+      normalized.includes("enotfound") ||
+      normalized.includes("connection reset") ||
+      normalized.includes("temporarily unavailable")
+    ) {
+      return new GitHostedProviderError("GitHub is temporarily unavailable.", 503, "network");
+    }
+
+    return new GitHostedProviderError(combined.split("\n")[0] ?? combined, 502, "unknown");
   }
 
-  return "GitHub pull request request failed.";
+  return new GitHostedProviderError("GitHub pull request request failed.", 502, "unknown");
 }
 
 function normalizeExecError(error: unknown): GhExecResult {
@@ -636,17 +831,23 @@ function normalizeExecError(error: unknown): GhExecResult {
     stderr?: string;
     code?: string | number;
     status?: number;
+    killed?: boolean;
+    signal?: string;
   };
+
+  const timedOut = record.code === "ETIMEDOUT" || record.killed === true;
+  const stderr =
+    typeof record.stderr === "string"
+      ? record.stderr
+      : timedOut
+        ? "gh command timed out."
+        : record.message ?? "gh command failed.";
 
   return {
     stdout: typeof record.stdout === "string" ? record.stdout : "",
-    stderr:
-      typeof record.stderr === "string"
-        ? record.stderr
-        : record.code === "ETIMEDOUT"
-          ? "gh command timed out."
-          : record.message ?? "gh command failed.",
-    exitCode: typeof record.status === "number" ? record.status : 1
+    stderr,
+    exitCode: typeof record.status === "number" ? record.status : 1,
+    timedOut
   };
 }
 

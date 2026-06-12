@@ -8,7 +8,10 @@ import type {
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import { GitSourceControlService } from "../services/git-source-control-service.js";
-import type { GitHostedProviderOptions } from "../services/git-hosted-provider.js";
+import {
+  GitHostedProviderError,
+  type GitHostedProviderOptions
+} from "../services/git-hosted-provider.js";
 import type { HttpRoute } from "../shared/http-route.js";
 import { resolveGitSourceControlContext } from "../shared/route-helpers.js";
 
@@ -285,6 +288,14 @@ export function createGitSourceControlRoutes(options: {
 
           sendJson(response, 200, payload as unknown as Record<string, unknown>);
         } catch (error) {
+          if (error instanceof GitHostedProviderError) {
+            sendJson(response, error.httpStatus, {
+              error: error.message,
+              code: error.code
+            });
+            return;
+          }
+
           const message = error instanceof Error ? error.message : "Git source-control request failed.";
           sendJson(response, resolveHttpStatusCode(message), { error: message });
         }

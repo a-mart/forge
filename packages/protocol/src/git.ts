@@ -284,23 +284,3 @@ export interface GitPullRequestDetail extends GitPullRequestSummary {
   deletions: number
   headSha: string
 }
-
-export type GitPullRequestMergeMethod = 'squash' | 'merge' | 'rebase'
-
-export interface GitPullRequestMergeRequest {
-  agentId: string
-  repoTarget?: GitRepoTarget
-  worktreeId?: string
-  method: GitPullRequestMergeMethod
-  expectedHead: string
-  deleteBranchAfterMerge?: boolean
-}
-
-export interface GitPullRequestMergeResult {
-  success: boolean
-  number: number
-  merged: boolean
-  message?: string
-  providerUrl?: string
-  errors: string[]
-}

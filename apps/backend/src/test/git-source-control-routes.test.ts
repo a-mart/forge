@@ -562,6 +562,46 @@ describe("git-source-control-routes", () => {
     expect(payload.mergeable).toBe(true);
     expect(payload.checks.length).toBeGreaterThan(0);
   });
+
+  it("returns 404 when gh reports a missing pull request", async () => {
+    const server = await createPullRequestTestServer({
+      ghAuth: "ok",
+      detailFailure: "not_found"
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests/999?agentId=alpha--s1`);
+    expect(response.status).toBe(404);
+
+    const payload = (await response.json()) as { error: string; code?: string };
+    expect(payload.code).toBe("not_found");
+    expect(payload.error).toContain("not found");
+  });
+
+  it("returns 429 when gh reports rate limiting", async () => {
+    const server = await createPullRequestTestServer({
+      ghAuth: "ok",
+      detailFailure: "rate_limit"
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests/428?agentId=alpha--s1`);
+    expect(response.status).toBe(429);
+
+    const payload = (await response.json()) as { error: string; code?: string };
+    expect(payload.code).toBe("rate_limit");
+  });
+
+  it("returns 504 when gh detail lookup times out", async () => {
+    const server = await createPullRequestTestServer({
+      ghAuth: "ok",
+      detailFailure: "timeout"
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests/428?agentId=alpha--s1`);
+    expect(response.status).toBe(504);
+
+    const payload = (await response.json()) as { error: string; code?: string };
+    expect(payload.code).toBe("timeout");
+  });
 });
 
 async function createSourceControlTestServer(options: {
@@ -954,6 +994,8 @@ async function createPullRequestTestServer(options: {
   ghAuth: "ok" | "fail";
   ghBinary?: string;
   branch?: string;
+  detailFailure?: "not_found" | "rate_limit" | "timeout" | "auth" | "permission";
+  ghTimeoutMs?: number;
 }): Promise<TestServer> {
   const root = await mkdtemp(join(tmpdir(), "git-source-control-pr-"));
   const mainDir = join(root, "main");
@@ -961,7 +1003,8 @@ async function createPullRequestTestServer(options: {
   await initGitRepo(mainDir, "README.md", "# repo\n", "initial commit", options.branch ?? "main");
   await execGit(mainDir, ["remote", "add", "origin", "git@github.com:a-mart/forge.git"]);
 
-  const fakeGhPath = options.ghBinary ?? (await createFakeGhScript(root, options.ghAuth));
+  const fakeGhPath =
+    options.ghBinary ?? (await createFakeGhScript(root, options.ghAuth, options.detailFailure));
   const mainRealPath = await realpath(mainDir);
   const descriptors = [createManagerSession("alpha", "alpha--s1")];
   descriptors[0]!.cwd = mainRealPath;
@@ -975,7 +1018,10 @@ async function createPullRequestTestServer(options: {
 
   const routes = createGitSourceControlRoutes({
     swarmManager,
-    hostedProviderOptions: { ghBinary: fakeGhPath }
+    hostedProviderOptions: {
+      ghBinary: fakeGhPath,
+      timeoutMs: options.ghTimeoutMs
+    }
   });
   const server = createServer((request, response) => {
     void handleRouteRequest(routes, request, response);
@@ -1015,7 +1061,11 @@ async function createPullRequestTestServer(options: {
   return testServer;
 }
 
-async function createFakeGhScript(root: string, auth: "ok" | "fail"): Promise<string> {
+async function createFakeGhScript(
+  root: string,
+  auth: "ok" | "fail",
+  detailFailure?: "not_found" | "rate_limit" | "timeout" | "auth" | "permission"
+): Promise<string> {
   const fakeGhPath = join(root, "fake-gh");
   const openJson = JSON.stringify([
     {
@@ -1102,6 +1152,27 @@ if (command.includes("pr list") && command.includes("--state closed")) {
 }
 
 if (command.startsWith("pr view")) {
+  const detailFailure = ${JSON.stringify(detailFailure ?? null)};
+  if (detailFailure === "timeout") {
+    process.stderr.write("gh command timed out.\\n");
+    process.exit(1);
+  }
+  if (detailFailure === "not_found") {
+    process.stderr.write("GraphQL: Could not resolve to a PullRequest with the number of 999\\n");
+    process.exit(1);
+  }
+  if (detailFailure === "rate_limit") {
+    process.stderr.write("API rate limit exceeded for user\\n");
+    process.exit(1);
+  }
+  if (detailFailure === "auth") {
+    process.stderr.write("HTTP 401: Bad credentials\\n");
+    process.exit(1);
+  }
+  if (detailFailure === "permission") {
+    process.stderr.write("HTTP 403: Resource not accessible by integration\\n");
+    process.exit(1);
+  }
   process.stdout.write(${JSON.stringify(detailJson)});
   process.exit(0);
 }

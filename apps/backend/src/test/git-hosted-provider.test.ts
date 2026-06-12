@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   GitHostedProviderService,
+  aggregateCheckStatusFromRollup,
+  classifyGhFailure,
+  matchesCurrentBranchPullRequest,
+  parseCheckSummariesFromRollup,
   parseGitHubRepoFromRemoteUrl
 } from "../ws/http/services/git-hosted-provider.js";
 import type { GitSourceControlContext } from "../ws/http/shared/route-helpers.js";
@@ -152,6 +156,135 @@ describe("GitHostedProviderService", () => {
     expect(detail?.mergeable).toBe(true);
     expect(detail?.changedFiles).toBe(7);
     expect(detail?.checks).toHaveLength(1);
+  });
+
+  it("aggregates check status by severity and uses conclusions for completed runs", () => {
+    expect(
+      aggregateCheckStatusFromRollup([
+        { name: "UI typecheck", status: "COMPLETED", conclusion: "SUCCESS" },
+        { name: "Backend tests", status: "COMPLETED", conclusion: "FAILURE" }
+      ])
+    ).toBe("failure");
+
+    expect(
+      aggregateCheckStatusFromRollup([
+        { name: "UI typecheck", status: "COMPLETED", conclusion: "SUCCESS" },
+        { name: "Backend tests", status: "COMPLETED", conclusion: "SUCCESS" }
+      ])
+    ).toBe("success");
+
+    const summaries = parseCheckSummariesFromRollup([
+      {
+        name: "Backend tests",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: "https://github.com/a-mart/forge/actions/runs/1"
+      },
+      {
+        name: "UI typecheck",
+        status: "COMPLETED",
+        conclusion: "SUCCESS",
+        detailsUrl: "https://github.com/a-mart/forge/actions/runs/2"
+      }
+    ]);
+
+    expect(summaries).toHaveLength(2);
+    expect(summaries[0]?.name).toBe("Backend tests");
+    expect(summaries[0]?.status).toBe("failure");
+    expect(summaries[0]?.url).toContain("/actions/runs/1");
+  });
+
+  it("does not mark fork pull requests as current branch when branch names match", async () => {
+    const { fakeGhPath, repoDir } = await createFakeGhFixture({
+      branch: "feature/shared-name",
+      auth: "ok",
+      openJson: JSON.stringify([
+        {
+          number: 501,
+          title: "Same branch from fork",
+          state: "OPEN",
+          author: { login: "fork-user" },
+          createdAt: "2026-06-10T10:00:00Z",
+          updatedAt: "2026-06-12T09:00:00Z",
+          headRefName: "feature/shared-name",
+          baseRefName: "main",
+          isDraft: false,
+          isCrossRepository: true,
+          headRepositoryOwner: { login: "fork-user" },
+          headRepository: { name: "forge-fork", owner: { login: "fork-user" } },
+          url: "https://github.com/a-mart/forge/pull/501"
+        },
+        {
+          number: 502,
+          title: "Same branch from origin",
+          state: "OPEN",
+          author: { login: "adam" },
+          createdAt: "2026-06-10T10:00:00Z",
+          updatedAt: "2026-06-12T09:00:00Z",
+          headRefName: "feature/shared-name",
+          baseRefName: "main",
+          isDraft: false,
+          isCrossRepository: false,
+          headRepositoryOwner: { login: "a-mart" },
+          headRepository: { name: "forge", owner: { login: "a-mart" } },
+          url: "https://github.com/a-mart/forge/pull/502"
+        }
+      ]),
+      closedJson: "[]"
+    });
+
+    const service = new GitHostedProviderService({ ghBinary: fakeGhPath });
+    const context = createContext({ cwd: repoDir, remoteSetup: true });
+    const result = await service.listPullRequests(context);
+
+    const forkPullRequest = result.open.find((entry) => entry.number === 501);
+    const originPullRequest = result.open.find((entry) => entry.number === 502);
+    expect(forkPullRequest?.isCurrentBranch).toBe(false);
+    expect(originPullRequest?.isCurrentBranch).toBe(true);
+    expect(result.currentBranchPullRequest?.number).toBe(502);
+  });
+
+  it("matches current branch for cross-repo PRs when head repo matches origin", () => {
+    const origin = parseGitHubRepoFromRemoteUrl("git@github.com:a-mart/forge.git");
+    expect(origin).not.toBeNull();
+
+    expect(
+      matchesCurrentBranchPullRequest(
+        {
+          headRefName: "feature/shared-name",
+          isCrossRepository: true,
+          headRepositoryOwner: { login: "a-mart" },
+          headRepository: { name: "forge", owner: { login: "a-mart" } }
+        },
+        "feature/shared-name",
+        origin
+      )
+    ).toBe(true);
+
+    expect(
+      matchesCurrentBranchPullRequest(
+        {
+          headRefName: "feature/shared-name",
+          isCrossRepository: true,
+          headRepositoryOwner: { login: "fork-user" },
+          headRepository: { name: "forge-fork", owner: { login: "fork-user" } }
+        },
+        "feature/shared-name",
+        origin
+      )
+    ).toBe(false);
+  });
+
+  it("classifies timed out gh executions as timeout errors", () => {
+    const error = classifyGhFailure({
+      stdout: "",
+      stderr: "gh command timed out.",
+      exitCode: 1,
+      timedOut: true
+    });
+
+    expect(error.httpStatus).toBe(504);
+    expect(error.code).toBe("timeout");
   });
 });
 
