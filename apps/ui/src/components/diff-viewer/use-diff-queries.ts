@@ -5,7 +5,6 @@ import type {
   GitDiffResult,
   GitFetchRequest,
   GitFetchResult,
-  GitHostedProviderStatus,
   GitLogResult,
   GitMutationPreflight,
   GitMutationResult,
@@ -320,32 +319,6 @@ export function useGitWorktrees(
   return useSimpleQuery<GitWorktreeListResult>(queryKey, fetchFn, {
     enabled: enabled && !!agentId,
     staleTime: 10_000,
-    refetchOnWindowFocus: true,
-  })
-}
-
-export function useGitProviderStatus(
-  wsUrl: string,
-  agentId: string | null,
-  repoTarget: GitRepoTarget,
-  worktreeId?: string | null,
-  options: { enabled?: boolean } = {},
-) {
-  const enabled = options.enabled ?? !!agentId
-  const queryKey = buildGitQueryKey('git:provider-status', agentId, repoTarget, worktreeId)
-  const fetchFn = useCallback(
-    () =>
-      fetchGitApi<GitHostedProviderStatus>(
-        wsUrl,
-        '/api/git/provider/status',
-        buildGitRequestParams(agentId!, repoTarget, {}, worktreeId),
-      ),
-    [wsUrl, agentId, repoTarget, worktreeId],
-  )
-
-  return useSimpleQuery<GitHostedProviderStatus>(queryKey, fetchFn, {
-    enabled: enabled && !!agentId,
-    staleTime: 30_000,
     refetchOnWindowFocus: true,
   })
 }

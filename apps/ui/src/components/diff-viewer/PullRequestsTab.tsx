@@ -183,7 +183,7 @@ function PullRequestDetailPane({
     } catch {
       setCopyState('failed')
     }
-  }, [pullRequest?.providerUrl])
+  }, [pullRequest])
 
   if (!pullRequest) {
     return (

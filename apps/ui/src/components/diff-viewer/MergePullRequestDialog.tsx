@@ -14,8 +14,10 @@ interface MergePullRequestDialogProps {
   onCancel: () => void
 }
 
+const DEFAULT_ALLOWED_MERGE_METHODS: GitPullRequestMergeMethod[] = ['squash', 'merge', 'rebase']
+
 function defaultMergeMethod(detail: GitPullRequestDetail | null): GitPullRequestMergeMethod {
-  const allowed = detail?.allowedMergeMethods ?? ['squash', 'merge', 'rebase']
+  const allowed = detail?.allowedMergeMethods ?? DEFAULT_ALLOWED_MERGE_METHODS
   if (allowed.includes('squash')) {
     return 'squash'
   }
@@ -46,7 +48,7 @@ export function MergePullRequestDialog({
   const [method, setMethod] = useState<GitPullRequestMergeMethod>(() => defaultMergeMethod(pullRequest))
   const [acknowledgeCheckFailures, setAcknowledgeCheckFailures] = useState(false)
 
-  const allowedMethods = pullRequest?.allowedMergeMethods ?? ['squash', 'merge', 'rebase']
+  const allowedMethods = pullRequest?.allowedMergeMethods ?? DEFAULT_ALLOWED_MERGE_METHODS
   const checkIssues =
     pullRequest?.checkStatus === 'failure' || pullRequest?.checkStatus === 'pending'
 
@@ -95,7 +97,7 @@ export function MergePullRequestDialog({
       items.push(mergeError)
     }
     return items
-  }, [acknowledgeCheckFailures, checkIssues, mergeError, pullRequest?.mergeBlockedReason])
+  }, [acknowledgeCheckFailures, checkIssues, mergeError, pullRequest])
 
   if (!pullRequest) {
     return null

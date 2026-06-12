@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import type { GitWorktreeSummary } from '@forge/protocol'
-import { createElement, useCallback, useState } from 'react'
+import { createElement, useCallback, useEffect, useState } from 'react'
 import { act } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
@@ -81,14 +81,23 @@ function BrowseFlowHarness(props: { presentation: 'inline' | 'modal' }) {
   const isInlineDiffViewerOpen = isDiffViewerOpen && diffViewerPresentation === 'inline'
   const showFileBrowserSidebar = !isInlineDiffViewerOpen
 
-  capturedRef.current = {
-    isDiffViewerOpen,
+  useEffect(() => {
+    capturedRef.current = {
+      isDiffViewerOpen,
+      diffViewerPresentation,
+      isInlineDiffViewerOpen,
+      showFileBrowserSidebar,
+      fileBrowserWorktreeContext: panelState.fileBrowserWorktreeContext,
+      isFileBrowserOpen: panelState.isFileBrowserOpen,
+    }
+  }, [
     diffViewerPresentation,
+    isDiffViewerOpen,
     isInlineDiffViewerOpen,
+    panelState.fileBrowserWorktreeContext,
+    panelState.isFileBrowserOpen,
     showFileBrowserSidebar,
-    fileBrowserWorktreeContext: panelState.fileBrowserWorktreeContext,
-    isFileBrowserOpen: panelState.isFileBrowserOpen,
-  }
+  ])
 
   return createElement(
     'div',

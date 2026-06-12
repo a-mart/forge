@@ -1281,14 +1281,6 @@ async function createRemoteBackedTestServer(options: {
   return testServer;
 }
 
-async function revParse(cwd: string, ref: string): Promise<string> {
-  const result = await execFileAsync("git", ["rev-parse", ref], {
-    cwd,
-    encoding: "utf8"
-  });
-  return result.stdout.trim();
-}
-
 async function createPullRequestTestServer(options: {
   ghAuth: "ok" | "fail";
   ghBinary?: string;
