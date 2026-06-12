@@ -4,6 +4,7 @@ import type {
   GitLogResult,
   GitRepoTarget,
   GitStatusResult,
+  GitWorktreeListResult,
 } from '@forge/protocol'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
@@ -16,6 +17,7 @@ export type {
   GitLogResult,
   GitRepoTarget,
   GitStatusResult,
+  GitWorktreeListResult,
 } from '@forge/protocol'
 
 /* ------------------------------------------------------------------ */
@@ -214,6 +216,30 @@ export function useGitStatus(wsUrl: string, agentId: string | null, repoTarget: 
   })
 }
 
+export function useGitWorktrees(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  refreshToken = 0,
+) {
+  const queryKey = buildGitQueryKey('git:worktrees', agentId, repoTarget, refreshToken)
+  const fetchFn = useCallback(
+    () =>
+      fetchGitApi<GitWorktreeListResult>(
+        wsUrl,
+        '/api/git/worktrees',
+        buildGitRequestParams(agentId!, repoTarget),
+      ),
+    [wsUrl, agentId, repoTarget],
+  )
+
+  return useSimpleQuery<GitWorktreeListResult>(queryKey, fetchFn, {
+    enabled: !!agentId,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+  })
+}
+
 export function useGitDiff(wsUrl: string, agentId: string | null, repoTarget: GitRepoTarget, file: string | null) {
   const queryKey = buildGitQueryKey('git:diff', agentId, repoTarget, file)
   const fetchFn = useCallback(
@@ -317,7 +343,12 @@ export function invalidateGitCaches(options?: { agentId?: string | null; repoTar
       continue
     }
 
-    if (parsed.scope !== 'git:status' && parsed.scope !== 'git:diff' && parsed.scope !== 'git:log') {
+    if (
+      parsed.scope !== 'git:status' &&
+      parsed.scope !== 'git:worktrees' &&
+      parsed.scope !== 'git:diff' &&
+      parsed.scope !== 'git:log'
+    ) {
       continue
     }
 

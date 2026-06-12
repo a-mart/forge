@@ -7,8 +7,9 @@ import { DiffDialogHeader, type DiffTab } from './DiffDialogHeader'
 import { DiffStatusBar } from './DiffStatusBar'
 import { ChangesView } from './ChangesView'
 import { HistoryView, type HistoryStatusInfo } from './HistoryView'
+import { WorktreesView } from './WorktreesView'
 import type { KnowledgeQuickFilterId } from './knowledge-surface'
-import { useGitStatus, invalidateGitCaches } from './use-diff-queries'
+import { useGitStatus, useGitWorktrees, invalidateGitCaches } from './use-diff-queries'
 
 export interface DiffViewerInitialState {
   initialRepoTarget?: GitRepoTarget
@@ -86,6 +87,7 @@ export function DiffViewerContent({
   }, [repoTarget])
 
   const statusQuery = useGitStatus(wsUrl, active ? agentId : null, repoTarget)
+  const worktreesQuery = useGitWorktrees(wsUrl, active ? agentId : null, repoTarget, refreshToken)
 
   const handleRefresh = useCallback(() => {
     invalidateGitCaches({ agentId, repoTarget })
@@ -99,6 +101,8 @@ export function DiffViewerContent({
   }, [])
 
   const summary = statusQuery.data?.summary ?? { filesChanged: 0, insertions: 0, deletions: 0 }
+  const currentWorktree = worktreesQuery.data?.worktrees.find((worktree) => worktree.isCurrentContext) ?? null
+  const worktreeCount = worktreesQuery.data?.worktrees.length ?? null
   const changesViewKey = `${agentId ?? 'none'}:${repoTarget}:changes`
   const historyViewKey = `${agentId ?? 'none'}:${repoTarget}:history`
 
@@ -113,8 +117,10 @@ export function DiffViewerContent({
         showRepoSelector={isCortex}
         repoLabel={statusQuery.data?.repoLabel ?? null}
         repoName={statusQuery.data?.repoName ?? null}
-        branch={statusQuery.data?.branch ?? null}
-        isRefreshing={statusQuery.isLoading}
+        branch={statusQuery.data?.branch ?? currentWorktree?.branch ?? null}
+        currentWorktreePath={currentWorktree?.path ?? null}
+        worktreeCount={worktreeCount}
+        isRefreshing={statusQuery.isLoading || worktreesQuery.isLoading}
         onRefresh={handleRefresh}
         onClose={onClose}
       />
@@ -134,7 +140,7 @@ export function DiffViewerContent({
             initialFile={initialFile}
             initialQuickFilter={initialQuickFilter}
           />
-        ) : (
+        ) : activeTab === 'history' ? (
           <HistoryView
             key={historyViewKey}
             wsUrl={wsUrl}
@@ -146,6 +152,18 @@ export function DiffViewerContent({
             initialFile={initialFile}
             initialQuickFilter={initialQuickFilter}
           />
+        ) : activeTab === 'worktrees' ? (
+          <WorktreesView
+            wsUrl={wsUrl}
+            agentId={active ? agentId : null}
+            repoTarget={repoTarget}
+            refreshToken={refreshToken}
+            onOpenCurrentWorktree={() => setActiveTab('changes')}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+            Pull request browsing is planned for a later Source Control phase. No PR or GitHub mutations are available here yet.
+          </div>
         )}
       </div>
 
@@ -156,6 +174,26 @@ export function DiffViewerContent({
           insertions={summary.insertions}
           deletions={summary.deletions}
         />
+      ) : activeTab === 'worktrees' ? (
+        <div
+          className="flex h-7 shrink-0 items-center border-t border-border/60 bg-card/80 px-3 text-xs text-muted-foreground"
+          aria-live="polite"
+        >
+          <span>{worktreeCount ?? 0} {(worktreeCount ?? 0) === 1 ? 'worktree' : 'worktrees'}</span>
+          {currentWorktree ? (
+            <>
+              <span className="mx-1.5 opacity-40">·</span>
+              <span className="truncate">Current: {currentWorktree.path}</span>
+            </>
+          ) : null}
+        </div>
+      ) : activeTab === 'pull-requests' ? (
+        <div
+          className="flex h-7 shrink-0 items-center border-t border-border/60 bg-card/80 px-3 text-xs text-muted-foreground"
+          aria-live="polite"
+        >
+          Pull requests are read-only placeholder content in this phase.
+        </div>
       ) : historyStatus ? (
         <div
           className="flex h-7 shrink-0 items-center border-t border-border/60 bg-card/80 px-3 text-xs text-muted-foreground"
@@ -216,13 +254,13 @@ export function DiffViewerDialog({
             'bg-background shadow-[0_16px_80px_rgba(0,0,0,0.5)] outline-none',
             'data-[state=open]:animate-in data-[state=closed]:animate-out',
           )}
-          aria-label="Diff viewer"
+          aria-label="Source Control"
           onEscapeKeyDown={(e) => {
             e.preventDefault()
             handleClose()
           }}
         >
-          <DialogTitle className="sr-only">Diff Viewer</DialogTitle>
+          <DialogTitle className="sr-only">Source Control</DialogTitle>
           <DiffViewerContent
             active={open}
             wsUrl={wsUrl}

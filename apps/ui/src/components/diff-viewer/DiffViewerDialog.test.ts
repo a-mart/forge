@@ -7,12 +7,21 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DiffViewerContent, DiffViewerDialog } from './DiffViewerDialog'
 
-const { invalidateGitCachesMock, hookCalls, STATUS_BY_TARGET, LOG_BY_TARGET, COMMIT_DETAILS } = vi.hoisted(() => ({
+const {
+  invalidateGitCachesMock,
+  hookCalls,
+  STATUS_BY_TARGET,
+  LOG_BY_TARGET,
+  COMMIT_DETAILS,
+  WORKTREES_BY_TARGET,
+  WORKTREE_ERROR_BY_TARGET,
+} = vi.hoisted(() => ({
   invalidateGitCachesMock: vi.fn(),
   hookCalls: {
     status: [] as Array<{ agentId: string | null; repoTarget: string }>,
     diff: [] as Array<{ agentId: string | null; repoTarget: string; file: string | null }>,
     log: [] as Array<{ agentId: string | null; repoTarget: string; limit: number; offset: number }>,
+    worktrees: [] as Array<{ agentId: string | null; repoTarget: string }>,
     commitDetail: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null }>,
     commitDiff: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null; file: string | null }>,
   },
@@ -108,6 +117,56 @@ const { invalidateGitCachesMock, hookCalls, STATUS_BY_TARGET, LOG_BY_TARGET, COM
       },
     ],
   },
+  WORKTREES_BY_TARGET: {
+    workspace: [
+      {
+        id: 'workspace-main',
+        path: '/repo/middleman',
+        repoRoot: '/repo/middleman',
+        branch: 'main',
+        headSha: 'abcdef1234567890',
+        isMainWorktree: true,
+        isCurrentContext: true,
+        dirty: true,
+        dirtySummary: { filesChanged: 2, insertions: 11, deletions: 1 },
+        activeAgents: [
+          { agentId: 'agent-1', displayName: 'Builder', role: 'manager' as const, status: 'idle' },
+        ],
+      },
+      {
+        id: 'feature-linked',
+        path: '/repo/middleman-feature',
+        repoRoot: '/repo/middleman-feature',
+        branch: 'feature/demo',
+        headSha: '1234567890abcdef',
+        isMainWorktree: false,
+        isCurrentContext: false,
+        locked: true,
+        prunable: false,
+        dirty: false,
+        dirtySummary: { filesChanged: 0, insertions: 0, deletions: 0 },
+        activeAgents: [],
+      },
+    ],
+    versioning: [
+      {
+        id: 'versioning-main',
+        path: '/data/forge',
+        repoRoot: '/data/forge',
+        branch: 'main',
+        headSha: 'fedcba9876543210',
+        isMainWorktree: true,
+        isCurrentContext: true,
+        dirty: true,
+        dirtySummary: { filesChanged: 2, insertions: 6, deletions: 3 },
+        activeAgents: [],
+      },
+    ],
+  },
+  WORKTREE_ERROR_BY_TARGET: {
+    workspace: null as string | null,
+    versioning: null as string | null,
+  },
   COMMIT_DETAILS: {
     workspace: {
       'workspace-1': {
@@ -200,6 +259,26 @@ vi.mock('./use-diff-queries', () => ({
       refetch: vi.fn(),
     }
   },
+  useGitWorktrees: (_wsUrl: string, agentId: string | null, repoTarget: 'workspace' | 'versioning') => {
+    hookCalls.worktrees.push({ agentId, repoTarget })
+    const status = STATUS_BY_TARGET[repoTarget]
+    const error = WORKTREE_ERROR_BY_TARGET[repoTarget]
+    return {
+      data: agentId && !error
+        ? {
+            repoName: status.repoName,
+            repoRoot: status.repoRoot,
+            repoKind: status.repoKind,
+            repoLabel: status.repoLabel,
+            context: { repoTarget },
+            worktrees: WORKTREES_BY_TARGET[repoTarget],
+          }
+        : null,
+      isLoading: false,
+      error,
+      refetch: vi.fn(),
+    }
+  },
   useGitDiff: (_wsUrl: string, agentId: string | null, repoTarget: 'workspace' | 'versioning', file: string | null) => {
     hookCalls.diff.push({ agentId, repoTarget, file })
     return {
@@ -287,6 +366,52 @@ beforeEach(() => {
     callList.length = 0
   }
   invalidateGitCachesMock.mockReset()
+  WORKTREE_ERROR_BY_TARGET.workspace = null
+  WORKTREE_ERROR_BY_TARGET.versioning = null
+  WORKTREES_BY_TARGET.workspace.splice(0, WORKTREES_BY_TARGET.workspace.length,
+    {
+      id: 'workspace-main',
+      path: '/repo/middleman',
+      repoRoot: '/repo/middleman',
+      branch: 'main',
+      headSha: 'abcdef1234567890',
+      isMainWorktree: true,
+      isCurrentContext: true,
+      dirty: true,
+      dirtySummary: { filesChanged: 2, insertions: 11, deletions: 1 },
+      activeAgents: [
+        { agentId: 'agent-1', displayName: 'Builder', role: 'manager' as const, status: 'idle' },
+      ],
+    },
+    {
+      id: 'feature-linked',
+      path: '/repo/middleman-feature',
+      repoRoot: '/repo/middleman-feature',
+      branch: 'feature/demo',
+      headSha: '1234567890abcdef',
+      isMainWorktree: false,
+      isCurrentContext: false,
+      locked: true,
+      prunable: false,
+      dirty: false,
+      dirtySummary: { filesChanged: 0, insertions: 0, deletions: 0 },
+      activeAgents: [],
+    },
+  )
+  WORKTREES_BY_TARGET.versioning.splice(0, WORKTREES_BY_TARGET.versioning.length,
+    {
+      id: 'versioning-main',
+      path: '/data/forge',
+      repoRoot: '/data/forge',
+      branch: 'main',
+      headSha: 'fedcba9876543210',
+      isMainWorktree: true,
+      isCurrentContext: true,
+      dirty: true,
+      dirtySummary: { filesChanged: 2, insertions: 6, deletions: 3 },
+      activeAgents: [],
+    },
+  )
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     writable: true,
@@ -341,7 +466,7 @@ function renderDialog(
     agentId?: string | null
     open?: boolean
     initialRepoTarget?: 'workspace' | 'versioning'
-    initialTab?: 'changes' | 'history'
+    initialTab?: 'changes' | 'history' | 'worktrees' | 'pull-requests'
     initialSha?: string | null
     initialFile?: string | null
     initialQuickFilter?: 'all' | 'shared-knowledge' | 'profile-memory' | 'reference-docs' | 'prompt-overrides'
@@ -425,6 +550,42 @@ describe('DiffViewerDialog', () => {
     expect(queryByRole(document.body, 'group', { name: 'Repository target' })).toBeNull()
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
     expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('renders the read-only Worktrees tab with current, locked, dirty, and active-agent state', async () => {
+    renderDialog({ isCortex: false, initialTab: 'worktrees' })
+    await flushEffects()
+
+    expect(getByRole(document.body, 'button', { name: 'Worktrees' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByText(document.body, 'Read-only inventory for this repository. Actions that would switch, create, or remove worktrees are intentionally unavailable in this phase.')).toBeTruthy()
+    expect(getByText(document.body, '/repo/middleman')).toBeTruthy()
+    expect(getByText(document.body, '/repo/middleman-feature')).toBeTruthy()
+    expect(getByText(document.body, 'Current')).toBeTruthy()
+    expect(getByText(document.body, 'Main')).toBeTruthy()
+    expect(getByText(document.body, '2 files +11 -1')).toBeTruthy()
+    expect(getByText(document.body, '1 active')).toBeTruthy()
+    expect(getByText(document.body, 'Builder · manager · idle')).toBeTruthy()
+    expect(getByText(document.body, 'Locked')).toBeTruthy()
+    expect(getAllByRole(document.body, 'button', { name: 'Browse files' }).every((button) => button.hasAttribute('disabled'))).toBe(true)
+  })
+
+  it('renders Worktrees empty and error states without leaving read-only mode', async () => {
+    WORKTREES_BY_TARGET.workspace.splice(0, WORKTREES_BY_TARGET.workspace.length)
+    renderDialog({ isCortex: false, initialTab: 'worktrees' })
+    await flushEffects()
+
+    expect(getByText(document.body, 'No worktrees were reported for this repository.')).toBeTruthy()
+
+    root?.unmount()
+    root = null
+    container.innerHTML = ''
+    WORKTREE_ERROR_BY_TARGET.workspace = 'worktree inventory unavailable'
+    renderDialog({ isCortex: false, initialTab: 'worktrees' })
+    await flushEffects()
+
+    expect(getByText(document.body, 'Failed to load worktrees: worktree inventory unavailable')).toBeTruthy()
+    expect(queryByRole(document.body, 'button', { name: 'Fetch origin' })).toBeNull()
+    expect(queryByRole(document.body, 'button', { name: 'Pull FF only' })).toBeNull()
   })
 
   it('changes repo-target hook params and resets history selection state when the selector changes', async () => {

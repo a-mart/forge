@@ -1372,7 +1372,7 @@ export function BuilderSurface({
       },
       {
         id: 'changes' as const,
-        label: 'View Changes',
+        label: 'Source Control',
         icon: GitBranch,
         active: isInlineDiffViewerOpen,
         disabled: workspaceDisabled || !activeAgentId,
@@ -1560,7 +1560,7 @@ export function BuilderSurface({
 
           <div className="flex min-w-0 flex-1 flex-col">
             {isInlineDiffViewerOpen ? (
-              <div className="diff-viewer flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label="Changes workspace">
+              <div className="diff-viewer flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label="Source Control workspace">
                 <DiffViewerContent
                   active={isInlineDiffViewerOpen}
                   wsUrl={wsUrl}
