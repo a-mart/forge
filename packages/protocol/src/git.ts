@@ -158,9 +158,37 @@ export interface GitBranchSummary {
 
 export interface GitBranchListResult extends GitRepoMetadata {
   branches: GitBranchSummary[]
+  remotes: string[]
   currentBranch: string | null
+  currentHead: string | null
+  statusHash: string | null
   context: GitSourceContextRef
   notInitialized?: boolean
+}
+
+export interface GitMutationRequestBase {
+  agentId: string
+  repoTarget?: GitRepoTarget
+  worktreeId?: string
+  expectedHead: string
+  expectedStatusHash: string
+}
+
+export interface GitFetchRequest extends GitMutationRequestBase {
+  remote?: string
+}
+
+export interface GitSwitchBranchRequest extends GitMutationRequestBase {
+  branch: string
+}
+
+export interface GitCreateBranchRequest extends GitMutationRequestBase {
+  branch: string
+  startPoint?: string
+}
+
+export interface GitPullFfOnlyRequest extends GitMutationRequestBase {
+  remote?: string
 }
 
 export type GitPreflightIssueSeverity = 'block' | 'warn'

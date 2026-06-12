@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { GitRepoTarget } from '@forge/protocol'
 import { GitBranch, HardDrive, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -27,6 +28,7 @@ interface DiffDialogHeaderProps {
   isRefreshing: boolean
   onRefresh: () => void
   onClose: () => void
+  branchActions?: ReactNode
 }
 
 export function DiffDialogHeader({
@@ -44,6 +46,7 @@ export function DiffDialogHeader({
   isRefreshing,
   onRefresh,
   onClose,
+  branchActions,
 }: DiffDialogHeaderProps) {
   const workspaceLabel = repoTarget === 'workspace' ? (repoLabel ?? 'Workspace') : 'Workspace'
   const versioningLabel = repoTarget === 'versioning' ? (repoLabel ?? 'Cortex Knowledge') : 'Cortex Knowledge'
@@ -138,6 +141,8 @@ export function DiffDialogHeader({
           {branch}
         </span>
       ) : null}
+
+      {branchActions}
 
       {/* Spacer */}
       <div className="flex-1" />

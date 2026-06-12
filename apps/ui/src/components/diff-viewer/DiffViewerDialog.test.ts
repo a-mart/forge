@@ -15,10 +15,12 @@ const {
   COMMIT_DETAILS,
   WORKTREES_BY_TARGET,
   WORKTREE_ERROR_BY_TARGET,
+  BRANCHES_BY_TARGET,
 } = vi.hoisted(() => ({
   invalidateGitCachesMock: vi.fn(),
   hookCalls: {
     status: [] as Array<{ agentId: string | null; repoTarget: string; worktreeId?: string | null }>,
+    branches: [] as Array<{ agentId: string | null; repoTarget: string; worktreeId?: string | null }>,
     diff: [] as Array<{ agentId: string | null; repoTarget: string; file: string | null }>,
     log: [] as Array<{ agentId: string | null; repoTarget: string; limit: number; offset: number }>,
     worktrees: [] as Array<{ agentId: string | null; repoTarget: string; enabled?: boolean }>,
@@ -167,6 +169,25 @@ const {
     workspace: null as string | null,
     versioning: null as string | null,
   },
+  BRANCHES_BY_TARGET: {
+    workspace: {
+      branches: [
+        { name: 'main', kind: 'current' as const, headSha: 'abcdef1234567890abcdef1234567890abcdef12', ahead: 0, behind: 0 },
+        { name: 'feature/demo', kind: 'local' as const, headSha: '1234567890abcdef1234567890abcdef12345678' },
+      ],
+      remotes: ['origin'],
+      currentBranch: 'main',
+      currentHead: 'abcdef1234567890abcdef1234567890abcdef12',
+      statusHash: 'abc123statushash',
+    },
+    versioning: {
+      branches: [],
+      remotes: [],
+      currentBranch: 'main',
+      currentHead: null,
+      statusHash: null,
+    },
+  },
   COMMIT_DETAILS: {
     workspace: {
       'workspace-1': {
@@ -259,6 +280,31 @@ vi.mock('./use-diff-queries', () => ({
     hookCalls.status.push({ agentId, repoTarget, worktreeId: worktreeId ?? null })
     return {
       data: agentId ? STATUS_BY_TARGET[repoTarget] : null,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    }
+  },
+  useGitBranches: (
+    _wsUrl: string,
+    agentId: string | null,
+    repoTarget: 'workspace' | 'versioning',
+    worktreeId?: string | null,
+  ) => {
+    hookCalls.branches.push({ agentId, repoTarget, worktreeId: worktreeId ?? null })
+    const status = STATUS_BY_TARGET[repoTarget]
+    const branches = BRANCHES_BY_TARGET[repoTarget]
+    return {
+      data: agentId
+        ? {
+            ...branches,
+            repoName: status.repoName,
+            repoRoot: status.repoRoot,
+            repoKind: status.repoKind,
+            repoLabel: status.repoLabel,
+            context: { repoTarget, worktreeId: worktreeId ?? undefined },
+          }
+        : null,
       isLoading: false,
       error: null,
       refetch: vi.fn(),
@@ -367,6 +413,10 @@ vi.mock('./use-diff-queries', () => ({
     }
   },
   invalidateGitCaches: invalidateGitCachesMock,
+  fetchGitOrigin: vi.fn(),
+  switchGitBranch: vi.fn(),
+  createGitBranch: vi.fn(),
+  pullGitFfOnly: vi.fn(),
 }))
 
 vi.mock('./DiffPane', () => ({
@@ -672,8 +722,8 @@ describe('DiffViewerDialog', () => {
     await flushEffects()
 
     expect(getByText(document.body, 'Failed to load worktrees: worktree inventory unavailable')).toBeTruthy()
-    expect(queryByRole(document.body, 'button', { name: 'Fetch origin' })).toBeNull()
-    expect(queryByRole(document.body, 'button', { name: 'Pull FF only' })).toBeNull()
+    expect(getByRole(document.body, 'button', { name: 'Fetch origin' })).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Pull FF only' })).toBeTruthy()
   })
 
   it('changes repo-target hook params and resets history selection state when the selector changes', async () => {

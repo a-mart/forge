@@ -9,7 +9,8 @@ import { ChangesView } from './ChangesView'
 import { HistoryView, type HistoryStatusInfo } from './HistoryView'
 import { WorktreesView } from './WorktreesView'
 import type { KnowledgeQuickFilterId } from './knowledge-surface'
-import { useGitStatus, useGitWorktrees, invalidateGitCaches } from './use-diff-queries'
+import { SourceControlBranchActions } from './SourceControlBranchActions'
+import { useGitBranches, useGitStatus, useGitWorktrees, invalidateGitCaches } from './use-diff-queries'
 
 export interface DiffViewerInitialState {
   initialRepoTarget?: GitRepoTarget
@@ -98,6 +99,9 @@ export function DiffViewerContent({
   const shouldLoadWorktrees =
     active && !!agentId && repoTarget === 'workspace' && activeTab === 'worktrees'
   const statusQuery = useGitStatus(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId)
+  const branchesQuery = useGitBranches(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId, {
+    enabled: active && !!agentId && repoTarget === 'workspace',
+  })
   const worktreesQuery = useGitWorktrees(wsUrl, active ? agentId : null, repoTarget, {
     enabled: shouldLoadWorktrees,
   })
@@ -106,10 +110,11 @@ export function DiffViewerContent({
     invalidateGitCaches({ agentId, repoTarget })
     setRefreshToken((previous) => previous + 1)
     statusQuery.refetch()
+    branchesQuery.refetch()
     if (activeTab === 'worktrees') {
       worktreesQuery.refetch()
     }
-  }, [activeTab, agentId, repoTarget, statusQuery, worktreesQuery])
+  }, [activeTab, agentId, branchesQuery, repoTarget, statusQuery, worktreesQuery])
 
   const handleRepoTargetChange = useCallback((nextTarget: GitRepoTarget) => {
     setRepoTarget(nextTarget)
@@ -155,9 +160,27 @@ export function DiffViewerContent({
         currentWorktreePath={contextWorktree?.path ?? null}
         worktreeCount={worktreeCount}
         selectedWorktreeId={selectedWorktreeId}
-        isRefreshing={statusQuery.isLoading || (shouldLoadWorktrees && worktreesQuery.isLoading)}
+        isRefreshing={
+          statusQuery.isLoading ||
+          branchesQuery.isLoading ||
+          (shouldLoadWorktrees && worktreesQuery.isLoading)
+        }
         onRefresh={handleRefresh}
         onClose={onClose}
+        branchActions={
+          repoTarget === 'workspace' ? (
+            <SourceControlBranchActions
+              wsUrl={wsUrl}
+              agentId={agentId}
+              repoTarget={repoTarget}
+              worktreeId={effectiveWorktreeId}
+              selectedWorktreePath={contextWorktree?.path ?? null}
+              branchesQuery={branchesQuery}
+              isDirty={(statusQuery.data?.summary.filesChanged ?? 0) > 0}
+              onMutationComplete={handleRefresh}
+            />
+          ) : null
+        }
       />
 
       {/* Content */}

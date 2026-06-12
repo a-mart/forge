@@ -1,15 +1,24 @@
 import type {
+  GitBranchListResult,
   GitCommitDetail,
+  GitCreateBranchRequest,
   GitDiffResult,
+  GitFetchRequest,
+  GitFetchResult,
   GitLogResult,
+  GitMutationResult,
+  GitPullFfOnlyRequest,
+  GitPullResult,
   GitRepoTarget,
   GitStatusResult,
+  GitSwitchBranchRequest,
   GitWorktreeListResult,
 } from '@forge/protocol'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 export type {
+  GitBranchListResult,
   GitCommitDetail,
   GitDiffResult,
   GitFileStatus,
@@ -35,6 +44,27 @@ async function fetchGitApi<T>(wsUrl: string, path: string, params: Record<string
   }
 
   return response.json() as Promise<T>
+}
+
+async function postGitApi<T>(wsUrl: string, path: string, body: object): Promise<T> {
+  const url = resolveApiEndpoint(wsUrl, path)
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  const payload = await response.json().catch(() => ({ error: response.statusText })) as T & {
+    error?: string
+    success?: boolean
+    errors?: string[]
+  }
+
+  if (!response.ok && typeof payload.error === 'string') {
+    throw new Error(payload.error)
+  }
+
+  return payload as T
 }
 
 function buildGitRequestParams(
@@ -106,6 +136,7 @@ export interface QueryResult<T> {
 }
 
 export type GitWorktreesQueryResult = QueryResult<GitWorktreeListResult>
+export type GitBranchesQueryResult = QueryResult<GitBranchListResult>
 
 // Simple in-memory cache shared across hooks
 const queryCache = new Map<string, { data: unknown; fetchedAt: number }>()
@@ -229,6 +260,32 @@ export function useGitStatus(
 
   return useSimpleQuery<GitStatusResult>(queryKey, fetchFn, {
     enabled: !!agentId,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+  })
+}
+
+export function useGitBranches(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  worktreeId?: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  const enabled = options.enabled ?? !!agentId
+  const queryKey = buildGitQueryKey('git:branches', agentId, repoTarget, worktreeId)
+  const fetchFn = useCallback(
+    () =>
+      fetchGitApi<GitBranchListResult>(
+        wsUrl,
+        '/api/git/branches',
+        buildGitRequestParams(agentId!, repoTarget, {}, worktreeId),
+      ),
+    [wsUrl, agentId, repoTarget, worktreeId],
+  )
+
+  return useSimpleQuery<GitBranchListResult>(queryKey, fetchFn, {
+    enabled: enabled && !!agentId,
     staleTime: 10_000,
     refetchOnWindowFocus: true,
   })
@@ -373,6 +430,34 @@ export function useGitCommitDiff(
   })
 }
 
+export async function fetchGitOrigin(
+  wsUrl: string,
+  request: GitFetchRequest,
+): Promise<GitFetchResult> {
+  return postGitApi<GitFetchResult>(wsUrl, '/api/git/fetch', request)
+}
+
+export async function switchGitBranch(
+  wsUrl: string,
+  request: GitSwitchBranchRequest,
+): Promise<GitMutationResult> {
+  return postGitApi<GitMutationResult>(wsUrl, '/api/git/switch-branch', request)
+}
+
+export async function createGitBranch(
+  wsUrl: string,
+  request: GitCreateBranchRequest,
+): Promise<GitMutationResult> {
+  return postGitApi<GitMutationResult>(wsUrl, '/api/git/create-branch', request)
+}
+
+export async function pullGitFfOnly(
+  wsUrl: string,
+  request: GitPullFfOnlyRequest,
+): Promise<GitPullResult> {
+  return postGitApi<GitPullResult>(wsUrl, '/api/git/pull-ff-only', request)
+}
+
 /** Invalidate mutable git caches. Commit caches remain immutable. */
 export function invalidateGitCaches(options?: { agentId?: string | null; repoTarget?: GitRepoTarget }) {
   for (const key of queryCache.keys()) {
@@ -383,6 +468,7 @@ export function invalidateGitCaches(options?: { agentId?: string | null; repoTar
 
     if (
       parsed.scope !== 'git:status' &&
+      parsed.scope !== 'git:branches' &&
       parsed.scope !== 'git:worktrees' &&
       parsed.scope !== 'git:diff' &&
       parsed.scope !== 'git:log'

@@ -4,7 +4,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { AgentDescriptor, GitWorktreeListResult } from "@forge/protocol";
+import type {
+  AgentDescriptor,
+  GitBranchListResult,
+  GitFetchResult,
+  GitMutationResult,
+  GitPullResult,
+  GitWorktreeListResult
+} from "@forge/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import {
@@ -160,6 +167,210 @@ describe("git-source-control-routes", () => {
     const linkedWorktree = payload.worktrees.find((entry) => entry.id === secondaryId);
     expect(linkedWorktree?.isCurrentContext).toBe(true);
     expect(payload.context.worktreeId).toBe(secondaryId);
+  });
+
+  it("lists branches with current head and status hash", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/branches?agentId=alpha--s1`);
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitBranchListResult;
+    expect(payload.currentBranch).toBe("main");
+    expect(payload.currentHead).toMatch(/^[a-f0-9]{40}$/);
+    expect(payload.statusHash).toHaveLength(16);
+    expect(payload.branches.some((branch) => branch.kind === "current" && branch.name === "main")).toBe(
+      true
+    );
+    expect(payload.branches.some((branch) => branch.name === "feature/worktree-test")).toBe(true);
+  });
+
+  it("switches branches on a clean worktree", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    await execGit(server.mainDir, ["branch", "release/test"]);
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/switch-branch", {
+      agentId: "alpha--s1",
+      branch: "release/test",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(200);
+    expect(mutation.payload.success).toBe(true);
+    expect(mutation.payload.currentBranch).toBe("release/test");
+  });
+
+  it("rejects branch switch when the worktree is dirty", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    await writeFile(join(server.mainDir, "dirty.txt"), "dirty\n", "utf8");
+    const branches = await fetchBranches(server, "alpha--s1");
+
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/switch-branch", {
+      agentId: "alpha--s1",
+      branch: "feature/worktree-test",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("uncommitted changes");
+  });
+
+  it("rejects switching to a branch checked out in another worktree", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/switch-branch", {
+      agentId: "alpha--s1",
+      branch: "feature/worktree-test",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("already checked out");
+  });
+
+  it("rejects branch switch when a streaming agent is attached to the worktree", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [
+        createManagerSession("alpha", "alpha--s1"),
+        createWorker("alpha-worker", "alpha--s1", { status: "streaming" })
+      ],
+      managerCwd: "linked"
+    });
+
+    await execGit(server.mainDir, ["branch", "release/test"]);
+    const branches = await fetchBranches(server, "alpha--s1", {
+      worktreeId: createWorktreeId(server.secondaryDir)
+    });
+
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/switch-branch", {
+      agentId: "alpha--s1",
+      branch: "release/test",
+      worktreeId: createWorktreeId(server.secondaryDir),
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("Stop active agents");
+  });
+
+  it("rejects stale preflight when expected head no longer matches", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/switch-branch", {
+      agentId: "alpha--s1",
+      branch: "feature/worktree-test",
+      expectedHead: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("HEAD changed");
+  });
+
+  it("creates a branch from the current head on a clean worktree", async () => {
+    const server = await createSourceControlTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitMutationResult>(server, "/api/git/create-branch", {
+      agentId: "alpha--s1",
+      branch: "feature/new-branch",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(200);
+    expect(mutation.payload.success).toBe(true);
+    expect(mutation.payload.currentBranch).toBe("feature/new-branch");
+  });
+
+  it("fetches from a local bare remote", async () => {
+    const server = await createRemoteBackedTestServer();
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitFetchResult>(server, "/api/git/fetch", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(200);
+    expect(mutation.payload.success).toBe(true);
+    expect(mutation.payload.remote).toBe("origin");
+  });
+
+  it("fast-forward pulls from a local bare remote", async () => {
+    const server = await createRemoteBackedTestServer({ aheadOnRemote: true });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPullResult>(server, "/api/git/pull-ff-only", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(200);
+    expect(mutation.payload.success).toBe(true);
+    expect(mutation.payload.fastForward).toBe(true);
+  });
+
+  it("rejects fast-forward pull when the branch has diverged", async () => {
+    const server = await createRemoteBackedTestServer({ diverged: true });
+
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPullResult>(server, "/api/git/pull-ff-only", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.fastForward).toBe(false);
+  });
+
+  it("rejects fast-forward pull on a dirty worktree", async () => {
+    const server = await createRemoteBackedTestServer({ aheadOnRemote: true });
+
+    await writeFile(join(server.mainDir, "dirty.txt"), "dirty\n", "utf8");
+    const branches = await fetchBranches(server, "alpha--s1");
+    const mutation = await postMutation<GitPullResult>(server, "/api/git/pull-ff-only", {
+      agentId: "alpha--s1",
+      remote: "origin",
+      expectedHead: branches.currentHead!,
+      expectedStatusHash: branches.statusHash!
+    });
+
+    expect(mutation.status).toBe(409);
+    expect(mutation.payload.success).toBe(false);
+    expect(mutation.payload.errors.join(" ")).toContain("uncommitted changes");
   });
 });
 
@@ -325,7 +536,7 @@ function createWorker(
 async function initGitRepo(cwd: string, relativePath: string, content: string, message: string): Promise<void> {
   await mkdir(join(cwd, dirnameSafe(relativePath)), { recursive: true });
   await writeFile(join(cwd, relativePath), content, "utf8");
-  await execGit(cwd, ["init"]);
+  await execGit(cwd, ["init", "-b", "main"]);
   await execGit(cwd, ["config", "user.name", "Forge Test"]);
   await execGit(cwd, ["config", "user.email", "forge-test@example.com"]);
   await execGit(cwd, ["add", relativePath]);
@@ -343,4 +554,130 @@ async function execGit(cwd: string, args: string[]): Promise<void> {
     cwd,
     encoding: "utf8"
   });
+}
+
+async function fetchBranches(
+  server: TestServer,
+  agentId: string,
+  options: { worktreeId?: string } = {}
+): Promise<GitBranchListResult> {
+  const params = new URLSearchParams({ agentId });
+  if (options.worktreeId) {
+    params.set("worktreeId", options.worktreeId);
+  }
+
+  const response = await fetch(`${server.baseUrl}/api/git/branches?${params.toString()}`);
+  expect(response.status).toBe(200);
+  return (await response.json()) as GitBranchListResult;
+}
+
+async function postMutation<T>(
+  server: TestServer,
+  endpoint: string,
+  body: Record<string, unknown>
+): Promise<{ status: number; payload: T }> {
+  const response = await fetch(`${server.baseUrl}${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  return {
+    status: response.status,
+    payload: (await response.json()) as T
+  };
+}
+
+async function createRemoteBackedTestServer(options: {
+  aheadOnRemote?: boolean;
+  diverged?: boolean;
+} = {}): Promise<TestServer> {
+  const root = await mkdtemp(join(tmpdir(), "git-source-control-remote-"));
+  const bareDir = join(root, "origin.git");
+  const mainDir = join(root, "main");
+  const remoteCloneDir = join(root, "remote-clone");
+  await mkdir(mainDir, { recursive: true });
+
+  await execGit(root, ["init", "--bare", bareDir]);
+  await initGitRepo(mainDir, "main.txt", "main v1\n", "initial commit");
+  await execGit(mainDir, ["remote", "add", "origin", bareDir]);
+  await execGit(mainDir, ["push", "-u", "origin", "main"]);
+  await execGit(bareDir, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+  if (options.aheadOnRemote) {
+    await writeFile(join(mainDir, "remote-only.txt"), "remote\n", "utf8");
+    await execGit(mainDir, ["add", "remote-only.txt"]);
+    await execGit(mainDir, ["commit", "-m", "remote advance"]);
+    await execGit(mainDir, ["push", "origin", "main"]);
+    await execGit(mainDir, ["reset", "--hard", "HEAD^"]);
+  }
+
+  if (options.diverged) {
+    await writeFile(join(mainDir, "local-only.txt"), "local\n", "utf8");
+    await execGit(mainDir, ["add", "local-only.txt"]);
+    await execGit(mainDir, ["commit", "-m", "local divergence"]);
+
+    await execGit(root, ["clone", "-b", "main", bareDir, remoteCloneDir]);
+    await writeFile(join(remoteCloneDir, "remote-only.txt"), "remote\n", "utf8");
+    await execGit(remoteCloneDir, ["add", "remote-only.txt"]);
+    await execGit(remoteCloneDir, ["commit", "-m", "remote divergence"]);
+    await execGit(remoteCloneDir, ["push", "origin", "main"]);
+  }
+
+  const mainRealPath = await realpath(mainDir);
+  const descriptors = [createManagerSession("alpha", "alpha--s1")];
+  descriptors[0]!.cwd = mainRealPath;
+
+  const descriptorById = new Map(descriptors.map((descriptor) => [descriptor.agentId, descriptor]));
+  const swarmManager = {
+    getConfig: () => ({ paths: { dataDir: join(root, "unused-data") } }),
+    getAgent: (agentId: string) => descriptorById.get(agentId),
+    listAgents: () => descriptors
+  } as unknown as SwarmManager;
+
+  const routes = createGitSourceControlRoutes({ swarmManager });
+  const server = createServer((request, response) => {
+    void handleRouteRequest(routes, request, response);
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine test server address.");
+  }
+
+  const testServer: TestServer = {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    root,
+    mainDir: mainRealPath,
+    secondaryDir: mainRealPath,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  activeServers.push(testServer);
+  return testServer;
+}
+
+async function revParse(cwd: string, ref: string): Promise<string> {
+  const result = await execFileAsync("git", ["rev-parse", ref], {
+    cwd,
+    encoding: "utf8"
+  });
+  return result.stdout.trim();
 }

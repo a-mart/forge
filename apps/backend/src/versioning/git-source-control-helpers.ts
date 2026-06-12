@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { GitCli } from "./git-cli.js";
 
 const RECORD_SEPARATOR = "\0";
@@ -280,4 +281,101 @@ export async function resolveWorktreeContextPath(
   }
 
   return path;
+}
+
+export type GitInProgressOperationKind = "merge" | "rebase" | "cherry-pick";
+
+export async function resolveGitDirectory(git: GitCli, cwd: string): Promise<string | null> {
+  const result = await git.run(["rev-parse", "--git-dir"], { allowFailure: true });
+  if (result.exitCode !== 0) {
+    return null;
+  }
+
+  const gitDir = result.stdout.trim();
+  if (gitDir.length === 0) {
+    return null;
+  }
+
+  return isAbsolute(gitDir) ? gitDir : resolve(cwd, gitDir);
+}
+
+export function detectInProgressGitOperation(
+  gitDir: string
+): { inProgress: true; kind: GitInProgressOperationKind } | { inProgress: false } {
+  if (existsSync(resolve(gitDir, "MERGE_HEAD"))) {
+    return { inProgress: true, kind: "merge" };
+  }
+
+  if (existsSync(resolve(gitDir, "rebase-merge")) || existsSync(resolve(gitDir, "rebase-apply"))) {
+    return { inProgress: true, kind: "rebase" };
+  }
+
+  if (existsSync(resolve(gitDir, "CHERRY_PICK_HEAD"))) {
+    return { inProgress: true, kind: "cherry-pick" };
+  }
+
+  return { inProgress: false };
+}
+
+export async function validateBranchName(git: GitCli, branchName: string): Promise<boolean> {
+  const trimmed = branchName.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  const result = await git.run(["check-ref-format", "--branch", trimmed], { allowFailure: true });
+  return result.exitCode === 0;
+}
+
+export async function listRemoteNames(git: GitCli): Promise<string[]> {
+  const result = await git.run(["remote"], { allowFailure: true });
+  if (result.exitCode !== 0) {
+    return [];
+  }
+
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export async function collectBranchesCheckedOutInOtherWorktrees(
+  baseGit: GitCli,
+  currentWorktreePath: string
+): Promise<Map<string, string>> {
+  const listResult = await baseGit.run(["worktree", "list", "--porcelain", "-z"], {
+    allowFailure: true
+  });
+  if (listResult.exitCode !== 0) {
+    return new Map();
+  }
+
+  const currentNormalized = await tryNormalizePathForComparison(currentWorktreePath);
+  const checkedOutElsewhere = new Map<string, string>();
+
+  for (const entry of parseWorktreeListPorcelain(listResult.stdout)) {
+    if (!entry.branch || entry.isPrunable) {
+      continue;
+    }
+
+    const identity = await resolveWorktreeIdentity(entry.path, {
+      forceInaccessible: entry.isPrunable
+    });
+    if (!identity.accessible) {
+      continue;
+    }
+
+    if (identity.path === currentNormalized.path) {
+      continue;
+    }
+
+    checkedOutElsewhere.set(entry.branch, identity.path);
+  }
+
+  return checkedOutElsewhere;
+}
+
+export function isBlockingAgentStatus(status: string): boolean {
+  return status === "streaming";
 }
