@@ -63,6 +63,8 @@ Then create a manager, point it at a project directory, and start chatting. See 
 
 Need terminal automation? Open **Settings → CLI Access** to generate a CLI key and install the bundled `forge` command. Desktop installs do not require Node.js for CLI use.
 
+You can also customize **Settings → Appearance** with Light, Dark, or System mode, appearance templates, and editable accent/background/foreground colors and UI/code fonts. Changes are drafted first and only applied when you click **Apply**; the saved appearance lives in local renderer/browser state, not shared server profile config.
+
 ### Building from Source
 
 If you need more control over the runtime environment or want to contribute to development:

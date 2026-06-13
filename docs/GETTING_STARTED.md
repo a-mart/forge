@@ -44,6 +44,8 @@ After adding credentials, you may need to restart the backend (`Ctrl+C` and re-r
 
 If you use pooled OAuth credentials, Forge refreshes them through the shared auth path before runtime selection, then writes refreshed tokens back into `auth.json` under the pooled key. Missing or clearly expired pooled credentials show up as `auth_error` instead of looking healthy.
 
+You can fine-tune the app under **Settings → Appearance**. It supports Light, Dark, and System mode, appearance templates, editable accent/background/foreground colors, and UI/code font choices. Changes are drafted first, then saved with **Apply**. The browser renderer keeps those preferences locally in browser storage, so they do not travel with server-side profile config.
+
 
 > **Tip:** You don't need all providers to get started. One is enough. But having multiple options gives you access to multi-model routing (more on this in [Advanced Usage](#10-advanced-usage)).
 
