@@ -65,28 +65,41 @@ export function DiffDialogHeader({
         Source Control
       </div>
 
-      {/* Tab switcher */}
-      <div className="inline-flex h-7 min-w-0 items-center overflow-x-auto rounded-md border border-border/60 bg-muted/30 p-0.5">
-        <TabButton
-          label="Changes"
-          active={activeTab === 'changes'}
-          onClick={() => onTabChange('changes')}
-        />
-        <TabButton
-          label="History"
-          active={activeTab === 'history'}
-          onClick={() => onTabChange('history')}
-        />
-        <TabButton
-          label="Worktrees"
-          active={activeTab === 'worktrees'}
-          onClick={() => onTabChange('worktrees')}
-        />
-        <TabButton
-          label="Pull Requests"
-          active={activeTab === 'pull-requests'}
-          onClick={() => onTabChange('pull-requests')}
-        />
+      {/* Source Control navigation: repo activity stays distinct from adjacent tools. */}
+      <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+        <div
+          className="inline-flex h-7 shrink-0 items-center rounded-md border border-border/60 bg-muted/30 p-0.5"
+          role="group"
+          aria-label="Repository activity"
+        >
+          <TabButton
+            label="Changes"
+            active={activeTab === 'changes'}
+            onClick={() => onTabChange('changes')}
+          />
+          <TabButton
+            label="History"
+            active={activeTab === 'history'}
+            onClick={() => onTabChange('history')}
+          />
+        </div>
+        <div className="hidden h-5 w-px shrink-0 bg-border/60 sm:block" aria-hidden />
+        <div
+          className="inline-flex h-7 shrink-0 items-center rounded-md border border-border/40 bg-background/40 p-0.5"
+          role="group"
+          aria-label="Source Control sections"
+        >
+          <TabButton
+            label="Worktrees"
+            active={activeTab === 'worktrees'}
+            onClick={() => onTabChange('worktrees')}
+          />
+          <TabButton
+            label="Pull Requests"
+            active={activeTab === 'pull-requests'}
+            onClick={() => onTabChange('pull-requests')}
+          />
+        </div>
       </div>
 
       {showRepoSelector ? (

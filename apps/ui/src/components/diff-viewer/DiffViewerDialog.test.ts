@@ -653,6 +653,8 @@ describe('DiffViewerDialog', () => {
     expect(queryByRole(document.body, 'group', { name: 'Repository target' })).toBeNull()
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
     expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole(document.body, 'group', { name: 'Repository activity' })).toBeTruthy()
+    expect(getByRole(document.body, 'group', { name: 'Source Control sections' })).toBeTruthy()
     expect(hookCalls.worktrees.filter((call) => call.enabled !== false)).toHaveLength(0)
   })
 
