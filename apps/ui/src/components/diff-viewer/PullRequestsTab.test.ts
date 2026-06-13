@@ -12,6 +12,20 @@ let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  const storage = new Map<string, string>()
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, value)
+      },
+      removeItem: (key: string) => {
+        storage.delete(key)
+      },
+      clear: () => storage.clear(),
+    },
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
 })
@@ -19,7 +33,8 @@ beforeEach(() => {
 afterEach(() => {
   root?.unmount()
   root = null
-  container.remove()
+  container?.remove()
+  window.localStorage.clear()
 })
 
 describe('PullRequestsTab', () => {
@@ -119,6 +134,17 @@ describe('PullRequestsTab', () => {
     expect(getByRole(container, 'link', { name: /Open in browser/i })).toBeTruthy()
   })
 
+  it('renders a compact resizable pull request list column by default', () => {
+    renderTab({
+      data: readyPullRequestsData(),
+      currentBranch: 'feature/git-source-control-workspace',
+    })
+
+    const resizeHandle = getByRole(container, 'separator', { name: /resize pull request list/i })
+    expect(resizeHandle.previousElementSibling).toBeInstanceOf(HTMLElement)
+    expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('300px')
+  })
+
   it('shows empty state when provider is ready but no pull requests exist', () => {
     renderTab({
       data: {
@@ -180,6 +206,40 @@ describe('PullRequestsTab', () => {
     expect(getByText(container, /GitHub pull request request failed/i)).toBeTruthy()
   })
 })
+
+function readyPullRequestsData(): NonNullable<GitPullRequestsQueryResult['data']> {
+  return {
+    open: [
+      {
+        number: 428,
+        title: 'Enhanced Source Control workspace',
+        state: 'open',
+        author: 'adam',
+        createdAt: '2026-06-10T10:00:00Z',
+        updatedAt: '2026-06-12T09:00:00Z',
+        headRef: 'feature/git-source-control-workspace',
+        baseRef: 'main',
+        isDraft: false,
+        isCurrentBranch: true,
+        checkStatus: 'success',
+        providerUrl: 'https://github.com/a-mart/forge/pull/428',
+      },
+    ],
+    recentlyClosed: [],
+    currentBranchPullRequest: null,
+    providerStatus: {
+      provider: 'github',
+      available: true,
+      authenticated: true,
+      remoteUrl: 'git@github.com:a-mart/forge.git',
+    },
+    repoName: 'forge',
+    repoRoot: '/repo/forge',
+    repoKind: 'workspace',
+    repoLabel: 'Workspace',
+    context: { repoTarget: 'workspace' },
+  }
+}
 
 function renderTab(options: {
   data?: GitPullRequestsQueryResult['data']

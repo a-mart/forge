@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { MergePullRequestDialog } from './MergePullRequestDialog'
+import { useResizablePanel } from './useResizablePanel'
 import {
   invalidateGitCaches,
   mergeGitPullRequest,
@@ -201,10 +202,10 @@ function PullRequestDetailPane({
       <div className="border-b border-border/60 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
-            <h2 className="text-base font-semibold text-foreground">
+            <h2 className="break-words text-base font-semibold text-foreground">
               #{pullRequest.number} {pullRequest.title}
             </h2>
-            <p className="text-xs text-muted-foreground">
+            <p className="break-words text-xs text-muted-foreground">
               {pullRequest.headRef} into {pullRequest.baseRef} · {pullRequest.author}
             </p>
             <p className="text-xs text-muted-foreground">
@@ -305,7 +306,7 @@ function PullRequestDetailPane({
                     key={check.name}
                     className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2 py-1.5 text-xs"
                   >
-                    <span className="flex items-center gap-1.5">
+                    <span className="flex min-w-0 items-center gap-1.5 break-words">
                       <CheckStatusIcon status={check.status} />
                       {check.name}
                     </span>
@@ -331,7 +332,7 @@ function PullRequestDetailPane({
                 {detail.changedFiles} files · +{detail.additions} / -{detail.deletions}
               </p>
               {detail.headSha ? (
-                <p className="font-mono text-[11px] text-muted-foreground">Head SHA: {detail.headSha}</p>
+                <p className="break-all font-mono text-[11px] text-muted-foreground">Head SHA: {detail.headSha}</p>
               ) : null}
             </section>
           ) : null}
@@ -405,6 +406,30 @@ export function PullRequestsTab({
 
   const selectedPullRequest =
     allPullRequests.find((entry) => entry.number === selectedNumber) ?? data?.currentBranchPullRequest ?? null
+
+  const {
+    width: pullRequestListWidth,
+    isDragging: isListDragging,
+    handleRef: listResizeHandleRef,
+  } = useResizablePanel({
+    storageKey: 'forge-diff-pull-requests-list-width',
+    defaultWidth: 300,
+    minWidth: 240,
+    maxWidth: 460,
+  })
+  const [isLargeLayout, setIsLargeLayout] = useState(true)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return
+    }
+
+    const query = window.matchMedia('(min-width: 1024px)')
+    const updateLayout = () => setIsLargeLayout(query.matches)
+    updateLayout()
+    query.addEventListener('change', updateLayout)
+    return () => query.removeEventListener('change', updateLayout)
+  }, [])
 
   const mergeDisabledReason = useMemo(() => {
     if (repoTarget === 'versioning') {
@@ -558,8 +583,11 @@ export function PullRequestsTab({
 
   return (
     <>
-      <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
-        <div className="flex min-h-0 flex-col border-b border-border/60 lg:border-b-0 lg:border-r">
+      <div className="flex h-full min-h-0 flex-col lg:flex-row">
+        <div
+          className="flex min-h-0 flex-col border-b border-border/60 lg:shrink-0 lg:border-b-0 lg:border-r"
+          style={isLargeLayout ? { width: pullRequestListWidth } : undefined}
+        >
           <div className="border-b border-border/60 px-4 py-3">
             <h3 className="text-sm font-medium text-foreground">Pull Requests</h3>
             <p className="text-xs text-muted-foreground">Open and recently closed for this repository</p>
@@ -602,19 +630,34 @@ export function PullRequestsTab({
             </div>
           </ScrollArea>
         </div>
-        <PullRequestDetailPane
-          pullRequest={selectedPullRequest}
-          detail={detailQuery.data}
-          detailLoading={detailQuery.isLoading}
-          detailError={detailQuery.error}
-          currentBranch={currentBranch}
-          mergeDisabledReason={mergeDisabledReason}
-          mergeSuccessMessage={mergeSuccessMessage}
-          onOpenMergeDialog={() => {
-            setMergeError(null)
-            setMergeDialogOpen(true)
-          }}
-        />
+        <div
+          ref={listResizeHandleRef}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize pull request list"
+          className={cn(
+            'group relative hidden h-full shrink-0 cursor-col-resize transition-colors lg:block',
+            isListDragging ? 'bg-primary/40' : 'bg-transparent hover:bg-border',
+          )}
+          style={{ width: 6 }}
+        >
+          <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
+        </div>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <PullRequestDetailPane
+            pullRequest={selectedPullRequest}
+            detail={detailQuery.data}
+            detailLoading={detailQuery.isLoading}
+            detailError={detailQuery.error}
+            currentBranch={currentBranch}
+            mergeDisabledReason={mergeDisabledReason}
+            mergeSuccessMessage={mergeSuccessMessage}
+            onOpenMergeDialog={() => {
+              setMergeError(null)
+              setMergeDialogOpen(true)
+            }}
+          />
+        </div>
       </div>
       <MergePullRequestDialog
         key={`${selectedNumber ?? 'none'}-${detailQuery.data?.headSha ?? 'loading'}`}
