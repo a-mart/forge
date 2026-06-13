@@ -10,6 +10,10 @@ export function isWorktreeRunningAgentStatus(status: string): boolean {
   return status === 'streaming'
 }
 
+export function isWorktreeRunningWorker(agent: GitWorktreeAgentSummary): boolean {
+  return agent.role === 'worker' && isWorktreeRunningAgentStatus(agent.status)
+}
+
 export interface WorktreeAgentStats {
   attached: number
   running: number
@@ -22,7 +26,7 @@ export function summarizeWorktreeAgents(agents: GitWorktreeAgentSummary[]): Work
 
   return {
     attached: attachedAgents.length,
-    running: attachedAgents.filter((agent) => isWorktreeRunningAgentStatus(agent.status)).length,
+    running: attachedAgents.filter((agent) => isWorktreeRunningWorker(agent)).length,
     managers: attachedAgents.filter((agent) => agent.role === 'manager').length,
     workers: attachedAgents.filter((agent) => agent.role === 'worker').length,
   }

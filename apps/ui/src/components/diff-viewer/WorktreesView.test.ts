@@ -3,6 +3,7 @@ import type { GitWorktreeAgentSummary } from '@forge/protocol'
 import {
   isWorktreeAttachedAgentStatus,
   isWorktreeRunningAgentStatus,
+  isWorktreeRunningWorker,
   summarizeWorktreeAgents,
 } from './worktree-agent-stats'
 
@@ -30,6 +31,46 @@ describe('worktree-agent-stats', () => {
     expect(isWorktreeRunningAgentStatus('streaming')).toBe(true)
     expect(isWorktreeRunningAgentStatus('idle')).toBe(false)
     expect(isWorktreeRunningAgentStatus('terminated')).toBe(false)
+  })
+
+  it('counts only streaming workers as running', () => {
+    expect(
+      isWorktreeRunningWorker(agent({ agentId: 'worker-1', role: 'worker', status: 'streaming' })),
+    ).toBe(true)
+    expect(
+      isWorktreeRunningWorker(agent({ agentId: 'mgr-1', role: 'manager', status: 'streaming' })),
+    ).toBe(false)
+    expect(
+      isWorktreeRunningWorker(agent({ agentId: 'worker-2', role: 'worker', status: 'idle' })),
+    ).toBe(false)
+  })
+
+  it('does not count a streaming manager as running', () => {
+    const stats = summarizeWorktreeAgents([
+      agent({ agentId: 'mgr-1', role: 'manager', status: 'streaming' }),
+      agent({ agentId: 'worker-1', role: 'worker', status: 'idle' }),
+    ])
+
+    expect(stats).toEqual({
+      attached: 2,
+      running: 0,
+      managers: 1,
+      workers: 1,
+    })
+  })
+
+  it('counts a streaming worker as running', () => {
+    const stats = summarizeWorktreeAgents([
+      agent({ agentId: 'mgr-1', role: 'manager', status: 'idle' }),
+      agent({ agentId: 'worker-1', role: 'worker', status: 'streaming' }),
+    ])
+
+    expect(stats).toEqual({
+      attached: 2,
+      running: 1,
+      managers: 1,
+      workers: 1,
+    })
   })
 
   it('summarizes attached, running, and role counts without terminated agents', () => {
