@@ -104,17 +104,19 @@ You can pin important messages to preserve them through compaction. Hover over a
 
 ### Workspace Rail and File Browser
 
-On desktop, Forge uses a left activity rail for workspace actions like Files, Changes/Git, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with a resizable file tree and file preview pane. Desktop header workspace buttons are hidden behind the rail; mobile keeps the header/drawer workspace actions.
+On desktop, Forge uses a left activity rail for workspace actions like Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with a resizable file tree and file preview pane. Desktop header workspace buttons are hidden behind the rail; mobile keeps the header/drawer workspace actions.
 
-The file browser is read-only for browsing, but the Files panel also has a scaffold action that can create a starter `.forge/` tree and README without overwriting existing files. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer.
+The file browser is read-only for browsing, but the Files panel also has a scaffold action that can create a starter `.forge/` tree and README without overwriting existing files. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer. When Source Control has a selected worktree, Files can browse that worktree without changing the chat session's working directory.
 
 > **Editor preference:** By default, files open in VS Code. You can change this to Cursor (or other editors) in **Settings**.
 
-### Git View
+### Source Control Workspace
 
-Desktop Changes/Git opens inline in the workspace content area from the rail, not as a modal overlay. Think GitHub Desktop built into Forge. Full commit history, diff viewer for any commit, branch information.
+Desktop Source Control opens inline in the workspace content area from the rail, not as a modal overlay. It evolves the old Changes/Git view into a workspace with tabs for current changes, commit history, worktrees, and pull requests. Selecting a worktree updates the Source Control context and the Files browsing context only; it does not move the chat session CWD or change where the manager sends workers.
 
-Currently read-only (you can't switch branches or make commits from the UI), but you won't need to. Your agents handle git operations. The view is there so you can inspect what they've done.
+Source Control supports fetch, branch switching, branch creation, and fast-forward-only pull. These are write actions, so Forge asks for confirmation and runs a preflight check before sending the git command. Force push, stash, discard, rebase, branch deletion, and worktree create/remove are not available from this workspace.
+
+The Pull Requests tab uses the GitHub CLI (`gh`). If the selected repository does not have a GitHub remote, `gh` is missing, or `gh` is not authenticated, Forge shows an unavailable or degraded state instead of PR data. PR merge has its own confirmation flow, re-checks the PR head commit with GitHub's match-head-commit guard, and does not delete the branch or use admin bypass.
 
 ### Session Sidebar
 

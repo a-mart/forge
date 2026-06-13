@@ -11,6 +11,7 @@ import chatProjectAgentsContent from './articles/chat/chat-project-agents.md?raw
 import chatSendingContent from './articles/chat/chat-sending.md?raw'
 import chatSessionsContent from './articles/chat/chat-sessions.md?raw'
 import chatSidebarContent from './articles/chat/chat-sidebar.md?raw'
+import chatSourceControlContent from './articles/chat/chat-source-control.md?raw'
 import chatSystemPromptContent from './articles/chat/chat-system-prompt.md?raw'
 import chatWorkersContent from './articles/chat/chat-workers.md?raw'
 
@@ -19,7 +20,7 @@ export const chatArticles: HelpArticle[] = [
     id: 'chat-overview',
     title: 'Chat Interface',
     category: 'chat',
-    summary: 'How the chat interface works, including streaming responses and stopping agents.',
+    summary: 'How the chat interface works, including streaming responses, workspace rail surfaces, and stopping agents.',
     content: chatOverviewContent,
     keywords: [
       'chat',
@@ -31,8 +32,11 @@ export const chatArticles: HelpArticle[] = [
       'overview',
       'active work',
       'work plan',
+      'source control',
+      'worktree',
+      'git',
     ],
-    relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction'],
+    relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction', 'chat-source-control'],
     contextKeys: ['chat.main'],
   },
   {
@@ -176,6 +180,29 @@ export const chatArticles: HelpArticle[] = [
       'image',
     ],
     relatedIds: ['chat-overview', 'chat-attachments'],
+    contextKeys: ['chat.artifacts'],
+  },
+  {
+    id: 'chat-source-control',
+    title: 'Source Control Workspace',
+    category: 'chat',
+    summary: 'How to review worktrees, branch changes, and pull requests from the Source Control workspace.',
+    content: chatSourceControlContent,
+    keywords: [
+      'source control',
+      'git',
+      'changes',
+      'history',
+      'diff',
+      'worktree',
+      'branch',
+      'fetch',
+      'pull',
+      'pull request',
+      'github',
+      'gh',
+    ],
+    relatedIds: ['chat-overview', 'chat-artifacts'],
     contextKeys: ['chat.artifacts'],
   },
   {

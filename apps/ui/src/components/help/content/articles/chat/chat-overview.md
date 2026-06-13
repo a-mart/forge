@@ -6,7 +6,7 @@ The main view has three parts:
 
 - **Sidebar** (left) for navigating managers, profiles, and sessions.
 - **Message area** (center) showing the conversation transcript.
-- **Desktop workspace rail** (left edge of the workspace) for Files, Changes/Git, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with resizable tree and preview panes; Changes/Git opens inline in the workspace content area; Artifacts and Schedules each open a single left activity-pane surface. Mobile keeps the header/drawer workspace behavior.
+- **Desktop workspace rail** (left edge of the workspace) for Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with resizable tree and preview panes; Source Control opens inline with Changes, History, Worktrees, and Pull Requests tabs. Selecting a worktree updates Source Control and Files browsing context without changing the chat session's working directory. Artifacts and Schedules each open a single left activity-pane surface. Mobile keeps the header/drawer workspace behavior.
 
 ## Streaming and status
 
