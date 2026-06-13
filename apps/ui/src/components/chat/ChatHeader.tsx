@@ -606,13 +606,13 @@ export function ChatHeader({
                     size="icon"
                     className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
                     onClick={onOpenDiffViewer}
-                    aria-label="View Changes (⌘⇧D)"
+                    aria-label="Source Control (⌘⇧D)"
                   >
                     <GitBranch className="size-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" sideOffset={6}>
-                  View Changes (⌘⇧D)
+                  Source Control (⌘⇧D)
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

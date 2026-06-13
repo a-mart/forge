@@ -511,5 +511,27 @@ describe('usePanelState', () => {
       })
       expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBeNull()
     })
+
+    it('clearFileBrowserWorktreeContext clears selected file and worktree context', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.browseWorktreeFiles({
+          worktreeId: 'feature-linked',
+          worktreePath: '/repo/middleman-feature',
+          branch: 'feature/worktree-test',
+          repoRoot: '/repo/middleman',
+        })
+        capturedRef.current!.panelState.selectFileBrowserFile('linked-only.txt')
+      })
+      expect(capturedRef.current!.panelState.fileBrowserWorktreeContext?.worktreeId).toBe('feature-linked')
+      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBe('linked-only.txt')
+
+      act(() => {
+        capturedRef.current!.panelState.clearFileBrowserWorktreeContext()
+      })
+      expect(capturedRef.current!.panelState.fileBrowserWorktreeContext).toBeNull()
+      expect(capturedRef.current!.panelState.selectedFileBrowserFile).toBeNull()
+    })
   })
 })

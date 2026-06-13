@@ -92,6 +92,7 @@ interface FileTreeProps {
   onSelectFile: (path: string) => void
   fileCount: number | null
   fileCountMethod: string | null
+  worktreeId?: string | null
 }
 
 /* ------------------------------------------------------------------ */
@@ -102,8 +103,12 @@ async function fetchDirectoryListing(
   wsUrl: string,
   agentId: string,
   dirPath: string,
+  worktreeId?: string | null,
 ): Promise<FileListResult> {
   const params = new URLSearchParams({ agentId, path: dirPath })
+  if (worktreeId) {
+    params.set('worktreeId', worktreeId)
+  }
   const url = resolveApiEndpoint(wsUrl, `/api/files/list?${params.toString()}`)
   const response = await fetch(url)
 
@@ -126,7 +131,7 @@ const ROW_HEIGHT = 28
 
 export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
   function FileTree(
-    { wsUrl, agentId, cwd, selectedFile, onSelectFile, fileCount, fileCountMethod },
+    { wsUrl, agentId, cwd, selectedFile, onSelectFile, fileCount, fileCountMethod, worktreeId = null },
     ref,
   ) {
     const [filterText, setFilterText] = useState('')
@@ -140,7 +145,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     const filterInputRef = useRef<HTMLInputElement>(null)
 
     // Deep search hook
-    const searchResult = useFileSearch(wsUrl, agentId, searchQuery)
+    const searchResult = useFileSearch(wsUrl, agentId, searchQuery, 50, worktreeId)
 
     // Mutable ref-based stores so the tree data loader closures see fresh data
     // without causing tree config re-creation on every state change.
@@ -150,8 +155,10 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     // Stable fetch function ref
     const wsUrlRef = useRef(wsUrl)
     const agentIdRef = useRef(agentId)
+    const worktreeIdRef = useRef(worktreeId)
     wsUrlRef.current = wsUrl
     agentIdRef.current = agentId
+    worktreeIdRef.current = worktreeId
 
     const loadAndCacheChildren = useCallback(
       async (itemId: string): Promise<string[]> => {
@@ -160,6 +167,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
           wsUrlRef.current,
           agentIdRef.current,
           dirPath,
+          worktreeIdRef.current,
         )
 
         const ids: string[] = []

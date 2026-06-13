@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { DashboardTab as CortexDashboardTab } from '@/components/chat/cortex/CortexDashboardPanel'
 import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
+import { invalidateFileBrowserCaches } from '@/components/file-browser/use-file-browser-queries'
 import type { ArtifactReference } from '@/lib/artifacts'
 
 export type ArtifactsPanelTab = 'artifacts' | 'schedules'
@@ -16,6 +17,13 @@ function shouldIgnoreKeyboardShortcutTarget(target: EventTarget | null): boolean
     target.tagName === 'SELECT' ||
     target.isContentEditable
   )
+}
+
+export interface FileBrowserWorktreeSelection {
+  worktreeId: string
+  worktreePath: string
+  branch: string | null
+  repoRoot: string
 }
 
 interface UsePanelStateOptions {
@@ -42,6 +50,8 @@ export function usePanelState({
     useState<DiffViewerInitialState | null>(null)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(false)
   const [selectedFileBrowserFile, setSelectedFileBrowserFile] = useState<string | null>(null)
+  const [fileBrowserWorktreeContext, setFileBrowserWorktreeContext] =
+    useState<FileBrowserWorktreeSelection | null>(null)
 
   useEffect(() => {
     setActiveArtifact(null)
@@ -50,12 +60,14 @@ export function usePanelState({
     setCortexDashboardTab('knowledge')
     setIsFileBrowserOpen(false)
     setSelectedFileBrowserFile(null)
+    setFileBrowserWorktreeContext(null)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
 
   const closeFileBrowserForWorkspacePanel = useCallback(() => {
     setIsFileBrowserOpen(false)
     setSelectedFileBrowserFile(null)
+    setFileBrowserWorktreeContext(null)
   }, [])
 
   useEffect(() => {
@@ -109,11 +121,26 @@ export function usePanelState({
     setIsFileBrowserOpen((previous) => {
       if (!previous) {
         setIsArtifactsPanelOpen(false)
+        setFileBrowserWorktreeContext(null)
       } else {
         setSelectedFileBrowserFile(null)
+        setFileBrowserWorktreeContext(null)
       }
       return !previous
     })
+  }, [])
+
+  const browseWorktreeFiles = useCallback((context: FileBrowserWorktreeSelection) => {
+    setFileBrowserWorktreeContext(context)
+    setSelectedFileBrowserFile(null)
+    setIsArtifactsPanelOpen(false)
+    setIsFileBrowserOpen(true)
+  }, [])
+
+  const clearFileBrowserWorktreeContext = useCallback(() => {
+    setFileBrowserWorktreeContext(null)
+    setSelectedFileBrowserFile(null)
+    invalidateFileBrowserCaches()
   }, [])
 
   useEffect(() => {
@@ -208,5 +235,8 @@ export function usePanelState({
     selectFileBrowserFile,
     closeFileBrowserPanel,
     navigateFileBrowserToDirectory,
+    fileBrowserWorktreeContext,
+    browseWorktreeFiles,
+    clearFileBrowserWorktreeContext,
   }
 }

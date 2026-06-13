@@ -11,6 +11,7 @@ interface ChangesViewProps {
   wsUrl: string
   agentId: string | null
   repoTarget: GitRepoTarget
+  worktreeId?: string | null
   status: GitStatusResult | null
   isStatusLoading: boolean
   statusError: string | null
@@ -23,6 +24,7 @@ export function ChangesView({
   wsUrl,
   agentId,
   repoTarget,
+  worktreeId = null,
   status,
   isStatusLoading,
   statusError,
@@ -33,7 +35,7 @@ export function ChangesView({
   const [selectedFile, setSelectedFile] = useState<string | null>(initialFile)
   const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>(initialQuickFilter)
   const files = useMemo(() => status?.files ?? [], [status?.files])
-  const diffQuery = useGitDiff(wsUrl, agentId, repoTarget, selectedFile)
+  const diffQuery = useGitDiff(wsUrl, agentId, repoTarget, selectedFile, worktreeId)
   const prevRefreshTokenRef = useRef(refreshToken)
 
   useEffect(() => {

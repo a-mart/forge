@@ -4,7 +4,7 @@ import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import { GitDiffService } from "../services/git-diff-service.js";
 import type { HttpRoute } from "../shared/http-route.js";
 import { resolveTrackedVersionedPathReference } from "../../../versioning/versioned-paths.js";
-import { resolveGitRepoContext } from "../shared/route-helpers.js";
+import { resolveGitRepoContext, resolveReadOnlyGitContext } from "../shared/route-helpers.js";
 
 const SHA_PATTERN = /^[a-f0-9]{4,40}$/i;
 const GIT_GET_METHODS = "GET, OPTIONS";
@@ -52,14 +52,16 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
     handleGet("/api/git/status", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
-      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
+      const repoContext = await resolveReadOnlyGitContext(swarmManager, agentId, repoTarget, worktreeId);
       return service.getStatus(repoContext.cwd, repoContext);
     }),
     handleGet("/api/git/diff", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const file = requireNonEmptyQuery(requestUrl.searchParams, "file");
       const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
-      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
+      const repoContext = await resolveReadOnlyGitContext(swarmManager, agentId, repoTarget, worktreeId);
       if (repoContext.notInitialized) {
         return createNotInitializedDiffResult();
       }
@@ -71,7 +73,8 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
       const limit = parseNumberParam(requestUrl.searchParams.get("limit"), 50, 1, MAX_LOG_LIMIT, "limit");
       const offset = parseNumberParam(requestUrl.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER, "offset");
       const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
-      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
+      const repoContext = await resolveReadOnlyGitContext(swarmManager, agentId, repoTarget, worktreeId);
       if (repoContext.notInitialized) {
         return createNotInitializedLogResult();
       }
@@ -124,7 +127,8 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const sha = requireValidSha(requestUrl.searchParams.get("sha"));
       const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
-      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
+      const repoContext = await resolveReadOnlyGitContext(swarmManager, agentId, repoTarget, worktreeId);
       if (repoContext.notInitialized) {
         return createNotInitializedCommitDetail(sha);
       }
@@ -136,7 +140,8 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
       const sha = requireValidSha(requestUrl.searchParams.get("sha"));
       const file = requireNonEmptyQuery(requestUrl.searchParams, "file");
       const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
-      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
+      const repoContext = await resolveReadOnlyGitContext(swarmManager, agentId, repoTarget, worktreeId);
       if (repoContext.notInitialized) {
         return createNotInitializedDiffResult();
       }
@@ -144,6 +149,15 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
       return service.getCommitFileDiff(repoContext.cwd, sha, file);
     })
   ];
+}
+
+function optionalTrimmedQuery(value: string | null): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function requireNonEmptyQuery(searchParams: URLSearchParams, key: string): string {
@@ -259,7 +273,9 @@ function resolveHttpStatusCode(message: string): number {
     normalized.includes("no cwd") ||
     normalized.includes("not a git repository") ||
     normalized.includes("git was not found") ||
-    normalized.includes("fatal: bad object")
+    normalized.includes("fatal: bad object") ||
+    normalized.includes("unknown or invalid worktreeid") ||
+    normalized.includes("worktreeid is not supported")
   ) {
     return 400;
   }

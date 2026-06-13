@@ -1,7 +1,8 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { ServerEvent } from "@forge/protocol";
 import { writeTrackedCortexPromptSurfaceFile } from "../../../swarm/cortex-prompt-surfaces.js";
+import { isPathWithinRoots } from "../../../swarm/cwd-policy.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -14,6 +15,7 @@ import {
   resolveLegacyWriteFilePath,
   resolveReadFilePath,
 } from "../../ws-file-access.js";
+import { resolveGitSourceControlContext } from "../shared/route-helpers.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const ATTACHMENT_ENDPOINT_PREFIX = "/api/attachments/";
@@ -32,7 +34,32 @@ export function createFileRoutes(options: {
 }): HttpRoute[] {
   const { swarmManager, broadcastEvent } = options;
 
-  const resolveAllowedPath = async (requestedPath: string, agentId?: string): Promise<string> => {
+  const resolveAllowedPath = async (
+    requestedPath: string,
+    agentId?: string,
+    worktreeId?: string
+  ): Promise<string> => {
+    const normalizedWorktreeId = worktreeId?.trim();
+    if (normalizedWorktreeId) {
+      if (!agentId || agentId.trim().length === 0) {
+        throw new Error("agentId is required when worktreeId is provided.");
+      }
+
+      const gitContext = await resolveGitSourceControlContext(
+        swarmManager,
+        agentId.trim(),
+        "workspace",
+        normalizedWorktreeId
+      );
+      const trimmedPath = requestedPath.trim();
+      const resolvedPath = resolve(gitContext.cwd, trimmedPath.length > 0 ? trimmedPath : ".");
+      if (!(await isPathWithinRoots(resolvedPath, [gitContext.cwd]))) {
+        throw new Error("Path is outside CWD.");
+      }
+
+      return resolvedPath;
+    }
+
     return resolveReadFilePath(requestedPath, swarmManager, agentId, {
       includeCwdAllowlistRootsForAgent: false,
     });
@@ -129,6 +156,7 @@ export function createFileRoutes(options: {
         try {
           let requestedPath = "";
           let agentId: string | undefined;
+          let worktreeId: string | undefined;
 
           if (request.method === "GET") {
             const pathFromQuery = requestUrl.searchParams.get("path");
@@ -139,6 +167,8 @@ export function createFileRoutes(options: {
             requestedPath = pathFromQuery;
             const agentIdFromQuery = requestUrl.searchParams.get("agentId")?.trim();
             agentId = agentIdFromQuery ? agentIdFromQuery : undefined;
+            const worktreeIdFromQuery = requestUrl.searchParams.get("worktreeId")?.trim();
+            worktreeId = worktreeIdFromQuery ? worktreeIdFromQuery : undefined;
           } else {
             const payload = await parseJsonBody(request, MAX_READ_FILE_BODY_BYTES);
             if (!payload || typeof payload !== "object") {
@@ -157,6 +187,10 @@ export function createFileRoutes(options: {
             if (typeof agentIdFromBody === "string" && agentIdFromBody.trim().length > 0) {
               agentId = agentIdFromBody.trim();
             }
+            const worktreeIdFromBody = (payload as { worktreeId?: unknown }).worktreeId;
+            if (typeof worktreeIdFromBody === "string" && worktreeIdFromBody.trim().length > 0) {
+              worktreeId = worktreeIdFromBody.trim();
+            }
           }
 
           if (requestedPath.trim().length === 0) {
@@ -164,7 +198,7 @@ export function createFileRoutes(options: {
             return;
           }
 
-          const resolvedPath = await resolveAllowedPath(requestedPath, agentId);
+          const resolvedPath = await resolveAllowedPath(requestedPath, agentId, worktreeId);
 
           let fileStats;
           try {
@@ -212,7 +246,16 @@ export function createFileRoutes(options: {
             return;
           }
 
-          if (message.includes("Path is outside allowed roots")) {
+          if (
+            message.includes("Unknown or invalid worktreeId") ||
+            message.includes("worktreeId is not supported") ||
+            message.includes("agentId is required when worktreeId is provided")
+          ) {
+            sendJson(response, 400, { error: message });
+            return;
+          }
+
+          if (message.includes("Path is outside allowed roots") || message.includes("Path is outside CWD.")) {
             sendJson(response, 403, { error: message });
             return;
           }

@@ -68,6 +68,7 @@ import type {
   ManagerExactModelSelection,
   ManagerReasoningLevel,
   ProjectAgentExternalDirectoryEntry,
+  GitWorktreeSummary,
 } from '@forge/protocol'
 
 function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
@@ -202,6 +203,9 @@ export function BuilderSurface({
     selectFileBrowserFile: handleFileBrowserSelectFile,
     closeFileBrowserPanel: handleFileBrowserClosePanel,
     navigateFileBrowserToDirectory: handleFileBrowserNavigateToDirectory,
+    fileBrowserWorktreeContext,
+    browseWorktreeFiles: handleBrowseWorktreeFiles,
+    clearFileBrowserWorktreeContext: handleClearFileBrowserWorktreeContext,
   } = usePanelState({
     activeAgentId,
     activeAgentArchetypeId: activeAgent?.archetypeId,
@@ -1332,6 +1336,19 @@ export function BuilderSurface({
     setIsDiffViewerOpen(false)
   }, [setIsDiffViewerOpen])
 
+  const handleBrowseWorktreeFromSourceControl = useCallback(
+    (worktree: GitWorktreeSummary) => {
+      handleBrowseWorktreeFiles({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path,
+        branch: worktree.branch,
+        repoRoot: worktree.repoRoot,
+      })
+      setIsDiffViewerOpen(false)
+    },
+    [handleBrowseWorktreeFiles, setIsDiffViewerOpen],
+  )
+
   useEffect(() => {
     if (!isDiffViewerOpen && diffViewerPresentation === 'inline') {
       setDiffViewerPresentation('modal')
@@ -1372,7 +1389,7 @@ export function BuilderSurface({
       },
       {
         id: 'changes' as const,
-        label: 'View Changes',
+        label: 'Source Control',
         icon: GitBranch,
         active: isInlineDiffViewerOpen,
         disabled: workspaceDisabled || !activeAgentId,
@@ -1539,6 +1556,8 @@ export function BuilderSurface({
               onClose={handleToggleFileBrowser}
               onSelectFile={handleFileBrowserSelectFile}
               selectedFile={selectedFileBrowserFile}
+              worktreeContext={fileBrowserWorktreeContext}
+              onClearWorktreeContext={handleClearFileBrowserWorktreeContext}
               projectResourceProfileId={activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null}
               projectResourceSessionAgentId={activeManagerAgent?.agentId ?? null}
               desktopPlacement="left"
@@ -1553,6 +1572,7 @@ export function BuilderSurface({
               filePath={selectedFileBrowserFile}
               onClose={handleFileBrowserClosePanel}
               onNavigateToDirectory={handleFileBrowserNavigateToDirectory}
+              worktreeId={fileBrowserWorktreeContext?.worktreeId ?? null}
               desktopOnly
               resizeHandlePlacement="right"
             />
@@ -1560,13 +1580,14 @@ export function BuilderSurface({
 
           <div className="flex min-w-0 flex-1 flex-col">
             {isInlineDiffViewerOpen ? (
-              <div className="diff-viewer flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label="Changes workspace">
+              <div className="diff-viewer flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label="Source Control workspace">
                 <DiffViewerContent
                   active={isInlineDiffViewerOpen}
                   wsUrl={wsUrl}
                   agentId={activeAgentId}
                   isCortex={isDiffViewerCortexSession}
                   onClose={handleCloseDiffViewer}
+                  onBrowseWorktreeFiles={handleBrowseWorktreeFromSourceControl}
                   initialRepoTarget={diffViewerInitialState?.initialRepoTarget}
                   initialTab={diffViewerInitialState?.initialTab}
                   initialSha={diffViewerInitialState?.initialSha}
@@ -1851,6 +1872,7 @@ export function BuilderSurface({
                       filePath: selectedFileBrowserFile,
                       onClose: handleFileBrowserClosePanel,
                       onNavigateToDirectory: handleFileBrowserNavigateToDirectory,
+                      worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
                       mobileOnly: true,
                     }
                   : null
@@ -1862,6 +1884,8 @@ export function BuilderSurface({
                 onClose: handleToggleFileBrowser,
                 onSelectFile: handleFileBrowserSelectFile,
                 selectedFile: selectedFileBrowserFile,
+                worktreeContext: fileBrowserWorktreeContext,
+                onClearWorktreeContext: handleClearFileBrowserWorktreeContext,
                 projectResourceProfileId: activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null,
                 projectResourceSessionAgentId: activeManagerAgent?.agentId ?? null,
                 mobileOnly: true,
@@ -1930,6 +1954,7 @@ export function BuilderSurface({
           wsUrl,
           agentId: activeAgentId,
           isCortex: isDiffViewerCortexSession,
+          onBrowseWorktreeFiles: handleBrowseWorktreeFromSourceControl,
           initialRepoTarget: diffViewerInitialState?.initialRepoTarget,
           initialTab: diffViewerInitialState?.initialTab,
           initialSha: diffViewerInitialState?.initialSha,

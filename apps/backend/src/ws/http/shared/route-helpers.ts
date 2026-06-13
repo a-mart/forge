@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDescriptor, GitRepoKind, GitRepoTarget } from "@forge/protocol";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
+import { resolveWorktreeContextPath } from "../../../versioning/git-source-control-helpers.js";
 
 export interface GitRepoContext {
   cwd: string;
@@ -9,6 +10,66 @@ export interface GitRepoContext {
   repoKind: GitRepoKind;
   repoLabel: string;
   notInitialized?: boolean;
+}
+
+export interface GitSourceControlContext extends GitRepoContext {
+  baseCwd: string;
+  worktreeId?: string;
+  worktreePath?: string;
+}
+
+export async function resolveReadOnlyGitContext(
+  swarmManager: SwarmManager,
+  agentId: string,
+  repoTarget: GitRepoTarget = "workspace",
+  worktreeId?: string
+): Promise<GitSourceControlContext> {
+  const normalizedWorktreeId = worktreeId?.trim();
+
+  if (normalizedWorktreeId) {
+    if (repoTarget === "versioning") {
+      throw new Error("worktreeId is not supported for repoTarget=versioning.");
+    }
+
+    return resolveGitSourceControlContext(swarmManager, agentId, repoTarget, normalizedWorktreeId);
+  }
+
+  const baseContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+  return {
+    ...baseContext,
+    baseCwd: baseContext.cwd
+  };
+}
+
+export async function resolveGitSourceControlContext(
+  swarmManager: SwarmManager,
+  agentId: string,
+  repoTarget: GitRepoTarget = "workspace",
+  worktreeId?: string
+): Promise<GitSourceControlContext> {
+  const baseContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+
+  if (!worktreeId || worktreeId.trim().length === 0) {
+    return {
+      ...baseContext,
+      baseCwd: baseContext.cwd
+    };
+  }
+
+  if (baseContext.notInitialized) {
+    throw new Error("Cannot resolve worktree context before the repository is initialized.");
+  }
+
+  const normalizedWorktreeId = worktreeId.trim();
+  const worktreePath = await resolveWorktreeContextPath(baseContext.cwd, normalizedWorktreeId);
+
+  return {
+    ...baseContext,
+    baseCwd: baseContext.cwd,
+    cwd: worktreePath,
+    worktreeId: normalizedWorktreeId,
+    worktreePath
+  };
 }
 
 export function resolveCwdFromAgent(swarmManager: SwarmManager, agentId: string): string {

@@ -7,12 +7,23 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DiffViewerContent, DiffViewerDialog } from './DiffViewerDialog'
 
-const { invalidateGitCachesMock, hookCalls, STATUS_BY_TARGET, LOG_BY_TARGET, COMMIT_DETAILS } = vi.hoisted(() => ({
+const {
+  invalidateGitCachesMock,
+  hookCalls,
+  STATUS_BY_TARGET,
+  LOG_BY_TARGET,
+  COMMIT_DETAILS,
+  WORKTREES_BY_TARGET,
+  WORKTREE_ERROR_BY_TARGET,
+  BRANCHES_BY_TARGET,
+} = vi.hoisted(() => ({
   invalidateGitCachesMock: vi.fn(),
   hookCalls: {
-    status: [] as Array<{ agentId: string | null; repoTarget: string }>,
+    status: [] as Array<{ agentId: string | null; repoTarget: string; worktreeId?: string | null }>,
+    branches: [] as Array<{ agentId: string | null; repoTarget: string; worktreeId?: string | null }>,
     diff: [] as Array<{ agentId: string | null; repoTarget: string; file: string | null }>,
     log: [] as Array<{ agentId: string | null; repoTarget: string; limit: number; offset: number }>,
+    worktrees: [] as Array<{ agentId: string | null; repoTarget: string; enabled?: boolean }>,
     commitDetail: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null }>,
     commitDiff: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null; file: string | null }>,
   },
@@ -108,6 +119,75 @@ const { invalidateGitCachesMock, hookCalls, STATUS_BY_TARGET, LOG_BY_TARGET, COM
       },
     ],
   },
+  WORKTREES_BY_TARGET: {
+    workspace: [
+      {
+        id: 'workspace-main',
+        path: '/repo/middleman',
+        repoRoot: '/repo/middleman',
+        branch: 'main',
+        headSha: 'abcdef1234567890',
+        isMainWorktree: true,
+        isCurrentContext: true,
+        dirty: true,
+        dirtySummary: { filesChanged: 2, insertions: 11, deletions: 1 },
+        activeAgents: [
+          { agentId: 'agent-1', displayName: 'Builder', role: 'manager' as const, status: 'idle' },
+        ],
+      },
+      {
+        id: 'feature-linked',
+        path: '/repo/middleman-feature',
+        repoRoot: '/repo/middleman-feature',
+        branch: 'feature/demo',
+        headSha: '1234567890abcdef',
+        isMainWorktree: false,
+        isCurrentContext: false,
+        locked: true,
+        prunable: false,
+        dirty: false,
+        dirtySummary: { filesChanged: 0, insertions: 0, deletions: 0 },
+        activeAgents: [],
+      },
+    ],
+    versioning: [
+      {
+        id: 'versioning-main',
+        path: '/data/forge',
+        repoRoot: '/data/forge',
+        branch: 'main',
+        headSha: 'fedcba9876543210',
+        isMainWorktree: true,
+        isCurrentContext: true,
+        dirty: true,
+        dirtySummary: { filesChanged: 2, insertions: 6, deletions: 3 },
+        activeAgents: [],
+      },
+    ],
+  },
+  WORKTREE_ERROR_BY_TARGET: {
+    workspace: null as string | null,
+    versioning: null as string | null,
+  },
+  BRANCHES_BY_TARGET: {
+    workspace: {
+      branches: [
+        { name: 'main', kind: 'current' as const, headSha: 'abcdef1234567890abcdef1234567890abcdef12', ahead: 0, behind: 0 },
+        { name: 'feature/demo', kind: 'local' as const, headSha: '1234567890abcdef1234567890abcdef12345678' },
+      ],
+      remotes: ['origin'],
+      currentBranch: 'main',
+      currentHead: 'abcdef1234567890abcdef1234567890abcdef12',
+      statusHash: 'abc123statushash',
+    },
+    versioning: {
+      branches: [],
+      remotes: [],
+      currentBranch: 'main',
+      currentHead: null,
+      statusHash: null,
+    },
+  },
   COMMIT_DETAILS: {
     workspace: {
       'workspace-1': {
@@ -191,12 +271,76 @@ const { invalidateGitCachesMock, hookCalls, STATUS_BY_TARGET, LOG_BY_TARGET, COM
 }))
 
 vi.mock('./use-diff-queries', () => ({
-  useGitStatus: (_wsUrl: string, agentId: string | null, repoTarget: 'workspace' | 'versioning') => {
-    hookCalls.status.push({ agentId, repoTarget })
+  useGitStatus: (
+    _wsUrl: string,
+    agentId: string | null,
+    repoTarget: 'workspace' | 'versioning',
+    worktreeId?: string | null,
+  ) => {
+    hookCalls.status.push({ agentId, repoTarget, worktreeId: worktreeId ?? null })
     return {
       data: agentId ? STATUS_BY_TARGET[repoTarget] : null,
       isLoading: false,
       error: null,
+      refetch: vi.fn(),
+    }
+  },
+  useGitBranches: (
+    _wsUrl: string,
+    agentId: string | null,
+    repoTarget: 'workspace' | 'versioning',
+    worktreeId?: string | null,
+  ) => {
+    hookCalls.branches.push({ agentId, repoTarget, worktreeId: worktreeId ?? null })
+    const status = STATUS_BY_TARGET[repoTarget]
+    const branches = BRANCHES_BY_TARGET[repoTarget]
+    return {
+      data: agentId
+        ? {
+            ...branches,
+            repoName: status.repoName,
+            repoRoot: status.repoRoot,
+            repoKind: status.repoKind,
+            repoLabel: status.repoLabel,
+            context: { repoTarget, worktreeId: worktreeId ?? undefined },
+          }
+        : null,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    }
+  },
+  useGitWorktrees: (
+    _wsUrl: string,
+    agentId: string | null,
+    repoTarget: 'workspace' | 'versioning',
+    options?: { enabled?: boolean },
+  ) => {
+    const enabled = options?.enabled ?? !!agentId
+    hookCalls.worktrees.push({ agentId, repoTarget, enabled })
+    if (!enabled) {
+      return {
+        data: null,
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      }
+    }
+    const status = STATUS_BY_TARGET[repoTarget]
+    const error = WORKTREE_ERROR_BY_TARGET[repoTarget]
+    return {
+      data: agentId && !error
+        ? {
+            repoName: status.repoName,
+            repoRoot: status.repoRoot,
+            repoKind: status.repoKind,
+            repoLabel: status.repoLabel,
+            context: { repoTarget },
+            worktrees: WORKTREES_BY_TARGET[repoTarget],
+          }
+        : null,
+      isLoading: false,
+      error,
       refetch: vi.fn(),
     }
   },
@@ -268,7 +412,17 @@ vi.mock('./use-diff-queries', () => ({
       refetch: vi.fn(),
     }
   },
+  useGitPullRequests: () => ({
+    data: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
   invalidateGitCaches: invalidateGitCachesMock,
+  fetchGitOrigin: vi.fn(),
+  switchGitBranch: vi.fn(),
+  createGitBranch: vi.fn(),
+  pullGitFfOnly: vi.fn(),
 }))
 
 vi.mock('./DiffPane', () => ({
@@ -287,6 +441,52 @@ beforeEach(() => {
     callList.length = 0
   }
   invalidateGitCachesMock.mockReset()
+  WORKTREE_ERROR_BY_TARGET.workspace = null
+  WORKTREE_ERROR_BY_TARGET.versioning = null
+  WORKTREES_BY_TARGET.workspace.splice(0, WORKTREES_BY_TARGET.workspace.length,
+    {
+      id: 'workspace-main',
+      path: '/repo/middleman',
+      repoRoot: '/repo/middleman',
+      branch: 'main',
+      headSha: 'abcdef1234567890',
+      isMainWorktree: true,
+      isCurrentContext: true,
+      dirty: true,
+      dirtySummary: { filesChanged: 2, insertions: 11, deletions: 1 },
+      activeAgents: [
+        { agentId: 'agent-1', displayName: 'Builder', role: 'manager' as const, status: 'idle' },
+      ],
+    },
+    {
+      id: 'feature-linked',
+      path: '/repo/middleman-feature',
+      repoRoot: '/repo/middleman-feature',
+      branch: 'feature/demo',
+      headSha: '1234567890abcdef',
+      isMainWorktree: false,
+      isCurrentContext: false,
+      locked: true,
+      prunable: false,
+      dirty: false,
+      dirtySummary: { filesChanged: 0, insertions: 0, deletions: 0 },
+      activeAgents: [],
+    },
+  )
+  WORKTREES_BY_TARGET.versioning.splice(0, WORKTREES_BY_TARGET.versioning.length,
+    {
+      id: 'versioning-main',
+      path: '/data/forge',
+      repoRoot: '/data/forge',
+      branch: 'main',
+      headSha: 'fedcba9876543210',
+      isMainWorktree: true,
+      isCurrentContext: true,
+      dirty: true,
+      dirtySummary: { filesChanged: 2, insertions: 6, deletions: 3 },
+      activeAgents: [],
+    },
+  )
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     writable: true,
@@ -335,16 +535,43 @@ function renderInlineContent(
   })
 }
 
+function renderInlineContentWithBrowse(
+  props: {
+    active?: boolean
+    isCortex: boolean
+    agentId?: string | null
+    onBrowseWorktreeFiles: ReturnType<typeof vi.fn>
+  },
+) {
+  root = createRoot(container)
+
+  flushSync(() => {
+    root?.render(
+      createElement('div', { className: 'diff-viewer flex h-full flex-col' },
+        createElement(DiffViewerContent, {
+          active: props.active ?? true,
+          wsUrl: 'ws://localhost:47187',
+          agentId: props.agentId ?? 'agent-1',
+          isCortex: props.isCortex,
+          onClose: vi.fn(),
+          onBrowseWorktreeFiles: props.onBrowseWorktreeFiles,
+        }),
+      ),
+    )
+  })
+}
+
 function renderDialog(
   props: {
     isCortex: boolean
     agentId?: string | null
     open?: boolean
     initialRepoTarget?: 'workspace' | 'versioning'
-    initialTab?: 'changes' | 'history'
+    initialTab?: 'changes' | 'history' | 'worktrees' | 'pull-requests'
     initialSha?: string | null
     initialFile?: string | null
     initialQuickFilter?: 'all' | 'shared-knowledge' | 'profile-memory' | 'reference-docs' | 'prompt-overrides'
+    onBrowseWorktreeFiles?: ReturnType<typeof vi.fn>
   },
 ) {
   root = createRoot(container)
@@ -357,6 +584,7 @@ function renderDialog(
         wsUrl: 'ws://localhost:47187',
         agentId: props.agentId ?? 'agent-1',
         isCortex: props.isCortex,
+        onBrowseWorktreeFiles: props.onBrowseWorktreeFiles,
         initialRepoTarget: props.initialRepoTarget,
         initialTab: props.initialTab,
         initialSha: props.initialSha,
@@ -425,6 +653,100 @@ describe('DiffViewerDialog', () => {
     expect(queryByRole(document.body, 'group', { name: 'Repository target' })).toBeNull()
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
     expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
+    expect(hookCalls.worktrees.filter((call) => call.enabled !== false)).toHaveLength(0)
+  })
+
+  it('loads worktree inventory only when the Worktrees tab is active', async () => {
+    renderDialog({ isCortex: false })
+    await flushEffects()
+    expect(hookCalls.worktrees.every((call) => call.enabled === false)).toBe(true)
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Worktrees' }))
+    await flushEffects()
+    expect(hookCalls.worktrees.some((call) => call.enabled !== false)).toBe(true)
+  })
+
+  it('renders the read-only Worktrees tab with current, locked, dirty, and active-agent state', async () => {
+    renderDialog({ isCortex: false, initialTab: 'worktrees' })
+    await flushEffects()
+
+    expect(getByRole(document.body, 'button', { name: 'Worktrees' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByText(document.body, 'Read-only inventory and browsing. Selecting a worktree updates Source Control and Files context only; chat session CWD stays unchanged.')).toBeTruthy()
+    expect(getByText(document.body, '/repo/middleman')).toBeTruthy()
+    expect(getByText(document.body, '/repo/middleman-feature')).toBeTruthy()
+    expect(getByText(document.body, 'Session CWD')).toBeTruthy()
+    expect(getByText(document.body, 'Main')).toBeTruthy()
+    expect(getByText(document.body, '2 files +11 -1')).toBeTruthy()
+    expect(getByText(document.body, '1 active')).toBeTruthy()
+    expect(getByText(document.body, 'Builder · manager · idle')).toBeTruthy()
+    expect(getByText(document.body, 'Locked')).toBeTruthy()
+    const browseButtons = getAllByRole(document.body, 'button', { name: 'Browse files' })
+    expect(browseButtons).toHaveLength(2)
+    expect(browseButtons.every((button) => !button.hasAttribute('disabled'))).toBe(true)
+  })
+
+  it('invokes browse callback for a worktree', async () => {
+    const onBrowseWorktreeFiles = vi.fn()
+    renderInlineContentWithBrowse({ isCortex: false, onBrowseWorktreeFiles })
+    await flushEffects()
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Worktrees' }))
+    await flushEffects()
+    fireEvent.click(getAllByRole(document.body, 'button', { name: 'Browse files' })[1])
+
+    expect(onBrowseWorktreeFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'feature-linked',
+        path: '/repo/middleman-feature',
+      }),
+    )
+  })
+
+  it('invokes modal browse callback for a worktree', async () => {
+    const onBrowseWorktreeFiles = vi.fn()
+    renderDialog({ isCortex: false, initialTab: 'worktrees', onBrowseWorktreeFiles })
+    await flushEffects()
+
+    fireEvent.click(getAllByRole(document.body, 'button', { name: 'Browse files' })[1])
+
+    expect(onBrowseWorktreeFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'feature-linked',
+        path: '/repo/middleman-feature',
+      }),
+    )
+  })
+
+  it('selects alternate worktree context for Changes and passes worktreeId to status hook', async () => {
+    renderInlineContent({ isCortex: false })
+    await flushEffects()
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Worktrees' }))
+    await flushEffects()
+    fireEvent.click(getAllByRole(document.body, 'button', { name: 'Open Source Control' })[1])
+    await flushEffects()
+
+    expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
+    expect(hookCalls.status.at(-1)?.worktreeId).toBe('feature-linked')
+  })
+
+  it('renders Worktrees empty and error states without leaving read-only mode', async () => {
+    WORKTREES_BY_TARGET.workspace.splice(0, WORKTREES_BY_TARGET.workspace.length)
+    renderDialog({ isCortex: false, initialTab: 'worktrees' })
+    await flushEffects()
+
+    expect(getByText(document.body, 'No worktrees were reported for this repository.')).toBeTruthy()
+
+    root?.unmount()
+    root = null
+    container.innerHTML = ''
+    WORKTREE_ERROR_BY_TARGET.workspace = 'worktree inventory unavailable'
+    renderDialog({ isCortex: false, initialTab: 'worktrees' })
+    await flushEffects()
+
+    expect(getByText(document.body, 'Failed to load worktrees: worktree inventory unavailable')).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Fetch origin' })).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Pull FF only' })).toBeTruthy()
   })
 
   it('changes repo-target hook params and resets history selection state when the selector changes', async () => {

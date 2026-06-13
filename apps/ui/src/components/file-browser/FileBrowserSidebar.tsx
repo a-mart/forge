@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FolderOpen, FolderPlus, GitBranch, Loader2, RefreshCw, X } from 'lucide-react'
+import { FolderOpen, FolderPlus, GitBranch, HardDrive, Loader2, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -14,6 +14,7 @@ import {
   seedProjectResources,
   invalidateFileBrowserCaches,
 } from './use-file-browser-queries'
+import type { FileBrowserWorktreeSelection } from '@/hooks/index-page/use-panel-state'
 
 /* Deterministic skeleton widths */
 const SKELETON_WIDTHS = [72, 85, 63, 90, 68, 78, 82, 65, 88, 70, 76, 84]
@@ -25,6 +26,8 @@ interface FileBrowserSidebarProps {
   onClose: () => void
   onSelectFile: (path: string) => void
   selectedFile: string | null
+  worktreeContext?: FileBrowserWorktreeSelection | null
+  onClearWorktreeContext?: () => void
   projectResourceProfileId?: string | null
   projectResourceSessionAgentId?: string | null
   desktopPlacement?: 'left' | 'right'
@@ -39,6 +42,8 @@ export function FileBrowserSidebar({
   onClose,
   onSelectFile,
   selectedFile,
+  worktreeContext = null,
+  onClearWorktreeContext,
   projectResourceProfileId,
   projectResourceSessionAgentId,
   desktopPlacement = 'right',
@@ -50,9 +55,10 @@ export function FileBrowserSidebar({
   const [seedError, setSeedError] = useState<string | null>(null)
 
   const gatedAgentId = isOpen ? agentId : null
+  const worktreeId = worktreeContext?.worktreeId ?? null
 
-  const rootList = useDirectoryListing(wsUrl, gatedAgentId, '')
-  const fileCount = useFileCount(wsUrl, gatedAgentId)
+  const rootList = useDirectoryListing(wsUrl, gatedAgentId, '', worktreeId)
+  const fileCount = useFileCount(wsUrl, gatedAgentId, worktreeId)
   const projectResources = useProjectResourcesSnapshot(wsUrl, {
     profileId: isOpen ? (projectResourceProfileId ?? null) : null,
     sessionAgentId: isOpen ? (projectResourceSessionAgentId ?? null) : null,
@@ -65,7 +71,7 @@ export function FileBrowserSidebar({
   useEffect(() => {
     setSeedStatus('idle')
     setSeedError(null)
-  }, [agentId, projectResourceProfileId, projectResourceSessionAgentId])
+  }, [agentId, projectResourceProfileId, projectResourceSessionAgentId, worktreeId])
 
   const handleRefresh = useCallback((options: { resetSeedStatus?: boolean } = {}) => {
     if (options.resetSeedStatus !== false) {
@@ -88,12 +94,15 @@ export function FileBrowserSidebar({
   })
 
   const repoName = rootList.data?.repoName ?? null
-  const branch = rootList.data?.branch ?? null
+  const branch = worktreeContext?.branch ?? rootList.data?.branch ?? null
   const isRefreshing = rootList.isLoading
   const canSeedProjectForge = useMemo(() => {
+    if (worktreeContext) {
+      return false
+    }
     const scaffold = projectResources.data?.scaffold
     return !!scaffold?.canSeed && scaffold.missing.length > 0
-  }, [projectResources.data])
+  }, [projectResources.data, worktreeContext])
 
   const handleSeedProjectForge = useCallback(() => {
     if (!projectResourceProfileId || !projectResourceSessionAgentId || seedStatus === 'saving') return
@@ -221,6 +230,36 @@ export function FileBrowserSidebar({
         </div>
       ) : null}
 
+      {worktreeContext ? (
+        <div className="border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-center gap-1.5 font-medium">
+                <HardDrive className="size-3 shrink-0" />
+                <span>Browsing linked worktree</span>
+              </div>
+              <p className="truncate text-amber-900/80 dark:text-amber-100/80" title={worktreeContext.worktreePath}>
+                {worktreeContext.worktreePath}
+              </p>
+              <p className="text-amber-900/70 dark:text-amber-100/70">
+                {worktreeContext.branch ?? 'detached HEAD'} · Chat session CWD unchanged
+              </p>
+            </div>
+            {onClearWorktreeContext ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 shrink-0 px-2 text-[10px] text-amber-900 hover:bg-amber-500/20 dark:text-amber-100"
+                onClick={onClearWorktreeContext}
+              >
+                Use session
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {/* Tree content */}
       <div className="flex min-h-0 flex-1 flex-col">
         {rootList.error ? (
@@ -246,6 +285,7 @@ export function FileBrowserSidebar({
           </div>
         ) : gatedAgentId ? (
           <FileTree
+            key={`${gatedAgentId}:${worktreeId ?? 'session'}`}
             ref={fileTreeRef}
             wsUrl={wsUrl}
             agentId={gatedAgentId}
@@ -254,6 +294,7 @@ export function FileBrowserSidebar({
             onSelectFile={onSelectFile}
             fileCount={fileCount.data?.count ?? null}
             fileCountMethod={fileCount.data?.method ?? null}
+            worktreeId={worktreeId}
           />
         ) : null}
       </div>

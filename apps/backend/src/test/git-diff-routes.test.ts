@@ -15,6 +15,7 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { createGitDiffRoutes } from "../ws/routes/git-diff-routes.js";
+import { createWorktreeId } from "../versioning/git-source-control-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -451,6 +452,35 @@ describe("git-diff-routes", () => {
       notInitialized: true
     });
   });
+
+  it("routes workspace status through a validated worktreeId", async () => {
+    const server = await createGitDiffWorktreeTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    await writeFile(join(server.mainDir, "main.txt"), "main v2\n", "utf8");
+    await writeFile(join(server.secondaryDir, "linked.txt"), "linked change\n", "utf8");
+
+    const defaultResponse = await fetch(`${server.baseUrl}/api/git/status?agentId=alpha--s1`);
+    expect(defaultResponse.status).toBe(200);
+    const defaultPayload = (await defaultResponse.json()) as GitStatusResult;
+    expect(defaultPayload.repoRoot).toBe(server.mainDir);
+    expect(defaultPayload.files.map((file) => file.path)).toContain("main.txt");
+
+    const linkedResponse = await fetch(
+      `${server.baseUrl}/api/git/status?agentId=alpha--s1&worktreeId=${server.secondaryWorktreeId}`
+    );
+    expect(linkedResponse.status).toBe(200);
+    const linkedPayload = (await linkedResponse.json()) as GitStatusResult;
+    expect(linkedPayload.repoRoot).toBeTruthy()
+    expect(linkedPayload.files.map((file) => file.path)).toContain("linked.txt");
+    expect(linkedPayload.summary.filesChanged).toBeGreaterThan(0);
+
+    const invalidResponse = await fetch(
+      `${server.baseUrl}/api/git/status?agentId=alpha--s1&worktreeId=deadbeefdeadbeef`
+    );
+    expect(invalidResponse.status).toBe(400);
+  });
 });
 
 async function createGitDiffTestServer(options: {
@@ -495,6 +525,80 @@ async function createGitDiffTestServer(options: {
     root,
     workspaceDir: workspaceRealPath,
     dataDir: dataRealPath,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  activeServers.push(testServer);
+  return testServer;
+}
+
+async function createGitDiffWorktreeTestServer(options: {
+  descriptors: AgentDescriptor[];
+}): Promise<
+  TestServer & {
+    mainDir: string;
+    secondaryDir: string;
+    secondaryWorktreeId: string;
+  }
+> {
+  const root = await mkdtemp(join(tmpdir(), "git-diff-worktree-routes-"));
+  const mainDir = join(root, "main");
+  const secondaryDir = join(root, "linked");
+  await mkdir(mainDir, { recursive: true });
+
+  await initGitRepo(mainDir, "main.txt", "main v1\n", "initial commit");
+  await writeFile(join(mainDir, "linked.txt"), "linked seed\n", "utf8");
+  await execGit(mainDir, ["add", "linked.txt"]);
+  await execGit(mainDir, ["commit", "-m", "add linked seed"]);
+  await execGit(mainDir, ["branch", "feature/worktree-test"]);
+  await execGit(mainDir, ["worktree", "add", secondaryDir, "feature/worktree-test"]);
+
+  const mainRealPath = await realpath(mainDir);
+  const secondaryRealPath = await realpath(secondaryDir);
+  const descriptorById = new Map(options.descriptors.map((descriptor) => [descriptor.agentId, descriptor]));
+
+  for (const descriptor of options.descriptors) {
+    descriptor.cwd = mainRealPath;
+  }
+
+  const swarmManager = {
+    getConfig: () => ({ paths: { dataDir: join(root, "unused-data") } }),
+    getAgent: (agentId: string) => descriptorById.get(agentId)
+  } as unknown as SwarmManager;
+
+  const routes = createGitDiffRoutes({ swarmManager });
+  const server = createServer((request, response) => {
+    void handleRouteRequest(routes, request, response);
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine test server address.");
+  }
+
+  const testServer = {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    root,
+    mainDir: mainRealPath,
+    secondaryDir: secondaryRealPath,
+    secondaryWorktreeId: createWorktreeId(secondaryRealPath),
     close: async () => {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {

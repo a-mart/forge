@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
+import { promisify } from "node:util";
+import { createWorktreeId } from "../../../../versioning/git-source-control-helpers.js";
 import { createFileRoutes } from "../../../routes/file-routes.js";
 import { createFileBrowserRoutes } from "../../../routes/file-browser-routes.js";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
@@ -14,6 +17,8 @@ import {
   makeWsServerTempConfig as makeTempConfig,
 } from "../../../../test-support/ws-integration-harness.js";
 import { SwarmWebSocketServer } from "../../../server.js";
+
+const execFileAsync = promisify(execFile);
 
 interface TestServer {
   readonly baseUrl: string;
@@ -240,6 +245,87 @@ describe("file routes", () => {
     expect(payload.entries.some((entry) => entry.name === "external-link")).toBe(false);
   });
 
+  it("lists and reads files from a validated worktreeId without changing default behavior", async () => {
+    const harness = await createWorktreeFileBrowserHarness();
+    await writeFile(join(harness.secondaryDir, "linked-only.txt"), "linked only\n", "utf8");
+
+    const defaultResponse = await fetch(`${harness.server.baseUrl}/api/files/list?agentId=manager-1`);
+    expect(defaultResponse.status).toBe(200);
+    const defaultPayload = (await defaultResponse.json()) as {
+      cwd: string;
+      context?: { kind: string; isSessionCwd: boolean };
+      entries: Array<{ name: string }>;
+    };
+    expect(defaultPayload.cwd).toBe(harness.mainDir);
+    expect(defaultPayload.context).toEqual({ kind: "workspace", isSessionCwd: true });
+    expect(defaultPayload.entries.some((entry) => entry.name === "main-only.txt")).toBe(true);
+
+    const linkedResponse = await fetch(
+      `${harness.server.baseUrl}/api/files/list?agentId=manager-1&worktreeId=${harness.secondaryWorktreeId}`,
+    );
+    expect(linkedResponse.status).toBe(200);
+    const linkedPayload = (await linkedResponse.json()) as {
+      cwd: string;
+      context?: { kind: string; worktreeId?: string; isSessionCwd: boolean };
+      entries: Array<{ name: string }>;
+    };
+    expect(linkedPayload.cwd).toBe(harness.secondaryDir);
+    expect(linkedPayload.context).toEqual({
+      kind: "worktree",
+      worktreeId: harness.secondaryWorktreeId,
+      worktreePath: harness.secondaryDir,
+      isSessionCwd: false,
+    });
+    expect(linkedPayload.entries.some((entry) => entry.name === "linked-only.txt")).toBe(true);
+    expect(linkedPayload.cwd).toBe(harness.secondaryDir);
+
+    const contentResponse = await fetch(
+      `${harness.server.baseUrl}/api/files/content?agentId=manager-1&worktreeId=${harness.secondaryWorktreeId}&path=${encodeURIComponent("linked-only.txt")}`,
+    );
+    expect(contentResponse.status).toBe(200);
+    await expect(contentResponse.json()).resolves.toEqual({
+      content: "linked only\n",
+      binary: false,
+      size: 12,
+      lines: 2,
+    });
+
+    const invalidResponse = await fetch(
+      `${harness.server.baseUrl}/api/files/list?agentId=manager-1&worktreeId=deadbeefdeadbeef`,
+    );
+    expect(invalidResponse.status).toBe(400);
+  });
+
+  it("reads image bytes from main vs linked worktree through GET /api/read-file", async () => {
+    const harness = await createWorktreeFileBrowserHarness();
+    const mainImagePath = join(harness.mainDir, "logo-main.png");
+    const linkedImagePath = join(harness.secondaryDir, "logo-linked.png");
+    await writeFile(mainImagePath, Buffer.from("main-image-bytes"));
+    await writeFile(linkedImagePath, Buffer.from("linked-image-bytes"));
+
+    const sessionResponse = await fetch(
+      `${harness.server.baseUrl}/api/read-file?agentId=manager-1&path=${encodeURIComponent("logo-main.png")}`,
+    );
+    expect(sessionResponse.status).toBe(200);
+    await expect(sessionResponse.arrayBuffer()).resolves.toEqual(Buffer.from("main-image-bytes").buffer);
+
+    const linkedResponse = await fetch(
+      `${harness.server.baseUrl}/api/read-file?agentId=manager-1&worktreeId=${harness.secondaryWorktreeId}&path=${encodeURIComponent("logo-linked.png")}`,
+    );
+    expect(linkedResponse.status).toBe(200);
+    await expect(linkedResponse.arrayBuffer()).resolves.toEqual(Buffer.from("linked-image-bytes").buffer);
+
+    const wrongWorktreeResponse = await fetch(
+      `${harness.server.baseUrl}/api/read-file?agentId=manager-1&worktreeId=${harness.secondaryWorktreeId}&path=${encodeURIComponent("logo-main.png")}`,
+    );
+    expect(wrongWorktreeResponse.status).toBe(404);
+
+    const invalidWorktreeResponse = await fetch(
+      `${harness.server.baseUrl}/api/read-file?agentId=manager-1&worktreeId=deadbeefdeadbeef&path=${encodeURIComponent("logo-linked.png")}`,
+    );
+    expect(invalidWorktreeResponse.status).toBe(400);
+  });
+
   it("rejects read-file symlinks that resolve outside allowed roots", async () => {
     const harness = await createFileRouteHarness();
     const outsideDir = await mkdtemp(join(tmpdir(), "file-routes-symlink-outside-"));
@@ -331,6 +417,100 @@ async function createFileRouteHarness(): Promise<{
 
   activeServers.push(testServer);
   return { root, workspaceDir, uploadsDir, swarmManager, server: testServer };
+}
+
+async function createWorktreeFileBrowserHarness(): Promise<{
+  root: string;
+  mainDir: string;
+  secondaryDir: string;
+  secondaryWorktreeId: string;
+  server: TestServer;
+}> {
+  const root = await mkdtemp(join(tmpdir(), "file-browser-worktree-test-"));
+  tempRoots.push(root);
+
+  const mainDir = join(root, "main");
+  const secondaryDir = join(root, "linked");
+  await mkdir(mainDir, { recursive: true });
+  await writeFile(join(mainDir, "main-only.txt"), "main only\n", "utf8");
+  await execGit(mainDir, ["init"]);
+  await execGit(mainDir, ["config", "user.name", "Forge Test"]);
+  await execGit(mainDir, ["config", "user.email", "forge-test@example.com"]);
+  await execGit(mainDir, ["add", "main-only.txt"]);
+  await execGit(mainDir, ["commit", "-m", "initial"]);
+  await execGit(mainDir, ["branch", "feature/worktree-test"]);
+  await execGit(mainDir, ["worktree", "add", secondaryDir, "feature/worktree-test"]);
+
+  const mainRealPath = await realpath(mainDir);
+  const secondaryRealPath = await realpath(secondaryDir);
+
+  const swarmManager: any = {
+    getConfig: () => ({
+      paths: {
+        rootDir: root,
+        dataDir: join(root, "data"),
+        uploadsDir: join(root, "data", "uploads"),
+      },
+      cwdAllowlistRoots: [root],
+    }),
+    getAgent: (agentId: string) => {
+      if (agentId === "manager-1") {
+        return {
+          agentId: "manager-1",
+          role: "manager",
+          cwd: mainRealPath,
+        };
+      }
+
+      return undefined;
+    },
+    getVersioningService: () => undefined,
+  };
+
+  const routes = [
+    ...createFileRoutes({ swarmManager }),
+    ...createFileBrowserRoutes({ swarmManager }),
+  ];
+  const server = createServer((request, response) => {
+    void handleRouteRequest(routes, request, response);
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Could not resolve test server address");
+  }
+
+  const testServer: TestServer = {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    },
+  };
+
+  activeServers.push(testServer);
+  return {
+    root,
+    mainDir: mainRealPath,
+    secondaryDir: secondaryRealPath,
+    secondaryWorktreeId: createWorktreeId(secondaryRealPath),
+    server: testServer,
+  };
+}
+
+async function execGit(cwd: string, args: string[]): Promise<void> {
+  await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8",
+  });
 }
 
 async function handleRouteRequest(

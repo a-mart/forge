@@ -70,6 +70,7 @@ import { createFeedbackRoutes } from "./http/routes/feedback-routes.js";
 import { createFileBrowserRoutes } from "./http/routes/file-browser-routes.js";
 import { createFileRoutes } from "./http/routes/file-routes.js";
 import { createGitDiffRoutes } from "./http/routes/git-diff-routes.js";
+import { createGitSourceControlRoutes } from "./http/routes/git-source-control-routes.js";
 import { createHealthRoutes } from "./http/routes/health-routes.js";
 import { createIntegrationRoutes } from "./http/routes/integration-routes.js";
 import { createMermaidPreviewRoutes } from "./http/routes/mermaid-preview-routes.js";
@@ -504,6 +505,7 @@ export class SwarmWebSocketServer {
       }),
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
+      ...createGitSourceControlRoutes({ swarmManager: this.swarmManager }),
       ...createFeedbackRoutes({ swarmManager: this.swarmManager, feedbackService: this.feedbackService }),
       ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
         ? createPhoenixObservabilityRoutes({

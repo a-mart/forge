@@ -30,6 +30,7 @@ interface HistoryViewProps {
   wsUrl: string
   agentId: string | null
   repoTarget: GitRepoTarget
+  worktreeId?: string | null
   onStatusChange?: (info: HistoryStatusInfo | null) => void
   refreshToken?: number
   initialSha?: string | null
@@ -41,6 +42,7 @@ export function HistoryView({
   wsUrl,
   agentId,
   repoTarget,
+  worktreeId = null,
   onStatusChange,
   refreshToken = 0,
   initialSha = null,
@@ -54,14 +56,14 @@ export function HistoryView({
   const [hasMore, setHasMore] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>(initialQuickFilter)
-  const prevContextKeyRef = useRef(`${agentId ?? ''}:${repoTarget}`)
+  const prevContextKeyRef = useRef(`${agentId ?? ''}:${repoTarget}:${worktreeId ?? ''}`)
   const prevRefreshTokenRef = useRef(refreshToken)
   const isKnowledgeMode = repoTarget === 'versioning'
 
-  const logQuery = useGitLog(wsUrl, agentId, repoTarget, PAGE_SIZE, currentOffset)
+  const logQuery = useGitLog(wsUrl, agentId, repoTarget, PAGE_SIZE, currentOffset, worktreeId)
 
   useEffect(() => {
-    const contextKey = `${agentId ?? ''}:${repoTarget}`
+    const contextKey = `${agentId ?? ''}:${repoTarget}:${worktreeId ?? ''}`
     if (contextKey !== prevContextKeyRef.current) {
       prevContextKeyRef.current = contextKey
       setAllCommits([])
@@ -72,7 +74,7 @@ export function HistoryView({
       setQuickFilter(initialQuickFilter)
       onStatusChange?.(null)
     }
-  }, [agentId, initialFile, initialQuickFilter, initialSha, onStatusChange, repoTarget])
+  }, [agentId, initialFile, initialQuickFilter, initialSha, onStatusChange, repoTarget, worktreeId])
 
   useEffect(() => {
     if (!logQuery.data) return
@@ -113,7 +115,7 @@ export function HistoryView({
     }
   }, [filteredCommits, selectedSha])
 
-  const commitDetailQuery = useGitCommitDetail(wsUrl, agentId, repoTarget, selectedSha)
+  const commitDetailQuery = useGitCommitDetail(wsUrl, agentId, repoTarget, selectedSha, worktreeId)
   const commitFiles = useMemo(() => commitDetailQuery.data?.files ?? [], [commitDetailQuery.data?.files])
 
   const filteredCommitFiles = useMemo(() => {
@@ -142,7 +144,7 @@ export function HistoryView({
     }
   }, [filteredCommitFiles, selectedFile, selectedSha])
 
-  const fileDiffQuery = useGitCommitDiff(wsUrl, agentId, repoTarget, selectedSha, selectedFile)
+  const fileDiffQuery = useGitCommitDiff(wsUrl, agentId, repoTarget, selectedSha, selectedFile, worktreeId)
 
   useEffect(() => {
     if (refreshToken === prevRefreshTokenRef.current) {
