@@ -45,16 +45,6 @@ vi.mock('@/lib/sidebar-prefs', () => ({
   storeSidebarProviderUsagePref: (v: boolean) => sidebarPrefsMock.storeSidebarProviderUsagePref(v),
 }))
 
-const themeMock = vi.hoisted(() => ({
-  readStoredThemePreference: vi.fn(),
-  applyThemePreference: vi.fn(),
-}))
-
-vi.mock('@/lib/theme', () => ({
-  readStoredThemePreference: () => themeMock.readStoredThemePreference(),
-  applyThemePreference: (pref: string) => themeMock.applyThemePreference(pref),
-}))
-
 const editorMock = vi.hoisted(() => ({
   readStoredEditorPreference: vi.fn(),
   storeEditorPreference: vi.fn(),
@@ -109,7 +99,6 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
 
-  themeMock.readStoredThemePreference.mockReturnValue('dark')
   editorMock.readStoredEditorPreference.mockReturnValue('vscode')
   sidebarPrefsMock.readSidebarModelIconsPref.mockReturnValue(true)
   sidebarPrefsMock.readSidebarProviderUsagePref.mockReturnValue(true)
@@ -164,23 +153,15 @@ function renderGeneral(): void {
 /* ================================================================== */
 
 describe('SettingsGeneral', () => {
-  /* ---- Appearance section ---- */
+  /* ---- Editor section ---- */
 
-  describe('appearance section', () => {
-    it('renders theme and editor selectors', async () => {
+  describe('editor section', () => {
+    it('renders the local editor selector', async () => {
       renderGeneral()
       await flush()
 
-      expect(container.textContent).toContain('Theme')
+      expect(container.textContent).toContain('Editor')
       expect(container.textContent).toContain('Preferred Editor')
-    })
-
-    it('applies theme preference on change', async () => {
-      renderGeneral()
-      await flush()
-
-      // The theme select should exist with the current value
-      expect(container.textContent).toContain('Appearance')
     })
   })
 

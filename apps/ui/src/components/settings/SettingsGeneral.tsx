@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useHelpContext } from '@/components/help/help-hooks'
 import { HelpTooltip } from '@/components/help/HelpTooltip'
-import { Check, Code, Monitor, Moon, RotateCcw, Sun, Terminal } from 'lucide-react'
+import { Check, Code, RotateCcw, Terminal } from 'lucide-react'
 import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import {
@@ -31,11 +31,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
 import { isElectron, type SleepBlockerStatus } from '@/lib/electron-bridge'
-import {
-  applyThemePreference,
-  readStoredThemePreference,
-  type ThemePreference,
-} from '@/lib/theme'
 import {
   EDITOR_LABELS,
   readStoredEditorPreference,
@@ -84,9 +79,6 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   const [onboardingSuccess, setOnboardingSuccess] = useState<string | null>(null)
   const [sidebarModelIcons, setSidebarModelIcons] = useState(() => readSidebarModelIconsPref())
   const [sidebarProviderUsage, setSidebarProviderUsage] = useState(() => readSidebarProviderUsagePref())
-  const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
-    readStoredThemePreference(),
-  )
   const [editorPreference, setEditorPreference] = useState<EditorPreference>(() =>
     readStoredEditorPreference(),
   )
@@ -252,11 +244,6 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
     [cortexSource, cortexUpdating],
   )
 
-  const handleThemePreferenceChange = useCallback((nextPreference: ThemePreference) => {
-    setThemePreference(nextPreference)
-    applyThemePreference(nextPreference)
-  }, [])
-
   const handleEditorPreferenceChange = useCallback((nextPreference: EditorPreference) => {
     setEditorPreference(nextPreference)
     storeEditorPreference(nextPreference)
@@ -292,52 +279,12 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
 
   return (
     <div className="flex flex-col gap-8">
-      {/* Appearance — local-only (Builder) */}
+      {/* Editor — local-only (Builder) */}
       {isBuilder && (
         <SettingsSection
-          label="Appearance"
-          description="Customize how the app looks"
+          label="Editor"
+          description="Customize local editor integration"
         >
-          <SettingsWithCTA
-            label="Theme"
-            description="Choose between light, dark, or system theme"
-          >
-            <HelpTooltip id="settings.theme" side="left">
-            <Select
-              value={themePreference}
-              onValueChange={(value) => {
-                if (value === 'light' || value === 'dark' || value === 'auto') {
-                  handleThemePreferenceChange(value)
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-48">
-                <SelectValue placeholder="Select theme" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="light">
-                  <span className="inline-flex items-center gap-2">
-                    <Sun className="size-3.5" />
-                    Light
-                  </span>
-                </SelectItem>
-                <SelectItem value="dark">
-                  <span className="inline-flex items-center gap-2">
-                    <Moon className="size-3.5" />
-                    Dark
-                  </span>
-                </SelectItem>
-                <SelectItem value="auto">
-                  <span className="inline-flex items-center gap-2">
-                    <Monitor className="size-3.5" />
-                    System
-                  </span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            </HelpTooltip>
-          </SettingsWithCTA>
-
           <SettingsWithCTA
             label="Preferred Editor"
             description="Choose which editor to open artifact files in"

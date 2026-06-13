@@ -33,10 +33,13 @@ export function useTitleBarOverlay() {
     // Update immediately
     updateOverlayColors()
 
-    // Watch for theme changes (dark class toggle)
+    // Watch for theme and appearance changes (dark class toggle + CSS variables).
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
-        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+        if (
+          mutation.type === 'attributes' &&
+          (mutation.attributeName === 'class' || mutation.attributeName === 'style')
+        ) {
           updateOverlayColors()
           break
         }
@@ -45,7 +48,7 @@ export function useTitleBarOverlay() {
 
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['class'],
+      attributeFilter: ['class', 'style'],
     })
 
     return () => {

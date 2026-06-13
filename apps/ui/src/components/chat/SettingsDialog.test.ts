@@ -5,18 +5,21 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsTab, SettingsBackendTarget } from '@/components/settings/settings-target'
 
-// Track activeTab values received by SettingsLayout
+// Track SettingsLayout props received by SettingsPanel
 let capturedActiveTab: SettingsTab | undefined
+let capturedContentWidthClassName: string | undefined
 
 vi.mock('@/components/settings/SettingsLayout', () => ({
-  SettingsLayout: (props: { activeTab: SettingsTab; onTabChange: (tab: SettingsTab) => void; children: React.ReactNode }) => {
+  SettingsLayout: (props: { activeTab: SettingsTab; onTabChange: (tab: SettingsTab) => void; contentWidthClassName?: string; children: React.ReactNode }) => {
     capturedActiveTab = props.activeTab
+    capturedContentWidthClassName = props.contentWidthClassName
     return createElement('div', { 'data-testid': 'settings-layout', 'data-active-tab': props.activeTab }, props.children)
   },
 }))
 
 // Mock all individual settings panes to avoid their dependencies
 vi.mock('@/components/settings/SettingsGeneral', () => ({ SettingsGeneral: () => createElement('div', null, 'General') }))
+vi.mock('@/components/settings/SettingsAppearance', () => ({ SettingsAppearance: () => createElement('div', null, 'Appearance') }))
 vi.mock('@/components/settings/SettingsNotifications', () => ({ SettingsNotifications: () => createElement('div', null, 'Notifications') }))
 vi.mock('@/components/settings/SettingsAuth', () => ({ SettingsAuth: () => createElement('div', null, 'Auth') }))
 vi.mock('@/components/settings/SettingsModels', () => ({ SettingsModels: () => createElement('div', null, 'Models') }))
@@ -40,7 +43,7 @@ const BUILDER_TARGET: SettingsBackendTarget = {
   fetchCredentials: 'same-origin',
   requiresAdmin: false,
   availableTabs: [
-    'general', 'notifications', 'auth', 'models', 'integrations',
+    'general', 'appearance', 'notifications', 'auth', 'models', 'integrations',
     'skills', 'prompts', 'specialists', 'slash-commands', 'extensions',
     'collaboration', 'about',
   ],
@@ -55,7 +58,7 @@ const COLLAB_TARGET: SettingsBackendTarget = {
   fetchCredentials: 'include',
   requiresAdmin: true,
   availableTabs: [
-    'general', 'auth', 'models', 'integrations',
+    'general', 'appearance', 'auth', 'models', 'integrations',
     'skills', 'prompts', 'specialists', 'slash-commands', 'extensions',
     'collaboration', 'about',
   ],
@@ -66,6 +69,7 @@ let root: Root | null = null
 
 beforeEach(() => {
   capturedActiveTab = undefined
+  capturedContentWidthClassName = undefined
   container = document.createElement('div')
   document.body.appendChild(container)
 })
@@ -108,11 +112,24 @@ describe('SettingsPanel initialTab', () => {
   it('defaults to general when no initialTab is provided', () => {
     renderPanel({})
     expect(capturedActiveTab).toBe('general')
+    expect(capturedContentWidthClassName).toBeUndefined()
   })
 
   it('uses initialTab on mount when it is a valid tab', () => {
     renderPanel({ initialTab: 'collaboration' })
     expect(capturedActiveTab).toBe('collaboration')
+  })
+
+  it('uses a wider content width for the appearance tab', () => {
+    renderPanel({ initialTab: 'appearance' })
+    expect(capturedActiveTab).toBe('appearance')
+    expect(capturedContentWidthClassName).toBe('max-w-6xl')
+  })
+
+  it('preserves full-width content for the skills tab', () => {
+    renderPanel({ initialTab: 'skills' })
+    expect(capturedActiveTab).toBe('skills')
+    expect(capturedContentWidthClassName).toBe('max-w-full')
   })
 
   it('syncs activeTab when initialTab prop changes while mounted', () => {
