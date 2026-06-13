@@ -306,6 +306,27 @@ The definitive experiment (`apps/backend/scripts/replay-empty-turn.ts`): rebuild
 
 **Defense in depth retained**: the resample ladder (§9.1) stays as the safety net for the residual fresh-context quirk — now genuinely effective, since retries no longer fight a poisoned context — and `manager:silent_turn` remains the canary. Expected steady state: resamples rare, silent_turn ≈ 0. Upstream note: this affects any pi-based agent running gpt-5.x on the Responses API; worth filing against earendil-works/pi with the bisection table.
 
+### 10.1 Post-fix recurrence and the completing fix (`ea76352f`, 2026-06-13)
+
+`4d9c11d8` was **incomplete**, and it shipped looking green because of a validation gap. It dropped only *wholly-silent* turns (no tool call, no text). But gpt-5.x emits an empty `commentary` text block alongside **most tool calls** (`[empty text, toolCall]`), and that empty `output_text` item is **not** wholly-silent — so it survived replay and kept re-seeding the loop.
+
+Recurrence: `middleman-project/activity-bar-2` (Jun 13, 10:49 AM) hit `silent_turn` *after* the fix was live (daemon restarted 9:51 AM; all fix commits present; the resample ladder fired correctly — verbatim then escalated — and exhausted). Replay forensics on that context:
+
+- 47 wholly-silent turns (correctly dropped by `4d9c11d8`) **+ 38 `toolCall + empty-commentary` turns (survived)**.
+- Multi-draw replay through the shipped converter: **4/5 empty (~80%)**. With `0.8³ ≈ 51%` the 3-attempt ladder exhausts more often than not — exactly the production failure.
+- `strip-empty` (remove empty text from *all* turns, incl. tool turns): **5/5 responded**.
+
+Why the earlier "verification" missed it: the shipped fix was narrower than the `strip-empty` experiment that diagnosed it, and it was confirmed with a **single** post-fix draw — indistinguishable from "80% empty but got lucky once."
+
+**Completing fix (`ea76352f`)** — one invariant: *an empty assistant message item must never reach the model in replayed context, neither preserved nor injected.*
+
+- `convertResponsesMessages`: skip empty assistant text blocks for **all** Responses providers (was xAI-only). With the existing wholly-silent drop, no empty `output_text` ever replays; the xAI placeholder stays xAI-scoped. (Removed the now-dead `assistantTurnHasToolCalls`.)
+- `convertMessages` (chat-completions): scope the `content=" "` forcing to **xAI only** (was global since Apr 18 `bc462356` — never scoped). pi's upstream default `null` is accepted by OpenAI/Anthropic/Google, so non-xAI completions providers stop getting a synthetic blank assistant item that seeded the same loop.
+
+**Validated properly this time**: multi-draw live replay through the real provider path — mammo-sch (was deterministic-empty) **10/10 responded**, activity-bar-2 (was ~80%) **10/10 responded**; both contexts convert to **0** empty items offline. New network-free regression test (`apps/backend/src/test/pi-replay-empty-content.test.ts`) drives the installed converter via `onPayload` and locks the invariant, so a future pi upgrade or patch-loss fails loudly (this exact fix regressed once by being lost/narrowed). Full backend suite 3077 passed; tsc + eslint clean; independent code review approved.
+
+**Lesson recorded**: a stochastic fix cannot be validated by one draw, and the shipped change must match the experiment that diagnosed it — not a narrowed version of it.
+
 ## 11. Reproducing the Forensics
 
 ```bash
