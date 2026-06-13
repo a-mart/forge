@@ -1,15 +1,15 @@
-Forge supports three theme modes: Light, Dark, and System. The System option follows your operating system preference and updates automatically if you change it.
+Forge supports Light, Dark, and System theme modes plus optional device-local color and font customization. System follows your operating system preference and updates automatically.
 
 ## How to change
 
-Open **Settings > General**. Under Appearance, select your theme from the dropdown. The change takes effect immediately across all views.
+Open **Settings > Appearance**. Choose a mode or template, edit colors if needed, preview the draft, then click **Apply appearance**. Draft template and color changes stay in the preview until applied.
+
+Choosing **Original Forge** and applying it restores the default system-following Forge colors and clears custom appearance values. Older Light/Dark/System-only preferences remain mode-only and do not become custom palettes.
 
 ## Where it's stored
 
-Your theme preference is saved in browser local storage. It persists across page reloads and browser restarts, but it is specific to the browser profile you're using. If you access Forge from a different browser, you'll need to set it again.
+Appearance is saved in browser local storage. It persists across page reloads and browser restarts, but it is specific to the browser profile you're using.
 
 ## Desktop app
 
-In the Electron desktop app, the theme applies to the full window including the title bar chrome. Dark mode is the default for new installs.
-
-If you use the System setting, the app follows your OS dark/light mode toggle in real time.
+In the Electron desktop app, the mode applies to the full window including the title bar chrome. If you use System, the app follows your OS dark/light mode toggle in real time.

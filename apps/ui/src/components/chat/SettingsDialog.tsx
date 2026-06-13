@@ -5,6 +5,7 @@ import type { SettingsBackendTarget } from '@/components/settings/settings-targe
 import { createBuilderSettingsTarget } from '@/components/settings/settings-target'
 import { createSettingsApiClient, type SettingsApiClient } from '@/components/settings/settings-api-client'
 import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
+import { SettingsAppearance } from '@/components/settings/SettingsAppearance'
 import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
 import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
@@ -20,6 +21,12 @@ import { SettingsCliAccess } from '@/components/settings/SettingsCliAccess'
 import { SettingsObservability } from '@/components/settings/SettingsObservability'
 import { SettingsCollaboration } from '@/components/settings/SettingsCollaboration'
 import type { AgentDescriptor, ManagerProfile, TelegramStatusEvent } from '@forge/protocol'
+
+function getSettingsContentWidthClassName(activeTab: SettingsTab): string | undefined {
+  if (activeTab === 'appearance') return 'max-w-6xl'
+  if (activeTab === 'skills') return 'max-w-full'
+  return undefined
+}
 
 interface SettingsPanelProps {
   wsUrl: string
@@ -117,12 +124,13 @@ export function SettingsPanel({
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onBack={onBack}
-      contentWidthClassName={activeTab === 'skills' ? 'max-w-full' : undefined}
+      contentWidthClassName={getSettingsContentWidthClassName(activeTab)}
       fillHeight={activeTab === 'skills'}
       availableTabs={availableTabs}
       targetLabel={targetLabel}
     >
       {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} target={target} apiClient={apiClient} />}
+      {activeTab === 'appearance' && <SettingsAppearance />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} apiClient={apiClient} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} target={target} apiClient={apiClient} />}
       {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />}

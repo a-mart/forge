@@ -1,8 +1,8 @@
-General Settings is the main preferences pane. It covers appearance, editor integration, sidebar preferences, Active Work Plans, telemetry, and the Cortex auto-review schedule. Diagnostic export controls live in **Settings > Observability**.
+General Settings covers editor integration, sidebar preferences, Active Work Plans, telemetry, and the Cortex auto-review schedule. Appearance now has its own **Settings > Appearance** pane, and diagnostic export controls live in **Settings > Observability**.
 
 ## Appearance
 
-Pick a theme (Light, Dark, or System) and choose which code editor opens when you click artifact file links. Supported editors are VS Code Insiders, VS Code, and Cursor. The theme preference is stored in your browser and applies immediately.
+Open **Settings > Appearance** to choose Light, Dark, System, or a custom local appearance. Choose which code editor opens artifact file links from General. Supported editors are VS Code Insiders, VS Code, and Cursor.
 
 ## Sidebar
 
