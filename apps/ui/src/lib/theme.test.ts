@@ -194,6 +194,46 @@ describe('appearance theme storage', () => {
     expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
   })
 
+  it('keeps startup init and runtime init aligned for invalid applied fields', () => {
+    const invalidAppliedConfig = {
+      version: 1,
+      mode: 'dark',
+      accentColor: '#14b8a6',
+      backgroundColor: '#ecfeff',
+      foregroundColor: '#083344',
+      uiFont: 'remote-font-url',
+      codeFont: 'evil-mono',
+      templateId: 'unknown-template',
+      customApplied: true,
+    }
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(invalidAppliedConfig))
+    Function(THEME_INIT_SCRIPT)()
+    const startupState = {
+      isDark: document.documentElement.classList.contains('dark'),
+      primary: document.documentElement.style.getPropertyValue('--primary'),
+      fontSans: document.documentElement.style.getPropertyValue('--app-font-sans'),
+      fontMono: document.documentElement.style.getPropertyValue('--app-font-mono'),
+    }
+
+    document.documentElement.className = ''
+    document.documentElement.removeAttribute('style')
+    initializeThemePreference()
+
+    expect({
+      isDark: document.documentElement.classList.contains('dark'),
+      primary: document.documentElement.style.getPropertyValue('--primary'),
+      fontSans: document.documentElement.style.getPropertyValue('--app-font-sans'),
+      fontMono: document.documentElement.style.getPropertyValue('--app-font-mono'),
+    }).toEqual(startupState)
+    expect(startupState).toMatchObject({
+      isDark: true,
+      primary: '#3ec5b6',
+      fontSans: expect.stringContaining('system-ui'),
+      fontMono: expect.stringContaining('ui-monospace'),
+    })
+  })
+
   it('persists versioned applied config and applies only safe CSS variables', () => {
     applyAppearanceConfig({
       version: 1,

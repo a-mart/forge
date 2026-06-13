@@ -109,6 +109,23 @@ describe('SettingsAppearance', () => {
     expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
   })
 
+  it('applies mode-only changes without generating a custom palette', () => {
+    renderAppearance()
+
+    clickButton('Dark')
+    expect(container.textContent).toContain('You have unapplied draft changes.')
+
+    clickButton('Apply appearance')
+
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--app-font-sans')).toBe('')
+    expect(container.textContent).toContain('Forge default colors; dark mode is active.')
+    expect(container.textContent).not.toContain('Custom appearance is applied.')
+    expect(findButton('Apply appearance').disabled).toBe(true)
+  })
+
   it('keeps template selections as draft until Apply is clicked', () => {
     renderAppearance()
 

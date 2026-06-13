@@ -17,6 +17,7 @@ import {
   APPEARANCE_TEMPLATES,
   APPEARANCE_UI_FONTS,
   applyAppearanceConfig,
+  applyThemePreference,
   getContrastRatio,
   getDefaultAppearanceConfig,
   mixColor,
@@ -77,11 +78,15 @@ export function SettingsAppearance() {
   }, [])
 
   const handleApply = useCallback(() => {
-    if (isOriginalForgeDraft(draftAppearance)) {
-      const defaults = getDefaultAppearanceConfig()
-      setDraftAppearance(defaults)
-      setAppliedAppearance(defaults)
-      applyAppearanceConfig(defaults, { applyModeWhenCustomDisabled: true })
+    if (isDefaultForgeStyleDraft(draftAppearance)) {
+      const next = { ...getDefaultAppearanceConfig(), mode: draftAppearance.mode }
+      setDraftAppearance(next)
+      setAppliedAppearance(next)
+      if (next.mode === getDefaultAppearanceConfig().mode) {
+        applyAppearanceConfig(next, { applyModeWhenCustomDisabled: true })
+      } else {
+        applyThemePreference(next.mode)
+      }
       return
     }
 
@@ -376,10 +381,9 @@ function isTemplateDraftActive(draft: AppearanceConfig, template: AppearanceTemp
     draft.foregroundColor === template.foregroundColor
 }
 
-function isOriginalForgeDraft(draft: AppearanceConfig): boolean {
+function isDefaultForgeStyleDraft(draft: AppearanceConfig): boolean {
   const defaults = getDefaultAppearanceConfig()
   return draft.templateId === defaults.templateId &&
-    draft.mode === defaults.mode &&
     draft.accentColor === defaults.accentColor &&
     draft.backgroundColor === defaults.backgroundColor &&
     draft.foregroundColor === defaults.foregroundColor &&
