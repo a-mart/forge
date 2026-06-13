@@ -6,7 +6,7 @@ The main view has three parts:
 
 - **Sidebar** (left) for navigating managers, profiles, and sessions.
 - **Message area** (center) showing the conversation transcript.
-- **Desktop workspace rail** (left edge of the workspace) for Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with resizable tree and preview panes; Source Control opens inline with Changes, History, Worktrees, and Pull Requests tabs. Selecting a worktree updates Source Control and Files browsing context without changing the chat session's working directory. Artifacts and Schedules each open a single left activity-pane surface. Mobile keeps the header/drawer workspace behavior.
+- **Desktop workspace rail** (left edge of the workspace) for Chat, Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Chat returns to the current manager/session conversation, including from a selected worker route back to its parent manager thread. Files opens as a left split pane beside the rail with resizable tree and preview panes; Source Control opens inline with Changes, History, Worktrees, and Pull Requests tabs. Selecting a worktree updates Source Control and Files browsing context without changing the chat session's working directory. Files, Source Control, Artifacts/Dashboard, and Schedules switch mutually exclusively so panes do not stack or hide behind each other, while Terminal stays independent and persistent. Mobile keeps the header/drawer workspace behavior.
 
 ## Streaming and status
 
@@ -36,4 +36,4 @@ The matching header control opens an anchored Active Work popover with an explic
 
 ## Header controls
 
-The chat header still shows the pin count badge, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted. Desktop workspace buttons now live behind the activity rail instead of the header; mobile keeps the header workspace actions.
+The chat header still shows the pin count badge, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted. Desktop workspace buttons now live behind the activity rail instead of the header; mobile keeps the header workspace actions. Use the Chat rail item to jump back to the current manager/session chat, including from worker-route views back to the parent manager thread.
