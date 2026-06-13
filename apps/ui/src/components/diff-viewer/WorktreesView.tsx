@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import type { GitWorktreesQueryResult } from './use-diff-queries'
+import { summarizeWorktreeAgents } from './worktree-agent-stats'
 
 interface WorktreesViewProps {
   agentId: string | null
@@ -36,6 +37,29 @@ function formatDirtySummary(worktree: GitWorktreeSummary): string {
   return parts.join(' ')
 }
 
+function WorktreeAgentStatsBadges({ worktree }: { worktree: GitWorktreeSummary }) {
+  const stats = summarizeWorktreeAgents(worktree.activeAgents)
+  if (stats.attached === 0) {
+    return null
+  }
+
+  return (
+    <>
+      <Badge variant="outline" className="h-5 gap-1 rounded-sm border-emerald-500/40 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+        <Users className="size-2.5" /> {stats.attached} attached
+      </Badge>
+      {stats.running > 0 ? (
+        <Badge variant="outline" className="h-5 rounded-sm border-sky-500/40 px-1.5 text-[10px] text-sky-600 dark:text-sky-400">
+          {stats.running} running
+        </Badge>
+      ) : null}
+      <span className="text-[10px] text-muted-foreground">
+        {stats.managers} mgr · {stats.workers} wkr
+      </span>
+    </>
+  )
+}
+
 function WorktreeStateBadges({ worktree }: { worktree: GitWorktreeSummary }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -62,11 +86,7 @@ function WorktreeStateBadges({ worktree }: { worktree: GitWorktreeSummary }) {
           <ShieldAlert className="size-2.5" /> Prunable
         </Badge>
       ) : null}
-      {worktree.activeAgents.length > 0 ? (
-        <Badge variant="outline" className="h-5 gap-1 rounded-sm border-emerald-500/40 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">
-          <Users className="size-2.5" /> {worktree.activeAgents.length} active
-        </Badge>
-      ) : null}
+      <WorktreeAgentStatsBadges worktree={worktree} />
     </div>
   )
 }
@@ -117,15 +137,6 @@ function WorktreeCard({
             </span>
           </div>
           <WorktreeStateBadges worktree={worktree} />
-          {worktree.activeAgents.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-              {worktree.activeAgents.map((agent) => (
-                <span key={agent.agentId} className="rounded-md border border-border/60 bg-muted/30 px-1.5 py-0.5">
-                  {agent.displayName} · {agent.role} · {agent.status}
-                </span>
-              ))}
-            </div>
-          ) : null}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           <Button
