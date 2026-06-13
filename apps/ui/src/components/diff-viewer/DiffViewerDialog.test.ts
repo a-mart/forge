@@ -15,6 +15,7 @@ const {
   COMMIT_DETAILS,
   WORKTREES_BY_TARGET,
   WORKTREE_ERROR_BY_TARGET,
+  WORKTREE_NOT_INITIALIZED_BY_TARGET,
   BRANCHES_BY_TARGET,
 } = vi.hoisted(() => ({
   invalidateGitCachesMock: vi.fn(),
@@ -168,6 +169,10 @@ const {
   WORKTREE_ERROR_BY_TARGET: {
     workspace: null as string | null,
     versioning: null as string | null,
+  },
+  WORKTREE_NOT_INITIALIZED_BY_TARGET: {
+    workspace: false,
+    versioning: false,
   },
   BRANCHES_BY_TARGET: {
     workspace: {
@@ -328,6 +333,7 @@ vi.mock('./use-diff-queries', () => ({
     }
     const status = STATUS_BY_TARGET[repoTarget]
     const error = WORKTREE_ERROR_BY_TARGET[repoTarget]
+    const notInitialized = WORKTREE_NOT_INITIALIZED_BY_TARGET[repoTarget]
     return {
       data: agentId && !error
         ? {
@@ -336,7 +342,8 @@ vi.mock('./use-diff-queries', () => ({
             repoKind: status.repoKind,
             repoLabel: status.repoLabel,
             context: { repoTarget },
-            worktrees: WORKTREES_BY_TARGET[repoTarget],
+            worktrees: notInitialized ? [] : WORKTREES_BY_TARGET[repoTarget],
+            notInitialized,
           }
         : null,
       isLoading: false,
@@ -418,6 +425,13 @@ vi.mock('./use-diff-queries', () => ({
     error: null,
     refetch: vi.fn(),
   }),
+  useGitPullRequestDetail: () => ({
+    data: null,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+  mergeGitPullRequest: vi.fn(),
   invalidateGitCaches: invalidateGitCachesMock,
   fetchGitOrigin: vi.fn(),
   switchGitBranch: vi.fn(),
@@ -443,6 +457,8 @@ beforeEach(() => {
   invalidateGitCachesMock.mockReset()
   WORKTREE_ERROR_BY_TARGET.workspace = null
   WORKTREE_ERROR_BY_TARGET.versioning = null
+  WORKTREE_NOT_INITIALIZED_BY_TARGET.workspace = false
+  WORKTREE_NOT_INITIALIZED_BY_TARGET.versioning = false
   WORKTREES_BY_TARGET.workspace.splice(0, WORKTREES_BY_TARGET.workspace.length,
     {
       id: 'workspace-main',
@@ -674,6 +690,24 @@ describe('DiffViewerDialog', () => {
     expect(hookCalls.worktrees.some((call) => call.enabled !== false)).toBe(true)
   })
 
+  it('keeps Changes and History reachable from Pull Requests', async () => {
+    renderDialog({ isCortex: false, initialTab: 'pull-requests' })
+    await flushEffects()
+
+    expect(getByRole(document.body, 'button', { name: 'Pull Requests' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole(document.body, 'group', { name: 'Repository activity' })).toBeTruthy()
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'History' }))
+    await flushEffects()
+    expect(getByRole(document.body, 'listbox', { name: 'Commit history' })).toBeTruthy()
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Pull Requests' }))
+    await flushEffects()
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Changes' }))
+    await flushEffects()
+    expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
+  })
+
   it('renders the read-only Worktrees tab with current, locked, dirty, and active-agent state', async () => {
     renderDialog({ isCortex: false, initialTab: 'worktrees' })
     await flushEffects()
@@ -739,16 +773,18 @@ describe('DiffViewerDialog', () => {
     expect(hookCalls.status.at(-1)?.worktreeId).toBe('feature-linked')
   })
 
-  it('renders Worktrees empty and error states without leaving read-only mode', async () => {
+  it('keeps Changes reachable from the Worktrees empty state', async () => {
     WORKTREES_BY_TARGET.workspace.splice(0, WORKTREES_BY_TARGET.workspace.length)
     renderDialog({ isCortex: false, initialTab: 'worktrees' })
     await flushEffects()
 
     expect(getByText(document.body, 'No worktrees were reported for this repository.')).toBeTruthy()
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Changes' }))
+    await flushEffects()
+    expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
+  })
 
-    root?.unmount()
-    root = null
-    container.innerHTML = ''
+  it('keeps History reachable from the Worktrees error state without leaving read-only mode', async () => {
     WORKTREE_ERROR_BY_TARGET.workspace = 'worktree inventory unavailable'
     renderDialog({ isCortex: false, initialTab: 'worktrees' })
     await flushEffects()
@@ -756,6 +792,20 @@ describe('DiffViewerDialog', () => {
     expect(getByText(document.body, 'Failed to load worktrees: worktree inventory unavailable')).toBeTruthy()
     expect(getByRole(document.body, 'button', { name: 'Fetch origin' })).toBeTruthy()
     expect(getByRole(document.body, 'button', { name: 'Pull FF only' })).toBeTruthy()
+    fireEvent.click(getByRole(document.body, 'button', { name: 'History' }))
+    await flushEffects()
+    expect(getByRole(document.body, 'listbox', { name: 'Commit history' })).toBeTruthy()
+  })
+
+  it('keeps Changes reachable from the Worktrees not-initialized state', async () => {
+    WORKTREE_NOT_INITIALIZED_BY_TARGET.workspace = true
+    renderDialog({ isCortex: false, initialTab: 'worktrees' })
+    await flushEffects()
+
+    expect(getByText(document.body, 'This workspace is not a Git repository.')).toBeTruthy()
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Changes' }))
+    await flushEffects()
+    expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
   })
 
   it('changes repo-target hook params and resets history selection state when the selector changes', async () => {

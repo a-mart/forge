@@ -1,9 +1,11 @@
 import type { DiffTab } from './DiffDialogHeader'
 import { cn } from '@/lib/utils'
 
+export type SourceControlActivityTab = Extract<DiffTab, 'changes' | 'history'>
+
 interface SourceControlActivityTabsProps {
-  activeTab: Extract<DiffTab, 'changes' | 'history'>
-  onTabChange: (tab: Extract<DiffTab, 'changes' | 'history'>) => void
+  activeTab: SourceControlActivityTab | null
+  onTabChange: (tab: SourceControlActivityTab) => void
 }
 
 export function SourceControlActivityTabs({ activeTab, onTabChange }: SourceControlActivityTabsProps) {
