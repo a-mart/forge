@@ -13,7 +13,21 @@ const STORAGE_KEY = 'swarm-theme'
 let container: HTMLDivElement
 let root: Root | null = null
 
+function installMockLocalStorage(): void {
+  const store = new Map<string, string>()
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => store.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => store.set(key, value)),
+      removeItem: vi.fn((key: string) => store.delete(key)),
+      clear: vi.fn(() => store.clear()),
+    },
+  })
+}
+
 beforeEach(() => {
+  installMockLocalStorage()
   window.localStorage.clear()
   document.documentElement.className = ''
   document.documentElement.removeAttribute('style')
@@ -83,6 +97,18 @@ function findPreviewShell(): HTMLElement {
 }
 
 describe('SettingsAppearance', () => {
+  it('keeps legacy mode-only preferences as mode-only and not applyable custom appearance', () => {
+    window.localStorage.setItem(STORAGE_KEY, 'dark')
+
+    renderAppearance()
+
+    const applyButton = findButton('Apply appearance')
+    expect(applyButton.disabled).toBe(true)
+    expect(container.textContent).toContain('Forge default colors; dark mode is active.')
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark')
+    expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
+  })
+
   it('keeps template selections as draft until Apply is clicked', () => {
     renderAppearance()
 
@@ -99,6 +125,31 @@ describe('SettingsAppearance', () => {
     expect(stored.templateId).toBe('aurora')
     expect(stored.customApplied).toBe(true)
     expect(document.documentElement.style.getPropertyValue('--primary')).toBe('#14b8a6')
+  })
+
+  it('edits hex color values with validation before applying', () => {
+    renderAppearance()
+
+    const accentInput = container.querySelector('input[aria-label="Accent hex value"]') as HTMLInputElement | null
+    expect(accentInput).toBeTruthy()
+
+    fireEvent.change(accentInput!, { target: { value: '14B8A6' } })
+    flushSync(() => {})
+
+    expect(container.textContent).toContain('--accent: #14b8a6')
+    expect(container.textContent).toContain('You have unapplied draft changes.')
+
+    fireEvent.change(accentInput!, { target: { value: '#12zzzz' } })
+    flushSync(() => {})
+
+    expect(accentInput?.getAttribute('aria-invalid')).toBe('true')
+    expect(container.textContent).toContain('Enter a 6-digit hex color.')
+    expect(container.textContent).toContain('--accent: #14b8a6')
+
+    clickButton('Apply appearance')
+    const stored = readStored()
+    expect(stored.accentColor).toBe('#14b8a6')
+    expect(stored.customApplied).toBe(true)
   })
 
   it('randomizes the draft without applying globally and keeps readable contrast', () => {

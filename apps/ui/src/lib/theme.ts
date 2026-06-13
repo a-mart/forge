@@ -74,8 +74,8 @@ export const APPEARANCE_TEMPLATES: AppearanceTemplate[] = [
     backgroundColor: '#f8f5f0',
     foregroundColor: '#3e2723',
     preferredMode: 'auto',
-    uiFont: 'geist',
-    codeFont: 'geist-mono',
+    uiFont: 'system',
+    codeFont: 'system-mono',
   },
   {
     id: 'aurora',
@@ -128,28 +128,28 @@ export const APPEARANCE_TEMPLATES: AppearanceTemplate[] = [
 ]
 
 export const APPEARANCE_UI_FONTS: Record<AppearanceFont, string> = {
-  geist: 'Geist',
   system: 'System UI',
+  geist: 'Geist (if installed)',
   inter: 'Inter/System',
   serif: 'Serif',
 }
 
 export const APPEARANCE_CODE_FONTS: Record<AppearanceCodeFont, string> = {
-  'geist-mono': 'Geist Mono',
   'system-mono': 'System Mono',
+  'geist-mono': 'Geist Mono (if installed)',
   jetbrains: 'JetBrains/System',
   'sf-mono': 'SF Mono/System',
 }
 
 const UI_FONT_STACKS: Record<AppearanceFont, string> = {
-  geist: '"Geist", sans-serif',
+  geist: '"Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   system: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   inter: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   serif: 'Georgia, Cambria, "Times New Roman", serif',
 }
 
 const CODE_FONT_STACKS: Record<AppearanceCodeFont, string> = {
-  'geist-mono': '"Geist Mono", monospace',
+  'geist-mono': '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
   'system-mono': 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
   jetbrains: '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
   'sf-mono': 'SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, monospace',
@@ -161,8 +161,8 @@ const DEFAULT_APPEARANCE: AppearanceConfig = {
   accentColor: '#2e7d32',
   backgroundColor: '#f8f5f0',
   foregroundColor: '#3e2723',
-  uiFont: 'geist',
-  codeFont: 'geist-mono',
+  uiFont: 'system',
+  codeFont: 'system-mono',
   templateId: 'forge',
   customApplied: false,
 }
@@ -184,10 +184,11 @@ export const THEME_INIT_SCRIPT = `(() => {
       try {
         const parsed = JSON.parse(stored);
         const customApplied = parsed?.customApplied === true;
+        if (!customApplied) return { ...defaults, draftOnly: false };
         const normalized = {
           ...defaults,
           ...(parsed && typeof parsed === 'object' ? parsed : {}),
-          mode: customApplied && isMode(parsed?.mode) ? parsed.mode : defaults.mode,
+          mode: isMode(parsed?.mode) ? parsed.mode : defaults.mode,
           accentColor: validHex(parsed?.accentColor) ? parsed.accentColor : defaults.accentColor,
           backgroundColor: validHex(parsed?.backgroundColor) ? parsed.backgroundColor : defaults.backgroundColor,
           foregroundColor: validHex(parsed?.foregroundColor) ? parsed.foregroundColor : defaults.foregroundColor,
@@ -205,7 +206,7 @@ export const THEME_INIT_SCRIPT = `(() => {
           try { window.localStorage.removeItem(storageKey); } catch {}
           return { ...defaults, draftOnly: false };
         }
-        return { ...normalized, draftOnly: !customApplied };
+        return { ...normalized, draftOnly: false };
       } catch { return { ...defaults, draftOnly: false }; }
     })();
     if (config.draftOnly) return;
@@ -277,8 +278,8 @@ export const THEME_INIT_SCRIPT = `(() => {
         '--sidebar-accent-foreground': secondaryForeground,
         '--sidebar-border': border,
         '--sidebar-ring': accent,
-        '--app-font-sans': ${JSON.stringify(UI_FONT_STACKS)}[config.uiFont] || ${JSON.stringify(UI_FONT_STACKS.geist)},
-        '--app-font-mono': ${JSON.stringify(CODE_FONT_STACKS)}[config.codeFont] || ${JSON.stringify(CODE_FONT_STACKS['geist-mono'])},
+        '--app-font-sans': ${JSON.stringify(UI_FONT_STACKS)}[config.uiFont] || ${JSON.stringify(UI_FONT_STACKS.system)},
+        '--app-font-mono': ${JSON.stringify(CODE_FONT_STACKS)}[config.codeFont] || ${JSON.stringify(CODE_FONT_STACKS['system-mono'])},
       };
     })();
     Object.entries(vars).forEach(([key, value]) => style.setProperty(key, value));
@@ -332,6 +333,10 @@ export function normalizeAppearanceConfig(value: unknown): AppearanceConfig {
   }
 
   const input = value as Partial<AppearanceConfig>
+  if (input.customApplied !== true) {
+    return { ...DEFAULT_APPEARANCE }
+  }
+
   const normalized: AppearanceConfig = {
     version: 1,
     mode: isThemePreference(input.mode) ? input.mode : DEFAULT_APPEARANCE.mode,
@@ -341,9 +346,7 @@ export function normalizeAppearanceConfig(value: unknown): AppearanceConfig {
     uiFont: isAppearanceFont(input.uiFont) ? input.uiFont : DEFAULT_APPEARANCE.uiFont,
     codeFont: isAppearanceCodeFont(input.codeFont) ? input.codeFont : DEFAULT_APPEARANCE.codeFont,
     templateId: isTemplateId(input.templateId) ? input.templateId : DEFAULT_APPEARANCE.templateId,
-    // Existing versioned JSON from pre-Apply builds omitted this flag. Treat it
-    // as a draft-only migration so merely opening Forge does not change the app.
-    customApplied: input.customApplied === true,
+    customApplied: true,
   }
 
   return hasDefaultAppearanceValues(normalized) ? { ...DEFAULT_APPEARANCE } : normalized

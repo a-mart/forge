@@ -22,7 +22,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-general',
     title: 'General Settings',
     category: 'settings',
-    summary: 'Appearance, editor choice, Cortex auto-review, and links to diagnostic settings.',
+    summary: 'Editor choice, sidebar preferences, Cortex auto-review, and links to Appearance and diagnostics.',
     content: settingsGeneralContent,
     keywords: [
       'theme',
@@ -52,7 +52,7 @@ export const settingsArticles: HelpArticle[] = [
     id: 'settings-theme',
     title: 'Theme and Appearance',
     category: 'settings',
-    summary: 'Switch between light, dark, and system-matched themes.',
+    summary: 'Switch modes, preview templates, and apply local color/font customization.',
     content: settingsThemeContent,
     keywords: [
       'theme',
@@ -63,7 +63,7 @@ export const settingsArticles: HelpArticle[] = [
       'color scheme',
     ],
     relatedIds: ['settings-general'],
-    contextKeys: ['settings.general'],
+    contextKeys: ['settings.general', 'settings.appearance'],
   },
   {
     id: 'settings-editor',

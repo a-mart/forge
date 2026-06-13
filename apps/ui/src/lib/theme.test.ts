@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   APPEARANCE_TEMPLATES,
   THEME_INIT_SCRIPT,
@@ -15,6 +15,23 @@ import {
 } from './theme'
 
 const STORAGE_KEY = 'swarm-theme'
+
+function installMockLocalStorage(): void {
+  const store = new Map<string, string>()
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => store.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => store.set(key, value)),
+      removeItem: vi.fn((key: string) => store.delete(key)),
+      clear: vi.fn(() => store.clear()),
+    },
+  })
+}
+
+beforeEach(() => {
+  installMockLocalStorage()
+})
 
 afterEach(() => {
   window.localStorage.clear()
@@ -87,39 +104,58 @@ describe('appearance theme storage', () => {
     })
   })
 
-  it('does not apply theme mode or custom CSS variables for pre-Apply migrated JSON', () => {
-    applyAppearanceConfig({
+  it('ignores stale pre-Apply JSON values and keeps true defaults', () => {
+    const staleDraft = {
       version: 1,
       mode: 'dark',
       accentColor: '#14b8a6',
       backgroundColor: '#ecfeff',
       foregroundColor: '#083344',
-      uiFont: 'system',
-      codeFont: 'system-mono',
+      uiFont: 'geist',
+      codeFont: 'geist-mono',
       templateId: 'aurora',
       customApplied: false,
-    })
+    } as const
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(staleDraft))
+    expect(readStoredAppearanceConfig()).toEqual(getDefaultAppearanceConfig())
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
+
+    applyAppearanceConfig(staleDraft)
 
     expect(document.documentElement.classList.contains('dark')).toBe(false)
     expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
     expect(document.documentElement.style.getPropertyValue('--app-font-sans')).toBe('')
   })
 
-  it('startup init ignores pre-Apply migrated JSON mode and variables', () => {
+  it('startup init ignores stale draft JSON but still applies default auto dark startup', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
       version: 1,
       mode: 'dark',
       accentColor: '#14b8a6',
       backgroundColor: '#ecfeff',
       foregroundColor: '#083344',
-      uiFont: 'system',
-      codeFont: 'system-mono',
+      uiFont: 'geist',
+      codeFont: 'geist-mono',
       templateId: 'aurora',
+      customApplied: false,
     }))
 
     Function(THEME_INIT_SCRIPT)()
 
-    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--app-font-sans')).toBe('')
+
+    document.documentElement.className = ''
+    document.documentElement.removeAttribute('style')
+    initializeThemePreference()
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(document.documentElement.style.getPropertyValue('--primary')).toBe('')
     expect(document.documentElement.style.getPropertyValue('--app-font-sans')).toBe('')
   })

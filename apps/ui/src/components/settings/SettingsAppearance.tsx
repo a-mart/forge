@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, Monitor, Moon, RotateCcw, Shuffle, Sun } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { Button } from '@/components/ui/button'
@@ -284,14 +284,14 @@ export function SettingsAppearance() {
 
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between xl:flex-col xl:items-stretch">
           <p className="text-xs text-muted-foreground">
-            {draftIsDirty ? 'You have unapplied draft changes.' : appliedAppearance.customApplied ? 'Custom appearance is applied.' : 'Forge default appearance is active.'}
+            {draftIsDirty ? 'You have unapplied draft changes.' : appliedAppearance.customApplied ? 'Custom appearance is applied.' : getDefaultStatusLabel(appliedAppearance.mode)}
           </p>
           <div className="flex justify-end gap-2 xl:flex-col">
             <Button type="button" variant="outline" size="sm" onClick={handleReset}>
               <RotateCcw className="mr-1.5 size-3.5" />
               Reset defaults
             </Button>
-            <Button type="button" size="sm" onClick={handleApply} disabled={!draftIsDirty && appliedAppearance.customApplied}>
+            <Button type="button" size="sm" onClick={handleApply} disabled={!draftIsDirty}>
               Apply appearance
             </Button>
           </div>
@@ -302,9 +302,26 @@ export function SettingsAppearance() {
 }
 
 function ColorControl({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [textValue, setTextValue] = useState(value.toUpperCase())
+  const inputId = `appearance-${label.toLowerCase()}-hex`
+  const normalizedTextValue = normalizeHexInput(textValue)
+  const isValid = normalizedTextValue !== null
+
+  useEffect(() => {
+    setTextValue(value.toUpperCase())
+  }, [value])
+
+  const handleTextChange = (nextValue: string) => {
+    setTextValue(nextValue)
+    const normalized = normalizeHexInput(nextValue)
+    if (normalized) {
+      onChange(normalized)
+    }
+  }
+
   return (
     <div className="rounded-lg border border-border bg-card p-3">
-      <Label className="mb-2 block text-xs font-medium text-muted-foreground">{label}</Label>
+      <Label className="mb-2 block text-xs font-medium text-muted-foreground" htmlFor={inputId}>{label}</Label>
       <div className="flex items-center gap-2">
         <Input
           type="color"
@@ -314,14 +331,38 @@ function ColorControl({ label, value, onChange }: { label: string; value: string
           aria-label={`${label} color`}
         />
         <Input
-          value={value.toUpperCase()}
+          id={inputId}
+          value={textValue}
+          onChange={(event) => handleTextChange(event.target.value)}
+          onBlur={() => {
+            if (!isValid) setTextValue(value.toUpperCase())
+          }}
           className="font-mono text-xs uppercase"
           aria-label={`${label} hex value`}
-          readOnly
+          aria-invalid={!isValid}
+          inputMode="text"
+          maxLength={7}
+          pattern="^#?[0-9a-fA-F]{6}$"
+          spellCheck={false}
         />
       </div>
+      {!isValid ? (
+        <p className="mt-1 text-xs text-destructive" role="status">Enter a 6-digit hex color.</p>
+      ) : null}
     </div>
   )
+}
+
+function normalizeHexInput(value: string): string | null {
+  const trimmed = value.trim()
+  const candidate = trimmed.startsWith('#') ? trimmed : `#${trimmed}`
+  return /^#[0-9a-fA-F]{6}$/.test(candidate) ? candidate.toLowerCase() : null
+}
+
+function getDefaultStatusLabel(mode: ThemePreference): string {
+  if (mode === 'dark') return 'Forge default colors; dark mode is active.'
+  if (mode === 'light') return 'Forge default colors; light mode is active.'
+  return 'Forge default appearance is active.'
 }
 
 function areAppearanceConfigsEqual(a: AppearanceConfig, b: AppearanceConfig): boolean {
