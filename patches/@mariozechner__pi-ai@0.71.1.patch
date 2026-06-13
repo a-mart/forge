@@ -278,17 +278,19 @@ index 4c74f00dc9ca24f1528f04a67be5ca45a4c01093..fea946a7f4d2c63f95a9fb60d03b07d3
              serviceTier: options?.serviceTier,
              resolveServiceTier: resolveCodexServiceTier,
 diff --git a/dist/providers/openai-completions.js b/dist/providers/openai-completions.js
-index 34ba15afe67da4c5e3d3d7ecafc77814ba5e5cef..eeb4937c3f67a572edc3092ca7ff82deceec37f8 100644
+index 34ba15afe67da4c5e3d3d7ecafc77814ba5e5cef..85bb1fe52c7932d110ce520a3256680e28945ff8 100644
 --- a/dist/providers/openai-completions.js
 +++ b/dist/providers/openai-completions.js
-@@ -680,6 +680,13 @@ export function convertMessages(model, context, compat) {
+@@ -680,6 +680,15 @@ export function convertMessages(model, context, compat) {
                  assistantMsg.reasoning_content === undefined) {
                  assistantMsg.reasoning_content = "";
              }
-+            // Ensure assistant messages with tool calls always have non-null, non-empty content.
-+            // Some providers (notably xAI) reject content: null or "" even when tool_calls are
-+            // present, unlike OpenAI which accepts it.
-+            if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 &&
++            // xAI rejects content:null/"" on tool-call messages; OpenAI/Anthropic/Google accept
++            // it (pi's upstream default is null and works for them). Scope the placeholder to xAI
++            // so other providers keep clean null content instead of a synthetic blank assistant
++            // text item, which would otherwise seed the same empty-turn imitation loop on replay.
++            const isXaiCompletionsModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
++            if (isXaiCompletionsModel && assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 &&
 +                (assistantMsg.content === null || assistantMsg.content === undefined || assistantMsg.content === "")) {
 +                assistantMsg.content = " ";
 +            }
@@ -296,10 +298,10 @@ index 34ba15afe67da4c5e3d3d7ecafc77814ba5e5cef..eeb4937c3f67a572edc3092ca7ff82de
              // Some providers require "either content or tool_calls, but not none".
              // Other providers also don't accept empty assistant messages.
 diff --git a/dist/providers/openai-responses-shared.js b/dist/providers/openai-responses-shared.js
-index 3081455a347db90995fd51f654d0ec48f16cc73d..167e2bf2280d290f946b569c21ddc39e5da4a666 100644
+index 3081455a347db90995fd51f654d0ec48f16cc73d..c3ea50147ddbcd992dbef7fe6ecb8fd63391d21d 100644
 --- a/dist/providers/openai-responses-shared.js
 +++ b/dist/providers/openai-responses-shared.js
-@@ -103,18 +103,41 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+@@ -103,18 +103,47 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
          else if (msg.role === "assistant") {
              const output = [];
              const assistantMsg = msg;
@@ -321,7 +323,6 @@ index 3081455a347db90995fd51f654d0ec48f16cc73d..167e2bf2280d290f946b569c21ddc39e
 +            let hasToolCalls = false;
 +            const isXaiResponsesModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
 +            const shouldReplayHistoricalReasoning = !isXaiResponsesModel;
-+            const assistantTurnHasToolCalls = msg.content.some((block) => block.type === "toolCall");
              for (const block of msg.content) {
                  if (block.type === "thinking") {
 -                    if (block.thinkingSignature) {
@@ -336,13 +337,20 @@ index 3081455a347db90995fd51f654d0ec48f16cc73d..167e2bf2280d290f946b569c21ddc39e
                  else if (block.type === "text") {
                      const textBlock = block;
 +                    const assistantText = sanitizeSurrogates(textBlock.text);
-+                    if (isXaiResponsesModel && assistantTurnHasToolCalls && assistantText.trim().length === 0) {
++                    // Never replay an empty assistant text item to any Responses model.
++                    // An empty output_text carries no information and trains the model that
++                    // empty turns are its own normal behavior — a self-reinforcing loop that
++                    // drives sessions toward silence (gpt-5.x is especially prone). Codex
++                    // commonly emits an empty "commentary" text block alongside tool calls;
++                    // skipping it here keeps that contamination out of replay. Wholly-silent
++                    // turns (no tool calls either) are dropped above via isSilentAssistantTurn.
++                    if (assistantText.trim().length === 0) {
 +                        continue;
 +                    }
                      const parsedSignature = parseTextSignature(textBlock.textSignature);
                      // OpenAI requires id to be max 64 characters
                      let msgId = parsedSignature?.id;
-@@ -127,11 +150,12 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+@@ -127,11 +156,12 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
                      output.push({
                          type: "message",
                          role: "assistant",
@@ -356,7 +364,7 @@ index 3081455a347db90995fd51f654d0ec48f16cc73d..167e2bf2280d290f946b569c21ddc39e
                  }
                  else if (block.type === "toolCall") {
                      const toolCall = block;
-@@ -150,8 +174,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+@@ -150,8 +180,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
                          name: toolCall.name,
                          arguments: JSON.stringify(toolCall.arguments),
                      });
