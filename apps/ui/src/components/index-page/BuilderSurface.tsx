@@ -9,7 +9,7 @@ import { reportBuilderConnected } from '@/lib/connection-health-store'
 import { AgentSidebar } from '@/components/chat/AgentSidebar'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ActivityRail } from '@/components/index-page/ActivityRail'
-import { isActivityRailWorkspaceAvailable } from '@/components/index-page/activity-rail-workspace'
+import { isActivityRailWorkspaceAvailable, resolveChatRailTargetAgentId } from '@/components/index-page/activity-rail-workspace'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { isUsableActiveTarget } from '@/components/index-page/archive-target-guards'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
@@ -53,7 +53,7 @@ import {
   shouldLoadExternalProjectAgentDirectory,
 } from '@/hooks/index-page/project-agent-suggestions'
 import { usePanelState } from '@/hooks/index-page/use-panel-state'
-import { Clock3, FolderOpen, GitBranch, Package, SquareTerminal } from 'lucide-react'
+import { Clock3, FolderOpen, GitBranch, MessageSquare, Package, SquareTerminal } from 'lucide-react'
 import {
   parseCompactSlashCommand,
   useSlashCommands,
@@ -185,7 +185,9 @@ export function BuilderSurface({
     setIsArtifactsPanelOpen,
     artifactsPanelTab,
     setArtifactsPanelTab,
+    openArtifactsPanel: handleOpenArtifactsPanel,
     toggleArtifactsPanel: handleToggleArtifactsPanel,
+    closeWorkspacePanels: handleCloseWorkspacePanels,
     cortexDashboardTab,
     cortexDashboardTabRequest,
     requestCortexDashboardTab,
@@ -198,6 +200,7 @@ export function BuilderSurface({
     diffViewerInitialState,
     openDiffViewer,
     isFileBrowserOpen,
+    openFileBrowser: handleOpenFileBrowser,
     toggleFileBrowser: handleToggleFileBrowser,
     selectedFileBrowserFile,
     selectFileBrowserFile: handleFileBrowserSelectFile,
@@ -1225,11 +1228,11 @@ export function BuilderSurface({
     return client.requestProjectAgentRecommendations(agentId)
   }, [clientRef])
 
-  const handleSelectAgent = (agentId: string) => {
+  const handleSelectAgent = useCallback((agentId: string) => {
     getSidebarPerfRegistry().startSessionSwitch(agentId)
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
-  }
+  }, [clientRef, navigateToRoute])
 
   const handleOpenCortexReview = useCallback((agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
@@ -1323,14 +1326,67 @@ export function BuilderSurface({
     openDiffViewer()
   }, [openDiffViewer])
 
+  const handleReturnToChatWorkspace = useCallback(() => {
+    const chatTargetAgentId = resolveChatRailTargetAgentId(
+      activeAgentId,
+      activeAgent,
+      activeManagerAgent,
+    )
+
+    if (chatTargetAgentId && chatTargetAgentId !== activeAgentId) {
+      handleSelectAgent(chatTargetAgentId)
+    }
+
+    setIsDiffViewerOpen(false)
+    setDiffViewerPresentation('modal')
+    handleCloseWorkspacePanels()
+    messageInputRef.current?.focus()
+  }, [activeAgent, activeAgentId, activeManagerAgent, handleCloseWorkspacePanels, handleSelectAgent, setIsDiffViewerOpen])
+
+  const handleToggleFileBrowserFromRail = useCallback(() => {
+    if (isFileBrowserOpen && !isInlineDiffViewerOpen) {
+      handleToggleFileBrowser()
+      return
+    }
+
+    setIsDiffViewerOpen(false)
+    setDiffViewerPresentation('modal')
+    handleOpenFileBrowser()
+  }, [handleOpenFileBrowser, handleToggleFileBrowser, isFileBrowserOpen, isInlineDiffViewerOpen, setIsDiffViewerOpen])
+
   const handleOpenDiffViewerInline = useCallback(() => {
     if (isInlineDiffViewerOpen) {
       setIsDiffViewerOpen(false)
+      setDiffViewerPresentation('modal')
       return
     }
+
+    handleCloseWorkspacePanels()
     setDiffViewerPresentation('inline')
     openDiffViewer()
-  }, [isInlineDiffViewerOpen, openDiffViewer, setIsDiffViewerOpen])
+  }, [handleCloseWorkspacePanels, isInlineDiffViewerOpen, openDiffViewer, setIsDiffViewerOpen])
+
+  const handleOpenArtifactsFromRail = useCallback((tab: 'artifacts' | 'schedules') => {
+    if (isInlineDiffViewerOpen) {
+      setIsDiffViewerOpen(false)
+      setDiffViewerPresentation('modal')
+      handleOpenArtifactsPanel(tab)
+      return
+    }
+
+    handleToggleArtifactsPanel(tab)
+  }, [handleOpenArtifactsPanel, handleToggleArtifactsPanel, isInlineDiffViewerOpen, setIsDiffViewerOpen])
+
+  const handleOpenCortexDashboardFromRail = useCallback((tab: 'knowledge' | 'schedules') => {
+    if (isInlineDiffViewerOpen) {
+      setIsDiffViewerOpen(false)
+      setDiffViewerPresentation('modal')
+      requestCortexDashboardTab(tab)
+      return
+    }
+
+    toggleCortexDashboardTab(tab)
+  }, [isInlineDiffViewerOpen, requestCortexDashboardTab, setIsDiffViewerOpen, toggleCortexDashboardTab])
 
   const handleCloseDiffViewer = useCallback(() => {
     setIsDiffViewerOpen(false)
@@ -1378,14 +1434,24 @@ export function BuilderSurface({
       ? isArtifactsPanelOpen && cortexDashboardTab === 'schedules'
       : isArtifactsPanelOpen && artifactsPanelTab === 'schedules'
 
+    const chatActive = !isInlineDiffViewerOpen && !isFileBrowserOpen && !isArtifactsPanelOpen
+
     return [
       {
+        id: 'chat' as const,
+        label: 'Chat',
+        icon: MessageSquare,
+        active: chatActive,
+        disabled: !activeAgentId,
+        onClick: handleReturnToChatWorkspace,
+      },
+      {
         id: 'files' as const,
-        label: isFileBrowserOpen ? 'Close file browser' : 'Browse Files',
+        label: isFileBrowserOpen && !isInlineDiffViewerOpen ? 'Close file browser' : 'Browse Files',
         icon: FolderOpen,
-        active: isFileBrowserOpen,
+        active: isFileBrowserOpen && !isInlineDiffViewerOpen,
         disabled: workspaceDisabled || !activeAgentId,
-        onClick: handleToggleFileBrowser,
+        onClick: handleToggleFileBrowserFromRail,
       },
       {
         id: 'changes' as const,
@@ -1415,13 +1481,13 @@ export function BuilderSurface({
         id: 'schedules' as const,
         label: 'Cron / Schedules',
         icon: Clock3,
-        active: schedulesActive,
+        active: schedulesActive && !isInlineDiffViewerOpen,
         disabled: workspaceDisabled,
         onClick: () => {
           if (isCortexSession) {
-            toggleCortexDashboardTab('schedules')
+            handleOpenCortexDashboardFromRail('schedules')
           } else {
-            handleToggleArtifactsPanel('schedules')
+            handleOpenArtifactsFromRail('schedules')
           }
         },
       },
@@ -1429,13 +1495,13 @@ export function BuilderSurface({
         id: 'artifacts' as const,
         label: artifactsLabel,
         icon: Package,
-        active: artifactsActive,
+        active: artifactsActive && !isInlineDiffViewerOpen,
         disabled: workspaceDisabled,
         onClick: () => {
           if (isCortexSession) {
-            toggleCortexDashboardTab('knowledge')
+            handleOpenCortexDashboardFromRail('knowledge')
           } else {
-            handleToggleArtifactsPanel('artifacts')
+            handleOpenArtifactsFromRail('artifacts')
           }
         },
       },
@@ -1445,17 +1511,18 @@ export function BuilderSurface({
     activeManagerAgent,
     artifactsPanelTab,
     cortexDashboardTab,
-    handleToggleArtifactsPanel,
-    handleToggleFileBrowser,
+    handleOpenArtifactsFromRail,
+    handleOpenCortexDashboardFromRail,
+    handleOpenDiffViewerInline,
+    handleReturnToChatWorkspace,
+    handleToggleFileBrowserFromRail,
     isArtifactsPanelOpen,
     isCortexSession,
     isInlineDiffViewerOpen,
     isFileBrowserOpen,
-    handleOpenDiffViewerInline,
     state.terminals.length,
     terminalPanel,
     terminalSessionAgentId,
-    toggleCortexDashboardTab,
     keyboardShortcutLabels.changes,
     keyboardShortcutLabels.terminal,
   ])

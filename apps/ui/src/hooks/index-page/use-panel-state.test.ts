@@ -370,6 +370,41 @@ describe('usePanelState', () => {
       expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(false)
     })
 
+    it('explicitly opening file browser is idempotent and closes artifacts panel', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel('schedules')
+      })
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
+
+      act(() => {
+        capturedRef.current!.panelState.openFileBrowser()
+      })
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(true)
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(false)
+
+      act(() => {
+        capturedRef.current!.panelState.openFileBrowser()
+      })
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(true)
+    })
+
+    it('closing workspace panels returns to chat primary surface without touching diff state', () => {
+      render()
+
+      act(() => {
+        capturedRef.current!.panelState.toggleArtifactsPanel('artifacts')
+      })
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(true)
+
+      act(() => {
+        capturedRef.current!.panelState.closeWorkspacePanels()
+      })
+      expect(capturedRef.current!.panelState.isArtifactsPanelOpen).toBe(false)
+      expect(capturedRef.current!.panelState.isFileBrowserOpen).toBe(false)
+    })
+
     it('opening schedules tab closes file browser', () => {
       render()
 

@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Clock3, FolderOpen, GitBranch, Package, SquareTerminal } from 'lucide-react'
+import { Clock3, FolderOpen, GitBranch, MessageSquare, Package, SquareTerminal } from 'lucide-react'
 import { ActivityRail } from './ActivityRail'
 import { ChatHeader } from '@/components/chat/ChatHeader'
 
@@ -91,12 +91,13 @@ describe('ActivityRail', () => {
     expect(container.querySelectorAll('button')).toHaveLength(2)
   })
 
-  it('preserves the workspace rail order from top to bottom', () => {
+  it('preserves the workspace rail order from top to bottom with Chat first', () => {
     act(() => {
       root = createRoot(container)
       root.render(
         createElement(ActivityRail, {
           items: [
+            { id: 'chat', label: 'Chat', icon: MessageSquare, onClick: vi.fn() },
             { id: 'files', label: 'Browse Files', icon: FolderOpen, onClick: vi.fn() },
             { id: 'changes', label: 'View Changes', icon: GitBranch, onClick: vi.fn() },
             { id: 'terminal', label: 'Terminal', icon: SquareTerminal, onClick: vi.fn() },
@@ -108,6 +109,7 @@ describe('ActivityRail', () => {
     })
 
     expect(Array.from(container.querySelectorAll('button')).map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Chat',
       'Browse Files',
       'View Changes',
       'Terminal',

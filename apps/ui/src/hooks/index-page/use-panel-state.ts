@@ -70,6 +70,11 @@ export function usePanelState({
     setFileBrowserWorktreeContext(null)
   }, [])
 
+  const closeWorkspacePanels = useCallback(() => {
+    setIsArtifactsPanelOpen(false)
+    closeFileBrowserForWorkspacePanel()
+  }, [closeFileBrowserForWorkspacePanel])
+
   useEffect(() => {
     if (!pendingCortexDashboardOpen || activeAgentArchetypeId !== 'cortex') {
       return
@@ -116,6 +121,12 @@ export function usePanelState({
     },
     [artifactsPanelTab, isArtifactsPanelOpen, openArtifactsPanel],
   )
+
+  const openFileBrowser = useCallback(() => {
+    setIsArtifactsPanelOpen(false)
+    setFileBrowserWorktreeContext(null)
+    setIsFileBrowserOpen(true)
+  }, [])
 
   const toggleFileBrowser = useCallback(() => {
     setIsFileBrowserOpen((previous) => {
@@ -218,6 +229,7 @@ export function usePanelState({
     setArtifactsPanelTab,
     openArtifactsPanel,
     toggleArtifactsPanel,
+    closeWorkspacePanels,
     cortexDashboardTab,
     cortexDashboardTabRequest,
     requestCortexDashboardTab,
@@ -230,6 +242,7 @@ export function usePanelState({
     diffViewerInitialState,
     openDiffViewer,
     isFileBrowserOpen,
+    openFileBrowser,
     toggleFileBrowser,
     selectedFileBrowserFile,
     selectFileBrowserFile,

@@ -3,6 +3,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 
 export type ActivityRailItemId =
+  | 'chat'
   | 'artifacts'
   | 'schedules'
   | 'files'
