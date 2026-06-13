@@ -339,7 +339,7 @@ function PullRequestDetailPane({
           {detail?.body ? (
             <section className="space-y-2">
               <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Description</h3>
-              <p className="whitespace-pre-wrap text-xs text-muted-foreground">{detail.body}</p>
+              <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{detail.body}</p>
             </section>
           ) : null}
         </div>
