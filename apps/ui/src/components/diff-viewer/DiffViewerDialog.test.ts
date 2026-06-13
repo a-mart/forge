@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getAllByRole, getByRole, getByText, queryByRole, queryByText, waitFor } from '@testing-library/dom'
+import { fireEvent, getAllByRole, getByRole, getByText, queryByRole, queryByText, waitFor, within } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -654,7 +654,13 @@ describe('DiffViewerDialog', () => {
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
     expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
     expect(getByRole(document.body, 'group', { name: 'Repository activity' })).toBeTruthy()
-    expect(getByRole(document.body, 'group', { name: 'Source Control sections' })).toBeTruthy()
+    const sourceControlSections = getByRole(document.body, 'group', { name: 'Source Control sections' })
+    expect(sourceControlSections).toBeTruthy()
+    expect(within(sourceControlSections).queryByRole('button', { name: 'Changes' })).toBeNull()
+    expect(within(sourceControlSections).queryByRole('button', { name: 'History' })).toBeNull()
+    fireEvent.click(getByRole(document.body, 'button', { name: 'History' }))
+    await flushEffects()
+    expect(getByRole(document.body, 'listbox', { name: 'Commit history' })).toBeTruthy()
     expect(hookCalls.worktrees.filter((call) => call.enabled !== false)).toHaveLength(0)
   })
 

@@ -5,6 +5,7 @@ import { DiffPane } from './DiffPane'
 import { matchesKnowledgeQuickFilter, type KnowledgeQuickFilterId } from './knowledge-surface'
 import { useGitDiff } from './use-diff-queries'
 import type { GitRepoTarget, GitStatusResult } from './use-diff-queries'
+import { SourceControlActivityTabs } from './SourceControlActivityTabs'
 import { useResizablePanel } from './useResizablePanel'
 
 interface ChangesViewProps {
@@ -18,6 +19,7 @@ interface ChangesViewProps {
   refreshToken?: number
   initialFile?: string | null
   initialQuickFilter?: KnowledgeQuickFilterId
+  onActivityTabChange: (tab: 'changes' | 'history') => void
 }
 
 export function ChangesView({
@@ -31,6 +33,7 @@ export function ChangesView({
   refreshToken = 0,
   initialFile = null,
   initialQuickFilter = 'all',
+  onActivityTabChange,
 }: ChangesViewProps) {
   const [selectedFile, setSelectedFile] = useState<string | null>(initialFile)
   const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>(initialQuickFilter)
@@ -75,45 +78,34 @@ export function ChangesView({
     maxWidth: 500,
   })
 
-  if (statusError) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-        <FileX2 className="mb-3 size-12 opacity-25" />
-        <span className="text-sm font-medium">Unable to read repository</span>
-        <span className="mt-1 max-w-sm text-center text-xs opacity-60">{statusError}</span>
-      </div>
-    )
-  }
-
-  if (!isStatusLoading && files.length === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-        <FileX2 className="mb-3 size-12 opacity-25" />
-        <span className="text-sm font-medium">No uncommitted changes</span>
-        <span className="mt-1 text-xs opacity-60">Working directory is clean</span>
-      </div>
-    )
-  }
-
   const visibleSummary = {
     filesChanged: visibleFiles.length,
     insertions: visibleFiles.reduce((total, file) => total + (file.additions ?? 0), 0),
     deletions: visibleFiles.reduce((total, file) => total + (file.deletions ?? 0), 0),
   }
 
+  const showFileList = !statusError && (isStatusLoading || files.length > 0)
+
   return (
     <div className="flex h-full">
       <div className="shrink-0 border-r border-border/60" style={{ width: sidebarWidth }}>
-        <FileList
-          files={files}
-          selectedFile={selectedFile}
-          onSelectFile={setSelectedFile}
-          isLoading={isStatusLoading}
-          summary={visibleSummary}
-          repoTarget={repoTarget}
-          quickFilter={quickFilter}
-          onQuickFilterChange={setQuickFilter}
-        />
+        <div className="flex h-full flex-col">
+          <SourceControlActivityTabs activeTab="changes" onTabChange={onActivityTabChange} />
+          {showFileList ? (
+            <div className="min-h-0 flex-1">
+              <FileList
+                files={files}
+                selectedFile={selectedFile}
+                onSelectFile={setSelectedFile}
+                isLoading={isStatusLoading}
+                summary={visibleSummary}
+                repoTarget={repoTarget}
+                quickFilter={quickFilter}
+                onQuickFilterChange={setQuickFilter}
+              />
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div
@@ -127,16 +119,32 @@ export function ChangesView({
       </div>
 
       <div className="min-w-0 flex-1">
-        <DiffPane
-          fileName={selectedFile}
-          oldContent={diffQuery.data?.oldContent ?? null}
-          newContent={diffQuery.data?.newContent ?? null}
-          isLoading={diffQuery.isLoading}
-          error={diffQuery.error}
-          truncated={diffQuery.data?.truncated}
-          truncatedReason={diffQuery.data?.reason}
-        />
+        {statusError ? (
+          <ChangesEmptyState title="Unable to read repository" description={statusError} />
+        ) : !isStatusLoading && files.length === 0 ? (
+          <ChangesEmptyState title="No uncommitted changes" description="Working directory is clean" />
+        ) : (
+          <DiffPane
+            fileName={selectedFile}
+            oldContent={diffQuery.data?.oldContent ?? null}
+            newContent={diffQuery.data?.newContent ?? null}
+            isLoading={diffQuery.isLoading}
+            error={diffQuery.error}
+            truncated={diffQuery.data?.truncated}
+            truncatedReason={diffQuery.data?.reason}
+          />
+        )}
       </div>
+    </div>
+  )
+}
+
+function ChangesEmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+      <FileX2 className="mb-3 size-12 opacity-25" />
+      <span className="text-sm font-medium">{title}</span>
+      <span className="mt-1 max-w-sm text-center text-xs opacity-60">{description}</span>
     </div>
   )
 }

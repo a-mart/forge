@@ -10,6 +10,7 @@ import {
   matchesKnowledgeQuickFilter,
   type KnowledgeQuickFilterId,
 } from './knowledge-surface'
+import { SourceControlActivityTabs } from './SourceControlActivityTabs'
 import { useGitLog, useGitCommitDetail, useGitCommitDiff } from './use-diff-queries'
 import { useResizablePanel } from './useResizablePanel'
 import type { GitLogEntry, GitRepoTarget } from './use-diff-queries'
@@ -36,6 +37,7 @@ interface HistoryViewProps {
   initialSha?: string | null
   initialFile?: string | null
   initialQuickFilter?: KnowledgeQuickFilterId
+  onActivityTabChange: (tab: 'changes' | 'history') => void
 }
 
 export function HistoryView({
@@ -48,6 +50,7 @@ export function HistoryView({
   initialSha = null,
   initialFile = null,
   initialQuickFilter = 'all',
+  onActivityTabChange,
 }: HistoryViewProps) {
   const [selectedSha, setSelectedSha] = useState<string | null>(initialSha)
   const [selectedFile, setSelectedFile] = useState<string | null>(initialFile)
@@ -215,25 +218,11 @@ export function HistoryView({
 
   const isInitialLoading = logQuery.isLoading && allCommits.length === 0
   const hasPendingData = !!logQuery.data?.commits?.length && allCommits.length === 0
-  if (!isInitialLoading && !hasPendingData && allCommits.length === 0 && !logQuery.error) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-        <History className="mb-3 size-12 opacity-25" />
-        <span className="text-sm font-medium">No commits found</span>
-        <span className="mt-1 text-xs opacity-60">This repository has no commit history</span>
-      </div>
-    )
-  }
-
-  if (logQuery.error) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-        <History className="mb-3 size-12 opacity-25" />
-        <span className="text-sm font-medium">Unable to load history</span>
-        <span className="mt-1 max-w-sm text-center text-xs opacity-60">{logQuery.error}</span>
-      </div>
-    )
-  }
+  const historyEmptyState = logQuery.error
+    ? { title: 'Unable to load history', description: logQuery.error }
+    : !isInitialLoading && !hasPendingData && allCommits.length === 0
+      ? { title: 'No commits found', description: 'This repository has no commit history' }
+      : null
 
   const visibleFileSummary = {
     filesChanged: filteredCommitFiles.length,
@@ -244,7 +233,8 @@ export function HistoryView({
     <div className="flex h-full">
       <div className="shrink-0 border-r border-border/60" style={{ width: commitListWidth }}>
         <div className="flex h-full flex-col">
-          {isKnowledgeMode ? (
+          <SourceControlActivityTabs activeTab="history" onTabChange={onActivityTabChange} />
+          {isKnowledgeMode && !historyEmptyState ? (
             <div className="border-b border-border/60 p-2">
               <div className="flex flex-wrap gap-1">
                 {KNOWLEDGE_QUICK_FILTERS.map((option) => {
@@ -270,19 +260,21 @@ export function HistoryView({
               </div>
             </div>
           ) : null}
-          <div className="min-h-0 flex-1">
-            <CommitList
-              commits={filteredCommits}
-              selectedSha={selectedSha}
-              onSelectCommit={setSelectedSha}
-              isLoading={isInitialLoading}
-              hasMore={hasMore}
-              onLoadMore={handleLoadMore}
-              isLoadingMore={isLoadingMore}
-              repoTarget={repoTarget}
-              emptyMessage={isKnowledgeMode && quickFilter !== 'all' ? 'No commits match this filter' : 'No commits found'}
-            />
-          </div>
+          {!historyEmptyState ? (
+            <div className="min-h-0 flex-1">
+              <CommitList
+                commits={filteredCommits}
+                selectedSha={selectedSha}
+                onSelectCommit={setSelectedSha}
+                isLoading={isInitialLoading}
+                hasMore={hasMore}
+                onLoadMore={handleLoadMore}
+                isLoadingMore={isLoadingMore}
+                repoTarget={repoTarget}
+                emptyMessage={isKnowledgeMode && quickFilter !== 'all' ? 'No commits match this filter' : 'No commits found'}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -296,46 +288,64 @@ export function HistoryView({
         <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
       </div>
 
-      <div className="shrink-0 border-r border-border/60" style={{ width: fileListWidth }}>
-        {selectedSha ? (
-          <FileList
-            files={commitFiles}
-            selectedFile={selectedFile}
-            onSelectFile={setSelectedFile}
-            isLoading={commitDetailQuery.isLoading}
-            summary={visibleFileSummary}
-            repoTarget={repoTarget}
-            quickFilter={quickFilter}
-            onQuickFilterChange={setQuickFilter}
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
-            {isKnowledgeMode && quickFilter !== 'all' ? 'No commit matches the selected filter' : 'Select a commit to view files'}
-          </div>
-        )}
-      </div>
+      {!historyEmptyState ? (
+        <div className="shrink-0 border-r border-border/60" style={{ width: fileListWidth }}>
+          {selectedSha ? (
+            <FileList
+              files={commitFiles}
+              selectedFile={selectedFile}
+              onSelectFile={setSelectedFile}
+              isLoading={commitDetailQuery.isLoading}
+              summary={visibleFileSummary}
+              repoTarget={repoTarget}
+              quickFilter={quickFilter}
+              onQuickFilterChange={setQuickFilter}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
+              {isKnowledgeMode && quickFilter !== 'all' ? 'No commit matches the selected filter' : 'Select a commit to view files'}
+            </div>
+          )}
+        </div>
+      ) : null}
 
-      <div
-        ref={fileListHandleRef}
-        className={`group relative h-full shrink-0 cursor-col-resize transition-colors ${
-          isFileListDragging ? 'bg-primary/40' : 'bg-transparent hover:bg-border'
-        }`}
-        style={{ width: 6 }}
-      >
-        <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
-      </div>
+      {!historyEmptyState ? (
+        <div
+          ref={fileListHandleRef}
+          className={`group relative h-full shrink-0 cursor-col-resize transition-colors ${
+            isFileListDragging ? 'bg-primary/40' : 'bg-transparent hover:bg-border'
+          }`}
+          style={{ width: 6 }}
+        >
+          <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
+        </div>
+      ) : null}
 
       <div className="min-w-0 flex-1">
-        <DiffPane
-          fileName={selectedFile}
-          oldContent={fileDiffQuery.data?.oldContent ?? null}
-          newContent={fileDiffQuery.data?.newContent ?? null}
-          isLoading={fileDiffQuery.isLoading}
-          error={fileDiffQuery.error}
-          truncated={fileDiffQuery.data?.truncated}
-          truncatedReason={fileDiffQuery.data?.reason}
-        />
+        {historyEmptyState ? (
+          <HistoryEmptyState title={historyEmptyState.title} description={historyEmptyState.description} />
+        ) : (
+          <DiffPane
+            fileName={selectedFile}
+            oldContent={fileDiffQuery.data?.oldContent ?? null}
+            newContent={fileDiffQuery.data?.newContent ?? null}
+            isLoading={fileDiffQuery.isLoading}
+            error={fileDiffQuery.error}
+            truncated={fileDiffQuery.data?.truncated}
+            truncatedReason={fileDiffQuery.data?.reason}
+          />
+        )}
       </div>
+    </div>
+  )
+}
+
+function HistoryEmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+      <History className="mb-3 size-12 opacity-25" />
+      <span className="text-sm font-medium">{title}</span>
+      <span className="mt-1 max-w-sm text-center text-xs opacity-60">{description}</span>
     </div>
   )
 }

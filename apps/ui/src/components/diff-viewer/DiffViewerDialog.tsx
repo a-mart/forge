@@ -215,6 +215,7 @@ export function DiffViewerContent({
             refreshToken={refreshToken}
             initialFile={initialFile}
             initialQuickFilter={initialQuickFilter}
+            onActivityTabChange={setActiveTab}
           />
         ) : activeTab === 'history' ? (
           <HistoryView
@@ -228,6 +229,7 @@ export function DiffViewerContent({
             initialSha={initialSha}
             initialFile={initialFile}
             initialQuickFilter={initialQuickFilter}
+            onActivityTabChange={setActiveTab}
           />
         ) : activeTab === 'worktrees' ? (
           <WorktreesView
