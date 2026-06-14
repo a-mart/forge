@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeEventProjector, type RuntimeEventProjectorDeps } from "../runtime/runtime-event-projector.js";
-import type { RuntimeSessionEvent } from "../runtime-contracts.js";
+import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "../runtime/worker-health-types.js";
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { AgentDescriptor } from "../types.js";
@@ -28,6 +28,33 @@ function baseDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescript
 
 function assistantEnd(content: string, extras: Record<string, unknown> = {}): RuntimeSessionEvent {
   return { type: "message_end", message: { role: "assistant", content, ...extras } };
+}
+
+function eligibleCacheAssistantEnd(extras: Record<string, unknown> = {}): RuntimeSessionEvent {
+  return assistantEnd("", {
+    provider: "openai-codex",
+    modelId: "gpt-5.5",
+    usage: { input_tokens: 3000, cache_read_input_tokens: 2500, output_tokens: 120 },
+    ...extras
+  });
+}
+
+function piRuntime(descriptor: AgentDescriptor): SwarmAgentRuntime {
+  return {
+    runtimeType: "pi",
+    descriptor,
+    getStatus: () => descriptor.status,
+    getPendingCount: () => 0,
+    sendMessage: vi.fn(),
+    compact: vi.fn(),
+    smartCompact: vi.fn(),
+    stopInFlight: vi.fn(),
+    terminate: vi.fn(),
+    shutdownForReplacement: vi.fn(),
+    recycle: vi.fn(),
+    getCustomEntries: () => [],
+    appendCustomEntry: () => "entry-1"
+  };
 }
 
 function createHarness(debug = false): {
@@ -62,7 +89,10 @@ function createHarness(debug = false): {
     cancelPendingTransientWorkerTerminatedError: vi.fn(),
     hasPendingTransientWorkerTerminatedError: vi.fn(() => false),
     queueVersionedToolMutation: vi.fn(async () => undefined),
-    logDebug: vi.fn()
+    logDebug: vi.fn(),
+    getRuntime: vi.fn(() => undefined),
+    isModelCacheVisualizationEnabled: vi.fn(() => false),
+    emitModelCacheObservation: vi.fn()
   };
 
   return { projector: new RuntimeEventProjector(deps), deps, descriptors, workerStallState, workerActivityState, runtimeRecoveryState };
@@ -357,6 +387,149 @@ describe("RuntimeEventProjector", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe("model cache observation capture", () => {
+    it("does not emit when visualization is disabled", async () => {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({ agentId: "manager-cache-off", role: "manager", managerId: "manager-cache-off" });
+      descriptors.set(manager.agentId, manager);
+      vi.mocked(deps.isModelCacheVisualizationEnabled).mockReturnValue(false);
+      vi.mocked(deps.getRuntime).mockReturnValue(piRuntime(manager));
+
+      await projector.projectEvent({ agentId: manager.agentId, event: eligibleCacheAssistantEnd() });
+
+      expect(deps.getRuntime).not.toHaveBeenCalled();
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
+    });
+
+    it("emits exactly one eligible manager Pi assistant message_end observation when enabled", async () => {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({ agentId: "manager-cache-on", role: "manager", managerId: "manager-cache-on" });
+      descriptors.set(manager.agentId, manager);
+      vi.mocked(deps.isModelCacheVisualizationEnabled).mockReturnValue(true);
+      vi.mocked(deps.getRuntime).mockReturnValue(piRuntime(manager));
+
+      await projector.projectEvent({ agentId: manager.agentId, event: eligibleCacheAssistantEnd({ turnId: "turn-42" }) });
+
+      expect(deps.emitModelCacheObservation).toHaveBeenCalledTimes(1);
+      expect(deps.emitModelCacheObservation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "model_cache_observation",
+          agentId: manager.agentId,
+          runtimeType: "pi",
+          provider: "openai-codex",
+          turnId: "turn-42",
+          id: "turn-42"
+        })
+      );
+    });
+
+    it.each(["toolUse", "tool_use", "ToolUse"])("does not emit for intermediate tool-use assistant ends (%s)", async (stopReason) => {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({ agentId: "manager-cache-tool-use", role: "manager", managerId: "manager-cache-tool-use" });
+      descriptors.set(manager.agentId, manager);
+      vi.mocked(deps.isModelCacheVisualizationEnabled).mockReturnValue(true);
+      vi.mocked(deps.getRuntime).mockReturnValue(piRuntime(manager));
+
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: eligibleCacheAssistantEnd({ stopReason })
+      });
+
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["worker role", baseDescriptor({ agentId: "worker-cache", role: "worker", managerId: "manager-1" })],
+      ["non-assistant message_end", baseDescriptor({ agentId: "manager-user", role: "manager", managerId: "manager-user" })]
+    ])("does not emit for %s", async (_label, descriptor) => {
+      const { projector, deps, descriptors } = createHarness();
+      descriptors.set(descriptor.agentId, descriptor);
+      vi.mocked(deps.isModelCacheVisualizationEnabled).mockReturnValue(true);
+      vi.mocked(deps.getRuntime).mockReturnValue(piRuntime(descriptor));
+
+      const event =
+        descriptor.role === "worker"
+          ? eligibleCacheAssistantEnd()
+          : ({ type: "message_end", message: { role: "user", content: "hi" } } as RuntimeSessionEvent);
+
+      await projector.projectEvent({ agentId: descriptor.agentId, event });
+
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
+    });
+
+    it("does not emit for non-Pi runtime, missing runtime, or ineligible usage", async () => {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({ agentId: "manager-cache-guards", role: "manager", managerId: "manager-cache-guards" });
+      descriptors.set(manager.agentId, manager);
+      vi.mocked(deps.isModelCacheVisualizationEnabled).mockReturnValue(true);
+
+      vi.mocked(deps.getRuntime).mockReturnValue({
+        ...piRuntime(manager),
+        runtimeType: "claude"
+      } as SwarmAgentRuntime);
+      await projector.projectEvent({ agentId: manager.agentId, event: eligibleCacheAssistantEnd() });
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
+
+      vi.mocked(deps.getRuntime).mockReturnValue(undefined);
+      await projector.projectEvent({ agentId: manager.agentId, event: eligibleCacheAssistantEnd() });
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
+
+      vi.mocked(deps.getRuntime).mockReturnValue(piRuntime(manager));
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: eligibleCacheAssistantEnd({ usage: { input_tokens: 100, cache_read_input_tokens: 0, output_tokens: 10 } })
+      });
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
+    });
+
+    it("does not emit for error, aborted, or manual-stop normalized assistant ends", async () => {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({ agentId: "manager-cache-stop", role: "manager", managerId: "manager-cache-stop" });
+      descriptors.set(manager.agentId, manager);
+      vi.mocked(deps.isModelCacheVisualizationEnabled).mockReturnValue(true);
+      vi.mocked(deps.getRuntime).mockReturnValue(piRuntime(manager));
+
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: eligibleCacheAssistantEnd({ stopReason: "error", errorMessage: "provider failed" })
+      });
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: eligibleCacheAssistantEnd({ stopReason: "aborted" })
+      });
+
+      const stripped = eligibleCacheAssistantEnd({ stopReason: "stop" });
+      vi.mocked(deps.consumePendingManualManagerStopNoticeIfApplicable).mockReturnValue(true);
+      vi.mocked(deps.stripManagerAbortErrorFromEvent).mockReturnValue(stripped);
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: eligibleCacheAssistantEnd({ stopReason: "error", errorMessage: "Request was aborted" })
+      });
+
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
+    });
+
+    it("does not emit for unsupported providers", async () => {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({
+        agentId: "manager-cache-provider",
+        role: "manager",
+        managerId: "manager-cache-provider",
+        model: { provider: "anthropic", modelId: "claude-sonnet", thinkingLevel: "medium" }
+      });
+      descriptors.set(manager.agentId, manager);
+      vi.mocked(deps.isModelCacheVisualizationEnabled).mockReturnValue(true);
+      vi.mocked(deps.getRuntime).mockReturnValue(piRuntime(manager));
+
+      await projector.projectEvent({
+        agentId: manager.agentId,
+        event: eligibleCacheAssistantEnd({ provider: "anthropic", modelId: "claude-sonnet" })
+      });
+
+      expect(deps.emitModelCacheObservation).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps debug logging manager-only and debug-gated", async () => {

@@ -78,6 +78,18 @@ vi.mock('@/components/settings/cortex-auto-review-api', () => ({
   updateCortexAutoReviewSettings: (...args: unknown[]) => cortexApiMock.updateCortexAutoReviewSettings(...args),
 }))
 
+const modelCacheVisualizationApiMock = vi.hoisted(() => ({
+  fetchModelCacheVisualizationEnabled: vi.fn(),
+  setModelCacheVisualizationEnabledApi: vi.fn(),
+}))
+
+vi.mock('@/components/settings/model-cache-visualization-api', () => ({
+  fetchModelCacheVisualizationEnabled: (...args: unknown[]) =>
+    modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled(...args),
+  setModelCacheVisualizationEnabledApi: (...args: unknown[]) =>
+    modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi(...args),
+}))
+
 const terminalApiMock = vi.hoisted(() => ({
   fetchAvailableShells: vi.fn(),
   updateTerminalShellSettings: vi.fn(),
@@ -112,6 +124,8 @@ beforeEach(() => {
     settings: { enabled: true, intervalMinutes: 120 },
     cortexDisabled: false,
   })
+  modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled.mockResolvedValue(false)
+  modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi.mockResolvedValue(undefined)
   terminalApiMock.fetchAvailableShells.mockResolvedValue({
     shells: [
       { name: 'Bash', path: '/bin/bash', available: true },
@@ -353,6 +367,17 @@ describe('SettingsGeneral — collab target', () => {
     expect(container.textContent).not.toContain('Show model icons')
   })
 
+  it('hides prompt cache visualization and does not load builder-only setting in collab mode', async () => {
+    renderCollab()
+    await flush()
+    await flush()
+
+    expect(container.textContent).not.toContain('Prompt Cache Visualization')
+    expect(container.textContent).not.toContain('Enable prompt cache visualization')
+    expect(modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled).not.toHaveBeenCalled()
+    expect(modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi).not.toHaveBeenCalled()
+  })
+
   it('still renders Cortex settings in collab mode', async () => {
     renderCollab()
     await flush()
@@ -539,5 +564,35 @@ describe('SettingsGeneral — collab target', () => {
 
     expect(container.textContent).not.toContain('Enable Active Work Plans')
     expect(container.querySelector('#work-plans-enabled-toggle')).toBeFalsy()
+  })
+
+  it('renders prompt cache visualization toggle defaulting off', async () => {
+    renderGeneral()
+    await flush()
+
+    expect(container.textContent).toContain('Enable prompt cache visualization')
+    expect(container.querySelector('#model-cache-visualization-enabled-toggle')).toBeTruthy()
+    expect(modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled).toHaveBeenCalled()
+
+    const toggle = container.querySelector('#model-cache-visualization-enabled-toggle') as HTMLInputElement | null
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('updates prompt cache visualization via PUT when toggled on', async () => {
+    renderGeneral()
+    await flush()
+
+    const toggle = container.querySelector('#model-cache-visualization-enabled-toggle') as HTMLInputElement | null
+    expect(toggle).toBeTruthy()
+
+    flushSync(() => {
+      fireEvent.click(toggle!)
+    })
+    await flush()
+
+    expect(modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi).toHaveBeenCalledWith(
+      expect.any(String),
+      true,
+    )
   })
 })

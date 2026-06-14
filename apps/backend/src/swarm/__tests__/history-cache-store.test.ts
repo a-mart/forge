@@ -82,6 +82,34 @@ function makeWorkPlanCreated(id: string): ConversationEntryEvent {
   };
 }
 
+function makeModelCacheObservation(id: string): ConversationEntryEvent {
+  return {
+    type: "model_cache_observation",
+    agentId: "manager",
+    id,
+    timestamp: FIXED_NOW,
+    runtimeType: "pi",
+    provider: "openai",
+    modelId: "gpt-5",
+    tokens: {
+      promptInputTokens: 2000,
+      cachedInputTokens: 1600,
+      cacheWriteInputTokens: 0,
+      uncachedInputTokens: 400,
+      outputTokens: 120,
+      totalTokens: 2120,
+      normalization: "raw_input_tokens_total",
+    },
+    classification: {
+      version: 1,
+      status: "hit",
+      cachedRatio: 0.8,
+      thresholdTokens: 1024,
+      hitRatioThreshold: 0.8,
+    },
+  };
+}
+
 function sessionHeader(cwd: string): string {
   return JSON.stringify({
     type: "session",
@@ -183,6 +211,27 @@ describe("HistoryCacheStore", () => {
     const validation = store.validateCachedConversationHistory(sessionFile, header.metadata!);
     expect(validation.ok).toBe(true);
     expect(validation.entries?.[0]?.type).toBe("work_plan_created");
+  });
+
+  it("uses compact stable cache identity for model_cache_observation entries", async () => {
+    const root = await createTempDir("history-cache-store-");
+    const sessionFile = join(root, "session.jsonl");
+    const store = makeStore();
+    const history = [makeModelCacheObservation("cache-obs-1")];
+    writeSession(sessionFile, history, root);
+
+    const metadata = store.buildMetadata(history, 1, store.readSessionFileCanonicalStat(sessionFile));
+    expect(metadata.firstPersistedEntryKey).toBe("model_cache_observation:cache-obs-1");
+    expect(metadata.lastPersistedEntryKey).toBe("model_cache_observation:cache-obs-1");
+
+    store.queueCacheSnapshotWrite(sessionFile, history, metadata);
+    await store.flushPendingWrites();
+
+    const header = store.loadConversationHistoryCacheHeader(sessionFile);
+    expect(header.metadata?.firstPersistedEntryKey).toBe("model_cache_observation:cache-obs-1");
+    const validation = store.validateCachedConversationHistory(sessionFile, header.metadata!);
+    expect(validation.ok).toBe(true);
+    expect(validation.entries?.[0]?.type).toBe("model_cache_observation");
   });
 
   it("refreshes canonical proof from a summary scan when the session stat changes", async () => {

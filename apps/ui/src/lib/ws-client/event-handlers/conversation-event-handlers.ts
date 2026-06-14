@@ -1,5 +1,6 @@
 import { handleUnreadNotification } from '../../notification-service'
 import { getSidebarPerfRegistry } from '../../perf/sidebar-perf-debug'
+import { routeModelCacheObservationsForState } from '../model-cache-visualization-state.js'
 import { clampConversationHistory, splitConversationHistory } from '../utils'
 import type { ManagerWsConversationEventContext } from '../types'
 import type { ServerEvent } from '@forge/protocol'
@@ -32,6 +33,7 @@ export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string>
   'agent_tool_call',
   'choice_request',
   'work_plan_created',
+  'model_cache_observation',
 ])
 
 export function handleConversationEvent(
@@ -56,6 +58,24 @@ export function handleConversationEvent(
       }
 
       context.updateState({ messages: [...context.state.messages, event] })
+      return true
+    }
+
+    case 'model_cache_observation': {
+      if (event.agentId !== context.state.targetAgentId) {
+        return true
+      }
+
+      const routed = routeModelCacheObservationsForState({
+        incoming: [event],
+        enabled: context.state.modelCacheVisualizationEnabled,
+        settingLoaded: context.state.modelCacheVisualizationSettingLoaded,
+        currentObservations: context.state.modelCacheObservations,
+        pendingObservations: context.state.pendingModelCacheObservations,
+        mode: 'upsert',
+      })
+
+      context.updateState(routed)
       return true
     }
 
@@ -148,7 +168,15 @@ export function handleConversationEvent(
         return true
       }
 
-      const { messages, activityMessages } = splitConversationHistory(event.messages)
+      const { messages, activityMessages, modelCacheObservations } = splitConversationHistory(event.messages)
+      const routedObservations = routeModelCacheObservationsForState({
+        incoming: modelCacheObservations,
+        enabled: context.state.modelCacheVisualizationEnabled,
+        settingLoaded: context.state.modelCacheVisualizationSettingLoaded,
+        currentObservations: context.state.modelCacheObservations,
+        pendingObservations: context.state.pendingModelCacheObservations,
+        mode: 'replace',
+      })
       // Sidebar perf: stop `session_switch.click_to_history_loaded_ms` and mark
       // the active session-switch token eligible for first-paint completion.
       // The interaction nonce ensures stale bootstraps from A→B→A rapid
@@ -164,6 +192,8 @@ export function handleConversationEvent(
       context.updateState({
         messages,
         activityMessages: clampConversationHistory(activityMessages),
+        modelCacheObservations: routedObservations.modelCacheObservations,
+        pendingModelCacheObservations: routedObservations.pendingModelCacheObservations,
       })
       return true
     }
@@ -194,6 +224,8 @@ export function handleConversationEvent(
       context.updateState({
         messages: [],
         activityMessages: [],
+        modelCacheObservations: [],
+        pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),
         lastError: null,
       })

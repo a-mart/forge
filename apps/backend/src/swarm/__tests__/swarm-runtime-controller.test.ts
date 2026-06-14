@@ -235,7 +235,10 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     saveStore: vi.fn(),
     applyManagerRuntimeRecyclePolicy,
     queueVersionedToolMutation: vi.fn(),
-    logDebug: vi.fn()
+    logDebug: vi.fn(),
+    getRuntime: vi.fn(() => undefined),
+    isModelCacheVisualizationEnabled: vi.fn(() => false),
+    emitModelCacheObservation: vi.fn()
   };
 
   return {

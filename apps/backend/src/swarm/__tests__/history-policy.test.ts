@@ -97,6 +97,34 @@ function workPlanCreated(id: string): ConversationEntryEvent {
   };
 }
 
+function modelCacheObservation(id: string): ConversationEntryEvent {
+  return {
+    type: "model_cache_observation",
+    agentId: "manager-1",
+    id,
+    timestamp: FIXED_NOW,
+    runtimeType: "pi",
+    provider: "openai",
+    modelId: "gpt-5",
+    tokens: {
+      promptInputTokens: 2000,
+      cachedInputTokens: 1600,
+      cacheWriteInputTokens: 0,
+      uncachedInputTokens: 400,
+      outputTokens: 120,
+      totalTokens: 2120,
+      normalization: "raw_input_tokens_total"
+    },
+    classification: {
+      version: 1,
+      status: "hit",
+      cachedRatio: 0.8,
+      thresholdTokens: 1024,
+      hitRatioThreshold: 0.8
+    }
+  };
+}
+
 function ids(entries: ConversationEntryEvent[]): string[] {
   return entries.map((entry) => {
     if (entry.type === "conversation_message") {
@@ -106,6 +134,9 @@ function ids(entries: ConversationEntryEvent[]): string[] {
       return entry.choiceId;
     }
     if (entry.type === "work_plan_created") {
+      return entry.id;
+    }
+    if (entry.type === "model_cache_observation") {
       return entry.id;
     }
     return entry.text;
@@ -233,6 +264,63 @@ describe("history policy", () => {
     trimConversationHistory(entries);
 
     expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY + 2);
+  });
+
+  it("does not displace visible transcript rows with model_cache_observation under tight bootstrap budget", () => {
+    const history = [
+      message("message-1"),
+      modelCacheObservation("cache-obs-1"),
+      message("message-2"),
+      agentActivity("activity-1"),
+    ];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      isWithinBudget: (messages) => messages.length <= 2,
+    });
+
+    expect(selection.history).toHaveLength(2);
+    expect(ids(selection.history)).toEqual(["message-1", "message-2"]);
+    expect(ids(selection.history)).not.toContain("cache-obs-1");
+  });
+
+  it("includes model_cache_observation only when bootstrap budget has room after transcript", () => {
+    const history = [message("message-1"), modelCacheObservation("cache-obs-1")];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      isWithinBudget: (messages) => messages.length <= 2,
+    });
+
+    expect(ids(selection.history)).toEqual(["message-1", "cache-obs-1"]);
+  });
+
+  it("excludes model_cache_observation from bootstrap when diagnostics are disabled", () => {
+    const history = [message("message-1"), modelCacheObservation("cache-obs-1"), message("message-2")];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      includeDiagnosticEntries: false,
+      isWithinBudget: () => true,
+    });
+
+    expect(selection.trimmed).toBe(false);
+    expect(selection.requestedHistoryLength).toBe(2);
+    expect(ids(selection.history)).toEqual(["message-1", "message-2"]);
+  });
+
+  it("does not let disabled diagnostics consume requested bootstrap count", () => {
+    const history = [message("message-1"), message("message-2"), modelCacheObservation("cache-obs-1")];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      requestedMessageCount: 1,
+      includeDiagnosticEntries: false,
+      isWithinBudget: () => true,
+    });
+
+    expect(selection.requestedHistoryLength).toBe(1);
+    expect(ids(selection.history)).toEqual(["message-2"]);
   });
 
   it("keeps transcript entries first and fills leftover bootstrap budget with tail activity in source order", () => {

@@ -13,6 +13,7 @@ import type {
   ModelConfigChangedEvent,
   PromptChangedEvent,
   SpecialistRosterChangedEvent,
+  ModelCacheVisualizationSettingsChangedEvent,
   WorkPlansSettingsChangedEvent,
 } from './config-events.js'
 import type {
@@ -209,6 +210,7 @@ export type ServerEvent =
   | TerminalsSnapshotEvent
   | SpecialistRosterChangedEvent
   | WorkPlansSettingsChangedEvent
+  | ModelCacheVisualizationSettingsChangedEvent
   | ModelConfigChangedEvent
   | ApiProxyResponseEvent
   | MessagePinnedEvent

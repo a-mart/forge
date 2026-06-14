@@ -8,7 +8,26 @@ import type {
   DeliveryMode,
   MessageSourceContext,
 } from './shared-types.js'
+import type { ModelCacheObservationEvent } from './model-cache.js'
 import type { WorkPlanSnapshot } from './tasks.js'
+
+export type {
+  ModelCacheClassification,
+  ModelCacheObservationEvent,
+  ModelCacheProvider,
+  ModelCacheRuntimeType,
+  ModelCacheStatus,
+  ModelCacheTokenFacts,
+  ModelCacheTokenNormalization,
+} from './model-cache.js'
+export {
+  MODEL_CACHE_CLASSIFICATION_VERSION,
+  MODEL_CACHE_ELIGIBILITY_THRESHOLD_TOKENS,
+  MODEL_CACHE_HIT_RATIO_THRESHOLD,
+  MODEL_CACHE_PROVIDERS,
+  MODEL_CACHE_STATUSES,
+  MODEL_CACHE_TOKEN_NORMALIZATIONS,
+} from './model-cache.js'
 
 export interface ProjectAgentMessageContext {
   fromAgentId: string
@@ -143,5 +162,6 @@ export type ConversationEntry =
   | AgentToolCallEvent
   | ChoiceRequestEvent
   | WorkPlanCreatedEvent
+  | ModelCacheObservationEvent
 
 export type ConversationEntryEvent = ConversationEntry

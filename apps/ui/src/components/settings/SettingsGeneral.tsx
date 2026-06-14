@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
   readSidebarModelIconsPref,
@@ -41,6 +42,10 @@ import {
   fetchCortexAutoReviewSettings,
   updateCortexAutoReviewSettings,
 } from '@/components/settings/cortex-auto-review-api'
+import {
+  fetchModelCacheVisualizationEnabled,
+  setModelCacheVisualizationEnabledApi,
+} from '@/components/settings/model-cache-visualization-api'
 import {
   fetchAvailableShells,
   updateTerminalShellSettings,
@@ -87,6 +92,11 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
   const [cortexUpdating, setCortexUpdating] = useState(false)
   const [cortexLoadFailed, setCortexLoadFailed] = useState(false)
   const [cortexDisabled, setCortexDisabled] = useState(false)
+
+  const [modelCacheVisualizationEnabled, setModelCacheVisualizationEnabled] = useState(false)
+  const [modelCacheVisualizationLoading, setModelCacheVisualizationLoading] = useState(true)
+  const [modelCacheVisualizationUpdating, setModelCacheVisualizationUpdating] = useState(false)
+  const [modelCacheVisualizationError, setModelCacheVisualizationError] = useState<string | null>(null)
 
   // Terminal shell settings — Builder-only
   const [terminalShells, setTerminalShells] = useState<AvailableShellsResponse | null>(null)
@@ -204,6 +214,53 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
       })
   }, [cortexSource])
 
+  const modelCacheVisualizationSource = apiClient ?? wsUrl
+
+  useEffect(() => {
+    if (!isBuilder) return
+    let cancelled = false
+    setModelCacheVisualizationLoading(true)
+    setModelCacheVisualizationError(null)
+    void fetchModelCacheVisualizationEnabled(modelCacheVisualizationSource)
+      .then((enabled) => {
+        if (!cancelled) setModelCacheVisualizationEnabled(enabled)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setModelCacheVisualizationError(
+            err instanceof Error ? err.message : 'Could not load prompt cache visualization setting',
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setModelCacheVisualizationLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isBuilder, modelCacheVisualizationSource])
+
+  const handleModelCacheVisualizationToggle = useCallback(
+    (checked: boolean) => {
+      if (modelCacheVisualizationUpdating) return
+      setModelCacheVisualizationUpdating(true)
+      setModelCacheVisualizationError(null)
+      void setModelCacheVisualizationEnabledApi(modelCacheVisualizationSource, checked)
+        .then(() => {
+          setModelCacheVisualizationEnabled(checked)
+        })
+        .catch((err) => {
+          setModelCacheVisualizationError(
+            err instanceof Error ? err.message : 'Failed to update prompt cache visualization setting',
+          )
+        })
+        .finally(() => {
+          setModelCacheVisualizationUpdating(false)
+        })
+    },
+    [modelCacheVisualizationSource, modelCacheVisualizationUpdating],
+  )
+
   const handleCortexToggle = useCallback(
     (enabled: boolean) => {
       if (cortexUpdating) return
@@ -312,6 +369,39 @@ export function SettingsGeneral({ wsUrl, target, apiClient }: SettingsGeneralPro
               </SelectContent>
             </Select>
           </SettingsWithCTA>
+        </SettingsSection>
+      )}
+
+      {isBuilder && (
+        <SettingsSection
+          label="Prompt Cache Visualization"
+          description="Show a compact prompt-cache indicator in manager chat headers for OpenAI/Codex Pi sessions when provider-reported cached input token counts are available."
+        >
+          <div className="flex items-center gap-3">
+            <Switch
+              id="model-cache-visualization-enabled-toggle"
+              checked={modelCacheVisualizationEnabled}
+              disabled={modelCacheVisualizationLoading || modelCacheVisualizationUpdating}
+              onCheckedChange={handleModelCacheVisualizationToggle}
+              aria-label="Enable prompt cache visualization"
+            />
+            <Label htmlFor="model-cache-visualization-enabled-toggle" className="text-sm font-medium">
+              Enable prompt cache visualization
+            </Label>
+            {modelCacheVisualizationUpdating ? (
+              <span className="text-xs text-muted-foreground">Saving…</span>
+            ) : null}
+          </div>
+          {!modelCacheVisualizationEnabled && !modelCacheVisualizationLoading ? (
+            <p className="mt-2 text-xs italic text-muted-foreground/70">
+              Prompt cache visualization is off by default. While disabled, Forge does not collect new cache
+              observations and hides the header indicator. Observations from earlier enabled periods may appear
+              after you turn this on and load session history; Forge does not report guaranteed miss or drop causes.
+            </p>
+          ) : null}
+          {modelCacheVisualizationError ? (
+            <p className="mt-2 text-xs text-destructive">{modelCacheVisualizationError}</p>
+          ) : null}
         </SettingsSection>
       )}
 

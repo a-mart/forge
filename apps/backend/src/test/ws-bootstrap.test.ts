@@ -30,6 +30,34 @@ function createTaskSnapshotEvent(agentId: string): Extract<ServerEvent, { type: 
   }
 }
 
+function createModelCacheObservationEvent(agentId: string): Extract<ServerEvent, { type: 'model_cache_observation' }> {
+  return {
+    type: 'model_cache_observation',
+    agentId,
+    id: 'cache-obs-1',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    runtimeType: 'pi',
+    provider: 'openai',
+    modelId: 'gpt-5',
+    tokens: {
+      promptInputTokens: 2000,
+      cachedInputTokens: 1600,
+      cacheWriteInputTokens: 0,
+      uncachedInputTokens: 400,
+      outputTokens: 120,
+      totalTokens: 2120,
+      normalization: 'raw_input_tokens_total',
+    },
+    classification: {
+      version: 1,
+      status: 'hit',
+      cachedRatio: 0.8,
+      thresholdTokens: 1024,
+      hitRatioThreshold: 0.8,
+    },
+  }
+}
+
 describe('sendSubscriptionBootstrap', () => {
   it('records sidebar.bootstrap once with diagnostics from the current history load', async () => {
     const perf = createPerfStub()
@@ -125,6 +153,130 @@ describe('sendSubscriptionBootstrap', () => {
       agentsSnapshotSent: true,
       profilesSnapshotSent: true,
     })
+  })
+
+  it('filters model cache observations from bootstrap while visualization is disabled', async () => {
+    const sentEvents: ServerEvent[] = []
+    const history = [
+      {
+        type: 'conversation_message' as const,
+        agentId: 'manager-1',
+        role: 'assistant' as const,
+        text: 'persisted history',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'system' as const,
+      },
+      createModelCacheObservationEvent('manager-1'),
+    ]
+
+    await sendSubscriptionBootstrap({
+      socket: {} as any,
+      targetAgentId: 'manager-1',
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryWithDiagnostics: () => ({
+          history,
+          diagnostics: {
+            cacheState: 'hit' as const,
+            historySource: 'cache_hit' as const,
+            coldLoad: false,
+            fsReadOps: 0,
+            fsReadBytes: 0,
+            sessionFileBytes: 0,
+            cacheFileBytes: 0,
+            persistedEntryCount: history.length,
+            cachedEntryCount: history.length,
+            sessionSummaryBytesScanned: 0,
+            cacheReadMs: 0,
+            sessionSummaryReadMs: 0,
+            detail: undefined,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => [],
+        getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
+        isModelCacheVisualizationEnabled: () => false,
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: () => undefined,
+    })
+
+    const conversationHistoryEvent = sentEvents.find(
+      (event): event is Extract<ServerEvent, { type: 'conversation_history' }> => event.type === 'conversation_history',
+    )
+    expect(conversationHistoryEvent?.messages).toHaveLength(1)
+    expect(conversationHistoryEvent?.messages.some((entry) => entry.type === 'model_cache_observation')).toBe(false)
+  })
+
+  it('includes model cache observations in bootstrap while visualization is enabled', async () => {
+    const sentEvents: ServerEvent[] = []
+    const modelCacheObservation = createModelCacheObservationEvent('manager-1')
+    const history = [
+      {
+        type: 'conversation_message' as const,
+        agentId: 'manager-1',
+        role: 'assistant' as const,
+        text: 'persisted history',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'system' as const,
+      },
+      modelCacheObservation,
+    ]
+
+    await sendSubscriptionBootstrap({
+      socket: {} as any,
+      targetAgentId: 'manager-1',
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryWithDiagnostics: () => ({
+          history,
+          diagnostics: {
+            cacheState: 'hit' as const,
+            historySource: 'cache_hit' as const,
+            coldLoad: false,
+            fsReadOps: 0,
+            fsReadBytes: 0,
+            sessionFileBytes: 0,
+            cacheFileBytes: 0,
+            persistedEntryCount: history.length,
+            cachedEntryCount: history.length,
+            sessionSummaryBytesScanned: 0,
+            cacheReadMs: 0,
+            sessionSummaryReadMs: 0,
+            detail: undefined,
+          },
+        }),
+        getPendingChoiceIdsForSession: () => [],
+        getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
+        isModelCacheVisualizationEnabled: () => true,
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: () => undefined,
+    })
+
+    const conversationHistoryEvent = sentEvents.find(
+      (event): event is Extract<ServerEvent, { type: 'conversation_history' }> => event.type === 'conversation_history',
+    )
+    expect(conversationHistoryEvent?.messages).toEqual(expect.arrayContaining([modelCacheObservation]))
   })
 
   it('prioritizes visible transcript entries for oversized bootstrap history and records matching metrics', async () => {

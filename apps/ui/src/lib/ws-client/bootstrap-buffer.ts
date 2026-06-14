@@ -175,6 +175,10 @@ export class BootstrapBuffer {
       )
     }
 
+    if (event.type === 'model_cache_visualization_settings_changed') {
+      return true
+    }
+
     return false
   }
 

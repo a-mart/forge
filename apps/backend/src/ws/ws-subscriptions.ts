@@ -96,6 +96,7 @@ export class WsSubscriptions {
         outboundEvent.type === "conversation_reset" ||
         outboundEvent.type === "choice_request" ||
         outboundEvent.type === "work_plan_created" ||
+        outboundEvent.type === "model_cache_observation" ||
         outboundEvent.type === "message_pinned"
       ) {
         if (subscribedAgent !== outboundEvent.agentId) {

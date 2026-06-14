@@ -28,6 +28,7 @@ import type {
   WorkerWatchdogStateLike
 } from "./runtime/worker-health-types.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
+import type { ModelCacheObservationEvent } from "@forge/protocol";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -162,6 +163,9 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   ): Promise<"recycled" | "deferred" | "none">;
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;
+  getRuntime(agentId: string): SwarmAgentRuntime | undefined;
+  isModelCacheVisualizationEnabled(): boolean;
+  emitModelCacheObservation(event: ModelCacheObservationEvent): void;
 }
 
 export class SwarmRuntimeController {
@@ -515,7 +519,10 @@ export class SwarmRuntimeController {
         hasPendingTransientWorkerTerminatedError: (agentId) =>
           this.host.hasPendingTransientWorkerTerminatedError(agentId),
         queueVersionedToolMutation: (descriptor, mutation) => this.host.queueVersionedToolMutation(descriptor, mutation),
-        logDebug: (message, details) => this.logDebug(message, details)
+        logDebug: (message, details) => this.logDebug(message, details),
+        getRuntime: (agentId) => this.getRuntime(agentId),
+        isModelCacheVisualizationEnabled: () => this.host.isModelCacheVisualizationEnabled(),
+        emitModelCacheObservation: (event) => this.host.emitModelCacheObservation(event)
       });
     }
 

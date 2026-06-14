@@ -86,6 +86,7 @@ import { createSkillRoutes } from "./http/routes/skill-routes.js";
 import { createSlashCommandRoutes } from "./http/routes/slash-command-routes.js";
 import { createSpecialistRoutes } from "./http/routes/specialist-routes.js";
 import { createWorkPlansRoutes } from "./http/routes/work-plans-routes.js";
+import { createModelCacheVisualizationRoutes } from "./http/routes/model-cache-visualization-routes.js";
 import { createStatsRoutes } from "./http/routes/stats-routes.js";
 import { createStaticUiRoutes } from "./http/routes/static-ui-routes.js";
 import { createTelemetryRoutes } from "./http/routes/telemetry-routes.js";
@@ -202,6 +203,12 @@ export class SwarmWebSocketServer {
   private readonly onWorkPlanCreated = (event: ServerEvent): void => {
     if (event.type !== "work_plan_created") return;
     if (!this.swarmManager.isWorkPlansEnabled()) return;
+    this.wsHandler.broadcastToSubscribed(event);
+    this.cliWsHandler.broadcast(event);
+  };
+
+  private readonly onModelCacheObservation = (event: ServerEvent): void => {
+    if (event.type !== "model_cache_observation") return;
     this.wsHandler.broadcastToSubscribed(event);
     this.cliWsHandler.broadcast(event);
   };
@@ -540,6 +547,10 @@ export class SwarmWebSocketServer {
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
+      ...createModelCacheVisualizationRoutes({
+        swarmManager: this.swarmManager,
+        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+      }),
       ...createModelConfigRoutes({
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
@@ -586,6 +597,7 @@ export class SwarmWebSocketServer {
     await this.notificationSettingsService.load();
     await this.unreadTracker.load();
     await this.swarmManager.loadWorkPlansSettings?.();
+    await this.swarmManager.loadModelCacheVisualizationSettings?.();
 
     const httpServer = createServer((request, response) => {
       void this.handleHttpRequest(request, response);
@@ -635,6 +647,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.on("choice_request", this.onChoiceRequest);
     this.swarmManager.on("work_plan_created", this.onWorkPlanCreated);
+    this.swarmManager.on("model_cache_observation", this.onModelCacheObservation);
     this.swarmManager.on("conversation_reset", this.onConversationReset);
     this.swarmManager.on("message_pinned", this.onMessagePinned);
     this.swarmManager.on("agent_status", this.onAgentStatus);
@@ -693,6 +706,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.off("choice_request", this.onChoiceRequest);
     this.swarmManager.off("work_plan_created", this.onWorkPlanCreated);
+    this.swarmManager.off("model_cache_observation", this.onModelCacheObservation);
     this.swarmManager.off("conversation_reset", this.onConversationReset);
     this.swarmManager.off("message_pinned", this.onMessagePinned);
     this.swarmManager.off("agent_status", this.onAgentStatus);

@@ -42,6 +42,8 @@ import {
 import {
   chooseMostRecentSessionFallbackForDeletedTarget,
 } from '@/hooks/index-page/deleted-agent-fallback'
+import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
+import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
 import { useVisibleMessages } from '@/hooks/index-page/use-visible-messages'
@@ -129,6 +131,20 @@ export function BuilderSurface({
   useEffect(() => {
     reportBuilderConnected(state.connected)
   }, [state.connected])
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchModelCacheVisualizationEnabled(wsUrl)
+      .then((enabled) => {
+        if (!cancelled) {
+          clientRef.current?.applyLoadedModelCacheVisualizationSetting(enabled)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [clientRef, wsUrl])
 
   useEffect(() => {
     if (activeView !== 'archive') {
@@ -297,6 +313,14 @@ export function BuilderSurface({
   }, [activeManagerId, state.agents])
 
   const activeWorkSnapshot = null
+
+  const modelCacheHeaderSummary =
+    state.modelCacheVisualizationEnabled && isActiveManager
+      ? buildModelCacheHeaderSummary({
+          enabled: true,
+          observations: state.modelCacheObservations,
+        })
+      : null
 
   const terminalSessionAgentId = useMemo(() => {
     if (!activeAgent) {
@@ -1735,6 +1759,7 @@ export function BuilderSurface({
                   detailedAllView: effectiveDetailedAllView,
                   onDetailedAllViewChange: isActiveManager ? setDetailedAllView : undefined,
                   contextWindowUsage,
+                  modelCacheHeaderSummary,
                   activeWorkSnapshot,
                   activeWorkAgents: state.agents,
                   activeWorkStatuses: state.statuses,

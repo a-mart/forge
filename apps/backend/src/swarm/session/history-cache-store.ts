@@ -816,7 +816,11 @@ function safeJson(value: unknown): string {
 }
 
 function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {
-  if (entry.type !== "conversation_message" && entry.type !== "work_plan_created") {
+  if (
+    entry.type !== "conversation_message" &&
+    entry.type !== "work_plan_created" &&
+    entry.type !== "model_cache_observation"
+  ) {
     return undefined;
   }
 

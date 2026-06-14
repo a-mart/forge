@@ -196,6 +196,7 @@ export class CliHeadlessSubscriptions {
       case "agent_tool_call":
       case "choice_request":
       case "work_plan_created":
+      case "model_cache_observation":
       case "conversation_reset":
       case "message_pinned":
         return this.resolveSessionAgentIdForAgent(event.agentId) === sessionAgentId;

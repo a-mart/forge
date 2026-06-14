@@ -91,12 +91,21 @@ export interface BootstrapConversationHistorySelection<Entry extends Conversatio
 export function selectBootstrapConversationHistory<Entry extends ConversationEntryEvent>(options: {
   fullHistory: Entry[];
   requestedMessageCount?: number;
+  includeDiagnosticEntries?: boolean;
   isWithinBudget: (messages: Entry[]) => boolean;
 }): BootstrapConversationHistorySelection<Entry> {
-  const { fullHistory, requestedMessageCount, isWithinBudget } = options;
+  const {
+    fullHistory,
+    requestedMessageCount,
+    includeDiagnosticEntries = true,
+    isWithinBudget,
+  } = options;
+  const selectableHistory = includeDiagnosticEntries
+    ? fullHistory
+    : fullHistory.filter((entry) => !isBootstrapDiagnosticEntry(entry));
   const requestedHistory = requestedMessageCount !== undefined
-    ? fullHistory.slice(-requestedMessageCount)
-    : fullHistory;
+    ? selectableHistory.slice(-requestedMessageCount)
+    : selectableHistory;
 
   if (isWithinBudget(requestedHistory)) {
     return {
@@ -108,13 +117,20 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
 
   const conversationEntries = requestedHistory.filter(isBootstrapTranscriptEntry);
   const activityEntries = requestedHistory.filter(isBootstrapActivityEntry);
+  const diagnosticEntries = requestedHistory.filter(isBootstrapDiagnosticEntry);
 
   if (!isWithinBudget(conversationEntries)) {
     const trimmedConversationEntries = trimBootstrapConversationHistoryTailToBudget(conversationEntries, isWithinBudget);
+    const history = appendBootstrapDiagnosticEntriesIfBudgetAllows(
+      requestedHistory,
+      trimmedConversationEntries,
+      diagnosticEntries,
+      isWithinBudget,
+    );
     return {
-      history: trimmedConversationEntries,
+      history,
       requestedHistoryLength: requestedHistory.length,
-      trimmed: trimmedConversationEntries.length !== requestedHistory.length
+      trimmed: history.length !== requestedHistory.length,
     };
   }
 
@@ -129,11 +145,17 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
     conversationEntries,
     selectedActivityEntries
   );
+  const history = appendBootstrapDiagnosticEntriesIfBudgetAllows(
+    requestedHistory,
+    trimmedHistory,
+    diagnosticEntries,
+    isWithinBudget,
+  );
 
   return {
-    history: trimmedHistory,
+    history,
     requestedHistoryLength: requestedHistory.length,
-    trimmed: trimmedHistory.length !== requestedHistory.length
+    trimmed: history.length !== requestedHistory.length,
   };
 }
 
@@ -144,6 +166,11 @@ function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry:
     entry.type === "choice_request" ||
     entry.type === "work_plan_created"
   );
+}
+
+/** Hidden diagnostics — lowest bootstrap priority until header UI consumes them. */
+function isBootstrapDiagnosticEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
+  return entry.type === "model_cache_observation";
 }
 
 function isBootstrapActivityEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
@@ -200,7 +227,67 @@ function selectTailActivityEntriesWithinBootstrapBudget<Entry extends Conversati
     }
   }
 
-  return activityEntries.slice(-low);
+  return activityEntries.slice(activityEntries.length - low);
+}
+
+function appendBootstrapDiagnosticEntriesIfBudgetAllows<Entry extends ConversationEntryEvent>(
+  sourceHistory: Entry[],
+  primaryHistory: Entry[],
+  diagnosticEntries: Entry[],
+  isWithinBudget: (messages: Entry[]) => boolean
+): Entry[] {
+  if (diagnosticEntries.length === 0) {
+    return primaryHistory;
+  }
+
+  const selectedDiagnostics = selectTailDiagnosticEntriesWithinBootstrapBudget(
+    sourceHistory,
+    primaryHistory,
+    diagnosticEntries,
+    isWithinBudget
+  );
+  if (selectedDiagnostics.length === 0) {
+    return primaryHistory;
+  }
+
+  const selectedEntries = new Set<Entry>(primaryHistory);
+  for (const entry of selectedDiagnostics) {
+    selectedEntries.add(entry);
+  }
+
+  return sourceHistory.filter((entry) => selectedEntries.has(entry));
+}
+
+function selectTailDiagnosticEntriesWithinBootstrapBudget<Entry extends ConversationEntryEvent>(
+  sourceHistory: Entry[],
+  primaryHistory: Entry[],
+  diagnosticEntries: Entry[],
+  isWithinBudget: (messages: Entry[]) => boolean
+): Entry[] {
+  if (diagnosticEntries.length === 0) {
+    return [];
+  }
+
+  let low = 0;
+  let high = diagnosticEntries.length;
+
+  while (low < high) {
+    const mid = Math.floor((low + high + 1) / 2);
+    const candidateDiagnostics = diagnosticEntries.slice(-mid);
+    const selectedEntries = new Set<Entry>(primaryHistory);
+    for (const entry of candidateDiagnostics) {
+      selectedEntries.add(entry);
+    }
+    const candidateHistory = sourceHistory.filter((entry) => selectedEntries.has(entry));
+
+    if (isWithinBudget(candidateHistory)) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return diagnosticEntries.slice(diagnosticEntries.length - low);
 }
 
 function mergeBootstrapConversationHistory<Entry extends ConversationEntryEvent>(

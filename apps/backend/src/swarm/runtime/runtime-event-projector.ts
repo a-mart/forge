@@ -1,5 +1,7 @@
-import type { RuntimeSessionEvent } from "../runtime-contracts.js";
+import type { ModelCacheObservationEvent } from "@forge/protocol";
+import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor, ConversationMessageEvent, SwarmConfig } from "../types.js";
+import { captureModelCacheObservationFromRuntimeEvent } from "./model-cache-observation.js";
 import {
   extractVersionedToolPath,
   formatToolExecutionPayload,
@@ -61,6 +63,9 @@ export interface RuntimeEventProjectorDeps {
   hasPendingTransientWorkerTerminatedError(agentId: string): boolean;
   queueVersionedToolMutation(descriptor: AgentDescriptor, mutation: VersioningMutation): Promise<void>;
   logDebug(message: string, details?: unknown): void;
+  getRuntime(agentId: string): SwarmAgentRuntime | undefined;
+  isModelCacheVisualizationEnabled(): boolean;
+  emitModelCacheObservation(event: ModelCacheObservationEvent): void;
 }
 
 export interface RuntimeEventProjectionInput {
@@ -225,6 +230,9 @@ export class RuntimeEventProjector {
       : event;
 
     this.deps.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent);
+    if (!shouldSurfaceManualStopNotice && !isContextRecoveryAbort) {
+      this.maybeEmitModelCacheObservation(agentId, descriptor, effectiveEvent);
+    }
     if (shouldSurfaceManualStopNotice) {
       this.deps.conversationProjector.emitConversationMessage({
         type: "conversation_message",
@@ -243,6 +251,29 @@ export class RuntimeEventProjector {
     }
 
     this.logManagerDebug(descriptor, event, effectiveEvent);
+  }
+
+  private maybeEmitModelCacheObservation(
+    agentId: string,
+    descriptor: AgentDescriptor | undefined,
+    effectiveEvent: RuntimeSessionEvent
+  ): void {
+    if (!this.deps.isModelCacheVisualizationEnabled()) {
+      return;
+    }
+
+    const observation = captureModelCacheObservationFromRuntimeEvent({
+      agentId,
+      descriptor,
+      effectiveEvent,
+      runtime: this.deps.getRuntime(agentId),
+      timestamp: this.deps.now(),
+      enabled: true
+    });
+
+    if (observation) {
+      this.deps.emitModelCacheObservation(observation);
+    }
   }
 
   private logManagerDebug(

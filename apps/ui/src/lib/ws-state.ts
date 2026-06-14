@@ -13,6 +13,10 @@ export type ConversationHistoryEntry = Extract<
   ConversationEntry,
   { type: 'conversation_message' | 'conversation_log' | 'choice_request' | 'work_plan_created' }
 >
+export type ModelCacheObservationEntry = Extract<
+  ConversationEntry,
+  { type: 'model_cache_observation' }
+>
 export type AgentActivityEntry = Extract<
   ConversationEntry,
   { type: 'agent_message' | 'agent_tool_call' }
@@ -24,6 +28,12 @@ export interface ManagerWsState {
   subscribedAgentId: string | null
   messages: ConversationHistoryEntry[]
   activityMessages: AgentActivityEntry[]
+  /** Persisted cache observations for header UI; not rendered as chat rows. */
+  modelCacheObservations: ModelCacheObservationEntry[]
+  /** Bootstrap/live observations held until persisted setting is loaded. */
+  pendingModelCacheObservations: ModelCacheObservationEntry[]
+  /** False until GET/WS confirms server setting; avoids dropping bootstrap while unknown. */
+  modelCacheVisualizationSettingLoaded: boolean
   /** Choice IDs with pending status for the current session */
   pendingChoiceIds: Set<string>
   agents: AgentDescriptor[]
@@ -48,6 +58,8 @@ export interface ManagerWsState {
   modelConfigChangeKey: number
   /** Global Active Work Plans feature toggle; defaults to enabled. */
   workPlansEnabled: boolean
+  /** Prompt/model cache visualization toggle; defaults to off. */
+  modelCacheVisualizationEnabled: boolean
 }
 
 export function createInitialManagerWsState(targetAgentId: string | null): ManagerWsState {
@@ -57,6 +69,9 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     subscribedAgentId: null,
     messages: [],
     activityMessages: [],
+    modelCacheObservations: [],
+    pendingModelCacheObservations: [],
+    modelCacheVisualizationSettingLoaded: false,
     pendingChoiceIds: new Set(),
     agents: [],
     loadedSessionIds: new Set(),
@@ -75,5 +90,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     specialistChangeKey: 0,
     modelConfigChangeKey: 0,
     workPlansEnabled: false,
+    modelCacheVisualizationEnabled: false,
   }
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createInitialManagerWsState } from '../ws-state'
+import type { ModelCacheObservationEntry } from '../ws-state'
 import { reduceAgentsSnapshot, reduceSessionWorkersSnapshot, reduceAgentStatus } from './snapshot-reducers'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 
@@ -88,6 +89,53 @@ describe('reduceAgentsSnapshot', () => {
     expect(result.patch.targetAgentId).toBe('active-manager')
     expect(result.patch.subscribedAgentId).toBe('active-manager')
     expect(result.patch.agents?.some((agent) => agent.agentId === 'archived-worker')).toBe(false)
+  })
+
+  it('clears modelCacheObservations when agents_snapshot changes the target session', () => {
+    const managerA = makeManager({ agentId: 'manager-a' })
+    const managerB = makeManager({ agentId: 'manager-b' })
+    const staleObservation = {
+      type: 'model_cache_observation',
+      agentId: 'manager-a',
+      id: 'cache-obs-stale',
+      timestamp: '2026-06-02T12:00:00.000Z',
+      runtimeType: 'pi',
+      provider: 'openai',
+      modelId: 'gpt-5',
+      tokens: {
+        promptInputTokens: 2000,
+        cachedInputTokens: 1600,
+        cacheWriteInputTokens: 0,
+        uncachedInputTokens: 400,
+        outputTokens: 120,
+        totalTokens: 2120,
+        normalization: 'raw_input_tokens_total',
+      },
+      classification: {
+        version: 1,
+        status: 'hit',
+        cachedRatio: 0.8,
+        thresholdTokens: 1024,
+        hitRatioThreshold: 0.8,
+      },
+    } satisfies ModelCacheObservationEntry
+
+    const state = {
+      ...createInitialManagerWsState('manager-a'),
+      targetAgentId: 'manager-a',
+      modelCacheObservations: [staleObservation],
+      agents: [managerA],
+    }
+
+    const result = reduceAgentsSnapshot({
+      state,
+      desiredAgentId: null,
+      explicitAgentSelectionAgentId: null,
+      agents: [managerB],
+    })
+
+    expect(result.patch.targetAgentId).toBe('manager-b')
+    expect(result.patch.modelCacheObservations).toEqual([])
   })
 })
 

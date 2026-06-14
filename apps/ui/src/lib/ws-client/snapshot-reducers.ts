@@ -153,6 +153,8 @@ export function reduceAgentsSnapshot(input: {
     patch.targetAgentId = fallbackTarget ?? null
     patch.messages = []
     patch.activityMessages = []
+    patch.modelCacheObservations = []
+    patch.pendingModelCacheObservations = []
     patch.pendingChoiceIds = new Set()
 
     const previousTerminalScopeId = resolveTerminalScopeAgentId(state.targetAgentId, state.agents)
@@ -379,6 +381,8 @@ export function reduceManagerDeleted(input: {
           subscribedAgentId: fallbackId,
           messages: [],
           activityMessages: [],
+          modelCacheObservations: [],
+          pendingModelCacheObservations: [],
           pendingChoiceIds: new Set(),
           terminals: [],
           terminalSessionScopeId: null,
@@ -399,6 +403,8 @@ export function reduceManagerDeleted(input: {
         subscribedAgentId: null,
         messages: [],
         activityMessages: [],
+        modelCacheObservations: [],
+        pendingModelCacheObservations: [],
         pendingChoiceIds: new Set(),
         terminals: [],
         terminalSessionScopeId: null,
@@ -465,6 +471,8 @@ export function reduceSessionDeleted(input: {
           subscribedAgentId: fallbackId,
           messages: [],
           activityMessages: [],
+          modelCacheObservations: [],
+          pendingModelCacheObservations: [],
           pendingChoiceIds: new Set(),
           ...(previousTerminalScopeId !== nextTerminalScopeId
             ? { terminals: [], terminalSessionScopeId: null }

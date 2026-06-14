@@ -21,6 +21,7 @@ import type {
   ServerEvent,
   SessionActiveToolsSnapshotEvent,
   SessionTaskStateSnapshotEvent,
+  ModelCacheObservationEvent,
   WorkPlanCreatedEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -204,6 +205,7 @@ import {
   type TaskToolResult,
 } from "./coordination/task-tool.js";
 import { ACTIVE_WORK_PLANS_SKILL_HANDLE } from "./coordination/work-plans-settings.js";
+import { getModelCacheVisualizationEnabled } from "./model-cache-visualization-settings.js";
 import { scanRepoProjectAgentDefinitions } from "./repo-project-agent-definitions.js";
 import {
   assertRepoProjectAgentSourceAvailable,
@@ -1310,6 +1312,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly observability: ObservabilityFacade | undefined;
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
   private workPlansEnabled = false;
+  private modelCacheVisualizationEnabled = false;
 
   constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
@@ -2102,8 +2105,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.workPlansEnabled = false;
   }
 
+  async loadModelCacheVisualizationSettings(): Promise<void> {
+    this.modelCacheVisualizationEnabled = await getModelCacheVisualizationEnabled(
+      this.config.paths.dataDir,
+    );
+  }
+
   isWorkPlansEnabled(): boolean {
     return this.workPlansEnabled;
+  }
+
+  isModelCacheVisualizationEnabled(): boolean {
+    return this.modelCacheVisualizationEnabled;
+  }
+
+  async applyModelCacheVisualizationSettingsChange(enabled: boolean): Promise<void> {
+    this.modelCacheVisualizationEnabled = enabled;
   }
 
   async applyWorkPlansSettingsChange(_enabled: boolean): Promise<void> {
@@ -7003,6 +7020,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitWorkPlanCreated(event: WorkPlanCreatedEvent): void {
     this.conversationProjector.emitWorkPlanCreated(event);
+  }
+
+  emitModelCacheObservation(event: ModelCacheObservationEvent): void {
+    this.conversationProjector.emitModelCacheObservation(event);
   }
 
   private emitConversationReset(agentId: string, reason: "user_new_command" | "api_reset"): void {
