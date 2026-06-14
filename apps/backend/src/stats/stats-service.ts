@@ -54,6 +54,9 @@ export class StatsService {
     );
 
     this.providerUsageService.setCredentialPoolGetter(() => this.swarmManager.getCredentialPoolService());
+    this.providerUsageService.setOpenAIAuthBrokerUsageGetter(async () =>
+      this.swarmManager.getOpenAIAuthBrokerRuntimeService().fetchUsageSnapshot()
+    );
   }
 
   async getSnapshot(

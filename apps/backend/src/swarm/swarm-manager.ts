@@ -6541,6 +6541,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.settingsService.getCredentialPoolService();
   }
 
+  getOpenAIAuthBrokerRuntimeService() {
+    return this.secretsEnvService.getOpenAIAuthBrokerRuntimeService();
+  }
+
   async listCredentialPool(provider: string): Promise<CredentialPoolState> {
     return this.settingsService.listCredentialPool(provider);
   }

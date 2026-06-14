@@ -271,7 +271,7 @@ export async function fetchOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient
   const response = await client.fetch('/api/settings/auth/openai-codex/source')
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
-  if (!payload.settings) throw new Error('Invalid OpenAI broker settings response from backend.')
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
   return payload.settings
 }
 
@@ -288,7 +288,7 @@ export async function updateOpenAIBrokerSettings(
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
   const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
-  if (!payload.settings) throw new Error('Invalid OpenAI broker settings response from backend.')
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
   return payload.settings
 }
 
@@ -312,7 +312,7 @@ export async function disableOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClie
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
   const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
-  if (!payload.settings) throw new Error('Invalid OpenAI broker settings response from backend.')
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
   return payload.settings
 }
 
@@ -322,7 +322,7 @@ export async function clearOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
   const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
-  if (!payload.settings) throw new Error('Invalid OpenAI broker settings response from backend.')
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
   return payload.settings
 }
 

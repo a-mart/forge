@@ -1,6 +1,7 @@
 import { type AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import type { CredentialPoolService } from "../credential-pool.js";
+import type { OpenAIAuthBrokerRuntimeService } from "../openai-auth/openai-auth-broker-runtime-service.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
 import type { ProjectExecutableTrustPlan } from "../project-executable-trust.js";
 import type {
@@ -34,6 +35,7 @@ interface RuntimeFactoryDependencies {
   getPiModelsJsonPath: () => string;
   getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
   getCredentialPoolService?: () => CredentialPoolService;
+  getOpenAIAuthBrokerRuntimeService?: () => OpenAIAuthBrokerRuntimeService;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };

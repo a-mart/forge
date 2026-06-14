@@ -41,6 +41,14 @@ export interface OpenAIAuthBrokerLease {
   expiresAtMs?: number;
 }
 
+export interface OpenAIAuthBrokerLeaseReportDetails {
+  retryAfterMs?: number;
+  errorCode?: string;
+  errorMessage?: string;
+  message?: string;
+  requestReplacement?: boolean;
+}
+
 export class OpenAIAuthBrokerClientError extends Error {
   constructor(
     message: string,
@@ -62,12 +70,12 @@ export class OpenAIAuthBrokerClient {
   constructor(options: OpenAIAuthBrokerClientOptions) {
     const normalizedBaseUrl = normalizeBrokerBaseUrl(options.baseUrl);
     if (!normalizedBaseUrl) {
-      throw new OpenAIAuthBrokerClientError("OpenAI/Codex broker URL is not configured.", "missing_broker_url");
+      throw new OpenAIAuthBrokerClientError("Forge Auth broker URL is not configured for OpenAI/Codex.", "missing_broker_url");
     }
 
     const bearerToken = options.bearerToken.trim();
     if (!bearerToken) {
-      throw new OpenAIAuthBrokerClientError("OpenAI/Codex broker token is not configured.", "missing_broker_token");
+      throw new OpenAIAuthBrokerClientError("Forge Auth broker token is not configured for OpenAI/Codex.", "missing_broker_token");
     }
 
     this.baseUrl = normalizedBaseUrl;
@@ -79,13 +87,17 @@ export class OpenAIAuthBrokerClient {
 
   async getStatus(): Promise<OpenAIBrokerSettingsStatus> {
     const payload = await this.requestJson("/v1/status", { method: "GET" });
-    return normalizeStatusPayload(payload, this.now());
+    return normalizeStatusPayload(payload, this.now(), [this.bearerToken]);
+  }
+
+  async getUsageSnapshot(): Promise<unknown> {
+    return this.requestJson("/v1/usage/snapshot", { method: "GET" });
   }
 
   async acquireLease(identity: OpenAIAuthBrokerRuntimeIdentity): Promise<OpenAIAuthBrokerLease> {
     const payload = await this.requestJson("/v1/leases", {
       method: "POST",
-      body: JSON.stringify({ provider: "openai-codex", ...sanitizeIdentity(identity) }),
+      body: JSON.stringify({ provider: "openai-codex", client: sanitizeIdentity(identity) }),
     });
     return parseLease(payload);
   }
@@ -93,7 +105,7 @@ export class OpenAIAuthBrokerClient {
   async renewLease(leaseId: string, identity: OpenAIAuthBrokerRuntimeIdentity): Promise<OpenAIAuthBrokerLease> {
     const payload = await this.requestJson(`/v1/leases/${encodeURIComponent(leaseId)}/renew`, {
       method: "POST",
-      body: JSON.stringify({ provider: "openai-codex", ...sanitizeIdentity(identity) }),
+      body: JSON.stringify({ client: sanitizeIdentity(identity) }),
     });
     return parseLease(payload);
   }
@@ -101,23 +113,28 @@ export class OpenAIAuthBrokerClient {
   async releaseLease(leaseId: string, reason: string, identity: OpenAIAuthBrokerRuntimeIdentity): Promise<void> {
     await this.requestJson(`/v1/leases/${encodeURIComponent(leaseId)}/release`, {
       method: "POST",
-      body: JSON.stringify({ provider: "openai-codex", reason, ...sanitizeIdentity(identity) }),
+      body: JSON.stringify({ client: sanitizeIdentity(identity), reason }),
     });
   }
 
   async reportLease(
     leaseId: string,
-    event: "used" | "success" | "auth_error" | "capacity_error",
+    event: "used" | "success" | "auth_error" | "capacity_error" | "runtime_error",
     identity: OpenAIAuthBrokerRuntimeIdentity,
-    details: Record<string, unknown> = {}
+    details: OpenAIAuthBrokerLeaseReportDetails = {}
   ): Promise<OpenAIAuthBrokerLease | null> {
     const payload = await this.requestJson(`/v1/leases/${encodeURIComponent(leaseId)}/report`, {
       method: "POST",
-      body: JSON.stringify({ provider: "openai-codex", event, ...sanitizeIdentity(identity), details }),
+      body: JSON.stringify({ client: sanitizeIdentity(identity), event, ...sanitizeReportDetails(details) }),
     });
 
-    if (payload && typeof payload === "object" && "lease" in payload) {
-      return parseLease((payload as { lease: unknown }).lease);
+    if (payload && typeof payload === "object") {
+      if ("replacement" in payload) {
+        return parseLease((payload as { replacement: unknown }).replacement);
+      }
+      if ("lease" in payload) {
+        return parseLease((payload as { lease: unknown }).lease);
+      }
     }
 
     return null;
@@ -142,7 +159,7 @@ export class OpenAIAuthBrokerClient {
       if (!response.ok) {
         const brokerError = normalizeBrokerError(payload);
         throw new OpenAIAuthBrokerClientError(
-          this.redactSecrets(`OpenAI/Codex broker request failed: ${brokerError.message}`),
+          this.redactSecrets(`Forge Auth broker request failed: ${brokerError.message}`),
           brokerError.code,
           response.status
         );
@@ -154,8 +171,8 @@ export class OpenAIAuthBrokerClient {
         throw error;
       }
       const message = error instanceof Error && error.name === "AbortError"
-        ? "OpenAI/Codex broker request timed out."
-        : `OpenAI/Codex broker request failed: ${redactOpenAIAuthBrokerText(error)}`;
+        ? "Forge Auth broker request timed out."
+        : `Forge Auth broker request failed: ${redactOpenAIAuthBrokerText(error)}`;
       throw new OpenAIAuthBrokerClientError(this.redactSecrets(message), "unreachable");
     } finally {
       clearTimeout(timeout);
@@ -207,11 +224,15 @@ function normalizeBrokerError(payload: unknown): { code: string; message: string
   };
 }
 
-function normalizeStatusPayload(payload: unknown, checkedAt: Date): OpenAIBrokerSettingsStatus {
+function normalizeStatusPayload(
+  payload: unknown,
+  checkedAt: Date,
+  exactSecrets: readonly (string | undefined)[] = []
+): OpenAIBrokerSettingsStatus {
   const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
   const ok = typeof record.ok === "boolean" ? record.ok : false;
   const degraded = normalizeDegradedReason(record.degraded ?? record.reason ?? record.code);
-  const message = typeof record.message === "string" ? redactOpenAIAuthBrokerText(record.message) : undefined;
+  const message = typeof record.message === "string" ? redactOpenAIAuthBrokerText(record.message, exactSecrets) : undefined;
   const earliestResetAtMs = typeof record.earliestResetAtMs === "number" ? record.earliestResetAtMs : undefined;
   const accounts = normalizeAccountCounts(record.accounts);
   return {
@@ -249,6 +270,7 @@ function normalizeAccountCounts(value: unknown): OpenAIBrokerAccountCounts | und
     cooldown: normalizeCount(record.cooldown),
     auth_error: normalizeCount(record.auth_error),
     disabled: normalizeCount(record.disabled),
+    draining: normalizeCount(record.draining),
     unknown: normalizeCount(record.unknown),
   };
 }
@@ -261,6 +283,23 @@ function sanitizeIdentity(identity: OpenAIAuthBrokerRuntimeIdentity): OpenAIAuth
   return Object.fromEntries(
     Object.entries(identity).filter(([, value]) => typeof value === "string" && value.trim().length > 0)
   ) as OpenAIAuthBrokerRuntimeIdentity;
+}
+
+function sanitizeReportDetails(details: OpenAIAuthBrokerLeaseReportDetails): Omit<OpenAIAuthBrokerLeaseReportDetails, "message"> {
+  return {
+    ...(typeof details.retryAfterMs === "number" && Number.isFinite(details.retryAfterMs)
+      ? { retryAfterMs: Math.max(0, Math.trunc(details.retryAfterMs)) }
+      : {}),
+    ...(typeof details.errorCode === "string" && details.errorCode.trim()
+      ? { errorCode: details.errorCode.trim() }
+      : {}),
+    ...(typeof details.errorMessage === "string" && details.errorMessage.trim()
+      ? { errorMessage: details.errorMessage.trim() }
+      : typeof details.message === "string" && details.message.trim()
+        ? { errorMessage: details.message.trim() }
+        : {}),
+    ...(typeof details.requestReplacement === "boolean" ? { requestReplacement: details.requestReplacement } : {}),
+  };
 }
 
 function parseLease(payload: unknown): OpenAIAuthBrokerLease {

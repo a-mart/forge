@@ -7,6 +7,7 @@ import {
   getDefaultManagerEnabled,
   isCatalogModelManagerSupported,
   type ForgeModelDefinition,
+  type ForgeProviderCredentialSummary,
   type ModelOverrideEntry,
 } from '@forge/protocol'
 import { Badge } from '@/components/ui/badge'
@@ -78,12 +79,28 @@ function hasOverrideField<K extends keyof ModelOverrideEntry>(
 function ProviderStatusBadge({
   availabilityMode,
   available,
+  credentialSummary,
 }: {
   availabilityMode: 'managed-auth' | 'external'
   available: boolean | undefined
+  credentialSummary?: ForgeProviderCredentialSummary
 }) {
   if (availabilityMode === 'external') {
     return <Badge variant="outline">External</Badge>
+  }
+
+  if (credentialSummary?.centralBroker?.configured) {
+    const detail = credentialSummary.centralBroker.detail
+      ?? (credentialSummary.centralBroker.degraded ? `Broker: ${credentialSummary.centralBroker.degraded}` : undefined)
+    return (
+      <Badge
+        variant="outline"
+        className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+        title={detail}
+      >
+        Forge Auth broker
+      </Badge>
+    )
   }
 
   return available ? (
@@ -539,6 +556,7 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
   const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
   const [overrides, setOverrides] = useState<Record<string, ModelOverrideEntry>>({})
   const [providerAvailability, setProviderAvailability] = useState<Record<string, boolean>>({})
+  const [providerCredentials, setProviderCredentials] = useState<Record<string, ForgeProviderCredentialSummary>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedModelIds, setExpandedModelIds] = useState<Record<string, boolean>>({})
@@ -565,8 +583,9 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
     setLoading(true)
     try {
       const response = await fetchModelOverrides(clientOrWsUrl)
-      setOverrides(response.overrides)
-      setProviderAvailability(response.providerAvailability)
+      setOverrides(response.overrides ?? {})
+      setProviderAvailability(response.providerAvailability ?? {})
+      setProviderCredentials(response.providerCredentials ?? {})
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
@@ -691,6 +710,7 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
                   <ProviderStatusBadge
                     availabilityMode={group.availabilityMode}
                     available={providerAvailability[group.providerId]}
+                    credentialSummary={providerCredentials[group.providerId]}
                   />
                   {collapsed ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronUp className="size-4 text-muted-foreground" />}
                 </div>

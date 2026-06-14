@@ -356,6 +356,7 @@ export interface CredentialPoolPanelProps {
   onError: (message: string) => void
   onSuccess: (message: string) => void
   onAuthReload: () => void
+  readOnly?: boolean
 }
 
 export function CredentialPoolPanel({
@@ -368,10 +369,12 @@ export function CredentialPoolPanel({
   onError,
   onSuccess,
   onAuthReload,
+  readOnly = false,
 }: CredentialPoolPanelProps) {
   const [pool, setPool] = useState<CredentialPoolState | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isBusy, setIsBusy] = useState(false)
+  const controlsDisabled = isBusy || readOnly
   const [nowMs, setNowMs] = useState(() => Date.now())
 
   // Tick nowMs every 60s for cooldown countdown display
@@ -646,6 +649,11 @@ export function CredentialPoolPanel({
             )}
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">{displayDescription}</p>
+          {readOnly ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Read-only while Forge Auth broker mode is active.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -656,7 +664,7 @@ export function CredentialPoolPanel({
           <Select
             value={pool.strategy}
             onValueChange={(v) => void handleStrategyChange(v)}
-            disabled={isBusy}
+            disabled={controlsDisabled}
           >
             <SelectTrigger className="h-8 w-[320px] text-xs">
               <SelectValue />
@@ -681,7 +689,7 @@ export function CredentialPoolPanel({
             <CredentialRow
               key={cred.id}
               credential={cred}
-              isBusy={isBusy}
+              isBusy={controlsDisabled}
               nowMs={nowMs}
               onSetPrimary={() => void handleSetPrimary(cred.id)}
               onRename={(label) => void handleRename(cred.id, label)}
@@ -693,13 +701,14 @@ export function CredentialPoolPanel({
       )}
 
       {/* Add Account + OAuth flow */}
+      {!readOnly ? (
       <div className="mt-3 space-y-2">
         <Button
           type="button"
           variant="outline"
           size="sm"
           onClick={() => void handleAddAccount()}
-          disabled={isBusy || oauthInProgress || oauthFlow.isSubmittingCode}
+          disabled={controlsDisabled || oauthInProgress || oauthFlow.isSubmittingCode}
           className="gap-1.5"
         >
           {oauthInProgress ? (
@@ -801,6 +810,7 @@ export function CredentialPoolPanel({
           </div>
         )}
       </div>
+      ) : null}
     </div>
   )
 }

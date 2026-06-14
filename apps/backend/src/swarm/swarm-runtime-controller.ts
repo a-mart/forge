@@ -3,6 +3,7 @@ import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import { createForgeBindingToken } from "./forge-extension-types.js";
 import type { ProjectExecutableTrustPlan } from "./project-executable-trust.js";
 import type { CredentialPoolService } from "./credential-pool.js";
+import type { OpenAIAuthBrokerRuntimeService } from "./openai-auth/openai-auth-broker-runtime-service.js";
 import type { SkillMetadata } from "./skills/skill-metadata-service.js";
 import type {
   RuntimeCreationOptions,
@@ -73,6 +74,7 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   };
   secretsEnvService: {
     getCredentialPoolService(): CredentialPoolService;
+    getOpenAIAuthBrokerRuntimeService(): OpenAIAuthBrokerRuntimeService;
   };
   cortexService: {
     handleManagerStatusTransition(
@@ -199,6 +201,7 @@ export class SwarmRuntimeController {
       getPiModelsJsonPath: () => this.host.getPiModelsJsonPathOrThrow(),
       getAgentDescriptor: (agentId) => this.host.descriptors.get(agentId),
       getCredentialPoolService: () => this.host.secretsEnvService.getCredentialPoolService(),
+      getOpenAIAuthBrokerRuntimeService: () => this.host.secretsEnvService.getOpenAIAuthBrokerRuntimeService(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {
           await this.refreshSessionMetaStatsBySessionId(descriptor.managerId, sessionFile);

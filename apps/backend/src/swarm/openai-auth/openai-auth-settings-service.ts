@@ -15,7 +15,8 @@ import { renameWithRetry } from "../retry-rename.js";
 import { OpenAIAuthBrokerClient, OpenAIAuthBrokerClientError } from "./openai-auth-broker-client.js";
 import { maskOpenAIAuthBrokerSecret, redactOpenAIAuthBrokerText } from "./openai-auth-redaction.js";
 
-export const OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY = "FORGE_OPENAI_AUTH_BROKER_TOKEN";
+export const OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY = "forge.openaiAuthBrokerToken";
+export const LEGACY_OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY = "FORGE_OPENAI_AUTH_BROKER_TOKEN";
 export const OPENAI_CODEX_AUTH_SOURCE_FILE_NAME = "openai-codex-auth-source.json";
 
 interface OpenAICodexAuthSourceFileV1 {
@@ -81,7 +82,7 @@ export class OpenAIAuthSettingsService {
     const current = await this.resolveEffectiveSettings();
     if (current.envOverride) {
       throw new OpenAIAuthBrokerSettingsValidationError(
-        "OpenAI/Codex broker auth is controlled by environment variables. Remove the FORGE_OPENAI_CODEX_AUTH_MODE override before changing Settings."
+        "OpenAI/Codex auth is controlled by environment variables. Remove the FORGE_OPENAI_CODEX_AUTH_MODE override before changing Forge Auth broker settings."
       );
     }
 
@@ -101,11 +102,16 @@ export class OpenAIAuthSettingsService {
     if (mode === "central_broker") {
       if (!nextBroker?.url || !nextToken) {
         throw new OpenAIAuthBrokerSettingsValidationError(
-          "OpenAI/Codex broker URL and token are required before enabling broker mode."
+          "Forge Auth broker URL and token are required before enabling broker mode for OpenAI/Codex."
         );
       }
 
-      if (request.testBeforeEnable) {
+      if (request.testBeforeEnable || current.file.mode !== "central_broker" || didBrokerConnectionChange({
+        existingBroker,
+        nextBroker,
+        currentToken,
+        nextToken,
+      })) {
         const status = await this.testResolvedBroker({
           url: nextBroker.url,
           token: nextToken,
@@ -117,7 +123,7 @@ export class OpenAIAuthSettingsService {
         });
         if (!status.ok) {
           throw new OpenAIAuthBrokerSettingsValidationError(
-            status.message ?? "OpenAI/Codex broker test failed. Broker mode was not enabled."
+            status.message ?? "Forge Auth broker test failed. Broker mode was not enabled."
           );
         }
         nextBroker.lastTestedAt = status.checkedAt;
@@ -143,7 +149,7 @@ export class OpenAIAuthSettingsService {
     const current = await this.resolveEffectiveSettings();
     if (current.envOverride) {
       throw new OpenAIAuthBrokerSettingsValidationError(
-        "OpenAI/Codex broker auth is controlled by environment variables. Remove the FORGE_OPENAI_CODEX_AUTH_MODE override before changing Settings."
+        "OpenAI/Codex auth is controlled by environment variables. Remove the FORGE_OPENAI_CODEX_AUTH_MODE override before changing Forge Auth broker settings."
       );
     }
 
@@ -160,7 +166,7 @@ export class OpenAIAuthSettingsService {
     const current = await this.resolveEffectiveSettings();
     if (current.envOverride) {
       throw new OpenAIAuthBrokerSettingsValidationError(
-        "OpenAI/Codex broker auth is controlled by environment variables. Remove the FORGE_OPENAI_CODEX_AUTH_MODE override before changing Settings."
+        "OpenAI/Codex auth is controlled by environment variables. Remove the FORGE_OPENAI_CODEX_AUTH_MODE override before changing Forge Auth broker settings."
       );
     }
 
@@ -185,7 +191,7 @@ export class OpenAIAuthSettingsService {
         });
 
     if (!broker?.url || !token) {
-      return { ok: false, error: "OpenAI/Codex broker URL and token are required before testing." };
+      return { ok: false, error: "Forge Auth broker URL and token are required before testing OpenAI/Codex auth." };
     }
 
     const status = await this.testResolvedBroker({
@@ -197,7 +203,13 @@ export class OpenAIAuthSettingsService {
       userLabel: broker.userLabel,
       timeoutMs: broker.timeoutMs,
     });
-    if (!request?.broker) {
+    if (!request?.broker || doesBrokerTestPatchMatchPersistedSettings({
+      current,
+      requestBroker: request.broker,
+      resolvedBroker: broker,
+      resolvedToken: token,
+      currentToken,
+    })) {
       await this.cacheStatus(status);
     }
     return status.ok ? { ok: true, status } : { ok: false, status, error: status.message };
@@ -207,7 +219,7 @@ export class OpenAIAuthSettingsService {
     const [file, savedToken] = await Promise.all([this.readConfigFile(), this.readBrokerToken()]);
     const envMode = normalizeEnvMode(process.env.FORGE_OPENAI_CODEX_AUTH_MODE);
     if (envMode) {
-      const envBroker = resolveEnvBrokerConfig(file, savedToken);
+      const envBroker = resolveEnvBrokerConfig();
       return {
         file,
         mode: file.mode,
@@ -230,7 +242,8 @@ export class OpenAIAuthSettingsService {
   }
 
   getConfigFilePath(): string {
-    return join(this.options.config.paths.sharedAuthDir, OPENAI_CODEX_AUTH_SOURCE_FILE_NAME);
+    const sharedAuthDir = this.options.config.paths.sharedAuthDir ?? dirname(this.options.config.paths.sharedAuthFile);
+    return join(sharedAuthDir, OPENAI_CODEX_AUTH_SOURCE_FILE_NAME);
   }
 
   private async testResolvedBroker(broker: ResolvedBrokerConfig & { token: string }): Promise<OpenAIBrokerSettingsStatus> {
@@ -248,7 +261,7 @@ export class OpenAIAuthSettingsService {
         degraded: error instanceof OpenAIAuthBrokerClientError && isKnownBrokerStatusReason(error.code)
           ? error.code
           : "unreachable",
-        message: redactOpenAIAuthBrokerText(error),
+        message: redactOpenAIAuthBrokerText(error, [broker.token]),
         checkedAt: this.now().toISOString(),
       };
     }
@@ -265,7 +278,7 @@ export class OpenAIAuthSettingsService {
       broker: {
         ...current.file.broker,
         lastTestedAt: status.checkedAt,
-        lastStatus: status,
+        lastStatus: redactBrokerStatus(status, [current.broker.token]),
       },
       updatedAt: this.now().toISOString(),
     });
@@ -299,7 +312,8 @@ export class OpenAIAuthSettingsService {
 
   private async readBrokerToken(): Promise<string | undefined> {
     const secrets = await this.readSecretsStore();
-    return normalizeOptionalString(secrets[OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY]);
+    return normalizeOptionalString(secrets[OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY])
+      ?? normalizeOptionalString(secrets[LEGACY_OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY]);
   }
 
   private async writeBrokerToken(token: string | undefined): Promise<void> {
@@ -309,6 +323,7 @@ export class OpenAIAuthSettingsService {
     } else {
       delete secrets[OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY];
     }
+    delete secrets[LEGACY_OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY];
     await this.writeSecretsStore(secrets);
   }
 
@@ -395,7 +410,8 @@ function buildNextBrokerConfig(options: {
   now: Date;
 }): OpenAICodexAuthSourceFileV1["broker"] {
   const existing = options.existingBroker;
-  const url = normalizeUrl(options.patch?.url) ?? existing?.url;
+  const patchUrl = normalizeUrlPatch(options.patch?.url);
+  const url = patchUrl ?? existing?.url;
   if (!url) {
     return undefined;
   }
@@ -423,20 +439,74 @@ function resolveSettingsBrokerConfig(file: OpenAICodexAuthSourceFileV1, token: s
     instanceLabel: broker?.instanceLabel,
     userLabel: broker?.userLabel,
     timeoutMs: broker?.timeoutMs ?? 10_000,
-    status: broker?.lastStatus,
+    status: redactBrokerStatus(broker?.lastStatus, [token]),
   };
 }
 
-function resolveEnvBrokerConfig(file: OpenAICodexAuthSourceFileV1, savedToken: string | undefined): ResolvedBrokerConfig {
-  const settingsBroker = resolveSettingsBrokerConfig(file, savedToken);
+function doesBrokerTestPatchMatchPersistedSettings({
+  current,
+  requestBroker,
+  resolvedBroker,
+  resolvedToken,
+  currentToken,
+}: {
+  current: EffectiveSettings;
+  requestBroker: UpdateOpenAIBrokerSettingsRequest["broker"];
+  resolvedBroker: ResolvedBrokerConfig;
+  resolvedToken: string;
+  currentToken?: string;
+}): boolean {
+  if (current.envOverride || !current.file.broker || !resolvedBroker.url || !resolvedBroker.instanceId || !requestBroker) {
+    return false;
+  }
+
+  const tokenPatch = normalizeOptionalString(requestBroker.token);
+  if (requestBroker.clearToken === true || (tokenPatch !== undefined && tokenPatch !== currentToken)) {
+    return false;
+  }
+
+  return !didBrokerConnectionChange({
+    existingBroker: current.file.broker,
+    nextBroker: {
+      url: resolvedBroker.url,
+      clientId: resolvedBroker.clientId,
+      instanceId: resolvedBroker.instanceId,
+      ...(resolvedBroker.instanceLabel ? { instanceLabel: resolvedBroker.instanceLabel } : {}),
+      ...(resolvedBroker.userLabel ? { userLabel: resolvedBroker.userLabel } : {}),
+      timeoutMs: resolvedBroker.timeoutMs,
+    },
+    currentToken,
+    nextToken: resolvedToken,
+  });
+}
+
+function didBrokerConnectionChange(options: {
+  existingBroker: OpenAICodexAuthSourceFileV1["broker"] | undefined;
+  nextBroker: OpenAICodexAuthSourceFileV1["broker"];
+  currentToken: string | undefined;
+  nextToken: string | undefined;
+}): boolean {
+  const { existingBroker, nextBroker, currentToken, nextToken } = options;
+  if (!existingBroker) {
+    return true;
+  }
+  return existingBroker.url !== nextBroker?.url
+    || existingBroker.clientId !== nextBroker?.clientId
+    || existingBroker.instanceId !== nextBroker?.instanceId
+    || existingBroker.instanceLabel !== nextBroker?.instanceLabel
+    || existingBroker.userLabel !== nextBroker?.userLabel
+    || existingBroker.timeoutMs !== nextBroker?.timeoutMs
+    || currentToken !== nextToken;
+}
+
+function resolveEnvBrokerConfig(): ResolvedBrokerConfig {
   return {
-    ...settingsBroker,
-    url: normalizeUrl(process.env.FORGE_OPENAI_AUTH_BROKER_URL) ?? settingsBroker.url,
-    token: normalizeOptionalString(process.env.FORGE_OPENAI_AUTH_BROKER_TOKEN) ?? settingsBroker.token,
+    url: normalizeUrl(process.env.FORGE_OPENAI_AUTH_BROKER_URL),
+    token: normalizeOptionalString(process.env.FORGE_OPENAI_AUTH_BROKER_TOKEN),
     clientId: "forge",
-    instanceId: normalizeOptionalString(process.env.FORGE_OPENAI_AUTH_BROKER_INSTANCE_ID) ?? settingsBroker.instanceId,
-    instanceLabel: normalizeOptionalString(process.env.FORGE_OPENAI_AUTH_BROKER_INSTANCE_LABEL) ?? settingsBroker.instanceLabel,
-    timeoutMs: normalizeTimeoutMs(process.env.FORGE_OPENAI_AUTH_BROKER_TIMEOUT_MS ?? settingsBroker.timeoutMs),
+    instanceId: normalizeOptionalString(process.env.FORGE_OPENAI_AUTH_BROKER_INSTANCE_ID),
+    instanceLabel: normalizeOptionalString(process.env.FORGE_OPENAI_AUTH_BROKER_INSTANCE_LABEL),
+    timeoutMs: normalizeTimeoutMs(process.env.FORGE_OPENAI_AUTH_BROKER_TIMEOUT_MS),
   };
 }
 
@@ -499,6 +569,16 @@ function normalizeUrl(value: unknown): string | undefined {
   }
 }
 
+function normalizeUrlPatch(value: unknown): string | undefined {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) return undefined;
+  const normalized = normalizeUrl(trimmed);
+  if (!normalized) {
+    throw new OpenAIAuthBrokerSettingsValidationError("Forge Auth broker URL must be a valid http(s) URL.");
+  }
+  return normalized;
+}
+
 function normalizeTimeoutMs(value: unknown): number {
   if (typeof value === "string") {
     const parsed = Number(value);
@@ -508,6 +588,19 @@ function normalizeTimeoutMs(value: unknown): number {
     return 10_000;
   }
   return Math.max(1_000, Math.min(60_000, Math.trunc(value)));
+}
+
+function redactBrokerStatus(
+  status: OpenAIBrokerSettingsStatus | undefined,
+  exactSecrets: readonly (string | undefined)[]
+): OpenAIBrokerSettingsStatus | undefined {
+  if (!status) {
+    return undefined;
+  }
+  return {
+    ...status,
+    ...(status.message ? { message: redactOpenAIAuthBrokerText(status.message, exactSecrets) } : {}),
+  };
 }
 
 function isOpenAIBrokerSettingsStatus(value: unknown): value is OpenAIBrokerSettingsStatus {

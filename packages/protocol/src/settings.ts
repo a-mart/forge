@@ -83,6 +83,7 @@ export interface SettingsAuthLoginCompleteEvent {
 
 export interface SettingsAuthLoginErrorEvent {
   message: string
+  code?: string
 }
 
 export interface SettingsAuthLoginEventPayload {

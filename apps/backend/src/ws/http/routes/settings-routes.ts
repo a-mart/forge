@@ -41,6 +41,8 @@ const OPENAI_AUTH_SOURCE_ENDPOINT_PATH = "/api/settings/auth/openai-codex/source
 const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
 const SETTINGS_AUTH_METHODS = "GET, PUT, DELETE, POST, OPTIONS";
 const SETTINGS_NOTIFICATIONS_ENDPOINT_PATH = "/api/settings/notifications";
+const OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR_CODE = "central_broker_mode_active";
+const OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR = "Switch OpenAI auth source back to local before editing local OpenAI credentials.";
 const SETTINGS_NOTIFICATIONS_METHODS = "GET, PUT, OPTIONS";
 
 type PooledSettingsAuthProviderId = SettingsAuthLoginProviderId;
@@ -425,7 +427,7 @@ async function handleOpenAIAuthBrokerSourceHttpRequest(
       return;
     }
   } catch (error) {
-    sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to update OpenAI broker settings" });
+    sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to update Forge Auth broker settings" });
     return;
   }
 
@@ -443,21 +445,36 @@ async function rejectLocalOpenAIAuthMutationWhenBrokerActive(
   response: ServerResponse,
   ...providers: string[]
 ): Promise<boolean> {
+  if (request.method === "GET" || request.method === "OPTIONS") {
+    return false;
+  }
+
   if (!providers.some((provider) => provider.trim().toLowerCase() === "openai-codex")) {
     return false;
   }
-  const brokerModeActive = typeof (swarmManager as { isOpenAIAuthBrokerModeActive?: unknown }).isOpenAIAuthBrokerModeActive === "function"
-    ? await swarmManager.isOpenAIAuthBrokerModeActive()
-    : false;
+  const brokerModeActive = await isOpenAIAuthBrokerModeActiveForProviders(swarmManager, ...providers);
   if (!brokerModeActive) {
     return false;
   }
   applyCorsHeaders(request, response, SETTINGS_AUTH_METHODS);
   sendJson(response, 400, {
-    code: "central_broker_mode_active",
-    error: "Switch OpenAI auth source back to local before editing local OpenAI credentials.",
+    code: OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR_CODE,
+    error: OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR,
   });
   return true;
+}
+
+async function isOpenAIAuthBrokerModeActiveForProviders(
+  swarmManager: SwarmManager,
+  ...providers: string[]
+): Promise<boolean> {
+  if (!providers.some((provider) => provider.trim().toLowerCase() === "openai-codex")) {
+    return false;
+  }
+
+  return typeof (swarmManager as { isOpenAIAuthBrokerModeActive?: unknown }).isOpenAIAuthBrokerModeActive === "function"
+    ? await swarmManager.isOpenAIAuthBrokerModeActive()
+    : false;
 }
 
 // ── Credential Pool Routes ──
@@ -779,6 +796,14 @@ async function handlePoolAddAccountOAuthLogin(
     const credentials = (await provider.login(callbacks)) as OAuthCredentials;
     if (flow.closed) return;
 
+    if (await isOpenAIAuthBrokerModeActiveForProviders(swarmManager, providerId)) {
+      sendSseEvent("error", {
+        code: OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR_CODE,
+        message: OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR,
+      });
+      return;
+    }
+
     await swarmManager.addPooledCredential(
       providerId,
       { type: "oauth", ...credentials },
@@ -829,6 +854,10 @@ async function handleSettingsAuthLoginHttpRequest(
 
   if (!providerId) {
     sendJson(response, 400, { error: "Invalid OAuth provider" });
+    return;
+  }
+
+  if (await rejectLocalOpenAIAuthMutationWhenBrokerActive(swarmManager, request, response, providerId)) {
     return;
   }
 
@@ -1012,6 +1041,14 @@ async function handleSettingsAuthLoginHttpRequest(
       return;
     }
 
+    if (await isOpenAIAuthBrokerModeActiveForProviders(swarmManager, providerId)) {
+      sendSseEvent("error", {
+        code: OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR_CODE,
+        message: OPENAI_BROKER_LOCAL_AUTH_MUTATION_ERROR,
+      });
+      return;
+    }
+
     authStorage.set(providerId, {
       type: "oauth",
       ...credentials
@@ -1192,14 +1229,14 @@ function parseOpenAIAuthBrokerSettingsPartialBody(value: unknown): Partial<Updat
 function parseOpenAIAuthBrokerSettingsUpdateBody(value: unknown): UpdateOpenAIBrokerSettingsRequest {
   const parsed = parseOpenAIAuthBrokerSettingsPartialBody(value);
   if (parsed.mode !== "local" && parsed.mode !== "central_broker") {
-    throw new Error("OpenAI broker settings mode must be 'local' or 'central_broker'");
+    throw new Error("Forge Auth broker settings mode must be 'local' or 'central_broker'");
   }
   return parsed as UpdateOpenAIBrokerSettingsRequest;
 }
 
 function parseOpenAIAuthBrokerPatch(value: unknown): NonNullable<UpdateOpenAIBrokerSettingsRequest["broker"]> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("OpenAI broker settings broker payload must be an object");
+    throw new Error("Forge Auth broker settings broker payload must be an object");
   }
   const body = value as Record<string, unknown>;
   return {

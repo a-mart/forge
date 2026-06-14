@@ -174,6 +174,62 @@ describe('SwarmManager', () => {
     ).rejects.toThrow(/cli\.command/)
   })
 
+  it('recycles active OpenAI manager runtimes when broker auth source mode changes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const runtime = manager.runtimeByAgentId.get(rootSession.agentId)
+    expect(runtime).toBeDefined()
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ ok: true })))
+    try {
+      await manager.updateOpenAIAuthBrokerSettings({
+        mode: 'central_broker',
+        broker: { url: 'https://broker.example.test', token: 'broker-token' },
+      })
+      expect(runtime?.recycleCalls).toBe(1)
+
+      await manager.handleUserMessage('recreate with broker auth', { targetAgentId: rootSession.agentId })
+      const brokerRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+      expect(brokerRuntime).toBeDefined()
+      expect(brokerRuntime).not.toBe(runtime)
+
+      await manager.disableOpenAIAuthBroker()
+      expect(brokerRuntime?.recycleCalls).toBe(1)
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('defers OpenAI manager runtime recycle on broker auth changes while the session is busy', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const descriptor = manager.getAgent(rootSession.agentId)
+    const runtime = manager.runtimeByAgentId.get(rootSession.agentId)
+    expect(runtime).toBeDefined()
+    expect(descriptor?.role).toBe('manager')
+    runtime!.busy = true
+    descriptor!.status = 'streaming'
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ ok: true })))
+    try {
+      await manager.updateOpenAIAuthBrokerSettings({
+        mode: 'central_broker',
+        broker: { url: 'https://broker.example.test', token: 'broker-token' },
+      })
+      expect(runtime?.recycleCalls).toBe(0)
+
+      runtime!.busy = false
+      descriptor!.status = 'idle'
+      await (manager as unknown as { applyPendingManagerRuntimeRecycleBeforeRuntimeUse: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void> })
+        .applyPendingManagerRuntimeRecycleBeforeRuntimeUse(descriptor as AgentDescriptor & { role: 'manager' })
+      expect(runtime?.recycleCalls).toBe(1)
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
   it('createSession strips stale service-tier fields from profile default models', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

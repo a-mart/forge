@@ -14,6 +14,7 @@ export interface OpenAIBrokerAccountCounts {
   cooldown: number
   auth_error: number
   disabled: number
+  draining: number
   unknown: number
 }
 

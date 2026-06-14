@@ -3,7 +3,12 @@ import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import { CredentialPoolService } from "./credential-pool.js";
-import { OpenAIAuthSettingsService } from "./openai-auth/openai-auth-settings-service.js";
+import {
+  LEGACY_OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY,
+  OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY,
+  OpenAIAuthSettingsService,
+} from "./openai-auth/openai-auth-settings-service.js";
+import { OpenAIAuthBrokerRuntimeService } from "./openai-auth/openai-auth-broker-runtime-service.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type {
@@ -22,6 +27,10 @@ const SETTINGS_ENV_MASK = "********";
 const SETTINGS_AUTH_MASK = "********";
 const API_KEY_POOL_CONFLICT_MESSAGE = "Remove pooled accounts before setting an API key";
 const POOLED_SETTINGS_AUTH_PROVIDERS = new Set<string>(["anthropic", "openai-codex"]);
+const RESERVED_NON_ENV_SECRET_KEYS = new Set<string>([
+  OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY,
+  LEGACY_OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY,
+]);
 
 const SETTINGS_AUTH_PROVIDER_DEFINITIONS: Array<{
   provider: SettingsAuthProviderName;
@@ -72,6 +81,7 @@ export class SecretsEnvService {
   private readonly originalProcessEnvByName = new Map<string, string | undefined>();
   private secrets: Record<string, string> = {};
   private credentialPoolServiceInstance: CredentialPoolService | null = null;
+  private openAIAuthBrokerRuntimeServiceInstance: OpenAIAuthBrokerRuntimeService | null = null;
 
   constructor(private readonly deps: SecretsEnvServiceDependencies) {}
 
@@ -83,6 +93,15 @@ export class SecretsEnvService {
       });
     }
     return this.credentialPoolServiceInstance;
+  }
+
+  getOpenAIAuthBrokerRuntimeService(): OpenAIAuthBrokerRuntimeService {
+    if (!this.openAIAuthBrokerRuntimeServiceInstance) {
+      this.openAIAuthBrokerRuntimeServiceInstance = new OpenAIAuthBrokerRuntimeService({
+        config: this.deps.config,
+      });
+    }
+    return this.openAIAuthBrokerRuntimeServiceInstance;
   }
 
   async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
@@ -125,6 +144,9 @@ export class SecretsEnvService {
       const normalizedName = normalizeEnvVarName(rawName);
       if (!normalizedName) {
         throw new Error(`Invalid environment variable name: ${rawName}`);
+      }
+      if (RESERVED_NON_ENV_SECRET_KEYS.has(normalizedName)) {
+        throw new Error(`Environment variable ${normalizedName} is managed by Forge Auth broker settings`);
       }
 
       const normalizedValue = typeof rawValue === "string" ? rawValue.trim() : "";
@@ -255,9 +277,10 @@ export class SecretsEnvService {
   private async saveSecretsStore(): Promise<void> {
     const target = this.deps.config.paths.sharedSecretsFile;
     const tmp = `${target}.tmp`;
+    const preservedSecrets = await readReservedSecretsForPreservationFromConfig(this.deps.config);
 
     await mkdir(dirname(target), { recursive: true });
-    await writeFile(tmp, `${JSON.stringify(this.secrets, null, 2)}\n`, "utf8");
+    await writeFile(tmp, `${JSON.stringify({ ...preservedSecrets, ...this.secrets }, null, 2)}\n`, "utf8");
     await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
   }
 
@@ -473,7 +496,7 @@ function buildCentralBrokerCredentialSummary(
 ): ForgeProviderCredentialSummary {
   const counts = brokerSettings.broker.status?.accounts;
   const totalAccounts = counts
-    ? counts.healthy + counts.cooldown + counts.auth_error + counts.disabled + counts.unknown
+    ? counts.healthy + counts.cooldown + counts.auth_error + counts.disabled + (counts.draining ?? 0) + counts.unknown
     : undefined;
   const availableAccounts = counts ? counts.healthy : undefined;
   const configured = brokerSettings.broker.configured;
@@ -502,15 +525,48 @@ function isCentralBrokerCredentialAvailable(summary: ForgeProviderCredentialSumm
 }
 
 async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<string, string>> {
+  const raw = await readFirstSecretsStoreRawFromConfig(config);
+  return raw ? parseSecretsStoreRaw(raw) : {};
+}
+
+async function readReservedSecretsForPreservationFromConfig(config: SwarmConfig): Promise<Record<string, string>> {
+  const raw = await readFirstSecretsStoreRawFromConfig(config);
+  if (!raw) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+
+  const reserved: Record<string, string> = {};
+  for (const [rawName, rawValue] of Object.entries(parsed)) {
+    if (!RESERVED_NON_ENV_SECRET_KEYS.has(rawName) || typeof rawValue !== "string") {
+      continue;
+    }
+    const normalizedValue = rawValue.trim();
+    if (normalizedValue) {
+      reserved[rawName] = normalizedValue;
+    }
+  }
+  return reserved;
+}
+
+async function readFirstSecretsStoreRawFromConfig(config: SwarmConfig): Promise<string | undefined> {
   const preferredPath = config.paths.sharedSecretsFile;
   const legacyPath = config.paths.secretsFile;
   const candidatePaths = uniquePaths([preferredPath, legacyPath]);
 
   for (const candidatePath of candidatePaths) {
-    let raw: string;
-
     try {
-      raw = await readFile(candidatePath, "utf8");
+      return await readFile(candidatePath, "utf8");
     } catch (error) {
       if (isEnoentError(error)) {
         continue;
@@ -518,11 +574,9 @@ async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<s
 
       throw error;
     }
-
-    return parseSecretsStoreRaw(raw);
   }
 
-  return {};
+  return undefined;
 }
 
 async function resolveAuthFileForReadFromConfig(config: SwarmConfig): Promise<string> {
@@ -574,6 +628,10 @@ function parseSecretsStoreRaw(raw: string): Record<string, string> {
   const normalized: Record<string, string> = {};
 
   for (const [rawName, rawValue] of Object.entries(parsed)) {
+    if (RESERVED_NON_ENV_SECRET_KEYS.has(rawName)) {
+      continue;
+    }
+
     const normalizedName = normalizeEnvVarName(rawName);
     if (!normalizedName) {
       continue;

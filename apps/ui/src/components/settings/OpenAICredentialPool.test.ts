@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OpenAICredentialPool } from './OpenAICredentialPool'
-import type { CredentialPoolState, PooledCredentialInfo } from '@forge/protocol'
+import type { CredentialPoolState, OpenAIBrokerSettingsState, PooledCredentialInfo } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 import type { SettingsBackendTarget } from './settings-target'
 
@@ -16,6 +16,11 @@ import type { SettingsBackendTarget } from './settings-target'
 
 const settingsApiMock = vi.hoisted(() => ({
   fetchCredentialPool: vi.fn(),
+  fetchOpenAIBrokerSettings: vi.fn(),
+  updateOpenAIBrokerSettings: vi.fn(),
+  testOpenAIBrokerSettings: vi.fn(),
+  disableOpenAIBrokerSettings: vi.fn(),
+  clearOpenAIBrokerSettings: vi.fn(),
   setCredentialPoolStrategy: vi.fn(),
   renamePooledCredential: vi.fn(),
   setPrimaryPooledCredential: vi.fn(),
@@ -46,6 +51,11 @@ const settingsApiMock = vi.hoisted(() => ({
 
 vi.mock('./settings-api', () => ({
   fetchCredentialPool: (...a: unknown[]) => settingsApiMock.fetchCredentialPool(a[0], a[1]),
+  fetchOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.fetchOpenAIBrokerSettings(a[0]),
+  updateOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.updateOpenAIBrokerSettings(a[0], a[1]),
+  testOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.testOpenAIBrokerSettings(a[0], a[1]),
+  disableOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.disableOpenAIBrokerSettings(a[0]),
+  clearOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.clearOpenAIBrokerSettings(a[0]),
   setCredentialPoolStrategy: (...a: unknown[]) => settingsApiMock.setCredentialPoolStrategy(a[0], a[1], a[2]),
   renamePooledCredential: (...a: unknown[]) => settingsApiMock.renamePooledCredential(a[0], a[1], a[2], a[3]),
   setPrimaryPooledCredential: (...a: unknown[]) => settingsApiMock.setPrimaryPooledCredential(a[0], a[1], a[2]),
@@ -88,6 +98,19 @@ function makePool(
   }
 }
 
+function makeBrokerSettings(
+  overrides: Partial<OpenAIBrokerSettingsState> = {},
+): OpenAIBrokerSettingsState {
+  return {
+    mode: 'local',
+    effectiveMode: 'local',
+    source: 'default',
+    envOverride: false,
+    broker: { configured: false, hasToken: false, clientId: 'forge', timeoutMs: 10000 },
+    ...overrides,
+  }
+}
+
 const mockTarget: SettingsBackendTarget = {
   kind: 'builder',
   label: 'Builder',
@@ -118,6 +141,11 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
 
+  settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
+  settingsApiMock.updateOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
+  settingsApiMock.testOpenAIBrokerSettings.mockResolvedValue({ ok: true })
+  settingsApiMock.disableOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
+  settingsApiMock.clearOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
   settingsApiMock.setCredentialPoolStrategy.mockResolvedValue(undefined)
   settingsApiMock.renamePooledCredential.mockResolvedValue(undefined)
   settingsApiMock.setPrimaryPooledCredential.mockResolvedValue(undefined)
@@ -176,8 +204,18 @@ describe('OpenAICredentialPool', () => {
       await flush()
       await flush()
 
-      expect(container.textContent).toContain('OpenAI Codex')
+      expect(container.textContent).toContain('OpenAI auth source')
+      expect(container.textContent).toContain('OpenAI local credentials')
       expect(container.textContent).toContain('Primary Account')
+    })
+
+    it('passes the active settings API client to broker and local credential requests', async () => {
+      renderPool()
+      await flush()
+      await flush()
+
+      expect(settingsApiMock.fetchOpenAIBrokerSettings).toHaveBeenCalledWith(mockApiClient)
+      expect(settingsApiMock.fetchCredentialPool).toHaveBeenCalledWith(mockApiClient, 'openai-codex')
     })
 
     it('shows not configured badge when no credentials', async () => {
@@ -186,6 +224,127 @@ describe('OpenAICredentialPool', () => {
       await flush()
 
       expect(container.textContent).toContain('Not configured')
+    })
+
+    it('keeps local OpenAI credentials visible but read-only when broker mode is active', async () => {
+      settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings({
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'settings',
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+          status: { ok: true, checkedAt: '2026-01-01T00:00:00.000Z' },
+        },
+      }))
+      renderPool()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Forge Auth broker active')
+      expect(container.textContent).toContain('Local OpenAI credentials below are visible for reference')
+      expect(container.textContent).toContain('Primary Account')
+      expect(container.textContent).toContain('Read-only while Forge Auth broker mode is active.')
+      expect(container.textContent).not.toContain('Add Account')
+    })
+
+    it('removes stored broker settings after confirmation and returns to local credentials', async () => {
+      settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings({
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'settings',
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+          status: { ok: true, checkedAt: '2026-01-01T00:00:00.000Z' },
+        },
+      }))
+      settingsApiMock.clearOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+      renderPool()
+      await flush()
+      await flush()
+
+      const removeButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Remove Forge Auth broker settings'))
+      expect(removeButton).toBeTruthy()
+      fireEvent.click(removeButton!)
+      await flush()
+      await flush()
+
+      expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('Remove the saved Forge Auth broker URL and token'))
+      expect(settingsApiMock.clearOpenAIBrokerSettings).toHaveBeenCalledWith(mockApiClient)
+      expect(onAuthReload).toHaveBeenCalledTimes(1)
+      expect(onSuccess).toHaveBeenCalledWith('Removed stored Forge Auth broker settings. Local credentials are active.')
+      confirmSpy.mockRestore()
+    })
+
+    it('documents strict env broker override semantics in the locked settings copy', async () => {
+      settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings({
+        effectiveMode: 'central_broker',
+        source: 'env',
+        envOverride: true,
+        broker: {
+          configured: false,
+          hasToken: false,
+          clientId: 'forge',
+          timeoutMs: 10000,
+        },
+      }))
+
+      renderPool()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Forge uses only `FORGE_OPENAI_AUTH_BROKER_URL` and `FORGE_OPENAI_AUTH_BROKER_TOKEN` from the environment')
+      expect(container.textContent).toContain('saved Forge Auth broker URL/token values are ignored')
+    })
+
+    it('reloads parent auth summaries after broker settings are saved', async () => {
+      const enabled = makeBrokerSettings({
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'settings',
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+          status: { ok: true, checkedAt: '2026-01-01T00:00:00.000Z' },
+        },
+      })
+      settingsApiMock.updateOpenAIBrokerSettings.mockResolvedValue(enabled)
+      renderPool()
+      await flush()
+      await flush()
+
+      const remoteButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Forge Auth broker'))
+      expect(remoteButton).toBeTruthy()
+      fireEvent.click(remoteButton!)
+      await flush()
+
+      fireEvent.input(container.querySelector('#openai-broker-url')!, { target: { value: 'https://broker.example.test' } })
+      fireEvent.input(container.querySelector('#openai-broker-token')!, { target: { value: 'broker-token' } })
+      const enableButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Enable Forge Auth broker'))
+      expect(enableButton).toBeTruthy()
+      fireEvent.click(enableButton!)
+      await flush()
+      await flush()
+
+      expect(settingsApiMock.updateOpenAIBrokerSettings).toHaveBeenCalledWith(mockApiClient, expect.objectContaining({
+        mode: 'central_broker',
+      }))
+      expect(onAuthReload).toHaveBeenCalledTimes(1)
     })
   })
 

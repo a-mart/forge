@@ -4,9 +4,13 @@ const TOKEN_LIKE_PATTERNS: RegExp[] = [
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
 ];
 
-export function redactOpenAIAuthBrokerText(value: unknown): string {
+export function redactOpenAIAuthBrokerText(value: unknown, exactSecrets: readonly (string | undefined)[] = []): string {
   const raw = value instanceof Error ? value.message : String(value ?? "");
-  return TOKEN_LIKE_PATTERNS.reduce((text, pattern) => text.replace(pattern, "[redacted]"), raw);
+  const exactRedacted = exactSecrets.reduce<string>((text, secret) => {
+    const trimmed = typeof secret === "string" ? secret.trim() : "";
+    return trimmed ? text.replaceAll(trimmed, "[redacted]") : text;
+  }, raw);
+  return TOKEN_LIKE_PATTERNS.reduce<string>((text, pattern) => text.replace(pattern, "[redacted]"), exactRedacted);
 }
 
 export function maskOpenAIAuthBrokerSecret(value: string | undefined): string | undefined {

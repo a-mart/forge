@@ -72,7 +72,7 @@ interface SettingsDescriptorTransactionStore {
   ) => ManagerProfile;
 }
 
-export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change" | "prompt_mode_change";
+export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change" | "prompt_mode_change" | "auth_source_change";
 
 type ManagerRuntimeRecycleDisposition = "recycled" | "deferred" | "none";
 type SessionDescriptor = AgentDescriptor & { role: "manager"; profileId: string };
@@ -559,15 +559,28 @@ export class SwarmSettingsService {
   }
 
   async updateOpenAIAuthBrokerSettings(request: UpdateOpenAIBrokerSettingsRequest): Promise<OpenAIBrokerSettingsResponse> {
-    return this.openAIAuthSettingsService.updateSettings(request);
+    const before = await this.openAIAuthSettingsService.getSettings();
+    const result = await this.openAIAuthSettingsService.updateSettings(request);
+    await this.recycleOpenAICodexManagersIfBrokerBoundaryChanged(
+      before,
+      result,
+      shouldRecycleOpenAICodexManagersForBrokerTokenPatch(before, result, request),
+    );
+    return result;
   }
 
   async disableOpenAIAuthBroker(): Promise<OpenAIBrokerSettingsResponse> {
-    return this.openAIAuthSettingsService.disableBroker();
+    const before = await this.openAIAuthSettingsService.getSettings();
+    const result = await this.openAIAuthSettingsService.disableBroker();
+    await this.recycleOpenAICodexManagersIfBrokerBoundaryChanged(before, result);
+    return result;
   }
 
   async clearOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
-    return this.openAIAuthSettingsService.clearBrokerSettings();
+    const before = await this.openAIAuthSettingsService.getSettings();
+    const result = await this.openAIAuthSettingsService.clearBrokerSettings();
+    await this.recycleOpenAICodexManagersIfBrokerBoundaryChanged(before, result);
+    return result;
   }
 
   async testOpenAIAuthBrokerSettings(request?: Partial<UpdateOpenAIBrokerSettingsRequest>): Promise<OpenAIBrokerTestResponse> {
@@ -576,6 +589,33 @@ export class SwarmSettingsService {
 
   async isOpenAIAuthBrokerModeActive(): Promise<boolean> {
     return (await this.openAIAuthSettingsService.getEffectiveMode()) === "central_broker";
+  }
+
+  private async recycleOpenAICodexManagersIfBrokerBoundaryChanged(
+    before: OpenAIBrokerSettingsResponse,
+    after: OpenAIBrokerSettingsResponse,
+    forceRecycle = false,
+  ): Promise<void> {
+    if (!forceRecycle && !hasOpenAIAuthBrokerRuntimeBoundaryChanged(before, after)) {
+      return;
+    }
+
+    const sessions = Array.from(this.options.profiles.keys())
+      .flatMap((profileId) => this.options.getSessionsForProfile(profileId))
+      .filter((session) => session.model.provider.trim().toLowerCase() === "openai-codex");
+
+    const results = await Promise.allSettled(
+      sessions.map((session) => this.options.applyManagerRuntimeRecyclePolicy(session.agentId, "auth_source_change")),
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        this.options.logDebug("openai_auth_broker:runtime_recycle:error", {
+          agentId: sessions[index]?.agentId,
+          message: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
+    });
   }
 
   private async assertLocalOpenAIAuthMutationAllowed(providers: string[]): Promise<void> {
@@ -597,22 +637,27 @@ export class SwarmSettingsService {
   }
 
   async renamePooledCredential(provider: string, credentialId: string, label: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().renameCredential(provider, credentialId, label);
   }
 
   async removePooledCredential(provider: string, credentialId: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().removeCredential(provider, credentialId);
   }
 
   async setPrimaryPooledCredential(provider: string, credentialId: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().setPrimary(provider, credentialId);
   }
 
   async setCredentialPoolStrategy(provider: string, strategy: CredentialPoolStrategy): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().setStrategy(provider, strategy);
   }
 
   async resetPooledCredentialCooldown(provider: string, credentialId: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().resetCooldown(provider, credentialId);
   }
 
@@ -621,6 +666,7 @@ export class SwarmSettingsService {
     oauthCredential: AuthCredential,
     identity?: { label?: string; autoLabel?: string; accountId?: string }
   ): Promise<PooledCredentialInfo> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     return this.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
   }
 
@@ -1034,6 +1080,46 @@ export class SwarmSettingsService {
       allowlistRoots: normalizeAllowlistRoots(this.options.config.cwdAllowlistRoots)
     };
   }
+}
+
+function hasOpenAIAuthBrokerRuntimeBoundaryChanged(
+  before: OpenAIBrokerSettingsResponse,
+  after: OpenAIBrokerSettingsResponse,
+): boolean {
+  return brokerRuntimeBoundaryFingerprint(before) !== brokerRuntimeBoundaryFingerprint(after);
+}
+
+function shouldRecycleOpenAICodexManagersForBrokerTokenPatch(
+  before: OpenAIBrokerSettingsResponse,
+  after: OpenAIBrokerSettingsResponse,
+  request: UpdateOpenAIBrokerSettingsRequest,
+): boolean {
+  const tokenPatch = request.broker?.token;
+  const touchesToken = (typeof tokenPatch === "string" && tokenPatch.trim().length > 0) || request.broker?.clearToken === true;
+  if (!touchesToken) {
+    return false;
+  }
+
+  return before.settings.effectiveMode === "central_broker" || after.settings.effectiveMode === "central_broker";
+}
+
+function brokerRuntimeBoundaryFingerprint(response: OpenAIBrokerSettingsResponse): string {
+  const settings = response.settings;
+  const broker = settings.broker;
+  return JSON.stringify({
+    mode: settings.mode,
+    effectiveMode: settings.effectiveMode,
+    source: settings.source,
+    configured: broker.configured,
+    url: broker.url,
+    hasToken: broker.hasToken,
+    tokenMasked: broker.tokenMasked,
+    clientId: broker.clientId,
+    instanceId: broker.instanceId,
+    instanceLabel: broker.instanceLabel,
+    userLabel: broker.userLabel,
+    timeoutMs: broker.timeoutMs,
+  });
 }
 
 function errorToMessage(error: unknown): string {

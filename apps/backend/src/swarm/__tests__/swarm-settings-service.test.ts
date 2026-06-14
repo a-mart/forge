@@ -637,6 +637,162 @@ describe("SwarmSettingsService.updateManagerModel", () => {
   });
 });
 
+describe("SwarmSettingsService pooled credential broker boundary", () => {
+  it("blocks OpenAI Codex pooled credential mutations at the service boundary when broker mode is active", async () => {
+    const root = await createTempRoot();
+    const previousMode = process.env.FORGE_OPENAI_CODEX_AUTH_MODE;
+    process.env.FORGE_OPENAI_CODEX_AUTH_MODE = "central_broker";
+    const credentialPoolService = {
+      renameCredential: vi.fn(async () => undefined),
+      removeCredential: vi.fn(async () => undefined),
+      setPrimary: vi.fn(async () => undefined),
+      setStrategy: vi.fn(async () => undefined),
+      resetCooldown: vi.fn(async () => undefined),
+      addCredential: vi.fn(async () => ({ id: "acct-1" })),
+    };
+    const service = createService({
+      rootDir: root,
+      sessions: [],
+      secretsEnvService: { getCredentialPoolService: () => credentialPoolService },
+    });
+
+    try {
+      await expect(service.renamePooledCredential("openai-codex", "acct-1", "Renamed")).rejects.toThrow(
+        "central_broker_mode_active"
+      );
+      await expect(service.removePooledCredential("openai-codex", "acct-1")).rejects.toThrow(
+        "central_broker_mode_active"
+      );
+      await expect(service.setPrimaryPooledCredential("openai-codex", "acct-1")).rejects.toThrow(
+        "central_broker_mode_active"
+      );
+      await expect(service.setCredentialPoolStrategy("openai-codex", "least_used")).rejects.toThrow(
+        "central_broker_mode_active"
+      );
+      await expect(service.resetPooledCredentialCooldown("openai-codex", "acct-1")).rejects.toThrow(
+        "central_broker_mode_active"
+      );
+      await expect(service.addPooledCredential("openai-codex", { type: "oauth" } as any)).rejects.toThrow(
+        "central_broker_mode_active"
+      );
+
+      expect(credentialPoolService.renameCredential).not.toHaveBeenCalled();
+      expect(credentialPoolService.removeCredential).not.toHaveBeenCalled();
+      expect(credentialPoolService.setPrimary).not.toHaveBeenCalled();
+      expect(credentialPoolService.setStrategy).not.toHaveBeenCalled();
+      expect(credentialPoolService.resetCooldown).not.toHaveBeenCalled();
+      expect(credentialPoolService.addCredential).not.toHaveBeenCalled();
+    } finally {
+      if (previousMode === undefined) {
+        delete process.env.FORGE_OPENAI_CODEX_AUTH_MODE;
+      } else {
+        process.env.FORGE_OPENAI_CODEX_AUTH_MODE = previousMode;
+      }
+    }
+  });
+
+  it("leaves non-OpenAI pooled credential mutations unchanged in broker mode", async () => {
+    const root = await createTempRoot();
+    const previousMode = process.env.FORGE_OPENAI_CODEX_AUTH_MODE;
+    process.env.FORGE_OPENAI_CODEX_AUTH_MODE = "central_broker";
+    const credentialPoolService = {
+      renameCredential: vi.fn(async () => undefined),
+      removeCredential: vi.fn(async () => undefined),
+      setPrimary: vi.fn(async () => undefined),
+      setStrategy: vi.fn(async () => undefined),
+      resetCooldown: vi.fn(async () => undefined),
+      addCredential: vi.fn(async () => ({ id: "acct-ant-1" })),
+    };
+    const service = createService({
+      rootDir: root,
+      sessions: [],
+      secretsEnvService: { getCredentialPoolService: () => credentialPoolService },
+    });
+
+    try {
+      await service.renamePooledCredential("anthropic", "acct-ant-1", "Renamed");
+      await service.removePooledCredential("anthropic", "acct-ant-1");
+      await service.setPrimaryPooledCredential("anthropic", "acct-ant-1");
+      await service.setCredentialPoolStrategy("anthropic", "least_used");
+      await service.resetPooledCredentialCooldown("anthropic", "acct-ant-1");
+      await expect(service.addPooledCredential("anthropic", { type: "oauth" } as any)).resolves.toEqual({
+        id: "acct-ant-1",
+      });
+
+      expect(credentialPoolService.renameCredential).toHaveBeenCalledWith("anthropic", "acct-ant-1", "Renamed");
+      expect(credentialPoolService.removeCredential).toHaveBeenCalledWith("anthropic", "acct-ant-1");
+      expect(credentialPoolService.setPrimary).toHaveBeenCalledWith("anthropic", "acct-ant-1");
+      expect(credentialPoolService.setStrategy).toHaveBeenCalledWith("anthropic", "least_used");
+      expect(credentialPoolService.resetCooldown).toHaveBeenCalledWith("anthropic", "acct-ant-1");
+      expect(credentialPoolService.addCredential).toHaveBeenCalledWith("anthropic", { type: "oauth" }, undefined);
+    } finally {
+      if (previousMode === undefined) {
+        delete process.env.FORGE_OPENAI_CODEX_AUTH_MODE;
+      } else {
+        process.env.FORGE_OPENAI_CODEX_AUTH_MODE = previousMode;
+      }
+    }
+  });
+});
+
+describe("SwarmSettingsService.updateOpenAIAuthBrokerSettings", () => {
+  it("recycles OpenAI Codex managers when active broker token changes but the masked suffix is unchanged", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      applyManagerRuntimeRecyclePolicy,
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ ok: true })));
+
+    try {
+      await service.updateOpenAIAuthBrokerSettings({
+        mode: "central_broker",
+        broker: { url: "https://broker.example.test", token: "first-secret-same" },
+      });
+      expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(1);
+      applyManagerRuntimeRecyclePolicy.mockClear();
+
+      await service.updateOpenAIAuthBrokerSettings({
+        mode: "central_broker",
+        broker: { token: "other-secret-same" },
+      });
+
+      expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
+        ["manager", "auth_source_change"],
+      ]);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("does not recycle OpenAI Codex managers for inactive local-mode broker token edits", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      applyManagerRuntimeRecyclePolicy,
+    });
+
+    await service.updateOpenAIAuthBrokerSettings({
+      mode: "local",
+      broker: { url: "https://broker.example.test", token: "first-secret-same" },
+    });
+    applyManagerRuntimeRecyclePolicy.mockClear();
+
+    await service.updateOpenAIAuthBrokerSettings({
+      mode: "local",
+      broker: { token: "other-secret-same" },
+    });
+
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+});
+
 describe("SwarmSettingsService.updateManagerCwd", () => {
   it("patches all profile sessions in one transaction and recycles only after save", async () => {
     const root = await createTempRoot();
