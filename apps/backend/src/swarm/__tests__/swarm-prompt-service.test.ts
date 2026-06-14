@@ -726,6 +726,7 @@ describe("SwarmPromptService", () => {
     expect(composition.rolePrompt).toBeUndefined();
     expect(composition.sources.map((source) => source.kind)).toEqual(["project_agent_base", "base_only"]);
     expect(composition.content).toContain("Forge Project Agent Operating Contract");
+    expect(composition.content).toContain("WORKER REPORT: status: done|partial|blocked");
     expect(composition.content).not.toContain("Non-Negotiable Forge Routing Contract");
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);

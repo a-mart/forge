@@ -7,6 +7,7 @@ import type {
   RequestedDeliveryMode
 } from "./types.js";
 import {
+  buildWorkerCompletionFallbackReport,
   buildWorkerCompletionReport,
   formatToolExecutionPayload,
   normalizeOptionalAgentId,
@@ -1217,7 +1218,7 @@ export class SwarmWorkerHealthService {
     const includeSummary = hasFreshSummary && !isDuplicateSummary;
     const message = includeSummary
       ? report.message
-      : `SYSTEM: Worker ${descriptor.agentId} completed its turn.`;
+      : buildWorkerCompletionFallbackReport(descriptor.agentId);
 
     try {
       await this.options.sendMessage(managerId, managerId, message, "auto", {

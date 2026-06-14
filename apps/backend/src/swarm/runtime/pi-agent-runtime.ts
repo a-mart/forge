@@ -62,7 +62,12 @@ interface PendingDelivery {
 
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
 const MAX_EMPTY_TURN_RESAMPLES = 2;
-const TERMINAL_WORKER_REPORT_PATTERN = /^(?:SYSTEM|WORKER REPORT):\s*status:\s*(?:done|partial|blocked)\b/i;
+const TERMINAL_WORKER_REPORT_PATTERNS = [
+  /^WORKER REPORT:\s*status:\s*(?:done|partial|blocked)\b/i,
+  /^SYSTEM:\s*status:\s*(?:done|partial|blocked)\b/i,
+  /^SYSTEM:\s*Worker\s+\S+\s+completed its turn\b/i,
+  /^SYSTEM:\s*Worker\s+\S+\s+ended its turn with an error\b/i,
+];
 // Appended to the final resample. Empty turns proved deterministic for a given
 // context (identical input -> identical silence), while terse user-register
 // prods have always broken through; this line perturbs the tokens AND supplies
@@ -1798,7 +1803,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     const reportText = stripEmptyTurnRedeliveryDirective(extractTextFromMessageRecord(triggerMessage));
-    if (!TERMINAL_WORKER_REPORT_PATTERN.test(reportText)) {
+    if (!isTerminalWorkerReport(reportText)) {
       return false;
     }
 
@@ -2218,6 +2223,11 @@ function isSilentAssistantMessage(message: Record<string, any>): boolean {
   }
 
   return true;
+}
+
+function isTerminalWorkerReport(text: string): boolean {
+  const normalized = text.trimStart();
+  return TERMINAL_WORKER_REPORT_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 function stripEmptyTurnRedeliveryDirective(text: string): string {

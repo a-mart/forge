@@ -872,6 +872,10 @@ function synthesizeCatalogBackedPiModel(descriptor: AgentModelDescriptor): Model
   };
 }
 
+export function buildWorkerCompletionFallbackReport(agentId: string): string {
+  return buildWorkerCompletionReportMessage({ agentId, status: "done" });
+}
+
 export function buildWorkerCompletionReport(
   agentId: string,
   history: ConversationEntryEvent[]
@@ -879,7 +883,7 @@ export function buildWorkerCompletionReport(
   const latestSummary = findLatestWorkerCompletionSummary(history);
   if (!latestSummary) {
     return {
-      message: `SYSTEM: Worker ${agentId} completed its turn.`
+      message: buildWorkerCompletionFallbackReport(agentId)
     };
   }
 
@@ -890,42 +894,65 @@ export function buildWorkerCompletionReport(
     MAX_WORKER_COMPLETION_REPORT_CHARS
   );
   const attachmentCount = latestSummary.attachments?.length ?? 0;
+  const status = isWorkerErrorSummary(latestSummary) ? "blocked" : "done";
   const attachmentLine =
     attachmentCount > 0
-      ? `\n\nAttachments: ${attachmentCount} generated attachment${attachmentCount === 1 ? "" : "s"}.`
-      : "";
-  const turnOutcomeLine = isWorkerErrorSummary(latestSummary)
-    ? `SYSTEM: Worker ${agentId} ended its turn with an error.`
-    : `SYSTEM: Worker ${agentId} completed its turn.`;
+      ? `Attachments: ${attachmentCount} generated attachment${attachmentCount === 1 ? "" : "s"}.`
+      : undefined;
 
   if (summaryText.length > 0) {
     return {
-      message: [
-        turnOutcomeLine,
-        "",
-        `${latestSummary.role === "system" ? "Last system message" : "Last assistant message"}:`,
-        summaryText
-      ].join("\n") + attachmentLine,
+      message: buildWorkerCompletionReportMessage({
+        agentId,
+        status,
+        detailLines: [
+          `${latestSummary.role === "system" ? "Last system message" : "Last assistant message"}:`,
+          summaryText,
+          ...(attachmentLine ? ["", attachmentLine] : [])
+        ]
+      }),
       summaryTimestamp,
       summaryKey
     };
   }
 
-  if (attachmentCount > 0) {
+  if (attachmentLine) {
     return {
-      message: isWorkerErrorSummary(latestSummary)
-        ? `SYSTEM: Worker ${agentId} ended its turn with an error and generated ${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}.`
-        : `SYSTEM: Worker ${agentId} completed its turn and generated ${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}.`,
+      message: buildWorkerCompletionReportMessage({
+        agentId,
+        status,
+        detailLines: [attachmentLine]
+      }),
       summaryTimestamp,
       summaryKey
     };
   }
 
   return {
-    message: turnOutcomeLine,
+    message: buildWorkerCompletionReportMessage({ agentId, status }),
     summaryTimestamp,
     summaryKey
   };
+}
+
+type WorkerCompletionReportStatus = "done" | "blocked";
+
+function buildWorkerCompletionReportMessage(options: {
+  agentId: string;
+  status: WorkerCompletionReportStatus;
+  detailLines?: string[];
+}): string {
+  const outcome = options.status === "blocked" ? "ended with an error" : "completed its turn";
+  const lines = [
+    `WORKER REPORT: status: ${options.status}`,
+    `summary: Auto-generated report because worker ${options.agentId} ${outcome} without an explicit callback.`
+  ];
+
+  if (options.detailLines && options.detailLines.length > 0) {
+    lines.push("", ...options.detailLines);
+  }
+
+  return lines.join("\n");
 }
 
 function findLatestWorkerCompletionSummary(

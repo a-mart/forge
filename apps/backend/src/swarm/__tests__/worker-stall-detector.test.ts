@@ -500,7 +500,7 @@ describe("worker stall detector", () => {
       .map((call) => call.message)
       .filter((message): message is string => typeof message === "string");
 
-    expect(managerMessages.some((message) => message.includes(`SYSTEM: Worker ${worker.agentId} completed its turn.`))).toBe(true);
+    expect(managerMessages.some((message) => message.includes("WORKER REPORT: status: done") && message.includes(`worker ${worker.agentId} completed its turn without an explicit callback`))).toBe(true);
     expect(managerMessages.some((message) => message.includes("[IDLE WORKER WATCHDOG"))).toBe(false);
     expect(managerMessages.some((message) => message.includes("[WORKER STALL DETECTED]"))).toBe(false);
     expect(readWorkerStallState(manager, worker.agentId)).toBeUndefined();
@@ -536,7 +536,8 @@ describe("worker stall detector", () => {
     managerRuntime.sendMessage = async (message, delivery = "auto") => {
       if (
         typeof message === "string" &&
-        message.startsWith(`SYSTEM: Worker ${silentWorker.agentId} completed its turn.`) &&
+        message.startsWith("WORKER REPORT: status: done") &&
+        message.includes(`worker ${silentWorker.agentId} completed its turn without an explicit callback`) &&
         !message.includes("[IDLE WORKER WATCHDOG — BATCHED]")
       ) {
         throw new Error("synthetic auto-report failure");

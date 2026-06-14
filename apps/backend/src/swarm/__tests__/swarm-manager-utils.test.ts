@@ -717,20 +717,64 @@ describe("buildWorkerCompletionReport", () => {
     ...partial
   });
 
-  it("uses default system line when history empty", () => {
+  it("uses canonical done report when history is empty", () => {
     const r = buildWorkerCompletionReport("worker-1", []);
-    expect(r.message).toBe("SYSTEM: Worker worker-1 completed its turn.");
+    expect(r.message).toBe([
+      "WORKER REPORT: status: done",
+      "summary: Auto-generated report because worker worker-1 completed its turn without an explicit callback."
+    ].join("\n"));
     expect(r.summaryTimestamp).toBeUndefined();
   });
 
-  it("includes latest assistant summary", () => {
+  it("includes latest assistant summary in a canonical done report", () => {
     const history: ConversationEntryEvent[] = [
       msg({ text: "old", timestamp: "2019-01-01T00:00:00.000Z" }),
       msg({ text: "newer", timestamp: "2020-01-02T00:00:00.000Z" })
     ];
     const r = buildWorkerCompletionReport("w", history);
-    expect(r.message).toContain("newer");
+    expect(r.message).toBe([
+      "WORKER REPORT: status: done",
+      "summary: Auto-generated report because worker w completed its turn without an explicit callback.",
+      "",
+      "Last assistant message:",
+      "newer"
+    ].join("\n"));
     expect(r.summaryTimestamp).toBe(parseTimestampToMillis("2020-01-02T00:00:00.000Z"));
+  });
+
+  it("emits canonical blocked report for worker error summaries", () => {
+    const history: ConversationEntryEvent[] = [
+      msg({
+        role: "system",
+        text: "⚠️ Agent error: socket closed. Message may need to be resent.",
+        timestamp: "2020-01-03T00:00:00.000Z"
+      })
+    ];
+    const r = buildWorkerCompletionReport("w", history);
+    expect(r.message).toBe([
+      "WORKER REPORT: status: blocked",
+      "summary: Auto-generated report because worker w ended with an error without an explicit callback.",
+      "",
+      "Last system message:",
+      "⚠️ Agent error: socket closed. Message may need to be resent."
+    ].join("\n"));
+    expect(r.summaryTimestamp).toBe(parseTimestampToMillis("2020-01-03T00:00:00.000Z"));
+  });
+
+  it("preserves attachment counts in canonical reports", () => {
+    const history: ConversationEntryEvent[] = [
+      msg({
+        text: "Done with files.",
+        attachments: [
+          { type: "text", mimeType: "text/plain", text: "one" },
+          { type: "text", mimeType: "text/plain", text: "two" }
+        ] as any
+      })
+    ];
+    const r = buildWorkerCompletionReport("w", history);
+    expect(r.message).toContain("WORKER REPORT: status: done");
+    expect(r.message).toContain("Last assistant message:\nDone with files.");
+    expect(r.message).toContain("Attachments: 2 generated attachments.");
   });
 });
 

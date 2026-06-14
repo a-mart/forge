@@ -136,7 +136,8 @@ describe("SwarmWorkerHealthService", () => {
     await vi.advanceTimersByTimeAsync(IDLE_GRACE_MS + BATCH_WINDOW_MS);
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toContain("SYSTEM: Worker w1 completed its turn.");
+    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toContain("WORKER REPORT: status: done");
+    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toContain("summary: Auto-generated report because worker w1 completed its turn without an explicit callback.");
     expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toContain("Last assistant message:\nDone.");
     expect(svc.watchdogTimers.has("w1")).toBe(false);
   });
@@ -611,7 +612,10 @@ describe("SwarmWorkerHealthService", () => {
     await svc.handleRuntimeAgentEnd("w1", worker as AgentDescriptor & { role: "worker" });
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toBe("SYSTEM: Worker w1 completed its turn.");
+    expect(String(sendMessage.mock.calls[0]?.[2] ?? "")).toBe([
+      "WORKER REPORT: status: done",
+      "summary: Auto-generated report because worker w1 completed its turn without an explicit callback."
+    ].join("\n"));
     expect(svc.watchdogTimers.has("w1")).toBe(false);
     expect(svc.workerWatchdogState.get("w1")).toEqual(
       expect.objectContaining({

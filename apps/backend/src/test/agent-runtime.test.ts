@@ -1311,7 +1311,9 @@ describe('AgentRuntime', () => {
 
 describe('manager empty-turn retry after worker terminal report', () => {
   const TERMINAL_CALLBACK = 'WORKER REPORT: status: blocked\nsummary: rerun failed before a Graph response.'
-  const LEGACY_TERMINAL_CALLBACK = 'SYSTEM: status: done\nsummary: executed the guarded pilot once.'
+  const LEGACY_SYSTEM_STATUS_CALLBACK = 'SYSTEM: status: done\nsummary: executed the guarded pilot once.'
+  const LEGACY_WORKER_COMPLETED_CALLBACK = 'SYSTEM: Worker w-1 completed its turn.\n\nLast assistant message:\nDone.'
+  const LEGACY_WORKER_ERROR_CALLBACK = 'SYSTEM: Worker w-1 ended its turn with an error.\n\nLast system message:\n⚠️ Agent error: failed.'
 
   beforeEach(() => {
     openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockReset()
@@ -1371,14 +1373,36 @@ describe('manager empty-turn retry after worker terminal report', () => {
     expect(onAgentEnd).not.toHaveBeenCalled()
   })
 
-  it('resamples when the report arrived under the legacy SYSTEM prefix', async () => {
+  it('resamples when the report arrived under the legacy SYSTEM status prefix', async () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
-    session.state.messages = [userMessage(LEGACY_TERMINAL_CALLBACK), emptyAssistantMessage()]
+    session.state.messages = [userMessage(LEGACY_SYSTEM_STATUS_CALLBACK), emptyAssistantMessage()]
 
     await (runtime as any).handleEvent({ type: 'agent_end' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
-    expect(session.promptCalls).toEqual([LEGACY_TERMINAL_CALLBACK])
+    expect(session.promptCalls).toEqual([LEGACY_SYSTEM_STATUS_CALLBACK])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('resamples legacy synthesized worker completion reports', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [userMessage(LEGACY_WORKER_COMPLETED_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([LEGACY_WORKER_COMPLETED_CALLBACK])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('resamples legacy synthesized worker error reports', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [userMessage(LEGACY_WORKER_ERROR_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([LEGACY_WORKER_ERROR_CALLBACK])
     expect(onAgentEnd).not.toHaveBeenCalled()
   })
 
@@ -1490,7 +1514,7 @@ describe('manager empty-turn retry after worker terminal report', () => {
 
   it('does not resample for non-terminal internal notices', async () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
-    session.state.messages = [userMessage('SYSTEM: Worker w-1 completed its turn.'), emptyAssistantMessage()]
+    session.state.messages = [userMessage('SYSTEM: ⚠️ [WORKER STALL DETECTED]\nWorker `w-1` has made no progress.'), emptyAssistantMessage()]
 
     await (runtime as any).handleEvent({ type: 'agent_end' })
 

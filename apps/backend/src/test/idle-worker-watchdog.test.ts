@@ -174,12 +174,16 @@ async function finishWorkerTurnViaIdleStatus(manager: TestSwarmManager, worker: 
 }
 
 function buildExpectedAutoCompletionMessage(worker: AgentDescriptor): string {
-  return `SYSTEM: Worker ${worker.agentId} completed its turn.`
+  return [
+    'WORKER REPORT: status: done',
+    `summary: Auto-generated report because worker ${worker.agentId} completed its turn without an explicit callback.`,
+  ].join('\n')
 }
 
 function buildExpectedDetailedCompletionMessage(worker: AgentDescriptor, text: string): string {
   return [
-    `SYSTEM: Worker ${worker.agentId} completed its turn.`,
+    'WORKER REPORT: status: done',
+    `summary: Auto-generated report because worker ${worker.agentId} completed its turn without an explicit callback.`,
     '',
     'Last assistant message:',
     text,
@@ -210,7 +214,7 @@ function failAutoCompletionReports(runtime: FakeRuntime): void {
   runtime.sendMessage = async (message, delivery = 'auto') => {
     if (
       typeof message === 'string' &&
-      message.startsWith('SYSTEM: Worker ') &&
+      message.startsWith('WORKER REPORT: status: done') &&
       message.includes('completed its turn') &&
       !message.includes('[IDLE WORKER WATCHDOG — BATCHED]')
     ) {
