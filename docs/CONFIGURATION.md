@@ -46,7 +46,14 @@ Legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` and `MIDDLEMAN_SKILL_SHARE_DISABLED` ali
 |----------|---------|-------------|
 | `XAI_API_KEY` | — | API key for xAI/Grok models (when using external API key mode). |
 | `FORGE_OPENAI_CODEX_TRANSPORT` | `sse` | Transport override for OpenAI Codex Responses models. Supported values: `sse` (stable reliability default and rollback path), `websocket`, `websocket-cached` (explicit experimental/canary opt-in; retries a fresh full-context WebSocket before falling back to SSE on pre-output close-before-completion failures), and `auto` (safe pre-start SSE fallback). Invalid values fail safe to `sse`. |
+| `FORGE_OPENAI_CODEX_AUTH_MODE` | `local` | OpenAI/Codex auth source. Use `central_broker` to make Forge use the Forge Auth broker for OpenAI/Codex in v1. |
+| `FORGE_OPENAI_AUTH_BROKER_URL` | — | Forge Auth broker base URL used when `FORGE_OPENAI_CODEX_AUTH_MODE=central_broker`. |
+| `FORGE_OPENAI_AUTH_BROKER_TOKEN` | — | Bearer token for the Forge Auth broker. |
+| `FORGE_OPENAI_AUTH_BROKER_INSTANCE_ID` | — | Optional stable install identifier sent to the Forge Auth broker. |
+| `FORGE_OPENAI_AUTH_BROKER_INSTANCE_LABEL` | — | Optional human-readable install label sent to the Forge Auth broker. |
 | `FORGE_CODEX_TRANSPORT_DEBUG` | — | Optional debugging flag. Set to `1` to enable the sanitized Codex transport diagnostics endpoint at `/api/debug/codex-transport` for transport selection and counter inspection; otherwise it stays disabled/404. |
+
+The OpenAI/Codex auth-mode settings are intentionally scoped to OpenAI/Codex in v1. If `FORGE_OPENAI_CODEX_AUTH_MODE` is set, the environment is authoritative: saved Settings mode and broker URL/token values are ignored while the env override is present. In `central_broker` mode, Forge acquires short-lived OpenAI/Codex leases from the Forge Auth broker and renews, reports, and releases them during runtime use.
 
 The OpenAI Codex Responses transport settings above apply to normal Codex model runtimes. Builder web also has a separate direct sidecar route: a plain leading `@Codex` or `[@Codex]` text message starts or continues a Codex CLI app-server sidecar thread. Selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin, reach the manager, and are delegated to the visible `Codex Plugin` specialist worker with server-owned scoped exact plugin tools. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Sidecar display cards are persisted in the parent session by default but are excluded from manager model context and from forked-session history.
 
@@ -94,9 +101,11 @@ FORGE_PORT=47187
 
 ## Provider Authentication
 
-Provider auth for **OpenAI**, **Anthropic**, **xAI**, and **Cursor SDK** is configured through the dashboard UI under **Settings → Authentication**. The pane shows provider labels with auth-mode badges so you can see whether a row is using OAuth or an API key.
+Provider auth for **OpenAI**, **Anthropic**, **xAI**, and **Cursor SDK** is configured through the dashboard UI under **Settings → Authentication**. The pane shows provider labels with auth-mode badges so you can see whether a row is using OAuth, an API key, or Forge Auth broker mode.
 
-OpenAI and Anthropic support either OAuth or API key auth. Claude SDK is separate and OAuth-only: it uses Claude Code CLI OAuth, with credentials stored in macOS Keychain on macOS and `~/.claude/.credentials.json` on Linux and Windows. Cursor SDK is API-key-based: set `CURSOR_API_KEY` in Settings → Authentication, shared secrets, or the environment. It is specialist-only; manager create/change/override selectors do not expose Cursor SDK or Composer 2.5. Cursor SDK uses a provider-local, fail-closed Cursor/ConnectRPC/HTTP2 classifier: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage from Cursor SDK sessions is recorded into session custom entries and contributes to dashboard stats, token analytics, and telemetry provider inference.
+OpenAI and Anthropic support either OAuth or API key auth. OpenAI/Codex can also use Forge Auth broker mode, which requests short-lived leases from a separate broker instead of using local OpenAI credentials. While broker mode is active, local OpenAI OAuth/API-key and pool credentials remain visible for reference but are read-only and cannot be changed from Settings. Forge Auth broker mode is v1-scoped to OpenAI/Codex only.
+
+Claude SDK is separate and OAuth-only: it uses Claude Code CLI OAuth, with credentials stored in macOS Keychain on macOS and `~/.claude/.credentials.json` on Linux and Windows. Cursor SDK is API-key-based: set `CURSOR_API_KEY` in Settings → Authentication, shared secrets, or the environment. It is specialist-only; manager create/change/override selectors do not expose Cursor SDK or Composer 2.5. Cursor SDK uses a provider-local, fail-closed Cursor/ConnectRPC/HTTP2 classifier: attributed transient transport or throttle failures can retry once before output, auth/permission/cancel/user-state failures are contained and projected without retry, and unattributed/generic/protocol/config failures remain fatal. Usage from Cursor SDK sessions is recorded into session custom entries and contributes to dashboard stats, token analytics, and telemetry provider inference.
 
 For the native Cursor runtime, Forge uses the Forge-owned Cursor SDK `stateRoot` and persisted `sdkAgentId` to keep runtime state local to the app.
 

@@ -57,7 +57,7 @@ Download the native installer for your platform from [GitHub Releases](https://g
 
 No Node.js or pnpm required. The desktop app bundles everything and updates automatically. Check for updates manually in Settings → About, or toggle beta releases to get early access to new features.
 
-On first launch, go to Settings and sign in with your OpenAI, Anthropic, or Claude SDK account. The Authentication pane shows provider labels with auth-mode badges so you can see whether each row is using OAuth or an API key. OpenAI and Anthropic support OAuth or API key sign-in; Claude SDK uses Claude Code CLI OAuth and does not require an API key. Forge will walk you through a short welcome conversation to learn your preferences.
+On first launch, go to Settings and sign in with your OpenAI, Anthropic, or Claude SDK account. The Authentication pane shows provider labels with auth-mode badges so you can see whether each row is using OAuth, an API key, or Forge Auth broker mode. OpenAI and Anthropic support OAuth or API key sign-in; OpenAI/Codex can also use the Forge Auth broker in v1, which supplies short-lived leases that Forge acquires, renews, reports, and releases while runtimes are active. While broker mode is active, local OpenAI credentials stay visible but are read-only. Claude SDK uses Claude Code CLI OAuth and does not require an API key. Forge will walk you through a short welcome conversation to learn your preferences.
 
 Then create a manager, point it at a project directory, and start chatting. See the [Getting Started Guide](docs/GETTING_STARTED.md) for a full walkthrough.
 
@@ -72,7 +72,7 @@ If you need more control over the runtime environment or want to contribute to d
 **Prerequisites:**
 - Node.js 22+
 - pnpm (`npm install -g pnpm`)
-- An OpenAI, Anthropic, or Claude SDK account (Claude SDK uses Claude Code CLI OAuth; no API key required)
+- An OpenAI, Anthropic, or Claude SDK account (Claude SDK uses Claude Code CLI OAuth; no API key required). For OpenAI/Codex only, a Forge Auth broker can be configured instead of local OpenAI credentials.
 
 **Setup:**
 ```bash

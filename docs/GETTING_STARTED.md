@@ -38,7 +38,9 @@ Forge supports three providers:
 
 - **Anthropic** — Claude models. Supports OAuth or API key auth.
 - **Claude SDK** — Native Claude Agent SDK access through Claude Code CLI OAuth. Use this when you want the SDK runtime instead of the Pi-proxied Anthropic path.
-- **OpenAI** — GPT and Codex models. Supports OAuth or API key auth.
+- **OpenAI** — GPT and Codex models. Supports OAuth, API key auth, or Forge Auth broker mode for OpenAI/Codex in v1.
+
+Forge Auth broker mode lets Forge use a separate broker for OpenAI/Codex short-lived leases instead of local OpenAI credentials. When broker mode is active, local OpenAI OAuth/API-key and pool credentials stay visible for reference but are read-only in Settings.
 
 After adding credentials, you may need to restart the backend (`Ctrl+C` and re-run `pnpm prod:daemon`) for the changes to take effect. On macOS this usually isn't necessary, but on Windows the backend sometimes doesn't pick up auth changes without a restart.
 
@@ -147,7 +149,7 @@ If the backend detects real provider credentials for OpenAI, Anthropic, or Curso
 - **Sidebar widget** — Compact stacked gauges showing 5-hour rolling and weekly usage windows with reset timers. Click to expand for detailed metrics (deficit/reserve pace, runout estimates), and use the manual refresh button in the detail panel if you want to re-poll immediately.
 - **Dashboard stats panel** — Full usage breakdown with the same metrics in a dedicated section.
 
-Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Cursor SDK usage is included in the same stats, analytics, and telemetry provider inference when Composer 2.5 sessions are active. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. The Dashboard stats panel's Sessions card keeps archived projects and sessions in the historical total, while the active subtitle excludes them. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
+Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Cursor SDK usage is included in the same stats, analytics, and telemetry provider inference when Composer 2.5 sessions are active. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. Broker-backed OpenAI/Codex auth can provide broker status and usage when the broker reports it. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. The Dashboard stats panel's Sessions card keeps archived projects and sessions in the historical total, while the active subtitle excludes them. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
 
 ---
 
