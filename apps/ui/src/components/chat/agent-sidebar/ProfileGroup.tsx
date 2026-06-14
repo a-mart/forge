@@ -21,7 +21,9 @@ import type { SessionRow } from '@/lib/agent-hierarchy'
 import { cn } from '@/lib/utils'
 import { SidebarModelIcon } from './shared'
 import { SessionRowItem } from './SessionRowItem'
+import { InactiveRepoProjectAgentRow } from './InactiveRepoProjectAgentRow'
 import { MAX_VISIBLE_SESSIONS } from './constants'
+import { matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui'
 import type { ProfileGroupProps } from './types'
 
 export const ProfileGroup = React.memo(function ProfileGroup({
@@ -73,6 +75,9 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   getCreatorAttribution,
   hideCliSessions,
   onToggleHideCliSessions,
+  inactiveRepoProjectAgents = [],
+  selectedInactiveRepoDefinitionId,
+  onSelectInactiveRepoProjectAgent,
 }: ProfileGroupProps) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -352,6 +357,10 @@ export const ProfileGroup = React.memo(function ProfileGroup({
             // Cortex sessions are excluded at the profile level
             const isCortex = sessions.some((s) => s.sessionAgent.archetypeId === 'cortex')
 
+            const visibleInactiveRepoProjectAgents = inactiveRepoProjectAgents.filter((entry) =>
+              matchesRepoProjectAgentSearch(entry.item, highlightQuery),
+            )
+
             const renderSession = (session: SessionRow) => {
               const sid = session.sessionAgent.agentId
               const sessionCollapsed = !collapsedSessionIds.has(sid)
@@ -408,6 +417,15 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                 <ul className="space-y-0.5">
                   {/* Project agents always pinned at top */}
                   {projectAgentSessions.map(renderSession)}
+                  {visibleInactiveRepoProjectAgents.map((entry) => (
+                    <InactiveRepoProjectAgentRow
+                      key={`repo-pa:${entry.item.definitionId}`}
+                      entry={entry}
+                      isSelected={selectedInactiveRepoDefinitionId === entry.item.definitionId}
+                      highlightQuery={highlightQuery}
+                      onSelect={() => onSelectInactiveRepoProjectAgent?.(entry)}
+                    />
+                  ))}
                   {/* Pinned sessions always visible, sorted by pin time */}
                   {pinnedSessions.map(renderSession)}
                   {/* Regular sessions below */}

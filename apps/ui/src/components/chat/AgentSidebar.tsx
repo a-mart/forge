@@ -52,9 +52,11 @@ import {
   SessionModelDialog,
 } from './agent-sidebar/dialogs'
 import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsSheet'
+import { ActivateRepoProjectAgentSheet } from './project-agent/ActivateRepoProjectAgentSheet'
 import { ProjectAgentSharingDialog } from './project-agent/ProjectAgentSharingDialog'
 import { findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
 import { useCortexReviewBadge, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
+import { useInactiveRepoProjectAgents, type RepoProjectAgentSidebarEntry } from '@/hooks/use-inactive-repo-project-agents'
 import type { AgentSidebarProps } from './agent-sidebar/types'
 
 // Inject subtle glow pulse keyframes once
@@ -207,6 +209,27 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     sessionLabel: string
     currentProjectAgent: ProjectAgentInfo
   } | null>(null)
+  const [inactiveRepoActivationTarget, setInactiveRepoActivationTarget] = useState<RepoProjectAgentSidebarEntry | null>(null)
+  const [selectedInactiveRepoDefinitionId, setSelectedInactiveRepoDefinitionId] = useState<string | null>(null)
+  const [inactiveRepoRefreshKey, setInactiveRepoRefreshKey] = useState(0)
+  const repoProjectAgentSignature = useMemo(() => (
+    agents
+      .filter((agent) => agent.role === 'manager' && agent.projectAgent?.source?.type === 'repo')
+      .map((agent) => {
+        const source = agent.projectAgent?.source
+        const definitionId = source?.type === 'repo' ? source.definitionId : agent.agentId
+        return `${agent.profileId ?? agent.agentId}:${definitionId}`
+      })
+      .sort()
+      .join('|')
+  ), [agents])
+
+  const { getEntriesForProfile } = useInactiveRepoProjectAgents({
+    connected,
+    wsUrl,
+    treeRows,
+    refreshKey: `${inactiveRepoRefreshKey}:${repoProjectAgentSignature}`,
+  })
 
   const handleForkSetTarget = useCallback((sourceAgentId: string) => setForkTarget({ sourceAgentId }), [])
 
@@ -218,6 +241,21 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   }, [agents])
 
   const handleSelectAgent = useCallback((agentId: string) => {
+    setSelectedInactiveRepoDefinitionId(null)
+    setInactiveRepoActivationTarget(null)
+    onSelectAgent(agentId)
+    onMobileClose?.()
+  }, [onSelectAgent, onMobileClose])
+
+  const handleSelectInactiveRepoProjectAgent = useCallback((entry: RepoProjectAgentSidebarEntry) => {
+    setSelectedInactiveRepoDefinitionId(entry.item.definitionId)
+    setInactiveRepoActivationTarget(entry)
+  }, [])
+
+  const handleInactiveRepoProjectAgentActivated = useCallback((agentId: string) => {
+    setInactiveRepoRefreshKey((prev) => prev + 1)
+    setSelectedInactiveRepoDefinitionId(null)
+    setInactiveRepoActivationTarget(null)
     onSelectAgent(agentId)
     onMobileClose?.()
   }, [onSelectAgent, onMobileClose])
@@ -494,6 +532,9 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       getCreatorAttribution={getCreatorAttribution}
       hideCliSessions={hideCliSessions}
       onToggleHideCliSessions={handleToggleHideCliSessions}
+      inactiveRepoProjectAgents={getEntriesForProfile(treeRow.profile.profileId)}
+      selectedInactiveRepoDefinitionId={selectedInactiveRepoDefinitionId}
+      onSelectInactiveRepoProjectAgent={wsUrl ? handleSelectInactiveRepoProjectAgent : undefined}
     />
   ), [
     statuses, unreadCounts, selectedAgentId, isSettingsActive, isSearchActive,
@@ -512,6 +553,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onPinSession, handleDemoteProjectAgent, onCreateAgentCreator, mutedAgentsState,
     handleToggleMute, handleMuteAllSessions, getCreatorAttribution,
     hideCliSessions, handleToggleHideCliSessions,
+    getEntriesForProfile, selectedInactiveRepoDefinitionId, wsUrl, handleSelectInactiveRepoProjectAgent,
   ])
 
   const sidebarContent = (
@@ -878,6 +920,20 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           onSetReference={onSetProjectAgentReference}
           onDeleteReference={onDeleteProjectAgentReference}
           onRequestRecommendations={onRequestProjectAgentRecommendations}
+        />
+      ) : null}
+
+      {inactiveRepoActivationTarget && wsUrl ? (
+        <ActivateRepoProjectAgentSheet
+          wsUrl={wsUrl}
+          profileId={inactiveRepoActivationTarget.profileId}
+          sessionAgentId={inactiveRepoActivationTarget.sessionAgentId}
+          item={inactiveRepoActivationTarget.item}
+          onClose={() => {
+            setInactiveRepoActivationTarget(null)
+            setSelectedInactiveRepoDefinitionId(null)
+          }}
+          onActivated={handleInactiveRepoProjectAgentActivated}
         />
       ) : null}
     </>

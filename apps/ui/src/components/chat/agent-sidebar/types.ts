@@ -189,6 +189,9 @@ export interface ProfileGroupProps {
   getCreatorAttribution?: (creatorAgentId: string) => string | null
   hideCliSessions?: boolean
   onToggleHideCliSessions?: () => void
+  inactiveRepoProjectAgents?: import('@/hooks/use-inactive-repo-project-agents').RepoProjectAgentSidebarEntry[]
+  selectedInactiveRepoDefinitionId?: string | null
+  onSelectInactiveRepoProjectAgent?: (entry: import('@/hooks/use-inactive-repo-project-agents').RepoProjectAgentSidebarEntry) => void
 }
 
 export interface CortexSectionProps {

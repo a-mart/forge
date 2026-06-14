@@ -1,25 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   AgentDescriptor,
-  ProjectAgentSourceStatus,
   ProjectResourcesSnapshotResponse,
-  RepoProjectAgentInventoryItem,
   RepoProjectAgentInventorySection,
 } from '@forge/protocol'
-import { AlertTriangle, CheckCircle2, GitBranch, Loader2, RefreshCw, ShieldAlert, Zap } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, ShieldAlert } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { SettingsApiClient } from './settings-api-client'
 import {
-  activateRepoProjectAgent,
   fetchProjectResourcesSnapshot,
   updateProjectResourcesOverride,
   updateProjectResourcesTrust,
 } from './project-resources-api'
+import {
+  ProjectAgentDefinitionRow,
+  useRepoProjectAgentActivation,
+} from './repo-project-agent-ui'
 
 interface SettingsProjectResourcesProps {
   managers: AgentDescriptor[]
@@ -223,27 +223,15 @@ function ProjectAgentInventory({
   apiClient: SettingsApiClient
   onRefresh: () => void
 }) {
-  const [activatingId, setActivatingId] = useState<string | null>(null)
-  const [activateError, setActivateError] = useState<string | null>(null)
-
-  const handleActivate = useCallback(async (item: RepoProjectAgentInventoryItem) => {
-    setActivatingId(item.definitionId)
-    setActivateError(null)
-    try {
-      await activateRepoProjectAgent(apiClient, {
-        ...context,
-        definitionId: item.definitionId,
-        mode: 'create',
-        applyRecommendedModel: Boolean(item.recommendedModel),
-        approvedCapabilities: item.requestedCapabilities,
-      })
-      onRefresh()
-    } catch (err) {
-      setActivateError(err instanceof Error ? err.message : 'Activation failed.')
-    } finally {
-      setActivatingId(null)
-    }
-  }, [apiClient, context, onRefresh])
+  const {
+    activatingId,
+    activateError,
+    handleActivate,
+  } = useRepoProjectAgentActivation({
+    apiClient,
+    context,
+    onActivated: () => { onRefresh() },
+  })
 
   return (
     <Card>
@@ -283,7 +271,9 @@ function ProjectAgentInventory({
                 key={item.definitionId}
                 item={item}
                 activating={activatingId === item.definitionId}
-                onActivate={() => void handleActivate(item)}
+                onActivate={item.status === 'valid' && !item.activatedAgentId
+                  ? () => { void handleActivate(item) }
+                  : undefined}
               />
             ))}
             {section.truncated ? (
@@ -296,105 +286,4 @@ function ProjectAgentInventory({
       </CardContent>
     </Card>
   )
-}
-
-function ProjectAgentDefinitionRow({
-  item,
-  activating,
-  onActivate,
-}: {
-  item: RepoProjectAgentInventoryItem
-  activating: boolean
-  onActivate: () => void
-}) {
-  const canActivate = item.status === 'valid' && !item.activatedAgentId
-  const isActive = Boolean(item.activatedAgentId)
-
-  return (
-    <div className="rounded-md border p-3 space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <Zap className="h-3.5 w-3.5 shrink-0 text-blue-400" />
-          <code className="text-sm font-semibold truncate">@{item.handle}</code>
-          {item.displayName ? (
-            <span className="text-sm text-muted-foreground truncate">{item.displayName}</span>
-          ) : null}
-          <SourceStatusBadge status={item.status} />
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {isActive ? (
-            <Badge variant="outline" className="gap-1">
-              <CheckCircle2 className="h-3 w-3" />
-              Active
-            </Badge>
-          ) : canActivate ? (
-            <Button size="sm" variant="outline" onClick={onActivate} disabled={activating}>
-              {activating ? (
-                <>
-                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                  Activating
-                </>
-              ) : (
-                'Activate'
-              )}
-            </Button>
-          ) : null}
-        </div>
-      </div>
-      {item.whenToUse ? (
-        <p className="text-sm text-muted-foreground line-clamp-2">{item.whenToUse}</p>
-      ) : null}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span className="break-all">{item.path}</span>
-        {item.recommendedModel ? (
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="cursor-default">
-                  Model: {item.recommendedModel.provider}/{item.recommendedModel.modelId}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">
-                {item.recommendedModel.thinkingLevel ? `Thinking: ${item.recommendedModel.thinkingLevel}` : 'No thinking level set'}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : null}
-        {item.requestedCapabilities?.length ? (
-          <span>Capabilities: {item.requestedCapabilities.join(', ')}</span>
-        ) : null}
-      </div>
-      {item.problems.length > 0 ? (
-        <div className="space-y-1">
-          {item.problems.map((problem, index) => (
-            <div key={index} className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>{problem.message}{problem.path ? ` (${problem.path})` : ''}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function SourceStatusBadge({ status }: { status: ProjectAgentSourceStatus }) {
-  switch (status) {
-    case 'valid':
-      return <Badge className="gap-1 text-[10px]"><CheckCircle2 className="h-2.5 w-2.5" />Valid</Badge>
-    case 'local':
-      return <Badge variant="secondary" className="text-[10px]">Local</Badge>
-    case 'missing':
-      return <Badge variant="destructive" className="text-[10px]">Missing</Badge>
-    case 'invalid':
-      return <Badge variant="destructive" className="text-[10px]">Invalid</Badge>
-    case 'conflict':
-      return <Badge variant="destructive" className="text-[10px]">Conflict</Badge>
-    case 'wrong_workspace':
-      return <Badge variant="secondary" className="text-[10px]">Wrong workspace</Badge>
-    case 'unavailable':
-      return <Badge variant="secondary" className="text-[10px]">Unavailable</Badge>
-    default:
-      return <Badge variant="secondary" className="text-[10px]">{status}</Badge>
-  }
 }
