@@ -269,6 +269,7 @@ function createFactory(
     forgeExtensionHost?: ForgeExtensionHost;
     getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
     getCredentialPoolService?: () => any;
+    getOpenAIAuthBrokerRuntimeService?: () => any;
     observability?: any;
     getMemoryRuntimeResources?: (descriptor: AgentDescriptor) => Promise<{
       memoryContextFile: { path: string; content: string };
@@ -320,6 +321,7 @@ function createFactory(
     getPiModelsJsonPath: () => projectionPath,
     getAgentDescriptor: overrides.getAgentDescriptor,
     getCredentialPoolService: overrides.getCredentialPoolService,
+    getOpenAIAuthBrokerRuntimeService: overrides.getOpenAIAuthBrokerRuntimeService,
     observability: overrides.observability,
     getMemoryRuntimeResources: overrides.getMemoryRuntimeResources ?? (async () => ({
       memoryContextFile: {
@@ -1316,6 +1318,40 @@ describe("RuntimeFactory", () => {
     await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 10)).rejects.toThrow("session failed");
     expect(sequence).toEqual(["prepare", "createAgentSession"]);
     expect(activateSpy).not.toHaveBeenCalled();
+  });
+
+  it("releases acquired OpenAI broker leases when Pi runtime creation fails before attach", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await seedProjectionFile(rootDir);
+    setupPiModel();
+    const brokerHandle = {
+      leaseId: "lease-runtime-create-fail",
+      identity: { clientId: "forge", instanceId: "forge" },
+      renewedAtMs: Date.now(),
+      lease: {
+        leaseId: "lease-runtime-create-fail",
+        credential: {
+          type: "oauth" as const,
+          access: "leased-access-token",
+          expires: Date.now() + 3_600_000,
+          accountId: "broker-account-1",
+        },
+      },
+    };
+    const brokerRuntimeService = {
+      isBrokerModeActive: vi.fn(async () => true),
+      acquireForRuntime: vi.fn(async () => ({ authStorage: { kind: "broker-auth-storage" }, handle: brokerHandle })),
+      release: vi.fn(async () => undefined),
+    };
+    piCodingAgentMockState.createAgentSession.mockRejectedValueOnce(new Error("createAgentSession failed"));
+
+    const factory = createFactory(rootDir, { getOpenAIAuthBrokerRuntimeService: () => brokerRuntimeService });
+
+    await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt", 11)).rejects.toThrow(
+      "createAgentSession failed",
+    );
+    expect(brokerRuntimeService.acquireForRuntime).toHaveBeenCalledTimes(1);
+    expect(brokerRuntimeService.release).toHaveBeenCalledWith(brokerHandle, "runtime_create_failed");
   });
 
   it("passes auth headers and custom instructions to Pi compaction in the correct argument order", async () => {

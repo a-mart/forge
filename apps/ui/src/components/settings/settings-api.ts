@@ -25,6 +25,10 @@ import type {
   SettingsEnvResponse,
   SettingsEnvVariable,
   SettingsExtensionsResponse,
+  OpenAIBrokerSettingsResponse,
+  OpenAIBrokerSettingsState,
+  OpenAIBrokerTestResponse,
+  UpdateOpenAIBrokerSettingsRequest,
   CredentialPoolState,
   CredentialPoolStrategy,
   SkillInventoryResponse,
@@ -138,7 +142,7 @@ function isSettingsEnvVariable(value: unknown): value is SettingsEnvVariable {
 
 function parseSettingsAuthProvider(value: unknown): SettingsAuthProvider | null {
   if (!value || typeof value !== 'object') return null
-  const provider = value as { provider?: unknown; configured?: unknown; authType?: unknown; maskedValue?: unknown }
+  const provider = value as { provider?: unknown; configured?: unknown; authType?: unknown; maskedValue?: unknown; source?: unknown; readOnly?: unknown; statusDetail?: unknown }
   const providerId = normalizeSettingsAuthProviderId(provider.provider)
   if (!providerId || typeof provider.configured !== 'boolean') return null
   if (provider.authType !== undefined && provider.authType !== 'api_key' && provider.authType !== 'oauth' && provider.authType !== 'unknown') return null
@@ -147,6 +151,9 @@ function parseSettingsAuthProvider(value: unknown): SettingsAuthProvider | null 
     configured: provider.configured,
     authType: provider.authType,
     maskedValue: typeof provider.maskedValue === 'string' ? provider.maskedValue : undefined,
+    source: provider.source === 'auth_file' || provider.source === 'env' || provider.source === 'secrets' || provider.source === 'pool' || provider.source === 'central_broker' ? provider.source : undefined,
+    readOnly: typeof provider.readOnly === 'boolean' ? provider.readOnly : undefined,
+    statusDetail: typeof provider.statusDetail === 'string' ? provider.statusDetail : undefined,
   }
 }
 
@@ -257,6 +264,66 @@ export async function deleteSettingsAuthProvider(clientOrWsUrl: SettingsApiClien
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   dispatchSettingsAuthChanged()
+}
+
+export async function fetchOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient | string): Promise<OpenAIBrokerSettingsState> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/auth/openai-codex/source')
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
+  return payload.settings
+}
+
+export async function updateOpenAIBrokerSettings(
+  clientOrWsUrl: SettingsApiClient | string,
+  request: UpdateOpenAIBrokerSettingsRequest,
+): Promise<OpenAIBrokerSettingsState> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/auth/openai-codex/source', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
+  const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
+  return payload.settings
+}
+
+export async function testOpenAIBrokerSettings(
+  clientOrWsUrl: SettingsApiClient | string,
+  request?: Partial<UpdateOpenAIBrokerSettingsRequest>,
+): Promise<OpenAIBrokerTestResponse> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/auth/openai-codex/source/test', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request ?? {}),
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  return (await response.json()) as OpenAIBrokerTestResponse
+}
+
+export async function disableOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient | string): Promise<OpenAIBrokerSettingsState> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/auth/openai-codex/source/disable', { method: 'POST' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
+  const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
+  return payload.settings
+}
+
+export async function clearOpenAIBrokerSettings(clientOrWsUrl: SettingsApiClient | string): Promise<OpenAIBrokerSettingsState> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/auth/openai-codex/source', { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
+  const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
+  return payload.settings
 }
 
 export async function startSettingsAuthOAuthLoginStream(

@@ -1,3 +1,5 @@
+import type { OpenAIBrokerDegradedReason } from './openai-auth-broker.js'
+
 export type ForgeProviderAvailabilityMode = 'managed-auth' | 'external'
 export type ForgePiProjectionMode = 'built-in-overrides' | 'custom-provider-merge' | 'none'
 export type ForgeProjectionScope = 'catalog-only' | 'full-upstream-provider'
@@ -6,13 +8,21 @@ export type ForgeWebSearchCapability = 'none' | 'native'
 export type ForgeInputMode = 'text' | 'image'
 export type ForgeReasoningLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh'
 export type ForgeProviderCredentialAuthType = 'api_key' | 'oauth' | 'unknown'
-export type ForgeProviderCredentialSource = 'auth_file' | 'env' | 'secrets' | 'pool'
+export type ForgeProviderCredentialSource = 'auth_file' | 'env' | 'secrets' | 'pool' | 'central_broker'
 
 export interface ForgeProviderCredentialSummary {
   configured: boolean
   authTypes: readonly ForgeProviderCredentialAuthType[]
   sources: readonly ForgeProviderCredentialSource[]
   pooled?: boolean
+  centralBroker?: {
+    configured: boolean
+    reachable?: boolean
+    degraded?: OpenAIBrokerDegradedReason
+    availableAccounts?: number
+    totalAccounts?: number
+    detail?: string
+  }
 }
 export type ForgeModelApiProtocol =
   | 'openai-codex-responses'

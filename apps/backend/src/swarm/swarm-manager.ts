@@ -12,6 +12,9 @@ import type {
   CollaborationAuthor,
   CredentialPoolState,
   CredentialPoolStrategy,
+  OpenAIBrokerSettingsResponse,
+  OpenAIBrokerTestResponse,
+  UpdateOpenAIBrokerSettingsRequest,
   PooledCredentialInfo,
   CortexReviewRunRecord,
   CortexReviewRunScope,
@@ -6968,10 +6971,38 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.settingsService.deleteSettingsAuth(provider);
   }
 
+  async getOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
+    return this.settingsService.getOpenAIAuthBrokerSettings();
+  }
+
+  async updateOpenAIAuthBrokerSettings(request: UpdateOpenAIBrokerSettingsRequest): Promise<OpenAIBrokerSettingsResponse> {
+    return this.settingsService.updateOpenAIAuthBrokerSettings(request);
+  }
+
+  async disableOpenAIAuthBroker(): Promise<OpenAIBrokerSettingsResponse> {
+    return this.settingsService.disableOpenAIAuthBroker();
+  }
+
+  async clearOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
+    return this.settingsService.clearOpenAIAuthBrokerSettings();
+  }
+
+  async testOpenAIAuthBrokerSettings(request?: Partial<UpdateOpenAIBrokerSettingsRequest>): Promise<OpenAIBrokerTestResponse> {
+    return this.settingsService.testOpenAIAuthBrokerSettings(request);
+  }
+
+  async isOpenAIAuthBrokerModeActive(): Promise<boolean> {
+    return this.settingsService.isOpenAIAuthBrokerModeActive();
+  }
+
   // ── Credential Pool pass-through ──
 
   getCredentialPoolService(): CredentialPoolService {
     return this.settingsService.getCredentialPoolService();
+  }
+
+  getOpenAIAuthBrokerRuntimeService() {
+    return this.secretsEnvService.getOpenAIAuthBrokerRuntimeService();
   }
 
   async listCredentialPool(provider: string): Promise<CredentialPoolState> {

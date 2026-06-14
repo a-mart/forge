@@ -3,6 +3,8 @@ import type {
   ChromeCdpPreviewTab,
   ChromeCdpProfile,
   ChromeCdpStatus,
+  OpenAIBrokerSettingsState,
+  OpenAIBrokerTestResponse,
   SettingsAuthProvider,
   SettingsAuthProviderId,
   SettingsEnvVariable,
@@ -20,6 +22,8 @@ export type {
 }
 
 export type {
+  OpenAIBrokerSettingsState,
+  OpenAIBrokerTestResponse,
   SettingsAuthProvider,
   SettingsAuthProviderId,
   SettingsEnvVariable,

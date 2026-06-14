@@ -3,6 +3,7 @@ export const SHARED_INTEGRATION_MANAGER_ID = '__shared__'
 export type SettingsAuthProviderId = 'anthropic' | 'openai-codex' | 'xai' | 'openrouter' | 'cursor-sdk'
 
 export type SettingsAuthProviderAuthType = 'api_key' | 'oauth' | 'unknown'
+export type SettingsAuthProviderSource = 'auth_file' | 'env' | 'secrets' | 'pool' | 'central_broker'
 
 export interface SettingsEnvVariable {
   name: string
@@ -44,6 +45,9 @@ export interface SettingsAuthProvider {
   configured: boolean
   authType?: SettingsAuthProviderAuthType
   maskedValue?: string
+  source?: SettingsAuthProviderSource
+  readOnly?: boolean
+  statusDetail?: string
 }
 
 export interface SettingsAuthResponse {
@@ -79,6 +83,7 @@ export interface SettingsAuthLoginCompleteEvent {
 
 export interface SettingsAuthLoginErrorEvent {
   message: string
+  code?: string
 }
 
 export interface SettingsAuthLoginEventPayload {

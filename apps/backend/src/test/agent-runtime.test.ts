@@ -30,7 +30,15 @@ class FakeSession {
   agent = { transport: 'websocket-cached' }
   model = { provider: 'openai-codex', api: 'openai-codex-responses' }
   state: { messages: Array<Record<string, any>> } = { messages: [] }
-  modelRegistry: any = { authStorage: { set: vi.fn() } }
+  authStorageCredentials = new Map<string, unknown>()
+  modelRegistry: any = {
+    authStorage: {
+      get: vi.fn((key: string) => this.authStorageCredentials.get(key)),
+      set: vi.fn((key: string, value: unknown) => {
+        this.authStorageCredentials.set(key, value)
+      }),
+    },
+  }
   sessionId = 'fake-session-id'
   shutdownEvents: any[] = []
   extensionRunner = {
@@ -136,6 +144,228 @@ describe('AgentRuntime', () => {
   beforeEach(() => {
     openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockReset()
     openAICodexResponsesMockState.getOpenAICodexWebSocketDebugStats.mockReset()
+  })
+
+  it('does not replay broker capacity failures when the broker returns the same exhausted lease', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: unknown[] = []
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => runtimeErrors.push(error),
+      },
+    })
+    const handle = {
+      leaseId: 'lease-exhausted',
+      renewedAtMs: Date.now(),
+      identity: { clientId: 'forge', sessionId: 'worker' },
+      lease: {
+        leaseId: 'lease-exhausted',
+        accountId: 'acct-1',
+        credential: { type: 'oauth', access: 'access-1', refresh: '', expires: 1_700_000_000_000, accountId: 'acct-1' },
+      },
+    }
+    const brokerRuntimeService = {
+      report: vi.fn(async () => handle),
+      applyLeaseToAuthStorage: vi.fn(async (_authStorage, nextHandle) => nextHandle),
+    }
+    runtime.configureOpenAIAuthBrokerController(brokerRuntimeService as any, handle as any)
+
+    const handled = await (runtime as any).openAIAuthBrokerController.attemptRecovery(
+      new Error('rate limit exhausted'),
+      'rate limit exhausted',
+      { text: 'retry me' },
+    )
+
+    expect(handled).toBe(false)
+    expect(session.promptCalls).toEqual([])
+    expect(brokerRuntimeService.applyLeaseToAuthStorage).not.toHaveBeenCalled()
+    expect(runtimeErrors).toContainEqual(expect.objectContaining({
+      phase: 'prompt_dispatch',
+      message: 'Forge Auth broker reported capacity exhaustion for OpenAI/Codex but did not provide a replacement lease.',
+      details: expect.objectContaining({ stage: 'broker_lease:no_replacement_capacity' }),
+    }))
+  })
+
+  it('does not immediately replay the same broker lease on full-dispatch capacity failures', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: unknown[] = []
+    const handle = {
+      leaseId: 'lease-exhausted',
+      renewedAtMs: Date.now(),
+      identity: { clientId: 'forge', sessionId: 'worker' },
+      lease: {
+        leaseId: 'lease-exhausted',
+        accountId: 'acct-1',
+        credential: { type: 'oauth', access: 'access-1', refresh: '', expires: 1_700_000_000_000, accountId: 'acct-1' },
+      },
+    }
+    const brokerRuntimeService = {
+      isBrokerModeActive: vi.fn(async () => true),
+      renewIfNeeded: vi.fn(async () => handle),
+      report: vi.fn(async () => handle),
+      applyLeaseToAuthStorage: vi.fn(async (_authStorage, nextHandle) => nextHandle),
+    }
+
+    session.prompt = async (message: string): Promise<void> => {
+      session.promptCalls.push(message)
+      throw new Error('HTTP 429 quota exhausted')
+    }
+
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => runtimeErrors.push(error),
+      },
+    })
+    runtime.configureOpenAIAuthBrokerController(brokerRuntimeService as any, handle as any)
+
+    await runtime.sendMessage('retry me')
+    await waitForCondition(() => brokerRuntimeService.report.mock.calls.length === 1)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(session.promptCalls).toEqual(['retry me'])
+    expect(brokerRuntimeService.report).toHaveBeenCalledWith(
+      handle,
+      'capacity_error',
+      expect.objectContaining({ message: 'HTTP 429 quota exhausted' }),
+    )
+    expect(runtimeErrors).toContainEqual(expect.objectContaining({
+      phase: 'prompt_dispatch',
+      message: 'Forge Auth broker reported capacity exhaustion for OpenAI/Codex but did not provide a replacement lease.',
+      details: expect.objectContaining({ stage: 'broker_lease:no_replacement_capacity' }),
+    }))
+  })
+
+  it('replays full-dispatch broker capacity failures after applying a replacement lease', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: unknown[] = []
+    const initialHandle = {
+      leaseId: 'lease-exhausted',
+      renewedAtMs: Date.now(),
+      identity: { clientId: 'forge', sessionId: 'worker' },
+      lease: {
+        leaseId: 'lease-exhausted',
+        accountId: 'acct-1',
+        credential: { type: 'oauth', access: 'access-1', refresh: '', expires: 1_700_000_000_000, accountId: 'acct-1' },
+      },
+    }
+    const replacementHandle = {
+      leaseId: 'lease-replacement',
+      renewedAtMs: Date.now(),
+      identity: { clientId: 'forge', sessionId: 'worker' },
+      lease: {
+        leaseId: 'lease-replacement',
+        accountId: 'acct-2',
+        credential: { type: 'oauth', access: 'access-2', refresh: '', expires: 1_700_000_000_000, accountId: 'acct-2' },
+      },
+    }
+    const brokerRuntimeService = {
+      isBrokerModeActive: vi.fn(async () => true),
+      renewIfNeeded: vi.fn(async (handleArg: unknown) => handleArg),
+      report: vi.fn(async () => replacementHandle),
+      applyLeaseToAuthStorage: vi.fn(async (_authStorage, nextHandle) => nextHandle),
+    }
+    let promptAttempts = 0
+
+    session.prompt = async (message: string): Promise<void> => {
+      session.promptCalls.push(message)
+      promptAttempts += 1
+      if (promptAttempts === 1) {
+        throw new Error('HTTP 429 quota exhausted')
+      }
+    }
+
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => runtimeErrors.push(error),
+      },
+    })
+    runtime.configureOpenAIAuthBrokerController(brokerRuntimeService as any, initialHandle as any)
+
+    await runtime.sendMessage('retry me')
+    await waitForCondition(() => session.promptCalls.length === 2)
+
+    expect(session.promptCalls).toEqual(['retry me', 'retry me'])
+    expect(brokerRuntimeService.report).toHaveBeenCalledTimes(1)
+    expect(brokerRuntimeService.applyLeaseToAuthStorage).toHaveBeenCalledWith(
+      expect.anything(),
+      replacementHandle,
+    )
+    expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).toHaveBeenCalledWith('fake-session-id')
+    expect(runtimeErrors).toEqual([])
+  })
+
+  it('fails closed before dispatch when an active broker runtime sees local auth mode', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: unknown[] = []
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => runtimeErrors.push(error),
+      },
+    })
+    const handle = {
+      leaseId: 'lease-broker',
+      renewedAtMs: Date.now(),
+      identity: { clientId: 'forge', sessionId: 'worker' },
+      lease: {
+        leaseId: 'lease-broker',
+        credential: { type: 'oauth', access: 'access-1', refresh: '', expires: 1_700_000_000_000 },
+      },
+    }
+    const brokerRuntimeService = {
+      isBrokerModeActive: vi.fn(async () => false),
+      release: vi.fn(async () => undefined),
+    }
+    runtime.configureOpenAIAuthBrokerController(brokerRuntimeService as any, handle as any)
+
+    await runtime.sendMessage('hello')
+    await waitForCondition(() => runtimeErrors.length > 0)
+
+    expect(session.promptCalls).toEqual([])
+    expect(brokerRuntimeService.release).toHaveBeenCalledWith(
+      expect.objectContaining({ leaseId: 'lease-broker' }),
+      'auth_source_change',
+    )
+    expect(runtimeErrors).toContainEqual(expect.objectContaining({
+      phase: 'prompt_dispatch',
+      message: expect.stringContaining('auth source changed to local credentials'),
+    }))
+  })
+
+  it('fails closed before dispatch when a local OpenAI runtime sees broker mode enabled', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: unknown[] = []
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => runtimeErrors.push(error),
+      },
+    })
+    runtime.configureOpenAIAuthBrokerController({
+      isBrokerModeActive: vi.fn(async () => true),
+    } as any)
+
+    await runtime.sendMessage('hello')
+    await waitForCondition(() => runtimeErrors.length > 0)
+
+    expect(session.promptCalls).toEqual([])
+    expect(runtimeErrors).toContainEqual(expect.objectContaining({
+      phase: 'prompt_dispatch',
+      message: expect.stringContaining('auth source changed to Forge Auth broker'),
+    }))
   })
 
   it('returns sanitized codex transport debug diagnostics', () => {

@@ -91,6 +91,7 @@ export class ProviderUsageService {
   private persistentCacheLoaded = false;
   private persistQueue: Promise<void> = Promise.resolve();
   private credentialPoolGetter?: () => CredentialPoolService;
+  private openAIAuthBrokerUsageGetter?: () => Promise<ProviderAccountUsage[] | null>;
   private inFlightSnapshot: Promise<ProviderUsageStats> | null = null;
 
   constructor(
@@ -103,6 +104,10 @@ export class ProviderUsageService {
 
   setCredentialPoolGetter(getter: () => CredentialPoolService): void {
     this.credentialPoolGetter = getter;
+  }
+
+  setOpenAIAuthBrokerUsageGetter(getter: () => Promise<ProviderAccountUsage[] | null>): void {
+    this.openAIAuthBrokerUsageGetter = getter;
   }
 
   async prewarmInBackground(): Promise<ProviderUsageStats | null> {
@@ -158,6 +163,21 @@ export class ProviderUsageService {
   private async refreshOpenAIIfStale(nowMs: number): Promise<void> {
     if (this.cache.openai?.length && this.cache.openai.every(e => isFresh(e, nowMs))) {
       return;
+    }
+
+    const brokerUsageGetter = this.openAIAuthBrokerUsageGetter;
+    if (brokerUsageGetter) {
+      try {
+        const brokerUsage = await brokerUsageGetter();
+        if (brokerUsage !== null) {
+          this.cache.openai = brokerUsage.map((data) => makeCachedEntry(data, nowMs));
+          this.queuePersistCacheWrite();
+          return;
+        }
+      } catch {
+        this.recordOpenAIFailedAttempt(nowMs);
+        return;
+      }
     }
 
     const pool = this.credentialPoolGetter?.();

@@ -22,6 +22,11 @@ import {
   type EmergencyContextTrimMessage
 } from "../emergency-context-trim.js";
 import type { CredentialPoolService } from "../credential-pool.js";
+import type {
+  OpenAIAuthBrokerLeaseHandle,
+  OpenAIAuthBrokerRuntimeService,
+} from "../openai-auth/openai-auth-broker-runtime-service.js";
+import { OpenAIAuthBrokerRuntimeController } from "./pi/openai-auth-broker-runtime-controller.js";
 import { transitionAgentStatus } from "../agent-state-machine.js";
 import type {
   RuntimeCodexTransportDebugDiagnostics,
@@ -148,6 +153,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   pooledCredentialProvider: string | undefined;
   credentialPoolService: CredentialPoolService | undefined;
 
+  private openAIAuthBrokerController: OpenAIAuthBrokerRuntimeController | undefined;
+
   private pooledCredentialFingerprint: string | undefined;
 
   private readonly session: AgentSession;
@@ -191,6 +198,28 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     this.unsubscribe = this.session.subscribe((event) => {
       void this.handleEvent(event);
+    });
+  }
+
+  configureOpenAIAuthBrokerController(
+    service: OpenAIAuthBrokerRuntimeService,
+    handle?: OpenAIAuthBrokerLeaseHandle,
+  ): void {
+    this.openAIAuthBrokerController = new OpenAIAuthBrokerRuntimeController({
+      service,
+      handle,
+      getAuthStorage: () => this.getRuntimeAuthStorage(),
+      getProvider: () => this.session.model?.provider ?? this.descriptor.model.provider,
+      retryPromptLater: (message) => {
+        setTimeout(() => {
+          if (this.status !== "terminated") {
+            this.dispatchPrompt(message);
+          }
+        }, 0);
+      },
+      closeStaleOpenAICodexWebSocketSession: (stage) => this.closeStaleOpenAICodexWebSocketSession(stage),
+      logRuntimeError: (phase, error, details) => this.logRuntimeError(phase, error, details),
+      reportRuntimeError: (error) => this.reportRuntimeError(error),
     });
   }
 
@@ -459,6 +488,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     this.closeStaleOpenAICodexWebSocketSession("dispose_session_resources");
+    await this.openAIAuthBrokerController?.release(shutdown.reason);
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.session.dispose();
@@ -668,7 +698,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async dispatchPromptWithRetry(message: RuntimeUserMessage): Promise<void> {
-    await this.reconcilePooledAuthBeforeDispatch();
+    try {
+      await this.openAIAuthBrokerController?.beforeDispatch();
+      await this.reconcilePooledAuthBeforeDispatch();
+    } catch (error) {
+      await this.handlePromptDispatchError(error, message, {
+        attempt: 0,
+        maxAttempts: MAX_PROMPT_DISPATCH_ATTEMPTS,
+      });
+      return;
+    }
+
     this.noteActivity();
     const images = toImageContent(message.images);
 
@@ -682,6 +722,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
           this.status !== "terminated" &&
           this.status !== "streaming" &&
           !this.session.isStreaming;
+
+        if (this.openAIAuthBrokerController?.shouldHandleErrorBeforeGenericRetry(error)) {
+          await this.handlePromptDispatchError(error, message, {
+            attempt,
+            maxAttempts: MAX_PROMPT_DISPATCH_ATTEMPTS
+          });
+          return;
+        }
 
         if (canRetry) {
           this.logRuntimeError("prompt_dispatch", error, {
@@ -811,6 +859,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         return;
       }
       this.emptyTurnResampleState = undefined;
+      await this.openAIAuthBrokerController?.reportSuccess();
       if (this.status !== "terminated") {
         await this.updateStatus("idle");
       }
@@ -1177,7 +1226,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const normalized = normalizeRuntimeError(error);
 
     // ── Credential pool failover for rate-limit / quota errors ──
-    if (this.pooledCredentialId && this.credentialPoolService) {
+    if (this.openAIAuthBrokerController?.hasLease()) {
+      const handled = await this.openAIAuthBrokerController.attemptRecovery(error, normalized.message, message);
+      if (handled) return;
+    } else if (this.pooledCredentialId && this.credentialPoolService) {
       const rotated = await this.attemptCredentialRotation(error, normalized.message, message);
       if (rotated) return; // retry dispatched with new credential
     }

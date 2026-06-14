@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AuthCredential } from "@mariozechner/pi-coding-agent";
 import {
+  type OpenAIBrokerSettingsResponse,
+  type OpenAIBrokerTestResponse,
+  type UpdateOpenAIBrokerSettingsRequest,
   getCatalogModelKey,
   type CredentialPoolState,
   type ManagerExactModelSelection,
@@ -38,6 +41,7 @@ import {
   getManagedModelProviderCredentialAvailability,
   type SecretsEnvService
 } from "./secrets-env-service.js";
+import { OpenAIAuthSettingsService } from "./openai-auth/openai-auth-settings-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
 import {
@@ -68,7 +72,7 @@ interface SettingsDescriptorTransactionStore {
   ) => ManagerProfile;
 }
 
-export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change" | "prompt_mode_change";
+export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change" | "prompt_mode_change" | "auth_source_change";
 
 type ManagerRuntimeRecycleDisposition = "recycled" | "deferred" | "none";
 type SessionDescriptor = AgentDescriptor & { role: "manager"; profileId: string };
@@ -96,7 +100,11 @@ export interface SwarmSettingsServiceOptions {
 }
 
 export class SwarmSettingsService {
-  constructor(private readonly options: SwarmSettingsServiceOptions) {}
+  private readonly openAIAuthSettingsService: OpenAIAuthSettingsService;
+
+  constructor(private readonly options: SwarmSettingsServiceOptions) {
+    this.openAIAuthSettingsService = new OpenAIAuthSettingsService({ config: options.config });
+  }
 
   async updateManagerModel(
     managerId: string,
@@ -512,15 +520,112 @@ export class SwarmSettingsService {
   }
 
   async listSettingsAuth(): Promise<SettingsAuthProvider[]> {
-    return this.options.secretsEnvService.listSettingsAuth();
+    const [providers, brokerSettings] = await Promise.all([
+      this.options.secretsEnvService.listSettingsAuth(),
+      this.openAIAuthSettingsService.getSettingsState(),
+    ]);
+    if (brokerSettings.effectiveMode !== "central_broker") {
+      return providers;
+    }
+
+    return providers.map((provider) => {
+      if (provider.provider !== "openai-codex") {
+        return provider;
+      }
+      return {
+        provider: "openai-codex",
+        configured: brokerSettings.broker.configured,
+        authType: brokerSettings.broker.configured ? "oauth" : undefined,
+        maskedValue: brokerSettings.broker.tokenMasked,
+        source: "central_broker",
+        readOnly: true,
+        statusDetail: brokerSettings.broker.status?.message ?? brokerSettings.broker.status?.degraded,
+      } satisfies SettingsAuthProvider;
+    });
   }
 
   async updateSettingsAuth(values: Record<string, string>): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed(Object.keys(values));
     await this.options.secretsEnvService.updateSettingsAuth(values);
   }
 
   async deleteSettingsAuth(provider: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.options.secretsEnvService.deleteSettingsAuth(provider);
+  }
+
+  async getOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
+    return this.openAIAuthSettingsService.getSettings();
+  }
+
+  async updateOpenAIAuthBrokerSettings(request: UpdateOpenAIBrokerSettingsRequest): Promise<OpenAIBrokerSettingsResponse> {
+    const before = await this.openAIAuthSettingsService.getSettings();
+    const result = await this.openAIAuthSettingsService.updateSettings(request);
+    await this.recycleOpenAICodexManagersIfBrokerBoundaryChanged(
+      before,
+      result,
+      shouldRecycleOpenAICodexManagersForBrokerTokenPatch(before, result, request),
+    );
+    return result;
+  }
+
+  async disableOpenAIAuthBroker(): Promise<OpenAIBrokerSettingsResponse> {
+    const before = await this.openAIAuthSettingsService.getSettings();
+    const result = await this.openAIAuthSettingsService.disableBroker();
+    await this.recycleOpenAICodexManagersIfBrokerBoundaryChanged(before, result);
+    return result;
+  }
+
+  async clearOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
+    const before = await this.openAIAuthSettingsService.getSettings();
+    const result = await this.openAIAuthSettingsService.clearBrokerSettings();
+    await this.recycleOpenAICodexManagersIfBrokerBoundaryChanged(before, result);
+    return result;
+  }
+
+  async testOpenAIAuthBrokerSettings(request?: Partial<UpdateOpenAIBrokerSettingsRequest>): Promise<OpenAIBrokerTestResponse> {
+    return this.openAIAuthSettingsService.testSettings(request);
+  }
+
+  async isOpenAIAuthBrokerModeActive(): Promise<boolean> {
+    return (await this.openAIAuthSettingsService.getEffectiveMode()) === "central_broker";
+  }
+
+  private async recycleOpenAICodexManagersIfBrokerBoundaryChanged(
+    before: OpenAIBrokerSettingsResponse,
+    after: OpenAIBrokerSettingsResponse,
+    forceRecycle = false,
+  ): Promise<void> {
+    if (!forceRecycle && !hasOpenAIAuthBrokerRuntimeBoundaryChanged(before, after)) {
+      return;
+    }
+
+    const sessions = Array.from(this.options.profiles.keys())
+      .flatMap((profileId) => this.options.getSessionsForProfile(profileId))
+      .filter((session) => session.model.provider.trim().toLowerCase() === "openai-codex");
+
+    const results = await Promise.allSettled(
+      sessions.map((session) => this.options.applyManagerRuntimeRecyclePolicy(session.agentId, "auth_source_change")),
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        this.options.logDebug("openai_auth_broker:runtime_recycle:error", {
+          agentId: sessions[index]?.agentId,
+          message: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
+    });
+  }
+
+  private async assertLocalOpenAIAuthMutationAllowed(providers: string[]): Promise<void> {
+    const touchesOpenAI = providers.some((provider) => provider.trim().toLowerCase() === "openai-codex");
+    if (!touchesOpenAI) {
+      return;
+    }
+    if (await this.isOpenAIAuthBrokerModeActive()) {
+      throw new Error("central_broker_mode_active: Switch OpenAI auth source back to local before editing local OpenAI credentials.");
+    }
   }
 
   getCredentialPoolService(): CredentialPoolService {
@@ -532,22 +637,27 @@ export class SwarmSettingsService {
   }
 
   async renamePooledCredential(provider: string, credentialId: string, label: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().renameCredential(provider, credentialId, label);
   }
 
   async removePooledCredential(provider: string, credentialId: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().removeCredential(provider, credentialId);
   }
 
   async setPrimaryPooledCredential(provider: string, credentialId: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().setPrimary(provider, credentialId);
   }
 
   async setCredentialPoolStrategy(provider: string, strategy: CredentialPoolStrategy): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().setStrategy(provider, strategy);
   }
 
   async resetPooledCredentialCooldown(provider: string, credentialId: string): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().resetCooldown(provider, credentialId);
   }
 
@@ -556,6 +666,7 @@ export class SwarmSettingsService {
     oauthCredential: AuthCredential,
     identity?: { label?: string; autoLabel?: string; accountId?: string }
   ): Promise<PooledCredentialInfo> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     return this.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
   }
 
@@ -969,6 +1080,46 @@ export class SwarmSettingsService {
       allowlistRoots: normalizeAllowlistRoots(this.options.config.cwdAllowlistRoots)
     };
   }
+}
+
+function hasOpenAIAuthBrokerRuntimeBoundaryChanged(
+  before: OpenAIBrokerSettingsResponse,
+  after: OpenAIBrokerSettingsResponse,
+): boolean {
+  return brokerRuntimeBoundaryFingerprint(before) !== brokerRuntimeBoundaryFingerprint(after);
+}
+
+function shouldRecycleOpenAICodexManagersForBrokerTokenPatch(
+  before: OpenAIBrokerSettingsResponse,
+  after: OpenAIBrokerSettingsResponse,
+  request: UpdateOpenAIBrokerSettingsRequest,
+): boolean {
+  const tokenPatch = request.broker?.token;
+  const touchesToken = (typeof tokenPatch === "string" && tokenPatch.trim().length > 0) || request.broker?.clearToken === true;
+  if (!touchesToken) {
+    return false;
+  }
+
+  return before.settings.effectiveMode === "central_broker" || after.settings.effectiveMode === "central_broker";
+}
+
+function brokerRuntimeBoundaryFingerprint(response: OpenAIBrokerSettingsResponse): string {
+  const settings = response.settings;
+  const broker = settings.broker;
+  return JSON.stringify({
+    mode: settings.mode,
+    effectiveMode: settings.effectiveMode,
+    source: settings.source,
+    configured: broker.configured,
+    url: broker.url,
+    hasToken: broker.hasToken,
+    tokenMasked: broker.tokenMasked,
+    clientId: broker.clientId,
+    instanceId: broker.instanceId,
+    instanceLabel: broker.instanceLabel,
+    userLabel: broker.userLabel,
+    timeoutMs: broker.timeoutMs,
+  });
 }
 
 function errorToMessage(error: unknown): string {

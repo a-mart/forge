@@ -175,6 +175,236 @@ describe('settings routes', () => {
     expect(swarmManager.deleteSettingsAuth).not.toHaveBeenCalled()
   })
 
+  it('handles OpenAI broker source routes before generic auth provider routes', async () => {
+    const settings = {
+      settings: {
+        mode: 'local',
+        effectiveMode: 'local',
+        source: 'default',
+        envOverride: false,
+        broker: { configured: false, hasToken: false, clientId: 'forge', timeoutMs: 10000 },
+      },
+    }
+    const swarmManager = {
+      getOpenAIAuthBrokerSettings: vi.fn(async () => settings),
+      testOpenAIAuthBrokerSettings: vi.fn(async () => ({ ok: false, error: 'missing config' })),
+      deleteSettingsAuth: vi.fn(async () => undefined),
+      listCredentialPool: vi.fn(async () => createPoolState([])),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager)
+    const getResponse = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/source`)
+    expect(getResponse.status).toBe(200)
+    await expect(getResponse.json()).resolves.toEqual(settings)
+
+    const testResponse = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/source/test`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ broker: { url: 'https://broker.example.test', token: 'broker-secret-token' } }),
+    })
+    expect(testResponse.status).toBe(200)
+    await expect(testResponse.json()).resolves.toEqual({ ok: false, error: 'missing config' })
+
+    expect(swarmManager.getOpenAIAuthBrokerSettings).toHaveBeenCalledTimes(1)
+    expect(swarmManager.testOpenAIAuthBrokerSettings).toHaveBeenCalledWith({
+      broker: { url: 'https://broker.example.test', token: 'broker-secret-token' },
+    })
+    expect(swarmManager.deleteSettingsAuth).not.toHaveBeenCalled()
+    expect(swarmManager.listCredentialPool).not.toHaveBeenCalled()
+  })
+
+  it('saves OpenAI broker source settings without echoing tokens and invalidates OpenAI usage', async () => {
+    const payload = {
+      settings: {
+        mode: 'local',
+        effectiveMode: 'local',
+        source: 'settings',
+        envOverride: false,
+        broker: {
+          configured: false,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********cret',
+          clientId: 'forge',
+          timeoutMs: 10000,
+        },
+      },
+    }
+    const swarmManager = {
+      updateOpenAIAuthBrokerSettings: vi.fn(async () => payload),
+    }
+    const statsService = {
+      invalidateProviderUsage: vi.fn(async () => undefined),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager, statsService)
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/source`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'local', broker: { url: 'https://broker.example.test', token: 'broker-bearer-secret' } }),
+    })
+
+    expect(response.status).toBe(200)
+    const body = await response.text()
+    expect(body).not.toContain('broker-bearer-secret')
+    expect(JSON.parse(body)).toEqual(payload)
+    expect(swarmManager.updateOpenAIAuthBrokerSettings).toHaveBeenCalledWith({
+      mode: 'local',
+      broker: { url: 'https://broker.example.test', token: 'broker-bearer-secret' },
+    })
+    expect(statsService.invalidateProviderUsage).toHaveBeenCalledWith('openai')
+  })
+
+  it('rejects local OpenAI auth and pool mutations while central broker mode is active', async () => {
+    const swarmManager = {
+      isOpenAIAuthBrokerModeActive: vi.fn(async () => true),
+      updateSettingsAuth: vi.fn(async () => undefined),
+      deleteSettingsAuth: vi.fn(async () => undefined),
+      listCredentialPool: vi.fn(async () => createPoolState([])),
+      setCredentialPoolStrategy: vi.fn(async () => undefined),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager)
+    const genericPut = await fetch(`${server.baseUrl}/api/settings/auth`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ 'openai-codex': 'sk-local' }),
+    })
+    const genericDelete = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex`, { method: 'DELETE' })
+    const poolMutation = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/strategy`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ strategy: 'least_used' }),
+    })
+
+    for (const response of [genericPut, genericDelete, poolMutation]) {
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({
+        code: 'central_broker_mode_active',
+        error: 'Switch OpenAI auth source back to local before editing local OpenAI credentials.',
+      })
+    }
+    expect(swarmManager.updateSettingsAuth).not.toHaveBeenCalled()
+    expect(swarmManager.deleteSettingsAuth).not.toHaveBeenCalled()
+    expect(swarmManager.setCredentialPoolStrategy).not.toHaveBeenCalled()
+  })
+
+  it('rejects legacy OpenAI Codex OAuth login start while central broker mode is active', async () => {
+    const swarmManager = {
+      isOpenAIAuthBrokerModeActive: vi.fn(async () => true),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager)
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/login/openai-codex`, {
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      code: 'central_broker_mode_active',
+      error: 'Switch OpenAI auth source back to local before editing local OpenAI credentials.',
+    })
+    expect(oauthMockState.openaiLogin).not.toHaveBeenCalled()
+  })
+
+  it('rejects final legacy OpenAI Codex OAuth persistence if broker mode becomes active mid-flow', async () => {
+    oauthMockState.openaiLogin.mockImplementation(async (callbacks: any) => {
+      const code = await callbacks.onPrompt?.({
+        message: 'Paste the OpenAI code',
+        placeholder: 'openai-code-123',
+      })
+
+      callbacks.onProgress?.(`Received code: ${code}`)
+
+      return {
+        accessToken: 'legacy-oauth-access-token',
+        refreshToken: 'legacy-oauth-refresh-token',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const brokerModeActive = vi.fn(async () => false)
+    brokerModeActive
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    ;(manager as unknown as { isOpenAIAuthBrokerModeActive: () => Promise<boolean> }).isOpenAIAuthBrokerModeActive = brokerModeActive
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/login/openai-codex`, {
+        method: 'POST',
+      })
+      expect(streamResponse.status).toBe(200)
+
+      let responded = false
+      const events = await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'prompt' || responded) {
+          return
+        }
+
+        responded = true
+        const respondResponse = await fetch(
+          `http://${config.host}:${config.port}/api/settings/auth/login/openai-codex/respond`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'code-from-user' }),
+          },
+        )
+
+        const payload = await parseJsonResponse(respondResponse)
+        expect(payload.status).toBe(200)
+        expect(payload.json.ok).toBe(true)
+      })
+
+      expect(events.map((event) => event.event)).toEqual(expect.arrayContaining(['prompt', 'error']))
+      expect(events).not.toContainEqual(expect.objectContaining({ event: 'complete' }))
+      expect(brokerModeActive).toHaveBeenCalledTimes(3)
+      const storedAuth = await readFile(config.paths.sharedAuthFile, 'utf8').catch(() => '')
+      expect(storedAuth).not.toContain('legacy-oauth-access-token')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('allows read-only OpenAI pool account routes while central broker mode is active', async () => {
+    const pool = createPoolState([makeCredential({ id: 'acct-1', label: 'Local OpenAI Account' })])
+    const swarmManager = {
+      isOpenAIAuthBrokerModeActive: vi.fn(async () => true),
+      listCredentialPool: vi.fn(async () => pool),
+      renamePooledCredential: vi.fn(async () => undefined),
+    }
+
+    const server = await createSettingsRouteTestServer(swarmManager)
+    const getResponse = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/accounts`)
+    const optionsResponse = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/accounts`, { method: 'OPTIONS' })
+    const patchResponse = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/accounts/acct-1/label`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ label: 'Blocked' }),
+    })
+
+    expect(getResponse.status).toBe(200)
+    await expect(getResponse.json()).resolves.toEqual({ pool })
+    expect(optionsResponse.status).toBe(204)
+    expect(patchResponse.status).toBe(400)
+    await expect(patchResponse.json()).resolves.toEqual({
+      code: 'central_broker_mode_active',
+      error: 'Switch OpenAI auth source back to local before editing local OpenAI credentials.',
+    })
+    expect(swarmManager.listCredentialPool).toHaveBeenCalledWith('openai-codex')
+    expect(swarmManager.renamePooledCredential).not.toHaveBeenCalled()
+  })
+
   it('lists pooled Anthropic credentials via the provider-scoped route', async () => {
     const pool = createPoolState([makeCredential({ id: 'acct-ant-1', label: 'Primary Anthropic', isPrimary: true })])
     const swarmManager = {
@@ -642,6 +872,83 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
           refreshToken: 'pooled-oauth-refresh-token',
         },
       })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('rejects final OpenAI Codex pool OAuth persistence if broker mode becomes active mid-flow', async () => {
+    oauthMockState.openaiLogin.mockImplementation(async (callbacks: any) => {
+      const code = await callbacks.onPrompt?.({
+        message: 'Paste the OpenAI code',
+        placeholder: 'openai-code-123',
+      })
+
+      callbacks.onProgress?.(`Received code: ${code}`)
+
+      return {
+        accessToken: 'pooled-mid-flow-access-token',
+        refreshToken: 'pooled-mid-flow-refresh-token',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const brokerModeActive = vi.fn(async () => false)
+    brokerModeActive
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    ;(manager as unknown as { isOpenAIAuthBrokerModeActive: () => Promise<boolean> }).isOpenAIAuthBrokerModeActive = brokerModeActive
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/auth/openai-codex/accounts/login`,
+        { method: 'POST' },
+      )
+      expect(streamResponse.status).toBe(200)
+
+      let responded = false
+      const events = await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'prompt' || responded) {
+          return
+        }
+
+        responded = true
+        const respondResponse = await fetch(
+          `http://${config.host}:${config.port}/api/settings/auth/login/openai-codex/respond`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'pool-code-from-user' }),
+          },
+        )
+
+        const payload = await parseJsonResponse(respondResponse)
+        expect(payload.status).toBe(200)
+        expect(payload.json.ok).toBe(true)
+      })
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'error',
+          data: {
+            code: 'central_broker_mode_active',
+            message: 'Switch OpenAI auth source back to local before editing local OpenAI credentials.',
+          },
+        }),
+      )
+      expect(events).not.toContainEqual(expect.objectContaining({ event: 'complete' }))
+      expect(brokerModeActive).toHaveBeenCalledTimes(3)
+      expect(manager.pooledCredentialAdds).toHaveLength(0)
     } finally {
       await server.stop()
     }

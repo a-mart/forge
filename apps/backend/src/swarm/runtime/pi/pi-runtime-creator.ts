@@ -19,6 +19,10 @@ import {
 import { AgentRuntime } from "../../agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
+import type {
+  OpenAIAuthBrokerLeaseHandle,
+  OpenAIAuthBrokerRuntimeService,
+} from "../../openai-auth/openai-auth-broker-runtime-service.js";
 import type { ForgeExtensionHost } from "../../forge-extension-host.js";
 import { createPiModelRegistry } from "../../pi-model-registry.js";
 import type {
@@ -59,6 +63,7 @@ interface PiRuntimeCreatorDependencies {
   logDebug: (message: string, details?: unknown) => void;
   getPiModelsJsonPath: () => string;
   getCredentialPoolService?: () => CredentialPoolService;
+  getOpenAIAuthBrokerRuntimeService?: () => OpenAIAuthBrokerRuntimeService;
   observability?: ObservabilityFacade;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
@@ -158,10 +163,28 @@ export class PiRuntimeCreator {
       managerSystemPromptSource: descriptor.role === "manager" ? "archetype:manager" : undefined
     });
 
-    const poolSelection = await this.selectPooledCredential(descriptor);
-    const authStorage = poolSelection?.authStorage ?? AuthStorage.create(authFilePath);
-    const pooledCredentialId = poolSelection?.credentialId;
+    const provider = descriptor.model.provider.trim().toLowerCase();
+    const brokerRuntimeService = this.deps.getOpenAIAuthBrokerRuntimeService?.();
+    const useBrokerAuth = provider === "openai-codex"
+      && brokerRuntimeService
+      && await brokerRuntimeService.isBrokerModeActive();
 
+    let poolSelection: Awaited<ReturnType<PiRuntimeCreator["selectPooledCredential"]>> = null;
+    let brokerLeaseHandle: OpenAIAuthBrokerLeaseHandle | undefined;
+    let authStorage: AuthStorage;
+
+    if (useBrokerAuth) {
+      const prepared = await brokerRuntimeService.acquireForRuntime(descriptor);
+      authStorage = prepared.authStorage;
+      brokerLeaseHandle = prepared.handle;
+    } else {
+      poolSelection = await this.selectPooledCredential(descriptor);
+      authStorage = poolSelection?.authStorage ?? AuthStorage.create(authFilePath);
+    }
+    const pooledCredentialId = poolSelection?.credentialId;
+    let brokerLeaseOwnershipTransferred = !brokerLeaseHandle;
+
+    try {
     const piModelsJsonPath = this.deps.getPiModelsJsonPath();
     const modelRegistry = createPiModelRegistry(authStorage, piModelsJsonPath);
     const model = this.resolveModel(modelRegistry, descriptor.model);
@@ -378,11 +401,27 @@ export class PiRuntimeCreator {
       runtime.credentialPoolService = this.deps.getCredentialPoolService?.();
     }
 
+    if (brokerRuntimeService && provider === "openai-codex") {
+      runtime.configureOpenAIAuthBrokerController(brokerRuntimeService, brokerLeaseHandle);
+    }
+
     if (preparedForgeBindings) {
       this.deps.forgeExtensionHost.activateRuntimeBindings(preparedForgeBindings);
     }
 
+    brokerLeaseOwnershipTransferred = true;
     return runtime;
+    } catch (error) {
+      if (brokerLeaseHandle && !brokerLeaseOwnershipTransferred) {
+        await brokerRuntimeService?.release(brokerLeaseHandle, "runtime_create_failed");
+        this.deps.logDebug("runtime:broker:lease_released_after_create_failure", {
+          agentId: descriptor.agentId,
+          leaseId: brokerLeaseHandle.leaseId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+      throw error;
+    }
   }
 
   private createRuntimeSettingsManager(
