@@ -3,11 +3,86 @@ import { redactCodexMcpSensitiveText } from "./codex-app-server-event-normalizer
 /** Upper bound for previews persisted in manager tool rows and chat details. */
 export const MAX_CODEX_MCP_UI_PREVIEW_BYTES = 2048;
 
+/** Upper bound for narrow read-only connector payloads returned to the scoped worker runtime. */
+export const MAX_CODEX_MCP_MODEL_CONTENT_BYTES = 1024 * 1024;
+
+const SENSITIVE_PAYLOAD_KEY_PATTERN =
+  /(?:authorization|cookie|set[-_\s]?cookie|api[-_\s]?key|api[-_\s]?token|access[-_\s]?token|refresh[-_\s]?token|secret[-_\s]?key|secret|password|credentials?|token)/i;
+const SENSITIVE_PAYLOAD_KEY_CANONICAL_PATTERN =
+  /(?:authorization|cookie|setcookie|apikey|apitoken|accesstoken|refreshtoken|secretkey|secret|password|credentials?|token)/i;
+
 export function boundCodexMcpToolUiPreview(value: string): string {
   return truncateBytesUtf8(
     redactCodexMcpSensitiveText(value),
     MAX_CODEX_MCP_UI_PREVIEW_BYTES,
   );
+}
+
+export function boundCodexMcpToolModelContent(value: string): {
+  text: string;
+  truncated: boolean;
+} {
+  const redacted = redactCodexMcpSensitiveText(value);
+  const text = truncateBytesUtf8(redacted, MAX_CODEX_MCP_MODEL_CONTENT_BYTES);
+  return {
+    text,
+    truncated: Buffer.byteLength(redacted, "utf8") > MAX_CODEX_MCP_MODEL_CONTENT_BYTES,
+  };
+}
+
+export function stringifyRedactedCodexMcpPayload(value: unknown): string {
+  try {
+    return JSON.stringify(redactCodexMcpPayload(value));
+  } catch {
+    return '{"note":"Unable to serialize Codex MCP tool payload."}';
+  }
+}
+
+function redactCodexMcpPayload(
+  value: unknown,
+  seen: WeakSet<object> = new WeakSet(),
+  depth = 0,
+): unknown {
+  if (depth > 32) {
+    return "[truncated-depth]";
+  }
+
+  if (typeof value === "string") {
+    return redactCodexMcpSensitiveText(value);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return value;
+  }
+
+  if (!value || typeof value !== "object") {
+    return String(value);
+  }
+
+  if (seen.has(value)) {
+    return "[circular]";
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactCodexMcpPayload(entry, seen, depth + 1));
+  }
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (isSensitivePayloadKey(key)) {
+      redacted[key] = "[redacted]";
+      continue;
+    }
+
+    redacted[key] = redactCodexMcpPayload(nested, seen, depth + 1);
+  }
+  return redacted;
+}
+
+function isSensitivePayloadKey(key: string): boolean {
+  const canonical = key.replace(/[^A-Za-z0-9]+/g, "").toLowerCase();
+  return SENSITIVE_PAYLOAD_KEY_PATTERN.test(key) || SENSITIVE_PAYLOAD_KEY_CANONICAL_PATTERN.test(canonical);
 }
 
 export function formatCodexMcpToolFailureMessage(message: string, maxBytes = 1024): string {

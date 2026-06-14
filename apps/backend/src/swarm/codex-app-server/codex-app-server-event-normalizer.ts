@@ -14,7 +14,11 @@ export const CODEX_DETAIL_MAX_BYTES_PER_TURN = 256 * 1024;
 export const CODEX_DETAIL_MAX_LABEL_CHARS = 240;
 
 const SECRET_KEY_PATTERN =
-  /^(authorization|cookie|set-cookie|apikey|api_key|token|access_token|refresh_token|secret|password)$/i;
+  /(?:authorization|cookie|set[-_\s]?cookie|api[-_\s]?key|api[-_\s]?token|access[-_\s]?token|refresh[-_\s]?token|secret[-_\s]?key|secret|password|credentials?|token)/i;
+const SECRET_KEY_CANONICAL_PATTERN =
+  /(?:authorization|cookie|setcookie|apikey|apitoken|accesstoken|refreshtoken|secretkey|secret|password|credentials?|token)/i;
+const INLINE_SECRET_ASSIGNMENT_PATTERN =
+  /((?:["']?)(?:authorization|cookie|set[-_\s]?cookie|api[-_\s]?key|api[-_\s]?token|access[-_\s]?token|refresh[-_\s]?token|secret[-_\s]?key|secret|password|credentials?|token|apiKey|apiToken|accessToken|refreshToken|secretKey)(?:["']?)\s*[:=]\s*)(Bearer\s+[^\s,;&}]+|\{[^}]*\}|\[[^\]]*\]|"[^"]*"|'[^']*'|[^\s,;&}]+)/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._-]+\b/gi;
 const SK_KEY_PATTERN = /\b(sk-[A-Za-z0-9_-]{8,})\b/g;
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
@@ -220,8 +224,17 @@ export function shouldAcceptCodexDetailNotification(
   return activeTurn.codexItemsById?.has(itemId) === true;
 }
 
+function normalizeSecretKey(value: string): string {
+  return value.replace(/[^A-Za-z0-9]+/g, "").toLowerCase();
+}
+
+function isSensitiveObjectKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key) || SECRET_KEY_CANONICAL_PATTERN.test(normalizeSecretKey(key));
+}
+
 export function redactCodexMcpSensitiveText(value: string): string {
   return value
+    .replace(INLINE_SECRET_ASSIGNMENT_PATTERN, (_match, prefix: string) => `${prefix}"[redacted]"`)
     .replace(BEARER_PATTERN, "Bearer [redacted]")
     .replace(SK_KEY_PATTERN, "[redacted-api-key]")
     .replace(JWT_PATTERN, "[redacted-token]")
@@ -263,7 +276,7 @@ function sanitizePrimitive(value: unknown, depth = 0): unknown {
 
   const sanitized: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(value)) {
-    if (SECRET_KEY_PATTERN.test(key)) {
+    if (isSensitiveObjectKey(key)) {
       sanitized[key] = "[redacted]";
       continue;
     }

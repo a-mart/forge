@@ -23,6 +23,47 @@ export interface RuntimeSessionMessage {
   content: unknown;
 }
 
+export interface RuntimeTokenUsageMeta {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+  total?: number;
+}
+
+export interface RuntimeCostUsdMeta {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  total?: number;
+}
+
+export type RuntimeRequestPayloadFidelity = "full" | "partial" | "delta_only" | "unavailable";
+
+export interface RuntimeModelCallMeta {
+  usage?: RuntimeTokenUsageMeta;
+  costUsd?: RuntimeCostUsdMeta;
+  modelId?: string;
+  responseModelId?: string;
+  provider?: string;
+  api?: string;
+  stopReason?: string;
+  providerRequestId?: string;
+  durationMs?: number;
+  requestPayloadFidelity?: RuntimeRequestPayloadFidelity;
+  requestMessages?: unknown;
+  invocationParameters?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RuntimeTurnMeta extends RuntimeModelCallMeta {
+  durationApiMs?: number;
+  providerSessionId?: string;
+  outcome?: string;
+}
+
 export interface SpecialistFallbackReplaySnapshot {
   messages: RuntimeUserMessage[];
 }
@@ -62,10 +103,10 @@ export type RuntimeSessionEvent =
   | { type: "agent_start" }
   | { type: "agent_end" }
   | { type: "turn_start" }
-  | { type: "turn_end"; toolResults: unknown[] }
+  | { type: "turn_end"; toolResults: unknown[]; meta?: RuntimeTurnMeta }
   | { type: "message_start"; message: RuntimeSessionMessage }
   | { type: "message_update"; message: RuntimeSessionMessage }
-  | { type: "message_end"; message: RuntimeSessionMessage }
+  | { type: "message_end"; message: RuntimeSessionMessage; meta?: RuntimeModelCallMeta }
   | {
       type: "tool_execution_start";
       toolName: string;
@@ -121,7 +162,8 @@ export interface RuntimeErrorEvent {
     | "interrupt"
     | "thread_resume"
     | "startup"
-    | "runtime_exit";
+    | "runtime_exit"
+    | "silent_turn";
   message: string;
   stack?: string;
   details?: Record<string, unknown>;

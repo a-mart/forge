@@ -63,6 +63,71 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     return createHeadingElement(level, className, children, adornment)
   }
 
+  const renderCode = useCallback(
+    ({ className, children }: { className?: string; children?: ReactNode }) => {
+      const contentValue = String(children)
+      const language = resolveCodeLanguage(className)
+      const hasLanguageClass = /language-/.test(className ?? '')
+      const isBlock = hasLanguageClass || contentValue.includes('\n')
+
+      if (isBlock) {
+        const normalizedCode = contentValue.replace(/\n$/, '')
+
+        if (enableMermaid && language === 'mermaid') {
+          return (
+            <MermaidBlock
+              code={normalizedCode}
+              isDocument={isDocument}
+            />
+          )
+        }
+
+        return (
+          <div className={cn('group/code relative', isDocument ? 'my-5' : 'my-2')}>
+            {language ? (
+              <div className="flex items-center justify-between rounded-t-lg border border-b-0 border-border/50 bg-muted/40 px-3 py-1.5">
+                <span className="font-mono text-[11px] font-medium text-muted-foreground">{language}</span>
+                <CodeBlockCopyButton code={normalizedCode} />
+              </div>
+            ) : (
+              <span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-hover/code:opacity-100">
+                <CodeBlockCopyButton code={normalizedCode} />
+              </span>
+            )}
+            <div
+              className={cn(
+                'w-full border border-border/50 bg-muted/25',
+                language ? 'rounded-b-lg' : 'rounded-lg',
+              )}
+            >
+              <pre className="overflow-x-auto p-4">
+                <code className={cn('font-mono text-foreground/90', isDocument ? 'text-[13px] leading-6' : 'text-xs leading-5')}>
+                  {normalizedCode}
+                </code>
+              </pre>
+            </div>
+          </div>
+        )
+      }
+
+      return (
+        <code
+          className={cn(
+            'rounded bg-muted/70 font-mono text-foreground',
+            isDocument
+              ? 'px-1.5 py-0.5 text-[13px]'
+              : 'px-1 py-0.5 text-xs',
+          )}
+        >
+          {children}
+        </code>
+      )
+    },
+    [enableMermaid, isDocument],
+  )
+
+  const renderPre = useCallback(({ children }: { children?: ReactNode }) => <>{children}</>, [])
+
   return (
     <>
       <div className={cn('min-w-0 overflow-hidden', isDocument ? 'text-[15px] leading-[1.8]' : 'text-sm leading-relaxed')}>
@@ -258,68 +323,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
                 </Button>
               )
             },
-            code({ className, children }) {
-              const contentValue = String(children)
-              const language = resolveCodeLanguage(className)
-              const hasLanguageClass = /language-/.test(className ?? '')
-              const isBlock = hasLanguageClass || contentValue.includes('\n')
-
-              if (isBlock) {
-                const normalizedCode = contentValue.replace(/\n$/, '')
-
-                if (enableMermaid && language === 'mermaid') {
-                  return (
-                    <MermaidBlock
-                      code={normalizedCode}
-                      isDocument={isDocument}
-                    />
-                  )
-                }
-
-                return (
-                  <div className={cn('group/code relative', isDocument ? 'my-5' : 'my-2')}>
-                    {language ? (
-                      <div className="flex items-center justify-between rounded-t-lg border border-b-0 border-border/50 bg-muted/40 px-3 py-1.5">
-                        <span className="font-mono text-[11px] font-medium text-muted-foreground">{language}</span>
-                        <CodeBlockCopyButton code={normalizedCode} />
-                      </div>
-                    ) : (
-                      <span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-hover/code:opacity-100">
-                        <CodeBlockCopyButton code={normalizedCode} />
-                      </span>
-                    )}
-                    <div
-                      className={cn(
-                        'w-full border border-border/50 bg-muted/25',
-                        language ? 'rounded-b-lg' : 'rounded-lg',
-                      )}
-                    >
-                      <pre className="overflow-x-auto p-4">
-                        <code className={cn('font-mono text-foreground/90', isDocument ? 'text-[13px] leading-6' : 'text-xs leading-5')}>
-                          {normalizedCode}
-                        </code>
-                      </pre>
-                    </div>
-                  </div>
-                )
-              }
-
-              return (
-                <code
-                  className={cn(
-                    'rounded bg-muted/70 font-mono text-foreground',
-                    isDocument
-                      ? 'px-1.5 py-0.5 text-[13px]'
-                      : 'px-1 py-0.5 text-xs',
-                  )}
-                >
-                  {children}
-                </code>
-              )
-            },
-            pre({ children }) {
-              return <>{children}</>
-            },
+            code: renderCode,
+            pre: renderPre,
             table({ children }) {
               return (
                 <div className={cn('my-4 w-full overflow-x-auto', isDocument && 'my-5')}>

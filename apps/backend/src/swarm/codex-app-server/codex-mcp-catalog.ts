@@ -1,11 +1,15 @@
-import { safeJson } from "./codex-app-server-event-normalizer.js";
 import {
   boundCodexMcpToolArgs,
+  boundCodexMcpToolModelContent,
   boundCodexMcpToolUiPreview,
   formatCodexMcpToolFailureMessage,
+  stringifyRedactedCodexMcpPayload,
 } from "./codex-mcp-args.js";
-import { assertCodexMcpToolReadOnlyAllowed } from "./codex-mcp-tool-safety.js";
-import { parseCodexMcpToolSafetyFields } from "./codex-mcp-tool-safety.js";
+import {
+  assertCodexMcpToolReadOnlyAllowed,
+  isFirefliesCodexMcpTool,
+  parseCodexMcpToolSafetyFields,
+} from "./codex-mcp-tool-safety.js";
 import type { CodexAppServerClientPort } from "./types.js";
 
 const CATALOG_CACHE_TTL_MS = 30_000;
@@ -82,6 +86,9 @@ export interface CodexMcpToolCallResult {
   /** Redacted, byte-bounded error preview safe for model context and tool details. */
   errorPreview?: string;
   redactedPreview: string;
+  /** Redacted, larger payload for narrow read-only connector tools that need full content in worker context. */
+  redactedModelContent?: string;
+  redactedModelContentTruncated?: boolean;
 }
 
 interface CatalogCacheEntry {
@@ -321,7 +328,11 @@ export class CodexMcpCatalog {
         });
       }
 
-      const preview = boundCodexMcpToolUiPreview(safeJson(parsed.redactedPayload));
+      const redactedPayloadText = stringifyRedactedCodexMcpPayload(parsed.redactedPayload);
+      const preview = boundCodexMcpToolUiPreview(redactedPayloadText);
+      const modelContent = shouldExposeFullRedactedPayloadToScopedWorker(tool)
+        ? boundCodexMcpToolModelContent(redactedPayloadText)
+        : undefined;
 
       return {
         auditId,
@@ -330,6 +341,8 @@ export class CodexMcpCatalog {
         toolName: tool.toolName,
         ok: true,
         redactedPreview: preview,
+        redactedModelContent: modelContent?.text,
+        redactedModelContentTruncated: modelContent?.truncated,
       };
     } catch (error) {
       return buildCodexMcpToolFailureResult({
@@ -716,6 +729,24 @@ function extractArray(response: unknown, keys: string[]): unknown[] {
 type ParsedToolCallResponse =
   | { ok: true; redactedPayload: unknown }
   | { ok: false; message: string };
+
+function shouldExposeFullRedactedPayloadToScopedWorker(tool: CodexCatalogMcpTool): boolean {
+  if (!isFirefliesCodexMcpTool(tool)) {
+    return false;
+  }
+
+  const tokens = `${tool.toolName} ${tool.selector} ${tool.description ?? ""}`
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+  if (!tokens.includes("transcript") && !tokens.includes("transcripts")) {
+    return false;
+  }
+
+  return ["fetch", "get", "download", "export"].some((token) => tokens.includes(token));
+}
 
 function parseToolCallResponse(response: unknown): ParsedToolCallResponse {
   const failureMessage = extractToolCallFailureMessage(response);

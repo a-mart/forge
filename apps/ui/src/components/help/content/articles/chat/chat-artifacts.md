@@ -1,4 +1,4 @@
-The artifact panel is a slide-out viewer for files that agents create or reference during a conversation. It opens on the right side without blocking chat interaction. You can still type and send messages while a file is open.
+The artifact panel is a slide-out viewer for files that agents create or reference during a conversation. On desktop, it now opens from the left activity rail as a single selected activity-pane surface; mobile keeps the header/drawer behavior. You can still type and send messages while a file is open.
 
 ## Opening the panel
 

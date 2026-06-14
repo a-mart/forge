@@ -34,7 +34,7 @@ Forge owns model metadata end-to-end:
 
 ## Codex app-server sidecar
 
-The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@Codex]` text message uses the Codex CLI app-server as a direct sidecar thread. Selector forms like `@Codex -<selector>` and inline `@Codex:<selector>` / `[@Codex:<selector>]` route through the manager, inject guidance, and can call Codex MCP tools. Manager-routed turns use the Codex catalog endpoint `/api/codex-app-server/catalog?managerAgentId=...`, are authorized per turn against the selected selector, keep read-only/safety gates and sanitized cache/results, and stay in the normal manager audit trail. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Parent session display cards are append-only and excluded from model context; forked sessions omit historical Codex display cards.
+The Builder web `@Codex` surface has two paths. A plain leading `@Codex` or `[@Codex]` text message uses the Codex CLI app-server as a direct sidecar thread. Selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin and delegate it to the visible `Codex Plugin` specialist worker. The plugin-scoped path is read-only/safety-gated, uses server-owned scoped exact plugin tools, and returns redacted bounded results. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Parent session display cards are append-only and excluded from model context; forked sessions omit historical Codex display cards.
 
 
 ## Cursor SDK provider

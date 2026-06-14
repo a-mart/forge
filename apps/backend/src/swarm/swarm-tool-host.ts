@@ -9,7 +9,19 @@ import type {
   SpawnAgentInput
 } from "./types.js";
 import type { CodexCatalogSnapshot, CodexMcpToolCallResult } from "./codex-app-server/codex-mcp-catalog.js";
+import type { CodexPluginScopeRuntimeView } from "./codex-app-server/codex-plugin-scope-service.js";
 import type { TaskToolInput, TaskToolResult } from "./coordination/task-tool.js";
+
+export interface SwarmToolSideEffectEvent {
+  toolName: string;
+  toolCallId: string;
+  phase: "before" | "after" | "side_effect";
+  input?: unknown;
+  output?: unknown;
+  isError?: boolean;
+  userVisible?: boolean;
+  metadata?: Record<string, unknown>;
+}
 
 export interface SwarmToolHost {
   listAgents(): AgentDescriptor[];
@@ -27,7 +39,15 @@ export interface SwarmToolHost {
     fromAgentId: string,
     targetAgentId: string,
     message: string,
-    delivery?: RequestedDeliveryMode
+    delivery?: RequestedDeliveryMode,
+    options?: {
+      observabilityParentTool?: {
+        agentId: string;
+        runtimeToken?: number;
+        toolCallId: string;
+        toolName?: string;
+      };
+    }
   ): Promise<SendMessageReceipt>;
   createSessionFromAgent(
     creatorAgentId: string,
@@ -64,10 +84,17 @@ export interface SwarmToolHost {
     toolCallId: string,
     input: TaskToolInput,
   ): Promise<TaskToolResult>;
+  recordToolSideEffect?(callerAgentId: string, event: SwarmToolSideEffectEvent): void;
   isWorkPlansEnabled?(): boolean;
   listCodexMcpTools?(managerAgentId: string): Promise<CodexCatalogSnapshot>;
   callCodexMcpTool?(
     managerAgentId: string,
     params: { selector: string; args?: Record<string, unknown> },
+  ): Promise<CodexMcpToolCallResult>;
+  getCodexPluginScopeForWorker?(workerAgentId: string): CodexPluginScopeRuntimeView | undefined;
+  callCodexPluginScopedTool?(
+    workerAgentId: string,
+    scopedToolName: string,
+    args?: Record<string, unknown>,
   ): Promise<CodexMcpToolCallResult>;
 }

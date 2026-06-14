@@ -7,6 +7,9 @@ import {
 } from 'react'
 import { reportBuilderConnected } from '@/lib/connection-health-store'
 import { AgentSidebar } from '@/components/chat/AgentSidebar'
+import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
+import { ActivityRail } from '@/components/index-page/ActivityRail'
+import { isActivityRailWorkspaceAvailable, resolveChatRailTargetAgentId } from '@/components/index-page/activity-rail-workspace'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { isUsableActiveTarget } from '@/components/index-page/archive-target-guards'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
@@ -17,6 +20,9 @@ import { useChatSearch } from '@/components/chat/useChatSearch'
 import { useSearchHighlight } from '@/components/chat/useSearchHighlight'
 import { ChatSidePanels } from '@/components/index-page/ChatSidePanels'
 import { ChatWorkspace } from '@/components/index-page/ChatWorkspace'
+import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
+import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar'
+import { DiffViewerContent } from '@/components/diff-viewer/DiffViewerDialog'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { StatsPage } from '@/components/index-page/StatsPage'
 import { shouldEnableCodexMention } from '@/components/index-page/codex-mention-utils'
@@ -36,7 +42,6 @@ import {
 import {
   chooseMostRecentSessionFallbackForDeletedTarget,
 } from '@/hooks/index-page/deleted-agent-fallback'
-import { fetchWorkPlansEnabled } from '@/components/settings/work-plans-api'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
 import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
@@ -50,6 +55,7 @@ import {
   shouldLoadExternalProjectAgentDirectory,
 } from '@/hooks/index-page/project-agent-suggestions'
 import { usePanelState } from '@/hooks/index-page/use-panel-state'
+import { Clock3, FolderOpen, GitBranch, MessageSquare, Package, SquareTerminal } from 'lucide-react'
 import {
   parseCompactSlashCommand,
   useSlashCommands,
@@ -64,6 +70,7 @@ import type {
   ManagerExactModelSelection,
   ManagerReasoningLevel,
   ProjectAgentExternalDirectoryEntry,
+  GitWorktreeSummary,
 } from '@forge/protocol'
 
 function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
@@ -126,21 +133,6 @@ export function BuilderSurface({
   }, [state.connected])
 
   useEffect(() => {
-    if (!state.connected) return
-    let cancelled = false
-    void fetchWorkPlansEnabled(wsUrl)
-      .then((enabled) => {
-        if (!cancelled) {
-          setState((prev) => ({ ...prev, workPlansEnabled: enabled }))
-        }
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [setState, state.connected, wsUrl])
-
-  useEffect(() => {
     let cancelled = false
     void fetchModelCacheVisualizationEnabled(wsUrl)
       .then((enabled) => {
@@ -178,6 +170,7 @@ export function BuilderSurface({
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
   const [detailedAllView, setDetailedAllView] = useState(false)
   const [activeWorkExpanded, setActiveWorkExpanded] = useState(false)
+  const [diffViewerPresentation, setDiffViewerPresentation] = useState<'modal' | 'inline'>('modal')
   const [externalProjectAgentEntries, setExternalProjectAgentEntries] = useState<ProjectAgentExternalDirectoryEntry[]>([])
 
   const activeAgentId = useMemo(() => {
@@ -206,9 +199,16 @@ export function BuilderSurface({
     closeArtifact: handleCloseArtifact,
     isArtifactsPanelOpen,
     setIsArtifactsPanelOpen,
+    artifactsPanelTab,
+    setArtifactsPanelTab,
+    openArtifactsPanel: handleOpenArtifactsPanel,
     toggleArtifactsPanel: handleToggleArtifactsPanel,
+    closeWorkspacePanels: handleCloseWorkspacePanels,
+    cortexDashboardTab,
     cortexDashboardTabRequest,
     requestCortexDashboardTab,
+    toggleCortexDashboardTab,
+    handleCortexDashboardTabChange,
     isMobileSidebarOpen,
     setIsMobileSidebarOpen,
     isDiffViewerOpen,
@@ -216,11 +216,15 @@ export function BuilderSurface({
     diffViewerInitialState,
     openDiffViewer,
     isFileBrowserOpen,
+    openFileBrowser: handleOpenFileBrowser,
     toggleFileBrowser: handleToggleFileBrowser,
     selectedFileBrowserFile,
     selectFileBrowserFile: handleFileBrowserSelectFile,
     closeFileBrowserPanel: handleFileBrowserClosePanel,
     navigateFileBrowserToDirectory: handleFileBrowserNavigateToDirectory,
+    fileBrowserWorktreeContext,
+    browseWorktreeFiles: handleBrowseWorktreeFiles,
+    clearFileBrowserWorktreeContext: handleClearFileBrowserWorktreeContext,
   } = usePanelState({
     activeAgentId,
     activeAgentArchetypeId: activeAgent?.archetypeId,
@@ -308,13 +312,7 @@ export function BuilderSurface({
     ) ?? null
   }, [activeManagerId, state.agents])
 
-  const activeWorkSnapshot =
-    state.workPlansEnabled &&
-    activeAgent?.role === 'manager' &&
-    activeManagerId &&
-    state.taskSnapshotLoadingSessionId !== activeManagerId
-      ? state.taskSnapshots[activeManagerId] ?? null
-      : null
+  const activeWorkSnapshot = null
 
   const modelCacheHeaderSummary =
     state.modelCacheVisualizationEnabled && isActiveManager
@@ -1254,11 +1252,11 @@ export function BuilderSurface({
     return client.requestProjectAgentRecommendations(agentId)
   }, [clientRef])
 
-  const handleSelectAgent = (agentId: string) => {
+  const handleSelectAgent = useCallback((agentId: string) => {
     getSidebarPerfRegistry().startSessionSwitch(agentId)
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
-  }
+  }, [clientRef, navigateToRoute])
 
   const handleOpenCortexReview = useCallback((agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
@@ -1343,6 +1341,216 @@ export function BuilderSurface({
     messageInputRef.current?.addTerminalContext(context)
   }, [])
 
+  const isCortexSession = activeAgent?.archetypeId === 'cortex'
+  const showActivityRail = activeView === 'chat'
+  const isInlineDiffViewerOpen = isDiffViewerOpen && diffViewerPresentation === 'inline'
+
+  const handleOpenDiffViewerModal = useCallback(() => {
+    setDiffViewerPresentation('modal')
+    openDiffViewer()
+  }, [openDiffViewer])
+
+  const handleReturnToChatWorkspace = useCallback(() => {
+    const chatTargetAgentId = resolveChatRailTargetAgentId(
+      activeAgentId,
+      activeAgent,
+      activeManagerAgent,
+    )
+
+    if (chatTargetAgentId && chatTargetAgentId !== activeAgentId) {
+      handleSelectAgent(chatTargetAgentId)
+    }
+
+    setIsDiffViewerOpen(false)
+    setDiffViewerPresentation('modal')
+    handleCloseWorkspacePanels()
+    messageInputRef.current?.focus()
+  }, [activeAgent, activeAgentId, activeManagerAgent, handleCloseWorkspacePanels, handleSelectAgent, setIsDiffViewerOpen])
+
+  const handleToggleFileBrowserFromRail = useCallback(() => {
+    if (isFileBrowserOpen && !isInlineDiffViewerOpen) {
+      handleToggleFileBrowser()
+      return
+    }
+
+    setIsDiffViewerOpen(false)
+    setDiffViewerPresentation('modal')
+    handleOpenFileBrowser()
+  }, [handleOpenFileBrowser, handleToggleFileBrowser, isFileBrowserOpen, isInlineDiffViewerOpen, setIsDiffViewerOpen])
+
+  const handleOpenDiffViewerInline = useCallback(() => {
+    if (isInlineDiffViewerOpen) {
+      setIsDiffViewerOpen(false)
+      setDiffViewerPresentation('modal')
+      return
+    }
+
+    handleCloseWorkspacePanels()
+    setDiffViewerPresentation('inline')
+    openDiffViewer()
+  }, [handleCloseWorkspacePanels, isInlineDiffViewerOpen, openDiffViewer, setIsDiffViewerOpen])
+
+  const handleOpenArtifactsFromRail = useCallback((tab: 'artifacts' | 'schedules') => {
+    if (isInlineDiffViewerOpen) {
+      setIsDiffViewerOpen(false)
+      setDiffViewerPresentation('modal')
+      handleOpenArtifactsPanel(tab)
+      return
+    }
+
+    handleToggleArtifactsPanel(tab)
+  }, [handleOpenArtifactsPanel, handleToggleArtifactsPanel, isInlineDiffViewerOpen, setIsDiffViewerOpen])
+
+  const handleOpenCortexDashboardFromRail = useCallback((tab: 'knowledge' | 'schedules') => {
+    if (isInlineDiffViewerOpen) {
+      setIsDiffViewerOpen(false)
+      setDiffViewerPresentation('modal')
+      requestCortexDashboardTab(tab)
+      return
+    }
+
+    toggleCortexDashboardTab(tab)
+  }, [isInlineDiffViewerOpen, requestCortexDashboardTab, setIsDiffViewerOpen, toggleCortexDashboardTab])
+
+  const handleCloseDiffViewer = useCallback(() => {
+    setIsDiffViewerOpen(false)
+  }, [setIsDiffViewerOpen])
+
+  const handleBrowseWorktreeFromSourceControl = useCallback(
+    (worktree: GitWorktreeSummary) => {
+      handleBrowseWorktreeFiles({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path,
+        branch: worktree.branch,
+        repoRoot: worktree.repoRoot,
+      })
+      setIsDiffViewerOpen(false)
+    },
+    [handleBrowseWorktreeFiles, setIsDiffViewerOpen],
+  )
+
+  useEffect(() => {
+    if (!isDiffViewerOpen && diffViewerPresentation === 'inline') {
+      setDiffViewerPresentation('modal')
+    }
+  }, [diffViewerPresentation, isDiffViewerOpen])
+
+  const keyboardShortcutLabels = useMemo(() => {
+    const electronPlatform = typeof window !== 'undefined' ? (window.electronBridge?.platform ?? '') : ''
+    const platform =
+      electronPlatform || (typeof window !== 'undefined' ? (window.navigator.platform ?? '') : '')
+    const normalizedPlatform = platform.toLowerCase()
+    const isMacPlatform =
+      normalizedPlatform.includes('mac') || normalizedPlatform.includes('darwin')
+    return {
+      terminal: isMacPlatform ? '⌘`' : 'Ctrl+`',
+      changes: isMacPlatform ? '⌘⇧D' : 'Ctrl+Shift+D',
+    }
+  }, [])
+
+  const activityRailItems = useMemo(() => {
+    const artifactsLabel = isCortexSession ? 'Dashboard' : 'Artifacts'
+    const workspaceDisabled = !isActivityRailWorkspaceAvailable(activeAgentId, activeManagerAgent)
+    const artifactsActive = isCortexSession
+      ? isArtifactsPanelOpen && cortexDashboardTab !== 'schedules'
+      : isArtifactsPanelOpen && artifactsPanelTab === 'artifacts'
+    const schedulesActive = isCortexSession
+      ? isArtifactsPanelOpen && cortexDashboardTab === 'schedules'
+      : isArtifactsPanelOpen && artifactsPanelTab === 'schedules'
+
+    const chatActive = !isInlineDiffViewerOpen && !isFileBrowserOpen && !isArtifactsPanelOpen
+
+    return [
+      {
+        id: 'chat' as const,
+        label: 'Chat',
+        icon: MessageSquare,
+        active: chatActive,
+        disabled: !activeAgentId,
+        onClick: handleReturnToChatWorkspace,
+      },
+      {
+        id: 'files' as const,
+        label: isFileBrowserOpen && !isInlineDiffViewerOpen ? 'Close file browser' : 'Browse Files',
+        icon: FolderOpen,
+        active: isFileBrowserOpen && !isInlineDiffViewerOpen,
+        disabled: workspaceDisabled || !activeAgentId,
+        onClick: handleToggleFileBrowserFromRail,
+      },
+      {
+        id: 'changes' as const,
+        label: 'Source Control',
+        icon: GitBranch,
+        active: isInlineDiffViewerOpen,
+        disabled: workspaceDisabled || !activeAgentId,
+        shortcutLabel: keyboardShortcutLabels.changes,
+        onClick: handleOpenDiffViewerInline,
+      },
+      {
+        id: 'terminal' as const,
+        label: terminalPanel.isPanelVisible ? 'Hide terminal panel' : 'Terminal',
+        icon: SquareTerminal,
+        active: terminalPanel.isPanelVisible,
+        disabled: !terminalSessionAgentId,
+        badge:
+          !terminalPanel.isPanelVisible && state.terminals.length > 0
+            ? state.terminals.length
+            : undefined,
+        shortcutLabel: keyboardShortcutLabels.terminal,
+        onClick: () => {
+          terminalPanel.togglePanel()
+        },
+      },
+      {
+        id: 'schedules' as const,
+        label: 'Cron / Schedules',
+        icon: Clock3,
+        active: schedulesActive && !isInlineDiffViewerOpen,
+        disabled: workspaceDisabled,
+        onClick: () => {
+          if (isCortexSession) {
+            handleOpenCortexDashboardFromRail('schedules')
+          } else {
+            handleOpenArtifactsFromRail('schedules')
+          }
+        },
+      },
+      {
+        id: 'artifacts' as const,
+        label: artifactsLabel,
+        icon: Package,
+        active: artifactsActive && !isInlineDiffViewerOpen,
+        disabled: workspaceDisabled,
+        onClick: () => {
+          if (isCortexSession) {
+            handleOpenCortexDashboardFromRail('knowledge')
+          } else {
+            handleOpenArtifactsFromRail('artifacts')
+          }
+        },
+      },
+    ]
+  }, [
+    activeAgentId,
+    activeManagerAgent,
+    artifactsPanelTab,
+    cortexDashboardTab,
+    handleOpenArtifactsFromRail,
+    handleOpenCortexDashboardFromRail,
+    handleOpenDiffViewerInline,
+    handleReturnToChatWorkspace,
+    handleToggleFileBrowserFromRail,
+    isArtifactsPanelOpen,
+    isCortexSession,
+    isInlineDiffViewerOpen,
+    isFileBrowserOpen,
+    state.terminals.length,
+    terminalPanel,
+    terminalSessionAgentId,
+    keyboardShortcutLabels.changes,
+    keyboardShortcutLabels.terminal,
+  ])
+
   return (
     <>
       <AgentSidebar
@@ -1400,6 +1608,10 @@ export function BuilderSurface({
         onCreateAgentCreator={handleCreateAgentCreator}
       />
 
+      {showActivityRail ? (
+        <ActivityRail items={activityRailItems} />
+      ) : null}
+
       <div
           className="relative flex min-w-0 flex-1"
           onDragEnter={handleDragEnter}
@@ -1411,8 +1623,70 @@ export function BuilderSurface({
             <div className="pointer-events-none absolute inset-2 z-50 rounded-lg border-2 border-dashed border-primary bg-primary/10" />
           ) : null}
 
+          {activeView === 'chat' && !isInlineDiffViewerOpen && isArtifactsPanelOpen ? (
+            <ArtifactsSidebar
+              wsUrl={wsUrl}
+              managerId={activeManagerId}
+              artifacts={collectedArtifacts}
+              isOpen={isArtifactsPanelOpen}
+              onClose={() => setIsArtifactsPanelOpen(false)}
+              onArtifactClick={handleOpenArtifact}
+              activeTab={artifactsPanelTab}
+              onActiveTabChange={setArtifactsPanelTab}
+              panelMode="rail-selected"
+              desktopPlacement="left"
+              desktopOnly
+            />
+          ) : null}
+
+          {activeView === 'chat' && !isInlineDiffViewerOpen && !isArtifactsPanelOpen ? (
+            <FileBrowserSidebar
+              wsUrl={wsUrl}
+              agentId={activeAgentId}
+              isOpen={isFileBrowserOpen}
+              onClose={handleToggleFileBrowser}
+              onSelectFile={handleFileBrowserSelectFile}
+              selectedFile={selectedFileBrowserFile}
+              worktreeContext={fileBrowserWorktreeContext}
+              onClearWorktreeContext={handleClearFileBrowserWorktreeContext}
+              projectResourceProfileId={activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null}
+              projectResourceSessionAgentId={activeManagerAgent?.agentId ?? null}
+              desktopPlacement="left"
+              desktopOnly
+            />
+          ) : null}
+
+          {activeView === 'chat' && !isInlineDiffViewerOpen && isFileBrowserOpen && selectedFileBrowserFile ? (
+            <FileBrowserPanel
+              wsUrl={wsUrl}
+              agentId={activeAgentId}
+              filePath={selectedFileBrowserFile}
+              onClose={handleFileBrowserClosePanel}
+              onNavigateToDirectory={handleFileBrowserNavigateToDirectory}
+              worktreeId={fileBrowserWorktreeContext?.worktreeId ?? null}
+              desktopOnly
+              resizeHandlePlacement="right"
+            />
+          ) : null}
+
           <div className="flex min-w-0 flex-1 flex-col">
-            {activeView === 'settings' ? (
+            {isInlineDiffViewerOpen ? (
+              <div className="diff-viewer flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label="Source Control workspace">
+                <DiffViewerContent
+                  active={isInlineDiffViewerOpen}
+                  wsUrl={wsUrl}
+                  agentId={activeAgentId}
+                  isCortex={isDiffViewerCortexSession}
+                  onClose={handleCloseDiffViewer}
+                  onBrowseWorktreeFiles={handleBrowseWorktreeFromSourceControl}
+                  initialRepoTarget={diffViewerInitialState?.initialRepoTarget}
+                  initialTab={diffViewerInitialState?.initialTab}
+                  initialSha={diffViewerInitialState?.initialSha}
+                  initialFile={diffViewerInitialState?.initialFile}
+                  initialQuickFilter={diffViewerInitialState?.initialQuickFilter}
+                />
+              </div>
+            ) : activeView === 'settings' ? (
               <SettingsPanel
                 wsUrl={wsUrl}
                 managers={settingsManagers}
@@ -1513,11 +1787,12 @@ export function BuilderSurface({
                   isTerminalPanelOpen: terminalPanel.isPanelVisible,
                   terminalCount: state.terminals.length,
                   onToggleTerminalPanel: terminalSessionAgentId ? terminalPanel.togglePanel : undefined,
-                  onOpenDiffViewer: () => openDiffViewer(),
+                  onOpenDiffViewer: handleOpenDiffViewerModal,
                   isFileBrowserOpen,
                   onToggleFileBrowser: handleToggleFileBrowser,
                   onToggleMobileSidebar: () =>
                     setIsMobileSidebarOpen((previous) => !previous),
+                  showDesktopWorkspaceActions: !showActivityRail,
                   sessionFeedbackVote: isActiveManager && activeAgentId ? getVote(activeAgentId) : null,
                   sessionFeedbackHasComment: isActiveManager && activeAgentId ? hasComment(activeAgentId) : false,
                   onSessionFeedbackVote:
@@ -1655,7 +1930,7 @@ export function BuilderSurface({
             )}
           </div>
 
-          {activeView === 'chat' ? (
+          {activeView === 'chat' && !isInlineDiffViewerOpen ? (
             <ChatSidePanels
               isCortexSession={activeAgent?.archetypeId === 'cortex'}
               cortexDashboardProps={{
@@ -1665,8 +1940,9 @@ export function BuilderSurface({
                 onClose: () => setIsArtifactsPanelOpen(false),
                 onArtifactClick: handleOpenArtifact,
                 onOpenSession: handleSelectAgent,
-                onOpenDiffViewer: openDiffViewer,
+                onOpenDiffViewer: handleOpenDiffViewerModal,
                 requestedTab: cortexDashboardTabRequest,
+                onActiveTabChange: handleCortexDashboardTabChange,
               }}
               artifactsSidebarProps={{
                 wsUrl,
@@ -1675,6 +1951,10 @@ export function BuilderSurface({
                 isOpen: isArtifactsPanelOpen,
                 onClose: () => setIsArtifactsPanelOpen(false),
                 onArtifactClick: handleOpenArtifact,
+                activeTab: artifactsPanelTab,
+                onActiveTabChange: setArtifactsPanelTab,
+                panelMode: 'rail-selected',
+                mobileOnly: true,
               }}
               fileBrowserPanelProps={
                 isFileBrowserOpen && selectedFileBrowserFile
@@ -1684,6 +1964,8 @@ export function BuilderSurface({
                       filePath: selectedFileBrowserFile,
                       onClose: handleFileBrowserClosePanel,
                       onNavigateToDirectory: handleFileBrowserNavigateToDirectory,
+                      worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+                      mobileOnly: true,
                     }
                   : null
               }
@@ -1694,8 +1976,11 @@ export function BuilderSurface({
                 onClose: handleToggleFileBrowser,
                 onSelectFile: handleFileBrowserSelectFile,
                 selectedFile: selectedFileBrowserFile,
+                worktreeContext: fileBrowserWorktreeContext,
+                onClearWorktreeContext: handleClearFileBrowserWorktreeContext,
                 projectResourceProfileId: activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? null,
                 projectResourceSessionAgentId: activeManagerAgent?.agentId ?? null,
+                mobileOnly: true,
               }}
             />
           ) : null}
@@ -1756,11 +2041,12 @@ export function BuilderSurface({
             : null
         }
         diffViewerDialogProps={{
-          open: isDiffViewerOpen,
+          open: isDiffViewerOpen && diffViewerPresentation === 'modal',
           onOpenChange: setIsDiffViewerOpen,
           wsUrl,
           agentId: activeAgentId,
           isCortex: isDiffViewerCortexSession,
+          onBrowseWorktreeFiles: handleBrowseWorktreeFromSourceControl,
           initialRepoTarget: diffViewerInitialState?.initialRepoTarget,
           initialTab: diffViewerInitialState?.initialTab,
           initialSha: diffViewerInitialState?.initialSha,

@@ -88,16 +88,6 @@ vi.mock('@/components/settings/cortex-auto-review-api', () => ({
   updateCortexAutoReviewSettings: (...args: unknown[]) => cortexApiMock.updateCortexAutoReviewSettings(...args),
 }))
 
-const workPlansApiMock = vi.hoisted(() => ({
-  fetchWorkPlansEnabled: vi.fn(),
-  setWorkPlansEnabledApi: vi.fn(),
-}))
-
-vi.mock('@/components/settings/work-plans-api', () => ({
-  fetchWorkPlansEnabled: (...args: unknown[]) => workPlansApiMock.fetchWorkPlansEnabled(...args),
-  setWorkPlansEnabledApi: (...args: unknown[]) => workPlansApiMock.setWorkPlansEnabledApi(...args),
-}))
-
 const modelCacheVisualizationApiMock = vi.hoisted(() => ({
   fetchModelCacheVisualizationEnabled: vi.fn(),
   setModelCacheVisualizationEnabledApi: vi.fn(),
@@ -145,8 +135,6 @@ beforeEach(() => {
     settings: { enabled: true, intervalMinutes: 120 },
     cortexDisabled: false,
   })
-  workPlansApiMock.fetchWorkPlansEnabled.mockResolvedValue(true)
-  workPlansApiMock.setWorkPlansEnabledApi.mockResolvedValue(undefined)
   modelCacheVisualizationApiMock.fetchModelCacheVisualizationEnabled.mockResolvedValue(false)
   modelCacheVisualizationApiMock.setModelCacheVisualizationEnabledApi.mockResolvedValue(undefined)
   terminalApiMock.fetchAvailableShells.mockResolvedValue({
@@ -589,13 +577,12 @@ describe('SettingsGeneral — collab target', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders the Active Work Plans enable toggle', async () => {
+  it('does not render the parked Active Work Plans enable toggle', async () => {
     renderGeneral()
     await flush()
 
-    expect(container.textContent).toContain('Enable Active Work Plans')
-    expect(container.querySelector('#work-plans-enabled-toggle')).toBeTruthy()
-    expect(workPlansApiMock.fetchWorkPlansEnabled).toHaveBeenCalled()
+    expect(container.textContent).not.toContain('Enable Active Work Plans')
+    expect(container.querySelector('#work-plans-enabled-toggle')).toBeFalsy()
   })
 
   it('renders prompt cache visualization toggle defaulting off', async () => {

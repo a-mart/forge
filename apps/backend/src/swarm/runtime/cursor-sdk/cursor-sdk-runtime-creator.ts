@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ObservabilityFacade } from "../../../observability/observability-types.js";
 import type { ForgeExtensionHost } from "../../forge-extension-host.js";
 import { modelCatalogService } from "../../model-catalog-service.js";
 import type { ProjectExecutableTrustPlan } from "../../project-executable-trust.js";
@@ -12,6 +13,7 @@ import type {
 import type { SwarmToolHost } from "../../swarm-tool-host.js";
 import type { AgentContextUsage, AgentDescriptor, AgentStatus, SwarmConfig } from "../../types.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
+import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planRuntimeTools } from "../runtime-tool-plan.js";
 import { CursorSdkAgentRuntime, getDefaultCursorSdkStateRoot } from "./cursor-sdk-agent-runtime.js";
 import { loadCursorSdkModule } from "./cursor-sdk-loader.js";
@@ -25,6 +27,7 @@ interface CursorSdkRuntimeCreatorDependencies {
   config: SwarmConfig;
   now: () => string;
   logDebug: (message: string, details?: unknown) => void;
+  observability?: ObservabilityFacade;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
@@ -138,6 +141,24 @@ export class CursorSdkRuntimeCreator {
       activeTools: swarmTools.map((tool) => tool.name),
       mcpServer: mcpBridge.serverName,
       stateRoot
+    });
+
+    recordRuntimePromptAndCreation({
+      observability: this.deps.observability,
+      descriptor,
+      runtimeToken,
+      runtimeType: "cursor-sdk",
+      forgeResolvedPrompt: systemPrompt,
+      finalSystemPrompt: cursorSystemPrompt,
+      activeTools: summarizeRuntimeTools(swarmTools),
+      mcpServers: [mcpBridge.serverName],
+      metadata: {
+        authSource: auth.source,
+        stateRoot,
+        promptHash: hashPrompt(cursorSystemPrompt),
+        modelContextWindow: modelCatalogService.getEffectiveContextWindow(descriptor.model.modelId, descriptor.model.provider),
+        projectExecutablesTrusted: projectExecutableTrustPlan.trusted,
+      },
     });
 
     if (preparedForgeBindings) {

@@ -164,6 +164,7 @@ function renderHistoryView(props: { refreshToken?: number; onStatusChange?: (inf
         repoTarget: 'versioning',
         refreshToken: props.refreshToken ?? 0,
         onStatusChange: props.onStatusChange,
+        onActivityTabChange: vi.fn(),
       }),
     )
   })

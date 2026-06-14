@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { AgentRuntime } from '../swarm/agent-runtime.js'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { AgentRuntime, EMPTY_TURN_REDELIVERY_DIRECTIVE } from '../swarm/agent-runtime.js'
 import type { AgentDescriptor } from '../swarm/types.js'
 
 const openAICodexResponsesMockState = vi.hoisted(() => ({
@@ -29,6 +29,7 @@ class FakeSession {
   contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined
   agent = { transport: 'websocket-cached' }
   model = { provider: 'openai-codex', api: 'openai-codex-responses' }
+  state: { messages: Array<Record<string, any>> } = { messages: [] }
   modelRegistry: any = { authStorage: { set: vi.fn() } }
   sessionId = 'fake-session-id'
   shutdownEvents: any[] = []
@@ -1075,5 +1076,241 @@ describe('AgentRuntime', () => {
 
     expect(session.abortCalls).toBe(1)
     expect(runtime.getStatus()).toBe('idle')
+  })
+})
+
+describe('manager empty-turn retry after worker terminal report', () => {
+  const TERMINAL_CALLBACK = 'WORKER REPORT: status: blocked\nsummary: rerun failed before a Graph response.'
+  const LEGACY_TERMINAL_CALLBACK = 'SYSTEM: status: done\nsummary: executed the guarded pilot once.'
+
+  beforeEach(() => {
+    openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockReset()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function makeManagerDescriptor(): AgentDescriptor {
+    return { ...makeDescriptor(), agentId: 'manager-1', displayName: 'Manager', role: 'manager', managerId: 'manager-1' }
+  }
+
+  function userMessage(text: string): Record<string, any> {
+    return { role: 'user', content: [{ type: 'text', text }] }
+  }
+
+  function emptyAssistantMessage(overrides: Record<string, any> = {}): Record<string, any> {
+    return {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: ' ' },
+        { type: 'text', text: '' },
+      ],
+      stopReason: 'stop',
+      ...overrides,
+    }
+  }
+
+  function makeRuntime(options: { descriptor?: AgentDescriptor } = {}) {
+    const session = new FakeSession()
+    const onAgentEnd = vi.fn()
+    const onRuntimeError = vi.fn()
+    const runtime = new AgentRuntime({
+      descriptor: options.descriptor ?? makeManagerDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onAgentEnd,
+        onRuntimeError,
+      },
+    })
+    return { session, runtime, onAgentEnd, onRuntimeError }
+  }
+
+  it('resamples an empty turn that follows a terminal worker report', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([TERMINAL_CALLBACK])
+    expect(session.state.messages).toEqual([])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('resamples when the report arrived under the legacy SYSTEM prefix', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [userMessage(LEGACY_TERMINAL_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([LEGACY_TERMINAL_CALLBACK])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('invalidates codex websocket continuation state before resampling', async () => {
+    const { session, runtime } = makeRuntime()
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).toHaveBeenCalledWith('fake-session-id')
+  })
+
+  it('escalates the final resample with the redelivery directive', async () => {
+    const { session, runtime } = makeRuntime()
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+    expect(session.promptCalls[0]).toBe(TERMINAL_CALLBACK)
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 2)
+
+    expect(session.promptCalls[1]).toBe(`${TERMINAL_CALLBACK}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`)
+  })
+
+  it('counts an empty turn after the escalated redelivery toward the same budget', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 2)
+
+    // The escalated redelivery itself comes back empty: history now holds the
+    // directive-appended report. It must key to the same budget and stop.
+    session.state.messages = [
+      userMessage(`${TERMINAL_CALLBACK}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`),
+      emptyAssistantMessage(),
+    ]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toHaveLength(2)
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits a silent_turn runtime notice when resamples are exhausted', async () => {
+    const { session, runtime, onRuntimeError } = makeRuntime()
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+      await (runtime as any).handleEvent({ type: 'agent_end' })
+      await waitForCondition(() => session.promptCalls.length === attempt)
+    }
+    expect(onRuntimeError).not.toHaveBeenCalled()
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(onRuntimeError).toHaveBeenCalledTimes(1)
+    const [agentId, event] = onRuntimeError.mock.calls[0]
+    expect(agentId).toBe('manager-1')
+    expect(event.phase).toBe('silent_turn')
+    expect(event.details?.userFacingMessage).toContain('did not produce a response')
+  })
+
+  it('gives up after two resamples and reports the turn end', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+      await (runtime as any).handleEvent({ type: 'agent_end' })
+      await waitForCondition(() => session.promptCalls.length === attempt)
+      expect(onAgentEnd).not.toHaveBeenCalled()
+    }
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toHaveLength(2)
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+    expect(session.state.messages).toHaveLength(2)
+  })
+
+  it('resets the retry budget once a turn produces real output', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    session.state.messages = [
+      userMessage(TERMINAL_CALLBACK),
+      { role: 'assistant', content: [{ type: 'toolCall', toolName: 'speak_to_user' }], stopReason: 'toolUse' },
+    ]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 2)
+    expect(session.promptCalls).toHaveLength(2)
+  })
+
+  it('does not resample for non-terminal internal notices', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [userMessage('SYSTEM: Worker w-1 completed its turn.'), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not resample when the turn called tools or produced text', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(TERMINAL_CALLBACK),
+      { role: 'assistant', content: [{ type: 'text', text: 'noted, relaying now.' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not resample aborted or errored turns', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage({ stopReason: 'aborted' })]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not resample for worker-role agents', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime({ descriptor: makeDescriptor() })
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not resample when another delivery is already pending', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.isStreaming = true
+    await runtime.sendMessage('SYSTEM: queued follow-up note')
+    session.isStreaming = false
+
+    session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
   })
 })

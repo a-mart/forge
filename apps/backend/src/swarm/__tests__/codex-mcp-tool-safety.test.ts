@@ -26,12 +26,94 @@ describe("codex-mcp-tool-safety", () => {
     ).toBe(true);
   });
 
-  it("rejects destructive and unannotated tools", () => {
+  it("rejects destructive, open-world, and unannotated tools", () => {
     expect(classifyCodexMcpToolSafety(tool({ destructive: true })).allowed).toBe(false);
     expect(classifyCodexMcpToolSafety(tool({ toolName: "delete_item" })).allowed).toBe(false);
     expect(classifyCodexMcpToolSafety(tool({ description: "Update calendar event" })).allowed).toBe(
       false,
     );
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({ readOnly: true, annotations: { readOnlyHint: true, openWorldHint: true } }),
+      ).allowed,
+    ).toBe(false);
+  });
+
+  it("rejects separator and camel-case denied tool names even when read-only annotated", () => {
+    for (const toolName of ["send_email", "delete-item", "browser_open", "computer_use", "fileRead"]) {
+      expect(
+        classifyCodexMcpToolSafety(
+          tool({ toolName, readOnly: true, annotations: { readOnlyHint: true } }),
+        ).allowed,
+      ).toBe(false);
+    }
+  });
+
+  it("allows narrow read-only Fireflies transcript download tools without allowing destructive downloads", () => {
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({
+          selector: "codex_apps/fireflies_fireflies_download_transcript",
+          serverName: "codex_apps",
+          toolName: "fireflies_fireflies_download_transcript",
+          description: "Download transcript text for a Fireflies meeting",
+          readOnly: true,
+          annotations: { readOnlyHint: true },
+        }),
+      ).allowed,
+    ).toBe(true);
+
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({
+          selector: "codex_apps/fireflies_fireflies_download_transcript",
+          serverName: "codex_apps",
+          toolName: "fireflies_fireflies_download_transcript",
+          description: "Download transcript text for a Fireflies meeting",
+          readOnly: true,
+          annotations: { readOnlyHint: true, openWorldHint: true },
+        }),
+      ).allowed,
+    ).toBe(false);
+
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({
+          selector: "files/download_transcript",
+          serverName: "files",
+          toolName: "download_transcript",
+          description: "Download transcript file",
+          readOnly: true,
+          annotations: { readOnlyHint: true },
+        }),
+      ).allowed,
+    ).toBe(false);
+
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({
+          selector: "files/download_fireflies_transcript",
+          serverName: "files",
+          toolName: "download_fireflies_transcript",
+          description: "Download Fireflies transcript text from a file store",
+          readOnly: true,
+          annotations: { readOnlyHint: true },
+        }),
+      ).allowed,
+    ).toBe(false);
+
+    expect(
+      classifyCodexMcpToolSafety(
+        tool({
+          selector: "codex_apps/fireflies_archive_download_transcript",
+          serverName: "codex_apps",
+          toolName: "fireflies_archive_download_transcript",
+          description: "Download transcript text from a Fireflies archive lookalike",
+          readOnly: true,
+          annotations: { readOnlyHint: true },
+        }),
+      ).allowed,
+    ).toBe(false);
   });
 
   it("throws on blocked tools", () => {

@@ -40,6 +40,7 @@ interface UseMentionsReturn {
   mentionFilter: string
   mentionSelectedIndex: number
   setMentionSelectedIndex: (index: number) => void
+  moveMentionSelection: (delta: number) => void
   mentionTokenStart: number
   filteredMentions: MentionSuggestion[]
   mentionMenuRef: React.RefObject<HTMLDivElement | null>
@@ -200,6 +201,34 @@ export function useMentions({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [isMentionMenuOpen])
 
+  useEffect(() => {
+    if (!isMentionMenuOpen || filteredMentions.length === 0) {
+      return
+    }
+    if (mentionSelectedIndex >= filteredMentions.length) {
+      setMentionSelectedIndex(0)
+      return
+    }
+
+    const option = mentionMenuRef.current?.querySelector<HTMLElement>(
+      `[role="option"][aria-selected="true"]`,
+    )
+    option?.scrollIntoView?.({ block: 'nearest' })
+  }, [filteredMentions.length, isMentionMenuOpen, mentionSelectedIndex])
+
+  const moveMentionSelection = useCallback(
+    (delta: number) => {
+      setMentionSelectedIndex((current) => {
+        const count = filteredMentions.length
+        if (count === 0) {
+          return 0
+        }
+        return (current + delta + count) % count
+      })
+    },
+    [filteredMentions.length],
+  )
+
   const selectMention = useCallback(
     (suggestion: MentionSuggestion) => {
       const textarea = textareaRef.current
@@ -336,6 +365,7 @@ export function useMentions({
     mentionFilter,
     mentionSelectedIndex,
     setMentionSelectedIndex,
+    moveMentionSelection,
     mentionTokenStart,
     filteredMentions,
     mentionMenuRef,

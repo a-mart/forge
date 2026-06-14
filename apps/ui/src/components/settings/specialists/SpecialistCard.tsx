@@ -102,6 +102,11 @@ export function SpecialistCard({
                   Both
                 </span>
               )}
+              {specialist.specialistId === 'codex-plugin' && (
+                <span className="inline-flex items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-400">
+                  Contextual / automatic
+                </span>
+              )}
               {!specialist.available && (
                 <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="size-3" />
@@ -211,6 +216,11 @@ export function SpecialistCard({
             <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               <Pin className="size-2.5" />
               Pinned
+            </span>
+          )}
+          {specialist.specialistId === 'codex-plugin' && (
+            <span className="inline-flex items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-400">
+              Contextual / automatic
             </span>
           )}
           {!specialist.available && (

@@ -99,7 +99,7 @@ export function renderMentionOverlay(text: string): ReactNode[] {
         <span
           className={
             isCodex || isCodexTool
-              ? 'font-medium text-emerald-700 dark:text-emerald-300'
+              ? 'text-emerald-700 dark:text-emerald-300'
               : 'text-blue-600 dark:text-blue-400'
           }
         >

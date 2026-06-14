@@ -195,17 +195,12 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       if (mentions.mentionMenuStatus === 'list' && mentions.filteredMentions.length > 0) {
         if (event.key === 'ArrowDown') {
           event.preventDefault()
-          mentions.setMentionSelectedIndex(
-            (mentions.mentionSelectedIndex + 1) % mentions.filteredMentions.length,
-          )
+          mentions.moveMentionSelection(1)
           return
         }
         if (event.key === 'ArrowUp') {
           event.preventDefault()
-          mentions.setMentionSelectedIndex(
-            (mentions.mentionSelectedIndex - 1 + mentions.filteredMentions.length) %
-              mentions.filteredMentions.length,
-          )
+          mentions.moveMentionSelection(-1)
           return
         }
         if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {

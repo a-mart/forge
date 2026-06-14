@@ -1,6 +1,6 @@
 Specialists are named worker templates that tell the manager which model, reasoning level, and system prompt to use for different kinds of tasks. Instead of a single generic worker, you can have a backend specialist running Codex and a frontend specialist running GPT-5.5 at medium reasoning, each with tailored instructions.
 
-Forge also ships collaboration-focused builtins such as `collab-planner`, `collab-reviewer`, `collab-doc-writer`, `collab-scout`, and `collab-researcher` for channel work that needs project-context aware roles.
+Forge also ships collaboration-focused builtins such as `collab-planner`, `collab-reviewer`, `collab-doc-writer`, `collab-scout`, and `collab-researcher` for channel work that needs project-context aware roles. It also exposes a contextual `Codex Plugin` specialist in Settings when an active `@Codex` plugin selector scope exists; it is automatic rather than manually spawned, uses GPT-5.5 Medium by default, and uses a slate label color.
 
 ## Global vs. profile scope
 
@@ -54,7 +54,7 @@ If a project agent has the **Can create sessions** toggle enabled in its setting
 
 ## Model and fallback
 
-Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Built-in specialists generally use cross-vendor fallbacks when practical. The built-in `web-researcher` follows normal fallback/model config semantics and uses Brave-backed research guidance on OpenAI Codex `gpt-5.4-mini`. Expand the fallback section to configure it.
+Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Built-in specialists generally use cross-vendor fallbacks when practical. The built-in `web-researcher` follows normal fallback/model config semantics and uses Brave-backed research guidance on OpenAI Codex `gpt-5.4-mini`. The contextual `Codex Plugin` specialist is visible in Settings as `Codex Plugin` only when an active selector scope exists, stays with that scope until stop/replacement/session cleanup/delete/archive/runtime error, and is not a general spawnable worker. Manager follow-ups are allowed while scope remains active, but direct user or sibling-worker targeting remains blocked. Expand the fallback section to configure it.
 
 ## Specialist web research
 

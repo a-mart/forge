@@ -4,9 +4,10 @@ import { getSpawnPresetFamilies } from "@forge/protocol";
 import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { ChoiceRequestCancelledError } from "./swarm-manager.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
-import { boundCodexMcpToolUiPreview } from "./codex-app-server/codex-mcp-args.js";
-import { isBuilderWebCodexRoutingSurface } from "./codex-app-server/codex-mention-router.js";
-import { buildTaskTool } from "./coordination/task-tool.js";
+import {
+  buildCodexPluginScopedToolDefinitions,
+  isCodexPluginWorkerDescriptor,
+} from "./codex-app-server/codex-plugin-scope-service.js";
 import {
   type AgentDescriptor,
   type MessageChannel,
@@ -97,6 +98,14 @@ function sortAgentsForList(left: AgentDescriptor, right: AgentDescriptor): numbe
   }
 
   return left.agentId.localeCompare(right.agentId);
+}
+
+function recordToolSideEffect(
+  host: SwarmToolHost,
+  descriptor: AgentDescriptor,
+  event: Parameters<NonNullable<SwarmToolHost["recordToolSideEffect"]>>[1],
+): void {
+  host.recordToolSideEffect?.(descriptor.agentId, event);
 }
 
 function compactPath(value: string): string {
@@ -300,8 +309,27 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           descriptor.agentId,
           parsed.targetAgentId,
           parsed.message,
-          parsed.delivery
+          parsed.delivery,
+          {
+            observabilityParentTool: {
+              agentId: descriptor.agentId,
+              toolCallId: _toolCallId,
+              toolName: "send_message_to_agent",
+            },
+          }
         );
+        recordToolSideEffect(host, descriptor, {
+          toolName: "send_message_to_agent",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: parsed,
+          output: receipt,
+          metadata: {
+            targetAgentId: parsed.targetAgentId,
+            acceptedMode: receipt.acceptedMode,
+            deliveryId: receipt.deliveryId,
+          },
+        });
 
         return {
           content: [
@@ -317,7 +345,23 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
   ];
 
   if (descriptor.role !== "manager") {
-    return shared;
+    const isInternalCodexPluginWorker = isCodexPluginWorkerDescriptor(descriptor);
+    const codexPluginScope = isInternalCodexPluginWorker
+      ? host.getCodexPluginScopeForWorker?.(descriptor.agentId)
+      : undefined;
+    const codexPluginTools = codexPluginScope && host.callCodexPluginScopedTool
+      ? buildCodexPluginScopedToolDefinitions({
+          scope: codexPluginScope,
+          executeScopedTool: (scopedToolName, args) =>
+            host.callCodexPluginScopedTool!(descriptor.agentId, scopedToolName, args),
+        })
+      : [];
+
+    const workerBaseTools = isInternalCodexPluginWorker
+      ? shared.filter((tool) => tool.name === "send_message_to_agent")
+      : shared;
+
+    return [...workerBaseTools, ...codexPluginTools];
   }
 
   const managerOnly: ToolDefinition[] = [
@@ -388,6 +432,19 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         };
 
         const spawned = await host.spawnAgent(descriptor.agentId, spawnInput);
+        recordToolSideEffect(host, descriptor, {
+          toolName: "spawn_agent",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: spawnInput,
+          output: { agentId: spawned.agentId, role: spawned.role, displayName: spawned.displayName },
+          metadata: {
+            spawnedAgentId: spawned.agentId,
+            specialist: spawnInput.specialist,
+            modelProvider: spawned.model.provider,
+            modelId: spawned.model.modelId,
+          },
+        });
 
         return {
           content: [
@@ -451,6 +508,17 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           "speak_to_user",
           parsed.target
         );
+        recordToolSideEffect(host, descriptor, {
+          toolName: "speak_to_user",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: parsed,
+          output: published,
+          userVisible: true,
+          metadata: {
+            targetChannel: published.targetContext.channel,
+          },
+        });
 
         return {
           content: [
@@ -554,6 +622,16 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             })),
           };
 
+          recordToolSideEffect(host, descriptor, {
+            toolName: "present_choices",
+            toolCallId: _toolCallId,
+            phase: "side_effect",
+            input: parsed,
+            output: details,
+            userVisible: true,
+            metadata: { status: "answered" },
+          });
+
           return {
             content: [
               {
@@ -569,6 +647,16 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
               status: "cancelled",
               reason: error.reason,
             };
+            recordToolSideEffect(host, descriptor, {
+              toolName: "present_choices",
+              toolCallId: _toolCallId,
+              phase: "side_effect",
+              input: parsed,
+              output: details,
+              isError: true,
+              userVisible: true,
+              metadata: { status: "cancelled" },
+            });
             return {
               content: [
                 {
@@ -584,105 +672,6 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         }
       },
     },
-    ...(host.isWorkPlansEnabled?.() === false ? [] : [buildTaskTool(host, descriptor)]),
-    ...(host.listCodexMcpTools &&
-    host.callCodexMcpTool &&
-    descriptor.role === "manager" &&
-    isBuilderWebCodexRoutingSurface({ channel: "web" }, descriptor)
-      ? [
-          {
-            name: "list_codex_mcp_tools",
-            label: "List Codex MCP Tools",
-            description:
-              "List Codex app-server apps and MCP tools available for direct manager calls. " +
-              "Use when the user tagged @Codex -<selector> or inline @Codex:<selector> mentions.",
-            parameters: Type.Object({
-              refresh: Type.Optional(
-                Type.Boolean({
-                  description: "Force refresh of the short-lived Codex catalog cache.",
-                }),
-              ),
-            }),
-            async execute() {
-              const snapshot = await host.listCodexMcpTools!(descriptor.agentId);
-              const summary = {
-                appCount: snapshot.apps.length,
-                toolCount: snapshot.tools.length,
-                fetchedAt: snapshot.fetchedAt,
-                tools: snapshot.tools.map((tool) => ({
-                  selector: tool.selector,
-                  serverName: tool.serverName,
-                  toolName: tool.toolName,
-                  appName: tool.appName,
-                  description: tool.description,
-                })),
-              };
-
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify(summary),
-                  },
-                ],
-                details: summary,
-              };
-            },
-          } satisfies ToolDefinition,
-          {
-            name: "call_codex_mcp_tool",
-            label: "Call Codex MCP Tool",
-            description:
-              "Call a Codex app-server MCP tool directly via mcpServer/tool/call. " +
-              "Infer arguments from the user's request; only read-only harmless calls are expected in v1.",
-            parameters: Type.Object({
-              selector: Type.String({
-                description: "Tool selector from list_codex_mcp_tools (server/tool or short name).",
-              }),
-              args: Type.Optional(
-                Type.Record(Type.String(), Type.Unknown(), {
-                  description: "JSON object of tool arguments validated against the tool schema when available.",
-                }),
-              ),
-            }),
-            async execute(_toolCallId, params) {
-              const parsed = params as {
-                selector: string;
-                args?: Record<string, unknown>;
-              };
-
-              const result = await host.callCodexMcpTool!(descriptor.agentId, {
-                selector: parsed.selector,
-                args: parsed.args,
-              });
-
-              const publicDetails = {
-                ok: result.ok,
-                selector: result.selector,
-                serverName: result.serverName,
-                toolName: result.toolName,
-                preview: result.redactedPreview
-                  ? boundCodexMcpToolUiPreview(result.redactedPreview)
-                  : undefined,
-                errorPreview: result.errorPreview
-                  ? boundCodexMcpToolUiPreview(result.errorPreview)
-                  : undefined,
-                auditId: result.auditId,
-              };
-
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify(publicDetails),
-                  },
-                ],
-                details: publicDetails,
-              };
-            },
-          } satisfies ToolDefinition,
-        ]
-      : []),
   ];
 
   return [...shared, ...managerOnly];

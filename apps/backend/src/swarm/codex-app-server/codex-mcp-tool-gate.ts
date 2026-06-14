@@ -78,13 +78,13 @@ export function assertCodexMcpToolGateAllowed(gate: CodexMcpToolGateEvaluation):
 
 export function buildCodexMcpToolTurnAuthorization(params: {
   surfaceGate: CodexMcpToolGateEvaluation;
-  codexClassification: { kind: "none" | "sidecar" | "manager_tool"; selectors?: string[] };
+  codexClassification: { kind: "none" | "sidecar" | "plugin_delegate"; selectors?: string[] };
 }): CodexMcpToolGateEvaluation {
   if (!params.surfaceGate.allowed) {
     return params.surfaceGate;
   }
 
-  if (params.codexClassification.kind === "manager_tool") {
+  if (params.codexClassification.kind === "plugin_delegate") {
     const selectors = params.codexClassification.selectors ?? [];
     if (selectors.length === 0) {
       return {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Eye, FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
+import { Eye, FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, Package, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -79,6 +79,8 @@ interface ChatHeaderProps {
   onToggleFileBrowser?: () => void
   fileBrowserAvailable?: boolean
   onToggleMobileSidebar?: () => void
+  /** When false, desktop header workspace actions (terminal, files, changes, artifacts) are hidden. Mobile always shows them. */
+  showDesktopWorkspaceActions?: boolean
   sessionFeedbackVote?: 'up' | 'down' | null
   sessionFeedbackHasComment?: boolean
   onSessionFeedbackVote?: (
@@ -193,6 +195,7 @@ export function ChatHeader({
   onToggleFileBrowser,
   fileBrowserAvailable = true,
   onToggleMobileSidebar,
+  showDesktopWorkspaceActions = true,
   sessionFeedbackVote,
   sessionFeedbackHasComment,
   onSessionFeedbackVote,
@@ -539,7 +542,12 @@ export function ChatHeader({
         ) : null}
 
         {/* ── Inline: file browser + diff viewer + artifacts/dashboard toggle ── */}
-        <div className="inline-flex items-center gap-0.5">
+        <div
+          className={cn(
+            'inline-flex items-center gap-0.5',
+            showDesktopWorkspaceActions === false && 'md:hidden',
+          )}
+        >
           {onToggleTerminalPanel ? (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
@@ -606,13 +614,13 @@ export function ChatHeader({
                     size="icon"
                     className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
                     onClick={onOpenDiffViewer}
-                    aria-label="View Changes (⌘⇧D)"
+                    aria-label="Source Control (⌘⇧D)"
                   >
                     <GitBranch className="size-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" sideOffset={6}>
-                  View Changes (⌘⇧D)
+                  Source Control (⌘⇧D)
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -633,7 +641,7 @@ export function ChatHeader({
                   aria-label={isArtifactsPanelOpen ? `Close ${panelLabel.toLowerCase()}` : panelLabel}
                   aria-pressed={isArtifactsPanelOpen}
                 >
-                  <PanelRight className="size-3.5" />
+                  <Package className="size-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={6}>

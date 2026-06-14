@@ -9,6 +9,7 @@ import {
   planPiExtensionFactories,
   planRuntimeTools
 } from "../runtime/runtime-tool-plan.js";
+import { resolvePiActiveToolNamesForDescriptor } from "../runtime/pi/pi-runtime-creator.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 
@@ -147,7 +148,26 @@ describe("runtime tool plan", () => {
       "kill_agent",
       "speak_to_user",
       "present_choices",
-      "task",
+    ]);
+  });
+
+  it("drops Pi default coding tools for scoped Codex Plugin specialist workers", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-tool-plan-"));
+    const descriptor = createDescriptor(rootDir, {
+      agentId: "codex-plugin-fireflies",
+      internalWorkerKind: "codex_plugin",
+    });
+
+    expect(
+      resolvePiActiveToolNamesForDescriptor(
+        descriptor,
+        ["read", "bash", "edit", "write", "list_agents"],
+        ["send_message_to_agent", "list_scoped_codex_plugin_tools", "codex_fireflies_list_recent"],
+      ).sort(),
+    ).toEqual([
+      "codex_fireflies_list_recent",
+      "list_scoped_codex_plugin_tools",
+      "send_message_to_agent",
     ]);
   });
 

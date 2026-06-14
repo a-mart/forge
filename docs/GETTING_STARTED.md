@@ -91,7 +91,7 @@ The key insight: **your manager writes better prompts than you do.** Especially 
 
 ### Chat Interface
 
-The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. In Builder web, a plain leading `@Codex` or `[@Codex]` starts or continues a direct Codex app-server sidecar turn, while selector forms like `@Codex -<selector>` and inline `@Codex:<selector>` / `[@Codex:<selector>]` route through the manager with injected guidance and Codex MCP tool access. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
+The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. In Builder web, a plain leading `@Codex` or `[@Codex]` starts or continues a direct Codex app-server sidecar turn, while selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin and delegate it through the visible `Codex Plugin` specialist worker. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
 
 Two view modes, toggled at the top:
 
@@ -102,17 +102,21 @@ Agents can include Mermaid diagrams in their responses using standard markdown c
 
 You can pin important messages to preserve them through compaction. Hover over any user or assistant message and click the pin icon. Pinned messages show an amber indicator and are guaranteed to survive when the context window is summarized. See [Smart Compaction](#8-reliability--continuity) for details.
 
-### File Browser
+### Workspace Rail and File Browser
 
-The left sidebar has a file browser pointed at your project directory. It's read-only for browsing, but the Files panel also has a scaffold action that can create a starter `.forge/` tree and README without overwriting existing files. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer.
+On desktop, Forge uses a left activity rail for workspace actions like Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with a resizable file tree and file preview pane. Desktop header workspace buttons are hidden behind the rail; mobile keeps the header/drawer workspace actions.
+
+The file browser is read-only for browsing, but the Files panel also has a scaffold action that can create a starter `.forge/` tree and README without overwriting existing files. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer. When Source Control has a selected worktree, Files can browse that worktree without changing the chat session's working directory.
 
 > **Editor preference:** By default, files open in VS Code. You can change this to Cursor (or other editors) in **Settings**.
 
-### Git View
+### Source Control Workspace
 
-Below the file browser, there's a Git view. Think GitHub Desktop built into Forge. Full commit history, diff viewer for any commit, branch information.
+Desktop Source Control opens inline in the workspace content area from the rail, not as a modal overlay. It evolves the old Changes/Git view into a workspace with tabs for current changes, commit history, worktrees, and pull requests. Selecting a worktree updates the Source Control context and the Files browsing context only; it does not move the chat session CWD or change where the manager sends workers.
 
-Currently read-only (you can't switch branches or make commits from the UI), but you won't need to. Your agents handle git operations. The view is there so you can inspect what they've done.
+Source Control supports fetch, branch switching, branch creation, and fast-forward-only pull. These are write actions, so Forge asks for confirmation and runs a preflight check before sending the git command. Force push, stash, discard, rebase, branch deletion, and worktree create/remove are not available from this workspace.
+
+The Pull Requests tab uses the GitHub CLI (`gh`). If the selected repository does not have a GitHub remote, `gh` is missing, or `gh` is not authenticated, Forge shows an unavailable or degraded state instead of PR data. PR merge has its own confirmation flow, re-checks the PR head commit with GitHub's match-head-commit guard, and does not delete the branch or use admin bypass.
 
 ### Session Sidebar
 
@@ -124,11 +128,11 @@ The left sidebar shows all your sessions across all managers. You can switch ses
 
 When workers are active, small green pills appear at the bottom of the chat window. Each pill represents a running worker and shows an elapsed timer. Click a pill to see what that worker is doing: commands it's running, files it's editing, with elapsed time on each tool call.
 
-Quick at-a-glance view of parallel work in progress. Codex app-server sidecars appear as worker-like external-thread cards. They persist by default, can be stopped through the same session stop path, and can be reused after stop. Plain `@Codex` / `[@Codex]` text follow-ups continue the direct sidecar thread; selector-based mentions open the manager-routed path with Codex MCP tools, catalog lookup, and normal manager audit rows. The sidecar path is Builder web only, text-only, excludes Collaboration, and allows only one active direct Codex turn globally.
+Quick at-a-glance view of parallel work in progress. Codex app-server sidecars appear as worker-like external-thread cards. They persist by default, can be stopped through the same session stop path, and can be reused after stop. Plain `@Codex` / `[@Codex]` text follow-ups continue the direct sidecar thread; plugin selector mentions open the plugin-scoped path, which reaches the manager and is delegated to the visible `Codex Plugin` specialist worker with read-only scoped tools, bounded redacted results, and normal manager follow-up while scope remains active. The sidecar path is Builder web only, text-only, excludes Collaboration, and allows only one active direct Codex turn globally.
 
 ### Artifacts Panel
 
-When agents create plans, design documents, or other working files that aren't part of your repository, they show up in an artifacts panel in the sidebar. Click any artifact to view it inline. This is where implementation plans, review documents, and other intermediate work products end up.
+When agents create plans, design documents, or other working files that aren't part of your repository, they show up in an artifacts panel in the sidebar. On desktop, the rail opens Artifacts or Schedules in the left activity-pane slot with one selected surface at a time, with no internal Artifacts/Schedules tab switcher on that path. Click any artifact to view it inline. This is where implementation plans, review documents, and other intermediate work products end up.
 
 ### Schedules
 
@@ -513,6 +517,12 @@ You can see exactly what Forge is telling your agents to do, and you can edit th
 **Settings → Slash Commands** lets you create auto-expander shortcuts. Type `/` in the chat, pick a command, press Tab, and the shortcut expands to your predefined text.
 
 Right now these are text snippets for commonly used prompts. Functional slash commands (that execute actions rather than expand text) are coming.
+
+### Observability
+
+**Settings → Observability** configures the Builder-only Arize Phoenix exporter. Forge sends OTLP HTTP/protobuf traces to a local loopback endpoint, defaulting to `http://127.0.0.1:6006/v1/traces`. Rich capture can include runtime, prompt, LLM, tool, delivery, lifecycle, error, and feedback spans. Use the capture toggles, redaction settings, and content caps to control what goes into Phoenix.
+
+Collaboration mode is not supported in V1. It uses a no-op/fail-closed observability facade and does not export traces.
 
 ### Editor Preference
 

@@ -6,7 +6,7 @@ The main view has three parts:
 
 - **Sidebar** (left) for navigating managers, profiles, and sessions.
 - **Message area** (center) showing the conversation transcript.
-- **Panels** (right/bottom) for artifacts, terminals, and file browsing.
+- **Desktop workspace rail** (left edge of the workspace) for Files, Source Control, Terminal, Cron/Schedules, and Artifacts/Dashboard. Files opens as a left split pane beside the rail with resizable tree and preview panes; Source Control opens inline with Changes, History, Worktrees, and Pull Requests tabs. Selecting a worktree updates Source Control and Files browsing context without changing the chat session's working directory. Artifacts and Schedules each open a single left activity-pane surface. Mobile keeps the header/drawer workspace behavior.
 
 ## Streaming and status
 
@@ -20,7 +20,7 @@ To stop a running response, open the **⋮ menu** in the header and choose **Sto
 
 The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity. A **Detailed** toggle can further reveal owned direct-worker tool activity for manager-scoped rows, but it stays off by default and resets when you switch views or agents.
 
-Builder web also supports Codex app-server sidecars. A plain leading @Codex or [@Codex] starts or continues a direct sidecar text turn. Selector forms like @Codex -<selector> and inline @Codex:<selector> / [@Codex:<selector>] route through the manager with injected guidance and Codex MCP tool access. Direct sidecars show as worker-like external-thread cards and persist by default; manager-routed turns stay in the normal manager audit trail. This is Builder web only, text-only for the direct sidecar path, excludes Collaboration, and allows one active direct Codex turn globally.
+Builder web also supports Codex app-server sidecars. A plain leading @Codex or [@Codex] starts or continues a direct sidecar text turn. Selector forms like @Codex -<plugin>, @Codex:<plugin>, and [@Codex:<plugin>] scope the turn to a plugin and delegate it through the visible Codex Plugin specialist worker. Direct sidecars show as worker-like external-thread cards and persist by default; plugin-scoped turns stay read-only/safety-gated with bounded redacted results. This is Builder web only, text-only for the direct sidecar path, excludes Collaboration, and allows one active direct Codex turn globally.
 
 Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
 
@@ -36,4 +36,4 @@ The matching header control opens an anchored Active Work popover with an explic
 
 ## Header controls
 
-The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count badge opens the pinned-message navigator/popover, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted.
+The chat header still shows the pin count badge, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted. Desktop workspace buttons now live behind the activity rail instead of the header; mobile keeps the header workspace actions.

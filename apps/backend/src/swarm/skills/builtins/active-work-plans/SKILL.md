@@ -97,7 +97,9 @@ Tool-call reliability rules:
 - If the plan already exists, use `get`, `update_item_status`, `link`, or `finish_plan`; do not attempt item-list rewrites from the manager prompt.
 - Do not add fields that are not in the examples or schema.
 
-`task.get` returns `stateRevision` plus the full bounded `snapshot`. Successful mutations return compact acknowledgements with `stateRevision`, `planId`, `planRevision`, current plan `status`, and sometimes `createdItemIds`, `updatedItemId`, or `linkedItemId`. Prefer passing the latest `stateRevision` as `expectedStateRevision` when linking, updating item status, or finishing an existing plan. If a conflict occurs, call `task.get`, review the latest state, then retry with the latest revision.
+`task.get` returns `stateRevision` plus the full bounded `snapshot`. Successful mutations return compact acknowledgements with `stateRevision`, `planId`, `planRevision`, current plan `status`, and sometimes `createdItemIds`, `updatedItemId`, or `linkedItemId`. Prefer passing the latest `stateRevision` as `expectedStateRevision` when linking, updating item status, or finishing an existing plan.
+
+If a `task` result returns `ok: false` with `error.recoverable: true`, treat it as a recoverable result, not a reason to stop or go silent. Follow `error.suggestedAction`: call `task.get` when the state or ids may be stale, retry with fresh `planId`, `itemId`, or `expectedStateRevision` when the input shape was wrong, or continue without plan state if the plan sidecar cannot safely represent the work. Do not auto-retarget a mutation to a different plan. Always keep the user turn visibly closed with `speak_to_user` even if plan state cannot be updated.
 
 ## Valid tool input shapes
 

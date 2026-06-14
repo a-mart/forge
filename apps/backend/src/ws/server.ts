@@ -46,6 +46,9 @@ import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
+import { createNoopObservabilityFacade } from "../observability/noop-observability.js";
+import type { ObservabilityFacade } from "../observability/observability-types.js";
+import { FeedbackService } from "../swarm/feedback-service.js";
 
 import {
   authenticateCliWebSocketRequest,
@@ -67,6 +70,7 @@ import { createFeedbackRoutes } from "./http/routes/feedback-routes.js";
 import { createFileBrowserRoutes } from "./http/routes/file-browser-routes.js";
 import { createFileRoutes } from "./http/routes/file-routes.js";
 import { createGitDiffRoutes } from "./http/routes/git-diff-routes.js";
+import { createGitSourceControlRoutes } from "./http/routes/git-source-control-routes.js";
 import { createHealthRoutes } from "./http/routes/health-routes.js";
 import { createIntegrationRoutes } from "./http/routes/integration-routes.js";
 import { createMermaidPreviewRoutes } from "./http/routes/mermaid-preview-routes.js";
@@ -74,6 +78,7 @@ import { createMobileRoutes } from "./http/routes/mobile-routes.js";
 import { createModelConfigRoutes } from "./http/routes/model-config-routes.js";
 import { createOpenRouterRoutes } from "./http/routes/openrouter-routes.js";
 import { createProjectResourceRoutes } from "./http/routes/project-resource-routes.js";
+import { createPhoenixObservabilityRoutes } from "./http/routes/phoenix-observability-routes.js";
 import { createPromptRoutes } from "./http/routes/prompt-routes.js";
 import { createSchedulerRoutes } from "./http/routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/settings-routes.js";
@@ -126,6 +131,8 @@ export class SwarmWebSocketServer {
   private readonly statsService: StatsService;
   private readonly tokenAnalyticsService: TokenAnalyticsService;
   private readonly telemetryService: TelemetryService | null;
+  private readonly observabilityService: ObservabilityFacade;
+  private readonly feedbackService: FeedbackService;
   private readonly collaborationSettingsService: CollaborationSettingsService | null;
   private readonly collaborationReadinessService: CollaborationReadinessRequestService | null;
   private readonly httpRoutes: HttpRoute[];
@@ -195,6 +202,7 @@ export class SwarmWebSocketServer {
 
   private readonly onWorkPlanCreated = (event: ServerEvent): void => {
     if (event.type !== "work_plan_created") return;
+    if (!this.swarmManager.isWorkPlansEnabled()) return;
     this.wsHandler.broadcastToSubscribed(event);
     this.cliWsHandler.broadcast(event);
   };
@@ -248,6 +256,7 @@ export class SwarmWebSocketServer {
 
   private readonly onSessionTaskStateSnapshot = (event: ServerEvent): void => {
     if (event.type !== "session_task_state_snapshot") return;
+    if (!this.swarmManager.isWorkPlansEnabled()) return;
     this.wsHandler.broadcastToExactSubscription(event.sessionAgentId, event);
     this.cliWsHandler.broadcast(event);
   };
@@ -367,6 +376,8 @@ export class SwarmWebSocketServer {
     collaborationReadinessService?: CollaborationReadinessRequestService;
     cliAccessService?: CliAccessService;
     notificationSettingsService?: NotificationSettingsService;
+    observabilityService?: ObservabilityFacade;
+    feedbackService?: FeedbackService;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -396,6 +407,12 @@ export class SwarmWebSocketServer {
             runtimeConfig: this.terminalRuntimeConfig,
           })
         : null;
+    this.observabilityService =
+      options.observabilityService ??
+      createNoopObservabilityFacade(this.swarmManager.getConfig().runtimeTarget);
+    this.feedbackService =
+      options.feedbackService ??
+      new FeedbackService(this.swarmManager.getConfig().paths.dataDir, { observability: this.observabilityService });
     this.unreadTracker =
       options.unreadTracker ??
       new UnreadTracker({
@@ -440,6 +457,7 @@ export class SwarmWebSocketServer {
       unreadTracker: this.unreadTracker,
       perf: this.swarmManager.getSidebarPerfRecorder(),
       collaborationReadinessService: options.collaborationReadinessService ?? undefined,
+      feedbackService: this.feedbackService,
     });
     this.cliWsHandler = new CliWsHandler(this.swarmManager);
     wsHandlerRef = this.wsHandler;
@@ -494,7 +512,14 @@ export class SwarmWebSocketServer {
       }),
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
-      ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
+      ...createGitSourceControlRoutes({ swarmManager: this.swarmManager }),
+      ...createFeedbackRoutes({ swarmManager: this.swarmManager, feedbackService: this.feedbackService }),
+      ...(isBuilderRuntimeTarget(this.swarmManager.getConfig().runtimeTarget)
+        ? createPhoenixObservabilityRoutes({
+            observabilityService: this.observabilityService,
+            runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+          })
+        : []),
       ...createCortexRoutes({ swarmManager: this.swarmManager, cortexEnabled }),
       ...createCortexAutoReviewRoutes({
         settingsService: this.cortexAutoReviewSettingsService,

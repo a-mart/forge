@@ -117,6 +117,33 @@ describe('work-plan-runtime-context', () => {
     expect(result?.source).toBe('recent_terminal')
   })
 
+  it('keeps runtime context bounded when persisted retained history is much larger than the projected snapshot', () => {
+    const result = formatWorkPlanRuntimeContext({
+      sessionAgentId: 'manager',
+      profileId: 'profile',
+      revision: 200,
+      activeWorkPlan: null,
+      recentWorkPlans: Array.from({ length: 8 }, (_, index) =>
+        createPlan({
+          planId: `recent-${index + 1}`,
+          status: 'completed_with_warnings',
+          title: `Projected receipt ${index + 1}`,
+          finalSummary: `Projected summary ${index + 1}`,
+        }),
+      ),
+      recentWorkPlanCount: 100,
+      recentWorkPlansTruncated: true,
+      diagnostics: { state: 'ok' },
+    })
+
+    expect(result?.source).toBe('recent_terminal')
+    expect(result!.text.length).toBeLessThanOrEqual(ACTIVE_WORK_RUNTIME_CONTEXT_MAX_CHARS)
+    expect(result?.text).toContain('Projected receipt 1')
+    expect(result?.text).toContain('Projected receipt 2')
+    expect(result?.text).not.toContain('Projected receipt 3')
+    expect(result?.text).toContain('Additional recent terminal work receipts omitted (98 more).')
+  })
+
   it('returns a safe diagnostic-only block when task state is unavailable', () => {
     const result = formatWorkPlanRuntimeContext({
       sessionAgentId: 'manager',

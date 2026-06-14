@@ -1,109 +1,8 @@
-diff --git a/dist/providers/simple-options.js b/dist/providers/simple-options.js
-index c7cfbfe..3794942 100644
---- a/dist/providers/simple-options.js
-+++ b/dist/providers/simple-options.js
-@@ -5,6 +5,7 @@ export function buildBaseOptions(model, options, apiKey) {
-         maxTokens: options?.maxTokens ?? (model.maxTokens > 0 ? Math.min(model.maxTokens, 32000) : undefined),
-         signal: options?.signal,
-         apiKey: apiKey || options?.apiKey,
-+        transport: options?.transport,
-         cacheRetention: options?.cacheRetention,
-         sessionId: options?.sessionId,
-         headers: options?.headers,
-diff --git a/dist/providers/openai-completions.js b/dist/providers/openai-completions.js
-index 34ba15a..eeb4937 100644
---- a/dist/providers/openai-completions.js
-+++ b/dist/providers/openai-completions.js
-@@ -680,6 +680,13 @@ export function convertMessages(model, context, compat) {
-                 assistantMsg.reasoning_content === undefined) {
-                 assistantMsg.reasoning_content = "";
-             }
-+            // Ensure assistant messages with tool calls always have non-null, non-empty content.
-+            // Some providers (notably xAI) reject content: null or "" even when tool_calls are
-+            // present, unlike OpenAI which accepts it.
-+            if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 &&
-+                (assistantMsg.content === null || assistantMsg.content === undefined || assistantMsg.content === "")) {
-+                assistantMsg.content = " ";
-+            }
-             // Skip assistant messages that have no content and no tool calls.
-             // Some providers require "either content or tool_calls, but not none".
-             // Other providers also don't accept empty assistant messages.
-diff --git a/dist/providers/openai-responses-shared.js b/dist/providers/openai-responses-shared.js
-index 3081455..f48eddb 100644
---- a/dist/providers/openai-responses-shared.js
-+++ b/dist/providers/openai-responses-shared.js
-@@ -106,15 +106,27 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
-             const isDifferentModel = assistantMsg.model !== model.id &&
-                 assistantMsg.provider === model.provider &&
-                 assistantMsg.api === model.api;
-+            let hasAssistantMessage = false;
-+            let hasToolCalls = false;
-+            const isXaiResponsesModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
-+            const shouldReplayHistoricalReasoning = !isXaiResponsesModel;
-+            const assistantTurnHasToolCalls = msg.content.some((block) => block.type === "toolCall");
-             for (const block of msg.content) {
-                 if (block.type === "thinking") {
--                    if (block.thinkingSignature) {
-+                    // xAI's Responses-compatible endpoint rejects historical reasoning items even
-+                    // when the rest of the assistant/tool-call turn is valid. Keep replaying them
-+                    // for providers that accept OpenAI Responses reasoning history.
-+                    if (block.thinkingSignature && shouldReplayHistoricalReasoning) {
-                         const reasoningItem = JSON.parse(block.thinkingSignature);
-                         output.push(reasoningItem);
-                     }
-                 }
-                 else if (block.type === "text") {
-                     const textBlock = block;
-+                    const assistantText = sanitizeSurrogates(textBlock.text);
-+                    if (isXaiResponsesModel && assistantTurnHasToolCalls && assistantText.trim().length === 0) {
-+                        continue;
-+                    }
-                     const parsedSignature = parseTextSignature(textBlock.textSignature);
-                     // OpenAI requires id to be max 64 characters
-                     let msgId = parsedSignature?.id;
-@@ -127,11 +139,12 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
-                     output.push({
-                         type: "message",
-                         role: "assistant",
--                        content: [{ type: "output_text", text: sanitizeSurrogates(textBlock.text), annotations: [] }],
-+                        content: [{ type: "output_text", text: assistantText, annotations: [] }],
-                         status: "completed",
-                         id: msgId,
-                         phase: parsedSignature?.phase,
-                     });
-+                    hasAssistantMessage = true;
-                 }
-                 else if (block.type === "toolCall") {
-                     const toolCall = block;
-@@ -150,8 +163,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
-                         name: toolCall.name,
-                         arguments: JSON.stringify(toolCall.arguments),
-                     });
-+                    hasToolCalls = true;
-                 }
-             }
-+            // xAI's Responses-compatible endpoint rejects assistant/tool-call turns that omit
-+            // the assistant message item entirely. Mirror the chat-completions fix by inserting
-+            // a non-empty placeholder assistant message before the function_call items when the
-+            // turn has tools but no text content.
-+            if (hasToolCalls && !hasAssistantMessage) {
-+                const firstFunctionCallIndex = output.findIndex((item) => item.type === "function_call");
-+                output.splice(firstFunctionCallIndex >= 0 ? firstFunctionCallIndex : output.length, 0, {
-+                    type: "message",
-+                    role: "assistant",
-+                    content: [{ type: "output_text", text: " ", annotations: [] }],
-+                    status: "completed",
-+                    id: `msg_${msgIndex}`,
-+                });
-+            }
-             if (output.length === 0)
-                 continue;
-             messages.push(...output);
 diff --git a/dist/providers/openai-codex-responses.js b/dist/providers/openai-codex-responses.js
-index 0000000..0000000 100644
+index 4c74f00dc9ca24f1528f04a67be5ca45a4c01093..fea946a7f4d2c63f95a9fb60d03b07d321dba6ba 100644
 --- a/dist/providers/openai-codex-responses.js
 +++ b/dist/providers/openai-codex-responses.js
-@@ -90,12 +90,14 @@
+@@ -90,12 +90,14 @@ export const streamOpenAICodexResponses = (model, context, options) => {
              const websocketHeaders = buildWebSocketHeaders(model.headers, options?.headers, accountId, apiKey, websocketRequestId);
              const bodyJson = JSON.stringify(body);
              const transport = options?.transport || "sse";
@@ -123,7 +22,7 @@ index 0000000..0000000 100644
                      if (options?.signal?.aborted) {
                          throw new Error("Request was aborted");
                      }
-@@ -105,10 +107,33 @@
+@@ -105,10 +107,33 @@ export const streamOpenAICodexResponses = (model, context, options) => {
                          message: output,
                      });
                      stream.end();
@@ -158,7 +57,7 @@ index 0000000..0000000 100644
                          throw error;
                      }
                  }
-@@ -167,7 +189,9 @@
+@@ -167,7 +192,9 @@ export const streamOpenAICodexResponses = (model, context, options) => {
              if (!response.body) {
                  throw new Error("No response body");
              }
@@ -169,7 +68,7 @@ index 0000000..0000000 100644
              await processStream(response, output, stream, model, options);
              if (options?.signal?.aborted) {
                  throw new Error("Request was aborted");
-@@ -495,7 +519,7 @@
+@@ -495,7 +522,7 @@ async function connectWebSocket(url, headers, signal) {
              reject(error);
          };
          const onClose = (event) => {
@@ -178,7 +77,7 @@ index 0000000..0000000 100644
              if (settled)
                  return;
              settled = true;
-@@ -522,7 +546,16 @@
+@@ -522,7 +549,16 @@ async function connectWebSocket(url, headers, signal) {
          signal?.addEventListener("abort", onAbort);
      });
  }
@@ -196,7 +95,7 @@ index 0000000..0000000 100644
      if (!sessionId) {
          const socket = await connectWebSocket(url, headers, signal);
          return {
-@@ -606,16 +639,66 @@
+@@ -606,15 +642,65 @@ function extractWebSocketError(event) {
      }
      return new Error("WebSocket error");
  }
@@ -228,10 +127,9 @@ index 0000000..0000000 100644
 +            phase,
 +            beforeCompletion: phase !== "connect",
 +        });
-     }
--    return new Error("WebSocket closed");
++    }
 +    return createWebSocketCloseError(`WebSocket closed${phase ? ` (phase: ${phase})` : ""}`, { phase, beforeCompletion: phase !== "connect" });
- }
++}
 +function isAbortError(error) {
 +    return error instanceof Error && (error.name === "AbortError" || error.message === "Request was aborted");
 +}
@@ -256,17 +154,17 @@ index 0000000..0000000 100644
 +function resetOutputState(output, state) {
 +    for (const key of Object.keys(output)) {
 +        delete output[key];
-+    }
+     }
+-    return new Error("WebSocket closed");
 +    Object.assign(output, {
 +        ...state,
 +        content: state.content.map((block) => ({ ...block })),
 +        usage: { ...state.usage, cost: { ...state.usage.cost } },
 +    });
-+}
+ }
  async function decodeWebSocketData(data) {
      if (typeof data === "string")
-         return data;
-@@ -639,29 +724,54 @@
+@@ -639,6 +725,7 @@ async function* parseWebSocket(socket, signal) {
      let done = false;
      let failed = null;
      let sawCompletion = false;
@@ -274,10 +172,10 @@ index 0000000..0000000 100644
      const wake = () => {
          if (!pending)
              return;
-         const resolve = pending;
+@@ -646,22 +733,46 @@ async function* parseWebSocket(socket, signal) {
          pending = null;
          resolve();
-+    };
+     };
 +    const enqueueParsedMessage = (parsed) => {
 +        const type = typeof parsed.type === "string" ? parsed.type : "";
 +        if (type === "response.created") {
@@ -301,7 +199,7 @@ index 0000000..0000000 100644
 +        }
 +        queue.push(parsed);
 +        wake();
-     };
++    };
      const onMessage = (event) => {
 +        if (!event || typeof event !== "object" || !("data" in event))
 +            return;
@@ -331,7 +229,7 @@ index 0000000..0000000 100644
              }
              catch { }
          })();
-@@ -678,7 +788,7 @@
+@@ -678,7 +789,7 @@ async function* parseWebSocket(socket, signal) {
              return;
          }
          if (!failed) {
@@ -340,7 +238,7 @@ index 0000000..0000000 100644
          }
          done = true;
          wake();
-@@ -711,7 +821,7 @@
+@@ -711,7 +822,7 @@ async function* parseWebSocket(socket, signal) {
              throw failed;
          }
          if (!sawCompletion) {
@@ -349,7 +247,7 @@ index 0000000..0000000 100644
          }
      }
      finally {
-@@ -762,14 +872,15 @@
+@@ -762,14 +873,15 @@ function buildCachedWebSocketRequestBody(entry, body) {
          input: delta,
      };
  }
@@ -368,7 +266,7 @@ index 0000000..0000000 100644
      const stats = options?.sessionId ? getOrCreateWebSocketDebugStats(options.sessionId) : undefined;
      if (stats) {
          stats.requests++;
-@@ -796,7 +907,9 @@
+@@ -796,7 +908,9 @@ async function processWebSocketStream(url, body, headers, output, stream, model,
      try {
          socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
          onStart();
@@ -379,3 +277,118 @@ index 0000000..0000000 100644
          await processResponsesStream(mapCodexEvents(parseWebSocket(socket, options?.signal)), output, stream, model, {
              serviceTier: options?.serviceTier,
              resolveServiceTier: resolveCodexServiceTier,
+diff --git a/dist/providers/openai-completions.js b/dist/providers/openai-completions.js
+index 34ba15afe67da4c5e3d3d7ecafc77814ba5e5cef..eeb4937c3f67a572edc3092ca7ff82deceec37f8 100644
+--- a/dist/providers/openai-completions.js
++++ b/dist/providers/openai-completions.js
+@@ -680,6 +680,13 @@ export function convertMessages(model, context, compat) {
+                 assistantMsg.reasoning_content === undefined) {
+                 assistantMsg.reasoning_content = "";
+             }
++            // Ensure assistant messages with tool calls always have non-null, non-empty content.
++            // Some providers (notably xAI) reject content: null or "" even when tool_calls are
++            // present, unlike OpenAI which accepts it.
++            if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 &&
++                (assistantMsg.content === null || assistantMsg.content === undefined || assistantMsg.content === "")) {
++                assistantMsg.content = " ";
++            }
+             // Skip assistant messages that have no content and no tool calls.
+             // Some providers require "either content or tool_calls, but not none".
+             // Other providers also don't accept empty assistant messages.
+diff --git a/dist/providers/openai-responses-shared.js b/dist/providers/openai-responses-shared.js
+index 3081455a347db90995fd51f654d0ec48f16cc73d..167e2bf2280d290f946b569c21ddc39e5da4a666 100644
+--- a/dist/providers/openai-responses-shared.js
++++ b/dist/providers/openai-responses-shared.js
+@@ -103,18 +103,41 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+         else if (msg.role === "assistant") {
+             const output = [];
+             const assistantMsg = msg;
++            // Silent turns (no tool calls, no non-whitespace text) carry zero
++            // information, and replaying them teaches the model that empty
++            // responses are its own normal behavior — a self-reinforcing loop
++            // measured at up to 100% empty-turn probability in contaminated
++            // sessions. Drop the whole message (including its reasoning items)
++            // from replay; the session file keeps the historical record.
++            const isSilentAssistantTurn = !msg.content.some((block) => block.type === "toolCall" ||
++                (block.type === "text" && typeof block.text === "string" && block.text.trim().length > 0));
++            if (isSilentAssistantTurn) {
++                continue;
++            }
+             const isDifferentModel = assistantMsg.model !== model.id &&
+                 assistantMsg.provider === model.provider &&
+                 assistantMsg.api === model.api;
++            let hasAssistantMessage = false;
++            let hasToolCalls = false;
++            const isXaiResponsesModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
++            const shouldReplayHistoricalReasoning = !isXaiResponsesModel;
++            const assistantTurnHasToolCalls = msg.content.some((block) => block.type === "toolCall");
+             for (const block of msg.content) {
+                 if (block.type === "thinking") {
+-                    if (block.thinkingSignature) {
++                    // xAI's Responses-compatible endpoint rejects historical reasoning items even
++                    // when the rest of the assistant/tool-call turn is valid. Keep replaying them
++                    // for providers that accept OpenAI Responses reasoning history.
++                    if (block.thinkingSignature && shouldReplayHistoricalReasoning) {
+                         const reasoningItem = JSON.parse(block.thinkingSignature);
+                         output.push(reasoningItem);
+                     }
+                 }
+                 else if (block.type === "text") {
+                     const textBlock = block;
++                    const assistantText = sanitizeSurrogates(textBlock.text);
++                    if (isXaiResponsesModel && assistantTurnHasToolCalls && assistantText.trim().length === 0) {
++                        continue;
++                    }
+                     const parsedSignature = parseTextSignature(textBlock.textSignature);
+                     // OpenAI requires id to be max 64 characters
+                     let msgId = parsedSignature?.id;
+@@ -127,11 +150,12 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+                     output.push({
+                         type: "message",
+                         role: "assistant",
+-                        content: [{ type: "output_text", text: sanitizeSurrogates(textBlock.text), annotations: [] }],
++                        content: [{ type: "output_text", text: assistantText, annotations: [] }],
+                         status: "completed",
+                         id: msgId,
+                         phase: parsedSignature?.phase,
+                     });
++                    hasAssistantMessage = true;
+                 }
+                 else if (block.type === "toolCall") {
+                     const toolCall = block;
+@@ -150,8 +174,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+                         name: toolCall.name,
+                         arguments: JSON.stringify(toolCall.arguments),
+                     });
++                    hasToolCalls = true;
+                 }
+             }
++            // xAI's Responses-compatible endpoint rejects assistant/tool-call turns that omit
++            // the assistant message item entirely. Mirror the chat-completions fix by inserting
++            // a non-empty placeholder assistant message before the function_call items when the
++            // turn has tools but no text. xAI-scoped: Codex accepts tool-only turns natively.
++            if (isXaiResponsesModel && hasToolCalls && !hasAssistantMessage) {
++                const firstFunctionCallIndex = output.findIndex((item) => item.type === "function_call");
++                output.splice(firstFunctionCallIndex >= 0 ? firstFunctionCallIndex : output.length, 0, {
++                    type: "message",
++                    role: "assistant",
++                    content: [{ type: "output_text", text: " ", annotations: [] }],
++                    status: "completed",
++                    id: `msg_${msgIndex}`,
++                });
++            }
+             if (output.length === 0)
+                 continue;
+             messages.push(...output);
+diff --git a/dist/providers/simple-options.js b/dist/providers/simple-options.js
+index d69e2b6bf47bf2d1dd176eed832f75612bc8ee5a..64c0447b9d0c33454d13bc6697ba67e815721e93 100644
+--- a/dist/providers/simple-options.js
++++ b/dist/providers/simple-options.js
+@@ -4,6 +4,7 @@ export function buildBaseOptions(model, options, apiKey) {
+         maxTokens: options?.maxTokens ?? (model.maxTokens > 0 ? Math.min(model.maxTokens, 32000) : undefined),
+         signal: options?.signal,
+         apiKey: apiKey || options?.apiKey,
++        transport: options?.transport,
+         cacheRetention: options?.cacheRetention,
+         sessionId: options?.sessionId,
+         headers: options?.headers,

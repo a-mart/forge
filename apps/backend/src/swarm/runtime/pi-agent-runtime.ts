@@ -28,6 +28,7 @@ import type {
   RuntimeCodexTransportDebugStats,
   RuntimeImageAttachment,
   RuntimeErrorEvent,
+  RuntimeModelCallMeta,
   RuntimeSessionEvent,
   RuntimeSessionMessage,
   RuntimeUserMessage,
@@ -55,6 +56,14 @@ interface PendingDelivery {
 }
 
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
+const MAX_EMPTY_TURN_RESAMPLES = 2;
+const TERMINAL_WORKER_REPORT_PATTERN = /^(?:SYSTEM|WORKER REPORT):\s*status:\s*(?:done|partial|blocked)\b/i;
+// Appended to the final resample. Empty turns proved deterministic for a given
+// context (identical input -> identical silence), while terse user-register
+// prods have always broken through; this line perturbs the tokens AND supplies
+// that register. Exported for tests.
+export const EMPTY_TURN_REDELIVERY_DIRECTIVE =
+  "The user is waiting on this outcome and has not been updated. Send them the update with speak_to_user now.";
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
 const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;
@@ -164,6 +173,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
   private suppressSessionEventsUntilIdle = false;
   private lastActivityAtMs = Date.now();
+  private emptyTurnResampleState: { triggerText: string; attempts: number } | undefined;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -777,7 +787,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    const normalizedEvent = normalizeRuntimeSessionEvent(event);
+    const normalizedEvent = normalizeRuntimeSessionEvent(event, this.session);
     if (this.callbacks.onSessionEvent && normalizedEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, normalizedEvent);
     }
@@ -797,6 +807,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (event.type === "agent_end") {
       this.currentTurnReplayMessages = [];
+      if (await this.maybeResampleEmptyTerminalReportTurn()) {
+        return;
+      }
+      this.emptyTurnResampleState = undefined;
       if (this.status !== "terminated") {
         await this.updateStatus("idle");
       }
@@ -1700,6 +1714,83 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
   }
 
+  /**
+   * gpt-5.x managers intermittently answer a worker's terminal report with a
+   * whitespace-only turn (no tool calls, stopReason "stop"), leaving the user
+   * with no update. The turn is side-effect free, so drop it together with the
+   * triggering report from the in-memory context and re-dispatch the report.
+   * The empty response is deterministic for a given context, so attempts
+   * escalate: the first resample re-sends the report verbatim, the final one
+   * appends EMPTY_TURN_REDELIVERY_DIRECTIVE (new tokens, user-register demand).
+   * Budget is keyed on the directive-stripped report text so an empty answer
+   * to the escalated redelivery exhausts the budget instead of resetting it.
+   * On exhaustion the turn end proceeds normally and a silent_turn runtime
+   * notice is emitted so the silence is visible in the conversation feed.
+   */
+  private async maybeResampleEmptyTerminalReportTurn(): Promise<boolean> {
+    if (this.descriptor.role !== "manager" || this.status === "terminated") {
+      return false;
+    }
+    if (this.isContextRecoveryActive() || this.session.isCompacting || this.pendingDeliveries.length > 0) {
+      return false;
+    }
+
+    const messages = this.getSessionAgentMessages();
+    const assistantMessage = messages[messages.length - 1];
+    const triggerMessage = messages[messages.length - 2];
+    if (!assistantMessage || !triggerMessage || assistantMessage.role !== "assistant" || triggerMessage.role !== "user") {
+      return false;
+    }
+    if (assistantMessage.stopReason !== "stop" || !isSilentAssistantMessage(assistantMessage)) {
+      return false;
+    }
+
+    const reportText = stripEmptyTurnRedeliveryDirective(extractTextFromMessageRecord(triggerMessage));
+    if (!TERMINAL_WORKER_REPORT_PATTERN.test(reportText)) {
+      return false;
+    }
+
+    const previousAttempts =
+      this.emptyTurnResampleState?.triggerText === reportText ? this.emptyTurnResampleState.attempts : 0;
+    if (previousAttempts >= MAX_EMPTY_TURN_RESAMPLES) {
+      console.error(`[swarm][${this.now()}] manager:silent_turn`, {
+        runtime: "pi",
+        agentId: this.descriptor.agentId,
+        resampleAttempts: previousAttempts,
+        triggerPreview: previewForLog(reportText)
+      });
+      await this.reportRuntimeError({
+        phase: "silent_turn",
+        message: "Manager produced no response to a worker's final report",
+        details: {
+          resampleAttempts: previousAttempts,
+          triggerPreview: previewForLog(reportText),
+          userFacingMessage:
+            "⚠️ The manager processed a worker's final report but did not produce a response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."
+        }
+      });
+      return false;
+    }
+
+    const attempt = previousAttempts + 1;
+    const escalate = attempt >= MAX_EMPTY_TURN_RESAMPLES;
+    this.emptyTurnResampleState = { triggerText: reportText, attempts: attempt };
+    this.replaceSessionAgentMessages(messages.slice(0, -2));
+    this.closeStaleOpenAICodexWebSocketSession("empty_turn_resample");
+    console.warn(`[swarm][${this.now()}] manager:empty_turn_resample`, {
+      runtime: "pi",
+      agentId: this.descriptor.agentId,
+      attempt,
+      maxAttempts: MAX_EMPTY_TURN_RESAMPLES,
+      escalated: escalate,
+      triggerPreview: previewForLog(reportText)
+    });
+    this.dispatchPrompt({
+      text: escalate ? `${reportText}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}` : reportText
+    });
+    return true;
+  }
+
   private getSessionAgentMessages(): Array<Record<string, any>> {
     const state = this.session.state as { messages?: unknown[] } | undefined;
     if (Array.isArray(state?.messages)) {
@@ -2049,6 +2140,60 @@ function cloneRuntimeUserMessage(message: RuntimeUserMessage | undefined): Runti
   };
 }
 
+function isSilentAssistantMessage(message: Record<string, any>): boolean {
+  const content = message.content;
+  if (typeof content === "string") {
+    return content.trim().length === 0;
+  }
+  if (!Array.isArray(content)) {
+    return content === undefined || content === null;
+  }
+
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const type = (block as { type?: unknown }).type;
+    if (type === "toolCall" || type === "tool_use") {
+      return false;
+    }
+    if (type === "text") {
+      const text = (block as { text?: unknown }).text;
+      if (typeof text === "string" && text.trim().length > 0) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function stripEmptyTurnRedeliveryDirective(text: string): string {
+  const suffix = `\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`;
+  return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
+}
+
+function extractTextFromMessageRecord(message: Record<string, any>): string {
+  const content = message.content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((block) => {
+      if (!block || typeof block !== "object" || (block as { type?: unknown }).type !== "text") {
+        return "";
+      }
+      const text = (block as { text?: unknown }).text;
+      return typeof text === "string" ? text : "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
+}
+
 function isRecordLikeMessage(message: unknown): message is Record<string, any> {
   return !!message && typeof message === "object";
 }
@@ -2177,7 +2322,62 @@ function getPooledProviderLabel(provider: string | undefined): string {
   }
 }
 
-function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionEvent | null {
+function extractPiModelCallMeta(message: unknown, session?: AgentSession): { meta: RuntimeModelCallMeta } | Record<string, never> {
+  if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "assistant") {
+    return {};
+  }
+
+  const record = message as {
+    provider?: unknown;
+    api?: unknown;
+    model?: unknown;
+    responseModel?: unknown;
+    responseId?: unknown;
+    stopReason?: unknown;
+    usage?: unknown;
+    timestamp?: unknown;
+  };
+  const usage = normalizePiUsage(record.usage);
+  const meta: RuntimeModelCallMeta = {
+    ...(usage ? { usage: usage.usage, costUsd: usage.costUsd } : {}),
+    provider: readString(record.provider),
+    api: readString(record.api),
+    modelId: readString(record.model),
+    responseModelId: readString(record.responseModel),
+    providerRequestId: readString(record.responseId),
+    stopReason: readString(record.stopReason),
+    requestPayloadFidelity: session?.messages ? "partial" : "unavailable",
+    requestMessages: session?.messages ? session.messages.slice(-24) : undefined,
+    metadata: typeof record.timestamp === "number" ? { providerTimestamp: record.timestamp } : undefined,
+  };
+  return { meta };
+}
+
+function normalizePiUsage(value: unknown): { usage: RuntimeModelCallMeta["usage"]; costUsd?: RuntimeModelCallMeta["costUsd"] } | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const cost = value && typeof record.cost === "object" && record.cost !== null ? record.cost as Record<string, unknown> : undefined;
+  return {
+    usage: {
+      input: readNumber(record.input),
+      output: readNumber(record.output),
+      cacheRead: readNumber(record.cacheRead),
+      cacheWrite: readNumber(record.cacheWrite),
+      total: readNumber(record.totalTokens),
+    },
+    costUsd: cost ? {
+      input: readNumber(cost.input),
+      output: readNumber(cost.output),
+      cacheRead: readNumber(cost.cacheRead),
+      cacheWrite: readNumber(cost.cacheWrite),
+      total: readNumber(cost.total),
+    } : undefined,
+  };
+}
+
+function normalizeRuntimeSessionEvent(event: AgentSessionEvent, session?: AgentSession): RuntimeSessionEvent | null {
   switch (event.type) {
     case "agent_start":
     case "agent_end":
@@ -2192,10 +2392,16 @@ function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionE
 
     case "message_start":
     case "message_update":
-    case "message_end":
       return {
         type: event.type,
         message: event.message as RuntimeSessionMessage
+      };
+
+    case "message_end":
+      return {
+        type: "message_end",
+        message: event.message as RuntimeSessionMessage,
+        ...extractPiModelCallMeta(event.message, session)
       };
 
     case "tool_execution_start":

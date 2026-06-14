@@ -322,6 +322,186 @@ describe("CodexMcpCatalog", () => {
     });
   });
 
+  it("returns larger redacted model content for narrow Fireflies full-transcript tools while keeping previews bounded", async () => {
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string, params?: unknown): Promise<T> => {
+      if (method === "mcpServer/tool/call") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `start adam@example.com ${"middle ".repeat(600)}tail-value`,
+            },
+          ],
+          structuredContent: { accessToken: "secret-token", transcriptId: "transcript-1" },
+        } as T;
+      }
+      return new FakeCatalogClient().request(method, params);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const result = await catalog.callTool(
+      {
+        managerAgentId: "manager",
+        cwd: "/tmp",
+        threadId: "thread-1",
+        serverName: "codex_apps",
+        toolName: "fireflies_fireflies_get_transcript",
+        args: { transcriptId: "transcript-1" },
+      },
+      {
+        selector: "codex_apps/fireflies_fireflies_get_transcript",
+        serverName: "codex_apps",
+        toolName: "fireflies_fireflies_get_transcript",
+        description: "Fetches detailed meeting transcript by ID.",
+        readOnly: true,
+        annotations: { readOnlyHint: true },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(Buffer.byteLength(result.redactedPreview, "utf8")).toBeLessThanOrEqual(2048);
+    expect(result.redactedPreview.endsWith("…")).toBe(true);
+    expect(result.redactedModelContent).toContain("tail-value");
+    expect(result.redactedModelContent).toContain("[redacted-email]");
+    expect(result.redactedModelContent).toContain('"accessToken":"[redacted]"');
+    expect(result.redactedModelContentTruncated).toBe(false);
+  });
+
+  it("returns model-only full redacted content for Fireflies fetch_transcript tools", async () => {
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string, params?: unknown): Promise<T> => {
+      if (method === "mcpServer/tool/call") {
+        return {
+          content: [{ type: "text", text: `preview ${"body ".repeat(600)}fetch-transcript-tail` }],
+          structuredContent: { email: "adam@example.com" },
+        } as T;
+      }
+      return new FakeCatalogClient().request(method, params);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const result = await catalog.callTool(
+      {
+        managerAgentId: "manager",
+        cwd: "/tmp",
+        threadId: "thread-1",
+        serverName: "fireflies",
+        toolName: "fetch_transcript",
+        args: { transcriptId: "transcript-1" },
+      },
+      {
+        selector: "fireflies/fetch_transcript",
+        serverName: "fireflies",
+        toolName: "fetch_transcript",
+        description: "Fetch full transcript by ID.",
+        readOnly: true,
+        annotations: { readOnlyHint: true },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.redactedPreview).not.toContain("fetch-transcript-tail");
+    expect(result.redactedModelContent).toContain("fetch-transcript-tail");
+    expect(result.redactedModelContent).toContain("[redacted-email]");
+    expect(result.redactedModelContentTruncated).toBe(false);
+  });
+
+  it("blocks non-Fireflies transcript download lookalikes without exposing full model content", async () => {
+    const client = new FakeCatalogClient();
+    const catalog = new CodexMcpCatalog(async () => client);
+    const lookalikeTool = {
+      selector: "files/download_fireflies_transcript",
+      serverName: "files",
+      toolName: "download_fireflies_transcript",
+      description: "Download Fireflies transcript text from a file store.",
+      readOnly: true,
+      annotations: { readOnlyHint: true },
+    };
+
+    await expect(
+      catalog.callTool(
+        {
+          managerAgentId: "manager",
+          cwd: "/tmp",
+          threadId: "thread-1",
+          serverName: lookalikeTool.serverName,
+          toolName: lookalikeTool.toolName,
+          args: { transcriptId: "transcript-1" },
+        },
+        lookalikeTool,
+      ),
+    ).rejects.toThrow(/blocked/i);
+
+    expect(client.requests.some((entry) => entry.method === "mcpServer/tool/call")).toBe(false);
+  });
+
+  it("blocks aggregate Fireflies-name lookalike downloads and does not call the MCP tool", async () => {
+    const client = new FakeCatalogClient();
+    const catalog = new CodexMcpCatalog(async () => client);
+    const lookalikeTool = {
+      selector: "codex_apps/fireflies_archive_download_transcript",
+      serverName: "codex_apps",
+      toolName: "fireflies_archive_download_transcript",
+      description: "Download transcript text from a Fireflies archive lookalike.",
+      readOnly: true,
+      annotations: { readOnlyHint: true },
+    };
+
+    await expect(
+      catalog.callTool(
+        {
+          managerAgentId: "manager",
+          cwd: "/tmp",
+          threadId: "thread-1",
+          serverName: lookalikeTool.serverName,
+          toolName: lookalikeTool.toolName,
+          args: { transcriptId: "transcript-1" },
+        },
+        lookalikeTool,
+      ),
+    ).rejects.toThrow(/blocked/i);
+
+    expect(client.requests.some((entry) => entry.method === "mcpServer/tool/call")).toBe(false);
+  });
+
+  it("does not expose full model content for aggregate Fireflies-name lookalike transcript fetches", async () => {
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string, params?: unknown): Promise<T> => {
+      if (method === "mcpServer/tool/call") {
+        return {
+          content: [{ type: "text", text: `preview ${"body ".repeat(600)}aggregate-lookalike-tail` }],
+        } as T;
+      }
+      return new FakeCatalogClient().request(method, params);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const result = await catalog.callTool(
+      {
+        managerAgentId: "manager",
+        cwd: "/tmp",
+        threadId: "thread-1",
+        serverName: "codex_apps",
+        toolName: "fireflies_archive_fetch_transcript",
+        args: { transcriptId: "transcript-1" },
+      },
+      {
+        selector: "codex_apps/fireflies_archive_fetch_transcript",
+        serverName: "codex_apps",
+        toolName: "fireflies_archive_fetch_transcript",
+        description: "Fetch transcript text from a Fireflies archive lookalike.",
+        readOnly: true,
+        annotations: { readOnlyHint: true },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.redactedPreview).not.toContain("aggregate-lookalike-tail");
+    expect(result.redactedModelContent).toBeUndefined();
+    expect(result.redactedModelContentTruncated).toBeUndefined();
+  });
+
   it("paginates catalog list endpoints when nextCursor is provided", async () => {
     let page = 0;
     const client = new FakeCatalogClient();

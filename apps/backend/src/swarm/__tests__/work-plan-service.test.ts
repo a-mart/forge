@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createEmptySessionCoordinationState, type WorkPlanRecord } from '../coordination/session-coordination-state.js'
+import {
+  createEmptySessionCoordinationState,
+  SessionCoordinationStateValidationError,
+  type WorkPlanRecord,
+} from '../coordination/session-coordination-state.js'
 import {
   SessionCoordinationStateRevisionConflictError,
   SessionCoordinationStore,
@@ -560,6 +564,96 @@ describe('work-plan-service', () => {
     expect(created.snapshot.diagnostics).toEqual({ state: 'ok' })
   })
 
+  it.each([8, 24, 100])(
+    'retains all %i terminal historical plans when creating the next plan',
+    async (historyCount) => {
+      const dataDir = await createDataDir()
+      let nowMs = Date.parse(FIXED_TIMESTAMP)
+      const { service, store } = createHarness(dataDir, { now: () => new Date(nowMs) })
+      let expectedStateRevision: number | undefined
+
+      for (let index = 1; index <= historyCount; index += 1) {
+        const created = await service.upsertPlan(managerActor(), {
+          expectedStateRevision,
+          title: `Historical plan ${index}`,
+          items: [{ title: `Do historical work ${index}` }],
+        })
+        nowMs += 1000
+        const finished = await service.finishPlan(managerActor(), {
+          expectedStateRevision: created.stateRevision,
+          planId: created.planId,
+          status: 'completed',
+          finalSummary: `Finished ${index}`,
+        })
+        nowMs += 1000
+        expectedStateRevision = finished.stateRevision
+      }
+
+      const beforeCreate = await service.get(managerActor())
+      expect(beforeCreate.snapshot.activeWorkPlan).toBeNull()
+      expect(beforeCreate.snapshot.recentWorkPlanCount).toBe(historyCount)
+      expect(beforeCreate.snapshot.recentWorkPlans).toHaveLength(Math.min(historyCount, MAX_RECENT_WORK_PLAN_SNAPSHOTS))
+      expect(beforeCreate.snapshot.recentWorkPlansTruncated).toBe(historyCount > MAX_RECENT_WORK_PLAN_SNAPSHOTS)
+
+      const createdNext = await service.upsertPlan(managerActor(), {
+        expectedStateRevision,
+        title: `Plan ${historyCount + 1}`,
+        items: [{ title: 'Continue after retained history' }],
+      })
+
+      expect(createdNext.planId).toBe(`plan-${historyCount + 1}`)
+      expect(createdNext.snapshot.activeWorkPlan?.planId).toBe(`plan-${historyCount + 1}`)
+      expect(createdNext.snapshot.recentWorkPlanCount).toBe(historyCount)
+      expect(createdNext.snapshot.recentWorkPlans).toHaveLength(Math.min(historyCount, MAX_RECENT_WORK_PLAN_SNAPSHOTS))
+      expect(createdNext.snapshot.recentWorkPlansTruncated).toBe(historyCount > MAX_RECENT_WORK_PLAN_SNAPSHOTS)
+
+      const persisted = await store.load()
+      expect(persisted.state.workPlans).toHaveLength(historyCount + 1)
+      expect(persisted.state.workPlans[0]?.planId).toBe('plan-1')
+      expect(persisted.state.workPlans.map((plan) => plan.planId)).toContain(`plan-${historyCount + 1}`)
+    },
+  )
+
+  it('preserves the single non-terminal plan invariant after retained history grows beyond the former cap', async () => {
+    const dataDir = await createDataDir()
+    const { service, store } = createHarness(dataDir)
+    let expectedStateRevision: number | undefined
+
+    for (let index = 1; index <= 12; index += 1) {
+      const created = await service.upsertPlan(managerActor(), {
+        expectedStateRevision,
+        title: `Terminal plan ${index}`,
+        items: [{ title: `Do terminal work ${index}` }],
+      })
+      const finished = await service.finishPlan(managerActor(), {
+        expectedStateRevision: created.stateRevision,
+        planId: created.planId,
+        status: 'completed',
+        finalSummary: `Finished ${index}`,
+      })
+      expectedStateRevision = finished.stateRevision
+    }
+
+    const active = await service.upsertPlan(managerActor(), {
+      expectedStateRevision,
+      title: 'Active preserved with retained history',
+      items: [{ title: 'Do active work' }],
+    })
+
+    await expect(
+      service.upsertPlan(managerActor(), {
+        expectedStateRevision: active.stateRevision,
+        title: 'Should not create a second active plan',
+        items: [{ title: 'Another active plan' }],
+      }),
+    ).rejects.toBeInstanceOf(WorkPlanActiveInvariantError)
+
+    const persisted = await store.load()
+    expect(persisted.state.workPlans).toHaveLength(13)
+    expect(persisted.state.workPlans.map((plan) => plan.planId)).toContain(active.planId)
+    expect(persisted.state.workPlans.find((plan) => plan.planId === active.planId)?.status).toBe('active')
+  })
+
   it('uses unique default-generated item ids within a single create mutation', async () => {
     const dataDir = await createDataDir()
     const { service } = createHarness(dataDir, { useDefaultCreateId: true })
@@ -800,6 +894,17 @@ describe('work-plan-service', () => {
       code: 'validation_error',
       message: 'workPlans[0].title must be at most 200 characters',
     })
+
+    expect(
+      toWorkPlanServiceErrorDescriptor(
+        new SessionCoordinationStateValidationError('workPlans[0].items must contain at most 25 items'),
+        'upsert_plan',
+      ),
+    ).toEqual({
+      action: 'upsert_plan',
+      code: 'validation_error',
+      message: 'workPlans[0].items must contain at most 25 items',
+    })
   })
 
   it('maps invalid expectedStateRevision values to validation_error for WP4', async () => {
@@ -931,6 +1036,7 @@ function createHarness(
   options: {
     agents?: AgentDescriptor[]
     useDefaultCreateId?: boolean
+    now?: () => Date
     storeDeps?: ConstructorParameters<typeof SessionCoordinationStore>[0]['deps']
   } = {},
 ): { service: WorkPlanService; store: SessionCoordinationStore } {
@@ -939,7 +1045,7 @@ function createHarness(
     profileId: PROFILE_ID,
     sessionAgentId: SESSION_ID,
     deps: {
-      now: () => new Date(FIXED_TIMESTAMP),
+      now: options.now ?? (() => new Date(FIXED_TIMESTAMP)),
       randomId: (() => {
         let counter = 0
         return () => `id-${++counter}`
@@ -954,7 +1060,7 @@ function createHarness(
     deps: {
       store,
       listAgents: () => options.agents ?? [],
-      now: () => new Date(FIXED_TIMESTAMP),
+      now: options.now ?? (() => new Date(FIXED_TIMESTAMP)),
       ...(options.useDefaultCreateId
         ? {}
         : {

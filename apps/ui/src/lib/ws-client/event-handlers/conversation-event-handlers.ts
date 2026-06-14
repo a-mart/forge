@@ -207,16 +207,8 @@ export function handleConversationEvent(
       return true
 
     case 'session_task_state_snapshot': {
-      const previous = context.state.taskSnapshots[event.sessionAgentId]
-      if (previous && previous.revision > event.revision) {
-        return true
-      }
-
       context.updateState({
-        taskSnapshots: {
-          ...context.state.taskSnapshots,
-          [event.sessionAgentId]: event,
-        },
+        taskSnapshots: {},
         ...(context.state.taskSnapshotLoadingSessionId === event.sessionAgentId
           ? { taskSnapshotLoadingSessionId: null }
           : {}),

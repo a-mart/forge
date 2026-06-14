@@ -46,6 +46,14 @@ export function buildCreateProjectAgentTool(
         systemPrompt: string;
       };
       const result = await host.createAndPromoteProjectAgent(creatorDescriptor.agentId, parsed);
+      host.recordToolSideEffect?.(creatorDescriptor.agentId, {
+        toolName: "create_project_agent",
+        toolCallId: _toolCallId,
+        phase: "side_effect",
+        input: parsed,
+        output: result,
+        metadata: { projectAgentId: result.agentId, handle: result.handle },
+      });
       const message = `Project agent @${result.handle} created successfully (agentId: ${result.agentId}).`;
 
       return {

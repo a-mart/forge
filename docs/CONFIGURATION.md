@@ -48,11 +48,19 @@ Legacy `MIDDLEMAN_SKILL_SHARE_BASE_URL` and `MIDDLEMAN_SKILL_SHARE_DISABLED` ali
 | `FORGE_OPENAI_CODEX_TRANSPORT` | `sse` | Transport override for OpenAI Codex Responses models. Supported values: `sse` (stable reliability default and rollback path), `websocket`, `websocket-cached` (explicit experimental/canary opt-in; retries a fresh full-context WebSocket before falling back to SSE on pre-output close-before-completion failures), and `auto` (safe pre-start SSE fallback). Invalid values fail safe to `sse`. |
 | `FORGE_CODEX_TRANSPORT_DEBUG` | — | Optional debugging flag. Set to `1` to enable the sanitized Codex transport diagnostics endpoint at `/api/debug/codex-transport` for transport selection and counter inspection; otherwise it stays disabled/404. |
 
-The OpenAI Codex Responses transport settings above apply to normal Codex model runtimes. Builder web also has a separate direct sidecar route: a plain leading `@Codex` or `[@Codex]` text message starts or continues a Codex CLI app-server sidecar thread. Selector forms like `@Codex -<selector>` and inline `@Codex:<selector>` / `[@Codex:<selector>]` route through the manager with injected guidance, can call Codex MCP tools, and are authorized per turn against the selected selector. Manager-routed Codex turns use the catalog endpoint `/api/codex-app-server/catalog?managerAgentId=...`, keep read-only/safety gates and sanitized cache/results, and stay in the normal manager audit trail. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Sidecar display cards are persisted in the parent session by default but are excluded from manager model context and from forked-session history.
+The OpenAI Codex Responses transport settings above apply to normal Codex model runtimes. Builder web also has a separate direct sidecar route: a plain leading `@Codex` or `[@Codex]` text message starts or continues a Codex CLI app-server sidecar thread. Selector forms like `@Codex -<plugin>`, `@Codex:<plugin>`, and `[@Codex:<plugin>]` scope the turn to a plugin, reach the manager, and are delegated to the visible `Codex Plugin` specialist worker with server-owned scoped exact plugin tools. The direct sidecar path is Builder web only, text-only, excluded from Collaboration, and limited to one active direct Codex turn globally. Sidecar display cards are persisted in the parent session by default but are excluded from manager model context and from forked-session history.
 
 ### Active Work Plans
 
 Settings → General includes a Builder-only, default-on **Enable Active Work Plans** toggle backed by `shared/config/work-plans.json`. When enabled, managers get the `task` tool, the Active Work skill/guidance/context, and the live Active Work UI. When disabled, those live surfaces are hidden and runtimes recycle or defer recycle as needed; historical read-only Work Plan receipts remain visible.
+
+### Phoenix Observability
+
+Settings → Observability configures Builder-only Arize Phoenix tracing. Settings persist in `shared/config/phoenix-observability.json`. Export uses OTLP HTTP/protobuf to a local Phoenix traces endpoint, defaulting to `http://127.0.0.1:6006/v1/traces`.
+
+V1 only accepts loopback `http://` endpoints: `localhost`, `127.0.0.0/8`, or `::1`, with a path ending in `/v1/traces`. Embedded credentials, query strings, and fragments are rejected. Rich capture can include runtime, prompt, LLM, tool, delivery, lifecycle, error, and feedback spans. Capture toggles, redaction, identifier/path modes, extra redaction patterns, and content/attribute caps control what is attached to spans.
+
+Collaboration runtime is unsupported in V1. It uses the no-op/fail-closed observability facade and does not write Phoenix settings or export traces.
 
 ### Collaboration
 
@@ -67,7 +75,7 @@ Settings → General includes a Builder-only, default-on **Enable Active Work Pl
 | `FORGE_COLLABORATION_AUTH_COOKIE_NAME` | `forge_collab_session` | Optional session cookie name. Use a distinct value only when multiple collaboration servers share one browser cookie scope. Custom values also namespace Better Auth auxiliary cookies as `<name>_session_data` and `<name>_dont_remember`. |
 | `FORGE_SECONDARY_COLLABORATION_AUTH_COOKIE_NAME` | `forge_collab_secondary_session` | Optional Docker Compose secondary-service cookie-name override for local multi-backend testing. |
 
-Collaboration keeps structured state in SQLite and user-authored specialist bodies on disk. Workspace, category, and channel metadata, membership, read state, category default selected specialist handles, channel selected specialist handles, and collaboration skill-selection state belong in the collaboration database. Specialist markdown files, prompt bodies, reference docs, and skill definitions remain file-backed. `NULL` or all-includes means every optional global skill is included; custom arrays filter both the prompt roster and runtime-loaded skills. `memory` is always-on/core. No channel-local skill authoring exists in V1. Global specialists live in `${FORGE_DATA_DIR}/shared/specialists/`; collaboration channel-local specialists live in `${FORGE_DATA_DIR}/profiles/_collaboration/sessions/<sessionId>/specialists/`. Specialist `TargetSpace` frontmatter controls whether a shared specialist appears in Builder, Collaboration, or both. Collaboration servers seed the union of Builder and `collab-` prefixed Collaboration built-ins, then UI/runtime rosters filter by `TargetSpace`. See [docs/collaboration.md](collaboration.md#collaboration-sqlite-migration-policy) for the migration policy.
+Collaboration keeps structured state in SQLite and user-authored specialist bodies on disk. Workspace, category, and channel metadata, membership, read state, category default selected specialist handles, channel selected specialist handles, and collaboration skill-selection state belong in the collaboration database. Specialist markdown files, prompt bodies, reference docs, and skill definitions remain file-backed. `NULL` or all-includes means every optional global skill is included; custom arrays filter both the prompt roster and runtime-loaded skills. `memory` is always-on/core. No channel-local skill authoring exists in V1. Global specialists live in `${FORGE_DATA_DIR}/shared/specialists/`; collaboration channel-local specialists live in `${FORGE_DATA_DIR}/profiles/_collaboration/sessions/<sessionId>/specialists/`. Specialist `TargetSpace` frontmatter controls whether a shared specialist appears in Builder, Collaboration, or both. Collaboration servers seed the union of Builder and `collab-` prefixed Collaboration built-ins, then UI/runtime rosters filter by `TargetSpace`. See [docs/collaboration/README.md](collaboration/README.md#collaboration-sqlite-migration-policy) for the migration policy.
 
 For compatibility, startup also accepts legacy `MIDDLEMAN_*` environment variables (for example, `MIDDLEMAN_HOST`, `MIDDLEMAN_PORT`, `MIDDLEMAN_DATA_DIR`, `MIDDLEMAN_DEBUG`, `VITE_MIDDLEMAN_WS_URL`, `MIDDLEMAN_RUNTIME_TARGET`). When `FORGE_RUNTIME_TARGET` is unset, legacy `FORGE_COLLABORATION_ENABLED=true` or `MIDDLEMAN_COLLABORATION_ENABLED=true` maps to the `collaboration-server` runtime target.
 
@@ -93,7 +101,7 @@ OpenAI and Anthropic support either OAuth or API key auth. Claude SDK is separat
 For the native Cursor runtime, Forge uses the Forge-owned Cursor SDK `stateRoot` and persisted `sdkAgentId` to keep runtime state local to the app.
 
 
-Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. Those visibility settings also control whether a model can appear in manager create-session, change-default, and per-session override selectors. Codex selector mentions are handled separately through the manager-routed Codex catalog and MCP tool path. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
+Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. Those visibility settings also control whether a model can appear in manager create-session, change-default, and per-session override selectors. Codex selector mentions are handled separately as plugin-scoped turns that delegate to the visible Codex Plugin specialist, not through the manager model selector list. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 
 ## Data Directory
 
@@ -112,6 +120,7 @@ All persistent state lives in a single data directory:
 │   │   ├── slash-commands.json            # Global slash commands
 │   │   ├── terminal-settings.json         # Terminal runtime settings
 │   │   ├── work-plans.json                # Builder-only default-on Active Work Plans toggle
+│   │   ├── phoenix-observability.json     # Builder-only Phoenix tracing settings
 │   │   └── integrations/      # Shared integration configs
 │   ├── cache/                 # Regenerable/ephemeral
 │   │   ├── generated/

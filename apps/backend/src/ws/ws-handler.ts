@@ -73,12 +73,13 @@ export class WsHandler {
     unreadTracker?: UnreadTracker;
     perf: SidebarPerfRecorder;
     collaborationReadinessService?: CollaborationReadinessRequestService;
+    feedbackService?: FeedbackService;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
     this.unreadTracker = options.unreadTracker ?? null;
 
-    const feedbackService = new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
+    const feedbackService = options.feedbackService ?? new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
     const terminalService = options.terminalService ?? null;
     const perf = options.perf;
 

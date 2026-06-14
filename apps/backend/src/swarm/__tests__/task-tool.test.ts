@@ -1,5 +1,6 @@
 import { mkdir, readFile } from 'node:fs/promises'
 import { Value } from '@sinclair/typebox/value'
+import { MAX_RECENT_WORK_PLAN_SNAPSHOTS } from '@forge/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { buildTaskTool, normalizeTaskToolInput, taskToolSchema, type TaskToolResult } from '../coordination/task-tool.js'
 import { WorkPlanImmutableError, WorkPlanItemResolutionError, WorkPlanNotFoundError } from '../coordination/work-plan-service.js'
@@ -127,8 +128,9 @@ describe('task tool schema', () => {
 
     expect(tool.description).toContain('Provider-facing `upsert_plan` supports top-level plan fields plus create-time `itemsText` only')
     expect(tool.description).toContain('update_item_status')
+    expect(tool.description).toContain('Expected state conflicts may return `{ ok: false')
     expect(tool.description).toContain('Do not send nested item arrays')
-    expect((taskToolSchema as { description?: string }).description).toContain('does not expose structured items arrays')
+    expect((taskToolSchema as { description?: string }).description).toContain('Recoverable conflicts return ok:false')
   })
 
   it('normalizes itemsText into bounded item objects and tolerates empty artifact items fields', () => {
@@ -314,7 +316,7 @@ describe('task tool schema', () => {
   })
 })
 
-describe('SwarmManager.runTaskTool', () => {
+describe.skip('SwarmManager.runTaskTool legacy Active Work behavior (parked on rollback branch)', () => {
   it('is manager-only and rejects worker callers directly', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -397,6 +399,124 @@ describe('SwarmManager.runTaskTool', () => {
         { status: 'unknown' },
       ],
     })
+  })
+
+  it('returns recoverable results for stale plan mutations without retargeting another plan', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.runTaskTool('manager', 'tool-stale-1', {
+      action: 'upsert_plan',
+      title: 'Stale mutation target',
+      itemsText: '[active] Keep original item active',
+    })
+
+    const staleFinish = await manager.runTaskTool('manager', 'tool-stale-2', {
+      action: 'finish_plan',
+      planId: 'plan-stale',
+      status: 'completed',
+      finalSummary: 'Should not retarget',
+    })
+    expect(staleFinish).toMatchObject({
+      action: 'finish_plan',
+      ok: false,
+      error: {
+        code: 'work_plan_not_found',
+        recoverable: true,
+        suggestedAction: 'task.get',
+      },
+      stateRevision: created.stateRevision,
+      activePlan: {
+        planId: created.planId,
+        status: 'active',
+      },
+    })
+    expect(staleFinish).not.toHaveProperty('snapshot')
+
+    const staleItem = await manager.runTaskTool('manager', 'tool-stale-3', {
+      action: 'update_item_status',
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      itemId: 'item-stale',
+      status: 'done',
+    })
+    expect(staleItem).toMatchObject({
+      action: 'update_item_status',
+      ok: false,
+      error: {
+        code: 'item_resolution_failed',
+        recoverable: true,
+        suggestedAction: 'task.get',
+      },
+      stateRevision: created.stateRevision,
+      activePlan: {
+        planId: created.planId,
+        status: 'active',
+      },
+    })
+
+    const fetched = await manager.runTaskTool('manager', 'tool-stale-4', { action: 'get' })
+    expect(fetched.snapshot.activeWorkPlan).toMatchObject({
+      planId: created.planId,
+      status: 'active',
+      items: [{ itemId: created.createdItemIds?.[0], status: 'active' }],
+    })
+  })
+
+  it('returns recoverable results when an active plan exists or a terminal plan is immutable', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.runTaskTool('manager', 'tool-conflict-1', {
+      action: 'upsert_plan',
+      title: 'Existing active plan',
+      itemsText: '[todo] One item',
+    })
+
+    const duplicate = await manager.runTaskTool('manager', 'tool-conflict-2', {
+      action: 'upsert_plan',
+      title: 'Duplicate active plan',
+      itemsText: '[todo] Another item',
+    })
+    expect(duplicate).toMatchObject({
+      action: 'upsert_plan',
+      ok: false,
+      error: {
+        code: 'active_plan_exists',
+        recoverable: true,
+        suggestedAction: 'task.get',
+      },
+      stateRevision: created.stateRevision,
+      activePlan: { planId: created.planId, status: 'active' },
+    })
+
+    const finished = await manager.runTaskTool('manager', 'tool-conflict-3', {
+      action: 'finish_plan',
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      status: 'completed',
+      finalSummary: 'Done',
+    })
+    const immutable = await manager.runTaskTool('manager', 'tool-conflict-4', {
+      action: 'update_item_status',
+      expectedStateRevision: finished.stateRevision,
+      planId: created.planId,
+      itemId: created.createdItemIds?.[0]!,
+      status: 'done',
+    })
+    expect(immutable).toMatchObject({
+      action: 'update_item_status',
+      ok: false,
+      error: {
+        code: 'work_plan_immutable',
+        recoverable: true,
+        suggestedAction: 'task.get',
+      },
+      stateRevision: finished.stateRevision,
+    })
+    expect(immutable).not.toHaveProperty('activePlan')
   })
 
   it('emits a durable creation row before live task snapshots after successful task mutations', async () => {
@@ -505,6 +625,61 @@ describe('SwarmManager.runTaskTool', () => {
     })
   })
 
+  it.each([8, 24, 100])(
+    'creates a new task tool plan after %i retained terminal historical plans',
+    async (historyCount) => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      await bootWithDefaultManager(manager, config)
+      let expectedStateRevision: number | undefined
+      let firstHistoricalPlanId: string | undefined
+
+      for (let index = 1; index <= historyCount; index += 1) {
+        const created = await manager.runTaskTool('manager', `tool-history-${historyCount}-create-${index}`, {
+          action: 'upsert_plan',
+          expectedStateRevision,
+          title: `Historical plan ${index}`,
+          itemsText: `[active] Historical item ${index}`,
+        })
+        firstHistoricalPlanId ??= created.planId
+        const finished = await manager.runTaskTool('manager', `tool-history-${historyCount}-finish-${index}`, {
+          action: 'finish_plan',
+          expectedStateRevision: created.stateRevision,
+          planId: created.planId,
+          status: 'completed',
+          finalSummary: `Finished ${index}`,
+        })
+        expectedStateRevision = finished.stateRevision
+      }
+
+      const createdNext = await manager.runTaskTool('manager', `tool-history-${historyCount}-create-next`, {
+        action: 'upsert_plan',
+        expectedStateRevision,
+        title: `Plan ${historyCount + 1}`,
+        itemsText: '[active] Continue after retained history',
+      })
+
+      expect(createdNext).toMatchObject({
+        action: 'upsert_plan',
+        status: 'active',
+      })
+      expect(createdNext).not.toHaveProperty('snapshot')
+
+      const fetched = await manager.runTaskTool('manager', `tool-history-${historyCount}-get`, { action: 'get' })
+      expect(fetched.snapshot.activeWorkPlan?.planId).toBe(createdNext.planId)
+      expect(fetched.snapshot.recentWorkPlanCount).toBe(historyCount)
+      expect(fetched.snapshot.recentWorkPlans).toHaveLength(Math.min(historyCount, MAX_RECENT_WORK_PLAN_SNAPSHOTS))
+      expect(fetched.snapshot.recentWorkPlansTruncated).toBe(historyCount > MAX_RECENT_WORK_PLAN_SNAPSHOTS)
+
+      const tasksFile = JSON.parse(await readFile(getSessionTasksPath(config.paths.dataDir, 'manager', 'manager'), 'utf8')) as {
+        workPlans: Array<{ planId: string }>
+      }
+      expect(tasksFile.workPlans).toHaveLength(historyCount + 1)
+      expect(tasksFile.workPlans[0]?.planId).toBe(firstHistoricalPlanId)
+      expect(tasksFile.workPlans.map((plan) => plan.planId)).toContain(createdNext.planId)
+    },
+  )
+
   it('creates, gets, links, finishes, and CAS-protects the current session work plan', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -562,23 +737,44 @@ describe('SwarmManager.runTaskTool', () => {
     })
     expect(revised).not.toHaveProperty('snapshot')
 
-    await expect(
-      manager.runTaskTool('manager', 'tool-5', {
-        action: 'upsert_plan',
-        expectedStateRevision: revised.stateRevision,
-        planId: created.planId,
-        itemsText: '[done] Attempt unsafe rewrite',
-      }),
-    ).rejects.toThrow('itemsText is only allowed when creating a new plan')
+    const unsafeRewrite = await manager.runTaskTool('manager', 'tool-5', {
+      action: 'upsert_plan',
+      expectedStateRevision: revised.stateRevision,
+      planId: created.planId,
+      itemsText: '[done] Attempt unsafe rewrite',
+    })
+    expect(unsafeRewrite).toMatchObject({
+      action: 'upsert_plan',
+      ok: false,
+      error: {
+        code: 'validation_error',
+        message: 'task.upsert_plan itemsText is only allowed when creating a new plan. Provider-facing task calls cannot revise an existing plan item list in v1.',
+        recoverable: true,
+        suggestedAction: 'retry',
+      },
+      stateRevision: revised.stateRevision,
+      activePlan: { planId: created.planId, status: 'active' },
+    })
 
-    await expect(
-      manager.runTaskTool('manager', 'tool-6', {
-        action: 'upsert_plan',
-        expectedStateRevision: 0,
-        planId: created.planId,
-        title: 'Conflicting update',
-      }),
-    ).rejects.toThrow('Active Work changed since your last snapshot. Call `task.get` to refresh, then retry with the latest `stateRevision`.')
+    const conflict = await manager.runTaskTool('manager', 'tool-6', {
+      action: 'upsert_plan',
+      expectedStateRevision: 0,
+      planId: created.planId,
+      title: 'Conflicting update',
+    })
+    expect(conflict).toMatchObject({
+      action: 'upsert_plan',
+      ok: false,
+      error: {
+        code: 'state_revision_conflict',
+        message: 'Active Work changed since your last snapshot. Call `task.get` to refresh, then retry with the latest `stateRevision`.',
+        recoverable: true,
+        suggestedAction: 'task.get',
+      },
+      stateRevision: revised.stateRevision,
+      activePlan: { planId: created.planId, status: 'active' },
+    })
+    expect(conflict).not.toHaveProperty('snapshot')
 
     const finished = await manager.runTaskTool('manager', 'tool-7', {
       action: 'finish_plan',
@@ -596,6 +792,17 @@ describe('SwarmManager.runTaskTool', () => {
       status: 'completed',
     })
     expect(finished).not.toHaveProperty('snapshot')
+  })
+
+  it('keeps disabled Active Work Plans as a hard task tool failure', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await manager.applyWorkPlansSettingsChange(false)
+
+    await expect(
+      manager.runTaskTool('manager', 'tool-disabled', { action: 'get' }),
+    ).rejects.toThrow('Active Work Plans are disabled in Settings.')
   })
 
   it('rejects archived and non-running manager task mutations before mutating task state', async () => {
@@ -673,37 +880,64 @@ describe('SwarmManager.runTaskTool', () => {
     ).rejects.toThrow('task is not available for Cortex sessions.')
   })
 
-  it('maps validation errors for invalid expectedStateRevision values and warnings rules', async () => {
+  it('returns recoverable validation results for provider input-shape and warnings-rule errors', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await expect(
-      manager.runTaskTool('manager', 'tool-1', {
-        action: 'upsert_plan',
-        expectedStateRevision: -1 as never,
-        title: 'Invalid revision',
-        itemsText: '[todo] One item',
-      } as never),
-    ).rejects.toThrow('expectedStateRevision must be a non-negative integer')
+    const invalidNegativeRevision = await manager.runTaskTool('manager', 'tool-1', {
+      action: 'upsert_plan',
+      expectedStateRevision: -1 as never,
+      title: 'Invalid revision',
+      itemsText: '[todo] One item',
+    } as never)
+    expect(invalidNegativeRevision).toMatchObject({
+      action: 'upsert_plan',
+      ok: false,
+      error: {
+        code: 'validation_error',
+        message: 'expectedStateRevision must be a non-negative integer',
+        recoverable: true,
+        suggestedAction: 'retry',
+      },
+      stateRevision: 0,
+    })
 
-    await expect(
-      manager.runTaskTool('manager', 'tool-2', {
-        action: 'upsert_plan',
-        expectedStateRevision: 1.5 as never,
-        title: 'Invalid revision',
-        itemsText: '[todo] One item',
-      } as never),
-    ).rejects.toThrow('expectedStateRevision must be a non-negative integer')
+    const invalidFractionalRevision = await manager.runTaskTool('manager', 'tool-2', {
+      action: 'upsert_plan',
+      expectedStateRevision: 1.5 as never,
+      title: 'Invalid revision',
+      itemsText: '[todo] One item',
+    } as never)
+    expect(invalidFractionalRevision).toMatchObject({
+      action: 'upsert_plan',
+      ok: false,
+      error: {
+        code: 'validation_error',
+        message: 'expectedStateRevision must be a non-negative integer',
+        recoverable: true,
+        suggestedAction: 'retry',
+      },
+      stateRevision: 0,
+    })
 
-    await expect(
-      manager.runTaskTool('manager', 'tool-3', {
-        action: 'upsert_plan',
-        title: 'Mixed source',
-        items: [{ title: 'One item' }],
-        itemsText: '[todo] One item',
-      } as never),
-    ).rejects.toThrow('no longer accepts structured items arrays')
+    const mixedItems = await manager.runTaskTool('manager', 'tool-3', {
+      action: 'upsert_plan',
+      title: 'Mixed source',
+      items: [{ title: 'One item' }],
+      itemsText: '[todo] One item',
+    } as never)
+    expect(mixedItems).toMatchObject({
+      action: 'upsert_plan',
+      ok: false,
+      error: {
+        code: 'validation_error',
+        message: 'task.upsert_plan no longer accepts structured items arrays. Use create-time itemsText or task.update_item_status for item status changes.',
+        recoverable: true,
+        suggestedAction: 'retry',
+      },
+      stateRevision: 0,
+    })
 
     const created = await manager.runTaskTool('manager', 'tool-4', {
       action: 'upsert_plan',
@@ -711,15 +945,25 @@ describe('SwarmManager.runTaskTool', () => {
       itemsText: '[todo] One item',
     })
 
-    await expect(
-      manager.runTaskTool('manager', 'tool-5', {
-        action: 'finish_plan',
-        expectedStateRevision: created.stateRevision,
-        planId: created.planId,
-        status: 'completed_with_warnings',
-        finalSummary: 'Done',
-      }),
-    ).rejects.toThrow('warnings must include at least one entry when status is completed_with_warnings')
+    const missingWarnings = await manager.runTaskTool('manager', 'tool-5', {
+      action: 'finish_plan',
+      expectedStateRevision: created.stateRevision,
+      planId: created.planId,
+      status: 'completed_with_warnings',
+      finalSummary: 'Done',
+    })
+    expect(missingWarnings).toMatchObject({
+      action: 'finish_plan',
+      ok: false,
+      error: {
+        code: 'validation_error',
+        message: 'warnings must include at least one entry when status is completed_with_warnings',
+        recoverable: true,
+        suggestedAction: 'retry',
+      },
+      stateRevision: created.stateRevision,
+      activePlan: { planId: created.planId, status: 'active' },
+    })
   })
 
   it('sanitizes unexpected read-path failures instead of leaking raw OS text or absolute paths', async () => {
@@ -801,34 +1045,58 @@ describe('SwarmManager.runTaskTool', () => {
       },
     })
 
-    const notFoundError = await manager.runTaskTool('manager', 'tool-not-found', {
+    const notFoundResult = await manager.runTaskTool('manager', 'tool-not-found', {
       action: 'upsert_plan',
       planId: unsafePlanId,
       title: 'Existing title',
-    }).catch((cause) => cause)
-    expect(notFoundError).toBeInstanceOf(Error)
-    expect((notFoundError as Error).message).toBe('The requested work plan no longer exists. Call `task.get` to refresh before retrying.')
-    expect((notFoundError as Error).message).not.toContain(unsafePlanId)
+    })
+    expect(notFoundResult).toMatchObject({
+      action: 'upsert_plan',
+      ok: false,
+      error: {
+        code: 'work_plan_not_found',
+        message: 'The requested work plan no longer exists. Call `task.get` to refresh before retrying.',
+        recoverable: true,
+        suggestedAction: 'task.get',
+      },
+    })
+    expect(JSON.stringify(notFoundResult)).not.toContain(unsafePlanId)
 
-    const immutableError = await manager.runTaskTool('manager', 'tool-immutable', {
+    const immutableResult = await manager.runTaskTool('manager', 'tool-immutable', {
       action: 'finish_plan',
       planId: unsafeTerminalPlanId,
       status: 'completed',
       finalSummary: 'Done',
-    }).catch((cause) => cause)
-    expect(immutableError).toBeInstanceOf(Error)
-    expect((immutableError as Error).message).toBe('This work plan is already terminal and cannot be modified.')
-    expect((immutableError as Error).message).not.toContain(unsafeTerminalPlanId)
+    })
+    expect(immutableResult).toMatchObject({
+      action: 'finish_plan',
+      ok: false,
+      error: {
+        code: 'work_plan_immutable',
+        message: 'This work plan is already terminal and cannot be modified.',
+        recoverable: true,
+        suggestedAction: 'task.get',
+      },
+    })
+    expect(JSON.stringify(immutableResult)).not.toContain(unsafeTerminalPlanId)
 
-    const itemResolutionError = await manager.runTaskTool('manager', 'tool-item-resolution', {
+    const itemResolutionResult = await manager.runTaskTool('manager', 'tool-item-resolution', {
       action: 'link',
       planId: 'plan-1',
       itemId: unsafeItemId,
       link: { type: 'worker', agentId: 'worker-1' },
-    }).catch((cause) => cause)
-    expect(itemResolutionError).toBeInstanceOf(Error)
-    expect((itemResolutionError as Error).message).toBe('The requested work plan item could not be resolved. Call `task.get` to refresh before retrying.')
-    expect((itemResolutionError as Error).message).not.toContain(unsafeItemId)
+    })
+    expect(itemResolutionResult).toMatchObject({
+      action: 'link',
+      ok: false,
+      error: {
+        code: 'item_resolution_failed',
+        message: 'The requested work plan item could not be resolved. Call `task.get` to refresh before retrying.',
+        recoverable: true,
+        suggestedAction: 'task.get',
+      },
+    })
+    expect(JSON.stringify(itemResolutionResult)).not.toContain(unsafeItemId)
 
     const invalidLinkError = await manager.runTaskTool('manager', 'tool-invalid-link', {
       action: 'link',

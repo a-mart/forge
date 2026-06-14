@@ -60,7 +60,6 @@ export const INTERNAL_WORK_PLAN_LINK_TYPES = ["worker"] as const satisfies reado
 export const WORK_PLAN_MUTATION_ACTIONS = ["upsert_plan", "update_item_status", "link", "finish_plan", "system"] as const;
 export type WorkPlanMutationAction = (typeof WORK_PLAN_MUTATION_ACTIONS)[number];
 
-export const MAX_WORK_PLANS_PER_SESSION = 8;
 export const MAX_WORK_PLAN_ITEMS = 25;
 export const MAX_WORK_PLAN_WORKER_LINKS = 8;
 export const MAX_WORK_PLAN_REVISION_NOTES = 20;
@@ -209,7 +208,7 @@ export function normalizeSessionCoordinationState(value: unknown): SessionCoordi
     schemaVersion: SESSION_COORDINATION_SCHEMA_VERSION,
     revision: normalizeNonNegativeInteger(state.revision, "revision"),
     updatedAt: normalizeRequiredIsoTimestamp(state.updatedAt, "updatedAt"),
-    workPlans: normalizeArray(state.workPlans, "workPlans", MAX_WORK_PLANS_PER_SESSION, normalizeWorkPlanRecord)
+    workPlans: normalizeUnboundedArray(state.workPlans, "workPlans", normalizeWorkPlanRecord)
   };
 }
 
@@ -358,6 +357,18 @@ function normalizeWorkPlanMutationProvenance(value: unknown, path: string): Work
     mutatedAt: normalizeRequiredIsoTimestamp(provenance.mutatedAt, `${path}.mutatedAt`),
     toolCallId: normalizeOptionalString(provenance.toolCallId, `${path}.toolCallId`, MAX_IDENTIFIER_LENGTH)
   };
+}
+
+function normalizeUnboundedArray<T>(
+  value: unknown,
+  path: string,
+  itemNormalizer: (value: unknown, path: string) => T
+): T[] {
+  if (!Array.isArray(value)) {
+    throw new SessionCoordinationStateValidationError(`${path} must be an array`);
+  }
+
+  return value.map((item, index) => itemNormalizer(item, `${path}[${index}]`));
 }
 
 function normalizeArray<T>(

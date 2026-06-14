@@ -1,4 +1,5 @@
 import { type AgentRuntimeExtensionSnapshot } from "@forge/protocol";
+import type { ObservabilityFacade } from "../../observability/observability-types.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import type { ForgeExtensionHost } from "../forge-extension-host.js";
@@ -34,6 +35,7 @@ interface RuntimeFactoryDependencies {
   getPiModelsJsonPath: () => string;
   getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
   getCredentialPoolService?: () => CredentialPoolService;
+  observability?: ObservabilityFacade;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };

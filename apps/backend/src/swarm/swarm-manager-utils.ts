@@ -395,6 +395,13 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     }
   }
 
+  if (
+    value.internalWorkerKind !== undefined &&
+    value.internalWorkerKind !== "codex_plugin"
+  ) {
+    return 'internalWorkerKind must be "codex_plugin" when provided';
+  }
+
   if (value.agentCreatorResult !== undefined) {
     if (!isRecord(value.agentCreatorResult)) {
       return "agentCreatorResult must be an object when provided";

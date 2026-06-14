@@ -20,6 +20,7 @@ import { normalizeRuntimeError, normalizeRuntimeUserMessage } from "../../runtim
 import type {
   RuntimeErrorEvent,
   RuntimeSessionEvent,
+  RuntimeTurnMeta,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
   SwarmRuntimeCallbacks
@@ -148,6 +149,7 @@ export class ClaudeQuerySession {
   private queuedSteers: PendingInput[] = [];
   private activeTurn: ActiveTurn | undefined;
   private currentTurnToolResults: unknown[] = [];
+  private currentTurnResultMeta: RuntimeTurnMeta | undefined;
   private sdkSessionId: string | undefined;
   private sdkCompactionInProgress = false;
   private lastContextUsage: AgentContextUsage | undefined;
@@ -479,6 +481,7 @@ export class ClaudeQuerySession {
         }
 
         if (isClaudeResultEvent(event)) {
+          this.currentTurnResultMeta = extractClaudeResultTurnMeta(event);
           await this.refreshContextUsageFromSdk();
           await this.handleTurnCompleted();
         }
@@ -535,11 +538,14 @@ export class ClaudeQuerySession {
     completedTurn.completion.resolve();
 
     const toolResults = [...this.currentTurnToolResults];
+    const meta = this.currentTurnResultMeta;
     this.currentTurnToolResults = [];
+    this.currentTurnResultMeta = undefined;
 
     await this.emitSessionEvent({
       type: "turn_end",
-      toolResults
+      toolResults,
+      ...(meta ? { meta } : {})
     });
     await this.emitSessionEvent({ type: "agent_end" });
 
@@ -572,6 +578,7 @@ export class ClaudeQuerySession {
 
     try {
       this.currentTurnToolResults = [];
+      this.currentTurnResultMeta = undefined;
       this.activeTurn = {
         deliveryId: input.deliveryId,
         completion: createDeferred<void>()
@@ -588,6 +595,7 @@ export class ClaudeQuerySession {
         this.activeTurn = undefined;
       }
       this.currentTurnToolResults = [];
+      this.currentTurnResultMeta = undefined;
       await this.handleFatalError("prompt_dispatch", new Error(normalized.message), {
         deliveryId: input.deliveryId,
         requestedMode: input.requestedMode,
@@ -1198,6 +1206,39 @@ function isClaudeInitEvent(event: ClaudeSdkMessage): boolean {
   const type = normalizeOptionalString((event as { type?: unknown }).type);
   const subtype = normalizeOptionalString((event as { subtype?: unknown }).subtype);
   return type === "system:init" || (type === "system" && subtype === "init") || type === "init";
+}
+
+function extractClaudeResultTurnMeta(event: ClaudeSdkMessage): RuntimeTurnMeta {
+  const record = event as Record<string, unknown>;
+  const usage = readObject(record.usage);
+  const modelUsage = readObject(record.modelUsage ?? record.model_usage);
+  const usageInput = readFiniteNumber(usage?.input_tokens ?? usage?.inputTokens);
+  const usageOutput = readFiniteNumber(usage?.output_tokens ?? usage?.outputTokens);
+  const cacheRead = readFiniteNumber(usage?.cache_read_input_tokens ?? usage?.cacheReadInputTokens ?? usage?.cacheRead);
+  const cacheWrite = readFiniteNumber(usage?.cache_creation_input_tokens ?? usage?.cacheCreationInputTokens ?? usage?.cacheWrite);
+  const total = [usageInput, usageOutput, cacheRead, cacheWrite].reduce<number>((sum, value) => sum + (value ?? 0), 0);
+  const modelId = normalizeOptionalString(record.model)
+    ?? (modelUsage ? Object.keys(modelUsage).find((key) => key.length > 0) : undefined);
+
+  return {
+    usage: total > 0 ? {
+      input: usageInput,
+      output: usageOutput,
+      cacheRead,
+      cacheWrite,
+      total,
+    } : undefined,
+    costUsd: readFiniteNumber(record.total_cost_usd) !== undefined ? { total: readFiniteNumber(record.total_cost_usd) } : undefined,
+    modelId,
+    provider: "anthropic",
+    stopReason: normalizeOptionalString(record.stop_reason ?? record.stopReason ?? record.subtype),
+    providerRequestId: normalizeOptionalString(record.uuid ?? record.id),
+    durationMs: readFiniteNumber(record.duration_ms ?? record.durationMs),
+    durationApiMs: readFiniteNumber(record.duration_api_ms ?? record.durationApiMs),
+    providerSessionId: normalizeOptionalString(record.session_id ?? record.sessionId),
+    requestPayloadFidelity: "delta_only",
+    metadata: modelUsage ? { modelUsage } : undefined,
+  };
 }
 
 function isClaudeResultEvent(event: ClaudeSdkMessage): boolean {

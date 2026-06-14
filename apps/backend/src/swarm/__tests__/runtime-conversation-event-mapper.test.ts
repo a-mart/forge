@@ -134,6 +134,71 @@ describe("RuntimeConversationEventMapper", () => {
     ]);
   });
 
+  it("preserves ordinary worker and manager tool results with fullText fields", () => {
+    const result = { fullText: "complete ordinary tool output", summary: "short summary" };
+
+    const workerProjections = mapRuntimeEvent({
+      descriptor: makeDescriptor(),
+      event: {
+        type: "tool_execution_end",
+        toolName: "ordinary_tool",
+        toolCallId: "tool-full-text-worker",
+        result,
+        isError: false
+      }
+    });
+
+    expect(workerProjections).toHaveLength(2);
+    for (const projection of workerProjections) {
+      expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
+      if (projection.type !== "agent_tool_call" && projection.type !== "conversation_log") {
+        continue;
+      }
+      expect(JSON.parse(projection.text)).toEqual(result);
+    }
+
+    expect(
+      mapRuntimeEvent({
+        descriptor: makeDescriptor({ agentId: "manager", role: "manager", managerId: "manager" }),
+        event: {
+          type: "tool_execution_end",
+          toolName: "manager_tool",
+          toolCallId: "tool-full-text-manager",
+          result,
+          isError: false
+        }
+      })
+    ).toMatchObject([{ type: "agent_tool_call", text: JSON.stringify(result) }]);
+  });
+
+  it("leaves non-Codex tool results untouched even when they contain model-only-looking keys", () => {
+    const result = {
+      fullRedactedContent: "ordinary tool field that must remain visible",
+      redactedModelContent: "ordinary compatibility field",
+      summary: "short summary"
+    };
+
+    const projections = mapRuntimeEvent({
+      descriptor: makeDescriptor(),
+      event: {
+        type: "tool_execution_end",
+        toolName: "ordinary_tool",
+        toolCallId: "tool-non-codex-full-content",
+        result,
+        isError: false
+      }
+    });
+
+    expect(projections).toHaveLength(2);
+    for (const projection of projections) {
+      expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
+      if (projection.type !== "agent_tool_call" && projection.type !== "conversation_log") {
+        continue;
+      }
+      expect(JSON.parse(projection.text)).toEqual(result);
+    }
+  });
+
   it("keeps message_start role filtering to user, assistant, and system", () => {
     expect(
       mapRuntimeEvent({
@@ -283,6 +348,71 @@ describe("RuntimeConversationEventMapper", () => {
         source: "system"
       }
     ]);
+  });
+
+  it("strips full Codex Plugin content from worker and manager audit projections while preserving runtime result and preview", () => {
+    const descriptor = makeDescriptor({ internalWorkerKind: "codex_plugin" } as Partial<AgentDescriptor>);
+    const preview = "synthetic transcript preview";
+    const transcriptTail = "SYNTHETIC_TRANSCRIPT_TAIL_SHOULD_NOT_PERSIST";
+    const runtimeResult = {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            ok: true,
+            selector: "fireflies/fetch_transcript",
+            serverName: "fireflies",
+            toolName: "fetch_transcript",
+            preview,
+            fullRedactedContent: `redacted transcript body ${transcriptTail}`,
+            fullRedactedContentTruncated: false,
+            redactedModelContent: `alternate full content ${transcriptTail}`,
+            note:
+              "fullRedactedContent is model-only; persisted audit rows must stay preview-bounded."
+          })
+        }
+      ],
+      details: {
+        ok: true,
+        selector: "fireflies/fetch_transcript",
+        serverName: "fireflies",
+        toolName: "fetch_transcript",
+        preview,
+        auditId: "audit-1"
+      }
+    };
+    const event: RuntimeSessionEvent = {
+      type: "tool_execution_end",
+      toolName: "codex_fireflies_fetch_transcript",
+      toolCallId: "tool-4",
+      result: runtimeResult,
+      isError: false
+    };
+
+    const projections = mapRuntimeEvent({ descriptor, event });
+
+    expect(JSON.stringify(event.result)).toContain(transcriptTail);
+    expect(JSON.stringify(event.result)).toContain("fullRedactedContent");
+    expect(projections).toHaveLength(2);
+    expect(projections).toMatchObject([
+      { type: "agent_tool_call", kind: "tool_execution_end" },
+      { type: "conversation_log", kind: "tool_execution_end" }
+    ]);
+
+    for (const projection of projections) {
+      expect(projection.type === "agent_tool_call" || projection.type === "conversation_log").toBe(true);
+      if (projection.type !== "agent_tool_call" && projection.type !== "conversation_log") {
+        continue;
+      }
+      expect(projection.text).toContain(preview);
+      expect(projection.text).toContain("fireflies/fetch_transcript");
+      expect(projection.text).not.toContain(transcriptTail);
+      expect(projection.text).not.toContain("fullRedactedContent");
+      expect(projection.text).not.toContain("redactedModelContent");
+
+      const persistedResult = JSON.parse(projection.text) as { content: Array<{ text: string }> };
+      expect(JSON.parse(persistedResult.content[0]!.text)).toEqual(runtimeResult.details);
+    }
   });
 
   it("preserves missing descriptor behavior for tool events", () => {

@@ -18,6 +18,10 @@ interface FileBrowserPanelProps {
   filePath: string | null
   onClose: () => void
   onNavigateToDirectory: (dirPath: string) => void
+  worktreeId?: string | null
+  desktopOnly?: boolean
+  mobileOnly?: boolean
+  resizeHandlePlacement?: 'left' | 'right'
 }
 
 export function FileBrowserPanel({
@@ -26,11 +30,15 @@ export function FileBrowserPanel({
   filePath,
   onClose,
   onNavigateToDirectory,
+  worktreeId = null,
+  desktopOnly = false,
+  mobileOnly = false,
+  resizeHandlePlacement = 'left',
 }: FileBrowserPanelProps) {
   const gatedAgentId = filePath ? agentId : null
 
   // Fetch root listing for cwd (re-uses cache from sidebar)
-  const rootList = useDirectoryListing(wsUrl, gatedAgentId, '')
+  const rootList = useDirectoryListing(wsUrl, gatedAgentId, '', worktreeId)
   const cwd = rootList.data?.cwd ?? ''
 
   // Only fetch file content for non-image files
@@ -42,6 +50,7 @@ export function FileBrowserPanel({
     wsUrl,
     gatedAgentId,
     shouldFetchContent ? filePath : null,
+    worktreeId,
   )
 
   const viewerInfo = useFileViewerInfo(filePath, fileContent.data)
@@ -54,7 +63,7 @@ export function FileBrowserPanel({
     defaultWidth: 850,
     minWidth: 300,
     maxWidth: 1400,
-    invertDelta: true,
+    invertDelta: resizeHandlePlacement === 'left',
   })
 
   const fileName = filePath?.split('/').pop() ?? ''
@@ -68,23 +77,25 @@ export function FileBrowserPanel({
 
   return (
     <>
-      {/* Drag handle (left edge) */}
-      <div
-        ref={handleRef}
-        className={cn(
-          'group relative h-full shrink-0 cursor-col-resize transition-colors',
-          isDragging ? 'bg-primary/40' : 'bg-transparent hover:bg-border',
-        )}
-        style={{ width: 6 }}
-      >
-        <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
-      </div>
+      {resizeHandlePlacement === 'left' ? (
+        <FileViewerResizeHandle
+          handleRef={handleRef}
+          isDragging={isDragging}
+          desktopOnly={desktopOnly}
+          mobileOnly={mobileOnly}
+        />
+      ) : null}
 
       {/* Panel */}
       <div
         ref={panelRef}
         onPointerDown={onSelectionPointerDown}
-        className="flex h-full shrink-0 flex-col border-l border-border/80 bg-background"
+        className={cn(
+          'flex h-full shrink-0 flex-col bg-background',
+          resizeHandlePlacement === 'left' ? 'border-l border-border/80' : 'border-r border-border/80',
+          desktopOnly && 'max-md:hidden',
+          mobileOnly && 'md:hidden',
+        )}
         style={{ width }}
       >
         {/* Header */}
@@ -127,6 +138,7 @@ export function FileBrowserPanel({
               isLoading={fileContent.isLoading}
               error={fileContent.error}
               onNavigateToDirectory={onNavigateToDirectory}
+              worktreeId={worktreeId}
             />
           ) : null}
         </div>
@@ -141,6 +153,42 @@ export function FileBrowserPanel({
           fileSize={viewerInfo.fileSize}
         />
       </div>
+
+      {resizeHandlePlacement === 'right' ? (
+        <FileViewerResizeHandle
+          handleRef={handleRef}
+          isDragging={isDragging}
+          desktopOnly={desktopOnly}
+          mobileOnly={mobileOnly}
+        />
+      ) : null}
     </>
+  )
+}
+
+function FileViewerResizeHandle({
+  handleRef,
+  isDragging,
+  desktopOnly,
+  mobileOnly,
+}: {
+  handleRef: (node: HTMLDivElement | null) => void
+  isDragging: boolean
+  desktopOnly: boolean
+  mobileOnly: boolean
+}) {
+  return (
+    <div
+      ref={handleRef}
+      className={cn(
+        'group relative h-full shrink-0 cursor-col-resize transition-colors',
+        isDragging ? 'bg-primary/40' : 'bg-transparent hover:bg-border',
+        desktopOnly && 'max-md:hidden',
+        mobileOnly && 'md:hidden',
+      )}
+      style={{ width: 6 }}
+    >
+      <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
+    </div>
   )
 }

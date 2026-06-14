@@ -1,4 +1,5 @@
 import type {
+  FileBrowserSourceContext,
   FileContentResult,
   FileCountResult,
   FileListResult,
@@ -8,7 +9,10 @@ import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import { FileBrowserService } from "../services/file-browser-service.js";
 import type { HttpRoute } from "../shared/http-route.js";
-import { resolveCwdFromAgent } from "../shared/route-helpers.js";
+import {
+  resolveCwdFromAgent,
+  resolveGitSourceControlContext,
+} from "../shared/route-helpers.js";
 
 const FILE_BROWSER_GET_METHODS = "GET, OPTIONS";
 const DEFAULT_SEARCH_LIMIT = 50;
@@ -55,13 +59,13 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
     handleGet("/api/files/list", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const requestedPath = requestUrl.searchParams.get("path")?.trim() ?? "";
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      const { cwd, context } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
       const result: FileListResult = await service.listDirectory(cwd, requestedPath);
-      return result;
+      return attachFileBrowserContext(result, context);
     }),
     handleGet("/api/files/count", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      const { cwd } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
       const result: FileCountResult = await service.getFileCount(cwd);
       return result;
     }),
@@ -75,18 +79,67 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
         MAX_SEARCH_LIMIT,
         "limit"
       );
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      const { cwd } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
       const result: FileSearchResult = await service.searchFiles(cwd, query, limit);
       return result;
     }),
     handleGet("/api/files/content", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const filePath = requireNonEmptyQuery(requestUrl.searchParams, "path");
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      const { cwd } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
       const result: FileContentResult = await service.getFileContent(cwd, filePath);
       return result;
     })
   ];
+}
+
+async function resolveFileBrowserContext(
+  swarmManager: SwarmManager,
+  agentId: string,
+  requestUrl: URL
+): Promise<{ cwd: string; context: FileBrowserSourceContext }> {
+  const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
+  const sessionCwd = resolveCwdFromAgent(swarmManager, agentId);
+
+  if (!worktreeId) {
+    return {
+      cwd: sessionCwd,
+      context: {
+        kind: "workspace",
+        isSessionCwd: true
+      }
+    };
+  }
+
+  const gitContext = await resolveGitSourceControlContext(swarmManager, agentId, "workspace", worktreeId);
+  return {
+    cwd: gitContext.cwd,
+    context: {
+      kind: "worktree",
+      worktreeId: gitContext.worktreeId,
+      worktreePath: gitContext.worktreePath,
+      isSessionCwd: false
+    }
+  };
+}
+
+function attachFileBrowserContext(
+  result: FileListResult,
+  context: FileBrowserSourceContext
+): FileListResult {
+  return {
+    ...result,
+    context
+  };
+}
+
+function optionalTrimmedQuery(value: string | null): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function requireNonEmptyQuery(searchParams: URLSearchParams, key: string): string {
@@ -127,6 +180,7 @@ function resolveHttpStatusCode(message: string): number {
   if (
     normalized.includes("must be") ||
     normalized.includes("invalid") ||
+    normalized.includes("unknown or invalid worktreeid") ||
     normalized.includes("no cwd")
   ) {
     return 400;

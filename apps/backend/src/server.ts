@@ -16,10 +16,14 @@ import {
   extractProvidersUsed
 } from "./telemetry/telemetry-payload.js";
 import { TelemetryService } from "./telemetry/telemetry-service.js";
+import { createNoopObservabilityFacade } from "./observability/noop-observability.js";
+import { ObservabilityService } from "./observability/observability-service.js";
+import type { ObservabilityFacade } from "./observability/observability-types.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
-import { isCollaborationServerRuntimeTarget } from "./runtime-target.js";
+import { isBuilderRuntimeTarget, isCollaborationServerRuntimeTarget } from "./runtime-target.js";
+import { FeedbackService } from "./swarm/feedback-service.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
 import { seedBuiltins } from "./swarm/specialists/specialist-registry.js";
 import { UnreadTracker } from "./swarm/unread-tracker.js";
@@ -68,6 +72,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   const logger = createLogger(options.logger);
 
   const runtimeLock = acquireRuntimeLock(config.paths.dataDir);
+  const observabilityService: ObservabilityFacade = isBuilderRuntimeTarget(config.runtimeTarget)
+    ? new ObservabilityService({
+        dataDir: config.paths.dataDir,
+        runtimeTarget: config.runtimeTarget,
+      })
+    : createNoopObservabilityFacade(config.runtimeTarget);
 
   // Ensure the lock is released even on unclean exits (Ctrl+C, crashes, SIGTERM)
   const emergencyRelease = () => {
@@ -96,8 +106,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     await bootstrapCollaborationAdmin(config, collaborationDatabase, authService);
   }
 
+  await observabilityService.initialize();
+
   swarmManager = new SwarmManager(config, {
     versioningService,
+    observability: observabilityService,
   });
   await versioningService.start();
 
@@ -349,6 +362,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       return formatIntegrationContext(integrationContext);
     });
 
+    const feedbackService = new FeedbackService(config.paths.dataDir, { observability: observabilityService });
+
     const wsServer = new SwarmWebSocketServer({
       swarmManager,
       host: config.host,
@@ -362,6 +377,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       unreadTracker,
       statsService,
       telemetryService,
+      observabilityService,
+      feedbackService,
       collaborationSettingsService,
       collaborationReadinessService,
 
@@ -371,6 +388,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       config,
       swarmManager,
       versioningService,
+      observabilityService,
       integrationRegistry,
       wsServer,
       queueSchedulerSync,
@@ -403,6 +421,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         queueSchedulerSync(new Set<string>()),
         integrationRegistry.stop(),
         terminalService?.shutdown(),
+        observabilityService.shutdown({ timeoutMs: 3000 }),
         versioningService.stop(),
       ]);
       clearCollaborationBetterAuthService(config);
@@ -420,6 +439,7 @@ class BackendServer implements StartedServer {
 
   private readonly swarmManager: SwarmManager;
   private readonly versioningService: EmbeddedGitVersioningService;
+  private readonly observabilityService: ObservabilityFacade;
   private readonly integrationRegistry: IntegrationRegistryService;
   private readonly wsServer: SwarmWebSocketServer;
   private readonly queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
@@ -436,6 +456,7 @@ class BackendServer implements StartedServer {
     config: SwarmConfig;
     swarmManager: SwarmManager;
     versioningService: EmbeddedGitVersioningService;
+    observabilityService: ObservabilityFacade;
     integrationRegistry: IntegrationRegistryService;
     wsServer: SwarmWebSocketServer;
     queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
@@ -450,6 +471,7 @@ class BackendServer implements StartedServer {
     this.config = options.config;
     this.swarmManager = options.swarmManager;
     this.versioningService = options.versioningService;
+    this.observabilityService = options.observabilityService;
     this.integrationRegistry = options.integrationRegistry;
     this.wsServer = options.wsServer;
     this.queueSchedulerSync = options.queueSchedulerSync;
@@ -500,6 +522,7 @@ class BackendServer implements StartedServer {
       this.queueSchedulerSync(new Set<string>()),
       this.integrationRegistry.stop(),
       this.terminalService?.shutdown(),
+      this.observabilityService.shutdown({ timeoutMs: 3000 }),
       this.versioningService.stop(),
     ]);
 

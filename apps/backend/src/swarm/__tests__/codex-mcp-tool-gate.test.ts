@@ -81,7 +81,7 @@ describe("codex-mcp-tool-gate", () => {
     ).toBe(true);
   });
 
-  it("authorizes tool calls only for manager_tool turns with selectors", () => {
+  it("authorizes tool calls only for plugin delegation turns with selectors", () => {
     const manager = createManagerDescriptor("/tmp", {
       agentId: "manager",
       sessionSurface: "builder",
@@ -102,7 +102,7 @@ describe("codex-mcp-tool-gate", () => {
     expect(
       buildCodexMcpToolTurnAuthorization({
         surfaceGate,
-        codexClassification: { kind: "manager_tool", selectors: ["fireflies/list_recent"] },
+        codexClassification: { kind: "plugin_delegate", selectors: ["fireflies/list_recent"] },
       }),
     ).toEqual({ allowed: true, authorizedSelectors: ["fireflies/list_recent"] });
   });

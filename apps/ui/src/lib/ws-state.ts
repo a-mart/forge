@@ -89,7 +89,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     promptChangeKey: 0,
     specialistChangeKey: 0,
     modelConfigChangeKey: 0,
-    workPlansEnabled: true,
+    workPlansEnabled: false,
     modelCacheVisualizationEnabled: false,
   }
 }

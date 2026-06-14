@@ -53,7 +53,7 @@ describe("Active Work Plan lifecycle", () => {
     ).resolves.toBe("unavailable");
   });
 
-  it("marks active work stopped on manual session stop without inferring item completion", async () => {
+  it("leaves active work sidecar unchanged on manual session stop while parked", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -67,16 +67,14 @@ describe("Active Work Plan lifecycle", () => {
       workPlans: [
         {
           planId: "plan-active",
-          status: "stopped",
-          finalSummary: "Work stopped. Partial progress was preserved.",
-          lifecycle: { reason: "manual_stop" },
+          status: "active",
           items: [{ itemId: "item-active", status: "active" }],
         },
       ],
     });
   });
 
-  it("marks active work stopped on stop-all without rewriting item outcomes", async () => {
+  it("leaves active work sidecar unchanged on stop-all while parked", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -89,16 +87,14 @@ describe("Active Work Plan lifecycle", () => {
       workPlans: [
         {
           planId: "plan-active",
-          status: "stopped",
-          finalSummary: "Work stopped. Partial progress was preserved.",
-          lifecycle: { reason: "manual_stop" },
+          status: "active",
           items: [{ itemId: "item-active", status: "active" }],
         },
       ],
     });
   });
 
-  it("preserves the sidecar and interrupts active work when clearing a session conversation", async () => {
+  it("preserves the sidecar without interrupting active work when clearing a session conversation while parked", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -112,15 +108,14 @@ describe("Active Work Plan lifecycle", () => {
       workPlans: [
         {
           planId: "plan-active",
-          status: "interrupted",
-          lifecycle: { reason: "conversation_cleared" },
+          status: "active",
           items: [{ itemId: "item-active", status: "active" }],
         },
       ],
     });
   });
 
-  it("preserves the sidecar and does not reactivate interrupted work after session archive and restore", async () => {
+  it("preserves the sidecar without archive transitions after session archive and restore while parked", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -133,8 +128,7 @@ describe("Active Work Plan lifecycle", () => {
       workPlans: [
         {
           planId: "plan-active",
-          status: "interrupted",
-          lifecycle: { reason: "archived" },
+          status: "active",
         },
       ],
     });
@@ -144,14 +138,13 @@ describe("Active Work Plan lifecycle", () => {
       workPlans: [
         {
           planId: "plan-active",
-          status: "interrupted",
-          lifecycle: { reason: "archived" },
+          status: "active",
         },
       ],
     });
   });
 
-  it("preserves child session sidecars across project archive and restore without reactivating work", async () => {
+  it("preserves child session sidecars unchanged across project archive and restore while parked", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -164,8 +157,7 @@ describe("Active Work Plan lifecycle", () => {
       workPlans: [
         {
           planId: "plan-active",
-          status: "interrupted",
-          lifecycle: { reason: "archived" },
+          status: "active",
         },
       ],
     });
@@ -175,14 +167,13 @@ describe("Active Work Plan lifecycle", () => {
       workPlans: [
         {
           planId: "plan-active",
-          status: "interrupted",
-          lifecycle: { reason: "archived" },
+          status: "active",
         },
       ],
     });
   });
 
-  it("rebroadcasts unavailable task snapshots for stop, clear, and archive lifecycle paths", async () => {
+  it("does not read or rebroadcast task snapshots for stop, clear, and archive lifecycle paths while parked", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -202,11 +193,7 @@ describe("Active Work Plan lifecycle", () => {
 
       await action(sessionAgent.agentId);
 
-      expect(snapshots.length).toBeGreaterThan(0);
-      expect(snapshots.at(-1)).toMatchObject({
-        sessionAgentId: sessionAgent.agentId,
-        diagnostics: { state: "unavailable" },
-      });
+      expect(snapshots).toHaveLength(0);
     };
 
     await runCase("Unavailable Stop", (sessionAgentId) => manager.stopSession(sessionAgentId));
@@ -214,7 +201,7 @@ describe("Active Work Plan lifecycle", () => {
     await runCase("Unavailable Archive", (sessionAgentId) => manager.archiveSession(sessionAgentId));
   });
 
-  it("copies only terminal work-plan summaries on full fork and omits the sidecar on partial fork", async () => {
+  it("does not copy task sidecars on full or partial fork while parked", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     await bootWithDefaultManager(manager, config);
@@ -264,66 +251,13 @@ describe("Active Work Plan lifecycle", () => {
     ]);
 
     const fullFork = await manager.forkSession(sessionAgent.agentId, { label: "Full Fork" });
-    const forkedTasks = await readTasksFile(config, fullFork.sessionAgent.agentId);
-    expect(forkedTasks).toMatchObject({
-      workPlans: [
-        {
-          planId: "plan-terminal",
-          createdByAgentId: fullFork.sessionAgent.agentId,
-          status: "completed_with_warnings",
-          finalSummary: "Terminal summary copied safely.",
-          warnings: ["One warning"],
-        },
-      ],
-    });
-    expect(forkedTasks?.workPlans).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ planId: "plan-active" })]),
-    );
-    expect(forkedTasks?.workPlans[0]).toMatchObject({
-      items: [],
-      revisionNotes: [],
-      mutationProvenance: [],
-    });
-    expect(forkedTasks?.workPlans[0]).not.toHaveProperty("goal");
+    await expect(readTasksFile(config, fullFork.sessionAgent.agentId)).resolves.toBeNull();
 
     const partialFork = await manager.forkSession(sessionAgent.agentId, {
       label: "Partial Fork",
       fromMessageId: "m2",
     });
     await expect(readTasksFile(config, partialFork.sessionAgent.agentId)).resolves.toBeNull();
-  });
-
-  it("fails full fork when terminal summary sidecar copy cannot be written", async () => {
-    const config = await makeTempConfig();
-    const manager = new TestSwarmManager(config);
-    await bootWithDefaultManager(manager, config);
-
-    const { sessionAgent } = await manager.createSession("manager", { label: "Fork Failure Source" });
-    await seedForkableConversation(config, sessionAgent);
-    await writeTasksFile(config, sessionAgent.agentId, [
-      createPlan("Completed summary", {
-        planId: "plan-terminal",
-        status: "completed",
-        completedAt: FIXED_TIMESTAMP,
-        updatedAt: FIXED_TIMESTAMP,
-        finalSummary: "Summary that should require a successful sidecar copy.",
-      }),
-    ]);
-
-    const managerWithForkHook = manager as TestSwarmManager & {
-      copySessionWorkPlansForFork: (
-        sourceDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
-        forkedDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
-        fromMessageId?: string,
-      ) => Promise<void>;
-    };
-    const originalCopySessionWorkPlansForFork = managerWithForkHook.copySessionWorkPlansForFork.bind(managerWithForkHook);
-    managerWithForkHook.copySessionWorkPlansForFork = async (sourceDescriptor, forkedDescriptor, fromMessageId) => {
-      await makeTasksPathUnreadable(config, forkedDescriptor.agentId);
-      return originalCopySessionWorkPlansForFork(sourceDescriptor, forkedDescriptor, fromMessageId);
-    };
-
-    await expect(manager.forkSession(sessionAgent.agentId, { label: "Broken Fork" })).rejects.toThrow();
   });
 
   it("removes the sidecar when deleting a session", async () => {

@@ -5,6 +5,7 @@ import {
   type RuntimeExtensionSource
 } from "@forge/protocol";
 import type { Model, Transport } from "@mariozechner/pi-ai";
+import type { ObservabilityFacade, ObservabilityToolDefinition } from "../../../observability/observability-types.js";
 import {
   AuthStorage,
   DefaultResourceLoader,
@@ -12,7 +13,8 @@ import {
   ModelRegistry,
   SettingsManager,
   type AgentSession,
-  type LoadExtensionsResult
+  type LoadExtensionsResult,
+  type ToolDefinition
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "../../agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
@@ -35,6 +37,7 @@ import {
 import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
 import type { SwarmToolHost } from "../../swarm-tool-host.js";
+import { isCodexPluginWorkerDescriptor } from "../../codex-app-server/codex-plugin-scope-service.js";
 import { isCollabSession, resolveExactModel } from "../../swarm-manager-utils.js";
 import type {
   AgentContextUsage,
@@ -45,6 +48,7 @@ import type {
 } from "../../types.js";
 import { planPiRuntimePrompt } from "../runtime-prompt-plan.js";
 import { planPiResourceLoaderOptions, planRuntimeResourcePaths } from "../runtime-resource-plan.js";
+import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "../runtime-tool-plan.js";
 
 interface PiRuntimeCreatorDependencies {
@@ -55,6 +59,7 @@ interface PiRuntimeCreatorDependencies {
   logDebug: (message: string, details?: unknown) => void;
   getPiModelsJsonPath: () => string;
   getCredentialPoolService?: () => CredentialPoolService;
+  observability?: ObservabilityFacade;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
@@ -179,7 +184,9 @@ export class PiRuntimeCreator {
       forgePiToolBridgeFactory: planForgePiToolBridgeFactory({
         forgeExtensionHost: this.deps.forgeExtensionHost,
         preparedForgeBindings,
-        baseSwarmTools
+        baseSwarmTools,
+        host: this.deps.host,
+        descriptor
       })
     });
     const resourcePlan = planPiResourceLoaderOptions({
@@ -312,18 +319,36 @@ export class PiRuntimeCreator {
       });
     }
 
-    const activeToolNames = new Set(session.getActiveToolNames());
-    for (const tool of swarmTools) {
-      activeToolNames.add(tool.name);
-    }
-    session.setActiveToolsByName(Array.from(activeToolNames));
+    const activeToolNames = resolvePiActiveToolNamesForDescriptor(
+      descriptor,
+      session.getActiveToolNames(),
+      swarmTools.map((tool) => tool.name),
+    );
+    session.setActiveToolsByName(activeToolNames);
 
     this.deps.logDebug("runtime:create:ready", {
       runtime: "pi",
       agentId: descriptor.agentId,
-      activeTools: session.getActiveToolNames(),
+      activeTools: activeToolNames,
       systemPromptPreview: previewForLog(session.systemPrompt, 240),
       containsSpeakToUserRule: descriptor.role === "manager" ? session.systemPrompt.includes("speak_to_user") : undefined
+    });
+
+    recordRuntimePromptAndCreation({
+      observability: this.deps.observability,
+      descriptor,
+      runtimeToken,
+      runtimeType: "pi",
+      forgeResolvedPrompt: systemPrompt,
+      finalSystemPrompt: session.systemPrompt,
+      activeTools: summarizePiActiveTools(session as AgentSession, swarmTools, activeToolNames),
+      metadata: {
+        thinkingLevel,
+        agentDir: runtimeAgentDir,
+        memoryFile: memoryResources.memoryContextFile.path,
+        projectExecutablesTrusted: projectExecutableTrustPlan.trusted,
+        pooledCredentialProvider: pooledCredentialId ? descriptor.model.provider : undefined,
+      },
     });
 
     const runtime = new AgentRuntime({
@@ -452,6 +477,109 @@ export class PiRuntimeCreator {
 
     throw new Error(`Model "${descriptor.modelId}" not found for provider "${descriptor.provider}".`);
   }
+}
+
+function summarizePiActiveTools(
+  session: AgentSession,
+  swarmTools: readonly ToolDefinition[],
+  activeToolNames: readonly string[],
+): ObservabilityToolDefinition[] {
+  const activeNames = Array.from(new Set(activeToolNames));
+  const byName = new Map<string, ObservabilityToolDefinition>();
+
+  for (const tool of summarizeRuntimeTools(swarmTools, { activeToolNames: activeNames })) {
+    byName.set(tool.name, tool);
+  }
+
+  for (const tool of listPiSessionTools(session)) {
+    if (!activeNames.includes(tool.name)) {
+      continue;
+    }
+    byName.set(tool.name, tool);
+  }
+
+  for (const name of activeNames) {
+    const tool = getPiSessionToolDefinition(session, name);
+    if (tool) {
+      byName.set(name, tool);
+    }
+  }
+
+  return activeNames.map((name) => byName.get(name) ?? { name, source: "pi" });
+}
+
+function listPiSessionTools(session: AgentSession): ObservabilityToolDefinition[] {
+  const getAllTools = (session as { getAllTools?: () => unknown }).getAllTools;
+  if (typeof getAllTools !== "function") {
+    return [];
+  }
+
+  return normalizePiToolCollection(getAllTools.call(session));
+}
+
+function getPiSessionToolDefinition(session: AgentSession, name: string): ObservabilityToolDefinition | undefined {
+  const getToolDefinition = (session as { getToolDefinition?: (toolName: string) => unknown }).getToolDefinition;
+  if (typeof getToolDefinition !== "function") {
+    return undefined;
+  }
+
+  const value = getToolDefinition.call(session, name);
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return normalizePiToolDefinition(name, value);
+}
+
+function normalizePiToolCollection(value: unknown): ObservabilityToolDefinition[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => {
+      const normalized = normalizePiToolDefinition(undefined, entry);
+      return normalized ? [normalized] : [];
+    });
+  }
+
+  if (value instanceof Map) {
+    return Array.from(value.entries()).flatMap(([name, entry]) => {
+      const normalized = normalizePiToolDefinition(String(name), entry);
+      return normalized ? [normalized] : [];
+    });
+  }
+
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([name, entry]) => {
+      const normalized = normalizePiToolDefinition(name, entry);
+      return normalized ? [normalized] : [];
+    });
+  }
+
+  return [];
+}
+
+function normalizePiToolDefinition(fallbackName: string | undefined, value: unknown): ObservabilityToolDefinition | undefined {
+  if (!value || typeof value !== "object") {
+    return fallbackName ? { name: fallbackName, source: "pi" } : undefined;
+  }
+
+  const record = value as {
+    name?: unknown;
+    description?: unknown;
+    parameters?: unknown;
+    inputSchema?: unknown;
+    schema?: unknown;
+    source?: unknown;
+  };
+  const name = typeof record.name === "string" && record.name.length > 0 ? record.name : fallbackName;
+  if (!name) {
+    return undefined;
+  }
+
+  return {
+    name,
+    description: typeof record.description === "string" ? record.description : undefined,
+    jsonSchema: record.parameters ?? record.inputSchema ?? record.schema,
+    source: typeof record.source === "string" ? record.source : "pi",
+  };
 }
 
 interface BuildRuntimeExtensionSnapshotOptions {
@@ -628,6 +756,18 @@ function normalizeExtensionDisplayName(pathValue: string, resolvedPathValue: str
   }
 
   return normalizedBase || candidate;
+}
+
+export function resolvePiActiveToolNamesForDescriptor(
+  descriptor: AgentDescriptor,
+  sessionActiveToolNames: readonly string[],
+  swarmToolNames: readonly string[],
+): string[] {
+  if (isCodexPluginWorkerDescriptor(descriptor)) {
+    return Array.from(new Set(swarmToolNames));
+  }
+
+  return Array.from(new Set([...sessionActiveToolNames, ...swarmToolNames]));
 }
 
 const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);

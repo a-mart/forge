@@ -61,6 +61,8 @@ export interface AgentContextUsage {
 
 export type AgentSessionPurpose = "cortex_review" | "agent_creator";
 
+export type InternalWorkerKind = "codex_plugin";
+
 export interface AgentDescriptor {
   agentId: string;
   displayName: string;
@@ -95,6 +97,7 @@ export interface AgentDescriptor {
   specialistId?: string;
   specialistDisplayName?: string;
   specialistColor?: string;
+  internalWorkerKind?: InternalWorkerKind;
   projectAgent?: ProjectAgentInfo;
   agentCreatorResult?: AgentCreatorResult;
   webSearch?: boolean;
