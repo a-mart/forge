@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getAllByRole, getByRole, getByText, queryByText } from '@testing-library/dom'
+import { fireEvent, getAllByRole, getByRole, getByText, queryByText, waitFor } from '@testing-library/dom'
 import { createElement, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -1045,5 +1045,69 @@ describe('AgentSidebar', () => {
 
     // Restore original localStorage for cleanup
     vi.stubGlobal('localStorage', localStorageMock)
+  })
+
+  it('keeps profiles visible when sidebar search matches inactive repository project agents', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      const profileId = url.searchParams.get('profileId')
+      const item = profileId === 'project-a'
+        ? {
+            definitionId: 'docs-definition',
+            handle: 'repo-docs',
+            path: '/repo/.forge/project-agents/docs-definition',
+            status: 'valid' as const,
+            problems: [],
+            displayName: 'Repository Docs Agent',
+            whenToUse: 'Use for handbook maintenance',
+          }
+        : {
+            definitionId: 'release-definition',
+            handle: 'repo-release',
+            path: '/repo/.forge/project-agents/release-definition',
+            status: 'valid' as const,
+            problems: [],
+            displayName: 'Release Agent',
+            whenToUse: 'Use for release notes',
+          }
+      return {
+        ok: true,
+        json: async () => ({
+          resources: {
+            projectAgents: {
+              exists: true,
+              count: 1,
+              items: [item],
+            },
+          },
+        }),
+      }
+    }))
+
+    const projectA = sessionManager('project-a-main', 'project-a')
+    const projectB = sessionManager('project-b-main', 'project-b')
+    renderSidebar({
+      agents: [projectA, projectB],
+      profiles: [
+        { ...profileFor(projectA), profileId: 'project-a', displayName: 'Project A', defaultSessionAgentId: 'project-a-main' },
+        { ...profileFor(projectB), profileId: 'project-b', displayName: 'Project B', defaultSessionAgentId: 'project-b-main' },
+      ],
+      wsUrl: 'ws://127.0.0.1:47187',
+    })
+    await flushEffects()
+
+    const sidebar = getDesktopSidebar()
+    const searchInput = sidebar.querySelector('input[placeholder^="Search"]') as HTMLInputElement
+    expect(searchInput).toBeTruthy()
+
+    for (const query of ['repo-docs', 'Repository Docs', 'handbook maintenance']) {
+      fireEvent.change(searchInput, { target: { value: query } })
+      await waitFor(() => {
+        expect(queryByText(sidebar, 'Project A')).toBeTruthy()
+        expect(sidebar.querySelector('button[aria-label^="Repository Docs Agent"]')).toBeTruthy()
+        expect(queryByText(sidebar, 'Project B')).toBeNull()
+        expect(queryByText(sidebar, 'No matches found.')).toBeNull()
+      })
+    }
   })
 })

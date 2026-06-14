@@ -190,7 +190,7 @@ export interface ProfileGroupProps {
   hideCliSessions?: boolean
   onToggleHideCliSessions?: () => void
   inactiveRepoProjectAgents?: import('@/hooks/use-inactive-repo-project-agents').RepoProjectAgentSidebarEntry[]
-  selectedInactiveRepoDefinitionId?: string | null
+  selectedInactiveRepoEntryKey?: string | null
   onSelectInactiveRepoProjectAgent?: (entry: import('@/hooks/use-inactive-repo-project-agents').RepoProjectAgentSidebarEntry) => void
 }
 

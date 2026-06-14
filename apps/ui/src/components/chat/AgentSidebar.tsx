@@ -22,6 +22,7 @@ import {
   buildProfileTreeRows,
   getArchivedProfileRows,
   getDirectlyArchivedSessionRows,
+  isCortexProfile,
 } from '@/lib/agent-hierarchy'
 import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
 import { useProviderUsage } from '@/hooks/use-provider-usage'
@@ -57,6 +58,7 @@ import { ProjectAgentSharingDialog } from './project-agent/ProjectAgentSharingDi
 import { findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
 import { useCortexReviewBadge, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import { useInactiveRepoProjectAgents, type RepoProjectAgentSidebarEntry } from '@/hooks/use-inactive-repo-project-agents'
+import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
 import type { AgentSidebarProps } from './agent-sidebar/types'
 
 // Inject subtle glow pulse keyframes once
@@ -210,7 +212,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     currentProjectAgent: ProjectAgentInfo
   } | null>(null)
   const [inactiveRepoActivationTarget, setInactiveRepoActivationTarget] = useState<RepoProjectAgentSidebarEntry | null>(null)
-  const [selectedInactiveRepoDefinitionId, setSelectedInactiveRepoDefinitionId] = useState<string | null>(null)
+  const [selectedInactiveRepoEntryKey, setSelectedInactiveRepoEntryKey] = useState<string | null>(null)
   const [inactiveRepoRefreshKey, setInactiveRepoRefreshKey] = useState(0)
   const repoProjectAgentSignature = useMemo(() => (
     agents
@@ -231,6 +233,31 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     refreshKey: `${inactiveRepoRefreshKey}:${repoProjectAgentSignature}`,
   })
 
+  const { rows: displayedRegularRows, matchCount: displayedMatchCount } = useMemo(() => {
+    if (!isSearchActive) {
+      return { rows: regularRows, matchCount }
+    }
+
+    const existingProfileIds = new Set(regularRows.map((row) => row.profile.profileId))
+    const inactiveOnlyRows: ProfileTreeRow[] = []
+    let inactiveMatchCount = 0
+
+    for (const row of treeRows) {
+      if (isCortexProfile(row) || existingProfileIds.has(row.profile.profileId)) continue
+      const matchingInactiveEntries = getEntriesForProfile(row.profile.profileId).filter((entry) =>
+        matchesRepoProjectAgentSearch(entry.item, parsedSearch.term),
+      )
+      if (matchingInactiveEntries.length === 0) continue
+      inactiveMatchCount += matchingInactiveEntries.length
+      inactiveOnlyRows.push({ ...row, sessions: [] })
+    }
+
+    return {
+      rows: inactiveOnlyRows.length > 0 ? [...regularRows, ...inactiveOnlyRows] : regularRows,
+      matchCount: matchCount + inactiveMatchCount,
+    }
+  }, [getEntriesForProfile, isSearchActive, matchCount, parsedSearch.term, regularRows, treeRows])
+
   const handleForkSetTarget = useCallback((sourceAgentId: string) => setForkTarget({ sourceAgentId }), [])
 
   const getCreatorAttribution = useCallback((creatorAgentId: string): string | null => {
@@ -241,20 +268,20 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   }, [agents])
 
   const handleSelectAgent = useCallback((agentId: string) => {
-    setSelectedInactiveRepoDefinitionId(null)
+    setSelectedInactiveRepoEntryKey(null)
     setInactiveRepoActivationTarget(null)
     onSelectAgent(agentId)
     onMobileClose?.()
   }, [onSelectAgent, onMobileClose])
 
   const handleSelectInactiveRepoProjectAgent = useCallback((entry: RepoProjectAgentSidebarEntry) => {
-    setSelectedInactiveRepoDefinitionId(entry.item.definitionId)
+    setSelectedInactiveRepoEntryKey(getInactiveRepoProjectAgentEntryKey(entry))
     setInactiveRepoActivationTarget(entry)
   }, [])
 
   const handleInactiveRepoProjectAgentActivated = useCallback((agentId: string) => {
     setInactiveRepoRefreshKey((prev) => prev + 1)
-    setSelectedInactiveRepoDefinitionId(null)
+    setSelectedInactiveRepoEntryKey(null)
     setInactiveRepoActivationTarget(null)
     onSelectAgent(agentId)
     onMobileClose?.()
@@ -444,7 +471,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   // displayed rows rather than raw treeRows.
   const handleToggleHideCliSessions = useCallback(() => {
     if (!hideCliSessions && selectedAgentId && !isSettingsActive) {
-      const displayedRows = cortexRow ? [cortexRow, ...regularRows] : regularRows
+      const displayedRows = cortexRow ? [cortexRow, ...displayedRegularRows] : displayedRegularRows
       const targetId = findCliHideNavigationTarget(selectedAgentId, agents, displayedRows)
       if (targetId) {
         onSelectAgent(targetId)
@@ -453,7 +480,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       // existing isSelectedSessionOrWorker exception in ProfileGroup.
     }
     toggleHideCliSessions()
-  }, [hideCliSessions, selectedAgentId, isSettingsActive, agents, regularRows, cortexRow, onSelectAgent, toggleHideCliSessions])
+  }, [hideCliSessions, selectedAgentId, isSettingsActive, agents, displayedRegularRows, cortexRow, onSelectAgent, toggleHideCliSessions])
 
   const handleMuteAllSessions = useCallback((sessionAgentIds: string[], mute: boolean) => {
     const current = getMutedAgents()
@@ -472,14 +499,14 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     const { active, over } = event
     if (!over || active.id === over.id || !onReorderProfiles) return
 
-    const currentIds = regularRows.map((row) => row.profile.profileId)
+    const currentIds = displayedRegularRows.map((row) => row.profile.profileId)
     const oldIndex = currentIds.indexOf(active.id as string)
     const newIndex = currentIds.indexOf(over.id as string)
     if (oldIndex === -1 || newIndex === -1) return
 
     const newOrder = arrayMove(currentIds, oldIndex, newIndex)
     onReorderProfiles(newOrder)
-  }, [onReorderProfiles, regularRows, setActiveDragId])
+  }, [onReorderProfiles, displayedRegularRows, setActiveDragId])
 
   const profileGroupContent = useCallback((treeRow: ProfileTreeRow, dragHandleRef?: (element: HTMLElement | null) => void, dragHandleListeners?: Record<string, unknown>) => (
     <ProfileGroup
@@ -533,7 +560,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       hideCliSessions={hideCliSessions}
       onToggleHideCliSessions={handleToggleHideCliSessions}
       inactiveRepoProjectAgents={getEntriesForProfile(treeRow.profile.profileId)}
-      selectedInactiveRepoDefinitionId={selectedInactiveRepoDefinitionId}
+      selectedInactiveRepoEntryKey={selectedInactiveRepoEntryKey}
       onSelectInactiveRepoProjectAgent={wsUrl ? handleSelectInactiveRepoProjectAgent : undefined}
     />
   ), [
@@ -553,7 +580,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onPinSession, handleDemoteProjectAgent, onCreateAgentCreator, mutedAgentsState,
     handleToggleMute, handleMuteAllSessions, getCreatorAttribution,
     hideCliSessions, handleToggleHideCliSessions,
-    getEntriesForProfile, selectedInactiveRepoDefinitionId, wsUrl, handleSelectInactiveRepoProjectAgent,
+    getEntriesForProfile, selectedInactiveRepoEntryKey, wsUrl, handleSelectInactiveRepoProjectAgent,
   ])
 
   const sidebarContent = (
@@ -670,23 +697,23 @@ export const AgentSidebar = React.memo(function AgentSidebar({
         {isSearchActive ? (
           <div className="px-1 pb-1">
             <h2 className="text-xs font-semibold text-muted-foreground">
-              {matchCount} match{matchCount !== 1 ? 'es' : ''}
+              {displayedMatchCount} match{displayedMatchCount !== 1 ? 'es' : ''}
             </h2>
           </div>
         ) : null}
 
-        {isSearchActive && regularRows.length === 0 && !cortexRow ? (
+        {isSearchActive && displayedRegularRows.length === 0 && !cortexRow ? (
           <p className="rounded-md px-3 py-4 text-center text-xs text-muted-foreground">
             No matches found.
           </p>
-        ) : regularRows.length === 0 && !isSearchActive ? (
+        ) : displayedRegularRows.length === 0 && !isSearchActive ? (
           <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
             No active agents.
           </p>
         ) : (() => {
-          const dndEnabled = !isSearchActive && onReorderProfiles && regularRows.length > 1
-          const sortableIds = regularRows.map((row) => row.profile.profileId)
-          const activeDragRow = activeDragId ? regularRows.find((row) => row.profile.profileId === activeDragId) : null
+          const dndEnabled = !isSearchActive && onReorderProfiles && displayedRegularRows.length > 1
+          const sortableIds = displayedRegularRows.map((row) => row.profile.profileId)
+          const activeDragRow = activeDragId ? displayedRegularRows.find((row) => row.profile.profileId === activeDragId) : null
 
           if (dndEnabled) {
             return (
@@ -699,7 +726,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
               >
                 <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
                   <ul className="mt-2 space-y-1">
-                    {regularRows.map((treeRow) => (
+                    {displayedRegularRows.map((treeRow) => (
                       <SortableProfileGroup key={treeRow.profile.profileId} treeRow={treeRow}>
                         {(dragHandleRef, dragHandleListeners) => profileGroupContent(treeRow, dragHandleRef, dragHandleListeners)}
                       </SortableProfileGroup>
@@ -721,7 +748,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
 
           return (
             <ul className="mt-2 space-y-1">
-              {regularRows.map((treeRow) => (
+              {displayedRegularRows.map((treeRow) => (
                 <li key={treeRow.profile.profileId}>
                   {profileGroupContent(treeRow)}
                 </li>
@@ -931,7 +958,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           item={inactiveRepoActivationTarget.item}
           onClose={() => {
             setInactiveRepoActivationTarget(null)
-            setSelectedInactiveRepoDefinitionId(null)
+            setSelectedInactiveRepoEntryKey(null)
           }}
           onActivated={handleInactiveRepoProjectAgentActivated}
         />

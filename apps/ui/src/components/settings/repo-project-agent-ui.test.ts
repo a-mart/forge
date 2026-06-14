@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getInactiveRepoProjectAgentDefinitions,
+  getInactiveRepoProjectAgentEntryKey,
   getUnavailableRepoProjectAgentDefinitions,
   matchesRepoProjectAgentSearch,
 } from './repo-project-agent-ui-utils'
@@ -51,5 +52,11 @@ describe('repo-project-agent-ui helpers', () => {
     expect(matchesRepoProjectAgentSearch(item, 'inactive')).toBe(true)
     expect(matchesRepoProjectAgentSearch(item, 'missing')).toBe(false)
     expect(matchesRepoProjectAgentSearch(item, undefined)).toBe(true)
+  })
+
+  it('keys inactive entries by profile and definition id', () => {
+    const item = section.items[1]
+    expect(getInactiveRepoProjectAgentEntryKey({ profileId: 'profile-a', item })).toBe('profile-a:inactive')
+    expect(getInactiveRepoProjectAgentEntryKey({ profileId: 'profile-b', item })).toBe('profile-b:inactive')
   })
 })

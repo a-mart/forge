@@ -22,6 +22,13 @@ export function getUnavailableRepoProjectAgentDefinitions(
   )
 }
 
+export function getInactiveRepoProjectAgentEntryKey(entry: {
+  profileId: string
+  item: Pick<RepoProjectAgentInventoryItem, 'definitionId'>
+}): string {
+  return `${entry.profileId}:${entry.item.definitionId}`
+}
+
 export function matchesRepoProjectAgentSearch(
   item: RepoProjectAgentInventoryItem,
   query: string | undefined,
@@ -60,7 +67,7 @@ export function useRepoProjectAgentActivation(options: {
       return result
     } catch (err) {
       setActivateError(err instanceof Error ? err.message : 'Activation failed.')
-      throw err
+      return undefined
     } finally {
       setActivatingId(null)
     }

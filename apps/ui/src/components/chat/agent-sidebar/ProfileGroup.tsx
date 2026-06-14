@@ -23,7 +23,7 @@ import { SidebarModelIcon } from './shared'
 import { SessionRowItem } from './SessionRowItem'
 import { InactiveRepoProjectAgentRow } from './InactiveRepoProjectAgentRow'
 import { MAX_VISIBLE_SESSIONS } from './constants'
-import { matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
+import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
 import type { ProfileGroupProps } from './types'
 
 export const ProfileGroup = React.memo(function ProfileGroup({
@@ -76,11 +76,11 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   hideCliSessions,
   onToggleHideCliSessions,
   inactiveRepoProjectAgents = [],
-  selectedInactiveRepoDefinitionId,
+  selectedInactiveRepoEntryKey,
   onSelectInactiveRepoProjectAgent,
 }: ProfileGroupProps) {
   const { profile, sessions } = treeRow
-  const hasAnySessions = sessions.length > 0
+  const hasAnySessions = sessions.length > 0 || inactiveRepoProjectAgents.length > 0
   const defaultSession = sessions.find((s) => s.isDefault)
   const isSelectedSessionOrWorkerForHeader = (s: SessionRow) =>
     s.sessionAgent.agentId === selectedAgentId ||
@@ -419,9 +419,9 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                   {projectAgentSessions.map(renderSession)}
                   {visibleInactiveRepoProjectAgents.map((entry) => (
                     <InactiveRepoProjectAgentRow
-                      key={`repo-pa:${entry.item.definitionId}`}
+                      key={`repo-pa:${getInactiveRepoProjectAgentEntryKey(entry)}`}
                       entry={entry}
-                      isSelected={selectedInactiveRepoDefinitionId === entry.item.definitionId}
+                      isSelected={selectedInactiveRepoEntryKey === getInactiveRepoProjectAgentEntryKey(entry)}
                       highlightQuery={highlightQuery}
                       onSelect={() => onSelectInactiveRepoProjectAgent?.(entry)}
                     />
