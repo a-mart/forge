@@ -184,6 +184,20 @@ describe('SessionRowItem repo-sourced project agent badge', () => {
     expect(repoLabel).toBeNull()
   })
 
+  it('labels the copied path as the session data path', () => {
+    renderRow()
+
+    const trigger = container.querySelector('[data-slot="context-menu-trigger"]') ?? container.firstElementChild
+    expect(trigger).not.toBeNull()
+    flushSync(() => {
+      trigger!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2 }))
+    })
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Copy session data path')
+    expect(text).not.toContain('Copy path')
+  })
+
   it('shows direct sharing action for promoted project agents only', () => {
     const onOpenProjectAgentSharing = vi.fn()
     renderRow({

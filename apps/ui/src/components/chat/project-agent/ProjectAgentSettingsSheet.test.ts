@@ -253,6 +253,12 @@ describe('ProjectAgentSettingsSheet', () => {
   })
 
   it('renders read-only mode for repo-sourced project agents', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+
     renderSheet({
       currentProjectAgent: {
         handle: 'repo-agent',
@@ -285,8 +291,16 @@ describe('ProjectAgentSettingsSheet', () => {
     // Repository badge should be visible
     expect(document.body.textContent).toContain('Repository')
 
-    // Source path should be displayed
-    expect(document.body.textContent).toContain('/test/repo/.forge')
+    // Repository source path should be displayed and copyable
+    expect(document.body.textContent).toContain('/test/repo/.forge/project-agents/def-repo-agent')
+    const copySourcePathButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Copy source path',
+    )
+    expect(copySourcePathButton).not.toBeNull()
+    flushSync(() => {
+      copySourcePathButton!.click()
+    })
+    expect(writeText).toHaveBeenCalledWith('/test/repo/.forge/project-agents/def-repo-agent')
 
     // Fields should be disabled/read-only
     const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement

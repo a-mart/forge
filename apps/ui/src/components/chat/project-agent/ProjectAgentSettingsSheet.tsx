@@ -6,7 +6,7 @@ import {
   type ProjectAgentShareGrantInfo,
   type RepoProjectAgentSourceIdentity,
 } from '@forge/protocol'
-import { AlertTriangle, GitBranch, Loader2, Sparkles } from 'lucide-react'
+import { AlertTriangle, Copy, GitBranch, Loader2, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
@@ -83,6 +83,7 @@ export function ProjectAgentSettingsSheet({
   const [referenceError, setReferenceError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showDiscardDialog, setShowDiscardDialog] = useState(false)
+  const [copiedSourcePath, setCopiedSourcePath] = useState(false)
 
   const whenToUseDirtyRef = useRef(false)
   const systemPromptDirtyRef = useRef(false)
@@ -166,6 +167,9 @@ export function ProjectAgentSettingsSheet({
   // Source diagnostics: use the live snapshot when available, fall back to descriptor identity
   const effectiveSourcePath = sourceSnapshot?.forgeDirRealpath ?? repoSourcePath
   const effectiveDefinitionId = sourceSnapshot?.definitionId ?? repoSource?.definitionId ?? null
+  const effectiveDefinitionPath = effectiveSourcePath && effectiveDefinitionId
+    ? `${effectiveSourcePath.replace(/[\\/]+$/, '')}${effectiveSourcePath.includes('\\') ? '\\' : '/'}project-agents${effectiveSourcePath.includes('\\') ? '\\' : '/'}${effectiveDefinitionId}`
+    : null
   const sourceStatus = sourceSnapshot?.status ?? (isRepoSourced ? 'valid' : null)
   const sourceProblems = sourceSnapshot?.problems ?? []
   const isSourceHealthy = !sourceStatus || sourceStatus === 'valid'
@@ -200,6 +204,14 @@ export function ProjectAgentSettingsSheet({
   const isDirty = isPromoting
     ? (trimmedWhenToUse.length > 0 || trimmedSystemPrompt.length > 0)
     : ((!isRepoSourced && (configHasChanges || dirtyReferenceFiles.size > 0)) || sharingDirty)
+
+  const handleCopySourcePath = useCallback(() => {
+    if (!effectiveDefinitionPath || !navigator.clipboard?.writeText) return
+    void navigator.clipboard.writeText(effectiveDefinitionPath).then(() => {
+      setCopiedSourcePath(true)
+      window.setTimeout(() => setCopiedSourcePath(false), 1200)
+    })
+  }, [effectiveDefinitionPath])
 
   // ── Close flow: confirm if dirty, otherwise close immediately ──
 
@@ -492,7 +504,21 @@ export function ProjectAgentSettingsSheet({
                     <GitBranch className="h-3.5 w-3.5 text-blue-400" />
                     Repository source
                   </div>
-                  {effectiveSourcePath ? (
+                  {effectiveDefinitionPath ? (
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="break-all text-xs text-muted-foreground">{effectiveDefinitionPath}</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 gap-1.5 px-2 text-[11px]"
+                        onClick={handleCopySourcePath}
+                      >
+                        <Copy className="h-3 w-3" />
+                        {copiedSourcePath ? 'Copied' : 'Copy source path'}
+                      </Button>
+                    </div>
+                  ) : effectiveSourcePath ? (
                     <p className="break-all text-xs text-muted-foreground">{effectiveSourcePath}</p>
                   ) : null}
                   <p className="text-[11px] text-muted-foreground">

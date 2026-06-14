@@ -311,7 +311,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             }}
           >
             <Copy className="mr-2 size-3.5" />
-            Copy path
+            Copy session data path
           </ContextMenuItem>
           {onPinSession && sessionAgent.profileId ? (
             <ContextMenuItem onClick={() => onPinSession(sessionAgent.agentId, !isPinned)}>
