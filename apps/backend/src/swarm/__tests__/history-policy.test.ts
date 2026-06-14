@@ -295,6 +295,34 @@ describe("history policy", () => {
     expect(ids(selection.history)).toEqual(["message-1", "cache-obs-1"]);
   });
 
+  it("excludes model_cache_observation from bootstrap when diagnostics are disabled", () => {
+    const history = [message("message-1"), modelCacheObservation("cache-obs-1"), message("message-2")];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      includeDiagnosticEntries: false,
+      isWithinBudget: () => true,
+    });
+
+    expect(selection.trimmed).toBe(false);
+    expect(selection.requestedHistoryLength).toBe(2);
+    expect(ids(selection.history)).toEqual(["message-1", "message-2"]);
+  });
+
+  it("does not let disabled diagnostics consume requested bootstrap count", () => {
+    const history = [message("message-1"), message("message-2"), modelCacheObservation("cache-obs-1")];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      requestedMessageCount: 1,
+      includeDiagnosticEntries: false,
+      isWithinBudget: () => true,
+    });
+
+    expect(selection.requestedHistoryLength).toBe(1);
+    expect(ids(selection.history)).toEqual(["message-2"]);
+  });
+
   it("keeps transcript entries first and fills leftover bootstrap budget with tail activity in source order", () => {
     const history = [
       agentActivity("activity-1"),

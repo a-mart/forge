@@ -91,12 +91,21 @@ export interface BootstrapConversationHistorySelection<Entry extends Conversatio
 export function selectBootstrapConversationHistory<Entry extends ConversationEntryEvent>(options: {
   fullHistory: Entry[];
   requestedMessageCount?: number;
+  includeDiagnosticEntries?: boolean;
   isWithinBudget: (messages: Entry[]) => boolean;
 }): BootstrapConversationHistorySelection<Entry> {
-  const { fullHistory, requestedMessageCount, isWithinBudget } = options;
+  const {
+    fullHistory,
+    requestedMessageCount,
+    includeDiagnosticEntries = true,
+    isWithinBudget,
+  } = options;
+  const selectableHistory = includeDiagnosticEntries
+    ? fullHistory
+    : fullHistory.filter((entry) => !isBootstrapDiagnosticEntry(entry));
   const requestedHistory = requestedMessageCount !== undefined
-    ? fullHistory.slice(-requestedMessageCount)
-    : fullHistory;
+    ? selectableHistory.slice(-requestedMessageCount)
+    : selectableHistory;
 
   if (isWithinBudget(requestedHistory)) {
     return {
