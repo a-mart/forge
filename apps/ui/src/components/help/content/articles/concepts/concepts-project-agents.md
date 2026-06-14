@@ -12,6 +12,7 @@ A project agent is a regular session with special properties:
 
 Project agents persist across restarts and appear in the agent directory that manager sessions can query. Handles are immutable after promotion, so renaming the underlying session does not change the project agent handle. Sessions created by a project agent inherit the profile default model unless the creator explicitly sets a model or reasoning override for the new session. Some project agents can also be granted the ability to create new manager sessions in the same profile, and those created sessions keep creator attribution in the sidebar.
 
+Repo-defined Project Agents under `.forge/project-agents/<definitionId>/` also surface in the sidebar as inactive/repo-defined rows when valid. They remain discoverable but unavailable until activated or linked through the Repository Resources flow, which opens from the sidebar row.
 ## How discovery works
 
 When a manager session starts, it receives an injected directory of available project agents in its prompt context. Each entry includes the agent's handle and "when to use" description. The directory includes local agents in the same profile plus shared agents explicitly granted from another profile. The manager can then message relevant project agents when it needs help with tasks that match their specialty.

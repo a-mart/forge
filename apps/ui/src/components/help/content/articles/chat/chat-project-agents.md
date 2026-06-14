@@ -11,6 +11,8 @@ The wizard flow:
 1. **Repo exploration** — The Agent Architect scans your repository to understand its structure and existing agents.
 2. **Interview** — You're asked 2-3 focused questions about the new agent's role and scope.
 3. **Proposal** — The architect drafts a configuration including handle, "when to use" blurb, and role instructions for the `systemPrompt` field. The resulting agent is stored in a dedicated per-handle directory under `profiles/<profileId>/project-agents/<handle>/`.
+
+Repositories can also define Project Agents under `.forge/project-agents/<definitionId>/`. Valid definitions appear in the sidebar as inactive/repo-defined rows; clicking one opens the Repository Resources activation sheet. Repo-defined agents remain unavailable until they are activated/linked.
 4. **Creation** — After you approve, the agent is atomically created and promoted to a project agent.
 
 The wizard session shows a violet Sparkles icon in the sidebar. Once the agent is created, the wizard session auto-hides but remains accessible via "View Creation History" on the created agent's context menu.
