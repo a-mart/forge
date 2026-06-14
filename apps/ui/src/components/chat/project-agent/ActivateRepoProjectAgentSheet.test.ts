@@ -12,8 +12,8 @@ const activationMock = vi.hoisted(() => ({
   activateError: null as string | null,
 }))
 
-vi.mock('@/components/settings/repo-project-agent-ui', async () => {
-  const actual = await vi.importActual<typeof import('@/components/settings/repo-project-agent-ui')>('@/components/settings/repo-project-agent-ui')
+vi.mock('@/components/settings/repo-project-agent-ui-utils', async () => {
+  const actual = await vi.importActual<typeof import('@/components/settings/repo-project-agent-ui-utils')>('@/components/settings/repo-project-agent-ui-utils')
   return {
     ...actual,
     useRepoProjectAgentActivation: () => activationMock,

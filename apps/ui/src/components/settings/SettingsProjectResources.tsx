@@ -16,10 +16,8 @@ import {
   updateProjectResourcesOverride,
   updateProjectResourcesTrust,
 } from './project-resources-api'
-import {
-  ProjectAgentDefinitionRow,
-  useRepoProjectAgentActivation,
-} from './repo-project-agent-ui'
+import { ProjectAgentDefinitionRow } from './repo-project-agent-ui'
+import { useRepoProjectAgentActivation } from './repo-project-agent-ui-utils'
 
 interface SettingsProjectResourcesProps {
   managers: AgentDescriptor[]

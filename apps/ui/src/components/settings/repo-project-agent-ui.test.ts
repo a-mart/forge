@@ -3,7 +3,7 @@ import {
   getInactiveRepoProjectAgentDefinitions,
   getUnavailableRepoProjectAgentDefinitions,
   matchesRepoProjectAgentSearch,
-} from './repo-project-agent-ui'
+} from './repo-project-agent-ui-utils'
 
 describe('repo-project-agent-ui helpers', () => {
   const section = {

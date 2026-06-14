@@ -23,7 +23,7 @@ import { SidebarModelIcon } from './shared'
 import { SessionRowItem } from './SessionRowItem'
 import { InactiveRepoProjectAgentRow } from './InactiveRepoProjectAgentRow'
 import { MAX_VISIBLE_SESSIONS } from './constants'
-import { matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui'
+import { matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'
 import type { ProfileGroupProps } from './types'
 
 export const ProfileGroup = React.memo(function ProfileGroup({

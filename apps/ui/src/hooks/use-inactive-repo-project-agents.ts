@@ -8,7 +8,7 @@ import {
 import {
   getInactiveRepoProjectAgentDefinitions,
   getUnavailableRepoProjectAgentDefinitions,
-} from '@/components/settings/repo-project-agent-ui'
+} from '@/components/settings/repo-project-agent-ui-utils'
 
 export interface RepoProjectAgentSidebarEntry {
   profileId: string

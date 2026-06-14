@@ -5,8 +5,8 @@ import { createBuilderSettingsApiClient } from '@/components/settings/settings-a
 import {
   ProjectAgentDefinitionRow,
   RepoProjectAgentActivationHeader,
-  useRepoProjectAgentActivation,
 } from '@/components/settings/repo-project-agent-ui'
+import { useRepoProjectAgentActivation } from '@/components/settings/repo-project-agent-ui-utils'
 
 export interface ActivateRepoProjectAgentSheetProps {
   wsUrl: string

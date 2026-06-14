@@ -372,9 +372,6 @@ export function readStoredAppearanceConfig(): AppearanceConfig {
   }
 }
 
-export function readStoredThemePreference(): ThemePreference {
-  return readStoredAppearanceConfig().mode
-}
 
 function hexToRgb(hex: string): [number, number, number] {
   const value = hex.replace('#', '')
