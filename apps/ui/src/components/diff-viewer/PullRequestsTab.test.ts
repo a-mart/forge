@@ -142,7 +142,7 @@ describe('PullRequestsTab', () => {
 
     const resizeHandle = getByRole(container, 'separator', { name: /resize pull request list/i })
     expect(resizeHandle.previousElementSibling).toBeInstanceOf(HTMLElement)
-    expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('280px')
+    expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('340px')
     expect(getByRole(container, 'button', { name: /Pull request #428/i }).className).toContain('border-b')
   })
 

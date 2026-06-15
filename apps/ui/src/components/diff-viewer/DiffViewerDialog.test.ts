@@ -690,12 +690,14 @@ describe('DiffViewerDialog', () => {
     expect(hookCalls.worktrees.some((call) => call.enabled !== false)).toBe(true)
   })
 
-  it('keeps Changes and History reachable from Pull Requests', async () => {
+  it('keeps Changes and History reachable from Pull Requests without a blank activity pane', async () => {
     renderDialog({ isCortex: false, initialTab: 'pull-requests' })
     await flushEffects()
 
     expect(getByRole(document.body, 'button', { name: 'Pull Requests' }).getAttribute('aria-pressed')).toBe('true')
-    expect(getByRole(document.body, 'group', { name: 'Repository activity' })).toBeTruthy()
+    expect(queryByRole(document.body, 'group', { name: 'Repository activity' })).toBeNull()
+    expect(getByRole(document.body, 'group', { name: 'Repository activity shortcuts' })).toBeTruthy()
+    expect(getByText(document.body, 'GitHub pull requests unavailable')).toBeTruthy()
 
     fireEvent.click(getByRole(document.body, 'button', { name: 'History' }))
     await flushEffects()
@@ -708,11 +710,13 @@ describe('DiffViewerDialog', () => {
     expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
   })
 
-  it('renders the read-only Worktrees tab with current, locked, dirty, and active-agent state', async () => {
+  it('renders the read-only Worktrees tab with compact activity navigation and worktree state', async () => {
     renderDialog({ isCortex: false, initialTab: 'worktrees' })
     await flushEffects()
 
     expect(getByRole(document.body, 'button', { name: 'Worktrees' }).getAttribute('aria-pressed')).toBe('true')
+    expect(queryByRole(document.body, 'group', { name: 'Repository activity' })).toBeNull()
+    expect(getByRole(document.body, 'group', { name: 'Repository activity shortcuts' })).toBeTruthy()
     expect(getByText(document.body, 'Read-only inventory and browsing. Selecting a worktree updates Source Control and Files context only; chat session CWD stays unchanged.')).toBeTruthy()
     expect(getByText(document.body, '/repo/middleman')).toBeTruthy()
     expect(getByText(document.body, '/repo/middleman-feature')).toBeTruthy()
@@ -726,6 +730,10 @@ describe('DiffViewerDialog', () => {
     const browseButtons = getAllByRole(document.body, 'button', { name: 'Browse files' })
     expect(browseButtons).toHaveLength(2)
     expect(browseButtons.every((button) => !button.hasAttribute('disabled'))).toBe(true)
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'History' }))
+    await flushEffects()
+    expect(getByRole(document.body, 'listbox', { name: 'Commit history' })).toBeTruthy()
   })
 
   it('invokes browse callback for a worktree', async () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import type { GitRepoTarget, GitWorktreeSummary } from '@forge/protocol'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
@@ -10,7 +10,6 @@ import { HistoryView, type HistoryStatusInfo } from './HistoryView'
 import { WorktreesView } from './WorktreesView'
 import { PullRequestsTab } from './PullRequestsTab'
 import type { KnowledgeQuickFilterId } from './knowledge-surface'
-import { SourceControlActivityTabs, type SourceControlActivityTab } from './SourceControlActivityTabs'
 import { SourceControlBranchActions } from './SourceControlBranchActions'
 import {
   useGitBranches,
@@ -233,30 +232,26 @@ export function DiffViewerContent({
             onActivityTabChange={setActiveTab}
           />
         ) : activeTab === 'worktrees' ? (
-          <SourceControlSectionContent onActivityTabChange={setActiveTab}>
-            <WorktreesView
-              agentId={active ? agentId : null}
-              worktreesQuery={worktreesQuery}
-              selectedWorktreeId={selectedWorktreeId}
-              onSelectWorktreeContext={handleSelectWorktreeContext}
-              onBrowseWorktree={handleBrowseWorktree}
-            />
-          </SourceControlSectionContent>
+          <WorktreesView
+            agentId={active ? agentId : null}
+            worktreesQuery={worktreesQuery}
+            selectedWorktreeId={selectedWorktreeId}
+            onSelectWorktreeContext={handleSelectWorktreeContext}
+            onBrowseWorktree={handleBrowseWorktree}
+          />
         ) : (
-          <SourceControlSectionContent onActivityTabChange={setActiveTab}>
-            <PullRequestsTab
-              wsUrl={wsUrl}
-              agentId={active ? agentId : null}
-              repoTarget={repoTarget}
-              worktreeId={effectiveWorktreeId}
-              currentBranch={statusQuery.data?.branch ?? contextWorktree?.branch ?? null}
-              pullRequestsQuery={pullRequestsQuery}
-              onMergeComplete={() => {
-                pullRequestsQuery.refetch()
-                branchesQuery.refetch()
-              }}
-            />
-          </SourceControlSectionContent>
+          <PullRequestsTab
+            wsUrl={wsUrl}
+            agentId={active ? agentId : null}
+            repoTarget={repoTarget}
+            worktreeId={effectiveWorktreeId}
+            currentBranch={statusQuery.data?.branch ?? contextWorktree?.branch ?? null}
+            pullRequestsQuery={pullRequestsQuery}
+            onMergeComplete={() => {
+              pullRequestsQuery.refetch()
+              branchesQuery.refetch()
+            }}
+          />
         )}
       </div>
 
@@ -326,25 +321,6 @@ export function DiffViewerContent({
         <DiffStatusBar filesChanged={0} insertions={0} deletions={0} />
       )}
     </>
-  )
-}
-
-function SourceControlSectionContent({
-  children,
-  onActivityTabChange,
-}: {
-  children: ReactNode
-  onActivityTabChange: (tab: SourceControlActivityTab) => void
-}) {
-  return (
-    <div className="flex h-full min-h-0">
-      <div className="shrink-0 border-r border-border/60" style={{ width: 250 }}>
-        <SourceControlActivityTabs activeTab={null} onTabChange={onActivityTabChange} />
-      </div>
-      <div className="min-w-0 flex-1">
-        {children}
-      </div>
-    </div>
   )
 }
 

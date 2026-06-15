@@ -437,9 +437,9 @@ export function PullRequestsTab({
     handleRef: listResizeHandleRef,
   } = useResizablePanel({
     storageKey: 'forge-diff-pull-requests-list-width',
-    defaultWidth: 280,
-    minWidth: 220,
-    maxWidth: 380,
+    defaultWidth: 340,
+    minWidth: 280,
+    maxWidth: 460,
   })
   const [isLargeLayout, setIsLargeLayout] = useState(true)
 

@@ -65,6 +65,28 @@ export function DiffDialogHeader({
         Source Control
       </div>
 
+      {activeTab === 'worktrees' || activeTab === 'pull-requests' ? (
+        <>
+          <div
+            className="inline-flex h-7 shrink-0 items-center rounded-md border border-border/60 bg-muted/30 p-0.5"
+            role="group"
+            aria-label="Repository activity shortcuts"
+          >
+            <TabButton
+              label="Changes"
+              active={false}
+              onClick={() => onTabChange('changes')}
+            />
+            <TabButton
+              label="History"
+              active={false}
+              onClick={() => onTabChange('history')}
+            />
+          </div>
+          <span className="text-muted-foreground/30" aria-hidden>·</span>
+        </>
+      ) : null}
+
       <div
         className="inline-flex h-7 shrink-0 items-center rounded-md border border-border/40 bg-background/40 p-0.5"
         role="group"
