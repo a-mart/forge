@@ -40,7 +40,9 @@ Forge supports three providers:
 - **Claude SDK** — Native Claude Agent SDK access through Claude Code CLI OAuth. Use this when you want the SDK runtime instead of the Pi-proxied Anthropic path.
 - **OpenAI** — GPT and Codex models. Supports OAuth, API key auth, or Forge Auth broker mode for OpenAI/Codex in v1.
 
-Forge Auth broker mode lets Forge use a separate broker for OpenAI/Codex short-lived leases instead of local OpenAI credentials. When broker mode is active, local OpenAI OAuth/API-key and pool credentials stay visible for reference but are read-only in Settings.
+Forge Auth broker mode lets Forge use a separate broker for OpenAI/Codex short-lived leases instead of local OpenAI credentials. For v1 setup, your broker administrator creates a one-time setup link for your name/email. Paste that link into **Settings → Authentication → OpenAI → Forge Auth broker** and redeem it. Forge sends the invite id/secret to the broker from the backend, stores only the returned broker runtime token in secrets, and masks broker status in the UI. Manual broker URL/token entry is still available under advanced setup for older deployments, but setup links are the normal path.
+
+When broker mode is active, local OpenAI OAuth/API-key and pool credentials stay visible for reference but are read-only in Settings. If broker mode is forced by environment variables, Settings cannot redeem setup links or edit broker fields until the env override is removed.
 
 After adding credentials, you may need to restart the backend (`Ctrl+C` and re-run `pnpm prod:daemon`) for the changes to take effect. On macOS this usually isn't necessary, but on Windows the backend sometimes doesn't pick up auth changes without a restart.
 
