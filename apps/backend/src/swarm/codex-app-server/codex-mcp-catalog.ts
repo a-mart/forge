@@ -13,6 +13,7 @@ import {
 import type { CodexAppServerClientPort } from "./types.js";
 
 const CATALOG_CACHE_TTL_MS = 30_000;
+const MCP_SERVER_STATUS_LIST_TIMEOUT_MS = 60_000;
 const MAX_CATALOG_ENTRIES = 500;
 const MAX_TOOL_ARGS_BYTES = 16 * 1024;
 const CODEX_APPS_AGGREGATE_SERVER = "codex_apps";
@@ -61,11 +62,17 @@ export interface CodexCatalogMcpTool {
   annotations?: Record<string, unknown>;
 }
 
+export interface CodexCatalogDiagnostics {
+  /** Non-empty when MCP tool discovery failed and no prior good snapshot was available. */
+  mcpToolsError?: string;
+}
+
 export interface CodexCatalogSnapshot {
   apps: CodexCatalogApp[];
   plugins: CodexCatalogPlugin[];
   tools: CodexCatalogMcpTool[];
   fetchedAt: string;
+  diagnostics?: CodexCatalogDiagnostics;
 }
 
 export interface CodexMcpToolCallInput {
@@ -130,7 +137,26 @@ export class CodexMcpCatalog {
     const client = await this.getClient();
     const apps = await this.fetchApps(client);
     const plugins = enrichPluginsFromApps(await this.fetchPlugins(client), apps);
-    const tools = await this.fetchMcpTools(client, apps);
+    let tools: CodexCatalogMcpTool[];
+    try {
+      tools = await this.fetchMcpTools(client, apps);
+    } catch (error) {
+      if (this.cache) {
+        return this.cache.snapshot;
+      }
+
+      const pickerPlugins = filterPluginsForPicker(plugins);
+      return {
+        apps,
+        plugins: pickerPlugins.slice(0, MAX_CATALOG_ENTRIES),
+        tools: [],
+        fetchedAt: new Date().toISOString(),
+        diagnostics: {
+          mcpToolsError: formatCatalogDiscoveryError("mcpServerStatus/list", error),
+        },
+      };
+    }
+
     const enrichedPlugins = enrichPluginsWithCodexAppsToolScopes(plugins, tools);
     const pickerPlugins = filterPluginsForPicker(enrichedPlugins);
     const snapshot: CodexCatalogSnapshot = {
@@ -373,19 +399,19 @@ export class CodexMcpCatalog {
     client: CodexAppServerClientPort,
     apps: CodexCatalogApp[],
   ): Promise<CodexCatalogMcpTool[]> {
-    try {
-      return await this.fetchPaginated(client, "mcpServerStatus/list", (response) =>
-        parseMcpToolsResponse(response, apps),
-      );
-    } catch {
-      return [];
-    }
+    return await this.fetchPaginated(
+      client,
+      "mcpServerStatus/list",
+      (response) => parseMcpToolsResponse(response, apps),
+      { timeoutMs: MCP_SERVER_STATUS_LIST_TIMEOUT_MS },
+    );
   }
 
   private async fetchPaginated<T>(
     client: CodexAppServerClientPort,
     method: string,
     parsePage: (response: unknown) => T[],
+    options: { timeoutMs?: number } = {},
   ): Promise<T[]> {
     const merged: T[] = [];
     let cursor: string | undefined;
@@ -395,6 +421,7 @@ export class CodexMcpCatalog {
       const response = await client.request<unknown>(
         method,
         cursor ? { cursor, pageToken: cursor, nextCursor: cursor } : {},
+        options.timeoutMs,
       );
       merged.push(...parsePage(response));
 
@@ -724,6 +751,11 @@ function extractArray(response: unknown, keys: string[]): unknown[] {
   }
 
   return [];
+}
+
+function formatCatalogDiscoveryError(method: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `Codex MCP catalog discovery failed for ${method}: ${message}`;
 }
 
 type ParsedToolCallResponse =

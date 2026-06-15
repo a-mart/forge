@@ -77,7 +77,15 @@ export class CodexAppServerService {
   }
 
   async listCodexMcpTools(): Promise<CodexCatalogSnapshot> {
-    return this.mcpCatalog.listCatalog();
+    const snapshot = await this.mcpCatalog.listCatalog();
+    if (snapshot.diagnostics?.mcpToolsError) {
+      this.host.logDebug("codex_mcp_catalog:tool_discovery_failed", {
+        error: snapshot.diagnostics.mcpToolsError,
+        pluginCount: snapshot.plugins.length,
+        toolCount: snapshot.tools.length,
+      });
+    }
+    return snapshot;
   }
 
   resolveCodexMcpToolInCatalog(
