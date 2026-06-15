@@ -1,6 +1,6 @@
 import type { Writable } from 'node:stream'
 
-import type { AgentDescriptor, CliStatusResponse, ManagerProfile } from '@forge/protocol'
+import type { AgentDescriptor, CliSessionTranscriptResponse, CliStatusResponse, ManagerProfile } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 
 import type { ForgeClientLike } from '../forge-client.js'
@@ -120,6 +120,88 @@ describe('runCli', () => {
     })
   })
 
+  it('renders session transcripts as stable JSON and human text', async () => {
+    const jsonIo = makeIo()
+    const jsonExit = await runCli(['sessions', 'transcript', 'session-1', '--json'], {
+      io: jsonIo,
+      createClient: async () => mockClient(),
+    })
+    expect(jsonExit).toBe(EXIT_CODES.success)
+    expect(JSON.parse(jsonIo.stdout.toString())).toMatchObject({
+      session: { agentId: 'session-1' },
+      messages: [
+        { kind: 'user', text: 'Hello' },
+        { kind: 'assistant', text: 'Hi there' },
+      ],
+    })
+
+    const humanIo = makeIo()
+    const humanExit = await runCli(['sessions', 'transcript', 'session-1'], {
+      io: humanIo,
+      createClient: async () => mockClient(),
+    })
+    expect(humanExit).toBe(EXIT_CODES.success)
+    expect(humanIo.stdout.toString()).toContain('Transcript for Session One (session-1)')
+    expect(humanIo.stdout.toString()).toContain('User:')
+    expect(humanIo.stdout.toString()).toContain('Assistant:')
+    expect(humanIo.stdout.toString()).not.toContain('Worker')
+  })
+
+  it('passes transcript pagination and worker-update options from spaced and equals flags', async () => {
+    const calls: Array<{ includeWorkerUpdates?: boolean; limit?: number; offset?: number }> = []
+    const client = mockClient()
+    client.getSessionTranscript = async (_agentId, options = {}) => {
+      calls.push(options)
+      return transcriptResponse({ includeWorkerUpdates: Boolean(options.includeWorkerUpdates), limit: options.limit ?? 200, offset: options.offset ?? 0 })
+    }
+
+    const spacedIo = makeIo()
+    await expect(runCli(['sessions', 'transcript', 'session-1', '--include-worker-updates', '--limit', '1', '--offset', '2'], {
+      io: spacedIo,
+      createClient: async () => client,
+    })).resolves.toBe(EXIT_CODES.success)
+    expect(spacedIo.stdout.toString()).toContain('Worker (Backend Specialist):')
+
+    const equalsIo = makeIo()
+    await expect(runCli(['sessions', 'transcript', 'session-1', '--limit=3', '--offset=4'], {
+      io: equalsIo,
+      createClient: async () => client,
+    })).resolves.toBe(EXIT_CODES.success)
+
+    expect(calls).toEqual([
+      { includeWorkerUpdates: true, limit: 1, offset: 2 },
+      { includeWorkerUpdates: false, limit: 3, offset: 4 },
+    ])
+  })
+
+  it('renders empty session transcripts gracefully', async () => {
+    const io = makeIo()
+    const client = mockClient()
+    client.getSessionTranscript = async () => ({
+      ...transcriptResponse(),
+      page: { total: 0, returned: 0, offset: 0, limit: 200, hasMore: false },
+      messages: [],
+    })
+    const exit = await runCli(['sessions', 'transcript', 'session-1'], { io, createClient: async () => client })
+    expect(exit).toBe(EXIT_CODES.success)
+    expect(io.stdout.toString()).toContain('No transcript messages.')
+  })
+
+  it('validates transcript pagination before creating a network client', async () => {
+    const io = makeIo()
+    let createdClient = false
+    const exit = await runCli(['sessions', 'transcript', 'session-1', '--limit', '0'], {
+      io,
+      createClient: async () => {
+        createdClient = true
+        return mockClient()
+      },
+    })
+    expect(exit).toBe(EXIT_CODES.usage)
+    expect(createdClient).toBe(false)
+    expect(io.stderr.toString()).toContain('--limit must be an integer')
+  })
+
   it('documents choice answer schema, duration examples, and destructive safety in help', async () => {
     const choicesIo = makeIo()
     await runCli(['choices', '--help'], { io: choicesIo })
@@ -134,6 +216,7 @@ describe('runCli', () => {
     const sessionsIo = makeIo()
     await runCli(['sessions', '--help'], { io: sessionsIo })
     expect(sessionsIo.stdout.toString()).toContain('Destructive session commands require --yes.')
+    expect(sessionsIo.stdout.toString()).toContain('transcript <agentId>')
   })
 
   it('requires --yes for destructive session commands before creating a client', async () => {
@@ -189,6 +272,7 @@ function mockClient(overrides: { status?: CliStatusResponse } = {}): ForgeClient
     showProfile: async () => ({ profile }),
     listSessions: async () => ({ sessions: [session] }),
     showSession: async () => ({ session }),
+    getSessionTranscript: async () => transcriptResponse(),
     listAgents: async () => ({ agents: [session, worker] }),
     showAgent: async () => ({ agent: worker }),
     listProjectAgents: async () => ({ projectAgents: [{ profileId: 'profile-1', agentId: 'session-1', handle: 'docs', whenToUse: 'Docs', displayName: 'Docs' }] }),
@@ -210,6 +294,63 @@ function mockClient(overrides: { status?: CliStatusResponse } = {}): ForgeClient
     forkSession: async () => ({ sourceAgentId: 'session-1', session }),
     answerChoice: async () => ({ choiceId: 'choice-1', sessionAgentId: 'session-1', status: 'answered' }),
     cancelChoice: async () => ({ choiceId: 'choice-1', sessionAgentId: 'session-1', status: 'cancelled' }),
+  }
+}
+
+function transcriptResponse(options: { includeWorkerUpdates?: boolean; limit?: number; offset?: number } = {}): CliSessionTranscriptResponse {
+  const includeWorkerUpdates = options.includeWorkerUpdates ?? false
+  const messages: CliSessionTranscriptResponse['messages'] = [
+    {
+      ordinal: 0,
+      id: 'user-1',
+      timestamp: '2026-05-11T00:00:00.000Z',
+      kind: 'user',
+      role: 'user',
+      source: 'user_input',
+      text: 'Hello',
+      agentId: 'session-1',
+    },
+    {
+      ordinal: 1,
+      id: 'assistant-1',
+      timestamp: '2026-05-11T00:00:01.000Z',
+      kind: 'assistant',
+      role: 'assistant',
+      source: 'speak_to_user',
+      text: 'Hi there',
+      agentId: 'session-1',
+    },
+  ]
+  if (includeWorkerUpdates) {
+    messages.push({
+      ordinal: 2,
+      timestamp: '2026-05-11T00:00:02.000Z',
+      kind: 'worker_update',
+      role: 'worker',
+      source: 'worker_update',
+      text: 'Done with backend checks.',
+      agentId: 'session-1',
+      fromAgentId: 'worker-1',
+      fromDisplayName: 'Backend Specialist',
+      toAgentId: 'session-1',
+    })
+  }
+
+  return {
+    session: { agentId: 'session-1', profileId: 'profile-1', displayName: 'Session One' },
+    options: {
+      includeWorkerUpdates,
+      limit: options.limit ?? 200,
+      offset: options.offset ?? 0,
+    },
+    page: {
+      total: messages.length,
+      returned: messages.length,
+      offset: options.offset ?? 0,
+      limit: options.limit ?? 200,
+      hasMore: false,
+    },
+    messages,
   }
 }
 

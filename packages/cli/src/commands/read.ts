@@ -1,6 +1,8 @@
 import type {
   AgentDescriptor,
   CliChoiceOwner,
+  CliSessionTranscriptMessage,
+  CliSessionTranscriptResponse,
   CliStatusResponse,
   ManagerProfile,
 } from '@forge/protocol'
@@ -80,7 +82,21 @@ export async function handleSessionsCommand(context: CommandContext): Promise<nu
     else writeHuman(context.io, context.args.options, formatAgent(response.session))
     return EXIT_CODES.success
   }
-  throw usage('Usage: forge sessions list --profile <profileId> | forge sessions show <agentId>')
+  if (action === 'transcript') {
+    const id = requireArg(agentId, 'agentId')
+    const limit = parseOptionalInteger(context.args.options.limit, '--limit', 1)
+    const offset = parseOptionalInteger(context.args.options.offset, '--offset', 0)
+    const client = await context.createClient()
+    const response = await client.getSessionTranscript(id, {
+      includeWorkerUpdates: Boolean(context.args.options.includeWorkerUpdates),
+      ...(limit !== undefined ? { limit } : {}),
+      ...(offset !== undefined ? { offset } : {}),
+    })
+    if (context.args.options.json) writeJson(context.io, response)
+    else writeHuman(context.io, context.args.options, formatTranscript(response))
+    return EXIT_CODES.success
+  }
+  throw usage('Usage: forge sessions list --profile <profileId> | forge sessions show <agentId> | forge sessions transcript <agentId> [--include-worker-updates] [--limit <n>] [--offset <n>]')
 }
 
 export async function handleAgentsCommand(context: CommandContext): Promise<number> {
@@ -230,6 +246,59 @@ function formatChoices(choices: CliChoiceOwner[]): string {
     { header: 'status', value: (choice) => choice.status },
     { header: 'question', value: (choice) => choice.questionSummary },
   ])
+}
+
+function formatTranscript(response: CliSessionTranscriptResponse): string {
+  const header = `Transcript for ${response.session.displayName ?? response.session.agentId} (${response.session.agentId})`
+  if (response.messages.length === 0) {
+    return `${header}\nNo transcript messages.`
+  }
+
+  const blocks = response.messages.map(formatTranscriptMessage)
+  const footer = response.page.hasMore && response.page.nextOffset !== undefined
+    ? [`More messages available. Re-run with --offset ${response.page.nextOffset}.`]
+    : []
+  return [header, ...blocks, ...footer].join('\n\n')
+}
+
+function formatTranscriptMessage(message: CliSessionTranscriptMessage): string {
+  const speaker = transcriptSpeaker(message)
+  const body = indentTranscriptBody(message.text)
+  const attachments = formatTranscriptAttachments(message)
+  return [`[${message.timestamp}] ${speaker}:`, body, ...attachments].join('\n')
+}
+
+function transcriptSpeaker(message: CliSessionTranscriptMessage): string {
+  if (message.kind === 'worker_update') {
+    return `Worker${message.fromDisplayName ? ` (${message.fromDisplayName})` : ''}`
+  }
+  return message.kind === 'user' ? 'User' : 'Assistant'
+}
+
+function indentTranscriptBody(text: string): string {
+  const normalized = text.length > 0 ? text : '(empty)'
+  return normalized.split('\n').map((line) => `  ${line}`).join('\n')
+}
+
+function formatTranscriptAttachments(message: CliSessionTranscriptMessage): string[] {
+  if (!message.attachments || message.attachments.length === 0) return []
+  return message.attachments.map((attachment) => {
+    const name = attachment.fileName ?? attachment.fileRef ?? 'attachment'
+    const size = attachment.sizeBytes !== undefined ? `, ${attachment.sizeBytes} bytes` : ''
+    return `  [attachment: ${name}, ${attachment.mimeType}${size}]`
+  })
+}
+
+function parseOptionalInteger(value: string | undefined, flag: '--limit' | '--offset', min: number): number | undefined {
+  if (value === undefined) return undefined
+  if (!/^\d+$/.test(value)) {
+    throw usage(`${flag} must be an integer greater than or equal to ${min}.`)
+  }
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < min) {
+    throw usage(`${flag} must be an integer greater than or equal to ${min}.`)
+  }
+  return parsed
 }
 
 function requireArg(value: string | undefined, name: string): string {

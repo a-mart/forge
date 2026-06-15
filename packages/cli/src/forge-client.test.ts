@@ -72,6 +72,55 @@ describe('ForgeClient', () => {
     })
   })
 
+  it('fetches session transcripts with feature-gated query options', async () => {
+    const calls: string[] = []
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: async (url) => {
+        calls.push(String(url))
+        if (String(url).endsWith('/api/cli/status')) return statusFetch()
+        return Response.json({
+          session: { agentId: 'session-1' },
+          options: { includeWorkerUpdates: true, limit: 5, offset: 10 },
+          page: { total: 0, returned: 0, offset: 10, limit: 5, hasMore: false },
+          messages: [],
+        })
+      },
+    })
+
+    await expect(client.getSessionTranscript('session-1', {
+      includeWorkerUpdates: true,
+      limit: 5,
+      offset: 10,
+    })).resolves.toMatchObject({ options: { includeWorkerUpdates: true, limit: 5, offset: 10 } })
+    expect(calls).toEqual([
+      'http://127.0.0.1:47287/api/cli/status',
+      'http://127.0.0.1:47287/api/cli/sessions/session-1/transcript?includeWorkerUpdates=true&limit=5&offset=10',
+    ])
+  })
+
+  it('reports old servers without the session transcript capability as unsupported', async () => {
+    const calls: string[] = []
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: async (url) => {
+        calls.push(String(url))
+        const status = await statusFetch()
+        const payload = await status.json()
+        payload.capabilities.features.sessionTranscript = false
+        return Response.json(payload)
+      },
+    })
+
+    await expect(client.getSessionTranscript('session-1')).rejects.toMatchObject({
+      code: 'unsupported_capability',
+      exitCode: EXIT_CODES.unsupported,
+    })
+    expect(calls).toEqual(['http://127.0.0.1:47287/api/cli/status'])
+  })
+
   it('subscribes before dispatching run to avoid fast-output races', async () => {
     const socket = new FakeWebSocket()
     const client = new ForgeClient({

@@ -59,6 +59,7 @@ forge profiles list
 forge sessions list --profile <profileId>
 forge sessions create --profile <profileId> --label "CLI task"
 forge sessions send <agentId> --message "Summarize the current repo state"
+forge sessions transcript <agentId> --limit 50
 forge run --profile <profileId> --message "Run the requested automation" --json
 forge launch --profile <profileId> --message @prompt.md
 forge wait <agentId> --timeout 10m --stop-on-timeout
@@ -69,6 +70,10 @@ forge choices answer <choiceId> --answers '[{"questionId":"q1","selectedOptionId
 Use `--json` for stable machine-readable output. Data commands such as `status`, `doctor`, `run`, `launch`, `wait`, and mutation commands write one final JSON object when `--json` is set; `--help` and `--version` still print plain text.
 
 Durations accept milliseconds by default or `ms`, `s`, and `m` suffixes. Examples: `5000`, `30s`, `10m`.
+
+## Session transcripts
+
+`forge sessions transcript <agentId>` prints a chronological, user-facing transcript by default: user inputs and assistant messages sent through `speak_to_user`. Add `--include-worker-updates` to include worker reports sent back to the manager. Use `--limit <n>` and `--offset <n>` for pagination, or `--json` for the stable `CliSessionTranscriptResponse` payload.
 
 ## Run semantics
 

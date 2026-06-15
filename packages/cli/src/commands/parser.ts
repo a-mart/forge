@@ -12,6 +12,8 @@ const VALUE_FLAGS = new Set([
   '--label',
   '--name',
   '--timeout',
+  '--limit',
+  '--offset',
   '--from-message-id',
   '--answers',
   '--pinned',
@@ -46,6 +48,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (token === '--stop-on-timeout') {
       options.stopOnTimeout = true
+      continue
+    }
+    if (token === '--include-worker-updates') {
+      options.includeWorkerUpdates = true
       continue
     }
     if (token === '--version' || token === '-v') {
@@ -99,6 +105,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       options.timeout = token.slice('--timeout='.length)
       continue
     }
+    if (token.startsWith('--limit=')) {
+      options.limit = token.slice('--limit='.length)
+      continue
+    }
+    if (token.startsWith('--offset=')) {
+      options.offset = token.slice('--offset='.length)
+      continue
+    }
     if (token.startsWith('--from-message-id=')) {
       options.fromMessageId = token.slice('--from-message-id='.length)
       continue
@@ -150,6 +164,12 @@ function assignValueFlag(options: ParsedArgs['options'], flag: string, value: st
       return
     case '--timeout':
       options.timeout = value
+      return
+    case '--limit':
+      options.limit = value
+      return
+    case '--offset':
+      options.offset = value
       return
     case '--from-message-id':
       options.fromMessageId = value

@@ -25,6 +25,7 @@ import type {
   CliSessionMutationCommand,
   CliSessionShowResponse,
   CliSessionsListResponse,
+  CliSessionTranscriptResponse,
   CliStatusResponse,
   CliWsCommand,
   ServerEvent,
@@ -81,6 +82,12 @@ export interface ClientWaitOptions {
   stopOnTimeout?: boolean
 }
 
+export interface ClientSessionTranscriptOptions {
+  includeWorkerUpdates?: boolean
+  limit?: number
+  offset?: number
+}
+
 export interface ForgeClientLike {
   getCapabilities(): Promise<CliCapabilitiesResponse>
   getStatus(): Promise<CliStatusResponse>
@@ -88,6 +95,7 @@ export interface ForgeClientLike {
   showProfile(profileId: string): Promise<CliProfileShowResponse>
   listSessions(profileId: string): Promise<CliSessionsListResponse>
   showSession(agentId: string): Promise<CliSessionShowResponse>
+  getSessionTranscript(agentId: string, options?: ClientSessionTranscriptOptions): Promise<CliSessionTranscriptResponse>
   listAgents(profileId?: string): Promise<CliAgentsListResponse>
   showAgent(agentId: string): Promise<CliAgentShowResponse>
   listProjectAgents(profileId: string): Promise<CliProjectAgentsListResponse>
@@ -146,6 +154,19 @@ export class ForgeClient implements ForgeClientLike {
 
   showSession(agentId: string): Promise<CliSessionShowResponse> {
     return this.get(`sessions/${encodeURIComponent(agentId)}`)
+  }
+
+  async getSessionTranscript(
+    agentId: string,
+    options: ClientSessionTranscriptOptions = {},
+  ): Promise<CliSessionTranscriptResponse> {
+    await this.ensureFeatures(['sessionTranscript'])
+    const params = new URLSearchParams()
+    if (options.includeWorkerUpdates) params.set('includeWorkerUpdates', 'true')
+    if (options.limit !== undefined) params.set('limit', String(options.limit))
+    if (options.offset !== undefined) params.set('offset', String(options.offset))
+    const query = params.size > 0 ? `?${params.toString()}` : ''
+    return this.get(`sessions/${encodeURIComponent(agentId)}/transcript${query}`)
   }
 
   listAgents(profileId?: string): Promise<CliAgentsListResponse> {

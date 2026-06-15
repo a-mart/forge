@@ -13,11 +13,14 @@ export interface ParsedArgs {
     label?: string
     name?: string
     timeout?: string
+    limit?: string
+    offset?: string
     fromMessageId?: string
     answers?: string
     pinned?: string
     yes?: boolean
     stopOnTimeout?: boolean
+    includeWorkerUpdates?: boolean
     help?: boolean
     version?: boolean
   }

@@ -41,6 +41,7 @@ forge profiles list
 forge profiles show <profileId>
 forge sessions list --profile <profileId>
 forge sessions show <agentId>
+forge sessions transcript <agentId> [--include-worker-updates] [--limit <n>] [--offset <n>]
 forge agents list [--profile <profileId>]
 forge agents show <agentId>
 forge project-agents list --profile <profileId>
