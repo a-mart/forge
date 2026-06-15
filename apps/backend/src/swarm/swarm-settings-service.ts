@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { AuthCredential } from "@mariozechner/pi-coding-agent";
 import {
+  type OpenAIBrokerInviteRedeemResponse,
   type OpenAIBrokerSettingsResponse,
   type OpenAIBrokerTestResponse,
+  type RedeemOpenAIBrokerInviteRequest,
   type UpdateOpenAIBrokerSettingsRequest,
   getCatalogModelKey,
   type CredentialPoolState,
@@ -566,6 +568,13 @@ export class SwarmSettingsService {
       result,
       shouldRecycleOpenAICodexManagersForBrokerTokenPatch(before, result, request),
     );
+    return result;
+  }
+
+  async redeemOpenAIAuthBrokerInvite(request: RedeemOpenAIBrokerInviteRequest): Promise<OpenAIBrokerInviteRedeemResponse> {
+    const before = await this.openAIAuthSettingsService.getSettings();
+    const result = await this.openAIAuthSettingsService.redeemInvite(request);
+    await this.recycleOpenAICodexManagersIfBrokerBoundaryChanged(before, result, true);
     return result;
   }
 

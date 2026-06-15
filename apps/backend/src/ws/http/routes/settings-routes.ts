@@ -12,8 +12,10 @@ import type {
   CredentialPoolStrategy,
   NotificationSettingsMutationResponse,
   NotificationSettingsResponse,
+  OpenAIBrokerInviteRedeemResponse,
   OpenAIBrokerSettingsResponse,
   OpenAIBrokerTestResponse,
+  RedeemOpenAIBrokerInviteRequest,
   UpdateOpenAIBrokerSettingsRequest,
   SettingsAuthLoginEventName,
   SettingsAuthLoginEventPayload,
@@ -399,6 +401,14 @@ async function handleOpenAIAuthBrokerSourceHttpRequest(
     if (request.method === "PUT" && requestUrl.pathname === OPENAI_AUTH_SOURCE_ENDPOINT_PATH) {
       const payload = parseOpenAIAuthBrokerSettingsUpdateBody(await readJsonBody(request));
       const result: OpenAIBrokerSettingsResponse = await swarmManager.updateOpenAIAuthBrokerSettings(payload);
+      await invalidateProviderUsage("openai-codex");
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
+      return;
+    }
+
+    if (request.method === "POST" && requestUrl.pathname === `${OPENAI_AUTH_SOURCE_ENDPOINT_PATH}/invite/redeem`) {
+      const payload = parseOpenAIAuthBrokerInviteRedeemBody(await readJsonBody(request));
+      const result: OpenAIBrokerInviteRedeemResponse = await swarmManager.redeemOpenAIAuthBrokerInvite(payload);
       await invalidateProviderUsage("openai-codex");
       sendJson(response, 200, result as unknown as Record<string, unknown>);
       return;
@@ -1232,6 +1242,20 @@ function parseOpenAIAuthBrokerSettingsUpdateBody(value: unknown): UpdateOpenAIBr
     throw new Error("Forge Auth broker settings mode must be 'local' or 'central_broker'");
   }
   return parsed as UpdateOpenAIBrokerSettingsRequest;
+}
+
+function parseOpenAIAuthBrokerInviteRedeemBody(value: unknown): RedeemOpenAIBrokerInviteRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Request body must be a JSON object");
+  }
+  const body = value as Record<string, unknown>;
+  if (typeof body.invite === "string") {
+    return { invite: body.invite };
+  }
+  if (body.invite && typeof body.invite === "object" && !Array.isArray(body.invite)) {
+    return { invite: body.invite as RedeemOpenAIBrokerInviteRequest["invite"] };
+  }
+  throw new Error("Forge Auth broker invite redeem request must include an invite setup link or JSON payload.");
 }
 
 function parseOpenAIAuthBrokerPatch(value: unknown): NonNullable<UpdateOpenAIBrokerSettingsRequest["broker"]> {

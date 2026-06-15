@@ -60,6 +60,25 @@ export interface UpdateOpenAIBrokerSettingsRequest {
   testBeforeEnable?: boolean
 }
 
+export interface OpenAIBrokerInvitePayload {
+  v: 1
+  brokerUrl: string
+  brokerId?: string
+  inviteId: string
+  secret: string
+  provider?: 'openai-codex'
+  providers?: Array<'openai-codex'>
+  grants?: Array<{ provider: 'openai-codex'; scopes?: string[] }>
+}
+
+export interface RedeemOpenAIBrokerInviteRequest {
+  invite: string | OpenAIBrokerInvitePayload
+}
+
+export interface OpenAIBrokerInviteRedeemResponse {
+  settings: OpenAIBrokerSettingsState
+}
+
 export interface OpenAIBrokerSettingsResponse {
   settings: OpenAIBrokerSettingsState
 }

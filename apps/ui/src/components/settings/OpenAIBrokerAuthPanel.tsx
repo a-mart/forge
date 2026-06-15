@@ -16,11 +16,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { Textarea } from '@/components/ui/textarea'
 import type { SettingsApiClient } from './settings-api-client'
 import {
   clearOpenAIBrokerSettings,
   disableOpenAIBrokerSettings,
   fetchOpenAIBrokerSettings,
+  redeemOpenAIBrokerInvite,
   testOpenAIBrokerSettings,
   toErrorMessage,
   updateOpenAIBrokerSettings,
@@ -102,11 +104,13 @@ export function OpenAIBrokerAuthPanel({
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
+  const [isRedeeming, setIsRedeeming] = useState(false)
   const [isDisabling, setIsDisabling] = useState(false)
   const [isClearing, setIsClearing] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showToken, setShowToken] = useState(false)
 
+  const [inviteDraft, setInviteDraft] = useState('')
   const [urlDraft, setUrlDraft] = useState('')
   const [tokenDraft, setTokenDraft] = useState('')
   const [instanceLabelDraft, setInstanceLabelDraft] = useState('')
@@ -184,6 +188,28 @@ export function OpenAIBrokerAuthPanel({
     }
   }
 
+  const handleRedeemInvite = async () => {
+    const invite = inviteDraft.trim()
+    if (!invite) {
+      onError('Paste a Forge Auth broker setup link first.')
+      return
+    }
+
+    setIsRedeeming(true)
+    try {
+      const next = await redeemOpenAIBrokerInvite(apiClient, { invite })
+      applySettingsToDrafts(next)
+      setModeDraft('central_broker')
+      setInviteDraft('')
+      onBrokerSettingsMutated?.()
+      onSuccess('Forge Auth broker invite redeemed. Broker mode is active.')
+    } catch (error) {
+      onError(toErrorMessage(error))
+    } finally {
+      setIsRedeeming(false)
+    }
+  }
+
   const handleDisableBroker = async () => {
     setIsDisabling(true)
     try {
@@ -229,6 +255,7 @@ export function OpenAIBrokerAuthPanel({
 
   const envLocked = settings.envOverride
   const brokerActive = settings.effectiveMode === 'central_broker'
+  const isBusy = isSaving || isTesting || isRedeeming || isDisabling || isClearing
   const statusDetail = settings.broker.status?.message
     ?? formatDegradedReason(settings.broker.status?.degraded)
 
@@ -264,7 +291,7 @@ export function OpenAIBrokerAuthPanel({
             type="button"
             size="sm"
             variant={modeDraft === 'local' ? 'default' : 'outline'}
-            disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
+            disabled={envLocked || isBusy}
             onClick={() => setModeDraft('local')}
           >
             Local credentials
@@ -273,7 +300,7 @@ export function OpenAIBrokerAuthPanel({
             type="button"
             size="sm"
             variant={modeDraft === 'central_broker' ? 'default' : 'outline'}
-            disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
+            disabled={envLocked || isBusy}
             onClick={() => setModeDraft('central_broker')}
           >
             Forge Auth broker
@@ -282,93 +309,127 @@ export function OpenAIBrokerAuthPanel({
 
         {modeDraft === 'central_broker' || settings.broker.configured ? (
           <div className="space-y-3 rounded-md border border-border/70 bg-background/40 p-3">
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-url">Broker URL</label>
-              <Input
-                id="openai-broker-url"
-                value={urlDraft}
-                onChange={(event) => setUrlDraft(event.target.value)}
-                placeholder="https://broker.example.test"
-                disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                className="font-mono text-xs"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-token">Broker token</label>
-              <div className="relative">
-                <Input
-                  id="openai-broker-token"
-                  type={showToken ? 'text' : 'password'}
-                  value={tokenDraft}
-                  onChange={(event) => setTokenDraft(event.target.value)}
-                  placeholder={settings.broker.hasToken ? settings.broker.tokenMasked ?? '********' : 'Bearer token'}
-                  disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                  className="pr-9 font-mono text-xs"
+            {!envLocked ? (
+              <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-invite">Paste setup link</label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Paste the one-time Forge Auth broker invite link from your administrator. Forge redeems it server-to-server and never displays the invite secret or broker token.
+                  </p>
+                </div>
+                <Textarea
+                  id="openai-broker-invite"
+                  value={inviteDraft}
+                  onChange={(event) => setInviteDraft(event.target.value)}
+                  placeholder="https://broker.example.com/-/forge-auth/invite#forge_auth_broker=…"
+                  disabled={isBusy}
+                  className="min-h-20 font-mono text-xs"
                   autoComplete="off"
                   spellCheck={false}
                 />
                 <Button
                   type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowToken((current) => !current)}
-                  disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                  className="absolute right-1 top-1/2 size-7 -translate-y-1/2 text-muted-foreground/70 hover:text-foreground"
+                  size="sm"
+                  onClick={() => void handleRedeemInvite()}
+                  disabled={isBusy || !inviteDraft.trim()}
+                  className="gap-1.5"
                 >
-                  {showToken ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                  {isRedeeming ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
+                  Redeem invite
                 </Button>
               </div>
-              {settings.broker.hasToken && !tokenDraft ? (
-                <p className="text-[11px] text-muted-foreground">
-                  Stored token: <code className="font-mono">{settings.broker.tokenMasked ?? '********'}</code>
-                </p>
-              ) : null}
-            </div>
+            ) : null}
 
             <button
               type="button"
               className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
               onClick={() => setShowAdvanced((current) => !current)}
+              disabled={envLocked || isBusy}
             >
               {showAdvanced ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-              Advanced settings
+              Advanced manual setup
             </button>
 
             {showAdvanced ? (
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-3 rounded-md border border-border/60 bg-background/50 p-3">
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-instance-label">Instance label</label>
+                  <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-url">Broker URL</label>
                   <Input
-                    id="openai-broker-instance-label"
-                    value={instanceLabelDraft}
-                    onChange={(event) => setInstanceLabelDraft(event.target.value)}
-                    disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                    className="text-xs"
+                    id="openai-broker-url"
+                    value={urlDraft}
+                    onChange={(event) => setUrlDraft(event.target.value)}
+                    placeholder="https://broker.example.test"
+                    disabled={envLocked || isBusy}
+                    className="font-mono text-xs"
                   />
                 </div>
+
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-user-label">User label</label>
-                  <Input
-                    id="openai-broker-user-label"
-                    value={userLabelDraft}
-                    onChange={(event) => setUserLabelDraft(event.target.value)}
-                    disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                    className="text-xs"
-                  />
+                  <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-token">Broker token</label>
+                  <div className="relative">
+                    <Input
+                      id="openai-broker-token"
+                      type={showToken ? 'text' : 'password'}
+                      value={tokenDraft}
+                      onChange={(event) => setTokenDraft(event.target.value)}
+                      placeholder={settings.broker.hasToken ? settings.broker.tokenMasked ?? '********' : 'Bearer token'}
+                      disabled={envLocked || isBusy}
+                      className="pr-9 font-mono text-xs"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setShowToken((current) => !current)}
+                      disabled={envLocked || isBusy}
+                      className="absolute right-1 top-1/2 size-7 -translate-y-1/2 text-muted-foreground/70 hover:text-foreground"
+                    >
+                      {showToken ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                    </Button>
+                  </div>
+                  {settings.broker.hasToken && !tokenDraft ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Stored token: <code className="font-mono">{settings.broker.tokenMasked ?? '********'}</code>
+                    </p>
+                  ) : null}
                 </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-timeout">Timeout (ms)</label>
-                  <Input
-                    id="openai-broker-timeout"
-                    type="number"
-                    min={1000}
-                    max={60000}
-                    value={timeoutDraft}
-                    onChange={(event) => setTimeoutDraft(event.target.value)}
-                    disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                    className="text-xs"
-                  />
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-instance-label">Instance label</label>
+                    <Input
+                      id="openai-broker-instance-label"
+                      value={instanceLabelDraft}
+                      onChange={(event) => setInstanceLabelDraft(event.target.value)}
+                      disabled={envLocked || isBusy}
+                      className="text-xs"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-user-label">User label</label>
+                    <Input
+                      id="openai-broker-user-label"
+                      value={userLabelDraft}
+                      onChange={(event) => setUserLabelDraft(event.target.value)}
+                      disabled={envLocked || isBusy}
+                      className="text-xs"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-foreground" htmlFor="openai-broker-timeout">Timeout (ms)</label>
+                    <Input
+                      id="openai-broker-timeout"
+                      type="number"
+                      min={1000}
+                      max={60000}
+                      value={timeoutDraft}
+                      onChange={(event) => setTimeoutDraft(event.target.value)}
+                      disabled={envLocked || isBusy}
+                      className="text-xs"
+                    />
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -384,42 +445,46 @@ export function OpenAIBrokerAuthPanel({
             ) : null}
 
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => void handleTest()}
-                disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                className="gap-1.5"
-              >
-                {isTesting ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
-                Test connection
-              </Button>
+              {showAdvanced ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleTest()}
+                    disabled={envLocked || isBusy}
+                    className="gap-1.5"
+                  >
+                    {isTesting ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
+                    Test connection
+                  </Button>
 
-              {modeDraft === 'central_broker' ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => void handleSave('central_broker')}
-                  disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                  className="gap-1.5"
-                >
-                  {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                  Enable Forge Auth broker
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void handleSave('local')}
-                  disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
-                  className="gap-1.5"
-                >
-                  {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                  Save Forge Auth broker settings
-                </Button>
-              )}
+                  {modeDraft === 'central_broker' ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => void handleSave('central_broker')}
+                      disabled={envLocked || isBusy}
+                      className="gap-1.5"
+                    >
+                      {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                      Enable Forge Auth broker
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handleSave('local')}
+                      disabled={envLocked || isBusy}
+                      className="gap-1.5"
+                    >
+                      {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                      Save Forge Auth broker settings
+                    </Button>
+                  )}
+                </>
+              ) : null}
 
               {brokerActive ? (
                 <Button
@@ -427,7 +492,7 @@ export function OpenAIBrokerAuthPanel({
                   size="sm"
                   variant="ghost"
                   onClick={() => void handleDisableBroker()}
-                  disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
+                  disabled={envLocked || isBusy}
                 >
                   {isDisabling ? <Loader2 className="size-3.5 animate-spin" /> : null}
                   Switch back to local
@@ -440,7 +505,7 @@ export function OpenAIBrokerAuthPanel({
                   size="sm"
                   variant="ghost"
                   onClick={() => void handleClearBrokerSettings()}
-                  disabled={envLocked || isSaving || isTesting || isDisabling || isClearing}
+                  disabled={envLocked || isBusy}
                   className="gap-1.5 text-destructive hover:text-destructive"
                 >
                   {isClearing ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
