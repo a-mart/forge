@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getAllByText, getByRole, getByText } from '@testing-library/dom'
+import { getAllByText, getByRole, getByText, getByTitle } from '@testing-library/dom'
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
@@ -143,6 +143,31 @@ describe('PullRequestsTab', () => {
     const resizeHandle = getByRole(container, 'separator', { name: /resize pull request list/i })
     expect(resizeHandle.previousElementSibling).toBeInstanceOf(HTMLElement)
     expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('300px')
+  })
+
+  it('keeps long pull request titles and branch refs in compact truncation affordances', () => {
+    const longTitle = 'Improve the pull request list card layout with a very long title that should not widen the list pane'
+    const longHeadRef = 'feature/source-control/pull-request-list-card-overflow-with-extremely-long-branch-name'
+    const longBaseRef = 'release/2026-06-long-lived-stabilization-branch'
+
+    renderTab({
+      data: {
+        ...readyPullRequestsData(),
+        open: [
+          {
+            ...readyPullRequestsData().open[0],
+            title: longTitle,
+            headRef: longHeadRef,
+            baseRef: longBaseRef,
+            checkStatus: 'pending',
+          },
+        ],
+      },
+    })
+
+    expect(getByTitle(container, longTitle)).toBeTruthy()
+    expect(getByTitle(container, `${longHeadRef} → ${longBaseRef}`)).toBeTruthy()
+    expect(getByText(container, 'Pending')).toBeTruthy()
   })
 
   it('shows empty state when provider is ready but no pull requests exist', () => {

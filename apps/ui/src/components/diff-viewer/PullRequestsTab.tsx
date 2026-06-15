@@ -75,6 +75,21 @@ function checkStatusLabel(status: GitPullRequestSummary['checkStatus']): string 
   }
 }
 
+function compactCheckStatusLabel(status: GitPullRequestSummary['checkStatus']): string {
+  switch (status) {
+    case 'success':
+      return 'Passed'
+    case 'failure':
+      return 'Failing'
+    case 'pending':
+      return 'Pending'
+    case 'neutral':
+      return 'Neutral'
+    default:
+      return 'Unknown'
+  }
+}
+
 function CheckStatusIcon({ status }: { status: GitPullRequestSummary['checkStatus'] }) {
   if (status === 'success') {
     return <CheckCircle2 className="size-3.5 text-emerald-500" />
@@ -105,42 +120,53 @@ function PullRequestCard({
       type="button"
       onClick={onClick}
       className={cn(
-        'w-full rounded-lg border border-border/70 bg-card/60 p-3 text-left transition-colors hover:bg-accent/40',
+        'w-full min-w-0 overflow-hidden rounded-lg border border-border/70 bg-card/60 p-2.5 text-left transition-colors hover:bg-accent/40',
         active && 'border-primary/40 bg-primary/5',
         pullRequest.isCurrentBranch && !active && 'border-emerald-500/30',
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <GitPullRequest className="size-4 shrink-0 text-muted-foreground" />
-            <span className="font-mono text-xs text-muted-foreground">#{pullRequest.number}</span>
-            <span className="truncate text-sm font-medium text-foreground">{pullRequest.title}</span>
-          </div>
-          <p className="truncate text-xs text-muted-foreground">
-            {pullRequest.headRef} → {pullRequest.baseRef} · {pullRequest.author} · updated{' '}
-            {formatRelativeTimestamp(pullRequest.updatedAt)}
-          </p>
+      <div className="min-w-0 space-y-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">#{pullRequest.number}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={pullRequest.title}>
+            {pullRequest.title}
+          </span>
+        </div>
+        <div
+          className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground"
+          title={`${pullRequest.headRef} → ${pullRequest.baseRef}`}
+        >
+          <span className="min-w-0 flex-1 truncate font-mono">{pullRequest.headRef}</span>
+          <span className="shrink-0">→</span>
+          <span className="min-w-0 flex-1 truncate font-mono">{pullRequest.baseRef}</span>
+        </div>
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="min-w-0 truncate" title={pullRequest.author}>
+            {pullRequest.author}
+          </span>
+          <span className="shrink-0">·</span>
+          <span className="shrink-0">updated {formatRelativeTimestamp(pullRequest.updatedAt)}</span>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <Badge variant={stateBadgeVariant(pullRequest.state)} className="h-5 rounded-sm px-1.5 text-[10px] capitalize">
+      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1">
+        <Badge variant={stateBadgeVariant(pullRequest.state)} className="h-5 shrink-0 rounded-sm px-1.5 text-[10px] capitalize">
           {pullRequest.state}
         </Badge>
         {pullRequest.isDraft ? (
-          <Badge variant="outline" className="h-5 rounded-sm px-1.5 text-[10px]">
+          <Badge variant="outline" className="h-5 shrink-0 rounded-sm px-1.5 text-[10px]">
             Draft
           </Badge>
         ) : null}
         {pullRequest.isCurrentBranch ? (
-          <Badge variant="outline" className="h-5 rounded-sm border-emerald-500/40 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+          <Badge variant="outline" className="h-5 shrink-0 rounded-sm border-emerald-500/40 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">
             Current branch PR
           </Badge>
         ) : null}
         {pullRequest.checkStatus ? (
-          <Badge variant="outline" className="h-5 gap-1 rounded-sm px-1.5 text-[10px]">
+          <Badge variant="outline" className="h-5 min-w-0 max-w-full gap-1 rounded-sm px-1.5 text-[10px]">
             <CheckStatusIcon status={pullRequest.checkStatus} />
-            {checkStatusLabel(pullRequest.checkStatus)}
+            <span className="truncate">{compactCheckStatusLabel(pullRequest.checkStatus)}</span>
           </Badge>
         ) : null}
       </div>
@@ -583,24 +609,24 @@ export function PullRequestsTab({
 
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col lg:flex-row">
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden lg:flex-row">
         <div
-          className="flex min-h-0 flex-col border-b border-border/60 lg:shrink-0 lg:border-b-0 lg:border-r"
+          className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b border-border/60 lg:shrink-0 lg:border-b-0 lg:border-r"
           style={isLargeLayout ? { width: pullRequestListWidth } : undefined}
         >
-          <div className="border-b border-border/60 px-4 py-3">
+          <div className="min-w-0 border-b border-border/60 px-4 py-3">
             <h3 className="text-sm font-medium text-foreground">Pull Requests</h3>
-            <p className="text-xs text-muted-foreground">Open and recently closed for this repository</p>
+            <p className="truncate text-xs text-muted-foreground">Open and recently closed for this repository</p>
           </div>
-          <ScrollArea className="min-h-0 flex-1 overflow-hidden">
-            <div className="space-y-4 p-3">
+          <ScrollArea className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <div className="min-w-0 space-y-3 p-2.5">
               {!hasAnyPullRequests ? (
                 <div className="rounded-lg border border-dashed border-border/70 p-4 text-center text-sm text-muted-foreground">
                   No pull requests found for this repository.
                 </div>
               ) : null}
               {(data?.open.length ?? 0) > 0 ? (
-                <section className="space-y-2">
+                <section className="min-w-0 space-y-2">
                   <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Open</p>
                   {data?.open.map((pullRequest) => (
                     <PullRequestCard
@@ -613,7 +639,7 @@ export function PullRequestsTab({
                 </section>
               ) : null}
               {(data?.recentlyClosed.length ?? 0) > 0 ? (
-                <section className="space-y-2">
+                <section className="min-w-0 space-y-2">
                   <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     Recently closed
                   </p>
