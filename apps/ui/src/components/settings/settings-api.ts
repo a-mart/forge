@@ -25,9 +25,11 @@ import type {
   SettingsEnvResponse,
   SettingsEnvVariable,
   SettingsExtensionsResponse,
+  OpenAIBrokerInviteRedeemResponse,
   OpenAIBrokerSettingsResponse,
   OpenAIBrokerSettingsState,
   OpenAIBrokerTestResponse,
+  RedeemOpenAIBrokerInviteRequest,
   UpdateOpenAIBrokerSettingsRequest,
   CredentialPoolState,
   CredentialPoolStrategy,
@@ -289,6 +291,23 @@ export async function updateOpenAIBrokerSettings(
   dispatchSettingsAuthChanged()
   const payload = (await response.json()) as Partial<OpenAIBrokerSettingsResponse>
   if (!payload.settings) throw new Error('Invalid Forge Auth broker settings response from backend.')
+  return payload.settings
+}
+
+export async function redeemOpenAIBrokerInvite(
+  clientOrWsUrl: SettingsApiClient | string,
+  request: RedeemOpenAIBrokerInviteRequest,
+): Promise<OpenAIBrokerSettingsState> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/auth/openai-codex/source/invite/redeem', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  dispatchSettingsAuthChanged()
+  const payload = (await response.json()) as Partial<OpenAIBrokerInviteRedeemResponse>
+  if (!payload.settings) throw new Error('Invalid Forge Auth broker invite redeem response from backend.')
   return payload.settings
 }
 

@@ -363,6 +363,81 @@ describe('OpenAIAuthSettingsService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('redeems broker invites without echoing invite secrets or returned broker tokens', async () => {
+    const inviteSecret = 'invite-secret-sentinel'
+    const brokerToken = 'fop_returned-broker-token-sentinel'
+    const invitePayload = Buffer.from(JSON.stringify({
+      v: 1,
+      brokerUrl: 'https://broker.example.test',
+      brokerId: 'broker-test',
+      inviteId: 'inv_test',
+      secret: inviteSecret,
+    }), 'utf8').toString('base64url')
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(async (_input, init) => {
+        const body = JSON.parse(String(init?.body))
+        expect(body).toMatchObject({
+          inviteId: 'inv_test',
+          secret: inviteSecret,
+          install: { clientId: 'forge' },
+        })
+        expect(body.install.instanceId).toBeTruthy()
+        return new Response(JSON.stringify({
+          ok: true,
+          token: brokerToken,
+          tokenType: 'bearer',
+          scopes: ['lease', 'read'],
+          grants: [{ provider: 'openai-codex', scopes: ['lease', 'read'] }],
+          user: { id: 'usr_test', name: 'Ada Lovelace', email: 'ada@example.com' },
+          install: { installId: body.install.installId, clientId: body.install.clientId, instanceId: body.install.instanceId },
+        }))
+      })
+      .mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true, message: `ready ${brokerToken} ${inviteSecret}` })))
+
+    const handle = await makeHandle()
+    const service = new OpenAIAuthSettingsService({ config: handle.config })
+    const response = await service.redeemInvite({
+      invite: `https://broker.example.test/-/forge-auth/invite#forge_auth_broker=${invitePayload}`,
+    })
+
+    expect(response.settings).toMatchObject({
+      mode: 'central_broker',
+      effectiveMode: 'central_broker',
+      broker: {
+        configured: true,
+        url: 'https://broker.example.test/',
+        hasToken: true,
+        tokenMasked: '********inel',
+        userLabel: 'ada@example.com',
+        status: { ok: true, message: 'ready [redacted] [redacted]' },
+      },
+    })
+    expect(JSON.stringify(response)).not.toContain(inviteSecret)
+    expect(JSON.stringify(response)).not.toContain(brokerToken)
+
+    const persistedStatusState = await service.getSettingsState()
+    expect(persistedStatusState.broker.status?.message).toBe('ready [redacted] [redacted]')
+    expect(JSON.stringify(persistedStatusState)).not.toContain(inviteSecret)
+    expect(JSON.stringify(persistedStatusState)).not.toContain(brokerToken)
+
+    const configRaw = await readFile(join(handle.config.paths.sharedAuthDir, 'openai-codex-auth-source.json'), 'utf8')
+    const secretsRaw = await readFile(handle.config.paths.sharedSecretsFile, 'utf8')
+    expect(configRaw).not.toContain(inviteSecret)
+    expect(configRaw).not.toContain(brokerToken)
+    expect(JSON.parse(secretsRaw)).toMatchObject({ [OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY]: brokerToken })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects invite redemption while broker auth is controlled by environment variables', async () => {
+    process.env.FORGE_OPENAI_CODEX_AUTH_MODE = 'central_broker'
+    process.env.FORGE_OPENAI_AUTH_BROKER_URL = 'https://env-broker.example.test'
+    process.env.FORGE_OPENAI_AUTH_BROKER_TOKEN = 'env-broker-token'
+    const handle = await makeHandle()
+    const service = new OpenAIAuthSettingsService({ config: handle.config })
+
+    await expect(service.redeemInvite({ invite: '{}' })).rejects.toThrow('environment variables')
+  })
+
   it('redacts exact broker bearer tokens and OpenAI-looking tokens from status responses, cached status, and enable errors', async () => {
     const brokerBearer = 'broker-secret-sentinel'
     const openAILookingToken = 'sk-proj-abcdefghijklmnopqrstuvwxyz'

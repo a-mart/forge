@@ -3,16 +3,19 @@ import { hostname } from "node:os";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type {
+  OpenAIBrokerInviteRedeemResponse,
   OpenAIBrokerSettingsResponse,
   OpenAIBrokerSettingsState,
   OpenAIBrokerSettingsStatus,
   OpenAIBrokerTestResponse,
   OpenAICodexAuthMode,
+  RedeemOpenAIBrokerInviteRequest,
   UpdateOpenAIBrokerSettingsRequest,
 } from "@forge/protocol";
 import type { SwarmConfig } from "../types.js";
 import { renameWithRetry } from "../retry-rename.js";
 import { OpenAIAuthBrokerClient, OpenAIAuthBrokerClientError } from "./openai-auth-broker-client.js";
+import { parseOpenAIAuthBrokerInvite } from "./openai-auth-broker-invite.js";
 import { maskOpenAIAuthBrokerSecret, redactOpenAIAuthBrokerText } from "./openai-auth-redaction.js";
 
 export const OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY = "forge.openaiAuthBrokerToken";
@@ -215,6 +218,60 @@ export class OpenAIAuthSettingsService {
     return status.ok ? { ok: true, status } : { ok: false, status, error: status.message };
   }
 
+  async redeemInvite(request: RedeemOpenAIBrokerInviteRequest): Promise<OpenAIBrokerInviteRedeemResponse> {
+    const current = await this.resolveEffectiveSettings();
+    if (current.envOverride) {
+      throw new OpenAIAuthBrokerSettingsValidationError(
+        "OpenAI/Codex auth is controlled by environment variables. Remove the FORGE_OPENAI_CODEX_AUTH_MODE override before redeeming a Forge Auth broker invite."
+      );
+    }
+
+    const invite = parseOpenAIAuthBrokerInvite(request.invite);
+    const nextBroker = buildNextBrokerConfig({
+      existingBroker: current.file.broker,
+      patch: { url: invite.brokerUrl },
+      token: undefined,
+      now: this.now(),
+    });
+    if (!nextBroker?.url || !nextBroker.instanceId) {
+      throw new OpenAIAuthBrokerSettingsValidationError("Forge Auth broker invite could not resolve a stable install identity.");
+    }
+
+    const redeemed = await redeemOpenAIAuthBrokerInvite({
+      invite,
+      broker: nextBroker,
+      timeoutMs: nextBroker.timeoutMs,
+      now: this.now,
+    });
+
+    const inviteRedactionSecrets = [invite.secret];
+    const status = await this.testResolvedBroker({
+      url: nextBroker.url,
+      token: redeemed.token,
+      clientId: nextBroker.clientId,
+      instanceId: nextBroker.instanceId,
+      instanceLabel: nextBroker.instanceLabel,
+      userLabel: nextBroker.userLabel,
+      timeoutMs: nextBroker.timeoutMs,
+    }, inviteRedactionSecrets);
+
+    const nextFile: OpenAICodexAuthSourceFileV1 = {
+      version: 1,
+      mode: "central_broker",
+      broker: {
+        ...nextBroker,
+        ...(redeemed.userLabel && !nextBroker.userLabel ? { userLabel: redeemed.userLabel } : {}),
+        lastTestedAt: status.checkedAt,
+        lastStatus: redactBrokerStatus(status, [redeemed.token, ...inviteRedactionSecrets]),
+      },
+      updatedAt: this.now().toISOString(),
+    };
+
+    await this.writeBrokerToken(redeemed.token);
+    await this.writeConfigFile(nextFile);
+    return this.getSettings();
+  }
+
   async resolveEffectiveSettings(): Promise<EffectiveSettings> {
     const [file, savedToken] = await Promise.all([this.readConfigFile(), this.readBrokerToken()]);
     const envMode = normalizeEnvMode(process.env.FORGE_OPENAI_CODEX_AUTH_MODE);
@@ -246,22 +303,28 @@ export class OpenAIAuthSettingsService {
     return join(sharedAuthDir, OPENAI_CODEX_AUTH_SOURCE_FILE_NAME);
   }
 
-  private async testResolvedBroker(broker: ResolvedBrokerConfig & { token: string }): Promise<OpenAIBrokerSettingsStatus> {
+  private async testResolvedBroker(
+    broker: ResolvedBrokerConfig & { token: string },
+    redactionSecrets: readonly (string | undefined)[] = []
+  ): Promise<OpenAIBrokerSettingsStatus> {
+    const exactRedactionSecrets = [broker.token, ...redactionSecrets];
     try {
       const client = new OpenAIAuthBrokerClient({
         baseUrl: broker.url ?? "",
         bearerToken: broker.token,
         timeoutMs: broker.timeoutMs,
         now: this.now,
+        redactionSecrets,
       });
-      return await client.getStatus();
+      const status = await client.getStatus();
+      return redactBrokerStatus(status, exactRedactionSecrets) ?? status;
     } catch (error) {
       return {
         ok: false,
         degraded: error instanceof OpenAIAuthBrokerClientError && isKnownBrokerStatusReason(error.code)
           ? error.code
           : "unreachable",
-        message: redactOpenAIAuthBrokerText(error, [broker.token]),
+        message: redactOpenAIAuthBrokerText(error, exactRedactionSecrets),
         checkedAt: this.now().toISOString(),
       };
     }
@@ -360,6 +423,110 @@ export class OpenAIAuthSettingsService {
   }
 
   private now = (): Date => this.options.now?.() ?? new Date();
+}
+
+async function redeemOpenAIAuthBrokerInvite(options: {
+  invite: { brokerUrl: string; inviteId: string; secret: string };
+  broker: NonNullable<OpenAICodexAuthSourceFileV1["broker"]>;
+  timeoutMs: number;
+  now: () => Date;
+  fetchImpl?: typeof fetch;
+}): Promise<{ token: string; userLabel?: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), normalizeTimeoutMs(options.timeoutMs));
+  try {
+    const response = await (options.fetchImpl ?? fetch)(new URL("/v1/invites/redeem", `${options.invite.brokerUrl}/`), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        inviteId: options.invite.inviteId,
+        secret: options.invite.secret,
+        install: {
+          installId: options.broker.instanceId,
+          clientId: options.broker.clientId,
+          instanceId: options.broker.instanceId,
+          ...(options.broker.instanceLabel ? { instanceLabel: options.broker.instanceLabel } : {}),
+          forgeVersion: process.env.FORGE_APP_VERSION ?? "dev",
+        },
+      }),
+    });
+
+    const text = await response.text();
+    const payload = text ? parseJson(text) : null;
+    if (!response.ok) {
+      const brokerError = normalizeBrokerError(payload);
+      throw new OpenAIAuthBrokerSettingsValidationError(
+        redactOpenAIAuthBrokerText(`Forge Auth broker invite redeem failed: ${brokerError.message}`, [options.invite.secret])
+      );
+    }
+
+    return normalizeInviteRedeemPayload(payload);
+  } catch (error) {
+    if (error instanceof OpenAIAuthBrokerSettingsValidationError) {
+      throw error;
+    }
+    const message = error instanceof Error && error.name === "AbortError"
+      ? "Forge Auth broker invite redeem timed out."
+      : `Forge Auth broker invite redeem failed: ${redactOpenAIAuthBrokerText(error, [options.invite.secret])}`;
+    throw new OpenAIAuthBrokerSettingsValidationError(message);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeInviteRedeemPayload(payload: unknown): { token: string; userLabel?: string } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new OpenAIAuthBrokerSettingsValidationError("Forge Auth broker invite redeem response was invalid.");
+  }
+  const record = payload as Record<string, unknown>;
+  const token = normalizeOptionalString(record.token);
+  if (!token) {
+    throw new OpenAIAuthBrokerSettingsValidationError("Forge Auth broker invite redeem response did not include a broker token.");
+  }
+
+  const scopes = Array.isArray(record.scopes) ? record.scopes.filter((scope): scope is string => typeof scope === "string") : [];
+  if (!scopes.includes("lease") || !scopes.includes("read")) {
+    throw new OpenAIAuthBrokerSettingsValidationError("Forge Auth broker invite token does not include the required read and lease scopes.");
+  }
+
+  if (Array.isArray(record.grants)) {
+    for (const grant of record.grants) {
+      if (grant && typeof grant === "object" && (grant as { provider?: unknown }).provider !== "openai-codex") {
+        throw new OpenAIAuthBrokerSettingsValidationError("Forge Auth broker invite returned an unsupported provider grant.");
+      }
+    }
+  }
+
+  const user = record.user && typeof record.user === "object" ? record.user as Record<string, unknown> : undefined;
+  const userLabel = normalizeOptionalString(user?.email) ?? normalizeOptionalString(user?.name);
+  return {
+    token,
+    ...(userLabel ? { userLabel } : {}),
+  };
+}
+
+function parseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeBrokerError(payload: unknown): { code: string; message: string } {
+  if (!payload || typeof payload !== "object") {
+    return { code: "broker_request_failed", message: "Unexpected broker response." };
+  }
+  const record = payload as { error?: unknown; message?: unknown; code?: unknown };
+  return {
+    code: typeof record.code === "string" && record.code.trim() ? record.code.trim() : "broker_request_failed",
+    message: typeof record.error === "string" && record.error.trim()
+      ? record.error.trim()
+      : typeof record.message === "string" && record.message.trim()
+        ? record.message.trim()
+        : "Unexpected broker response.",
+  };
 }
 
 function defaultConfigFile(now: Date): OpenAICodexAuthSourceFileV1 {

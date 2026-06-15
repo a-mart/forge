@@ -18,6 +18,7 @@ const settingsApiMock = vi.hoisted(() => ({
   fetchCredentialPool: vi.fn(),
   fetchOpenAIBrokerSettings: vi.fn(),
   updateOpenAIBrokerSettings: vi.fn(),
+  redeemOpenAIBrokerInvite: vi.fn(),
   testOpenAIBrokerSettings: vi.fn(),
   disableOpenAIBrokerSettings: vi.fn(),
   clearOpenAIBrokerSettings: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock('./settings-api', () => ({
   fetchCredentialPool: (...a: unknown[]) => settingsApiMock.fetchCredentialPool(a[0], a[1]),
   fetchOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.fetchOpenAIBrokerSettings(a[0]),
   updateOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.updateOpenAIBrokerSettings(a[0], a[1]),
+  redeemOpenAIBrokerInvite: (...a: unknown[]) => settingsApiMock.redeemOpenAIBrokerInvite(a[0], a[1]),
   testOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.testOpenAIBrokerSettings(a[0], a[1]),
   disableOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.disableOpenAIBrokerSettings(a[0]),
   clearOpenAIBrokerSettings: (...a: unknown[]) => settingsApiMock.clearOpenAIBrokerSettings(a[0]),
@@ -143,6 +145,7 @@ beforeEach(() => {
 
   settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
   settingsApiMock.updateOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
+  settingsApiMock.redeemOpenAIBrokerInvite.mockResolvedValue(makeBrokerSettings())
   settingsApiMock.testOpenAIBrokerSettings.mockResolvedValue({ ok: true })
   settingsApiMock.disableOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
   settingsApiMock.clearOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings())
@@ -308,6 +311,89 @@ describe('OpenAICredentialPool', () => {
       expect(container.textContent).toContain('saved Forge Auth broker URL/token values are ignored')
     })
 
+    it('redeems pasted Forge Auth broker invites, clears the paste box, and reloads auth summaries', async () => {
+      const enabled = makeBrokerSettings({
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'settings',
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+          status: { ok: true, checkedAt: '2026-01-01T00:00:00.000Z' },
+        },
+      })
+      settingsApiMock.redeemOpenAIBrokerInvite.mockResolvedValue(enabled)
+      renderPool()
+      await flush()
+      await flush()
+
+      const remoteButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Forge Auth broker'))
+      expect(remoteButton).toBeTruthy()
+      fireEvent.click(remoteButton!)
+      await flush()
+
+      const textarea = container.querySelector('#openai-broker-invite') as HTMLTextAreaElement | null
+      expect(textarea).toBeTruthy()
+      fireEvent.input(textarea!, { target: { value: 'https://broker.example.test/-/forge-auth/invite#forge_auth_broker=secret-fragment' } })
+      const redeemButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Redeem invite'))
+      expect(redeemButton).toBeTruthy()
+      fireEvent.click(redeemButton!)
+      await flush()
+      await flush()
+
+      expect(settingsApiMock.redeemOpenAIBrokerInvite).toHaveBeenCalledWith(mockApiClient, {
+        invite: 'https://broker.example.test/-/forge-auth/invite#forge_auth_broker=secret-fragment',
+      })
+      expect(onAuthReload).toHaveBeenCalledTimes(1)
+      expect(onSuccess).toHaveBeenCalledWith('Forge Auth broker invite redeemed. Broker mode is active.')
+      expect((container.querySelector('#openai-broker-invite') as HTMLTextAreaElement | null)?.value ?? '').toBe('')
+    })
+
+    it('surfaces invite redeem failures without switching auth source', async () => {
+      settingsApiMock.redeemOpenAIBrokerInvite.mockRejectedValue(new Error('Invite could not be redeemed.'))
+      renderPool()
+      await flush()
+      await flush()
+
+      const remoteButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Forge Auth broker'))
+      fireEvent.click(remoteButton!)
+      await flush()
+      fireEvent.input(container.querySelector('#openai-broker-invite')!, { target: { value: 'https://broker.example.test/-/forge-auth/invite#forge_auth_broker=bad' } })
+      const redeemButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Redeem invite'))
+      fireEvent.click(redeemButton!)
+      await flush()
+      await flush()
+
+      expect(onError).toHaveBeenCalledWith('Invite could not be redeemed.')
+      expect(onAuthReload).not.toHaveBeenCalled()
+    })
+
+    it('keeps invite paste disabled under environment broker overrides', async () => {
+      settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings({
+        effectiveMode: 'central_broker',
+        source: 'env',
+        envOverride: true,
+        broker: {
+          configured: false,
+          hasToken: false,
+          clientId: 'forge',
+          timeoutMs: 10000,
+        },
+      }))
+      renderPool()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('controlled by environment variables')
+      expect(container.querySelector('#openai-broker-invite')).toBeNull()
+      const brokerButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Forge Auth broker'))
+      expect(brokerButton?.disabled).toBe(true)
+    })
+
     it('reloads parent auth summaries after broker settings are saved', async () => {
       const enabled = makeBrokerSettings({
         mode: 'central_broker',
@@ -331,6 +417,11 @@ describe('OpenAICredentialPool', () => {
       const remoteButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Forge Auth broker'))
       expect(remoteButton).toBeTruthy()
       fireEvent.click(remoteButton!)
+      await flush()
+
+      const advancedButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Advanced manual setup'))
+      expect(advancedButton).toBeTruthy()
+      fireEvent.click(advancedButton!)
       await flush()
 
       fireEvent.input(container.querySelector('#openai-broker-url')!, { target: { value: 'https://broker.example.test' } })

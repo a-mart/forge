@@ -11,6 +11,7 @@ export interface OpenAIAuthBrokerClientOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  redactionSecrets?: readonly (string | undefined)[];
 }
 
 export interface OpenAIAuthBrokerRuntimeIdentity {
@@ -63,6 +64,7 @@ export class OpenAIAuthBrokerClientError extends Error {
 export class OpenAIAuthBrokerClient {
   private readonly baseUrl: string;
   private readonly bearerToken: string;
+  private readonly redactionSecrets: readonly (string | undefined)[];
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => Date;
@@ -80,6 +82,7 @@ export class OpenAIAuthBrokerClient {
 
     this.baseUrl = normalizedBaseUrl;
     this.bearerToken = bearerToken;
+    this.redactionSecrets = [bearerToken, ...(options.redactionSecrets ?? [])];
     this.timeoutMs = normalizeTimeoutMs(options.timeoutMs);
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? (() => new Date());
@@ -87,7 +90,7 @@ export class OpenAIAuthBrokerClient {
 
   async getStatus(): Promise<OpenAIBrokerSettingsStatus> {
     const payload = await this.requestJson("/v1/status", { method: "GET" });
-    return normalizeStatusPayload(payload, this.now(), [this.bearerToken]);
+    return normalizeStatusPayload(payload, this.now(), this.redactionSecrets);
   }
 
   async getUsageSnapshot(): Promise<unknown> {
@@ -180,7 +183,7 @@ export class OpenAIAuthBrokerClient {
   }
 
   private redactSecrets(message: string): string {
-    return message.replaceAll(this.bearerToken, "[redacted]");
+    return redactOpenAIAuthBrokerText(message, this.redactionSecrets);
   }
 }
 

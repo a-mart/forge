@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clearOpenAIBrokerSettings,
   fetchOpenAIBrokerSettings,
+  redeemOpenAIBrokerInvite,
   testOpenAIBrokerSettings,
   updateOpenAIBrokerSettings,
 } from './settings-api'
@@ -57,6 +58,38 @@ describe('OpenAI broker settings API helpers', () => {
       mode: 'central_broker',
       broker: { url: 'https://broker.example.test', token: 'broker-token' },
       testBeforeEnable: true,
+    })).resolves.toMatchObject({
+      effectiveMode: 'central_broker',
+      broker: { configured: true, tokenMasked: '********oken' },
+    })
+  })
+
+  it('redeemOpenAIBrokerInvite posts invite payloads without requiring token echo', async () => {
+    const client = createBuilderSettingsApiClient('http://127.0.0.1:47187')
+    client.fetch = async (input, init) => {
+      expect(String(input)).toContain('/api/settings/auth/openai-codex/source/invite/redeem')
+      expect(init?.method).toBe('POST')
+      expect(JSON.parse(String(init?.body))).toEqual({ invite: 'https://broker.example.test/-/forge-auth/invite#forge_auth_broker=payload' })
+      return new Response(JSON.stringify({
+        settings: {
+          mode: 'central_broker',
+          effectiveMode: 'central_broker',
+          source: 'settings',
+          envOverride: false,
+          broker: {
+            configured: true,
+            url: 'https://broker.example.test/',
+            hasToken: true,
+            tokenMasked: '********oken',
+            clientId: 'forge',
+            timeoutMs: 10000,
+          },
+        },
+      }))
+    }
+
+    await expect(redeemOpenAIBrokerInvite(client, {
+      invite: 'https://broker.example.test/-/forge-auth/invite#forge_auth_broker=payload',
     })).resolves.toMatchObject({
       effectiveMode: 'central_broker',
       broker: { configured: true, tokenMasked: '********oken' },

@@ -12,8 +12,10 @@ import type {
   CollaborationAuthor,
   CredentialPoolState,
   CredentialPoolStrategy,
+  OpenAIBrokerInviteRedeemResponse,
   OpenAIBrokerSettingsResponse,
   OpenAIBrokerTestResponse,
+  RedeemOpenAIBrokerInviteRequest,
   UpdateOpenAIBrokerSettingsRequest,
   PooledCredentialInfo,
   CortexReviewRunRecord,
@@ -6977,6 +6979,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async updateOpenAIAuthBrokerSettings(request: UpdateOpenAIBrokerSettingsRequest): Promise<OpenAIBrokerSettingsResponse> {
     return this.settingsService.updateOpenAIAuthBrokerSettings(request);
+  }
+
+  async redeemOpenAIAuthBrokerInvite(request: RedeemOpenAIBrokerInviteRequest): Promise<OpenAIBrokerInviteRedeemResponse> {
+    return this.settingsService.redeemOpenAIAuthBrokerInvite(request);
   }
 
   async disableOpenAIAuthBroker(): Promise<OpenAIBrokerSettingsResponse> {

@@ -213,6 +213,47 @@ describe('settings routes', () => {
     expect(swarmManager.listCredentialPool).not.toHaveBeenCalled()
   })
 
+  it('redeems OpenAI broker invite source settings without echoing pasted secrets and invalidates OpenAI usage', async () => {
+    const payload = {
+      settings: {
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'settings',
+        envOverride: false,
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+        },
+      },
+    }
+    const swarmManager = {
+      redeemOpenAIAuthBrokerInvite: vi.fn(async () => payload),
+    }
+    const statsService = {
+      invalidateProviderUsage: vi.fn(async () => undefined),
+    }
+
+    const invite = 'https://broker.example.test/-/forge-auth/invite#forge_auth_broker=secret-fragment'
+    const server = await createSettingsRouteTestServer(swarmManager, statsService)
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/source/invite/redeem`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ invite }),
+    })
+
+    expect(response.status).toBe(200)
+    const body = await response.text()
+    expect(body).not.toContain('secret-fragment')
+    expect(body).not.toContain('fop_')
+    expect(JSON.parse(body)).toEqual(payload)
+    expect(swarmManager.redeemOpenAIAuthBrokerInvite).toHaveBeenCalledWith({ invite })
+    expect(statsService.invalidateProviderUsage).toHaveBeenCalledWith('openai')
+  })
+
   it('saves OpenAI broker source settings without echoing tokens and invalidates OpenAI usage', async () => {
     const payload = {
       settings: {
