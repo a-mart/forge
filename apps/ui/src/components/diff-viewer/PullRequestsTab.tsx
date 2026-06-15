@@ -106,7 +106,7 @@ function CheckStatusIcon({ status }: { status: GitPullRequestSummary['checkStatu
   return <AlertCircle className="size-3.5 text-muted-foreground" />
 }
 
-function PullRequestCard({
+function PullRequestRow({
   pullRequest,
   active,
   onClick,
@@ -115,59 +115,57 @@ function PullRequestCard({
   active: boolean
   onClick: () => void
 }) {
+  const branchLabel = `${pullRequest.headRef} → ${pullRequest.baseRef}`
+
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-label={`Pull request #${pullRequest.number}: ${pullRequest.title}`}
       className={cn(
-        'w-full min-w-0 overflow-hidden rounded-lg border border-border/70 bg-card/60 p-2.5 text-left transition-colors hover:bg-accent/40',
-        active && 'border-primary/40 bg-primary/5',
-        pullRequest.isCurrentBranch && !active && 'border-emerald-500/30',
+        'flex w-full min-w-0 items-start gap-2 overflow-hidden border-b border-l-2 border-b-border/50 border-l-transparent px-2.5 py-2 text-left transition-colors hover:bg-accent/35',
+        active && 'border-l-primary bg-accent/45',
+        pullRequest.isCurrentBranch && !active && 'border-l-emerald-500 bg-emerald-500/5',
       )}
     >
-      <div className="min-w-0 space-y-1.5">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">#{pullRequest.number}</span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={pullRequest.title}>
+      <GitPullRequest className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <div className="flex min-w-0 items-baseline gap-1.5">
+          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">#{pullRequest.number}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-foreground" title={pullRequest.title}>
             {pullRequest.title}
           </span>
         </div>
-        <div
-          className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground"
-          title={`${pullRequest.headRef} → ${pullRequest.baseRef}`}
-        >
-          <span className="min-w-0 flex-1 truncate font-mono">{pullRequest.headRef}</span>
-          <span className="shrink-0">→</span>
-          <span className="min-w-0 flex-1 truncate font-mono">{pullRequest.baseRef}</span>
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate font-mono" title={branchLabel}>
+            {branchLabel}
+          </span>
+          <span className="shrink-0">{formatRelativeTimestamp(pullRequest.updatedAt)}</span>
         </div>
-        <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground/80">
           <span className="min-w-0 truncate" title={pullRequest.author}>
             {pullRequest.author}
           </span>
-          <span className="shrink-0">·</span>
-          <span className="shrink-0">updated {formatRelativeTimestamp(pullRequest.updatedAt)}</span>
+          {pullRequest.isDraft ? (
+            <span className="shrink-0 rounded-sm border border-border/70 px-1 text-[10px] leading-4">Draft</span>
+          ) : null}
+          {pullRequest.isCurrentBranch ? (
+            <span className="shrink-0 rounded-sm border border-emerald-500/40 px-1 text-[10px] leading-4 text-emerald-600 dark:text-emerald-400">
+              Current
+            </span>
+          ) : null}
         </div>
       </div>
-      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1">
-        <Badge variant={stateBadgeVariant(pullRequest.state)} className="h-5 shrink-0 rounded-sm px-1.5 text-[10px] capitalize">
-          {pullRequest.state}
-        </Badge>
-        {pullRequest.isDraft ? (
-          <Badge variant="outline" className="h-5 shrink-0 rounded-sm px-1.5 text-[10px]">
-            Draft
-          </Badge>
-        ) : null}
-        {pullRequest.isCurrentBranch ? (
-          <Badge variant="outline" className="h-5 shrink-0 rounded-sm border-emerald-500/40 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">
-            Current branch PR
-          </Badge>
-        ) : null}
+      <div className="flex max-w-16 shrink-0 flex-col items-end gap-1 overflow-hidden pt-0.5 text-[10px] text-muted-foreground">
+        <span className="max-w-full truncate capitalize">{pullRequest.state}</span>
         {pullRequest.checkStatus ? (
-          <Badge variant="outline" className="h-5 min-w-0 max-w-full gap-1 rounded-sm px-1.5 text-[10px]">
+          <span
+            className="flex max-w-full items-center gap-1 truncate"
+            title={checkStatusLabel(pullRequest.checkStatus)}
+          >
             <CheckStatusIcon status={pullRequest.checkStatus} />
             <span className="truncate">{compactCheckStatusLabel(pullRequest.checkStatus)}</span>
-          </Badge>
+          </span>
         ) : null}
       </div>
     </button>
@@ -439,9 +437,9 @@ export function PullRequestsTab({
     handleRef: listResizeHandleRef,
   } = useResizablePanel({
     storageKey: 'forge-diff-pull-requests-list-width',
-    defaultWidth: 300,
-    minWidth: 240,
-    maxWidth: 460,
+    defaultWidth: 280,
+    minWidth: 220,
+    maxWidth: 380,
   })
   const [isLargeLayout, setIsLargeLayout] = useState(true)
 
@@ -614,43 +612,51 @@ export function PullRequestsTab({
           className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b border-border/60 lg:shrink-0 lg:border-b-0 lg:border-r"
           style={isLargeLayout ? { width: pullRequestListWidth } : undefined}
         >
-          <div className="min-w-0 border-b border-border/60 px-4 py-3">
-            <h3 className="text-sm font-medium text-foreground">Pull Requests</h3>
-            <p className="truncate text-xs text-muted-foreground">Open and recently closed for this repository</p>
+          <div className="min-w-0 border-b border-border/60 px-3 py-2">
+            <h3 className="text-sm font-medium leading-5 text-foreground">Pull Requests</h3>
+            <p className="truncate text-[11px] text-muted-foreground">Open and recently closed</p>
           </div>
           <ScrollArea className="min-h-0 min-w-0 flex-1 overflow-hidden">
-            <div className="min-w-0 space-y-3 p-2.5">
+            <div className="min-w-0">
               {!hasAnyPullRequests ? (
-                <div className="rounded-lg border border-dashed border-border/70 p-4 text-center text-sm text-muted-foreground">
+                <div className="m-2.5 rounded-lg border border-dashed border-border/70 p-4 text-center text-sm text-muted-foreground">
                   No pull requests found for this repository.
                 </div>
               ) : null}
               {(data?.open.length ?? 0) > 0 ? (
-                <section className="min-w-0 space-y-2">
-                  <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Open</p>
-                  {data?.open.map((pullRequest) => (
-                    <PullRequestCard
-                      key={pullRequest.number}
-                      pullRequest={pullRequest}
-                      active={selectedNumber === pullRequest.number}
-                      onClick={() => setSelectedNumber(pullRequest.number)}
-                    />
-                  ))}
+                <section className="min-w-0" aria-label="Open pull requests">
+                  <p className="border-b border-border/50 bg-muted/30 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Open
+                  </p>
+                  <div role="list" className="min-w-0">
+                    {data?.open.map((pullRequest) => (
+                      <div key={pullRequest.number} role="listitem" className="min-w-0">
+                        <PullRequestRow
+                          pullRequest={pullRequest}
+                          active={selectedNumber === pullRequest.number}
+                          onClick={() => setSelectedNumber(pullRequest.number)}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </section>
               ) : null}
               {(data?.recentlyClosed.length ?? 0) > 0 ? (
-                <section className="min-w-0 space-y-2">
-                  <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <section className="min-w-0" aria-label="Recently closed pull requests">
+                  <p className="border-b border-border/50 bg-muted/30 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     Recently closed
                   </p>
-                  {data?.recentlyClosed.map((pullRequest) => (
-                    <PullRequestCard
-                      key={pullRequest.number}
-                      pullRequest={pullRequest}
-                      active={selectedNumber === pullRequest.number}
-                      onClick={() => setSelectedNumber(pullRequest.number)}
-                    />
-                  ))}
+                  <div role="list" className="min-w-0">
+                    {data?.recentlyClosed.map((pullRequest) => (
+                      <div key={pullRequest.number} role="listitem" className="min-w-0">
+                        <PullRequestRow
+                          pullRequest={pullRequest}
+                          active={selectedNumber === pullRequest.number}
+                          onClick={() => setSelectedNumber(pullRequest.number)}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </section>
               ) : null}
             </div>

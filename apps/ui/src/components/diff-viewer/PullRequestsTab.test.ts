@@ -129,12 +129,12 @@ describe('PullRequestsTab', () => {
 
     expect(getByText(container, 'Open')).toBeTruthy()
     expect(getByText(container, 'Recently closed')).toBeTruthy()
-    expect(getByText(container, 'Current branch PR')).toBeTruthy()
+    expect(getByText(container, 'Current')).toBeTruthy()
     expect(getAllByText(container, /Enhanced Source Control workspace/).length).toBeGreaterThan(0)
     expect(getByRole(container, 'link', { name: /Open in browser/i })).toBeTruthy()
   })
 
-  it('renders a compact resizable pull request list column by default', () => {
+  it('renders a dense resizable pull request list column by default', () => {
     renderTab({
       data: readyPullRequestsData(),
       currentBranch: 'feature/git-source-control-workspace',
@@ -142,7 +142,8 @@ describe('PullRequestsTab', () => {
 
     const resizeHandle = getByRole(container, 'separator', { name: /resize pull request list/i })
     expect(resizeHandle.previousElementSibling).toBeInstanceOf(HTMLElement)
-    expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('300px')
+    expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('280px')
+    expect(getByRole(container, 'button', { name: /Pull request #428/i }).className).toContain('border-b')
   })
 
   it('keeps long pull request titles and branch refs in compact truncation affordances', () => {
