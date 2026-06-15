@@ -59,6 +59,19 @@ describe('ForgeClient', () => {
     })
   })
 
+  it('maps revoked CLI keys to auth failures even when the server returns 403', async () => {
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: async () => Response.json({ error: { code: 'revoked_token', message: 'CLI API key has been revoked' } }, { status: 403 }),
+    })
+
+    await expect(client.getStatus()).rejects.toMatchObject({
+      code: 'revoked_token',
+      exitCode: EXIT_CODES.auth,
+    })
+  })
+
   it('subscribes before dispatching run to avoid fast-output races', async () => {
     const socket = new FakeWebSocket()
     const client = new ForgeClient({

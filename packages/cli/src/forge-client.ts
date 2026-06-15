@@ -449,9 +449,10 @@ export class ForgeClient implements ForgeClientLike {
     if (!response.ok) {
       const errorPayload = await readErrorPayload(response)
       const message = errorPayload?.error.message ?? `Forge request failed with HTTP ${response.status}`
+      const code = errorPayload?.error.code ?? `http_${response.status}`
       throw new CliError(redactSecret(message, this.apiKey), {
-        exitCode: mapHttpErrorExitCode(response.status),
-        code: errorPayload?.error.code ?? `http_${response.status}`,
+        exitCode: mapHttpErrorExitCode(response.status, code),
+        code,
         details: { status: response.status },
       })
     }
@@ -954,17 +955,21 @@ function featuresForTarget(target: ClientRunTarget): Array<keyof CliStatusRespon
   return features
 }
 
-function mapHttpErrorExitCode(status: number) {
-  if (status === 401) return EXIT_CODES.auth
+function mapHttpErrorExitCode(status: number, code: string) {
+  if (status === 401 || isAuthErrorCode(code)) return EXIT_CODES.auth
   if (status >= 400 && status < 500) return EXIT_CODES.usage
   return EXIT_CODES.connection
 }
 
 function mapCliRequestErrorExitCode(event: CliRequestErrorEvent) {
-  if (event.status === 401) return EXIT_CODES.auth
+  if (event.status === 401 || isAuthErrorCode(event.code)) return EXIT_CODES.auth
   if (event.code === 'unsupported_command' || event.code === 'unsupported_target') return EXIT_CODES.unsupported
   if (event.status && event.status >= 400 && event.status < 500) return EXIT_CODES.usage
   return EXIT_CODES.connection
+}
+
+function isAuthErrorCode(code: string): boolean {
+  return code === 'missing_authorization' || code === 'malformed_authorization' || code === 'invalid_token' || code === 'revoked_token'
 }
 
 function redactSecret(message: string, secret: string): string {

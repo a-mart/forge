@@ -292,6 +292,62 @@ describe("CLI access settings routes — cross-origin protection", () => {
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  it("allows packaged Electron app origin in desktop mode over a direct loopback socket", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "1");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "0");
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "app://forge" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("app://forge");
+  });
+
+  it("rejects packaged Electron app origin outside desktop mode", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "0");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "0");
+    const { server } = await setup();
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "app://forge" },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("rejects forwarded packaged Electron app origin requests", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "1");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "0");
+    const { server } = await setup();
+
+    const result = await rawHttpRequest({
+      url: `${server.baseUrl}/api/settings/cli-access/keys`,
+      method: "GET",
+      headers: {
+        Origin: "app://forge",
+        "X-Forwarded-For": "127.0.0.1",
+      },
+    });
+    expect(result.status).toBe(403);
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("rejects packaged Electron app origin from non-loopback socket clients", async () => {
+    vi.stubEnv("FORGE_DESKTOP", "1");
+    vi.stubEnv("FORGE_ELECTRON_DEV", "0");
+    const { server } = await setup({ remoteAddress: "100.64.0.10" });
+
+    const response = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
+      method: "GET",
+      headers: { Origin: "app://forge" },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("rejects the Electron dev renderer origin when NODE_ENV=development leaks into packaged desktop", async () => {
     vi.stubEnv("FORGE_DESKTOP", "1");
     vi.stubEnv("FORGE_ELECTRON_DEV", "0");

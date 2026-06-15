@@ -10,6 +10,7 @@ import type { HttpRoute } from "../shared/http-route.js";
 const ENDPOINT_PREFIX = "/api/settings/cli-access";
 const LIST_METHODS = "GET, POST, OPTIONS";
 const ITEM_METHODS = "DELETE, POST, OPTIONS";
+const ELECTRON_PACKAGED_RENDERER_ORIGIN = "app://forge";
 const ELECTRON_DEV_RENDERER_ORIGINS = new Set([
   "http://127.0.0.1:47188",
   "http://localhost:47188",
@@ -53,6 +54,8 @@ export function createCliAccessSettingsRoutes(options: {
  *  - Allow requests whose Origin matches the server's own origin derived
  *    from the request Host header (covers localhost, LAN IPs, Tailscale
  *    hostnames, and any custom bind address).
+ *  - In packaged Electron desktop, allow the app://forge renderer origin only
+ *    after the direct-loopback/no-proxy checks above.
  *  - In Electron dev only, allow the fixed Vite renderer origins used by the
  *    desktop shell while preserving the direct-loopback/no-proxy checks above.
  *  - Block everything else with 403 and no Access-Control-Allow-Origin.
@@ -88,14 +91,14 @@ function applySameOriginGate(
     return true;
   }
 
-  if (!isSameOrigin(origin, request) && !isTrustedElectronDevRendererOrigin(origin)) {
+  if (!isSameOrigin(origin, request) && !isTrustedElectronPackagedRendererOrigin(origin) && !isTrustedElectronDevRendererOrigin(origin)) {
     sendJson(response, 403, {
       error: { code: "forbidden_origin", message: "Cross-origin requests are not allowed for CLI key management", status: 403 },
     });
     return false;
   }
 
-  // Same-origin or trusted Electron dev renderer — set tight CORS headers so the browser permits the response.
+  // Same-origin or trusted Electron renderer — set tight CORS headers so the browser permits the response.
   response.setHeader("Access-Control-Allow-Origin", origin);
   response.setHeader("Access-Control-Allow-Methods", methods);
   response.setHeader("Access-Control-Allow-Headers", "content-type");
@@ -128,6 +131,14 @@ function stripAddressPortAndQuotes(value: string): string {
     }
   }
   return normalized;
+}
+
+function isTrustedElectronPackagedRendererOrigin(origin: string): boolean {
+  return (
+    isTruthyEnv(process.env.FORGE_DESKTOP) &&
+    process.env.FORGE_ELECTRON_DEV !== "1" &&
+    origin === ELECTRON_PACKAGED_RENDERER_ORIGIN
+  );
 }
 
 function isTrustedElectronDevRendererOrigin(origin: string): boolean {
