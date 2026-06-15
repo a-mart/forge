@@ -160,6 +160,7 @@ const cliCapabilities = {
     choiceOwnerLookup: true,
     activeToolSnapshot: true,
     projectAgentRunTarget: true,
+    sessionTranscript: true,
     builderRuntimeOnly: true,
   },
 } satisfies CliCapabilities

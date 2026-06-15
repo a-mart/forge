@@ -14,11 +14,17 @@ import {
   type CliProjectAgentShowResponse,
   type CliProjectAgentsListResponse,
   type CliSessionShowResponse,
+  type CliSessionTranscriptResponse,
   type CliSessionsListResponse,
   type CliStatusResponse,
+  type ConversationEntryEvent,
 } from "@forge/protocol";
 import { isBuilderRuntimeTarget, type RuntimeTarget } from "../../../runtime-target.js";
 import { buildCliCapabilities, CLI_SERVER_VERSION } from "../../cli-capabilities.js";
+import {
+  buildCliSessionTranscriptResponse,
+  parseCliSessionTranscriptOptions,
+} from "../../cli-session-transcript.js";
 import {
   findCliVisibleChoiceSession,
   getCliChoiceOwner,
@@ -27,6 +33,7 @@ import {
   listCliChoiceOwnersForSession,
 } from "../../cli-choice-owners.js";
 import { toPublicCliAgentDescriptor } from "../../cli-public-descriptors.js";
+import type { SidebarConversationHistoryDiagnostics } from "../../../stats/sidebar-perf-types.js";
 import type { CliAccessService } from "../../../swarm/cli-access-service.js";
 import type { AgentDescriptor, ManagerProfile } from "../../../swarm/types.js";
 import {
@@ -50,6 +57,10 @@ interface CliRouteSwarmManager {
     sessionAgentId: string;
     questions: ChoiceQuestion[];
   } | undefined;
+  getConversationHistoryWithDiagnostics(agentId: string): {
+    history: ConversationEntryEvent[];
+    diagnostics: SidebarConversationHistoryDiagnostics;
+  };
 }
 
 export function createCliRoutes(options: {
@@ -195,6 +206,35 @@ async function handleCliHttpRequest(
         .filter((agent) => agent.role === "manager")
         .map(toPublicCliAgentDescriptor),
     };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (segments.length === 3 && segments[0] === "sessions" && segments[2] === "transcript") {
+    const session = findCliAgent(options.swarmManager, segments[1]);
+    if (!session || session.role !== "manager") {
+      sendCliError(response, 404, "not_found", "Session not found");
+      return;
+    }
+
+    const transcriptOptionsResult = parseCliSessionTranscriptOptions(requestUrl.searchParams);
+    if (!transcriptOptionsResult.ok) {
+      sendCliError(
+        response,
+        transcriptOptionsResult.status,
+        transcriptOptionsResult.code,
+        transcriptOptionsResult.message,
+      );
+      return;
+    }
+
+    const { history } = options.swarmManager.getConversationHistoryWithDiagnostics(session.agentId);
+    const payload: CliSessionTranscriptResponse = buildCliSessionTranscriptResponse({
+      session,
+      agents: listCliAgents(options.swarmManager, listCliProfiles(options.swarmManager)),
+      history,
+      transcriptOptions: transcriptOptionsResult.options,
+    });
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }

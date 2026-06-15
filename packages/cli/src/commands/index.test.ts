@@ -232,6 +232,7 @@ function statusResponse(): CliStatusResponse {
         choiceOwnerLookup: true,
         activeToolSnapshot: true,
         projectAgentRunTarget: true,
+        sessionTranscript: true,
         builderRuntimeOnly: true,
       },
     },

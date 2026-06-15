@@ -8,6 +8,7 @@ import {
   parseP0HttpRouteJsonResponse as parseJsonResponse,
 } from "../../../../test-support/ws-integration-harness.js";
 import { CliAccessService } from "../../../../swarm/cli-access-service.js";
+import type { ConversationEntryEvent } from "@forge/protocol";
 import type { AgentDescriptor, ManagerProfile } from "../../../../swarm/types.js";
 import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 import { SwarmWebSocketServer } from "../../../server.js";
@@ -66,6 +67,7 @@ describe("CLI routes and bearer auth", () => {
           choiceOwnerLookup: true,
           activeToolSnapshot: true,
           projectAgentRunTarget: true,
+          sessionTranscript: true,
           builderRuntimeOnly: true,
         },
       },
@@ -118,6 +120,7 @@ describe("CLI routes and bearer auth", () => {
       "/api/cli/agents/session-a",
       "/api/cli/sessions?profileId=profile-a",
       "/api/cli/sessions/session-a",
+      "/api/cli/sessions/session-a/transcript",
       "/api/cli/project-agents?profileId=profile-a",
       "/api/cli/project-agents/docs?profileId=profile-a",
       "/api/cli/choices?sessionAgentId=session-a",
@@ -157,6 +160,7 @@ describe("CLI routes and bearer auth", () => {
             cliSessionMetadata: true,
             choiceOwnerLookup: true,
             headlessWs: true,
+            sessionTranscript: true,
           },
         },
         summary: { profileCount: 1, sessionCount: 2, agentCount: 3 },
@@ -250,6 +254,104 @@ describe("CLI routes and bearer auth", () => {
     });
   });
 
+  it("serves filtered session transcript DTOs with pagination and worker update opt-in", async () => {
+    const { service } = await makeCliAccessService();
+    const generated = await service.generateKey({ name: "Transcript route test" });
+    const server = await createCliRouteTestServer(service, createCliRouteState());
+    const headers = { authorization: `Bearer ${generated.plaintextKey}` };
+
+    const defaultTranscript = await parseJsonResponse(
+      await fetch(`${server.baseUrl}/api/cli/sessions/session-a/transcript`, { headers })
+    );
+    expect(defaultTranscript.status).toBe(200);
+    expect(defaultTranscript.json).toMatchObject({
+      session: { agentId: "session-a", profileId: "profile-a", displayName: "Session A" },
+      options: { includeWorkerUpdates: false, limit: 200, offset: 0 },
+      page: { total: 2, returned: 2, hasMore: false },
+      messages: [
+        {
+          ordinal: 0,
+          id: "user-1",
+          kind: "user",
+          role: "user",
+          source: "user_input",
+          text: "User asks",
+          attachments: [
+            { type: "image", mimeType: "image/png", fileName: "image.png" },
+            {
+              type: "binary",
+              mimeType: "application/octet-stream",
+              fileName: "archive.bin",
+              fileRef: "upload-ref",
+              sizeBytes: 12,
+            },
+          ],
+        },
+        {
+          ordinal: 1,
+          id: "assistant-1",
+          kind: "assistant",
+          role: "assistant",
+          source: "speak_to_user",
+          text: "Manager replies",
+        },
+      ],
+    });
+    const defaultJson = JSON.stringify(defaultTranscript.json);
+    expect(defaultJson).not.toContain("sourceContext");
+    expect(defaultJson).not.toContain("telegram-channel-id");
+    expect(defaultJson).not.toContain("telegram-message-id");
+    expect(defaultJson).not.toContain("thread-ts");
+    expect(defaultJson).not.toContain("telegram-user-id");
+    expect(defaultJson).not.toContain("integration-profile-id");
+    expect(defaultJson).not.toContain("base64-image-body");
+    expect(defaultJson).not.toContain("filePath");
+    expect(defaultJson).not.toContain("/tmp/private");
+    expect(defaultJson).not.toContain("Hidden system");
+    expect(defaultJson).not.toContain("project agent input");
+    expect(defaultJson).not.toContain("Worker report");
+    expect(defaultJson).not.toContain("tool row");
+    expect(defaultJson).not.toContain("choice-q");
+    expect(defaultJson).not.toContain("plan-a");
+    expect(defaultJson).not.toContain("cache hit");
+
+    const workerTranscript = await parseJsonResponse(
+      await fetch(`${server.baseUrl}/api/cli/sessions/session-a/transcript?includeWorkerUpdates=true&limit=2&offset=1`, {
+        headers,
+      })
+    );
+    expect(workerTranscript.status).toBe(200);
+    expect(workerTranscript.json).toMatchObject({
+      options: { includeWorkerUpdates: true, limit: 2, offset: 1 },
+      page: { total: 3, returned: 2, offset: 1, limit: 2, hasMore: false },
+      messages: [
+        {
+          ordinal: 1,
+          kind: "worker_update",
+          role: "worker",
+          source: "worker_update",
+          text: "Worker report",
+          fromAgentId: "worker-a",
+          fromDisplayName: "Worker A",
+          toAgentId: "session-a",
+        },
+        { ordinal: 2, kind: "assistant", text: "Manager replies" },
+      ],
+    });
+    const workerJson = JSON.stringify(workerTranscript.json);
+    expect(workerJson).not.toContain("Peer manager note");
+    expect(workerJson).not.toContain("Other worker report");
+    expect(workerJson).not.toContain("Manager-to-worker prompt");
+    expect(workerJson).not.toContain("secret session prompt");
+
+    await expect(
+      parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/sessions/session-a/transcript?limit=0`, { headers }))
+    ).resolves.toMatchObject({ status: 400, json: { error: { code: "invalid_limit" } } });
+    await expect(
+      parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/sessions/session-a/transcript?offset=-1`, { headers }))
+    ).resolves.toMatchObject({ status: 400, json: { error: { code: "invalid_offset" } } });
+  });
+
   it("uses stable ids only and excludes system/collaboration surfaces", async () => {
     const { service } = await makeCliAccessService();
     const generated = await service.generateKey({ name: "Stable ID test" });
@@ -268,7 +370,19 @@ describe("CLI routes and bearer auth", () => {
       status: 404,
       json: { error: { code: "not_found" } },
     });
+    await expect(
+      parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/sessions/collab-session/transcript`, { headers }))
+    ).resolves.toMatchObject({
+      status: 404,
+      json: { error: { code: "not_found" } },
+    });
     await expect(parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/agents/cortex-session`, { headers }))).resolves.toMatchObject({
+      status: 404,
+      json: { error: { code: "not_found" } },
+    });
+    await expect(
+      parseJsonResponse(await fetch(`${server.baseUrl}/api/cli/sessions/cortex-session/transcript`, { headers }))
+    ).resolves.toMatchObject({
       status: 404,
       json: { error: { code: "not_found" } },
     });
@@ -406,6 +520,17 @@ function createCliRouteState(): {
     sessionAgentId: string;
     questions: Array<{ id: string; question: string; options?: Array<{ id: string; label: string }> }>;
   } | undefined;
+  getConversationHistoryWithDiagnostics(agentId: string): {
+    history: ConversationEntryEvent[];
+    diagnostics: {
+      cacheState: "memory";
+      historySource: "memory";
+      coldLoad: false;
+      fsReadOps: 0;
+      fsReadBytes: 0;
+      detail: "test";
+    };
+  };
 } {
   const profiles: ManagerProfile[] = [
     {
@@ -428,7 +553,14 @@ function createCliRouteState(): {
   ];
   const agents: AgentDescriptor[] = [
     createRouteAgent({ agentId: "session-a", profileId: "profile-a", sessionLabel: "Session A" }),
-    createRouteAgent({ agentId: "worker-a", role: "worker", managerId: "session-a", profileId: "profile-a" }),
+    createRouteAgent({
+      agentId: "worker-a",
+      role: "worker",
+      managerId: "session-a",
+      profileId: "profile-a",
+      specialistDisplayName: "Worker A",
+      sessionSystemPrompt: "secret session prompt",
+    }),
     createRouteAgent({
       agentId: "docs-agent",
       profileId: "profile-a",
@@ -449,6 +581,138 @@ function createCliRouteState(): {
       collab: { workspaceId: "workspace", channelId: "channel" },
     }),
     createRouteAgent({ agentId: "cortex-session", profileId: "cortex" }),
+  ];
+
+  const history: ConversationEntryEvent[] = [
+    {
+      type: "conversation_message",
+      agentId: "session-a",
+      id: "user-1",
+      role: "user",
+      text: "User asks",
+      timestamp: "2026-06-15T00:00:00.000Z",
+      source: "user_input",
+      sourceContext: {
+        channel: "telegram",
+        channelId: "telegram-channel-id",
+        messageId: "telegram-message-id",
+        threadTs: "thread-ts",
+        userId: "telegram-user-id",
+        integrationProfileId: "integration-profile-id",
+      },
+      attachments: [
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: "base64-image-body",
+          fileName: "/tmp/private/image.png",
+          filePath: "/tmp/private/image.png",
+        },
+        {
+          type: "binary",
+          mimeType: "application/octet-stream",
+          data: "base64-binary-body",
+          fileName: "archive.bin",
+          filePath: "/tmp/private/archive.bin",
+          fileRef: "upload-ref",
+          sizeBytes: 12,
+        },
+      ],
+    },
+    {
+      type: "conversation_message",
+      agentId: "session-a",
+      role: "system",
+      text: "Hidden system",
+      timestamp: "2026-06-15T00:00:01.000Z",
+      source: "system",
+    },
+    {
+      type: "conversation_message",
+      agentId: "session-a",
+      role: "user",
+      text: "project agent input",
+      timestamp: "2026-06-15T00:00:02.000Z",
+      source: "project_agent_input",
+    },
+    {
+      type: "agent_message",
+      agentId: "session-a",
+      timestamp: "2026-06-15T00:00:03.000Z",
+      source: "agent_to_agent",
+      fromAgentId: "worker-a",
+      toAgentId: "session-a",
+      text: "Worker report",
+      sourceContext: { channel: "telegram", channelId: "telegram-channel-id" },
+    },
+    {
+      type: "agent_message",
+      agentId: "session-a",
+      timestamp: "2026-06-15T00:00:04.000Z",
+      source: "user_to_agent",
+      fromAgentId: "session-a",
+      toAgentId: "worker-a",
+      text: "Manager-to-worker prompt",
+    },
+    {
+      type: "agent_message",
+      agentId: "session-a",
+      timestamp: "2026-06-15T00:00:05.000Z",
+      source: "agent_to_agent",
+      fromAgentId: "docs-agent",
+      toAgentId: "session-a",
+      text: "Peer manager note",
+    },
+    {
+      type: "agent_message",
+      agentId: "session-a",
+      timestamp: "2026-06-15T00:00:06.000Z",
+      source: "agent_to_agent",
+      fromAgentId: "missing-worker",
+      toAgentId: "session-a",
+      text: "Other worker report",
+    },
+    {
+      type: "conversation_log",
+      agentId: "session-a",
+      timestamp: "2026-06-15T00:00:07.000Z",
+      source: "runtime_log",
+      kind: "tool_execution_update",
+      text: "tool row",
+    },
+    {
+      type: "choice_request",
+      agentId: "session-a",
+      choiceId: "choice-q",
+      questions: [{ id: "q", question: "Pick one?" }],
+      status: "pending",
+      timestamp: "2026-06-15T00:00:08.000Z",
+    },
+    {
+      type: "work_plan_created",
+      agentId: "session-a",
+      id: "work-plan-row",
+      timestamp: "2026-06-15T00:00:09.000Z",
+      planId: "plan-a",
+      stateRevision: 1,
+      planRevision: 1,
+      plan: { id: "plan-a", title: "Plan", status: "active", items: [] },
+    } as unknown as ConversationEntryEvent,
+    {
+      type: "model_cache_observation",
+      agentId: "session-a",
+      timestamp: "2026-06-15T00:00:10.000Z",
+      text: "cache hit",
+    } as unknown as ConversationEntryEvent,
+    {
+      type: "conversation_message",
+      agentId: "session-a",
+      id: "assistant-1",
+      role: "assistant",
+      text: "Manager replies",
+      timestamp: "2026-06-15T00:00:11.000Z",
+      source: "speak_to_user",
+    },
   ];
 
   const choices = new Map([
@@ -485,6 +749,17 @@ function createCliRouteState(): {
       .filter(([, choice]) => choice.sessionAgentId === sessionAgentId)
       .map(([choiceId]) => choiceId),
     getPendingChoice: (choiceId) => choices.get(choiceId),
+    getConversationHistoryWithDiagnostics: (agentId) => ({
+      history: agentId === "session-a" ? history.map((entry) => ({ ...entry })) : [],
+      diagnostics: {
+        cacheState: "memory",
+        historySource: "memory",
+        coldLoad: false,
+        fsReadOps: 0,
+        fsReadBytes: 0,
+        detail: "test",
+      },
+    }),
   };
 }
 

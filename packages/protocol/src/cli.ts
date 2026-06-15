@@ -34,6 +34,7 @@ export interface CliFeatureFlags {
   choiceOwnerLookup: boolean
   activeToolSnapshot: boolean
   projectAgentRunTarget: boolean
+  sessionTranscript: boolean
   builderRuntimeOnly: boolean
 }
 
@@ -134,6 +135,53 @@ export interface CliSessionsListResponse {
 
 export interface CliSessionShowResponse {
   session: AgentDescriptor
+}
+
+export type CliSessionTranscriptMessageKind = 'user' | 'assistant' | 'worker_update'
+
+export interface CliSessionTranscriptAttachment {
+  type?: 'image' | 'text' | 'binary'
+  mimeType: string
+  fileName?: string
+  fileRef?: string
+  sizeBytes?: number
+}
+
+export interface CliSessionTranscriptMessage {
+  ordinal: number
+  id?: string
+  timestamp: string
+  kind: CliSessionTranscriptMessageKind
+  role: 'user' | 'assistant' | 'worker'
+  source: 'user_input' | 'speak_to_user' | 'worker_update'
+  text: string
+  agentId: string
+  fromAgentId?: string
+  fromDisplayName?: string
+  toAgentId?: string
+  attachments?: CliSessionTranscriptAttachment[]
+}
+
+export interface CliSessionTranscriptResponse {
+  session: {
+    agentId: string
+    profileId?: string
+    displayName?: string
+  }
+  options: {
+    includeWorkerUpdates: boolean
+    limit: number
+    offset: number
+  }
+  page: {
+    total: number
+    returned: number
+    offset: number
+    limit: number
+    hasMore: boolean
+    nextOffset?: number
+  }
+  messages: CliSessionTranscriptMessage[]
 }
 
 export interface CliProjectAgentDescriptor {
