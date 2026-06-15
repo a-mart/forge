@@ -24,7 +24,7 @@ export function parseOpenAIAuthBrokerInvite(input: unknown): ParsedOpenAIAuthBro
 }
 
 export function isLocalOrDevBrokerUrl(url: URL): boolean {
-  const host = url.hostname.toLowerCase();
+  const host = url.hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
   return host === "localhost"
     || host === "::1"
     || host === "0.0.0.0"

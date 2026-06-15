@@ -392,7 +392,7 @@ describe('OpenAIAuthSettingsService', () => {
           install: { installId: body.install.installId, clientId: body.install.clientId, instanceId: body.install.instanceId },
         }))
       })
-      .mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true, message: `ready ${brokerToken}` })))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true, message: `ready ${brokerToken} ${inviteSecret}` })))
 
     const handle = await makeHandle()
     const service = new OpenAIAuthSettingsService({ config: handle.config })
@@ -409,11 +409,16 @@ describe('OpenAIAuthSettingsService', () => {
         hasToken: true,
         tokenMasked: '********inel',
         userLabel: 'ada@example.com',
-        status: { ok: true, message: 'ready [redacted]' },
+        status: { ok: true, message: 'ready [redacted] [redacted]' },
       },
     })
     expect(JSON.stringify(response)).not.toContain(inviteSecret)
     expect(JSON.stringify(response)).not.toContain(brokerToken)
+
+    const persistedStatusState = await service.getSettingsState()
+    expect(persistedStatusState.broker.status?.message).toBe('ready [redacted] [redacted]')
+    expect(JSON.stringify(persistedStatusState)).not.toContain(inviteSecret)
+    expect(JSON.stringify(persistedStatusState)).not.toContain(brokerToken)
 
     const configRaw = await readFile(join(handle.config.paths.sharedAuthDir, 'openai-codex-auth-source.json'), 'utf8')
     const secretsRaw = await readFile(handle.config.paths.sharedSecretsFile, 'utf8')

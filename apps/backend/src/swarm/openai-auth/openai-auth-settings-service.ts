@@ -244,6 +244,7 @@ export class OpenAIAuthSettingsService {
       now: this.now,
     });
 
+    const inviteRedactionSecrets = [invite.secret];
     const status = await this.testResolvedBroker({
       url: nextBroker.url,
       token: redeemed.token,
@@ -252,7 +253,7 @@ export class OpenAIAuthSettingsService {
       instanceLabel: nextBroker.instanceLabel,
       userLabel: nextBroker.userLabel,
       timeoutMs: nextBroker.timeoutMs,
-    });
+    }, inviteRedactionSecrets);
 
     const nextFile: OpenAICodexAuthSourceFileV1 = {
       version: 1,
@@ -261,7 +262,7 @@ export class OpenAIAuthSettingsService {
         ...nextBroker,
         ...(redeemed.userLabel && !nextBroker.userLabel ? { userLabel: redeemed.userLabel } : {}),
         lastTestedAt: status.checkedAt,
-        lastStatus: redactBrokerStatus(status, [redeemed.token]),
+        lastStatus: redactBrokerStatus(status, [redeemed.token, ...inviteRedactionSecrets]),
       },
       updatedAt: this.now().toISOString(),
     };
@@ -302,22 +303,28 @@ export class OpenAIAuthSettingsService {
     return join(sharedAuthDir, OPENAI_CODEX_AUTH_SOURCE_FILE_NAME);
   }
 
-  private async testResolvedBroker(broker: ResolvedBrokerConfig & { token: string }): Promise<OpenAIBrokerSettingsStatus> {
+  private async testResolvedBroker(
+    broker: ResolvedBrokerConfig & { token: string },
+    redactionSecrets: readonly (string | undefined)[] = []
+  ): Promise<OpenAIBrokerSettingsStatus> {
+    const exactRedactionSecrets = [broker.token, ...redactionSecrets];
     try {
       const client = new OpenAIAuthBrokerClient({
         baseUrl: broker.url ?? "",
         bearerToken: broker.token,
         timeoutMs: broker.timeoutMs,
         now: this.now,
+        redactionSecrets,
       });
-      return await client.getStatus();
+      const status = await client.getStatus();
+      return redactBrokerStatus(status, exactRedactionSecrets) ?? status;
     } catch (error) {
       return {
         ok: false,
         degraded: error instanceof OpenAIAuthBrokerClientError && isKnownBrokerStatusReason(error.code)
           ? error.code
           : "unreachable",
-        message: redactOpenAIAuthBrokerText(error, [broker.token]),
+        message: redactOpenAIAuthBrokerText(error, exactRedactionSecrets),
         checkedAt: this.now().toISOString(),
       };
     }
