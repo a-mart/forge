@@ -60,20 +60,26 @@ interface PendingDelivery {
   mode: "steer" | "recovery_buffer";
 }
 
+interface PromptDispatchRestoreOptions {
+  restoreSessionMessagesOnFailure: unknown[];
+  restoreStage?: string;
+}
+
+type PromptDispatchResult = "sent" | "retry_scheduled" | "failed";
+
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
-const MAX_EMPTY_TURN_RESAMPLES = 2;
+const MAX_TERMINAL_REPORT_RESAMPLES = 2;
 const TERMINAL_WORKER_REPORT_PATTERNS = [
   /^WORKER REPORT:\s*status:\s*(?:done|partial|blocked)\b/i,
   /^SYSTEM:\s*status:\s*(?:done|partial|blocked)\b/i,
   /^SYSTEM:\s*Worker\s+\S+\s+completed its turn\b/i,
   /^SYSTEM:\s*Worker\s+\S+\s+ended its turn with an error\b/i,
 ];
-// Appended to the final resample. Empty turns proved deterministic for a given
-// context (identical input -> identical silence), while terse user-register
-// prods have always broken through; this line perturbs the tokens AND supplies
-// that register. Exported for tests.
-export const EMPTY_TURN_REDELIVERY_DIRECTIVE =
-  "The user is waiting on this outcome and has not been updated. Send them the update with speak_to_user now.";
+// Appended when re-delivering terminal worker reports after a manager turn with
+// no visible side effect. Exported for tests.
+export const TERMINAL_REPORT_REDELIVERY_DIRECTIVE =
+  "Plain assistant text is not visible here. Use speak_to_user, present_choices, delegate/follow up, or take an intentional non-user-visible coordination action now.";
+export const EMPTY_TURN_REDELIVERY_DIRECTIVE = TERMINAL_REPORT_REDELIVERY_DIRECTIVE;
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
 const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;
@@ -185,7 +191,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
   private suppressSessionEventsUntilIdle = false;
   private lastActivityAtMs = Date.now();
-  private emptyTurnResampleState: { triggerText: string; attempts: number } | undefined;
+  private terminalReportResampleState: { triggerText: string; attempts: number } | undefined;
+  private readonly promptDispatchRestoreOptions = new WeakMap<RuntimeUserMessage, PromptDispatchRestoreOptions>();
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -684,15 +691,36 @@ export class AgentRuntime implements SwarmAgentRuntime {
     return this.session.sessionManager.appendCustomEntry(customType, data);
   }
 
-  private dispatchPrompt(message: RuntimeUserMessage): void {
+  private dispatchPrompt(
+    message: RuntimeUserMessage,
+    options?: PromptDispatchRestoreOptions
+  ): void {
     this.promptDispatchPending = true;
     this.ignoreNextAgentStart = false;
+    if (options) {
+      this.promptDispatchRestoreOptions.set(message, options);
+    }
 
     const run = this.dispatchPromptWithRetry(message)
       .catch((error) => {
         this.logRuntimeError("prompt_dispatch", error, {
           stage: "dispatch_prompt_retry"
         });
+        return "failed" as const;
+      })
+      .then((result) => {
+        if (result === "retry_scheduled") {
+          return;
+        }
+
+        const restoreOptions = this.promptDispatchRestoreOptions.get(message);
+        this.promptDispatchRestoreOptions.delete(message);
+        if (result === "failed" && restoreOptions) {
+          this.replaceSessionAgentMessages(restoreOptions.restoreSessionMessagesOnFailure);
+          this.logRuntimeError("prompt_dispatch", new Error("Restored pruned session context after prompt dispatch failure"), {
+            stage: restoreOptions.restoreStage ?? "restore_session_messages_on_dispatch_failure"
+          });
+        }
       })
       .finally(() => {
         this.promptDispatchPending = false;
@@ -702,16 +730,15 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.inFlightPrompts.add(run);
   }
 
-  private async dispatchPromptWithRetry(message: RuntimeUserMessage): Promise<void> {
+  private async dispatchPromptWithRetry(message: RuntimeUserMessage): Promise<PromptDispatchResult> {
     try {
       await this.openAIAuthBrokerController?.beforeDispatch();
       await this.reconcilePooledAuthBeforeDispatch();
     } catch (error) {
-      await this.handlePromptDispatchError(error, message, {
+      return await this.handlePromptDispatchError(error, message, {
         attempt: 0,
         maxAttempts: MAX_PROMPT_DISPATCH_ATTEMPTS,
       });
-      return;
     }
 
     this.noteActivity();
@@ -720,7 +747,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     for (let attempt = 1; attempt <= MAX_PROMPT_DISPATCH_ATTEMPTS; attempt += 1) {
       try {
         await this.sendToSession(message.text, images);
-        return;
+        return "sent";
       } catch (error) {
         const canRetry =
           attempt < MAX_PROMPT_DISPATCH_ATTEMPTS &&
@@ -729,11 +756,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
           !this.session.isStreaming;
 
         if (this.openAIAuthBrokerController?.shouldHandleErrorBeforeGenericRetry(error)) {
-          await this.handlePromptDispatchError(error, message, {
+          return await this.handlePromptDispatchError(error, message, {
             attempt,
             maxAttempts: MAX_PROMPT_DISPATCH_ATTEMPTS
           });
-          return;
         }
 
         if (canRetry) {
@@ -747,13 +773,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
           continue;
         }
 
-        await this.handlePromptDispatchError(error, message, {
+        return await this.handlePromptDispatchError(error, message, {
           attempt,
           maxAttempts: MAX_PROMPT_DISPATCH_ATTEMPTS
         });
-        return;
       }
     }
+
+    return "failed";
   }
 
   private async sendToSession(text: string, images: ImageContent[]): Promise<void> {
@@ -860,10 +887,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (event.type === "agent_end") {
       this.currentTurnReplayMessages = [];
-      if (await this.maybeResampleEmptyTerminalReportTurn()) {
+      if (await this.maybeResampleUnhandledTerminalReportTurn()) {
         return;
       }
-      this.emptyTurnResampleState = undefined;
+      this.terminalReportResampleState = undefined;
       await this.openAIAuthBrokerController?.reportSuccess();
       if (this.status !== "terminated") {
         await this.updateStatus("idle");
@@ -1227,16 +1254,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
     error: unknown,
     message: RuntimeUserMessage,
     dispatchMeta?: { attempt: number; maxAttempts: number }
-  ): Promise<void> {
+  ): Promise<PromptDispatchResult> {
     const normalized = normalizeRuntimeError(error);
 
     // ── Credential pool failover for rate-limit / quota errors ──
     if (this.openAIAuthBrokerController?.hasLease()) {
       const handled = await this.openAIAuthBrokerController.attemptRecovery(error, normalized.message, message);
-      if (handled) return;
+      if (handled) return "retry_scheduled";
     } else if (this.pooledCredentialId && this.credentialPoolService) {
       const rotated = await this.attemptCredentialRotation(error, normalized.message, message);
-      if (rotated) return; // retry dispatched with new credential
+      if (rotated) return "retry_scheduled"; // retry dispatched with new credential
     }
 
     const phase: RuntimeErrorEvent["phase"] = isLikelyCompactionError(normalized.message)
@@ -1283,6 +1310,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
         });
       }
     }
+
+    return "failed";
   }
 
   private noteActivity(): void {
@@ -1773,18 +1802,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   /**
    * gpt-5.x managers intermittently answer a worker's terminal report with a
-   * whitespace-only turn (no tool calls, stopReason "stop"), leaving the user
-   * with no update. The turn is side-effect free, so drop it together with the
-   * triggering report from the in-memory context and re-dispatch the report.
-   * The empty response is deterministic for a given context, so attempts
-   * escalate: the first resample re-sends the report verbatim, the final one
-   * appends EMPTY_TURN_REDELIVERY_DIRECTIVE (new tokens, user-register demand).
-   * Budget is keyed on the directive-stripped report text so an empty answer
-   * to the escalated redelivery exhausts the budget instead of resetting it.
-   * On exhaustion the turn end proceeds normally and a silent_turn runtime
-   * notice is emitted so the silence is visible in the conversation feed.
+   * side-effect-free assistant turn (no tool calls, stopReason "stop"). That
+   * can be whitespace-only or non-empty plain text; both leave the user with no
+   * visible update because manager plain assistant text is hidden. Drop the
+   * report and unhandled assistant from in-memory context, then re-dispatch the
+   * report with a bounded retry budget keyed to the directive-stripped report.
    */
-  private async maybeResampleEmptyTerminalReportTurn(): Promise<boolean> {
+  private async maybeResampleUnhandledTerminalReportTurn(): Promise<boolean> {
     if (this.descriptor.role !== "manager" || this.status === "terminated") {
       return false;
     }
@@ -1798,53 +1822,65 @@ export class AgentRuntime implements SwarmAgentRuntime {
     if (!assistantMessage || !triggerMessage || assistantMessage.role !== "assistant" || triggerMessage.role !== "user") {
       return false;
     }
-    if (assistantMessage.stopReason !== "stop" || !isSilentAssistantMessage(assistantMessage)) {
+
+    const unhandledKind = classifyUnhandledTerminalReportAssistant(assistantMessage);
+    if (!unhandledKind) {
       return false;
     }
 
-    const reportText = stripEmptyTurnRedeliveryDirective(extractTextFromMessageRecord(triggerMessage));
+    const reportText = stripTerminalReportRedeliveryDirective(extractTextFromMessageRecord(triggerMessage));
     if (!isTerminalWorkerReport(reportText)) {
       return false;
     }
 
     const previousAttempts =
-      this.emptyTurnResampleState?.triggerText === reportText ? this.emptyTurnResampleState.attempts : 0;
-    if (previousAttempts >= MAX_EMPTY_TURN_RESAMPLES) {
-      console.error(`[swarm][${this.now()}] manager:silent_turn`, {
+      this.terminalReportResampleState?.triggerText === reportText ? this.terminalReportResampleState.attempts : 0;
+    if (previousAttempts >= MAX_TERMINAL_REPORT_RESAMPLES) {
+      console.error(`[swarm][${this.now()}] manager:terminal_report_unhandled`, {
         runtime: "pi",
         agentId: this.descriptor.agentId,
+        reason: unhandledKind,
         resampleAttempts: previousAttempts,
         triggerPreview: previewForLog(reportText)
       });
       await this.reportRuntimeError({
         phase: "silent_turn",
-        message: "Manager produced no response to a worker's final report",
+        message: "Manager produced no visible response to a worker's final report",
         details: {
+          reason: unhandledKind,
           resampleAttempts: previousAttempts,
           triggerPreview: previewForLog(reportText),
           userFacingMessage:
-            "⚠️ The manager processed a worker's final report but did not produce a response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."
+            "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."
         }
       });
       return false;
     }
 
     const attempt = previousAttempts + 1;
-    const escalate = attempt >= MAX_EMPTY_TURN_RESAMPLES;
-    this.emptyTurnResampleState = { triggerText: reportText, attempts: attempt };
+    const addDirective = unhandledKind === "hidden_text" || attempt >= MAX_TERMINAL_REPORT_RESAMPLES;
+    this.terminalReportResampleState = { triggerText: reportText, attempts: attempt };
+    const restoreMessagesOnFailure = messages.map((message) => structuredClone(message));
     this.replaceSessionAgentMessages(messages.slice(0, -2));
-    this.closeStaleOpenAICodexWebSocketSession("empty_turn_resample");
-    console.warn(`[swarm][${this.now()}] manager:empty_turn_resample`, {
+    this.closeStaleOpenAICodexWebSocketSession("terminal_report_resample");
+    console.warn(`[swarm][${this.now()}] manager:terminal_report_resample`, {
       runtime: "pi",
       agentId: this.descriptor.agentId,
+      reason: unhandledKind,
       attempt,
-      maxAttempts: MAX_EMPTY_TURN_RESAMPLES,
-      escalated: escalate,
+      maxAttempts: MAX_TERMINAL_REPORT_RESAMPLES,
+      directiveAdded: addDirective,
       triggerPreview: previewForLog(reportText)
     });
-    this.dispatchPrompt({
-      text: escalate ? `${reportText}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}` : reportText
-    });
+    this.dispatchPrompt(
+      {
+        text: addDirective ? `${reportText}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}` : reportText
+      },
+      {
+        restoreSessionMessagesOnFailure: restoreMessagesOnFailure,
+        restoreStage: "terminal_report_resample_dispatch_failed"
+      }
+    );
     return true;
   }
 
@@ -2197,32 +2233,46 @@ function cloneRuntimeUserMessage(message: RuntimeUserMessage | undefined): Runti
   };
 }
 
-function isSilentAssistantMessage(message: Record<string, any>): boolean {
-  const content = message.content;
-  if (typeof content === "string") {
-    return content.trim().length === 0;
-  }
-  if (!Array.isArray(content)) {
-    return content === undefined || content === null;
+type UnhandledTerminalReportAssistantKind = "empty" | "hidden_text";
+
+function classifyUnhandledTerminalReportAssistant(
+  message: Record<string, any>
+): UnhandledTerminalReportAssistantKind | undefined {
+  if (message.stopReason !== "stop") {
+    return undefined;
   }
 
+  const content = message.content;
+  if (typeof content === "string") {
+    return content.trim().length === 0 ? "empty" : "hidden_text";
+  }
+  if (!Array.isArray(content)) {
+    return content === undefined || content === null ? "empty" : undefined;
+  }
+
+  let sawNonEmptyText = false;
   for (const block of content) {
     if (!block || typeof block !== "object") {
       continue;
     }
     const type = (block as { type?: unknown }).type;
-    if (type === "toolCall" || type === "tool_use") {
-      return false;
+    if (isAssistantToolOrSideEffectBlockType(type)) {
+      return undefined;
     }
-    if (type === "text") {
-      const text = (block as { text?: unknown }).text;
-      if (typeof text === "string" && text.trim().length > 0) {
-        return false;
-      }
+    if (type !== "text") {
+      continue;
+    }
+    const text = (block as { text?: unknown }).text;
+    if (typeof text === "string" && text.trim().length > 0) {
+      sawNonEmptyText = true;
     }
   }
 
-  return true;
+  return sawNonEmptyText ? "hidden_text" : "empty";
+}
+
+function isAssistantToolOrSideEffectBlockType(type: unknown): boolean {
+  return type === "toolCall" || type === "tool_use" || type === "toolResult" || type === "tool_result";
 }
 
 function isTerminalWorkerReport(text: string): boolean {
@@ -2230,8 +2280,8 @@ function isTerminalWorkerReport(text: string): boolean {
   return TERMINAL_WORKER_REPORT_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-function stripEmptyTurnRedeliveryDirective(text: string): string {
-  const suffix = `\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`;
+function stripTerminalReportRedeliveryDirective(text: string): string {
+  const suffix = `\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`;
   return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
 }
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
-import { AgentRuntime, EMPTY_TURN_REDELIVERY_DIRECTIVE } from '../swarm/agent-runtime.js'
+import { AgentRuntime, TERMINAL_REPORT_REDELIVERY_DIRECTIVE } from '../swarm/agent-runtime.js'
 import type { AgentDescriptor } from '../swarm/types.js'
 
 const openAICodexResponsesMockState = vi.hoisted(() => ({
@@ -1373,6 +1373,27 @@ describe('manager empty-turn retry after worker terminal report', () => {
     expect(onAgentEnd).not.toHaveBeenCalled()
   })
 
+  it('resamples a blank terminal-report turn that also contains reasoning blocks', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(TERMINAL_CALLBACK),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'I should report this.' },
+          { type: 'text', text: ' ' },
+        ],
+        stopReason: 'stop',
+      },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([TERMINAL_CALLBACK])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
   it('resamples when the report arrived under the legacy SYSTEM status prefix', async () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [userMessage(LEGACY_SYSTEM_STATUS_CALLBACK), emptyAssistantMessage()]
@@ -1416,7 +1437,7 @@ describe('manager empty-turn retry after worker terminal report', () => {
     expect(openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions).toHaveBeenCalledWith('fake-session-id')
   })
 
-  it('escalates the final resample with the redelivery directive', async () => {
+  it('escalates the final empty-turn resample with the redelivery directive', async () => {
     const { session, runtime } = makeRuntime()
 
     session.state.messages = [userMessage(TERMINAL_CALLBACK), emptyAssistantMessage()]
@@ -1428,7 +1449,7 @@ describe('manager empty-turn retry after worker terminal report', () => {
     await (runtime as any).handleEvent({ type: 'agent_end' })
     await waitForCondition(() => session.promptCalls.length === 2)
 
-    expect(session.promptCalls[1]).toBe(`${TERMINAL_CALLBACK}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`)
+    expect(session.promptCalls[1]).toBe(`${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`)
   })
 
   it('counts an empty turn after the escalated redelivery toward the same budget', async () => {
@@ -1445,7 +1466,7 @@ describe('manager empty-turn retry after worker terminal report', () => {
     // The escalated redelivery itself comes back empty: history now holds the
     // directive-appended report. It must key to the same budget and stop.
     session.state.messages = [
-      userMessage(`${TERMINAL_CALLBACK}\n\n${EMPTY_TURN_REDELIVERY_DIRECTIVE}`),
+      userMessage(`${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`),
       emptyAssistantMessage(),
     ]
     await (runtime as any).handleEvent({ type: 'agent_end' })
@@ -1471,7 +1492,7 @@ describe('manager empty-turn retry after worker terminal report', () => {
     const [agentId, event] = onRuntimeError.mock.calls[0]
     expect(agentId).toBe('manager-1')
     expect(event.phase).toBe('silent_turn')
-    expect(event.details?.userFacingMessage).toContain('did not produce a response')
+    expect(event.details?.userFacingMessage).toContain('did not produce a visible response')
   })
 
   it('gives up after two resamples and reports the turn end', async () => {
@@ -1522,7 +1543,20 @@ describe('manager empty-turn retry after worker terminal report', () => {
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
   })
 
-  it('does not resample when the turn called tools or produced text', async () => {
+  it('does not resample post-spawn empty finals without a terminal worker report', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage('Please ask the backend specialist to investigate this.'),
+      emptyAssistantMessage(),
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('resamples non-empty hidden plain text that follows a terminal worker report', async () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [
       userMessage(TERMINAL_CALLBACK),
@@ -1530,8 +1564,87 @@ describe('manager empty-turn retry after worker terminal report', () => {
     ]
 
     await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([`${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`])
+    expect(session.state.messages).toEqual([])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('does not resample when the turn called tools', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(TERMINAL_CALLBACK),
+      { role: 'assistant', content: [{ type: 'toolCall', toolName: 'speak_to_user' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
 
     expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores the pruned terminal report context when resample dispatch fails', async () => {
+    const { session, runtime, onAgentEnd, onRuntimeError } = makeRuntime()
+    const originalMessages = [
+      userMessage(TERMINAL_CALLBACK),
+      { role: 'assistant', content: [{ type: 'text', text: 'noted, relaying now.' }], stopReason: 'stop' },
+    ]
+    session.state.messages = originalMessages.map((message) => structuredClone(message))
+    session.prompt = async (message: string): Promise<void> => {
+      session.promptCalls.push(message)
+      throw new Error('dispatch failed')
+    }
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => onRuntimeError.mock.calls.length > 0)
+    await waitForCondition(() => session.state.messages.length === 2)
+
+    expect(session.promptCalls).toEqual([
+      `${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`,
+      `${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`,
+    ])
+    expect(session.state.messages).toEqual(originalMessages)
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores the pruned terminal report context when credential rotation schedules a retry that fails', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    const originalMessages = [
+      userMessage(TERMINAL_CALLBACK),
+      { role: 'assistant', content: [{ type: 'text', text: 'noted, relaying now.' }], stopReason: 'stop' },
+    ]
+    session.state.messages = originalMessages.map((message) => structuredClone(message))
+    runtime.pooledCredentialId = 'cred_primary'
+    runtime.pooledCredentialProvider = 'openai-codex'
+    runtime.credentialPoolService = {
+      markAuthError: vi.fn(async () => {}),
+      select: vi.fn(async () => ({ credentialId: 'cred_second', authStorageKey: 'openai-codex' })),
+      buildRuntimeAuthData: vi.fn(async () => ({
+        'openai-codex': { type: 'oauth', access: 'token-2', accountId: 'acct_2' },
+      })),
+      markUsed: vi.fn(async () => {}),
+    } as any
+
+    session.prompt = async (message: string): Promise<void> => {
+      session.promptCalls.push(message)
+      if (session.promptCalls.length === 2) {
+        throw new Error('HTTP 403 forbidden: OAuth token expired')
+      }
+      throw new Error('provider outage')
+    }
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 4)
+    await waitForCondition(() => session.state.messages.length === 2)
+
+    expect(session.promptCalls).toEqual([
+      `${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`,
+      `${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`,
+      `${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`,
+      `${TERMINAL_CALLBACK}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`,
+    ])
+    expect(session.state.messages).toEqual(originalMessages)
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
   })
 
