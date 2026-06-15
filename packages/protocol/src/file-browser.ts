@@ -40,9 +40,78 @@ export interface FileSearchResult {
   unavailable?: true
 }
 
+export interface FileVersionToken {
+  kind: 'sha256-stat-v1'
+  sha256: string
+  size: number
+  mtimeMs: number
+}
+
+export type FileEditabilityReason =
+  | 'binary'
+  | 'too_large'
+  | 'unsupported_encoding'
+  | 'not_file'
+  | 'read_error'
+
+export interface FileEditability {
+  editable: boolean
+  reason?: FileEditabilityReason
+  maxEditableBytes: number
+}
+
 export interface FileContentResult {
   content: string | null
   binary: boolean
   size: number
   lines?: number
+  encoding?: 'utf8'
+  version?: FileVersionToken
+  editability?: FileEditability
 }
+
+export interface FileSaveNormalRequest {
+  agentId: string
+  path: string
+  content: string
+  baseVersion: FileVersionToken
+  worktreeId?: string | null
+  overwrite?: false
+}
+
+export interface FileSaveOverwriteRequest {
+  agentId: string
+  path: string
+  content: string
+  baseVersion: FileVersionToken
+  worktreeId?: string | null
+  overwrite: true
+}
+
+export type FileSaveRequest = FileSaveNormalRequest | FileSaveOverwriteRequest
+
+export type FileSaveConflictReason =
+  | 'modified'
+  | 'deleted'
+  | 'not_file'
+  | 'binary'
+  | 'too_large'
+  | 'unsupported_encoding'
+
+export interface FileSaveConflictResponse {
+  success: false
+  conflict: true
+  reason: FileSaveConflictReason
+  currentVersion?: FileVersionToken
+  currentSize?: number
+}
+
+export interface FileSaveSuccessResponse {
+  success: true
+  version: FileVersionToken
+  size: number
+  lines: number
+  bytesWritten: number
+}
+
+export type FileSaveResponse = FileSaveSuccessResponse | FileSaveConflictResponse

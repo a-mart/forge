@@ -215,12 +215,24 @@ describe("file routes", () => {
       `${harness.server.baseUrl}/api/files/content?agentId=manager-1&path=${encodeURIComponent("src/index.ts")}`,
     );
     expect(contentResponse.status).toBe(200);
-    await expect(contentResponse.json()).resolves.toEqual({
+    const contentPayload = (await contentResponse.json()) as {
+      content: string;
+      binary: boolean;
+      size: number;
+      lines: number;
+      encoding?: string;
+      version?: { kind: string };
+      editability?: { editable: boolean };
+    };
+    expect(contentPayload).toMatchObject({
       content: "line one\nline two\n",
       binary: false,
       size: 18,
       lines: 3,
+      encoding: "utf8",
     });
+    expect(contentPayload.version?.kind).toBe("sha256-stat-v1");
+    expect(contentPayload.editability?.editable).toBe(true);
   });
 
   it("rejects file-browser traversal outside the agent cwd", async () => {
@@ -283,11 +295,19 @@ describe("file routes", () => {
       `${harness.server.baseUrl}/api/files/content?agentId=manager-1&worktreeId=${harness.secondaryWorktreeId}&path=${encodeURIComponent("linked-only.txt")}`,
     );
     expect(contentResponse.status).toBe(200);
-    await expect(contentResponse.json()).resolves.toEqual({
+    const linkedContent = (await contentResponse.json()) as {
+      content: string;
+      binary: boolean;
+      size: number;
+      lines: number;
+      encoding?: string;
+    };
+    expect(linkedContent).toMatchObject({
       content: "linked only\n",
       binary: false,
       size: 12,
       lines: 2,
+      encoding: "utf8",
     });
 
     const invalidResponse = await fetch(

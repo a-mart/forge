@@ -3,11 +3,19 @@ import type {
   FileContentResult,
   FileCountResult,
   FileListResult,
+  FileSaveRequest,
+  FileSaveResponse,
   FileSearchResult,
+  FileVersionToken,
 } from "@forge/protocol";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
-import { applyCorsHeaders, sendJson } from "../../http-utils.js";
-import { FileBrowserService } from "../services/file-browser-service.js";
+import { applyCorsHeaders, parseJsonBody, sendJson } from "../../http-utils.js";
+import {
+  FileBrowserService,
+  MAX_FILE_SAVE_BODY_BYTES,
+  MAX_FILE_SAVE_BYTES,
+} from "../services/file-browser-service.js";
 import type { HttpRoute } from "../shared/http-route.js";
 import {
   resolveCwdFromAgent,
@@ -15,6 +23,7 @@ import {
 } from "../shared/route-helpers.js";
 
 const FILE_BROWSER_GET_METHODS = "GET, OPTIONS";
+const FILE_CONTENT_METHODS = "GET, PUT, OPTIONS";
 const DEFAULT_SEARCH_LIMIT = 50;
 const MAX_SEARCH_LIMIT = 200;
 
@@ -58,7 +67,7 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
   return [
     handleGet("/api/files/list", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
-      const requestedPath = requestUrl.searchParams.get("path")?.trim() ?? "";
+      const requestedPath = requestUrl.searchParams.get("path") ?? "";
       const { cwd, context } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
       const result: FileListResult = await service.listDirectory(cwd, requestedPath);
       return attachFileBrowserContext(result, context);
@@ -83,14 +92,145 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
       const result: FileSearchResult = await service.searchFiles(cwd, query, limit);
       return result;
     }),
-    handleGet("/api/files/content", async (requestUrl) => {
-      const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
-      const filePath = requireNonEmptyQuery(requestUrl.searchParams, "path");
-      const { cwd } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
-      const result: FileContentResult = await service.getFileContent(cwd, filePath);
-      return result;
-    })
+    {
+      methods: FILE_CONTENT_METHODS,
+      matches: (pathname) => pathname === "/api/files/content",
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, FILE_CONTENT_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method === "GET") {
+          applyCorsHeaders(request, response, FILE_CONTENT_METHODS);
+
+          try {
+            const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+            const filePath = requireNonEmptyPathQuery(requestUrl.searchParams, "path");
+            const { cwd } = await resolveFileBrowserContext(swarmManager, agentId, requestUrl);
+            const result: FileContentResult = await service.getFileContent(cwd, filePath);
+            sendJson(response, 200, result as unknown as Record<string, unknown>);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "File browser request failed.";
+            sendJson(response, resolveHttpStatusCode(message), { error: message });
+          }
+          return;
+        }
+
+        if (request.method === "PUT") {
+          applyCorsHeaders(request, response, FILE_CONTENT_METHODS);
+          await handlePutFileContent(request, response, swarmManager, service);
+          return;
+        }
+
+        applyCorsHeaders(request, response, FILE_CONTENT_METHODS);
+        response.setHeader("Allow", FILE_CONTENT_METHODS);
+        sendJson(response, 405, { error: "Method Not Allowed" });
+      }
+    }
   ];
+}
+
+async function handlePutFileContent(
+  request: IncomingMessage,
+  response: ServerResponse,
+  swarmManager: SwarmManager,
+  service: FileBrowserService
+): Promise<void> {
+  try {
+    const payload = await parseJsonBody(request, MAX_FILE_SAVE_BODY_BYTES);
+    if (!payload || typeof payload !== "object") {
+      sendJson(response, 400, { error: "Request body must be a JSON object." });
+      return;
+    }
+
+    const saveRequest = payload as Partial<FileSaveRequest>;
+    const agentId = saveRequest.agentId;
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      sendJson(response, 400, { error: "agentId must be a non-empty string." });
+      return;
+    }
+
+    const filePath = saveRequest.path;
+    if (typeof filePath !== "string" || filePath.length === 0) {
+      sendJson(response, 400, { error: "path must be a non-empty string." });
+      return;
+    }
+
+    if (typeof saveRequest.content !== "string") {
+      sendJson(response, 400, { error: "content must be a string." });
+      return;
+    }
+
+    if (!isValidFileVersionToken(saveRequest.baseVersion)) {
+      sendJson(response, 400, { error: "baseVersion must be a valid file version token." });
+      return;
+    }
+
+    const contentBytes = Buffer.byteLength(saveRequest.content, "utf8");
+    if (contentBytes > MAX_FILE_SAVE_BYTES) {
+      sendJson(response, 413, { error: `Save content exceeds ${MAX_FILE_SAVE_BYTES} byte limit.` });
+      return;
+    }
+
+    const normalizedAgentId = agentId.trim();
+    const { cwd } = await resolveFileBrowserContextByWorktree(
+      swarmManager,
+      normalizedAgentId,
+      saveRequest.worktreeId
+    );
+
+    const overwrite = saveRequest.overwrite === true;
+    const result: FileSaveResponse = await service.saveFileContent({
+      cwd,
+      relativePath: filePath,
+      content: saveRequest.content,
+      baseVersion: saveRequest.baseVersion,
+      overwrite,
+      onSaved: ({ resolvedPath }) => {
+        try {
+          const versioningService = swarmManager.getVersioningService();
+          if (!versioningService) {
+            return;
+          }
+
+          let tracked = false;
+          try {
+            tracked = versioningService.isTrackedPath(resolvedPath);
+          } catch {
+            return;
+          }
+
+          if (!tracked) {
+            return;
+          }
+
+          void versioningService.recordMutation({
+            path: resolvedPath,
+            action: "write",
+            source: "api-write-file",
+            agentId: normalizedAgentId
+          }).catch(() => {
+            // Fail open: editor saves succeed even when versioning cannot record them.
+          });
+        } catch {
+          // Fail open: lookup/isTrackedPath/getVersioningService failures must not fail the save.
+        }
+      }
+    });
+
+    if (!result.success) {
+      sendJson(response, 409, result as unknown as Record<string, unknown>);
+      return;
+    }
+
+    sendJson(response, 200, result as unknown as Record<string, unknown>);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save file.";
+    sendJson(response, resolveSaveHttpStatusCode(message), { error: message });
+  }
 }
 
 async function resolveFileBrowserContext(
@@ -99,9 +239,20 @@ async function resolveFileBrowserContext(
   requestUrl: URL
 ): Promise<{ cwd: string; context: FileBrowserSourceContext }> {
   const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
-  const sessionCwd = resolveCwdFromAgent(swarmManager, agentId);
+  return resolveFileBrowserContextByWorktree(swarmManager, agentId, worktreeId);
+}
 
-  if (!worktreeId) {
+async function resolveFileBrowserContextByWorktree(
+  swarmManager: SwarmManager,
+  agentId: string,
+  worktreeId?: string | null
+): Promise<{ cwd: string; context: FileBrowserSourceContext }> {
+  const sessionCwd = resolveCwdFromAgent(swarmManager, agentId);
+  const normalizedWorktreeId = optionalTrimmedQuery(
+    typeof worktreeId === "string" ? worktreeId : null
+  );
+
+  if (!normalizedWorktreeId) {
     return {
       cwd: sessionCwd,
       context: {
@@ -111,7 +262,7 @@ async function resolveFileBrowserContext(
     };
   }
 
-  const gitContext = await resolveGitSourceControlContext(swarmManager, agentId, "workspace", worktreeId);
+  const gitContext = await resolveGitSourceControlContext(swarmManager, agentId, "workspace", normalizedWorktreeId);
   return {
     cwd: gitContext.cwd,
     context: {
@@ -133,6 +284,23 @@ function attachFileBrowserContext(
   };
 }
 
+function isValidFileVersionToken(value: unknown): value is FileVersionToken {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const token = value as FileVersionToken;
+  return (
+    token.kind === "sha256-stat-v1" &&
+    typeof token.sha256 === "string" &&
+    token.sha256.length > 0 &&
+    typeof token.size === "number" &&
+    Number.isFinite(token.size) &&
+    typeof token.mtimeMs === "number" &&
+    Number.isFinite(token.mtimeMs)
+  );
+}
+
 function optionalTrimmedQuery(value: string | null): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -140,6 +308,15 @@ function optionalTrimmedQuery(value: string | null): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function requireNonEmptyPathQuery(searchParams: URLSearchParams, key: string): string {
+  const value = searchParams.get(key);
+  if (value === null || value.length === 0) {
+    throw new Error(`${key} must be a non-empty string.`);
+  }
+
+  return value;
 }
 
 function requireNonEmptyQuery(searchParams: URLSearchParams, key: string): string {
@@ -173,7 +350,7 @@ function parseNumberParam(
 function resolveHttpStatusCode(message: string): number {
   const normalized = message.toLowerCase();
 
-  if (normalized.includes("outside cwd") || normalized.includes("not readable")) {
+  if (normalized.includes("outside cwd") || normalized.includes("not readable") || normalized.includes("not writable")) {
     return 403;
   }
 
@@ -186,9 +363,25 @@ function resolveHttpStatusCode(message: string): number {
     return 400;
   }
 
+  if (normalized.includes("too large") || normalized.includes("exceeds")) {
+    return 413;
+  }
+
   if (normalized.includes("unknown agent") || normalized.includes("not found")) {
     return 404;
   }
 
   return 500;
+}
+
+function resolveSaveHttpStatusCode(message: string): number {
+  if (message.includes("Request body exceeds")) {
+    return 413;
+  }
+
+  if (message.includes("Save content exceeds")) {
+    return 413;
+  }
+
+  return resolveHttpStatusCode(message);
 }

@@ -33,6 +33,7 @@ interface FileBrowserSidebarProps {
   desktopPlacement?: 'left' | 'right'
   desktopOnly?: boolean
   mobileOnly?: boolean
+  refreshNonce?: number
 }
 
 export function FileBrowserSidebar({
@@ -49,6 +50,7 @@ export function FileBrowserSidebar({
   desktopPlacement = 'right',
   desktopOnly = false,
   mobileOnly = false,
+  refreshNonce = 0,
 }: FileBrowserSidebarProps) {
   const fileTreeRef = useRef<FileTreeHandle>(null)
   const [seedStatus, setSeedStatus] = useState<'idle' | 'saving' | 'success'>('idle')
@@ -103,6 +105,12 @@ export function FileBrowserSidebar({
     const scaffold = projectResources.data?.scaffold
     return !!scaffold?.canSeed && scaffold.missing.length > 0
   }, [projectResources.data, worktreeContext])
+
+  useEffect(() => {
+    if (refreshNonce > 0) {
+      handleRefresh({ resetSeedStatus: false })
+    }
+  }, [handleRefresh, refreshNonce])
 
   const handleSeedProjectForge = useCallback(() => {
     if (!projectResourceProfileId || !projectResourceSessionAgentId || seedStatus === 'saving') return

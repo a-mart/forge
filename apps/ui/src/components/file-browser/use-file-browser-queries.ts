@@ -3,15 +3,24 @@ import type {
   FileContentResult,
   FileCountResult,
   FileListResult,
+  FileSaveRequest,
+  FileSaveResponse,
+  FileSaveSuccessResponse,
   FileSearchResult,
+  FileVersionToken,
   ProjectResourceMutationResponse,
   ProjectResourcesSnapshotResponse,
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import { invalidateGitCaches } from '@/components/diff-viewer/use-diff-queries'
 
 export type {
   FileContentResult,
   FileListResult,
+  FileSaveRequest,
+  FileSaveResponse,
+  FileSaveSuccessResponse,
+  FileVersionToken,
   ProjectResourcesSnapshotResponse,
 }
 
@@ -70,6 +79,71 @@ async function fetchJson<T>(
   return response.json() as Promise<T>
 }
 
+const FILE_SAVE_CONFLICT_REASONS = new Set([
+  'modified',
+  'deleted',
+  'not_file',
+  'binary',
+  'too_large',
+  'unsupported_encoding',
+])
+
+function isFileVersionToken(value: unknown): value is FileVersionToken {
+  if (!value || typeof value !== 'object') return false
+  const token = value as Partial<FileVersionToken>
+  return token.kind === 'sha256-stat-v1' &&
+    typeof token.sha256 === 'string' &&
+    token.sha256.length > 0 &&
+    typeof token.size === 'number' &&
+    Number.isFinite(token.size) &&
+    typeof token.mtimeMs === 'number' &&
+    Number.isFinite(token.mtimeMs)
+}
+
+function isFileSaveResponse(value: unknown): value is FileSaveResponse {
+  if (!value || typeof value !== 'object') return false
+  const response = value as Partial<FileSaveResponse>
+
+  if (response.success === true) {
+    return isFileVersionToken(response.version) &&
+      typeof response.size === 'number' &&
+      Number.isFinite(response.size) &&
+      typeof response.lines === 'number' &&
+      Number.isFinite(response.lines) &&
+      typeof response.bytesWritten === 'number' &&
+      Number.isFinite(response.bytesWritten)
+  }
+
+  if (response.success === false) {
+    return response.conflict === true &&
+      typeof response.reason === 'string' &&
+      FILE_SAVE_CONFLICT_REASONS.has(response.reason) &&
+      (response.currentVersion === undefined || isFileVersionToken(response.currentVersion)) &&
+      (response.currentSize === undefined || (typeof response.currentSize === 'number' && Number.isFinite(response.currentSize)))
+  }
+
+  return false
+}
+
+async function parseResponseJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+function getResponseErrorMessage(payload: unknown, response: Response): string {
+  if (payload && typeof payload === 'object') {
+    const error = (payload as { error?: unknown }).error
+    if (typeof error === 'string' && error.trim().length > 0) {
+      return error
+    }
+  }
+
+  return response.statusText || `HTTP ${response.status}`
+}
+
 /* ------------------------------------------------------------------ */
 /*  Lightweight query hook (same pattern as use-diff-queries.ts)       */
 /* ------------------------------------------------------------------ */
@@ -101,25 +175,27 @@ function useSimpleQuery<T>(
   fetchFn: () => Promise<T>,
   options: { enabled: boolean; staleTime: number },
 ): QueryResult<T> {
-  const [data, setData] = useState<T | null>(() => {
+  const [dataState, setDataState] = useState<{ queryKey: string; data: T | null }>(() => {
     const cached = queryCache.get(queryKey)
     if (cached && Date.now() - cached.fetchedAt < options.staleTime) {
-      return cached.data as T
+      return { queryKey, data: cached.data as T }
     }
-    return null
+    return { queryKey, data: null }
   })
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fetchKeyRef = useRef(0)
 
   // Reset state when queryKey changes to prevent stale data flash.
-  // Uses an effect rather than render-time state reset to keep render pure.
+  // Uses an effect rather than render-time state reset to keep render pure;
+  // the returned value is additionally keyed below so stale data is hidden
+  // synchronously during the first render after a key change.
   useEffect(() => {
     const cached = queryCache.get(queryKey)
     if (cached && Date.now() - cached.fetchedAt < options.staleTime) {
-      setData(cached.data as T)
+      setDataState({ queryKey, data: cached.data as T })
     } else {
-      setData(null)
+      setDataState({ queryKey, data: null })
     }
     setError(null)
   }, [queryKey, options.staleTime])
@@ -132,7 +208,7 @@ function useSimpleQuery<T>(
 
     const cached = queryCache.get(queryKey)
     if (cached && Date.now() - cached.fetchedAt < options.staleTime) {
-      setData(cached.data as T)
+      setDataState({ queryKey, data: cached.data as T })
       setError(null)
       return
     }
@@ -145,7 +221,7 @@ function useSimpleQuery<T>(
         if (key !== fetchKeyRef.current) return
         queryCache.set(queryKey, { data: result, fetchedAt: Date.now() })
         evictOldestCacheEntries()
-        setData(result)
+        setDataState({ queryKey, data: result })
         setError(null)
       })
       .catch((err: unknown) => {
@@ -166,6 +242,8 @@ function useSimpleQuery<T>(
   useEffect(() => {
     doFetch()
   }, [doFetch])
+
+  const data = dataState.queryKey === queryKey ? dataState.data : null
 
   return { data, isLoading: isLoading && !data, error, refetch }
 }
@@ -283,6 +361,99 @@ export function seedProjectResources(
   })
 }
 
+export async function saveFileContent(
+  wsUrl: string,
+  request: FileSaveRequest,
+): Promise<FileSaveResponse> {
+  const url = resolveApiEndpoint(wsUrl, '/api/files/content')
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+
+  const payload = await parseResponseJson(response)
+
+  if (response.status === 200 || response.status === 409) {
+    if (!isFileSaveResponse(payload)) {
+      throw new Error(`Malformed file save response (HTTP ${response.status})`)
+    }
+
+    if (response.status === 200 && payload.success === true) {
+      return payload
+    }
+
+    if (response.status === 409 && payload.success === false && payload.conflict === true) {
+      return payload
+    }
+
+    throw new Error(`Malformed file save response (HTTP ${response.status})`)
+  }
+
+  if (!response.ok) {
+    throw new Error(getResponseErrorMessage(payload, response))
+  }
+
+  throw new Error(`Unexpected file save status ${response.status}`)
+}
+
+export interface ApplySuccessfulFileSaveOptions {
+  agentId: string
+  worktreeId?: string | null
+  filePath: string
+  previousContent: FileContentResult | null
+  draftContent: string
+  saveResponse: FileSaveSuccessResponse
+}
+
+export interface FileSaveRefreshTargets {
+  content: true
+  sidebar: true
+  tree: true
+  sourceControl: true
+}
+
+export interface ApplySuccessfulFileSaveResult {
+  content: FileContentResult
+  refresh: FileSaveRefreshTargets
+}
+
+export function applySuccessfulFileSaveToCaches({
+  agentId,
+  worktreeId = null,
+  filePath,
+  previousContent,
+  draftContent,
+  saveResponse,
+}: ApplySuccessfulFileSaveOptions): ApplySuccessfulFileSaveResult {
+  const nextContent: FileContentResult = {
+    ...(previousContent ?? {}),
+    content: draftContent,
+    binary: false,
+    size: saveResponse.size,
+    lines: saveResponse.lines,
+    encoding: 'utf8',
+    version: saveResponse.version,
+    editability: previousContent?.editability
+      ? { ...previousContent.editability, editable: true }
+      : undefined,
+  }
+
+  setFileContentCache(agentId, worktreeId, filePath, nextContent)
+  invalidateFileBrowserMetadataCaches()
+  invalidateGitCaches({ agentId, repoTarget: 'workspace' })
+
+  return {
+    content: nextContent,
+    refresh: {
+      content: true,
+      sidebar: true,
+      tree: true,
+      sourceControl: true,
+    },
+  }
+}
+
 export function useFileContent(
   wsUrl: string,
   agentId: string | null,
@@ -291,12 +462,7 @@ export function useFileContent(
 ) {
   const queryKey = buildFileBrowserQueryKey('files:content', agentId, worktreeId, filePath ?? '')
   const fetchFn = useCallback(
-    () =>
-      fetchFileBrowserApi<FileContentResult>(
-        wsUrl,
-        '/api/files/content',
-        buildFileBrowserParams(agentId!, { path: filePath! }, worktreeId),
-      ),
+    () => fetchFileContent(wsUrl, agentId!, filePath!, worktreeId),
     [wsUrl, agentId, filePath, worktreeId],
   )
 
@@ -304,6 +470,47 @@ export function useFileContent(
     enabled: !!agentId && !!filePath,
     staleTime: 30_000,
   })
+}
+
+export async function fetchFileContent(
+  wsUrl: string,
+  agentId: string,
+  filePath: string,
+  worktreeId?: string | null,
+): Promise<FileContentResult> {
+  return fetchFileBrowserApi<FileContentResult>(
+    wsUrl,
+    '/api/files/content',
+    buildFileBrowserParams(agentId, { path: filePath }, worktreeId),
+  )
+}
+
+export function setFileContentCache(
+  agentId: string,
+  worktreeId: string | null | undefined,
+  filePath: string,
+  content: FileContentResult,
+) {
+  const queryKey = buildFileBrowserQueryKey('files:content', agentId, worktreeId, filePath)
+  queryCache.set(queryKey, { data: content, fetchedAt: Date.now() })
+  evictOldestCacheEntries()
+}
+
+export function invalidateFileContentCache(
+  agentId: string | null,
+  worktreeId: string | null | undefined,
+  filePath: string | null,
+) {
+  if (!agentId || !filePath) return
+  queryCache.delete(buildFileBrowserQueryKey('files:content', agentId, worktreeId, filePath))
+}
+
+export function invalidateFileBrowserMetadataCaches() {
+  for (const key of queryCache.keys()) {
+    if (key.startsWith('files:list') || key.startsWith('files:count') || key.startsWith('files:search')) {
+      queryCache.delete(key)
+    }
+  }
 }
 
 /** Invalidate all file browser caches (call on manual refresh) */

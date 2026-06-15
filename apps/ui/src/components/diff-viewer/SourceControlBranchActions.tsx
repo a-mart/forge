@@ -31,6 +31,11 @@ interface SourceControlBranchActionsProps {
   branchesQuery: GitBranchesQueryResult
   isDirty: boolean
   onMutationComplete: () => void
+  onRequestMutation?: (
+    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+    target: { agentId: string; worktreeId: string | null },
+    run: () => void,
+  ) => void
 }
 
 export function SourceControlBranchActions({
@@ -42,6 +47,7 @@ export function SourceControlBranchActions({
   branchesQuery,
   isDirty,
   onMutationComplete,
+  onRequestMutation,
 }: SourceControlBranchActionsProps) {
   const [branchMenuOpen, setBranchMenuOpen] = useState(false)
   const [newBranchName, setNewBranchName] = useState('')
@@ -188,16 +194,30 @@ export function SourceControlBranchActions({
     }
   }, [agentId, branchData, invalidateAfterMutation, repoTarget, worktreeId, wsUrl])
 
+  const requestMutationGuard = useCallback((
+    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+    run: () => void,
+  ) => {
+    if (!agentId) return
+    if (onRequestMutation) {
+      onRequestMutation(mutation, { agentId, worktreeId: worktreeId ?? null }, run)
+      return
+    }
+    run()
+  }, [agentId, onRequestMutation, worktreeId])
+
   const openSwitchConfirmation = useCallback((branch: GitBranchSummary) => {
     if (branch.kind === 'current') {
       return
     }
 
-    setActionError(null)
-    setActionWarning(null)
-    setPendingMutation({ kind: 'switch', branch: branch.name })
-    setBranchMenuOpen(false)
-  }, [])
+    requestMutationGuard('switch-branch', () => {
+      setActionError(null)
+      setActionWarning(null)
+      setPendingMutation({ kind: 'switch', branch: branch.name })
+      setBranchMenuOpen(false)
+    })
+  }, [requestMutationGuard])
 
   const openCreateConfirmation = useCallback(() => {
     const trimmed = newBranchName.trim()
@@ -205,15 +225,17 @@ export function SourceControlBranchActions({
       return
     }
 
-    setActionError(null)
-    setActionWarning(null)
-    setPendingMutation({
-      kind: 'create',
-      branch: trimmed,
-      startPoint: createFromRemote ?? undefined,
+    requestMutationGuard('create-branch', () => {
+      setActionError(null)
+      setActionWarning(null)
+      setPendingMutation({
+        kind: 'create',
+        branch: trimmed,
+        startPoint: createFromRemote ?? undefined,
+      })
+      setBranchMenuOpen(false)
     })
-    setBranchMenuOpen(false)
-  }, [createFromRemote, newBranchName])
+  }, [createFromRemote, newBranchName, requestMutationGuard])
 
   const confirmMutation = useCallback(async () => {
     if (!pendingMutation || !agentId || !branchData?.currentHead || !branchData.statusHash) {
@@ -447,9 +469,11 @@ export function SourceControlBranchActions({
           size="sm"
           className="h-7 px-2 text-xs"
           onClick={() => {
-            setActionError(null)
-            setActionWarning(null)
-            setPendingMutation({ kind: 'pull' })
+            requestMutationGuard('pull-ff-only', () => {
+              setActionError(null)
+              setActionWarning(null)
+              setPendingMutation({ kind: 'pull' })
+            })
           }}
           disabled={pullBlockedReasons.length > 0}
           title={pullBlockedReasons[0]}

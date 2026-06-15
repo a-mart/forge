@@ -27,6 +27,12 @@ export interface DiffViewerInitialState {
   initialQuickFilter?: KnowledgeQuickFilterId
 }
 
+type SourceControlMutationGuard = (
+  mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+  target: { agentId: string; worktreeId: string | null },
+  run: () => void,
+) => void
+
 interface DiffViewerDialogProps extends DiffViewerInitialState {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -34,6 +40,8 @@ interface DiffViewerDialogProps extends DiffViewerInitialState {
   agentId: string | null
   isCortex: boolean
   onBrowseWorktreeFiles?: (worktree: GitWorktreeSummary) => void
+  onRequestSourceControlMutation?: SourceControlMutationGuard
+  externalRefreshNonce?: number
 }
 
 interface DiffViewerContentProps extends DiffViewerInitialState {
@@ -43,6 +51,8 @@ interface DiffViewerContentProps extends DiffViewerInitialState {
   isCortex: boolean
   onClose: () => void
   onBrowseWorktreeFiles?: (worktree: GitWorktreeSummary) => void
+  onRequestSourceControlMutation?: SourceControlMutationGuard
+  externalRefreshNonce?: number
 }
 
 function getDefaultRepoTarget(isCortex: boolean): GitRepoTarget {
@@ -65,6 +75,8 @@ export function DiffViewerContent({
   initialFile,
   initialQuickFilter,
   onBrowseWorktreeFiles,
+  onRequestSourceControlMutation,
+  externalRefreshNonce = 0,
 }: DiffViewerContentProps) {
   const defaultTab = useMemo(() => initialTab ?? getDefaultTab(isCortex), [initialTab, isCortex])
   const defaultRepoTarget = useMemo(
@@ -77,6 +89,7 @@ export function DiffViewerContent({
   const [selectedWorktreeSummary, setSelectedWorktreeSummary] = useState<GitWorktreeSummary | null>(null)
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusInfo | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
+  const lastExternalRefreshNonceRef = useRef(externalRefreshNonce)
   const prevActiveRef = useRef(active)
   const prevContextKeyRef = useRef(`${agentId ?? ''}:${isCortex ? 'cortex' : 'workspace'}`)
 
@@ -131,6 +144,12 @@ export function DiffViewerContent({
       pullRequestsQuery.refetch()
     }
   }, [activeTab, agentId, branchesQuery, pullRequestsQuery, repoTarget, statusQuery, worktreesQuery])
+
+  useEffect(() => {
+    if (!active || externalRefreshNonce === 0 || externalRefreshNonce === lastExternalRefreshNonceRef.current) return
+    lastExternalRefreshNonceRef.current = externalRefreshNonce
+    handleRefresh()
+  }, [active, externalRefreshNonce, handleRefresh])
 
   const handleRepoTargetChange = useCallback((nextTarget: GitRepoTarget) => {
     setRepoTarget(nextTarget)
@@ -195,6 +214,7 @@ export function DiffViewerContent({
               branchesQuery={branchesQuery}
               isDirty={(statusQuery.data?.summary.filesChanged ?? 0) > 0}
               onMutationComplete={handleRefresh}
+              onRequestMutation={onRequestSourceControlMutation}
             />
           ) : null
         }
@@ -336,6 +356,8 @@ export function DiffViewerDialog({
   initialFile,
   initialQuickFilter,
   onBrowseWorktreeFiles,
+  onRequestSourceControlMutation,
+  externalRefreshNonce,
 }: DiffViewerDialogProps) {
   const handleClose = useCallback(() => {
     onOpenChange(false)
@@ -373,6 +395,8 @@ export function DiffViewerDialog({
             isCortex={isCortex}
             onClose={handleClose}
             onBrowseWorktreeFiles={onBrowseWorktreeFiles}
+            onRequestSourceControlMutation={onRequestSourceControlMutation}
+            externalRefreshNonce={externalRefreshNonce}
             initialRepoTarget={initialRepoTarget}
             initialTab={initialTab}
             initialSha={initialSha}

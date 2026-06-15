@@ -5,6 +5,25 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FileBrowserPanel } from './FileBrowserPanel'
+import type { FileEditSessionController } from './use-file-edit-session'
+
+const capturedViewerProps: Array<Record<string, unknown>> = []
+
+const cachedFileContent = {
+  content: 'cached content',
+  binary: false,
+  size: 14,
+  lines: 1,
+  encoding: 'utf8' as const,
+  version: { kind: 'sha256-stat-v1' as const, sha256: 'cached', size: 14, mtimeMs: 1 },
+  editability: { editable: true, maxEditableBytes: 1024 },
+}
+
+const useFileContentMock = vi.fn(() => ({
+  data: cachedFileContent,
+  isLoading: false,
+  error: null,
+}))
 
 vi.mock('./use-file-browser-queries', () => ({
   useDirectoryListing: () => ({
@@ -12,15 +31,14 @@ vi.mock('./use-file-browser-queries', () => ({
     isLoading: false,
     error: null,
   }),
-  useFileContent: () => ({
-    data: { content: 'hello', size: 5 },
-    isLoading: false,
-    error: null,
-  }),
+  useFileContent: () => useFileContentMock(),
 }))
 
 vi.mock('./FileContentViewer', () => ({
-  FileContentViewer: () => createElement('div', { 'data-testid': 'file-content-viewer' }, 'file content'),
+  FileContentViewer: (props: Record<string, unknown>) => {
+    capturedViewerProps.push(props)
+    return createElement('div', { 'data-testid': 'file-content-viewer' }, 'file content')
+  },
   useFileViewerInfo: () => ({
     languageDisplayName: 'TypeScript',
     lineCount: 1,
@@ -34,6 +52,12 @@ let root: Root | null = null
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  capturedViewerProps.length = 0
+  useFileContentMock.mockReturnValue({
+    data: cachedFileContent,
+    isLoading: false,
+    error: null,
+  })
 })
 
 afterEach(() => {
@@ -58,6 +82,33 @@ function renderPanel(props: Partial<Parameters<typeof FileBrowserPanel>[0]> = {}
   })
 }
 
+function createEditSession(dirty = false): FileEditSessionController {
+  return {
+    state: {
+      key: null,
+      mode: 'edit',
+      draft: dirty ? 'changed' : 'hello',
+      baseContent: 'hello',
+      baseVersion: null,
+      dirty,
+      focused: false,
+      saveState: 'idle',
+      error: null,
+      conflict: null,
+    },
+    canEnterEditMode: true,
+    enterEditMode: vi.fn(),
+    updateDraft: vi.fn(),
+    setFocused: vi.fn(),
+    save: vi.fn(),
+    reloadFromDisk: vi.fn(),
+    dismissConflict: vi.fn(),
+    revert: vi.fn(),
+    discard: vi.fn(),
+    getDirtySnapshot: vi.fn(),
+  }
+}
+
 describe('FileBrowserPanel resize handle placement', () => {
   it('places the desktop inline resize handle on the right edge of the preview pane', () => {
     renderPanel({ desktopOnly: true, resizeHandlePlacement: 'right' })
@@ -80,5 +131,53 @@ describe('FileBrowserPanel resize handle placement', () => {
     const secondChild = firstChild?.nextElementSibling
     expect(firstChild?.className).toContain('cursor-col-resize')
     expect(secondChild?.className).toContain('border-l')
+  })
+
+  it('shows a compact unsaved indicator in the panel header for dirty edits', () => {
+    renderPanel({ editSession: createEditSession(true) })
+
+    expect(container.textContent).toContain('Unsaved')
+  })
+
+  it('keeps mobile panels read-only even when inline editing is enabled globally', () => {
+    renderPanel({
+      mobileOnly: true,
+      inlineEditingEnabled: true,
+      editSession: createEditSession(true),
+    })
+
+    expect(capturedViewerProps.at(-1)?.inlineEditingEnabled).toBe(false)
+  })
+
+  it('passes inline editing only to the writable desktop panel instance', () => {
+    renderPanel({
+      desktopOnly: true,
+      inlineEditingEnabled: true,
+      editSession: createEditSession(false),
+    })
+
+    expect(capturedViewerProps.at(-1)?.inlineEditingEnabled).toBe(true)
+  })
+
+  it('reports cached synchronous content to onContentLoaded on mount and remount', () => {
+    const onContentLoaded = vi.fn()
+    const editorSessionKey = {
+      agentId: 'session-a',
+      worktreeId: null,
+      filePath: 'src/file.ts',
+    }
+
+    renderPanel({ onContentLoaded, editorSessionKey })
+
+    expect(onContentLoaded).toHaveBeenCalledWith(editorSessionKey, cachedFileContent)
+    onContentLoaded.mockClear()
+
+    flushSync(() => root?.unmount())
+    root = null
+
+    renderPanel({ onContentLoaded, editorSessionKey })
+
+    expect(onContentLoaded).toHaveBeenCalledWith(editorSessionKey, cachedFileContent)
+    expect(onContentLoaded).not.toHaveBeenCalledWith(editorSessionKey, null)
   })
 })

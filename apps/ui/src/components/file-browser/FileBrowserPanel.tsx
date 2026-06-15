@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { FileCode2, FileImage, FileText, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -6,6 +6,9 @@ import { useResizablePanel } from '@/components/diff-viewer/useResizablePanel'
 import { FileContentViewer, useFileViewerInfo } from './FileContentViewer'
 import { FileStatusBar } from './FileStatusBar'
 import { useDirectoryListing, useFileContent } from './use-file-browser-queries'
+import type { FileContentResult } from './use-file-browser-queries'
+import type { FileEditSessionController } from './use-file-edit-session'
+import type { FileEditorSessionKey } from './use-file-editor-coordinator'
 import { isImageFile } from './file-browser-utils'
 import { useSelectionContainment } from '@/hooks/useSelectionContainment'
 
@@ -22,6 +25,10 @@ interface FileBrowserPanelProps {
   desktopOnly?: boolean
   mobileOnly?: boolean
   resizeHandlePlacement?: 'left' | 'right'
+  inlineEditingEnabled?: boolean
+  editSession?: FileEditSessionController | null
+  editorSessionKey?: FileEditorSessionKey | null
+  onContentLoaded?: (key: FileEditorSessionKey, content: FileContentResult | null) => void
 }
 
 export function FileBrowserPanel({
@@ -34,6 +41,10 @@ export function FileBrowserPanel({
   desktopOnly = false,
   mobileOnly = false,
   resizeHandlePlacement = 'left',
+  inlineEditingEnabled = false,
+  editSession = null,
+  editorSessionKey = null,
+  onContentLoaded,
 }: FileBrowserPanelProps) {
   const gatedAgentId = filePath ? agentId : null
 
@@ -54,6 +65,11 @@ export function FileBrowserPanel({
   )
 
   const viewerInfo = useFileViewerInfo(filePath, fileContent.data)
+
+  useEffect(() => {
+    if (!editorSessionKey || !onContentLoaded) return
+    onContentLoaded(editorSessionKey, fileContent.data ?? null)
+  }, [editorSessionKey, fileContent.data, onContentLoaded])
 
   const panelRef = useRef<HTMLDivElement>(null)
   const { onPointerDown: onSelectionPointerDown } = useSelectionContainment(panelRef)
@@ -105,7 +121,14 @@ export function FileBrowserPanel({
               <FileIcon className="size-3.5" aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <h2 className="truncate text-sm font-bold text-foreground">{fileName}</h2>
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="truncate text-sm font-bold text-foreground">{fileName}</h2>
+                {editSession?.state.dirty ? (
+                  <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                    Unsaved
+                  </span>
+                ) : null}
+              </div>
               <p className="truncate font-mono text-[11px] text-muted-foreground">{filePath}</p>
             </div>
           </div>
@@ -139,6 +162,8 @@ export function FileBrowserPanel({
               error={fileContent.error}
               onNavigateToDirectory={onNavigateToDirectory}
               worktreeId={worktreeId}
+              inlineEditingEnabled={inlineEditingEnabled && !mobileOnly}
+              editSession={editSession}
             />
           ) : null}
         </div>
@@ -151,6 +176,10 @@ export function FileBrowserPanel({
           languageDisplayName={viewerInfo.languageDisplayName}
           lineCount={viewerInfo.lineCount}
           fileSize={viewerInfo.fileSize}
+          encoding={viewerInfo.encoding}
+          editability={viewerInfo.editability}
+          isDirty={editSession?.state.dirty ?? false}
+          saveState={editSession?.state.saveState}
         />
       </div>
 

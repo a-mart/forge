@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- component and its companion hook are tightly coupled */
-import { useCallback, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   FileText,
   FileWarning,
@@ -17,6 +17,7 @@ import {
 import '@/styles/syntax-highlight.css'
 import '@/styles/file-browser.css'
 import { FileContentHeader } from './FileContentHeader'
+import type { FileEditSessionController } from './use-file-edit-session'
 import { formatFileSize, isImageFile } from './file-browser-utils'
 import { ImagePreview } from './ImagePreview'
 import { MarkdownPreview } from './MarkdownPreview'
@@ -27,6 +28,21 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
+
+const CodeMirrorFileEditorLazy = lazy(async () => {
+  const module = await import('./CodeMirrorFileEditor')
+  return { default: module.CodeMirrorFileEditor }
+})
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -92,6 +108,8 @@ interface FileContentViewerProps {
   error: string | null
   onNavigateToDirectory: (dirPath: string) => void
   worktreeId?: string | null
+  inlineEditingEnabled?: boolean
+  editSession?: FileEditSessionController | null
 }
 
 interface FileViewerInfo {
@@ -99,6 +117,9 @@ interface FileViewerInfo {
   languageDisplayName: string | undefined
   lineCount: number | null
   fileSize: number | null
+  encoding: FileContentResult['encoding'] | null
+  editability: FileContentResult['editability'] | null
+  version: FileContentResult['version'] | null
   isMarkdown: boolean
   markdownRaw: boolean
 }
@@ -113,10 +134,13 @@ export function FileContentViewer({
   error,
   onNavigateToDirectory,
   worktreeId = null,
+  inlineEditingEnabled = false,
+  editSession = null,
 }: FileContentViewerProps) {
   const [wordWrap, setWordWrap] = useState(readWordWrapPreference)
   const [markdownRaw, setMarkdownRaw] = useState(readMarkdownRawPreference)
   const [copied, setCopied] = useState(false)
+  const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false)
 
   // Detect language — always compute, before any early returns
   const language = useMemo(
@@ -151,6 +175,19 @@ export function FileContentViewer({
   }, [])
 
   const contentText = content?.content
+  const editState = editSession?.state
+  const isEditing = inlineEditingEnabled && editState?.mode === 'edit'
+  const canEdit = inlineEditingEnabled && Boolean(editSession?.canEnterEditMode)
+  const editorLocked = editState?.saveState === 'saving' || editState?.saveState === 'reloading'
+  const conflictActionsDisabled = editorLocked
+
+  useEffect(() => {
+    if (isEditing && isMarkdown && !markdownRaw) {
+      setMarkdownRaw(true)
+      storeMarkdownRawPreference(true)
+    }
+  }, [isEditing, isMarkdown, markdownRaw])
+
   const handleCopyContent = useCallback(async () => {
     if (!contentText) return
     try {
@@ -161,6 +198,12 @@ export function FileContentViewer({
       // Clipboard not available
     }
   }, [contentText])
+
+  const handleReloadFromDisk = useCallback(async () => {
+    if (!editSession || editorLocked) return
+    await editSession.reloadFromDisk()
+    setReloadConfirmOpen(false)
+  }, [editSession, editorLocked])
 
   const fileName = filePath?.split('/').pop() ?? ''
 
@@ -286,6 +329,13 @@ export function FileContentViewer({
           isMarkdown
           markdownRaw={markdownRaw}
           onToggleMarkdownRaw={handleToggleMarkdownRaw}
+          canEdit={canEdit}
+          editMode={isEditing}
+          dirty={editState?.dirty ?? false}
+          saveState={editState?.saveState}
+          onEnterEditMode={editSession?.enterEditMode}
+          onSave={() => void editSession?.save()}
+          onRevert={editSession?.revert}
         />
         <MarkdownPreview content={text} />
       </div>
@@ -303,9 +353,76 @@ export function FileContentViewer({
         isMarkdown={isMarkdown}
         markdownRaw={markdownRaw}
         onToggleMarkdownRaw={handleToggleMarkdownRaw}
+        canEdit={canEdit}
+        editMode={isEditing}
+        dirty={editState?.dirty ?? false}
+        saveState={editState?.saveState}
+        onEnterEditMode={editSession?.enterEditMode}
+        onSave={() => void editSession?.save()}
+        onRevert={editSession?.revert}
       />
 
-      {/* Copy content button — floating top-right of code area */}
+      {editState?.error || editState?.conflict ? (
+        <div className="border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {editState.conflict ? 'This file changed on disk since you opened it.' : editState.error}
+          {editState.conflict ? (
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2 disabled:opacity-60"
+                disabled={conflictActionsDisabled}
+                onClick={() => setReloadConfirmOpen(true)}
+              >
+                {editState?.saveState === 'reloading' ? 'Reloading…' : 'Reload from disk'}
+              </button>
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2 disabled:opacity-60"
+                disabled={conflictActionsDisabled}
+                onClick={() => void editSession?.save({ overwrite: true })}
+              >
+                Overwrite anyway
+              </button>
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2 disabled:opacity-60"
+                disabled={conflictActionsDisabled}
+                onClick={() => editSession?.dismissConflict()}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {isEditing ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <Suspense
+            fallback={(
+              <div className="flex h-full items-center justify-center">
+                <Loader2 className="size-5 animate-spin text-muted-foreground" />
+              </div>
+            )}
+          >
+            <CodeMirrorFileEditorLazy
+              value={editState?.draft ?? text}
+              language={language}
+              wordWrap={wordWrap}
+              readOnly={editorLocked}
+              ariaLabel={`Editing ${fileName}`}
+              onChange={(next) => editSession?.updateDraft(next)}
+              onFocusedChange={(focused) => editSession?.setFocused(focused)}
+              onSaveShortcut={() => {
+                if (!editorLocked) {
+                  void editSession?.save()
+                }
+              }}
+            />
+          </Suspense>
+        </div>
+      ) : (
+      /* Copy content button — floating top-right of code area */
       <div className="relative flex-1 overflow-hidden">
         <div className="absolute right-3 top-2 z-10">
           <TooltipProvider delayDuration={300}>
@@ -336,6 +453,33 @@ export function FileContentViewer({
 
         <CodeView content={text} language={language} wordWrap={wordWrap} />
       </div>
+      )}
+
+      <AlertDialog open={reloadConfirmOpen} onOpenChange={(open) => {
+        if (!editorLocked) {
+          setReloadConfirmOpen(open)
+        }
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reload from disk?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Discard your unsaved changes and reload {fileName} from disk?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={editorLocked}>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={editorLocked}
+              onClick={() => void handleReloadFromDisk()}
+            >
+              {editState?.saveState === 'reloading' ? 'Reloading…' : 'Discard and reload'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -368,6 +512,9 @@ export function useFileViewerInfo(
     languageDisplayName,
     lineCount: content?.lines ?? null,
     fileSize: content?.size ?? null,
+    encoding: content?.encoding ?? null,
+    editability: content?.editability ?? null,
+    version: content?.version ?? null,
     isMarkdown,
     markdownRaw: markdownRaw ?? false,
   }
