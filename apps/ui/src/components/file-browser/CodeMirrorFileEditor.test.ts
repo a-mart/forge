@@ -9,11 +9,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CodeMirrorFileEditor, type CodeMirrorFileEditorProps } from './CodeMirrorFileEditor'
 import { codeMirrorLanguageExtension } from './codemirror-language'
+import { codeMirrorDarkThemeFacet } from './codemirror-theme'
 
 let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  document.documentElement.classList.remove('dark')
   container = document.createElement('div')
   container.style.height = '400px'
   document.body.appendChild(container)
@@ -161,6 +163,38 @@ describe('CodeMirrorFileEditor', () => {
     renderEditor()
 
     expect(contentElement().getAttribute('aria-label')).toBe('File editor')
+  })
+
+  it('uses the light-safe CodeMirror theme extension by default', () => {
+    renderEditor()
+
+    const view = editorView()
+
+    expect(view.state.facet(codeMirrorDarkThemeFacet)).toBe(false)
+    expect(view.state.facet(EditorView.darkTheme)).toBe(false)
+  })
+
+  it('uses the One Dark CodeMirror theme extension when Forge dark mode is active', () => {
+    document.documentElement.classList.add('dark')
+    renderEditor()
+
+    const view = editorView()
+
+    expect(view.state.facet(codeMirrorDarkThemeFacet)).toBe(true)
+    expect(view.state.facet(EditorView.darkTheme)).toBe(true)
+  })
+
+  it('reconfigures the CodeMirror theme when Forge dark mode changes', async () => {
+    renderEditor()
+    const view = editorView()
+
+    expect(view.state.facet(codeMirrorDarkThemeFacet)).toBe(false)
+
+    document.documentElement.classList.add('dark')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(view.state.facet(codeMirrorDarkThemeFacet)).toBe(true)
+    expect(view.state.facet(EditorView.darkTheme)).toBe(true)
   })
 
   it('provides Dockerfile language support to the editor', () => {

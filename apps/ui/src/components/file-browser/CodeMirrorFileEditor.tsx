@@ -2,9 +2,10 @@ import { keymap, drawSelection, dropCursor, highlightActiveLine, highlightActive
 import { Prec, Compartment, EditorState, type Extension } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { searchKeymap } from '@codemirror/search'
-import { bracketMatching, defaultHighlightStyle, foldGutter, indentOnInput, syntaxHighlighting } from '@codemirror/language'
+import { bracketMatching, foldGutter, indentOnInput } from '@codemirror/language'
 import { useEffect, useMemo, useRef } from 'react'
 import { codeMirrorLanguageExtension } from './codemirror-language'
+import { codeMirrorDarkThemeFacet, codeMirrorThemeExtensions, isForgeDarkModeActive } from './codemirror-theme'
 
 export interface CodeMirrorFileEditorProps {
   value: string
@@ -95,6 +96,7 @@ export function CodeMirrorFileEditor({
   const readOnlyCompartment = useMemo(() => new Compartment(), [])
   const wrapCompartment = useMemo(() => new Compartment(), [])
   const contentAttributesCompartment = useMemo(() => new Compartment(), [])
+  const themeCompartment = useMemo(() => new Compartment(), [])
   const onChangeRef = useRef(onChange)
   const onFocusedChangeRef = useRef(onFocusedChange)
   const onSaveShortcutRef = useRef(onSaveShortcut)
@@ -151,7 +153,7 @@ export function CodeMirrorFileEditor({
         indentOnInput(),
         bracketMatching(),
         highlightActiveLine(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        themeCompartment.of(codeMirrorThemeExtensions(isForgeDarkModeActive())),
         saveKeymap,
         keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap]),
         languageCompartment.of(codeMirrorLanguageExtension(initialConfig.language)),
@@ -184,7 +186,40 @@ export function CodeMirrorFileEditor({
         viewRef.current = null
       }
     }
-  }, [contentAttributesCompartment, languageCompartment, readOnlyCompartment, wrapCompartment])
+  }, [contentAttributesCompartment, languageCompartment, readOnlyCompartment, themeCompartment, wrapCompartment])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view || typeof document === 'undefined') {
+      return undefined
+    }
+
+    const root = document.documentElement
+    let lastIsDark = view.state.facet(codeMirrorDarkThemeFacet)
+    const applyTheme = () => {
+      const nextIsDark = isForgeDarkModeActive()
+      if (nextIsDark === lastIsDark) {
+        return
+      }
+      lastIsDark = nextIsDark
+      view.dispatch({
+        effects: themeCompartment.reconfigure(codeMirrorThemeExtensions(nextIsDark)),
+      })
+    }
+
+    applyTheme()
+
+    if (typeof MutationObserver === 'undefined') {
+      return undefined
+    }
+
+    const observer = new MutationObserver(applyTheme)
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] })
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [themeCompartment])
 
   useEffect(() => {
     const view = viewRef.current
