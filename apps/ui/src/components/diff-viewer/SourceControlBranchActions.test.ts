@@ -97,6 +97,76 @@ describe('SourceControlBranchActions', () => {
     expect(getByRole(document.body, 'button', { name: 'Pull fast-forward' })).toBeTruthy()
   })
 
+  it('runs Source Control mutation guard before opening pull confirmation', () => {
+    const runRef: { current: (() => void) | null } = { current: null }
+    const onRequestMutation = vi.fn((_mutation, _target, run) => {
+      runRef.current = run
+    })
+    renderActions({ isDirty: false, worktreeId: 'feature-linked', onRequestMutation })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+    })
+
+    expect(onRequestMutation).toHaveBeenCalledWith(
+      'pull-ff-only',
+      { agentId: 'agent-1', worktreeId: 'feature-linked' },
+      expect.any(Function),
+    )
+    expect(document.body.textContent ?? '').not.toContain('Fast-forward pull?')
+
+    flushSync(() => {
+      runRef.current?.()
+    })
+
+    expect(getByText(document.body, 'Fast-forward pull?')).toBeTruthy()
+  })
+
+  it('runs Source Control mutation guard before opening switch and create confirmations', () => {
+    const guarded: Array<{ mutation: string; run: () => void }> = []
+    const onRequestMutation = vi.fn((mutation, _target, run) => {
+      guarded.push({ mutation, run })
+    })
+    renderActions({ isDirty: false, onRequestMutation })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: /main/i }))
+    })
+    flushSync(() => {
+      fireEvent.click(getByText(document.body, 'feature/demo'))
+    })
+
+    expect(onRequestMutation).toHaveBeenCalledWith(
+      'switch-branch',
+      { agentId: 'agent-1', worktreeId: null },
+      expect.any(Function),
+    )
+    expect(document.body.textContent ?? '').not.toContain('Switch to feature/demo?')
+
+    flushSync(() => {
+      guarded[0]?.run()
+    })
+    expect(getByText(document.body, 'Switch to feature/demo?')).toBeTruthy()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Cancel' }))
+    })
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: /main/i }))
+    })
+    const input = getByRole(document.body, 'textbox') as HTMLInputElement
+    flushSync(() => {
+      fireEvent.change(input, { target: { value: 'feature/new' } })
+      fireEvent.click(getByRole(document.body, 'button', { name: 'Create branch' }))
+    })
+
+    expect(onRequestMutation).toHaveBeenLastCalledWith(
+      'create-branch',
+      { agentId: 'agent-1', worktreeId: null },
+      expect.any(Function),
+    )
+  })
+
   it('shows idle attached-session warnings from mutation preflight', async () => {
     fetchMutationPreflightMock.mockResolvedValue({
       allowed: true,
@@ -181,7 +251,15 @@ describe('SourceControlBranchActions', () => {
   })
 })
 
-function renderActions(options: { isDirty: boolean; worktreeId?: string }) {
+function renderActions(options: {
+  isDirty: boolean
+  worktreeId?: string
+  onRequestMutation?: (
+    mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+    target: { agentId: string; worktreeId: string | null },
+    run: () => void,
+  ) => void
+}) {
   root = createRoot(container)
   flushSync(() => {
     root!.render(
@@ -198,6 +276,7 @@ function renderActions(options: { isDirty: boolean; worktreeId?: string }) {
         },
         isDirty: options.isDirty,
         onMutationComplete: vi.fn(),
+        onRequestMutation: options.onRequestMutation,
       }),
     )
   })

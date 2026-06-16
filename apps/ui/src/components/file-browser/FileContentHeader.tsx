@@ -8,6 +8,9 @@ import {
   Eye,
   Code,
   FolderOpen,
+  RotateCcw,
+  Save,
+  Pencil,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -36,6 +39,13 @@ interface FileContentHeaderProps {
   markdownRaw?: boolean
   /** Toggle between raw source and rendered preview */
   onToggleMarkdownRaw?: () => void
+  canEdit?: boolean
+  editMode?: boolean
+  dirty?: boolean
+  saveState?: 'idle' | 'saving' | 'saved' | 'error' | 'conflict' | 'reloading'
+  onEnterEditMode?: () => void
+  onSave?: () => void
+  onRevert?: () => void
 }
 
 export function FileContentHeader({
@@ -47,6 +57,13 @@ export function FileContentHeader({
   isMarkdown = false,
   markdownRaw = false,
   onToggleMarkdownRaw,
+  canEdit = false,
+  editMode = false,
+  dirty = false,
+  saveState = 'idle',
+  onEnterEditMode,
+  onSave,
+  onRevert,
 }: FileContentHeaderProps) {
   const [copied, setCopied] = useState(false)
 
@@ -151,6 +168,93 @@ export function FileContentHeader({
                 </TooltipContent>
               </Tooltip>
             </div>
+          ) : null}
+
+          {canEdit && !editMode ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    'inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors',
+                    'hover:bg-muted hover:text-foreground',
+                  )}
+                  onClick={onEnterEditMode}
+                  aria-label="Edit file inline"
+                >
+                  <Pencil className="size-3" />
+                  <span>Edit</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>
+                Edit inline
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+
+          {editMode ? (
+            <>
+              <span className={cn(
+                'mr-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                dirty ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+                saveState === 'error' && 'bg-destructive/15 text-destructive',
+                saveState === 'conflict' && 'bg-orange-500/15 text-orange-700 dark:text-orange-300',
+              )}>
+                {saveState === 'saving'
+                  ? 'Saving…'
+                  : saveState === 'reloading'
+                    ? 'Reloading…'
+                    : saveState === 'error'
+                      ? 'Error'
+                      : saveState === 'conflict'
+                        ? 'Conflict'
+                        : dirty
+                          ? 'Unsaved'
+                          : 'Saved'}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      'inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs transition-colors',
+                      dirty && saveState !== 'saving' && saveState !== 'reloading'
+                        ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                        : 'text-muted-foreground opacity-60',
+                    )}
+                    onClick={onSave}
+                    disabled={!dirty || saveState === 'saving' || saveState === 'reloading'}
+                    aria-label="Save file"
+                  >
+                    <Save className="size-3" />
+                    <span>Save</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={4}>
+                  Save changes
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      'inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors',
+                      dirty && saveState !== 'saving' && saveState !== 'reloading' ? 'hover:bg-muted hover:text-foreground' : 'opacity-60',
+                    )}
+                    onClick={onRevert}
+                    disabled={!dirty || saveState === 'saving' || saveState === 'reloading'}
+                    aria-label="Revert file changes"
+                  >
+                    <RotateCcw className="size-3" />
+                    <span>Revert</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={4}>
+                  Revert draft
+                </TooltipContent>
+              </Tooltip>
+            </>
           ) : null}
 
           {/* Copy path */}

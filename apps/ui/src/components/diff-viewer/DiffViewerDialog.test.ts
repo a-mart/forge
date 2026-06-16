@@ -27,6 +27,7 @@ const {
     worktrees: [] as Array<{ agentId: string | null; repoTarget: string; enabled?: boolean }>,
     commitDetail: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null }>,
     commitDiff: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null; file: string | null }>,
+    refetches: [] as string[],
   },
   STATUS_BY_TARGET: {
     workspace: {
@@ -287,7 +288,7 @@ vi.mock('./use-diff-queries', () => ({
       data: agentId ? STATUS_BY_TARGET[repoTarget] : null,
       isLoading: false,
       error: null,
-      refetch: vi.fn(),
+      refetch: vi.fn(() => hookCalls.refetches.push(`status:${repoTarget}:${worktreeId ?? 'session'}`)),
     }
   },
   useGitBranches: (
@@ -312,7 +313,7 @@ vi.mock('./use-diff-queries', () => ({
         : null,
       isLoading: false,
       error: null,
-      refetch: vi.fn(),
+      refetch: vi.fn(() => hookCalls.refetches.push(`branches:${repoTarget}:${worktreeId ?? 'session'}`)),
     }
   },
   useGitWorktrees: (
@@ -348,7 +349,7 @@ vi.mock('./use-diff-queries', () => ({
         : null,
       isLoading: false,
       error,
-      refetch: vi.fn(),
+      refetch: vi.fn(() => hookCalls.refetches.push(`worktrees:${repoTarget}`)),
     }
   },
   useGitDiff: (_wsUrl: string, agentId: string | null, repoTarget: 'workspace' | 'versioning', file: string | null) => {
@@ -423,7 +424,7 @@ vi.mock('./use-diff-queries', () => ({
     data: null,
     isLoading: false,
     error: null,
-    refetch: vi.fn(),
+    refetch: vi.fn(() => hookCalls.refetches.push('pull-requests')),
   }),
   useGitPullRequestDetail: () => ({
     data: null,
@@ -532,9 +533,15 @@ function renderInlineContent(
     active?: boolean
     isCortex: boolean
     agentId?: string | null
+    externalRefreshNonce?: number
+    onRequestSourceControlMutation?: (
+      mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
+      target: { agentId: string; worktreeId: string | null },
+      run: () => void,
+    ) => void
   },
 ) {
-  root = createRoot(container)
+  root ??= createRoot(container)
 
   flushSync(() => {
     root?.render(
@@ -545,6 +552,8 @@ function renderInlineContent(
           agentId: props.agentId ?? 'agent-1',
           isCortex: props.isCortex,
           onClose: vi.fn(),
+          onRequestSourceControlMutation: props.onRequestSourceControlMutation,
+          externalRefreshNonce: props.externalRefreshNonce,
         }),
       ),
     )
@@ -639,6 +648,21 @@ describe('DiffViewerContent', () => {
     expect(document.body.querySelector('[data-radix-dialog-overlay]')).toBeNull()
     expect(getByRole(document.body, 'listbox', { name: 'Changed files' })).toBeTruthy()
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
+  })
+
+  it('refreshes mounted Source Control status and branches when externalRefreshNonce changes', async () => {
+    renderInlineContent({ isCortex: false, externalRefreshNonce: 0 })
+    await flushEffects()
+    hookCalls.refetches.length = 0
+    invalidateGitCachesMock.mockClear()
+
+    renderInlineContent({ isCortex: false, externalRefreshNonce: 1 })
+    await waitFor(() => {
+      expect(invalidateGitCachesMock).toHaveBeenCalledWith({ agentId: 'agent-1', repoTarget: 'workspace' })
+    })
+
+    expect(hookCalls.refetches).toContain('status:workspace:session')
+    expect(hookCalls.refetches).toContain('branches:workspace:session')
   })
 })
 

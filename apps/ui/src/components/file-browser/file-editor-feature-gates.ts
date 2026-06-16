@@ -1,0 +1,2 @@
+export const FILE_BROWSER_INLINE_EDITING_ENABLED =
+  import.meta.env.VITE_FORGE_FILE_BROWSER_INLINE_EDITING !== 'false'

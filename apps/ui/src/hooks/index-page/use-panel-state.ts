@@ -6,9 +6,15 @@ import type { ArtifactReference } from '@/lib/artifacts'
 
 export type ArtifactsPanelTab = 'artifacts' | 'schedules'
 
-function shouldIgnoreKeyboardShortcutTarget(target: EventTarget | null): boolean {
+function shouldIgnoreKeyboardShortcutTarget(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented) return true
+  const target = event.target
   if (!(target instanceof HTMLElement)) {
     return false
+  }
+
+  if (target.closest('.cm-editor') || target.closest('.cm-content')) {
+    return true
   }
 
   return (
@@ -29,11 +35,13 @@ export interface FileBrowserWorktreeSelection {
 interface UsePanelStateOptions {
   activeAgentId: string | null
   activeAgentArchetypeId?: string | null
+  enableKeyboardShortcuts?: boolean
 }
 
 export function usePanelState({
   activeAgentId,
   activeAgentArchetypeId,
+  enableKeyboardShortcuts = true,
 }: UsePanelStateOptions) {
   const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
@@ -87,7 +95,7 @@ export function usePanelState({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (shouldIgnoreKeyboardShortcutTarget(e.target)) {
+      if (shouldIgnoreKeyboardShortcutTarget(e)) {
         return
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
@@ -96,9 +104,13 @@ export function usePanelState({
       }
     }
 
+    if (!enableKeyboardShortcuts) {
+      return undefined
+    }
+
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [enableKeyboardShortcuts])
 
   const openArtifactsPanel = useCallback(
     (tab: ArtifactsPanelTab = 'artifacts') => {
@@ -156,7 +168,7 @@ export function usePanelState({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (shouldIgnoreKeyboardShortcutTarget(e.target)) {
+      if (shouldIgnoreKeyboardShortcutTarget(e)) {
         return
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
@@ -165,9 +177,13 @@ export function usePanelState({
       }
     }
 
+    if (!enableKeyboardShortcuts) {
+      return undefined
+    }
+
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [toggleFileBrowser])
+  }, [enableKeyboardShortcuts, toggleFileBrowser])
 
   const requestCortexDashboardTab = useCallback(
     (tab: CortexDashboardTab) => {
