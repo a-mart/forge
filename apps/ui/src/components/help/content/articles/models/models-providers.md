@@ -12,7 +12,7 @@ OpenAI offers the GPT-5 model family through the Codex runtime. OpenAI/Codex can
 
 Anthropic offers the Claude model family through the Pi-proxied path.
 
-- **Claude Opus 4.6** — Anthropic's top-tier model. Particularly strong at frontend work, UI polish, writing, and nuanced code review. Reasoning levels are limited to low, medium, and high (no "none" or "max").
+- **Claude Opus 4.8** — Anthropic's top-tier model. Particularly strong at frontend work, UI polish, writing, and nuanced code review. Reasoning levels are limited to low, medium, and high (no "none" or "max").
 - **Claude Sonnet 4.5** — A mid-range model. Faster than Opus, still capable. Good for documentation, lighter code tasks, and cases where Opus is overkill.
 - **Claude Haiku 4.5** — The fast, affordable option. Use it for bulk tasks, formatting, and anything that does not need deep analysis.
 
