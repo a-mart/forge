@@ -200,7 +200,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
     })
     expect(opusWorker.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-6',
+      modelId: 'claude-opus-4-8',
       thinkingLevel: 'high',
     })
   })
@@ -243,12 +243,12 @@ describe("SwarmManager spawn_agent preset routing", () => {
 
     expect(lowMapped.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-6',
+      modelId: 'claude-opus-4-8',
       thinkingLevel: 'low',
     })
     expect(highMapped.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-6',
+      modelId: 'claude-opus-4-8',
       thinkingLevel: 'high',
     })
   })

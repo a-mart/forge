@@ -113,19 +113,45 @@ function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderCon
     (model) => model.provider === provider.providerId,
   );
 
+  const upstreamModelIds = new Set(
+    getModels(provider.providerId as Parameters<typeof getModels>[0]).map((model) => model.id),
+  );
+
   const modelOverrides: Record<string, PiModelOverride> = {};
+  const models: PiModelDefinition[] = [];
+
   for (const model of providerModels) {
-    if (!model.piUpstreamId) {
+    const upstreamKey = model.piUpstreamId ?? model.modelId;
+    const existsInUpstream = upstreamModelIds.has(upstreamKey);
+
+    if (existsInUpstream && model.piUpstreamId) {
+      modelOverrides[model.modelId] = {
+        contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
+        maxTokens: model.maxOutputTokens,
+      };
       continue;
     }
 
-    modelOverrides[model.modelId] = {
-      contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
-      maxTokens: model.maxOutputTokens,
-    };
+    if (!existsInUpstream) {
+      models.push({
+        id: model.modelId,
+        name: model.displayName,
+        reasoning: model.supportsReasoning,
+        input: [...model.inputModes],
+        contextWindow: modelCatalogService.getEffectiveContextWindow(model.modelId) ?? model.contextWindow,
+        maxTokens: model.maxOutputTokens,
+      });
+    }
   }
 
-  return Object.keys(modelOverrides).length > 0 ? { modelOverrides } : undefined;
+  if (Object.keys(modelOverrides).length === 0 && models.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...(Object.keys(modelOverrides).length > 0 ? { modelOverrides } : {}),
+    ...(models.length > 0 ? { models } : {}),
+  };
 }
 
 function buildCustomProviderProjection(provider: ForgeProviderDefinition): PiProviderConfig | undefined {

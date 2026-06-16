@@ -533,7 +533,7 @@ describe("specialist-registry", () => {
 
       const parsed = await parseSpecialistFile(filePath);
       expect(parsed).not.toBeNull();
-      expect(parsed?.frontmatter.modelId).toBe("claude-sonnet-4-5-20250929");
+      expect(parsed?.frontmatter.modelId).toBe("claude-opus-4-8");
     } finally {
       await modelCatalogService.loadOverrides(join(root, "reset-data"));
     }
