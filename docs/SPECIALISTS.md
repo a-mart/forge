@@ -44,6 +44,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.4` | GPT-5.4 | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.4-mini` | GPT-5.4 Mini | OpenAI Codex | none, low, medium, high, xhigh |
+| `claude-opus-4-8` | Claude Opus 4.8 | Anthropic | low, medium, high |
 | `claude-opus-4-6` | Claude Opus 4.6 | Anthropic | low, medium, high |
 | `claude-sonnet-4-5-20250929` | Claude Sonnet 4.5 | Anthropic | low, medium, high |
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Anthropic | low, medium, high |

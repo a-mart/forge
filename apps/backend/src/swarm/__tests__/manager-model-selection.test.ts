@@ -109,10 +109,10 @@ describe("manager model selection", () => {
     ).toThrow("Model Claude Opus 4.7 is disabled for manager agents");
   });
 
-  it("keeps legacy pi-opus preset resolution unchanged", async () => {
+  it("keeps pi-opus preset resolution on the catalog default", async () => {
     expect(resolveModelDescriptorFromPreset("pi-opus")).toEqual({
       provider: "anthropic",
-      modelId: "claude-opus-4-6",
+      modelId: "claude-opus-4-8",
       thinkingLevel: "high",
     });
   });

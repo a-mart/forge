@@ -1250,7 +1250,7 @@ describe('SwarmManager', () => {
     })
     expect(opusManager.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-6',
+      modelId: 'claude-opus-4-8',
       thinkingLevel: 'high',
     })
     expect(cursorAliasManager.model).toEqual({
@@ -1479,7 +1479,7 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
       provider: 'anthropic',
-      modelId: 'claude-opus-4-6',
+      modelId: 'claude-opus-4-8',
       thinkingLevel: 'high',
     })
 

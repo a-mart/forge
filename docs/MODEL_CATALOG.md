@@ -71,6 +71,7 @@ pnpm model-catalog:audit
 The audit reports:
 
 - curated Forge models missing upstream
+- curated Forge models pending installed Pi upstream
 - upstream models not yet curated by Forge
 - metadata drift for curated models
 - intentional divergences recorded in the catalog

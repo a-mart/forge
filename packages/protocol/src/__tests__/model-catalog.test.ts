@@ -56,7 +56,7 @@ const EXPECTED_FAMILIES = {
   },
   'pi-opus': {
     provider: 'anthropic',
-    defaultModelId: 'claude-opus-4-6',
+    defaultModelId: 'claude-opus-4-8',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -64,7 +64,7 @@ const EXPECTED_FAMILIES = {
   },
   'sdk-opus': {
     provider: 'claude-sdk',
-    defaultModelId: 'claude-opus-4-6',
+    defaultModelId: 'claude-opus-4-8',
     visibleInCreateManager: true,
     visibleInChangeManager: true,
     visibleInSpawnPreset: true,
@@ -129,6 +129,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
+  'claude-opus-4-8': {
+    provider: 'anthropic',
+    familyId: 'pi-opus',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
   'claude-opus-4-7': {
     provider: 'anthropic',
     familyId: 'pi-opus',
@@ -158,6 +166,14 @@ const EXPECTED_MODELS = {
     familyId: 'pi-opus',
     contextWindow: 200_000,
     maxOutputTokens: 64_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'claude-sdk/claude-opus-4-8': {
+    provider: 'claude-sdk',
+    familyId: 'sdk-opus',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
@@ -247,7 +263,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(17)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(19)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.3-codex')
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
@@ -283,6 +299,7 @@ describe('model-catalog', () => {
 
   it('documents the intentional xAI divergences from Pi upstream', () => {
     expect(getCatalogModel('grok-4-fast')?.intentionalDivergenceNotes).toContain('text-only')
+    expect(getCatalogModel('claude-opus-4-8')?.intentionalDivergenceNotes).toContain('Pending Pi upstream')
     expect(getCatalogModel('grok-4.20-0309-reasoning')?.intentionalDivergenceNotes).toContain(
       'text-only',
     )
@@ -412,7 +429,7 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBe('pi-5.4')
     expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')
     expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-4-5-20250929')).toBe('sdk-sonnet')
-    expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-6')).toBe('sdk-opus')
+    expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-8')).toBe('sdk-opus')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
     expect(isCatalogModelId('default')).toBe(false)

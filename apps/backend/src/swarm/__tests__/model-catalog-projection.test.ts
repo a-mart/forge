@@ -135,6 +135,52 @@ describe("model-catalog-projection", () => {
     expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
   });
 
+  it("projects catalog-only built-in Anthropic models missing from Pi upstream through ModelRegistry", async () => {
+    const { ModelRegistry: RealModelRegistry } = await vi.importActual<typeof import("@mariozechner/pi-coding-agent")>(
+      "@mariozechner/pi-coding-agent",
+    );
+
+    const upstreamAnthropicIds = new Set(getModels("anthropic").map((model) => model.id));
+    if (upstreamAnthropicIds.has("claude-opus-4-8")) {
+      return;
+    }
+
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-opus48-"));
+    const dataDir = join(rootDir, "data");
+    await mkdir(dataDir, { recursive: true });
+
+    const projectionPath = await generatePiProjection(dataDir);
+    const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+      providers: Record<string, {
+        modelOverrides?: Record<string, unknown>;
+        models?: Array<{ id: string; contextWindow?: number; maxTokens?: number }>;
+      }>;
+    };
+
+    expect(projection.providers.anthropic?.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1_000_000,
+          maxTokens: 128_000,
+        }),
+      ]),
+    );
+    expect(projection.providers.anthropic?.modelOverrides?.["claude-opus-4-8"]).toBeUndefined();
+
+    const registry = new RealModelRegistry(authStorageStub as any, projectionPath) as {
+      getError: () => unknown;
+      find: (provider: string, modelId: string) => { contextWindow?: number; maxTokens?: number } | undefined;
+    };
+
+    expect(registry.getError()).toBeUndefined();
+    expect(registry.find("anthropic", "claude-opus-4-8")).toMatchObject({
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+    });
+  });
+
   it("keeps disabled curated models in the projection so existing configs retain Forge-owned runtime behavior", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-"));
     const dataDir = join(rootDir, "data");

@@ -67,11 +67,11 @@ describe("model-overrides", () => {
     expect(service.isModelEnabled("claude-opus-4-6", "claude-sdk")).toBe(true);
 
     const opusPreset = service.getModelPresetInfoList().find((preset) => preset.presetId === "pi-opus");
-    expect(opusPreset?.modelId).toBe("claude-sonnet-4-5-20250929");
+    expect(opusPreset?.modelId).toBe("claude-opus-4-8");
     expect(service.resolveModelDescriptorFromFamily("pi-opus")).toEqual({
       provider: "anthropic",
-      modelId: "claude-sonnet-4-5-20250929",
-      thinkingLevel: "medium",
+      modelId: "claude-opus-4-8",
+      thinkingLevel: "high",
     });
   });
 

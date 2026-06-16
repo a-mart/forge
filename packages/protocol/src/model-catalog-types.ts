@@ -77,7 +77,7 @@ export interface ForgeModelDefinition {
   enabledByDefault: boolean
   /** Pi upstream source metadata for audit; null for synthetic entries */
   piUpstreamId: string | null
-  /** Notes when Forge intentionally diverges from Pi metadata */
+  /** Notes when Forge intentionally diverges from Pi metadata. Prefix with "Pending Pi upstream" for curated built-in models ahead of installed Pi upstream. */
   intentionalDivergenceNotes: string | null
 }
 

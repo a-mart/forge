@@ -1,6 +1,9 @@
 import { access } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import {
+  classifyMissingUpstreamModel,
+} from './model-catalog-audit-helpers.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -35,6 +38,7 @@ const missingProviders = curatedProviders
   .filter((providerId) => !upstreamProviders.has(providerId))
 
 const missingUpstream = []
+const pendingUpstream = []
 const uncuratedUpstream = []
 const metadataDrift = []
 const intentionalDivergences = []
@@ -70,11 +74,23 @@ for (const provider of curatedProviders) {
 
     const upstream = upstreamById.get(model.piUpstreamId)
     if (!upstream) {
-      missingUpstream.push({
+      const classification = classifyMissingUpstreamModel(model)
+      const entry = {
         providerId: provider.providerId,
         modelId: model.modelId,
         piUpstreamId: model.piUpstreamId,
-      })
+        ...(model.intentionalDivergenceNotes ? { notes: model.intentionalDivergenceNotes } : {}),
+      }
+
+      if (classification === 'pending') {
+        pendingUpstream.push(entry)
+        intentionalDivergences.push({
+          ...entry,
+          kind: 'pending-upstream',
+        })
+      } else {
+        missingUpstream.push(entry)
+      }
       continue
     }
 
@@ -161,6 +177,7 @@ const report = {
   upstreamProviders: [...upstreamProviders].sort(),
   missingProviders,
   missingUpstream,
+  pendingUpstream,
   uncuratedUpstream,
   metadataDrift,
   intentionalDivergences,
@@ -169,6 +186,7 @@ const report = {
     upstreamProviderCount: upstreamProviders.size,
     missingProviderCount: missingProviders.length,
     missingUpstreamCount: missingUpstream.length,
+    pendingUpstreamCount: pendingUpstream.length,
     uncuratedUpstreamCount: uncuratedUpstream.length,
     metadataDriftCount: metadataDrift.length,
     intentionalDivergenceCount: intentionalDivergences.length,
@@ -181,6 +199,7 @@ console.log(`Forge model catalog audit: ${status.toUpperCase()}`)
 console.log(`- curated providers checked: ${report.summary.curatedProviderCount}`)
 console.log(`- missing providers: ${report.summary.missingProviderCount}`)
 console.log(`- missing upstream models: ${report.summary.missingUpstreamCount}`)
+console.log(`- pending upstream models: ${report.summary.pendingUpstreamCount}`)
 console.log(`- uncurated upstream models: ${report.summary.uncuratedUpstreamCount}`)
 console.log(`- metadata drift entries: ${report.summary.metadataDriftCount}`)
 console.log(`- intentional divergences: ${report.summary.intentionalDivergenceCount}`)
@@ -192,6 +211,14 @@ if (missingProviders.length > 0) {
 if (missingUpstream.length > 0) {
   console.log(
     `Missing upstream models: ${missingUpstream
+      .map((entry) => `${entry.providerId}:${entry.modelId}`)
+      .join(', ')}`,
+  )
+}
+
+if (pendingUpstream.length > 0) {
+  console.log(
+    `Pending upstream models: ${pendingUpstream
       .map((entry) => `${entry.providerId}:${entry.modelId}`)
       .join(', ')}`,
   )

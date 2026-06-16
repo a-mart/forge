@@ -190,7 +190,7 @@ describe("model-presets", () => {
 
     expect(inferSwarmModelPresetFromDescriptor({
       provider: "claude-sdk",
-      modelId: "claude-opus-4-6",
+      modelId: "claude-opus-4-8",
     })).toBe("sdk-opus");
 
     expect(inferSwarmModelPresetFromDescriptor({
@@ -200,6 +200,7 @@ describe("model-presets", () => {
 
     expect(presets.find((preset) => preset.presetId === "sdk-opus")?.variants?.map((variant) => variant.modelId)).toEqual([
       "claude-opus-4-7",
+      "claude-opus-4-6",
       "claude-haiku-4-5-20251001",
     ]);
 
