@@ -776,14 +776,14 @@ export function SettingsCollaboration({ wsUrl: _wsUrl, initialApiBaseUrl }: Sett
             ) : null}
           </SettingsSection>
 
-          {/* Authentication — only shown when collab is enabled on this connection */}
-          {selectedTarget.isRemote && status?.enabled && (
+          {/* Authentication — shown when collab is enabled on the selected connection, including hosted same-origin deployments */}
+          {status?.enabled && (
             <SettingsSection
               label="Authentication"
               description={
                 connections.length > 1
                   ? `Sign in to ${selectedTarget.label}`
-                  : 'Sign in to the remote collaboration server'
+                  : 'Sign in to the collaboration server'
               }
             >
               {sessionLoading ? (

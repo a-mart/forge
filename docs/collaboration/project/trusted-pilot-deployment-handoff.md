@@ -199,6 +199,7 @@ If `FORGE_COLLABORATION_AUTH_SECRET` is supplied through deployment secrets inst
     - create a category/channel;
     - create an invite;
     - redeem it as a member in a separate browser profile or incognito window;
+      invite URLs are hosted pages at `/collaboration/invite/<token>` and depend on the frontend route that redeems against the same-origin public invite APIs;
     - send a message in the channel;
     - confirm the member can see channel history and that admin-only settings remain admin-only.
 

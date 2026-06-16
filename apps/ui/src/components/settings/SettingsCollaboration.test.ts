@@ -652,7 +652,7 @@ describe('SettingsCollaboration', () => {
       expect(queryByText(container, 'Authentication')).toBeNull()
     })
 
-    it('does not show auth section for same-origin (non-remote) connections', async () => {
+    it('shows auth section for enabled same-origin hosted collaboration', async () => {
       registryMock.connections = [sameOriginTarget()]
       registryMock.defaultConnectionId = 'conn_same_origin'
 
@@ -662,9 +662,10 @@ describe('SettingsCollaboration', () => {
       await flush()
       await flush()
 
-      // Status should show enabled but no auth form for local
       expect(container.textContent).toContain('Enabled')
-      expect(queryByText(container, 'Authentication')).toBeNull()
+      expect(getByText(container, 'Authentication')).toBeTruthy()
+      expect(getByLabelText(container, 'Email')).toBeTruthy()
+      expect(getByRole(container, 'button', { name: 'Sign in' })).toBeTruthy()
     })
 
     it('shows signed-in state with user info and sign-out button', async () => {
