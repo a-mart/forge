@@ -3,6 +3,7 @@ import type { ProviderAccountUsage, ProviderUsageWindow } from "@forge/protocol"
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import {
   OpenAIAuthBrokerClient,
+  OpenAIAuthBrokerClientError,
   type OpenAIAuthBrokerLease,
   type OpenAIAuthBrokerRuntimeIdentity,
 } from "./openai-auth-broker-client.js";
@@ -62,7 +63,16 @@ export class OpenAIAuthBrokerRuntimeService {
     }
 
     const client = await this.createClient();
-    const lease = await client.renewLease(handle.leaseId, handle.identity);
+    let lease: OpenAIAuthBrokerLease;
+    try {
+      lease = await client.renewLease(handle.leaseId, handle.identity);
+    } catch (error) {
+      if (!isStaleBrokerLeaseError(error)) {
+        throw error;
+      }
+      lease = await client.acquireLease(handle.identity);
+    }
+
     return {
       ...handle,
       lease,
@@ -181,6 +191,11 @@ function buildRuntimeIdentity(
     projectLabel: descriptor.profileId,
     agentId: descriptor.agentId,
   };
+}
+
+export function isStaleBrokerLeaseError(error: unknown): boolean {
+  return error instanceof OpenAIAuthBrokerClientError
+    && (error.code === "lease_not_found" || error.code === "lease_not_active");
 }
 
 export function isBrokerLeaseRenewalDue(handle: OpenAIAuthBrokerLeaseHandle, nowMs: number): boolean {
