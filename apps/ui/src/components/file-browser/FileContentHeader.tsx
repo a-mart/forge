@@ -10,7 +10,6 @@ import {
   FolderOpen,
   RotateCcw,
   Save,
-  Pencil,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -39,11 +38,9 @@ interface FileContentHeaderProps {
   markdownRaw?: boolean
   /** Toggle between raw source and rendered preview */
   onToggleMarkdownRaw?: () => void
-  canEdit?: boolean
   editMode?: boolean
   dirty?: boolean
   saveState?: 'idle' | 'saving' | 'saved' | 'error' | 'conflict' | 'reloading'
-  onEnterEditMode?: () => void
   onSave?: () => void
   onRevert?: () => void
 }
@@ -57,11 +54,9 @@ export function FileContentHeader({
   isMarkdown = false,
   markdownRaw = false,
   onToggleMarkdownRaw,
-  canEdit = false,
   editMode = false,
   dirty = false,
   saveState = 'idle',
-  onEnterEditMode,
   onSave,
   onRevert,
 }: FileContentHeaderProps) {
@@ -168,28 +163,6 @@ export function FileContentHeader({
                 </TooltipContent>
               </Tooltip>
             </div>
-          ) : null}
-
-          {canEdit && !editMode ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className={cn(
-                    'inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors',
-                    'hover:bg-muted hover:text-foreground',
-                  )}
-                  onClick={onEnterEditMode}
-                  aria-label="Edit file inline"
-                >
-                  <Pencil className="size-3" />
-                  <span>Edit</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>
-                Edit inline
-              </TooltipContent>
-            </Tooltip>
           ) : null}
 
           {editMode ? (

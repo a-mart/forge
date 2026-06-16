@@ -111,6 +111,29 @@ export function useFileEditSession({
     })
   }, [key])
 
+  useEffect(() => {
+    if (!key || !contentForKey?.version || contentForKey.content == null || !canEnterEditMode) return
+    const initialContent = contentForKey.content
+    const initialVersion = contentForKey.version
+    setState((previous) => {
+      if (keysEqual(previous.key, key) && previous.mode === 'edit') {
+        return previous
+      }
+      return {
+        key,
+        mode: 'edit',
+        draft: initialContent,
+        baseContent: initialContent,
+        baseVersion: initialVersion,
+        dirty: false,
+        focused: false,
+        saveState: 'idle',
+        error: null,
+        conflict: null,
+      }
+    })
+  }, [canEnterEditMode, contentForKey, key])
+
   const enterEditMode = useCallback(() => {
     if (!key || !contentForKey?.version || contentForKey.content == null || !canEnterEditMode) return
     setState({

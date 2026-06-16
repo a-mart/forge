@@ -176,10 +176,11 @@ export function FileContentViewer({
 
   const contentText = content?.content
   const editState = editSession?.state
-  const isEditing = inlineEditingEnabled && editState?.mode === 'edit'
   const canEdit = inlineEditingEnabled && Boolean(editSession?.canEnterEditMode)
+  const isEditing = canEdit
   const editorLocked = editState?.saveState === 'saving' || editState?.saveState === 'reloading'
   const conflictActionsDisabled = editorLocked
+  const effectiveMarkdownRaw = markdownRaw || (isMarkdown && isEditing)
 
   useEffect(() => {
     if (isEditing && isMarkdown && !markdownRaw) {
@@ -316,8 +317,8 @@ export function FileContentViewer({
   // --- Text content ---
   const text = content?.content ?? ''
 
-  // --- Markdown file: show rendered or raw based on toggle ---
-  if (isMarkdown && !markdownRaw) {
+  // --- Markdown file: show rendered or raw based on toggle. Editable markdown opens as source. ---
+  if (isMarkdown && !effectiveMarkdownRaw && !isEditing) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden" role="region" aria-label={`File content: ${fileName}`}>
         <FileContentHeader
@@ -327,13 +328,11 @@ export function FileContentViewer({
           onToggleWordWrap={handleToggleWordWrap}
           onNavigateToDirectory={onNavigateToDirectory}
           isMarkdown
-          markdownRaw={markdownRaw}
+          markdownRaw={effectiveMarkdownRaw}
           onToggleMarkdownRaw={handleToggleMarkdownRaw}
-          canEdit={canEdit}
           editMode={isEditing}
           dirty={editState?.dirty ?? false}
           saveState={editState?.saveState}
-          onEnterEditMode={editSession?.enterEditMode}
           onSave={() => void editSession?.save()}
           onRevert={editSession?.revert}
         />
@@ -351,13 +350,11 @@ export function FileContentViewer({
         onToggleWordWrap={handleToggleWordWrap}
         onNavigateToDirectory={onNavigateToDirectory}
         isMarkdown={isMarkdown}
-        markdownRaw={markdownRaw}
+        markdownRaw={effectiveMarkdownRaw}
         onToggleMarkdownRaw={handleToggleMarkdownRaw}
-        canEdit={canEdit}
         editMode={isEditing}
         dirty={editState?.dirty ?? false}
         saveState={editState?.saveState}
-        onEnterEditMode={editSession?.enterEditMode}
         onSave={() => void editSession?.save()}
         onRevert={editSession?.revert}
       />
@@ -406,7 +403,7 @@ export function FileContentViewer({
             )}
           >
             <CodeMirrorFileEditorLazy
-              value={editState?.draft ?? text}
+              value={editState?.mode === 'edit' ? editState.draft : text}
               language={language}
               wordWrap={wordWrap}
               readOnly={editorLocked}

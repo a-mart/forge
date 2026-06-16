@@ -1,11 +1,14 @@
 /** @vitest-environment jsdom */
 
+import { EditorState } from '@codemirror/state'
+import { syntaxTree } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CodeMirrorFileEditor, type CodeMirrorFileEditorProps } from './CodeMirrorFileEditor'
+import { codeMirrorLanguageExtension } from './codemirror-language'
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -158,6 +161,15 @@ describe('CodeMirrorFileEditor', () => {
     renderEditor()
 
     expect(contentElement().getAttribute('aria-label')).toBe('File editor')
+  })
+
+  it('provides Dockerfile language support to the editor', () => {
+    const state = EditorState.create({
+      doc: 'FROM node:22\nRUN echo hello',
+      extensions: [codeMirrorLanguageExtension('dockerfile')],
+    })
+
+    expect(syntaxTree(state).toString()).toContain('keyword')
   })
 
   it('enables CodeMirror line wrapping when wordWrap is true', () => {

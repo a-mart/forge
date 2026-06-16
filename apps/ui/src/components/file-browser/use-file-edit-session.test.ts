@@ -109,6 +109,15 @@ afterEach(() => {
 })
 
 describe('useFileEditSession', () => {
+  it('opens editable text content directly in edit mode', () => {
+    renderHook({ keyValue: keyA, keyedContent: { key: keyA, content: content('base') } })
+
+    expect(captured?.canEnterEditMode).toBe(true)
+    expect(captured?.state.mode).toBe('edit')
+    expect(captured?.state.draft).toBe('base')
+    expect(captured?.state.dirty).toBe(false)
+  })
+
   it('does not initialize editing from content keyed to a different file', () => {
     renderHook({ keyValue: keyB, keyedContent: { key: keyA, content: content('old') } })
 
@@ -150,7 +159,7 @@ describe('useFileEditSession', () => {
 
     expect(onSavedContent).not.toHaveBeenCalled()
     expect(captured?.state.key).toEqual(keyB)
-    expect(captured?.state.mode).toBe('preview')
+    expect(captured?.state.mode).toBe('edit')
   })
 
   it('reloads disk content and clears conflict state', async () => {

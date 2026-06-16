@@ -2,13 +2,9 @@ import { keymap, drawSelection, dropCursor, highlightActiveLine, highlightActive
 import { Prec, Compartment, EditorState, type Extension } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { searchKeymap } from '@codemirror/search'
-import { css } from '@codemirror/lang-css'
-import { html } from '@codemirror/lang-html'
-import { javascript } from '@codemirror/lang-javascript'
-import { json } from '@codemirror/lang-json'
-import { markdown } from '@codemirror/lang-markdown'
 import { bracketMatching, defaultHighlightStyle, foldGutter, indentOnInput, syntaxHighlighting } from '@codemirror/language'
 import { useEffect, useMemo, useRef } from 'react'
+import { codeMirrorLanguageExtension } from './codemirror-language'
 
 export interface CodeMirrorFileEditorProps {
   value: string
@@ -68,40 +64,6 @@ const editorTheme = EditorView.theme({
     backgroundColor: 'rgb(251 146 60 / 0.45)',
   },
 })
-
-function languageExtension(language: string | undefined): Extension {
-  const normalized = language?.trim().toLowerCase()
-  switch (normalized) {
-    case 'css':
-    case 'scss':
-    case 'sass':
-    case 'less':
-      return css()
-    case 'html':
-    case 'htm':
-    case 'xml':
-    case 'svg':
-      return html()
-    case 'javascript':
-    case 'js':
-    case 'jsx':
-    case 'typescript':
-    case 'ts':
-    case 'tsx':
-    case 'mjs':
-    case 'cjs':
-      return javascript({ jsx: normalized === 'jsx' || normalized === 'tsx', typescript: normalized === 'typescript' || normalized === 'ts' || normalized === 'tsx' })
-    case 'json':
-    case 'jsonc':
-      return json()
-    case 'markdown':
-    case 'md':
-    case 'mdx':
-      return markdown()
-    default:
-      return []
-  }
-}
 
 function readOnlyExtensions(readOnly: boolean | undefined): Extension {
   const isReadOnly = readOnly === true
@@ -192,7 +154,7 @@ export function CodeMirrorFileEditor({
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         saveKeymap,
         keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap]),
-        languageCompartment.of(languageExtension(initialConfig.language)),
+        languageCompartment.of(codeMirrorLanguageExtension(initialConfig.language)),
         readOnlyCompartment.of(readOnlyExtensions(initialConfig.readOnly)),
         wrapCompartment.of(initialConfig.wordWrap ? EditorView.lineWrapping : []),
         contentAttributesCompartment.of(contentAttributes(initialConfig.ariaLabel)),
@@ -244,7 +206,7 @@ export function CodeMirrorFileEditor({
     }
 
     view.dispatch({
-      effects: languageCompartment.reconfigure(languageExtension(language)),
+      effects: languageCompartment.reconfigure(codeMirrorLanguageExtension(language)),
     })
   }, [language, languageCompartment])
 

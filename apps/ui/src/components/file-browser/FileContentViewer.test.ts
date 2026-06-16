@@ -9,6 +9,7 @@ import { FileContentViewer } from './FileContentViewer'
 import type { FileEditSessionController, FileEditSessionState } from './use-file-edit-session'
 
 const codeMirrorProps: Array<Record<string, unknown>> = []
+const headerProps: Array<Record<string, unknown>> = []
 
 vi.mock('./CodeMirrorFileEditor', () => ({
   CodeMirrorFileEditor: (props: Record<string, unknown>) => {
@@ -18,7 +19,10 @@ vi.mock('./CodeMirrorFileEditor', () => ({
 }))
 
 vi.mock('./FileContentHeader', () => ({
-  FileContentHeader: () => createElement('div', { 'data-testid': 'file-content-header' }),
+  FileContentHeader: (props: Record<string, unknown>) => {
+    headerProps.push(props)
+    return createElement('div', { 'data-testid': 'file-content-header' })
+  },
 }))
 
 const content: FileContentResult = {
@@ -38,6 +42,7 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   codeMirrorProps.length = 0
+  headerProps.length = 0
 })
 
 afterEach(() => {
@@ -77,7 +82,7 @@ function createEditSession(overrides: Partial<FileEditSessionController> = {}): 
   }
 }
 
-function renderViewer(editSession: FileEditSessionController) {
+function renderViewer(editSession: FileEditSessionController, overrides: Partial<Parameters<typeof FileContentViewer>[0]> = {}) {
   root ??= createRoot(container)
   flushSync(() => {
     root?.render(createElement(FileContentViewer, {
@@ -91,6 +96,7 @@ function renderViewer(editSession: FileEditSessionController) {
       onNavigateToDirectory: vi.fn(),
       inlineEditingEnabled: true,
       editSession,
+      ...overrides,
     }))
   })
 }
@@ -133,6 +139,47 @@ function editState(overrides: Partial<FileEditSessionState>): FileEditSessionSta
     ...overrides,
   }
 }
+
+describe('FileContentViewer direct inline editing', () => {
+  it('renders editable text files directly in the editor without requiring an Edit action', () => {
+    renderViewer(createEditSession({ state: editState({ mode: 'preview', dirty: false }) }))
+
+    expect(headerProps.at(-1)?.editMode).toBe(true)
+    expect(headerProps.at(-1)).not.toHaveProperty('onEnterEditMode')
+  })
+
+  it('wires Save and Revert actions while direct editing', () => {
+    const editSession = createEditSession({ state: editState({ dirty: true, saveState: 'idle' }) })
+    renderViewer(editSession)
+
+    const onSave = headerProps.at(-1)?.onSave as (() => void) | undefined
+    const onRevert = headerProps.at(-1)?.onRevert as (() => void) | undefined
+    onSave?.()
+    onRevert?.()
+
+    expect(editSession.save).toHaveBeenCalledTimes(1)
+    expect(editSession.revert).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps mobile/read-only mode on the highlighted preview surface', () => {
+    renderViewer(createEditSession(), { inlineEditingEnabled: false })
+
+    expect(codeMirrorProps).toHaveLength(0)
+    expect(container.querySelector('.syntax-highlight')).not.toBeNull()
+  })
+
+  it('keeps non-editable text files on the highlighted preview surface', () => {
+    const readOnlyContent: FileContentResult = {
+      ...content,
+      editability: { editable: false, reason: 'unsupported_encoding', maxEditableBytes: 1024 },
+    }
+
+    renderViewer(createEditSession({ canEnterEditMode: false }), { content: readOnlyContent })
+
+    expect(codeMirrorProps).toHaveLength(0)
+    expect(container.querySelector('.syntax-highlight')).not.toBeNull()
+  })
+})
 
 describe('FileContentViewer conflict recovery', () => {
   it('offers reload, overwrite, and cancel actions in the conflict banner', () => {
