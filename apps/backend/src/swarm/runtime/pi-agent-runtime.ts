@@ -79,7 +79,6 @@ const TERMINAL_WORKER_REPORT_PATTERNS = [
 // no visible side effect. Exported for tests.
 export const TERMINAL_REPORT_REDELIVERY_DIRECTIVE =
   "Plain assistant text is not visible here. Use speak_to_user, present_choices, delegate/follow up, or take an intentional non-user-visible coordination action now.";
-export const EMPTY_TURN_REDELIVERY_DIRECTIVE = TERMINAL_REPORT_REDELIVERY_DIRECTIVE;
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
 const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;

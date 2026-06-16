@@ -65,14 +65,6 @@ function snapshotsMatchSourceControlMutation(
   return snapshot.key.agentId === action.agentId && snapshot.key.worktreeId === action.worktreeId
 }
 
-export function createCleanFileEditorSnapshot(key: FileEditorSessionKey): FileEditorDirtySnapshot {
-  return {
-    key,
-    isDirty: false,
-    fileName: fileNameFromPath(key.filePath),
-  }
-}
-
 export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null) {
   const guardsRef = useRef<Map<string, RegisteredGuard>>(new Map())
   const [pendingTransition, setPendingTransition] = useState<PendingTransition | null>(null)

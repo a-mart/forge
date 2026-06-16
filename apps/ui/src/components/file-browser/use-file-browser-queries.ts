@@ -496,15 +496,6 @@ export function setFileContentCache(
   evictOldestCacheEntries()
 }
 
-export function invalidateFileContentCache(
-  agentId: string | null,
-  worktreeId: string | null | undefined,
-  filePath: string | null,
-) {
-  if (!agentId || !filePath) return
-  queryCache.delete(buildFileBrowserQueryKey('files:content', agentId, worktreeId, filePath))
-}
-
 export function invalidateFileBrowserMetadataCaches() {
   for (const key of queryCache.keys()) {
     if (key.startsWith('files:list') || key.startsWith('files:count') || key.startsWith('files:search')) {
