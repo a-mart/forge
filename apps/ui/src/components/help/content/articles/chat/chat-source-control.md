@@ -9,11 +9,11 @@ Open **Source Control** from the desktop workspace rail. The workspace includes 
 - **Worktrees** for a read-only inventory of repository worktrees.
 - **Pull Requests** for GitHub pull requests when the repository remote and `gh` CLI setup are available.
 
-Selecting a worktree changes the Source Control and Files context only. You can browse files from that worktree in the Files pane without changing the chat session's working directory or where the manager sends workers.
+Selecting a worktree changes the Source Control and Files context only. You can browse and, on desktop, edit files from that worktree in the Files pane without changing the chat session's working directory or where the manager sends workers. Same-workspace file edits refresh Source Control so Changes stays current.
 
 ## Branch and remote actions
 
-Source Control can fetch from origin, switch branches, create branches, and run fast-forward-only pulls. Write actions use a confirmation flow with a preflight check, including the expected head and status state, before Forge sends the git command.
+Source Control can fetch from origin, switch branches, create branches, and run fast-forward-only pulls. Write actions use a confirmation flow with a preflight check, including the expected head and status state, before Forge sends the git command. If the matching Files worktree has unsaved inline edits, Forge guards the transition or mutation instead of discarding the draft.
 
 Forge does not provide force push, stash, discard, rebase, branch deletion, or worktree create/remove actions from this workspace.
 

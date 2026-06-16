@@ -12,11 +12,11 @@ The panel loads the file content from the agent's working directory and displays
 - **Images** (PNG, JPG, GIF, WebP, SVG) display inline.
 - **Code and text files** show syntax-highlighted source.
 
-The header shows the file name, full path, and an "Open in Editor" link. In the desktop app, a "Show in folder" button also appears.
+Artifact viewing is distinct from the Files rail's inline editor. Use the Files rail when you want desktop in-app editing; use this panel for conversation artifacts and file references. The header shows the file name, full path, and an "Open in Editor" link. In the desktop app, a "Show in folder" button also appears.
 
 ## Opening in your editor
 
-Click "Open in [Editor]" in the panel header to open the file directly in your preferred editor. Set your editor (VS Code, VS Code Insiders, or Cursor) in Settings > General.
+Click "Open in [Editor]" in the panel header to open the file directly in your preferred external editor. Set your editor (VS Code, VS Code Insiders, or Cursor) in Settings > General.
 
 ## Revealing in the file system
 
