@@ -220,11 +220,22 @@ function normalizeBrokerError(payload: unknown): { code: string; message: string
   if (!payload || typeof payload !== "object") {
     return { code: "broker_request_failed", message: "Unexpected broker response." };
   }
-  const record = payload as { error?: unknown; code?: unknown };
-  return {
-    code: typeof record.code === "string" && record.code.trim() ? record.code.trim() : "broker_request_failed",
-    message: typeof record.error === "string" && record.error.trim() ? record.error.trim() : "Unexpected broker response.",
-  };
+
+  const record = payload as { error?: unknown; code?: unknown; message?: unknown };
+  const nestedError = record.error && typeof record.error === "object"
+    ? record.error as { code?: unknown; message?: unknown; error?: unknown }
+    : undefined;
+  const code = readBrokerErrorString(record.code) ?? readBrokerErrorString(nestedError?.code) ?? "broker_request_failed";
+  const message = readBrokerErrorString(record.error)
+    ?? readBrokerErrorString(record.message)
+    ?? readBrokerErrorString(nestedError?.message)
+    ?? readBrokerErrorString(nestedError?.error)
+    ?? "Unexpected broker response.";
+  return { code, message };
+}
+
+function readBrokerErrorString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function normalizeStatusPayload(

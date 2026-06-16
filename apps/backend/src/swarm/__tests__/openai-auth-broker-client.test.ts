@@ -185,6 +185,25 @@ describe('OpenAIAuthBrokerClient broker contract', () => {
     }])
   })
 
+  it('preserves nested broker error codes from non-2xx JSON bodies', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      error: {
+        code: 'lease_not_found',
+        message: 'Lease not found: lease_test_001',
+      },
+    }), { status: 404 }))
+    const client = new OpenAIAuthBrokerClient({
+      baseUrl: 'https://broker.example.test',
+      bearerToken: 'broker-test-token',
+      fetchImpl,
+    })
+
+    await expect(client.renewLease('lease_test_001', identity)).rejects.toMatchObject({
+      code: 'lease_not_found',
+      status: 404,
+    })
+  })
+
   it('omits blank optional identity fields from the nested client object', async () => {
     const { client, requests } = makeClient([leaseCreateFixture])
 

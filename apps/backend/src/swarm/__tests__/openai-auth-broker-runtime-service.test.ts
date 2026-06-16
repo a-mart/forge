@@ -149,6 +149,166 @@ describe('OpenAIAuthBrokerRuntimeService', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://broker.example.test/v1/leases/lease-expired/renew')
   })
 
+  it('reacquires a broker lease when renewal reports the existing lease is stale', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(async () => new Response(JSON.stringify({
+        code: 'lease_not_found',
+        error: 'Lease not found: lease-expired',
+      }), { status: 404 }))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({
+        leaseId: 'lease-reacquired',
+        accountId: 'broker-account-2',
+        accountLabel: 'Recovered Account',
+        renewAfterMs: Date.now() + 120_000,
+        expiresAtMs: Date.now() + 3_600_000,
+        credential: {
+          type: 'oauth',
+          access: 'reacquired-access-token',
+          expires: Date.now() + 3_600_000,
+          accountId: 'broker-account-2',
+        },
+      })))
+
+    const handle = await makeHandle()
+    const service = new OpenAIAuthBrokerRuntimeService({ config: handle.config })
+    const settingsService = new (await import('../openai-auth/openai-auth-settings-service.js')).OpenAIAuthSettingsService({
+      config: handle.config,
+    })
+    await settingsService.updateSettings({
+      mode: 'local',
+      broker: { url: 'https://broker.example.test', token: 'broker-token' },
+    })
+
+    const renewed = await service.renewIfNeeded({
+      leaseId: 'lease-expired',
+      identity: { clientId: 'forge', instanceId: 'forge' },
+      renewedAtMs: Date.now() - 60_000,
+      lease: {
+        leaseId: 'lease-expired',
+        renewAfterMs: Date.now() - 1,
+        credential: {
+          type: 'oauth',
+          access: 'expired-access-token',
+          expires: Date.now() + 3_600_000,
+          accountId: 'broker-account-1',
+        },
+      },
+    })
+
+    expect(renewed).toMatchObject({
+      leaseId: 'lease-reacquired',
+      lease: {
+        leaseId: 'lease-reacquired',
+        accountId: 'broker-account-2',
+        accountLabel: 'Recovered Account',
+        credential: {
+          access: 'reacquired-access-token',
+          accountId: 'broker-account-2',
+        },
+      },
+      renewedAtMs: Date.now(),
+    })
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://broker.example.test/v1/leases/lease-expired/renew')
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('https://broker.example.test/v1/leases')
+  })
+
+  it('uses a reacquired lease id for subsequent broker report and release calls', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(async () => new Response(JSON.stringify({
+        code: 'lease_not_active',
+        error: 'Lease is not active: lease-expired',
+      }), { status: 409 }))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({
+        leaseId: 'lease-reacquired',
+        renewAfterMs: Date.now() + 120_000,
+        credential: {
+          type: 'oauth',
+          access: 'reacquired-access-token',
+          expires: Date.now() + 3_600_000,
+          accountId: 'broker-account-2',
+        },
+      })))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true })))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true })))
+
+    const handle = await makeHandle()
+    const service = new OpenAIAuthBrokerRuntimeService({ config: handle.config })
+    const settingsService = new (await import('../openai-auth/openai-auth-settings-service.js')).OpenAIAuthSettingsService({
+      config: handle.config,
+    })
+    await settingsService.updateSettings({
+      mode: 'local',
+      broker: { url: 'https://broker.example.test', token: 'broker-token' },
+    })
+
+    const renewed = await service.renewIfNeeded({
+      leaseId: 'lease-expired',
+      identity: { clientId: 'forge', instanceId: 'forge' },
+      renewedAtMs: Date.now() - 60_000,
+      lease: {
+        leaseId: 'lease-expired',
+        renewAfterMs: Date.now() - 1,
+        credential: {
+          type: 'oauth',
+          access: 'expired-access-token',
+          expires: Date.now() + 3_600_000,
+          accountId: 'broker-account-1',
+        },
+      },
+    })
+    await service.report(renewed, 'success')
+    await service.release(renewed, 'test_complete')
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://broker.example.test/v1/leases/lease-expired/renew')
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('https://broker.example.test/v1/leases')
+    expect(String(fetchMock.mock.calls[2]?.[0])).toBe('https://broker.example.test/v1/leases/lease-reacquired/report')
+    expect(String(fetchMock.mock.calls[3]?.[0])).toBe('https://broker.example.test/v1/leases/lease-reacquired/release')
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).not.toContain('https://broker.example.test/v1/leases/lease-expired/report')
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).not.toContain('https://broker.example.test/v1/leases/lease-expired/release')
+  })
+
+  it('preserves non-stale broker renewal failures', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async () => new Response(JSON.stringify({
+      code: 'invalid_bearer',
+      error: 'Broker bearer token is invalid.',
+    }), { status: 401 }))
+
+    const handle = await makeHandle()
+    const service = new OpenAIAuthBrokerRuntimeService({ config: handle.config })
+    const settingsService = new (await import('../openai-auth/openai-auth-settings-service.js')).OpenAIAuthSettingsService({
+      config: handle.config,
+    })
+    await settingsService.updateSettings({
+      mode: 'local',
+      broker: { url: 'https://broker.example.test', token: 'broker-token' },
+    })
+
+    await expect(service.renewIfNeeded({
+      leaseId: 'lease-expired',
+      identity: { clientId: 'forge', instanceId: 'forge' },
+      renewedAtMs: Date.now() - 60_000,
+      lease: {
+        leaseId: 'lease-expired',
+        renewAfterMs: Date.now() - 1,
+        credential: {
+          type: 'oauth',
+          access: 'expired-access-token',
+          expires: Date.now() + 3_600_000,
+          accountId: 'broker-account-1',
+        },
+      },
+    })).rejects.toMatchObject({ code: 'invalid_bearer' })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://broker.example.test/v1/leases/lease-expired/renew')
+  })
+
   it('maps broker contract usage snapshots with account identity and usage windows', async () => {
     vi.spyOn(globalThis, 'fetch')
       .mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true })))

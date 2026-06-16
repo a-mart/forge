@@ -50,6 +50,7 @@ describe('OpenAIAuthBrokerRuntimeController', () => {
     const service = {
       isBrokerModeActive: vi.fn(async () => true),
       renewIfNeeded: vi.fn(async () => renewedHandle),
+      report: vi.fn(async () => renewedHandle),
       applyLeaseToAuthStorage: vi.fn(async (storage: typeof authStorage, handle: OpenAIAuthBrokerLeaseHandle) => {
         storage.set('openai-codex', credentialFromHandle(handle))
         return handle
@@ -73,6 +74,12 @@ describe('OpenAIAuthBrokerRuntimeController', () => {
     expect(service.applyLeaseToAuthStorage).toHaveBeenCalledWith(authStorage, renewedHandle)
     expect(closeStaleOpenAICodexWebSocketSession).toHaveBeenCalledTimes(1)
     expect(closeStaleOpenAICodexWebSocketSession).toHaveBeenCalledWith('broker_lease_rotated')
+
+    await controller.reportSuccess()
+
+    expect(service.report).toHaveBeenCalledWith(renewedHandle, 'success')
+    expect(service.report).not.toHaveBeenCalledWith(initialHandle, 'success')
+    expect(closeStaleOpenAICodexWebSocketSession).toHaveBeenCalledTimes(1)
   })
 
   it('closes cached OpenAI Codex websocket sessions when success reporting returns a replacement broker credential', async () => {
