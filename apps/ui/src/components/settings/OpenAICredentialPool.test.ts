@@ -394,6 +394,156 @@ describe('OpenAICredentialPool', () => {
       expect(brokerButton?.disabled).toBe(true)
     })
 
+    it('disables active broker mode from the top local credentials source control', async () => {
+      settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings({
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'settings',
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+          status: { ok: true, checkedAt: '2026-01-01T00:00:00.000Z' },
+        },
+      }))
+      settingsApiMock.disableOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings({
+        mode: 'local',
+        effectiveMode: 'local',
+        source: 'settings',
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+          status: { ok: true, checkedAt: '2026-01-01T00:00:00.000Z' },
+        },
+      }))
+
+      renderPool()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Forge Auth broker active')
+      expect(container.textContent).toContain('Read-only while Forge Auth broker mode is active.')
+      const localButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Local credentials')
+      expect(localButton).toBeTruthy()
+      fireEvent.click(localButton!)
+      await flush()
+      await flush()
+
+      expect(settingsApiMock.disableOpenAIBrokerSettings).toHaveBeenCalledWith(mockApiClient)
+      expect(onAuthReload).toHaveBeenCalledTimes(1)
+      expect(onSuccess).toHaveBeenCalledWith('Switched OpenAI auth back to local credentials.')
+      expect(container.textContent).toContain('Forge Auth broker configured')
+      expect(container.textContent).toContain('Add Account')
+      expect(container.textContent).not.toContain('Read-only while Forge Auth broker mode is active.')
+    })
+
+    it('enables an already configured Forge Auth broker from the top auth source control', async () => {
+      const configuredLocal = makeBrokerSettings({
+        mode: 'local',
+        effectiveMode: 'local',
+        source: 'settings',
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+          status: { ok: true, checkedAt: '2026-01-01T00:00:00.000Z' },
+        },
+      })
+      const enabled = makeBrokerSettings({
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'settings',
+        broker: configuredLocal.broker,
+      })
+      settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(configuredLocal)
+      settingsApiMock.updateOpenAIBrokerSettings.mockResolvedValue(enabled)
+
+      renderPool()
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('Forge Auth broker configured')
+      const brokerButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Forge Auth broker')
+      expect(brokerButton).toBeTruthy()
+      fireEvent.click(brokerButton!)
+      await flush()
+      await flush()
+
+      expect(settingsApiMock.updateOpenAIBrokerSettings).toHaveBeenCalledWith(mockApiClient, expect.objectContaining({
+        mode: 'central_broker',
+        testBeforeEnable: true,
+        broker: expect.not.objectContaining({ token: expect.any(String) }),
+      }))
+      expect(onAuthReload).toHaveBeenCalledTimes(1)
+      expect(onSuccess).toHaveBeenCalledWith('Forge Auth broker enabled.')
+      expect(container.textContent).toContain('Forge Auth broker active')
+    })
+
+    it('refetches enabled broker mode after settings is reopened', async () => {
+      const enabled = makeBrokerSettings({
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'settings',
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+          status: { ok: true, checkedAt: '2026-01-01T00:00:00.000Z' },
+        },
+      })
+      settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(enabled)
+
+      renderPool()
+      await flush()
+      await flush()
+
+      expect(settingsApiMock.fetchOpenAIBrokerSettings).toHaveBeenCalledWith(mockApiClient)
+      expect(container.textContent).toContain('Forge Auth broker active')
+      expect(container.textContent).toContain('Local OpenAI credentials below are visible for reference')
+    })
+
+    it('keeps enable and edit controls disabled under environment broker overrides', async () => {
+      settingsApiMock.fetchOpenAIBrokerSettings.mockResolvedValue(makeBrokerSettings({
+        mode: 'central_broker',
+        effectiveMode: 'central_broker',
+        source: 'env',
+        envOverride: true,
+        broker: {
+          configured: true,
+          url: 'https://broker.example.test/',
+          hasToken: true,
+          tokenMasked: '********oken',
+          clientId: 'forge',
+          timeoutMs: 10000,
+        },
+      }))
+      renderPool()
+      await flush()
+      await flush()
+
+      const sourceButtons = Array.from(container.querySelectorAll('button')).filter((button) => (
+        button.textContent?.includes('Local credentials') || button.textContent?.includes('Forge Auth broker')
+      ))
+      expect(sourceButtons.length).toBeGreaterThanOrEqual(2)
+      expect(sourceButtons.every((button) => button.disabled)).toBe(true)
+      expect(container.querySelector('#openai-broker-url')).toBeNull()
+      expect(container.querySelector('#openai-broker-token')).toBeNull()
+      expect(settingsApiMock.updateOpenAIBrokerSettings).not.toHaveBeenCalled()
+    })
+
     it('reloads parent auth summaries after broker settings are saved', async () => {
       const enabled = makeBrokerSettings({
         mode: 'central_broker',

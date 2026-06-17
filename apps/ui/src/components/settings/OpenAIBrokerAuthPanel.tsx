@@ -224,6 +224,22 @@ export function OpenAIBrokerAuthPanel({
     }
   }
 
+  const handleSelectLocalCredentials = () => {
+    if (settings?.effectiveMode === 'central_broker') {
+      void handleDisableBroker()
+      return
+    }
+    setModeDraft('local')
+  }
+
+  const handleSelectBrokerCredentials = () => {
+    if (settings?.broker.configured && settings.effectiveMode !== 'central_broker') {
+      void handleSave('central_broker')
+      return
+    }
+    setModeDraft('central_broker')
+  }
+
   const handleClearBrokerSettings = async () => {
     if (typeof window !== 'undefined') {
       const confirmed = window.confirm(
@@ -292,8 +308,9 @@ export function OpenAIBrokerAuthPanel({
             size="sm"
             variant={modeDraft === 'local' ? 'default' : 'outline'}
             disabled={envLocked || isBusy}
-            onClick={() => setModeDraft('local')}
+            onClick={handleSelectLocalCredentials}
           >
+            {isDisabling ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
             Local credentials
           </Button>
           <Button
@@ -301,8 +318,9 @@ export function OpenAIBrokerAuthPanel({
             size="sm"
             variant={modeDraft === 'central_broker' ? 'default' : 'outline'}
             disabled={envLocked || isBusy}
-            onClick={() => setModeDraft('central_broker')}
+            onClick={handleSelectBrokerCredentials}
           >
+            {isSaving ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
             Forge Auth broker
           </Button>
         </div>
