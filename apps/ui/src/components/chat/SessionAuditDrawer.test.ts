@@ -59,6 +59,33 @@ describe('SessionAuditDrawer', () => {
     expect(requestUrl.searchParams.has('includeConversationEntry')).toBe(false)
   })
 
+  it('does not show previous manager rows immediately after switching sessions', async () => {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session A',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-2',
+        sessionLabel: 'Project / Session B',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    expect(queryByText(document.body, 'Worker tool call')).toBeNull()
+  })
+
   it('clears loaded rows when the active session becomes ineligible', async () => {
     root = createRoot(container)
     flushSync(() => {
@@ -87,8 +114,9 @@ describe('SessionAuditDrawer', () => {
     expect(getByText(document.body, 'No audit rows found')).toBeTruthy()
   })
 
-  it('does not append a stale load-more page after filters change', async () => {
+  it('does not append a stale load-more page after filters change away and back', async () => {
     const loadMore = createDeferred<Response>()
+    let unfilteredPage = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
       const cursor = url.searchParams.get('cursor')
@@ -99,7 +127,8 @@ describe('SessionAuditDrawer', () => {
       if (type === 'filtered') {
         return responseFor(auditPageFixture({ title: 'Filtered row', hasMore: false, nextCursor: undefined }))
       }
-      return responseFor(auditPageFixture({ title: 'Initial row', hasMore: true, nextCursor: 'cursor-1' }))
+      unfilteredPage += 1
+      return responseFor(auditPageFixture({ title: unfilteredPage === 1 ? 'Initial row' : 'Fresh row', hasMore: true, nextCursor: 'cursor-1' }))
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -118,12 +147,71 @@ describe('SessionAuditDrawer', () => {
     fireEvent.click(getByRole(document.body, 'button', { name: /load more audit rows/i }))
     fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: 'filtered' } })
     await waitFor(() => expect(getByText(document.body, 'Filtered row')).toBeTruthy())
+    fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: '' } })
+    await waitFor(() => expect(getByText(document.body, 'Fresh row')).toBeTruthy())
 
     loadMore.resolve(responseFor(auditPageFixture({ title: 'Stale old page', hasMore: false, nextCursor: undefined })))
+    await settlePromises(loadMore.promise)
 
-    await waitFor(() => expect(queryByText(document.body, 'Stale old page')).toBeNull())
+    expect(queryByText(document.body, 'Stale old page')).toBeNull()
     expect(queryByText(document.body, 'Initial row')).toBeNull()
-    expect(getByText(document.body, 'Filtered row')).toBeTruthy()
+    expect(queryByText(document.body, 'Filtered row')).toBeNull()
+    expect(getByText(document.body, 'Fresh row')).toBeTruthy()
+  })
+
+  it('does not append a stale load-more page after close and reopen with the same session', async () => {
+    const loadMore = createDeferred<Response>()
+    let initialPage = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.searchParams.get('cursor') === 'cursor-1') {
+        return loadMore.promise
+      }
+      initialPage += 1
+      return responseFor(auditPageFixture({ title: initialPage === 1 ? 'Before close row' : 'After reopen row', hasMore: true, nextCursor: 'cursor-1' }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Before close row')).toBeTruthy())
+    fireEvent.click(getByRole(document.body, 'button', { name: /load more audit rows/i }))
+
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: false,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'After reopen row')).toBeTruthy())
+    loadMore.resolve(responseFor(auditPageFixture({ title: 'Stale after reopen page', hasMore: false, nextCursor: undefined })))
+    await settlePromises(loadMore.promise)
+
+    expect(queryByText(document.body, 'Stale after reopen page')).toBeNull()
+    expect(queryByText(document.body, 'Before close row')).toBeNull()
+    expect(getByText(document.body, 'After reopen row')).toBeTruthy()
   })
 })
 
@@ -172,6 +260,12 @@ function responseFor(payload: unknown): Response {
     ok: true,
     json: async () => payload,
   } as Response
+}
+
+async function settlePromises<T>(promise: Promise<T>): Promise<void> {
+  await promise
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 function createDeferred<T>() {

@@ -31,9 +31,12 @@ export function SessionAuditDrawer({
 }: SessionAuditDrawerProps) {
   const [category, setCategory] = useState<string>(ALL_CATEGORIES)
   const [typeFilter, setTypeFilter] = useState('')
-  const [items, setItems] = useState<SessionAuditEntry[]>([])
-  const [nextCursor, setNextCursor] = useState<string | undefined>()
-  const [hasMore, setHasMore] = useState(false)
+  const [pageState, setPageState] = useState<{
+    requestKey: string
+    items: SessionAuditEntry[]
+    nextCursor?: string
+    hasMore: boolean
+  } | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,29 +45,42 @@ export function SessionAuditDrawer({
   const selectedCategory = category === ALL_CATEGORIES ? undefined : category as SessionAuditEntryCategory
   const requestKey = `${open ? 'open' : 'closed'}:${sessionAgentId ?? ''}:${category}:${normalizedTypeFilter}:${wsUrl ?? ''}`
   const activeRequestKeyRef = useRef(requestKey)
+  const requestGenerationRef = useRef(0)
+  const loadMoreAbortRef = useRef<AbortController | null>(null)
+
+  if (activeRequestKeyRef.current !== requestKey) {
+    activeRequestKeyRef.current = requestKey
+    requestGenerationRef.current += 1
+  }
+
   const canShowRows = open && Boolean(sessionAgentId)
-  const visibleItems = canShowRows ? items : []
+  const currentPageState = canShowRows && pageState?.requestKey === requestKey ? pageState : null
+  const visibleItems = currentPageState?.items ?? []
   const visibleLoading = canShowRows ? loading : false
   const visibleLoadingMore = canShowRows ? loadingMore : false
   const visibleError = canShowRows ? error : null
-  const visibleHasMore = canShowRows ? hasMore : false
+  const visibleHasMore = currentPageState?.hasMore ?? false
+  const visibleNextCursor = currentPageState?.nextCursor
 
   const resetAuditState = useCallback(() => {
-    setItems([])
-    setNextCursor(undefined)
-    setHasMore(false)
+    loadMoreAbortRef.current?.abort()
+    loadMoreAbortRef.current = null
+    setPageState(null)
     setLoading(false)
     setLoadingMore(false)
     setError(null)
   }, [])
 
   useEffect(() => {
-    activeRequestKeyRef.current = requestKey
+    const generation = requestGenerationRef.current
 
     if (!open || !sessionAgentId) {
       resetAuditState()
       return
     }
+
+    loadMoreAbortRef.current?.abort()
+    loadMoreAbortRef.current = null
 
     const controller = new AbortController()
     const currentRequestKey = requestKey
@@ -80,18 +96,19 @@ export function SessionAuditDrawer({
           types: normalizedTypeFilter ? [normalizedTypeFilter] : undefined,
           signal: controller.signal,
         })
-        if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
-        setItems(page.items)
-        setNextCursor(page.nextCursor)
-        setHasMore(page.hasMore)
+        if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey || requestGenerationRef.current !== generation) return
+        setPageState({
+          requestKey: currentRequestKey,
+          items: page.items,
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+        })
       } catch (error) {
-        if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
-        setItems([])
-        setNextCursor(undefined)
-        setHasMore(false)
+        if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey || requestGenerationRef.current !== generation) return
+        setPageState({ requestKey: currentRequestKey, items: [], hasMore: false })
         setError(error instanceof Error ? error.message : String(error))
       } finally {
-        if (!controller.signal.aborted && activeRequestKeyRef.current === currentRequestKey) {
+        if (!controller.signal.aborted && activeRequestKeyRef.current === currentRequestKey && requestGenerationRef.current === generation) {
           setLoading(false)
         }
       }
@@ -104,10 +121,13 @@ export function SessionAuditDrawer({
   }, [open, requestKey, resetAuditState, sessionAgentId, selectedCategory, normalizedTypeFilter, wsUrl])
 
   async function loadMore() {
-    if (!sessionAgentId || !nextCursor || loadingMore) return
+    if (!sessionAgentId || !visibleNextCursor || loadingMore) return
     const currentRequestKey = activeRequestKeyRef.current
-    const cursor = nextCursor
+    const generation = requestGenerationRef.current
+    const cursor = visibleNextCursor
+    loadMoreAbortRef.current?.abort()
     const controller = new AbortController()
+    loadMoreAbortRef.current = controller
     setLoadingMore(true)
     setError(null)
     try {
@@ -118,16 +138,27 @@ export function SessionAuditDrawer({
         types: normalizedTypeFilter ? [normalizedTypeFilter] : undefined,
         signal: controller.signal,
       })
-      if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
-      setItems((current) => [...current, ...page.items])
-      setNextCursor(page.nextCursor)
-      setHasMore(page.hasMore)
+      if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey || requestGenerationRef.current !== generation) return
+      setPageState((current) => {
+        if (!current || current.requestKey !== currentRequestKey || current.nextCursor !== cursor || requestGenerationRef.current !== generation) {
+          return current
+        }
+        return {
+          requestKey: currentRequestKey,
+          items: [...current.items, ...page.items],
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+        }
+      })
     } catch (error) {
-      if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
+      if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey || requestGenerationRef.current !== generation) return
       setError(error instanceof Error ? error.message : String(error))
     } finally {
-      if (!controller.signal.aborted && activeRequestKeyRef.current === currentRequestKey) {
+      if (!controller.signal.aborted && activeRequestKeyRef.current === currentRequestKey && requestGenerationRef.current === generation) {
         setLoadingMore(false)
+        if (loadMoreAbortRef.current === controller) {
+          loadMoreAbortRef.current = null
+        }
       }
     }
   }
