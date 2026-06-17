@@ -4,6 +4,9 @@ import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
+import { preferNodeExtraCaCertsOverOpenSslCaFile } from "./tls-env.js";
+
+preferNodeExtraCaCertsOverOpenSslCaFile();
 
 const args = process.argv.slice(2);
 
