@@ -385,8 +385,6 @@ forge/
 
 ## A Note
 
-Forge is built on [Middleman](https://github.com/SawyerHood/middleman) by Sawyer Hood.
-
 This project started as a personal tool and is shared in that spirit. It's functional, actively used in production, and being improved continuously. Forge is the primary tool used to develop itself. The system you see today will probably be unrecognizable in a month. It prioritizes practical utility over enterprise polish.
 
 These are powerful tools with broad system access. Agents can create files, run commands, and modify your environment. Use version control, keep backups, and be thoughtful about what you let agents do unsupervised.

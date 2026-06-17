@@ -12,7 +12,7 @@ Forge fully supports Windows for the backend daemon, dashboard UI, agent orchest
 
 ```powershell
 git clone https://github.com/a-mart/forge.git
-cd middleman
+cd forge
 pnpm i
 ```
 
