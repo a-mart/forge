@@ -58,9 +58,13 @@ ${FORGE_DATA_DIR}/shared/config/auth/
 ${FORGE_DATA_DIR}/shared/config/secrets.json
 ${FORGE_DATA_DIR}/shared/specialists/
 ${FORGE_DATA_DIR}/profiles/_collaboration/
+${FORGE_DATA_DIR}/skills/
+${FORGE_DATA_DIR}/profiles/*/pi/skills/
 ${FORGE_DATA_DIR}/agent/skills/
 ${FORGE_DATA_DIR}/agent/manager/skills/
 ```
+
+`${FORGE_DATA_DIR}/skills/` stores user-created global Forge skills. `${FORGE_DATA_DIR}/profiles/*/pi/skills/` stores profile/project-scoped Pi skills. `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/` store Pi-discovered global worker/manager skills.
 
 If `FORGE_COLLABORATION_AUTH_SECRET` is supplied outside the data directory, back up the external secret source too.
 

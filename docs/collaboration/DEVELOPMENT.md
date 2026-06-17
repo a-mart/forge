@@ -89,10 +89,12 @@ Use files for:
 - channel reference docs
 - global/shared specialist markdown
 - channel-local specialist markdown
-- global/project skill definitions
+- Forge global skill definitions under `${FORGE_DATA_DIR}/skills/`
+- profile/project Pi skill definitions under `${FORGE_DATA_DIR}/profiles/<profileId>/pi/skills/`
+- Pi agent global worker/manager skill definitions under `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/`
 - provider auth/secrets through the existing Forge config/secret services
 
-If the state is user-authored prose or reusable agent content, keep it file-backed unless a design explicitly changes that boundary.
+If the state is user-authored prose or reusable agent content, keep it file-backed unless a design explicitly changes that boundary. Do not confuse Forge skill storage (`${FORGE_DATA_DIR}/skills/` for user-created global Forge skills) with Pi agent skill storage (`agent/skills`, `agent/manager/skills`, and profile `pi/skills`).
 
 ## Runtime and data isolation for validation
 

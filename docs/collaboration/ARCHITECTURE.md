@@ -105,7 +105,8 @@ Protocol changes start in `packages/protocol/src/collaboration.ts`, then backend
 | Additional instructions | Files | `profiles/_collaboration/sessions/<sessionId>/context/prompt.md`. |
 | Channel reference docs | Files | `profiles/_collaboration/sessions/<sessionId>/reference/`. |
 | Specialist definitions | Files | Shared markdown in `shared/specialists/`; channel-local markdown under session `specialists/`. |
-| Skill definitions | Files | Normal Forge/Pi skill directories. V1 has no channel-local skill authoring. |
+| Forge skill definitions | Files | User-created global Forge skills live under `${FORGE_DATA_DIR}/skills/`; repository project skills live under repo-root `.forge/skills/`. |
+| Pi agent skill definitions | Files | Pi-discovered global worker/manager skills live under `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/`; profile/project Pi skills live under `${FORGE_DATA_DIR}/profiles/<profileId>/pi/skills/`. V1 has no channel-local skill authoring. |
 
 The hidden collaboration profile constants live in `apps/backend/src/collaboration/constants.ts`:
 
@@ -204,7 +205,7 @@ Missing `TargetSpace` is treated as Builder-only for legacy compatibility. Colla
 
 Global selected specialist handles are structured SQLite state. Channel-local specialist definitions remain markdown files under the backing session.
 
-Collaboration skill selection is also SQLite-backed. Skill definitions stay file-backed. Category defaults are copied into newly created channels; existing channels are not rewritten when a category default changes. `NULL` and `[]` have different meanings and must be preserved by migrations and UI code.
+Collaboration skill selection is also SQLite-backed. Forge and Pi skill definitions stay file-backed in their normal directories. Category defaults are copied into newly created channels; existing channels are not rewritten when a category default changes. `NULL` and `[]` have different meanings and must be preserved by migrations and UI code.
 
 ## Boundaries and exclusions
 
