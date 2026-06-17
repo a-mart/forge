@@ -137,6 +137,10 @@ describe('session audit routes', () => {
       const missingWorkerSourceResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=missing-worker`)
       expect(missingWorkerSourceResponse.status).toBe(404)
 
+      await mkdir(getWorkerSessionFilePath(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId, 'directory-worker'), { recursive: true })
+      const directoryWorkerResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=directory-worker`)
+      expect(directoryWorkerResponse.status).toBe(404)
+
       const traversalWorkerResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=${encodeURIComponent('../worker-1')}`)
       expect(traversalWorkerResponse.status).toBe(400)
 

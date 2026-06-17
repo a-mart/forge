@@ -1,4 +1,5 @@
-import { open, readdir, stat } from 'node:fs/promises'
+import type { Stats } from 'node:fs'
+import { lstat, open, readdir, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import type {
   SessionAuditCursor,
@@ -225,13 +226,8 @@ export class SessionAuditService {
     const workerFile = resolve(getWorkerSessionFilePath(dataDir, profileId, sessionSource.sessionAgentId, safeWorkerId))
     assertPathInside(workerFile, workersDir, 'Worker audit file is outside the selected workers directory')
 
-    const fileExists = await stat(workerFile).then(() => true).catch((error: unknown) => {
-      if (isNodeErrorCode(error, 'ENOENT')) {
-        return false
-      }
-      throw error
-    })
-    if (!descriptor && !fileExists) {
+    const fileStats = await readWorkerAuditFileStats(workerFile)
+    if (fileStats.rejected || (!descriptor && !fileStats.stats)) {
       throw new SessionAuditError('Unknown worker audit source', 404)
     }
 
@@ -311,29 +307,27 @@ export class SessionAuditService {
       }
     }
 
-    const summaries = await Promise.all([...workerIds].sort().map(async (workerId) => {
+    const summaries: Array<SessionAuditWorkerSummary | undefined> = await Promise.all([...workerIds].sort().map(async (workerId) => {
       const safeWorkerId = sanitizeAuditPathSegment(workerId, 'workerId')
       const relativePath = join('workers', `${safeWorkerId}.jsonl`)
       const filePath = resolve(workersDir, `${safeWorkerId}.jsonl`)
       assertPathInside(filePath, workersDir, 'Worker audit file is outside the selected workers directory')
       const descriptor = descriptorWorkers.get(workerId)
-      const fileStat = await stat(filePath).catch((error: unknown) => {
-        if (isNodeErrorCode(error, 'ENOENT')) {
-          return undefined
-        }
-        throw error
-      })
+      const fileStat = await readWorkerAuditFileStats(filePath)
+      if (fileStat.rejected) {
+        return undefined
+      }
       return {
         workerId,
         displayName: descriptor?.displayName,
         status: descriptor?.status,
         relativePath,
-        bytes: fileStat?.size,
-        updatedAt: descriptor?.updatedAt ?? fileStat?.mtime.toISOString(),
+        bytes: fileStat.stats?.size,
+        updatedAt: descriptor?.updatedAt ?? fileStat.stats?.mtime.toISOString(),
       } satisfies SessionAuditWorkerSummary
     }))
 
-    return summaries
+    return summaries.filter((summary): summary is SessionAuditWorkerSummary => Boolean(summary))
   }
 }
 
@@ -949,6 +943,22 @@ async function readFileSize(filePath: string): Promise<number | undefined> {
     }
     throw error
   })
+}
+
+async function readWorkerAuditFileStats(filePath: string): Promise<{ stats?: Stats; rejected: boolean }> {
+  const fileStats = await lstat(filePath).catch((error: unknown) => {
+    if (isNodeErrorCode(error, 'ENOENT')) {
+      return undefined
+    }
+    throw error
+  })
+  if (!fileStats) {
+    return { rejected: false }
+  }
+  if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
+    return { rejected: true }
+  }
+  return { stats: fileStats, rejected: false }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
