@@ -133,12 +133,19 @@ export function CollabSurface({
     managerSetActiveChannel(connId, channel ?? null)
   }, [activeConnectionId, channel, managerSetActiveChannel])
 
-  // Keep activeClientRef in sync for backward-compat CollabWsProvider
+  const activeState = activeConnectionId
+    ? connections.connectionStates[activeConnectionId]
+    : undefined
+
+  // Keep activeClientRef in sync for backward-compat CollabWsProvider.
+  // Client attachment can happen asynchronously after auth probing; the
+  // manager notifies via connection state changes, so include activeState to
+  // refresh the ref even when activeConnectionId and getClient are stable.
   useEffect(() => {
     activeClientRef.current = activeConnectionId
       ? managerGetClient(activeConnectionId)
       : null
-  }, [activeConnectionId, managerGetClient])
+  }, [activeConnectionId, activeState, managerGetClient])
 
   // Resolve the active target for wsUrl/settings derivation.
   // This ensures the settings target, wsUrl passed to children, and compat state
@@ -160,9 +167,6 @@ export function CollabSurface({
 
   // Sync collab WS health to the module-level store so ModeSwitch can
   // display the collab connection dot even from the builder surface.
-  const activeState = activeConnectionId
-    ? connections.connectionStates[activeConnectionId]
-    : undefined
   const isConnected = activeState?.connected ?? false
 
   useEffect(() => {
