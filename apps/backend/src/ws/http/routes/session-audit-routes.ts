@@ -76,8 +76,14 @@ function parseAuditPageRequest(searchParams: URLSearchParams): SessionAuditPageR
   if (searchParams.has('q') || searchParams.has('search') || searchParams.has('textQuery')) {
     throw new SessionAuditError('Session audit search is not supported', 400)
   }
+  if (searchParams.has('includeConversationEntry')) {
+    throw new SessionAuditError('Full conversation entries are not exposed by audit pages; use capped previews', 400)
+  }
+  if (searchParams.has('source')) {
+    throw new SessionAuditError('Use sourceKind for audit source filtering', 400)
+  }
 
-  const sourceKind = searchParams.get('source') ?? searchParams.get('sourceKind')
+  const sourceKind = searchParams.get('sourceKind')
   if (sourceKind && sourceKind !== 'canonical_session_jsonl') {
     throw new SessionAuditError('Only canonical_session_jsonl audit source is supported', 400)
   }
@@ -89,7 +95,6 @@ function parseAuditPageRequest(searchParams: URLSearchParams): SessionAuditPageR
     offset: parseOptionalInteger(searchParams.get('offset'), 'offset'),
     order: parseOptionalEnum(searchParams.get('order'), ['asc', 'desc'] as const, 'order'),
     limit: parseOptionalInteger(searchParams.get('limit'), 'limit'),
-    includeConversationEntry: parseOptionalBoolean(searchParams.get('includeConversationEntry'), 'includeConversationEntry'),
     categories: parseCategories(searchParams),
     types: parseCsv(searchParams, 'type', 'types'),
   }
@@ -127,20 +132,6 @@ function parseOptionalInteger(raw: string | null, field: string): number | undef
     throw new SessionAuditError(`Invalid ${field}`, 400)
   }
   return value
-}
-
-function parseOptionalBoolean(raw: string | null, field: string): boolean | undefined {
-  if (raw === null || raw.trim() === '') {
-    return undefined
-  }
-  const normalized = raw.trim().toLowerCase()
-  if (normalized === 'true' || normalized === '1') {
-    return true
-  }
-  if (normalized === 'false' || normalized === '0') {
-    return false
-  }
-  throw new SessionAuditError(`Invalid ${field}`, 400)
 }
 
 function parseOptionalEnum<const T extends readonly string[]>(raw: string | null, allowed: T, field: string): T[number] | undefined {

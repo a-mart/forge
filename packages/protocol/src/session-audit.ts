@@ -1,5 +1,4 @@
 import type { AgentStatus } from './agents.js'
-import type { ConversationEntry } from './conversation-events.js'
 
 export const SESSION_AUDIT_SCOPES = ['session', 'worker'] as const
 export type SessionAuditScope = (typeof SESSION_AUDIT_SCOPES)[number]
@@ -90,7 +89,7 @@ export interface SessionAuditEntry {
   toolCallId?: string
   toolKind?: string
   role?: string
-  source?: string
+  conversationSource?: string
   renderable: boolean
   hiddenReason?: SessionAuditHiddenReason
   title: string
@@ -100,7 +99,6 @@ export interface SessionAuditEntry {
   rawPreview: string
   rawPreviewTruncated?: boolean
   rawBytes: number
-  conversationEntry?: ConversationEntry
   parseError?: string
 }
 
@@ -121,7 +119,6 @@ export interface SessionAuditPageRequest {
   offset?: number
   order?: SessionAuditOrder
   limit?: number
-  includeConversationEntry?: boolean
   categories?: SessionAuditEntryCategory[]
   types?: string[]
 }
@@ -139,6 +136,5 @@ export interface SessionAuditPageResponse {
   items: SessionAuditEntry[]
   page: SessionAuditPageInfo
   nextCursor?: string
-  previousCursor?: string
   hasMore: boolean
 }

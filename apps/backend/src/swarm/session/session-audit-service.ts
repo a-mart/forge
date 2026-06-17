@@ -1,7 +1,6 @@
 import { open, readdir, stat } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import type {
-  ConversationEntry,
   SessionAuditCursor,
   SessionAuditEntry,
   SessionAuditEntryCategory,
@@ -84,7 +83,6 @@ interface ReadJsonlPageOptions {
   startOffset: number
   startLineNumber?: number
   limit: number
-  includeConversationEntry: boolean
   categories?: ReadonlySet<SessionAuditEntryCategory>
   types?: ReadonlySet<string>
   source: ResolvedAuditSource
@@ -137,7 +135,6 @@ export class SessionAuditService {
       startOffset,
       startLineNumber: cursor?.lineNumber ?? (startOffset === 0 ? 1 : undefined),
       limit,
-      includeConversationEntry: request.includeConversationEntry === true,
       categories,
       types,
       source,
@@ -177,17 +174,6 @@ export class SessionAuditService {
         scanLimited: readResult.scanLimited,
       },
       nextCursor,
-      previousCursor: startOffset > 0
-        ? encodeCursor({
-            v: 1,
-            sessionAgentId: normalizedSessionAgentId,
-            scope,
-            sourceId: SESSION_SOURCE_ID,
-            offset: 0,
-            lineNumber: 1,
-            order,
-          })
-        : undefined,
       hasMore,
     }
   }
@@ -343,7 +329,7 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
       }
       scannedLines += 1
       scannedBytes += nextByteOffset - byteOffset
-      const item = buildAuditEntry(record, options.source, options.includeConversationEntry)
+      const item = buildAuditEntry(record, options.source)
       lineStartOffset = nextByteOffset
       lineNumber = lineNumber === undefined ? undefined : lineNumber + 1
 
@@ -429,11 +415,11 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
   }
 }
 
-function buildAuditEntry(record: JsonlLineRecord, source: ResolvedAuditSource, includeConversationEntry: boolean): SessionAuditEntry {
+function buildAuditEntry(record: JsonlLineRecord, source: ResolvedAuditSource): SessionAuditEntry {
   const lineText = record.lineBytes.toString('utf8')
   const rawPreview = truncateUtf8(lineText, RAW_PREVIEW_MAX_BYTES)
   const base = {
-    id: `${source.sourceKind}:${record.byteOffset}`,
+    id: `${source.sourceKind}:${source.sourceId}:${record.byteOffset}`,
     scope: source.scope,
     sourceId: source.sourceId,
     sourceLabel: source.sourceLabel,
@@ -529,7 +515,6 @@ function buildAuditEntry(record: JsonlLineRecord, source: ResolvedAuditSource, i
       }
     }
 
-    const conversationEntry = data as unknown as ConversationEntry
     const conversationType = stringValue(data.type)
     const classified = classifyConversationEntry(data)
     const preview = truncateText(extractConversationPreview(data) || rawPreview.text)
@@ -551,14 +536,13 @@ function buildAuditEntry(record: JsonlLineRecord, source: ResolvedAuditSource, i
       toolCallId: stringValue(data.toolCallId),
       toolKind: stringValue(data.kind),
       role: stringValue(data.role),
-      source: stringValue(data.source),
+      conversationSource: stringValue(data.source),
       renderable: classified.renderable,
       hiddenReason: classified.hiddenReason,
       title: classified.title,
       summary: buildConversationSummary(data, classified.title, preview.text),
       preview: preview.text,
       previewTruncated: preview.truncated,
-      conversationEntry: includeConversationEntry ? conversationEntry : undefined,
     }
   }
 

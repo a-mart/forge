@@ -31,8 +31,11 @@ describe('SessionAuditService', () => {
       'malformed',
       'manager_tool_call',
     ])
+    expect(page.items[1]).toMatchObject({ conversationSource: 'user_input' })
+    expect(page.items[1].id).toMatch(/^canonical_session_jsonl:session:\d+$/)
     expect(page.items[2].parseError).toBeTruthy()
     expect(page.items[3]).toMatchObject({ toolName: 'spawn_agent', renderable: true })
+    expect('conversationEntry' in page.items[1]).toBe(false)
   })
 
   it('paginates by byte cursor without relying on the 2,000-entry projected history cap', async () => {

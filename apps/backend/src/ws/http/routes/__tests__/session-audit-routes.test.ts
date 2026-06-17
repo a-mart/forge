@@ -64,6 +64,14 @@ describe('session audit routes', () => {
       const workerResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=worker-1`)
       expect(workerResponse.status).toBe(400)
 
+      const includeResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?includeConversationEntry=true`)
+      expect(includeResponse.status).toBe(400)
+      await expect(includeResponse.json()).resolves.toMatchObject({ error: expect.stringContaining('capped previews') })
+
+      const sourceResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?source=session`)
+      expect(sourceResponse.status).toBe(400)
+      await expect(sourceResponse.json()).resolves.toMatchObject({ error: expect.stringContaining('sourceKind') })
+
       const postResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit`, { method: 'POST' })
       expect(postResponse.status).toBe(405)
       expect(postResponse.headers.get('allow')).toContain('GET')
