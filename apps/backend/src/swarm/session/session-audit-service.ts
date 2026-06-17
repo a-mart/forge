@@ -1,5 +1,5 @@
 import type { Stats } from 'node:fs'
-import { lstat, open, readdir, stat } from 'node:fs/promises'
+import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import type {
   SessionAuditCursor,
@@ -126,7 +126,7 @@ export class SessionAuditService {
     const limit = clampLimit(request.limit)
     const categories = normalizeCategories(request.categories)
     const types = normalizeStringSet(request.types)
-    const sessionSource = this.resolveSessionSource(normalizedSessionAgentId)
+    const sessionSource = await this.resolveSessionSource(normalizedSessionAgentId)
     const source = scope === 'session'
       ? sessionSource
       : await this.resolveWorkerSource(sessionSource, request.workerId)
@@ -190,7 +190,7 @@ export class SessionAuditService {
     }
   }
 
-  private resolveSessionSource(sessionAgentId: string): ResolvedAuditSource {
+  private async resolveSessionSource(sessionAgentId: string): Promise<ResolvedAuditSource> {
     const descriptor = this.host.getAgent(sessionAgentId)
     if (!descriptor || descriptor.role !== 'manager') {
       throw new SessionAuditError('Unknown manager session', 404)
@@ -201,6 +201,17 @@ export class SessionAuditService {
     const sessionDir = resolve(getSessionDir(dataDir, profileId, descriptor.agentId))
     const sessionFile = resolve(getSessionFilePath(dataDir, profileId, descriptor.agentId))
     assertPathInside(sessionFile, sessionDir, 'Session audit file is outside the selected session directory')
+    const sessionDirState = await readAuditDirectoryState(sessionDir)
+    if (sessionDirState.rejected) {
+      throw new SessionAuditError('Unknown session audit source', 404)
+    }
+    const sessionFileState = await readAuditFileState(sessionFile, {
+      parentRealPath: sessionDirState.realPath,
+      outsideMessage: 'Session audit file is outside the selected session directory',
+    })
+    if (sessionFileState.rejected) {
+      throw new SessionAuditError('Unknown session audit source', 404)
+    }
 
     return {
       sessionAgentId,
@@ -223,10 +234,21 @@ export class SessionAuditService {
     const profileId = sessionDescriptor?.profileId ?? sessionSource.sessionAgentId
     const workersDir = resolve(getWorkersDir(dataDir, profileId, sessionSource.sessionAgentId))
     assertPathInside(workersDir, sessionSource.sessionDir, 'Workers directory is outside the selected session directory')
+    const workersDirState = await readAuditDirectoryState(workersDir)
+    if (workersDirState.rejected) {
+      throw new SessionAuditError('Unknown worker audit source', 404)
+    }
+    const sessionDirState = await readAuditDirectoryState(sessionSource.sessionDir)
+    if (sessionDirState.rejected) {
+      throw new SessionAuditError('Unknown worker audit source', 404)
+    }
+    if (workersDirState.realPath && sessionDirState.realPath) {
+      assertPathInside(workersDirState.realPath, sessionDirState.realPath, 'Workers directory is outside the selected session directory')
+    }
     const workerFile = resolve(getWorkerSessionFilePath(dataDir, profileId, sessionSource.sessionAgentId, safeWorkerId))
     assertPathInside(workerFile, workersDir, 'Worker audit file is outside the selected workers directory')
 
-    const fileStats = await readWorkerAuditFileStats(workerFile)
+    const fileStats = await readWorkerAuditFileStats(workerFile, workersDirState.realPath, sessionDirState.realPath)
     if (fileStats.rejected || (!descriptor && !fileStats.stats)) {
       throw new SessionAuditError('Unknown worker audit source', 404)
     }
@@ -290,6 +312,27 @@ export class SessionAuditService {
     const profileId = sessionDescriptor?.profileId ?? sessionAgentId
     const workersDir = resolve(getWorkersDir(dataDir, profileId, sessionAgentId))
     assertPathInside(workersDir, sessionDir, 'Workers directory is outside the selected session directory')
+    const workersDirState = await readAuditDirectoryState(workersDir)
+    if (workersDirState.rejected) {
+      return []
+    }
+    if (workersDirState.missing) {
+      return [...descriptorWorkers.values()].sort((a, b) => a.agentId.localeCompare(b.agentId)).map((descriptor) => ({
+        workerId: descriptor.agentId,
+        displayName: descriptor.displayName,
+        status: descriptor.status,
+        descriptorPresent: true,
+        relativePath: join('workers', `${sanitizeAuditPathSegment(descriptor.agentId, 'workerId')}.jsonl`),
+        updatedAt: descriptor.updatedAt,
+      } satisfies SessionAuditWorkerSummary))
+    }
+    const sessionDirState = await readAuditDirectoryState(sessionDir)
+    if (sessionDirState.rejected) {
+      return []
+    }
+    if (workersDirState.realPath && sessionDirState.realPath) {
+      assertPathInside(workersDirState.realPath, sessionDirState.realPath, 'Workers directory is outside the selected session directory')
+    }
 
     const workerIds = new Set(descriptorWorkers.keys())
     const files = await readdir(workersDir).catch((error: unknown) => {
@@ -313,7 +356,7 @@ export class SessionAuditService {
       const filePath = resolve(workersDir, `${safeWorkerId}.jsonl`)
       assertPathInside(filePath, workersDir, 'Worker audit file is outside the selected workers directory')
       const descriptor = descriptorWorkers.get(workerId)
-      const fileStat = await readWorkerAuditFileStats(filePath)
+      const fileStat = await readWorkerAuditFileStats(filePath, workersDirState.realPath, sessionDirState.realPath)
       if (fileStat.rejected) {
         return undefined
       }
@@ -934,15 +977,58 @@ function truncateText(text: string): { text: string; truncated: boolean } {
 }
 
 async function readFileSize(filePath: string): Promise<number | undefined> {
-  return stat(filePath).then((stats) => stats.size).catch((error: unknown) => {
+  const fileState = await readAuditFileState(filePath)
+  return fileState.rejected ? undefined : fileState.stats?.size
+}
+
+async function readWorkerAuditFileStats(
+  filePath: string,
+  workersDirRealPath: string | undefined,
+  sessionDirRealPath: string | undefined,
+): Promise<AuditFileState> {
+  const fileState = await readAuditFileState(filePath, {
+    parentRealPath: workersDirRealPath,
+    outsideMessage: 'Worker audit file is outside the selected workers directory',
+  })
+  if (fileState.rejected || !fileState.realPath || !sessionDirRealPath) {
+    return fileState
+  }
+  assertPathInside(fileState.realPath, sessionDirRealPath, 'Worker audit file is outside the selected session directory')
+  return fileState
+}
+
+interface AuditDirectoryState {
+  realPath?: string
+  missing: boolean
+  rejected: boolean
+}
+
+interface AuditFileState {
+  stats?: Stats
+  realPath?: string
+  rejected: boolean
+}
+
+async function readAuditDirectoryState(dirPath: string): Promise<AuditDirectoryState> {
+  const dirStats = await lstat(dirPath).catch((error: unknown) => {
     if (isNodeErrorCode(error, 'ENOENT')) {
       return undefined
     }
     throw error
   })
+  if (!dirStats) {
+    return { missing: true, rejected: false }
+  }
+  if (dirStats.isSymbolicLink() || !dirStats.isDirectory()) {
+    return { missing: false, rejected: true }
+  }
+  return { realPath: await realpath(dirPath), missing: false, rejected: false }
 }
 
-async function readWorkerAuditFileStats(filePath: string): Promise<{ stats?: Stats; rejected: boolean }> {
+async function readAuditFileState(
+  filePath: string,
+  containment?: { parentRealPath?: string; outsideMessage: string },
+): Promise<AuditFileState> {
   const fileStats = await lstat(filePath).catch((error: unknown) => {
     if (isNodeErrorCode(error, 'ENOENT')) {
       return undefined
@@ -955,7 +1041,11 @@ async function readWorkerAuditFileStats(filePath: string): Promise<{ stats?: Sta
   if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
     return { rejected: true }
   }
-  return { stats: fileStats, rejected: false }
+  const fileRealPath = await realpath(filePath)
+  if (containment?.parentRealPath) {
+    assertPathInside(fileRealPath, containment.parentRealPath, containment.outsideMessage)
+  }
+  return { stats: fileStats, realPath: fileRealPath, rejected: false }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

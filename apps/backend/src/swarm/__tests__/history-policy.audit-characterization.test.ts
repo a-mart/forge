@@ -79,6 +79,18 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
     };
   }
 
+  function runtimeLog(text: string): ConversationEntryEvent {
+    return {
+      type: "conversation_log",
+      agentId: MANAGER_ID,
+      timestamp: FIXED_NOW,
+      source: "runtime_log",
+      kind: "message_start",
+      role: "assistant",
+      text
+    };
+  }
+
   function ids(entries: ConversationEntryEvent[]): string[] {
     return entries.map((entry) => {
       if (entry.type === "conversation_message") {
@@ -177,6 +189,25 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
       });
 
       expect(ids(selection.history)).not.toContain("unknown-spawn");
+    });
+
+    it("preserves visible transcript ahead of hidden runtime logs under tight budget", () => {
+      const history: ConversationEntryEvent[] = [
+        message("visible-user", { role: "user", source: "user_input" }),
+        message("visible-assistant", { role: "assistant", source: "speak_to_user" }),
+        runtimeLog("hidden-log-0"),
+        runtimeLog("hidden-log-1"),
+        runtimeLog("hidden-log-2")
+      ];
+
+      const selection = selectBootstrapConversationHistory({
+        fullHistory: history,
+        managerId: MANAGER_ID,
+        isWithinBudget: (messages) => messages.length <= 2
+      });
+
+      expect(ids(selection.history)).toEqual(["visible-user", "visible-assistant"]);
+      expect(ids(selection.history)).not.toEqual(expect.arrayContaining(["hidden-log-0", "hidden-log-1", "hidden-log-2"]));
     });
 
     it("respects bootstrap budget when conversation fits alone but protected activity exceeds budget", () => {

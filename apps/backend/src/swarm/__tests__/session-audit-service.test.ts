@@ -147,6 +147,29 @@ describe('SessionAuditService', () => {
     expect(page.items.map((item) => item.wrapperId)).not.toContain('outside')
   })
 
+  it('rejects symlinked canonical session files without following them', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    const fixture = await createFixture()
+    const sessionDir = getSessionDir(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId)
+    await mkdir(sessionDir, { recursive: true })
+    const outsidePath = join(fixture.dataDir, 'outside-session.jsonl')
+    await writeFile(outsidePath, `${sessionHeader()}\n${conversationRow('outside', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'outside', timestamp: now, source: 'user_input' })}\n`, 'utf8')
+    try {
+      await symlink(outsidePath, getSessionFilePath(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId))
+    } catch (error) {
+      if (isSymlinkUnavailable(error)) {
+        return
+      }
+      throw error
+    }
+
+    const service = new SessionAuditService(fixture.host)
+    await expect(service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })).rejects.toMatchObject({ statusCode: 404 })
+  })
+
   it('reads descriptor-owned worker transcript sources with source-aware pagination and malformed rows', async () => {
     const fixture = await createFixture()
     const worker = createDescriptor({ agentId: 'worker-1', managerId: fixture.manager.agentId, role: 'worker', profileId: fixture.manager.profileId })
@@ -228,13 +251,46 @@ describe('SessionAuditService', () => {
     const outsidePath = join(fixture.dataDir, 'outside-worker.jsonl')
     await writeFile(outsidePath, `${conversationRow('outside-worker-message', { type: 'conversation_message', agentId: worker.agentId, role: 'assistant', text: 'outside', timestamp: now, source: 'worker' })}\n`, 'utf8')
     await mkdir(getWorkersDir(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId), { recursive: true })
-    await symlink(outsidePath, getWorkerPath(fixture.dataDir, fixture.manager, worker.agentId))
+    try {
+      await symlink(outsidePath, getWorkerPath(fixture.dataDir, fixture.manager, worker.agentId))
+    } catch (error) {
+      if (isSymlinkUnavailable(error)) {
+        return
+      }
+      throw error
+    }
 
     const service = new SessionAuditService(fixture.host)
     const managerPage = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
 
     expect(managerPage.manifest.workers.map((summary) => summary.workerId)).not.toContain(worker.agentId)
     await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: worker.agentId })).rejects.toMatchObject({ statusCode: 404 })
+  })
+
+  it('rejects symlinked workers directories without following orphan transcripts', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [sessionHeader()])
+    const outsideWorkersDir = join(fixture.dataDir, 'outside-workers')
+    await mkdir(outsideWorkersDir, { recursive: true })
+    await writeFile(join(outsideWorkersDir, 'orphan-worker.jsonl'), `${conversationRow('outside-worker-message', { type: 'conversation_message', agentId: 'orphan-worker', role: 'assistant', text: 'outside', timestamp: now, source: 'worker' })}\n`, 'utf8')
+    try {
+      await symlink(outsideWorkersDir, getWorkersDir(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId), 'dir')
+    } catch (error) {
+      if (isSymlinkUnavailable(error)) {
+        return
+      }
+      throw error
+    }
+
+    const service = new SessionAuditService(fixture.host)
+    const managerPage = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+
+    expect(managerPage.manifest.workers.map((summary) => summary.workerId)).not.toContain('orphan-worker')
+    await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: 'orphan-worker' })).rejects.toMatchObject({ statusCode: 404 })
   })
 
   it('rejects unknown sessions, non-manager agents, invalid worker sources, and invalid cursors', async () => {
@@ -304,6 +360,10 @@ async function writeWorkerLines(dataDir: string, manager: AgentDescriptor, worke
 
 function getWorkerPath(dataDir: string, manager: AgentDescriptor, workerId: string): string {
   return getWorkerSessionFilePath(dataDir, manager.profileId ?? manager.agentId, manager.agentId, workerId)
+}
+
+function isSymlinkUnavailable(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && ['EPERM', 'EACCES', 'ENOTSUP'].includes(String((error as NodeJS.ErrnoException).code))
 }
 
 function sessionHeader(): string {
