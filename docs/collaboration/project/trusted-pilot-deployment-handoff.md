@@ -223,6 +223,8 @@ The reverse proxy must preserve:
 - `X-Forwarded-Host` if your proxy uses it
 - WebSocket upgrade headers (`Upgrade` and `Connection`)
 
+Forge collaboration clients also emit a 25s `{type:"ping"}` WebSocket heartbeat, which helps reduce long-idle tunnel closes, but the proxy still needs to pass upgrades and keep sane tunnel/read timeouts.
+
 Apply rate limits before the container for at least:
 
 - `/api/auth/*`
