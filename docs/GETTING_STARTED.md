@@ -102,7 +102,7 @@ The main panel is a chat window. You type messages to your manager, it responds.
 Two view modes, toggled at the top:
 
 - **Web** (default) — Shows only the messages between you and the manager. Clean, focused.
-- **All** — Shows internal activity. A **Detailed** toggle can further reveal owned direct-worker tool activity, but it stays off by default and only applies to manager-scoped rows.
+- **All** — Stays manager-focused. Worker/internal JSONL and tool rows live in Session Audit Log; **Detailed** can show owned direct-worker activity, but it still does not surface every worker internal inline.
 
 Agents can include Mermaid diagrams in their responses using standard markdown code fences (` ```mermaid ... ``` `). These render inline with an interactive toolbar for toggling between diagram and source, copying code, exporting as SVG or PNG, and viewing fullscreen.
 
