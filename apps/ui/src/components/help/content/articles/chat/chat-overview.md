@@ -18,7 +18,9 @@ To stop a running response, open the **⋮ menu** in the header and choose **Sto
 
 ## Channel views
 
-The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity. A **Detailed** toggle can further reveal owned direct-worker tool activity for manager-scoped rows, but it stays off by default and resets when you switch views or agents.
+The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" adds manager-session activity that belongs to the visible chat flow. Worker-internal tool activity is not shown in normal Web, All, or Detailed chat views.
+
+For diagnostics, use **Session Audit Log** from the chat header menu. It reads the persisted session history directly from canonical JSONL files. The manager source shows the manager session log; selecting a worker source shows that worker's transcript and internal tool activity. Rows include category/type filters, byte offsets, hidden reasons, and capped parsed/raw JSON previews. This audit surface is for inspection only: it is paginated, uses capped previews, and is not part of the normal chat transcript or model context.
 
 Builder web also supports Codex app-server sidecars. A plain leading @Codex or [@Codex] starts or continues a direct sidecar text turn. Selector forms like @Codex -<plugin>, @Codex:<plugin>, and [@Codex:<plugin>] scope the turn to a plugin and delegate it through the visible Codex Plugin specialist worker. Direct sidecars show as worker-like external-thread cards and persist by default; plugin-scoped turns stay read-only/safety-gated with bounded redacted results. This is Builder web only, text-only for the direct sidecar path, excludes Collaboration, and allows one active direct Codex turn globally.
 

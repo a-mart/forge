@@ -40,9 +40,9 @@ interface ChatHeaderProps {
   activeAgentUpdatedAt?: string | null
   channelView: MessageSourceView
   onChannelViewChange: (view: MessageSourceView) => void
-  /** Whether Detailed All mode is active (reveals worker tool calls). */
+  /** Whether legacy Detailed All mode is active for manager-scoped rows. */
   detailedAllView?: boolean
-  /** Callback to toggle Detailed All mode. Present only for manager sessions. */
+  /** Callback to toggle legacy Detailed All mode. Present only when the surface is enabled. */
   onDetailedAllViewChange?: (value: boolean) => void
   showSessionAudit?: boolean
   onOpenSessionAudit?: () => void
@@ -389,7 +389,7 @@ export function ChatHeader({
             />
           </div>
 
-          {/* Detailed All toggle — visible only for manager + All view */}
+          {/* Detailed All toggle — currently only rendered when an owner explicitly enables the legacy surface. */}
           {channelView === 'all' && activeAgentRole === 'manager' && onDetailedAllViewChange ? (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
@@ -404,14 +404,14 @@ export function ChatHeader({
                     )}
                     onClick={() => onDetailedAllViewChange(!detailedAllView)}
                     aria-pressed={detailedAllView}
-                    aria-label="Show worker tool activity in All view"
+                    aria-label="Toggle detailed manager activity in All view"
                   >
                     <Eye className="size-3" aria-hidden="true" />
                     <span>Detailed</span>
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" sideOffset={6}>
-                  Show worker tool activity in All view
+                  Toggle detailed manager activity in All view
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -496,14 +496,14 @@ export function ChatHeader({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={6} className="min-w-44">
-                {/* Detailed All toggle — overflow/mobile only (inline chip handles sm+) */}
+                {/* Detailed All toggle — overflow/mobile only when the legacy surface is enabled. */}
                 {channelView === 'all' && activeAgentRole === 'manager' && onDetailedAllViewChange ? (
                   <DropdownMenuItem
                     onClick={() => onDetailedAllViewChange(!detailedAllView)}
                     className="gap-2 text-xs sm:hidden"
                   >
                     <Eye className="size-3.5" />
-                    {detailedAllView ? 'Hide worker tools' : 'Show worker tools'}
+                    {detailedAllView ? 'Hide detailed activity' : 'Show detailed activity'}
                   </DropdownMenuItem>
                 ) : null}
 
