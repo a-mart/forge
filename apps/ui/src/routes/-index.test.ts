@@ -404,7 +404,7 @@ describe('IndexPage create project model selection', () => {
     expect(queryByText(container, /foreign-call/)).toBeNull()
   })
 
-  it('reveals owned worker tool calls when Detailed is toggled, hides foreign, and resets on view switch', async () => {
+  it('does not reveal worker tool calls in manager all view when detailed toggle would have applied', async () => {
     const socket = await renderPage()
 
     emitServerEvent(socket, {
@@ -464,33 +464,15 @@ describe('IndexPage create project model selection', () => {
 
     await vi.advanceTimersByTimeAsync(0)
 
-    // Switch to All view
     click(getByRole(container, 'button', { name: 'All' }))
 
-    // Default All: manager tool visible, worker tools hidden
     expect(queryByText(container, /mgr-tool/)).not.toBeNull()
     expect(queryByText(container, /owned-tool/)).toBeNull()
     expect(queryByText(container, /foreign-tool/)).toBeNull()
-
-    // Toggle Detailed ON
-    click(getByLabelText(container, 'Show worker tool activity in All view'))
-
-    // Owned worker tool call now visible
-    expect(queryByText(container, /owned-tool/)).not.toBeNull()
-    // Foreign worker tool call still hidden (fail-closed)
-    expect(queryByText(container, /foreign-tool/)).toBeNull()
-    // Manager tool still visible
-    expect(queryByText(container, /mgr-tool/)).not.toBeNull()
-
-    // Switch back to Web view — Detailed should reset
-    click(getByRole(container, 'button', { name: 'Web' }))
-    // Switch back to All — owned worker tool should be hidden again (Detailed was reset)
-    click(getByRole(container, 'button', { name: 'All' }))
-    expect(queryByText(container, /owned-tool/)).toBeNull()
-    expect(queryByText(container, /mgr-tool/)).not.toBeNull()
+    expect(container.querySelector('[aria-label="Show worker tool activity in All view"]')).toBeNull()
   })
 
-  it('resets Detailed toggle when switching to a different agent', async () => {
+  it('resets detailed all view state when switching to a different agent', async () => {
     const socket = await renderPage()
 
     const secondManager = {
@@ -535,13 +517,9 @@ describe('IndexPage create project model selection', () => {
 
     await vi.advanceTimersByTimeAsync(0)
 
-    // Enter All + Detailed
     click(getByRole(container, 'button', { name: 'All' }))
-    click(getByLabelText(container, 'Show worker tool activity in All view'))
-    expect(queryByText(container, /w-tool-alpha/)).not.toBeNull()
+    expect(queryByText(container, /w-tool-alpha/)).toBeNull()
 
-    // Switch agent — select manager-beta from sidebar
-    // Simulate clicking the second manager in the sidebar
     const sidebarButtons = container.querySelectorAll('[data-agent-id]')
     const betaButton = Array.from(sidebarButtons).find(
       (el) => el.getAttribute('data-agent-id') === 'manager-beta',

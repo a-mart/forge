@@ -7,7 +7,7 @@ import { deriveVisibleMessages } from './use-visible-messages'
  * These assert Phase 1 target semantics. Skipped until QF-1/QF-2 land.
  * Unskip the whole describe in Phase 1 when the visibility classifier changes.
  */
-describe.skip('audit view replay characterization (Phase 0 → Phase 1)', () => {
+describe('audit view replay characterization (Phase 0 → Phase 1)', () => {
   const currentManager: AgentDescriptor = {
     agentId: 'visible-messages-dropped',
     displayName: 'Visible Messages Dropped',

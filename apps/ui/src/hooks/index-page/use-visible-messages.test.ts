@@ -229,7 +229,7 @@ describe('deriveVisibleMessages', () => {
     expect(defaultResult.visibleMessages[0]).toEqual(detailedResult.visibleMessages[0])
   })
 
-  it('shows owned worker tool calls in detailed manager all view', () => {
+  it('hides owned worker tool calls in detailed manager all view', () => {
     const activityMessages: ConversationEntry[] = [
       makeToolCall('manager', 'worker-1', 'owned-call'),
     ]
@@ -243,11 +243,10 @@ describe('deriveVisibleMessages', () => {
       detailedAllView: true,
     })
 
-    expect(result.visibleMessages).toHaveLength(1)
-    expect(result.visibleMessages[0].type).toBe('agent_tool_call')
+    expect(result.visibleMessages).toEqual([])
   })
 
-  it('hides Codex sidecar tool activity in default manager all view but shows it in detailed all view', () => {
+  it('hides Codex sidecar tool activity in manager all view regardless of detailed toggle', () => {
     const activityMessages: ConversationEntry[] = [
       makeToolCall('manager', 'manager--codex', 'codex-call'),
     ]
@@ -271,8 +270,7 @@ describe('deriveVisibleMessages', () => {
     })
 
     expect(defaultResult.visibleMessages).toHaveLength(0)
-    expect(detailedResult.visibleMessages).toHaveLength(1)
-    expect(detailedResult.visibleMessages[0].type).toBe('agent_tool_call')
+    expect(detailedResult.visibleMessages).toHaveLength(0)
   })
 
   it('shows Codex sidecar conversation_log rows in selected sidecar view', () => {

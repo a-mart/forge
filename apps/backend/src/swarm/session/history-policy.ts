@@ -1,5 +1,10 @@
 import type { ConversationEntryEvent } from "../types.js";
 import { isCodexStreamDetailToolName } from "../codex-app-server/codex-app-server-event-normalizer.js";
+import {
+  collectKnownWorkerIds,
+  inferManagerAliasIds,
+  isProtectedManagerContextEntry
+} from "@forge/protocol";
 
 export const MAX_CONVERSATION_HISTORY = 2000;
 
@@ -56,11 +61,27 @@ export function isProtectedWebTranscriptEntry(entry: ConversationEntryEvent): bo
   return channel === "web" || channel === "cli";
 }
 
-export function trimConversationHistory(entries: ConversationEntryEvent[]): void {
+export function isProtectedManagerContextHistoryEntry(
+  entry: ConversationEntryEvent,
+  managerAliasIds: ReadonlySet<string>,
+  knownWorkerIds: ReadonlySet<string>
+): boolean {
+  return isProtectedManagerContextEntry(entry, managerAliasIds, knownWorkerIds);
+}
+
+export function trimConversationHistory(
+  entries: ConversationEntryEvent[],
+  managerId?: string
+): void {
   const overflow = entries.length - MAX_CONVERSATION_HISTORY;
   if (overflow <= 0) {
     return;
   }
+
+  const knownWorkerIds = managerId ? inferKnownWorkerIdsFromHistory(entries, managerId) : new Set<string>();
+  const managerAliasIds = managerId
+    ? inferManagerAliasIds(entries, managerId, knownWorkerIds)
+    : new Set<string>();
 
   const removableIndexes: number[] = [];
   for (let index = 0; index < entries.length; index += 1) {
@@ -68,9 +89,19 @@ export function trimConversationHistory(entries: ConversationEntryEvent[]): void
       break;
     }
 
-    if (!isProtectedTranscriptEntry(entries[index])) {
-      removableIndexes.push(index);
+    const entry = entries[index];
+    if (isProtectedTranscriptEntry(entry)) {
+      continue;
     }
+
+    if (
+      managerId &&
+      isProtectedManagerContextHistoryEntry(entry, managerAliasIds, knownWorkerIds)
+    ) {
+      continue;
+    }
+
+    removableIndexes.push(index);
   }
 
   if (removableIndexes.length === 0) {
@@ -90,12 +121,14 @@ export interface BootstrapConversationHistorySelection<Entry extends Conversatio
 
 export function selectBootstrapConversationHistory<Entry extends ConversationEntryEvent>(options: {
   fullHistory: Entry[];
+  managerId?: string;
   requestedMessageCount?: number;
   includeDiagnosticEntries?: boolean;
   isWithinBudget: (messages: Entry[]) => boolean;
 }): BootstrapConversationHistorySelection<Entry> {
   const {
     fullHistory,
+    managerId,
     requestedMessageCount,
     includeDiagnosticEntries = true,
     isWithinBudget,
@@ -115,9 +148,24 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
     };
   }
 
+  const knownWorkerIds = managerId ? inferKnownWorkerIdsFromHistory(requestedHistory, managerId) : new Set<string>();
+  const managerAliasIds = managerId
+    ? inferManagerAliasIds(requestedHistory, managerId, knownWorkerIds)
+    : new Set<string>();
+
   const conversationEntries = requestedHistory.filter(isBootstrapTranscriptEntry);
   const activityEntries = requestedHistory.filter(isBootstrapActivityEntry);
   const diagnosticEntries = requestedHistory.filter(isBootstrapDiagnosticEntry);
+  const protectedActivityEntries = managerId
+    ? activityEntries.filter((entry) =>
+        isProtectedManagerContextHistoryEntry(entry, managerAliasIds, knownWorkerIds)
+      )
+    : [];
+  const unprotectedActivityEntries = managerId
+    ? activityEntries.filter(
+        (entry) => !isProtectedManagerContextHistoryEntry(entry, managerAliasIds, knownWorkerIds)
+      )
+    : activityEntries;
 
   if (!isWithinBudget(conversationEntries)) {
     const trimmedConversationEntries = trimBootstrapConversationHistoryTailToBudget(conversationEntries, isWithinBudget);
@@ -134,10 +182,11 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
     };
   }
 
-  const selectedActivityEntries = selectTailActivityEntriesWithinBootstrapBudget(
+  const selectedActivityEntries = selectBootstrapActivityEntriesWithinBudget(
     requestedHistory,
     conversationEntries,
-    activityEntries,
+    protectedActivityEntries,
+    unprotectedActivityEntries,
     isWithinBudget
   );
   const trimmedHistory = mergeBootstrapConversationHistory(
@@ -157,6 +206,88 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
     requestedHistoryLength: requestedHistory.length,
     trimmed: history.length !== requestedHistory.length,
   };
+}
+
+function inferKnownWorkerIdsFromHistory(
+  history: readonly ConversationEntryEvent[],
+  managerId: string
+): Set<string> {
+  const workerIds = collectKnownWorkerIds([], managerId);
+
+  for (const entry of history) {
+    if (entry.type !== "agent_tool_call") {
+      continue;
+    }
+
+    const agentId = entry.agentId.trim();
+    const actorAgentId = entry.actorAgentId.trim();
+    if (agentId === managerId && actorAgentId.length > 0 && actorAgentId !== agentId) {
+      workerIds.add(actorAgentId);
+    }
+  }
+
+  return workerIds;
+}
+
+function selectBootstrapActivityEntriesWithinBudget<Entry extends ConversationEntryEvent>(
+  sourceHistory: Entry[],
+  conversationEntries: Entry[],
+  protectedActivityEntries: Entry[],
+  unprotectedActivityEntries: Entry[],
+  isWithinBudget: (messages: Entry[]) => boolean
+): Entry[] {
+  const protectedHistory = mergeBootstrapConversationHistory(
+    sourceHistory,
+    conversationEntries,
+    protectedActivityEntries
+  );
+
+  if (!isWithinBudget(protectedHistory)) {
+    const trimmedConversationEntries = trimBootstrapConversationHistoryTailToBudget(
+      conversationEntries,
+      (candidateConversationEntries) =>
+        isWithinBudget(
+          mergeBootstrapConversationHistory(
+            sourceHistory,
+            candidateConversationEntries,
+            protectedActivityEntries
+          )
+        )
+    );
+    return mergeBootstrapConversationHistory(
+      sourceHistory,
+      trimmedConversationEntries,
+      protectedActivityEntries
+    );
+  }
+
+  if (unprotectedActivityEntries.length === 0) {
+    return protectedActivityEntries;
+  }
+
+  let low = 0;
+  let high = unprotectedActivityEntries.length;
+
+  while (low < high) {
+    const mid = Math.floor((low + high + 1) / 2);
+    const candidateUnprotectedEntries = unprotectedActivityEntries.slice(-mid);
+    const candidateHistory = mergeBootstrapConversationHistory(
+      sourceHistory,
+      conversationEntries,
+      [...protectedActivityEntries, ...candidateUnprotectedEntries]
+    );
+
+    if (isWithinBudget(candidateHistory)) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return [
+    ...protectedActivityEntries,
+    ...unprotectedActivityEntries.slice(unprotectedActivityEntries.length - low)
+  ];
 }
 
 function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
@@ -196,38 +327,6 @@ function trimBootstrapConversationHistoryTailToBudget<Entry extends Conversation
   }
 
   return history.slice(low);
-}
-
-function selectTailActivityEntriesWithinBootstrapBudget<Entry extends ConversationEntryEvent>(
-  sourceHistory: Entry[],
-  conversationEntries: Entry[],
-  activityEntries: Entry[],
-  isWithinBudget: (messages: Entry[]) => boolean
-): Entry[] {
-  if (activityEntries.length === 0) {
-    return [];
-  }
-
-  let low = 0;
-  let high = activityEntries.length;
-
-  while (low < high) {
-    const mid = Math.floor((low + high + 1) / 2);
-    const candidateActivityEntries = activityEntries.slice(-mid);
-    const candidateHistory = mergeBootstrapConversationHistory(
-      sourceHistory,
-      conversationEntries,
-      candidateActivityEntries
-    );
-
-    if (isWithinBudget(candidateHistory)) {
-      low = mid;
-    } else {
-      high = mid - 1;
-    }
-  }
-
-  return activityEntries.slice(activityEntries.length - low);
 }
 
 function appendBootstrapDiagnosticEntriesIfBudgetAllows<Entry extends ConversationEntryEvent>(

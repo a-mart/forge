@@ -1,6 +1,11 @@
 import { useMemo } from 'react'
 import type { MessageSourceView } from '@/components/chat/ChatHeader'
 import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
+import {
+  collectKnownWorkerIds,
+  inferManagerAliasIds,
+  isVisibleInManagerAllView,
+} from '@forge/protocol'
 
 function toEpochMillis(timestamp: string): number {
   const parsed = Date.parse(timestamp)
@@ -48,68 +53,13 @@ function mergeConversationAndActivityMessages(
   return merged
 }
 
-function buildManagerScopedAgentIds(agents: AgentDescriptor[], managerId: string): Set<string> {
-  const scopedAgentIds = new Set<string>([managerId])
-
-  for (const agent of agents) {
-    if (agent.agentId === managerId || agent.managerId === managerId) {
-      scopedAgentIds.add(agent.agentId)
-    }
+function isWebVisibleConversationMessage(entry: ConversationEntry): boolean {
+  if (entry.type !== 'conversation_message') {
+    return true
   }
 
-  return scopedAgentIds
-}
-
-/**
- * Build the set of actor IDs owned by this manager for Detailed All view.
- * Includes only the manager itself and direct worker children
- * (`agent.role === 'worker' && agent.managerId === managerId`).
- * Does not include sibling managers, project/profile peers, or unknown IDs.
- */
-function buildOwnedActorIds(agents: AgentDescriptor[], managerId: string): Set<string> {
-  const owned = new Set<string>([managerId])
-
-  for (const agent of agents) {
-    if (agent.role === 'worker' && agent.managerId === managerId) {
-      owned.add(agent.agentId)
-    }
-  }
-
-  return owned
-}
-
-function isManagerScopedAllViewEntry(
-  entry: ConversationEntry,
-  managerId: string,
-  scopedAgentIds: ReadonlySet<string>,
-  detailedAllView: boolean,
-  ownedActorIds: ReadonlySet<string>,
-): boolean {
-  if (entry.type === 'agent_tool_call') {
-    // Non-negotiable precondition: entry must belong to this manager's context
-    if (entry.agentId !== managerId) {
-      return false
-    }
-
-    // Default: only manager-owned tool calls
-    // Detailed: manager + owned worker tool calls
-    if (detailedAllView) {
-      return ownedActorIds.has(entry.actorAgentId)
-    }
-
-    return entry.actorAgentId === managerId
-  }
-
-  if (entry.type === 'agent_message') {
-    if (entry.agentId !== managerId) {
-      return false
-    }
-
-    const fromAgentId = entry.fromAgentId?.trim()
-    return scopedAgentIds.has(entry.toAgentId) || (!!fromAgentId && scopedAgentIds.has(fromAgentId))
-  }
-
-  return scopedAgentIds.has(entry.agentId)
+  const channel = entry.sourceContext?.channel ?? 'web'
+  return channel === 'web' || channel === 'cli'
 }
 
 export interface VisibleMessagesOptions {
@@ -118,7 +68,7 @@ export interface VisibleMessagesOptions {
   agents: AgentDescriptor[]
   activeAgent: AgentDescriptor | null
   channelView: MessageSourceView
-  /** When true and channelView is 'all' for a manager, reveals owned worker tool calls. */
+  /** Reserved for future manager-only metadata expansion; does not change visibility. */
   detailedAllView?: boolean
 }
 
@@ -128,41 +78,37 @@ export function deriveVisibleMessages({
   agents,
   activeAgent,
   channelView,
-  detailedAllView = false,
 }: VisibleMessagesOptions): {
   allMessages: ConversationEntry[]
   visibleMessages: ConversationEntry[]
 } {
   const isManager = activeAgent?.role === 'manager'
-  const managerScopedAgentIds =
-    isManager ? buildManagerScopedAgentIds(agents, activeAgent.agentId) : null
-  const ownedActorIds =
-    isManager ? buildOwnedActorIds(agents, activeAgent.agentId) : null
-
   const allMessages = mergeConversationAndActivityMessages(messages, activityMessages)
-
-  const effectiveDetailed = detailedAllView && isManager
 
   const visibleMessages =
     channelView === 'all'
-      ? !isManager || !managerScopedAgentIds || !ownedActorIds
+      ? !isManager || !activeAgent
         ? allMessages
-        : allMessages.filter((entry) =>
-            isManagerScopedAllViewEntry(
-              entry,
-              activeAgent.agentId,
-              managerScopedAgentIds,
-              effectiveDetailed,
-              ownedActorIds,
-            ),
-          )
+        : (() => {
+            const activeManagerId = activeAgent.agentId
+            const knownWorkerIds = collectKnownWorkerIds(agents, activeManagerId)
+            const managerAliasIds = inferManagerAliasIds(allMessages, activeManagerId, knownWorkerIds)
+
+            return allMessages.filter((entry) =>
+              isVisibleInManagerAllView(entry, {
+                activeManagerId,
+                managerAliasIds,
+                knownWorkerIds,
+                sessionEntries: allMessages,
+              }),
+            )
+          })()
       : messages.filter((entry) => {
-          if (entry.type !== 'conversation_message') {
-            return true
+          if (entry.type === 'conversation_log') {
+            return false
           }
 
-          const ch = entry.sourceContext?.channel ?? 'web'
-          return ch === 'web' || ch === 'cli'
+          return isWebVisibleConversationMessage(entry)
         })
 
   return {

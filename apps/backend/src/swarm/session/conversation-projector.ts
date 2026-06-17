@@ -61,6 +61,14 @@ interface ConversationProjectorDependencies {
   getPinnedMessageIds?: (agentId: string) => ReadonlySet<string> | undefined;
 }
 
+function resolveManagerContextId(descriptor: AgentDescriptor | undefined, fallbackAgentId: string): string {
+  if (!descriptor) {
+    return fallbackAgentId;
+  }
+
+  return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+}
+
 export class ConversationProjector {
   private readonly timeline: ConversationTimeline;
   private readonly historyCacheStore: HistoryCacheStore;
@@ -246,7 +254,7 @@ export class ConversationProjector {
         : (this.deps.conversationEntriesByAgentId.get(event.agentId) ?? []);
 
     history.push(event);
-    trimConversationHistory(history);
+    trimConversationHistory(history, resolveManagerContextId(descriptor, event.agentId));
     this.deps.conversationEntriesByAgentId.set(event.agentId, history);
 
     // Runtime logs are valuable for the live in-memory transcript and cache, but
@@ -308,8 +316,15 @@ export class ConversationProjector {
 
       if (validation.ok) {
         const validatedCachedEntries = validation.entries ?? [];
-        trimConversationHistory(validatedCachedEntries);
-        const mergedEntries = this.mergeDiskAndInMemoryEntries(validatedCachedEntries, existingInMemoryEntries);
+        trimConversationHistory(
+          validatedCachedEntries,
+          resolveManagerContextId(descriptor, descriptor.agentId)
+        );
+        const mergedEntries = this.mergeDiskAndInMemoryEntries(
+          validatedCachedEntries,
+          existingInMemoryEntries,
+          resolveManagerContextId(descriptor, descriptor.agentId)
+        );
         this.applyPinnedState(descriptor.agentId, mergedEntries);
         this.historyCacheStore.trackPersistedEntryCount(descriptor.sessionFile, validation.persistedEntryCount);
         this.loadedFromDisk.add(descriptor.agentId);
@@ -436,7 +451,10 @@ export class ConversationProjector {
           }
         }
 
-        trimConversationHistory(entriesForAgent);
+        trimConversationHistory(
+          entriesForAgent,
+          resolveManagerContextId(descriptor, descriptor.agentId)
+        );
 
         this.deps.logDebug("history:load:ready", {
           agentId: descriptor.agentId,
@@ -456,7 +474,11 @@ export class ConversationProjector {
       });
     }
 
-    const mergedEntries = this.mergeDiskAndInMemoryEntries(entriesForAgent, existingInMemoryEntries);
+    const mergedEntries = this.mergeDiskAndInMemoryEntries(
+      entriesForAgent,
+      existingInMemoryEntries,
+      resolveManagerContextId(descriptor, descriptor.agentId)
+    );
     this.applyPinnedState(descriptor.agentId, mergedEntries);
     this.timeline.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
     this.historyCacheStore.trackPersistedEntryCount(descriptor.sessionFile, persistedEntryCount);
@@ -510,7 +532,8 @@ export class ConversationProjector {
 
   private mergeDiskAndInMemoryEntries(
     diskEntries: ConversationEntryEvent[],
-    inMemoryEntries: ConversationEntryEvent[]
+    inMemoryEntries: ConversationEntryEvent[],
+    managerId: string
   ): ConversationEntryEvent[] {
     if (inMemoryEntries.length === 0) {
       return diskEntries;
@@ -553,7 +576,7 @@ export class ConversationProjector {
     }
 
     mergedEntries.push(...inMemoryEntries);
-    trimConversationHistory(mergedEntries);
+    trimConversationHistory(mergedEntries, managerId);
     return mergedEntries;
   }
 

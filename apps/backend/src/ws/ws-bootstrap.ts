@@ -175,6 +175,7 @@ export async function sendSubscriptionBootstrap(options: {
   const historyResult = swarmManager.getConversationHistoryWithDiagnostics(targetAgentId);
   const conversationHistorySelection = selectBootstrapConversationHistoryByPolicy({
     fullHistory: historyResult.history,
+    managerId: targetAgentId,
     requestedMessageCount: historyMessageCount,
     includeDiagnosticEntries: swarmManager.isModelCacheVisualizationEnabled?.() ?? false,
     isWithinBudget: (messages) => isBootstrapConversationHistoryWithinBudget(targetAgentId, messages)

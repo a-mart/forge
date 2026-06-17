@@ -2095,7 +2095,7 @@ export function BuilderSurface({
                   channelView: messageSourceView,
                   onChannelViewChange: setMessageSourceView,
                   detailedAllView: effectiveDetailedAllView,
-                  onDetailedAllViewChange: isActiveManager ? setDetailedAllView : undefined,
+                  onDetailedAllViewChange: undefined,
                   contextWindowUsage,
                   modelCacheHeaderSummary,
                   activeWorkSnapshot,

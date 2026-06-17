@@ -12,7 +12,7 @@ import type { ConversationEntryEvent, ConversationMessageEvent } from "../types.
  * Phase 0 characterization tests for cache atomicity and safe fallback.
  * Skipped until QF-5 lands. Unskip in Phase 1.
  */
-describe.skip("audit replay history cache characterization (Phase 0 → Phase 1)", () => {
+describe("audit replay history cache characterization (Phase 0 → Phase 1)", () => {
   const createdDirs: string[] = [];
   const FIXED_NOW = "2026-01-01T00:00:00.000Z";
 

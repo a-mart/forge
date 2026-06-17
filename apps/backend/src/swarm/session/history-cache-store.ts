@@ -1,5 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { dirname } from "node:path";
 import type { HistoryCacheState } from "../../stats/sidebar-perf-metrics.js";
@@ -227,13 +228,34 @@ export class HistoryCacheStore {
 
       const metadata = parseConversationHistoryCacheMetadata(parsed);
       if (metadata) {
+        if (fileDescriptor !== undefined) {
+          closeSync(fileDescriptor);
+          fileDescriptor = undefined;
+        }
+
+        const raw = readFileSync(cacheFile, "utf8");
+        const firstNewline = raw.indexOf("\n");
+        const remainder = firstNewline >= 0 ? raw.slice(firstNewline + 1) : "";
+        const parsedEntryCount = countParsedConversationCacheEntries(remainder);
+        if (parsedEntryCount === null) {
+          return {
+            cacheState: "cache_read_error",
+            metadata: null,
+            cacheFileBytes,
+            cacheReadMs: performance.now() - startedAtMs,
+            fsReadOps,
+            fsReadBytes,
+            detail: "invalid_cache_payload"
+          };
+        }
+
         return {
           cacheState: "loaded",
           metadata,
           cacheFileBytes,
           cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps,
-          fsReadBytes
+          fsReadOps: fsReadOps + 1,
+          fsReadBytes: Math.max(fsReadBytes, cacheFileBytes)
         };
       }
 
@@ -296,15 +318,13 @@ export class HistoryCacheStore {
       const cacheFileBytes = Buffer.byteLength(raw, "utf8");
       if (raw.trim().length === 0) {
         return {
-          cacheState: "loaded",
-          cachedHistory: {
-            entries: [],
-            metadata: null
-          },
+          cacheState: "cache_read_error",
+          cachedHistory: null,
           cacheFileBytes,
           cacheReadMs: performance.now() - startedAtMs,
           fsReadOps: 1,
-          fsReadBytes: cacheFileBytes
+          fsReadBytes: cacheFileBytes,
+          detail: "missing_cache_metadata"
         };
       }
 
@@ -787,7 +807,9 @@ export class HistoryCacheStore {
         JSON.stringify(resolvedMetadata),
         ...cacheEntries.map((entry) => JSON.stringify(entry))
       ].join("\n")}\n`;
-      await writeFile(cacheFile, serializedHistory, "utf8");
+      const tempCacheFile = `${cacheFile}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
+      await writeFile(tempCacheFile, serializedHistory, "utf8");
+      await rename(tempCacheFile, cacheFile);
     }
   }
 }
@@ -1043,4 +1065,36 @@ function isEnoentError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: string }).code === "ENOENT"
   );
+}
+
+function countParsedConversationCacheEntries(remainder: string): number | null {
+  if (remainder.trim().length === 0) {
+    return 0;
+  }
+
+  let parsedEntryCount = 0;
+  for (const line of remainder.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return null;
+    }
+
+    if (parseConversationHistoryCacheMetadata(parsed)) {
+      continue;
+    }
+
+    if (!isConversationEntryEvent(parsed)) {
+      return null;
+    }
+
+    parsedEntryCount += 1;
+  }
+
+  return parsedEntryCount;
 }

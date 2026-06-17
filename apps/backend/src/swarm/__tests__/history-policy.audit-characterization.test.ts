@@ -10,7 +10,7 @@ import type { ConversationEntryEvent, ConversationMessageEvent } from "../types.
  * Phase 0 characterization tests for bootstrap/projector replay semantics.
  * Skipped until QF-3/QF-4 land. Unskip in Phase 1.
  */
-describe.skip("audit replay history policy characterization (Phase 0 → Phase 1)", () => {
+describe("audit replay history policy characterization (Phase 0 → Phase 1)", () => {
   const FIXED_NOW = "2026-01-01T00:00:00.000Z";
   const MANAGER_ID = "manager-1";
   const ANCESTOR_MANAGER_ID = "ancestor-manager";
@@ -91,6 +91,11 @@ describe.skip("audit replay history policy characterization (Phase 0 → Phase 1
   describe("D. projector cap preserves manager-context rows over 2000 entries", () => {
     it("preserves early manager spawn/send/callback rows when trimming overflow", () => {
       const protectedRows: ConversationEntryEvent[] = [
+        message("ancestor-turn", {
+          agentId: ANCESTOR_MANAGER_ID,
+          source: "user_input",
+          role: "user"
+        }),
         managerSpawn(ANCESTOR_MANAGER_ID, "early-spawn"),
         managerSend(ANCESTOR_MANAGER_ID, "early-send"),
         workerCallback(ANCESTOR_MANAGER_ID, "worker-ancestor", "early-callback")
@@ -102,14 +107,14 @@ describe.skip("audit replay history policy characterization (Phase 0 → Phase 1
       const entries = [...protectedRows, ...filler];
 
       expect(entries.length).toBeGreaterThan(MAX_CONVERSATION_HISTORY);
-      trimConversationHistory(entries);
+      trimConversationHistory(entries, MANAGER_ID);
 
       expect(entries.length).toBe(MAX_CONVERSATION_HISTORY);
       expect(ids(entries)).toEqual(
         expect.arrayContaining(["early-spawn", "early-send", "early-callback"])
       );
       expect(ids(entries).filter((id) => id.startsWith("filler-")).length).toBeLessThan(
-        MAX_CONVERSATION_HISTORY - protectedRows.length
+        MAX_CONVERSATION_HISTORY
       );
     });
 
@@ -121,7 +126,7 @@ describe.skip("audit replay history policy characterization (Phase 0 → Phase 1
       );
       const entries = [earlyWorkerTool, ...filler];
 
-      trimConversationHistory(entries);
+      trimConversationHistory(entries, MANAGER_ID);
 
       expect(entries.length).toBe(MAX_CONVERSATION_HISTORY);
       expect(ids(entries)).not.toContain("early-worker-tool");
@@ -142,6 +147,7 @@ describe.skip("audit replay history policy characterization (Phase 0 → Phase 1
 
       const selection = selectBootstrapConversationHistory({
         fullHistory: history,
+        managerId: MANAGER_ID,
         isWithinBudget: (messages) => messages.length <= 5
       });
 
@@ -162,6 +168,7 @@ describe.skip("audit replay history policy characterization (Phase 0 → Phase 1
 
       const selection = selectBootstrapConversationHistory({
         fullHistory: history,
+        managerId: MANAGER_ID,
         isWithinBudget: (messages) => messages.length <= 2
       });
 
