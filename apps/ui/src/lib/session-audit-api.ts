@@ -15,6 +15,7 @@ export interface SessionAuditPageQuery {
   limit?: number
   categories?: SessionAuditEntryCategory[]
   types?: string[]
+  signal?: AbortSignal
 }
 
 export class SessionAuditApiError extends Error {
@@ -46,7 +47,7 @@ export async function fetchSessionAuditPage(
 
   const queryString = params.toString()
   const path = `/api/sessions/${encodeURIComponent(trimmedSessionAgentId)}/audit${queryString ? `?${queryString}` : ''}`
-  const response = await fetch(resolveApiEndpoint(wsUrl, path))
+  const response = await fetch(resolveApiEndpoint(wsUrl, path), { signal: query.signal })
   const payload = await readJson(response)
 
   if (!response.ok) {

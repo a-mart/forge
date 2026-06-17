@@ -1,4 +1,4 @@
-import { useState, type ComponentPropsWithoutRef, type RefObject } from 'react'
+import { useEffect, useState, type ComponentPropsWithoutRef, type RefObject } from 'react'
 import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { ChatHeader } from '@/components/chat/ChatHeader'
 import { ChatSearchBar } from '@/components/chat/ChatSearchBar'
@@ -49,6 +49,12 @@ export function ChatWorkspace({
 }: ChatWorkspaceProps) {
   const [sessionAuditOpen, setSessionAuditOpen] = useState(false)
   const showSessionAudit = headerProps.activeAgentRole === 'manager' && Boolean(headerProps.activeAgentId)
+
+  useEffect(() => {
+    if (!showSessionAudit && sessionAuditOpen) {
+      setSessionAuditOpen(false)
+    }
+  }, [sessionAuditOpen, showSessionAudit])
 
   return (
     <>

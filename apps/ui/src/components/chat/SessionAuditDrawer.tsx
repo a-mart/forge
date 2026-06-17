@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, Clipboard, Loader2, RotateCw } from 'lucide-react'
 import type { SessionAuditEntry, SessionAuditEntryCategory } from '@forge/protocol'
 import { SESSION_AUDIT_ENTRY_CATEGORIES } from '@forge/protocol'
@@ -40,59 +40,95 @@ export function SessionAuditDrawer({
 
   const normalizedTypeFilter = typeFilter.trim()
   const selectedCategory = category === ALL_CATEGORIES ? undefined : category as SessionAuditEntryCategory
+  const requestKey = `${open ? 'open' : 'closed'}:${sessionAgentId ?? ''}:${category}:${normalizedTypeFilter}:${wsUrl ?? ''}`
+  const activeRequestKeyRef = useRef(requestKey)
+  const canShowRows = open && Boolean(sessionAgentId)
+  const visibleItems = canShowRows ? items : []
+  const visibleLoading = canShowRows ? loading : false
+  const visibleLoadingMore = canShowRows ? loadingMore : false
+  const visibleError = canShowRows ? error : null
+  const visibleHasMore = canShowRows ? hasMore : false
+
+  const resetAuditState = useCallback(() => {
+    setItems([])
+    setNextCursor(undefined)
+    setHasMore(false)
+    setLoading(false)
+    setLoadingMore(false)
+    setError(null)
+  }, [])
 
   useEffect(() => {
-    if (!open || !sessionAgentId) return
-    let cancelled = false
+    activeRequestKeyRef.current = requestKey
+
+    if (!open || !sessionAgentId) {
+      resetAuditState()
+      return
+    }
+
+    const controller = new AbortController()
+    const currentRequestKey = requestKey
 
     async function loadInitial() {
       setLoading(true)
+      setLoadingMore(false)
       setError(null)
       try {
         const page = await fetchSessionAuditPage(wsUrl, sessionAgentId!, {
           limit: PAGE_LIMIT,
           categories: selectedCategory ? [selectedCategory] : undefined,
           types: normalizedTypeFilter ? [normalizedTypeFilter] : undefined,
+          signal: controller.signal,
         })
-        if (cancelled) return
+        if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
         setItems(page.items)
         setNextCursor(page.nextCursor)
         setHasMore(page.hasMore)
       } catch (error) {
-        if (cancelled) return
+        if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
         setItems([])
         setNextCursor(undefined)
         setHasMore(false)
         setError(error instanceof Error ? error.message : String(error))
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!controller.signal.aborted && activeRequestKeyRef.current === currentRequestKey) {
+          setLoading(false)
+        }
       }
     }
 
     void loadInitial()
     return () => {
-      cancelled = true
+      controller.abort()
     }
-  }, [open, sessionAgentId, selectedCategory, normalizedTypeFilter, wsUrl])
+  }, [open, requestKey, resetAuditState, sessionAgentId, selectedCategory, normalizedTypeFilter, wsUrl])
 
   async function loadMore() {
     if (!sessionAgentId || !nextCursor || loadingMore) return
+    const currentRequestKey = activeRequestKeyRef.current
+    const cursor = nextCursor
+    const controller = new AbortController()
     setLoadingMore(true)
     setError(null)
     try {
       const page = await fetchSessionAuditPage(wsUrl, sessionAgentId, {
-        cursor: nextCursor,
+        cursor,
         limit: PAGE_LIMIT,
         categories: selectedCategory ? [selectedCategory] : undefined,
         types: normalizedTypeFilter ? [normalizedTypeFilter] : undefined,
+        signal: controller.signal,
       })
+      if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
       setItems((current) => [...current, ...page.items])
       setNextCursor(page.nextCursor)
       setHasMore(page.hasMore)
     } catch (error) {
+      if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
       setError(error instanceof Error ? error.message : String(error))
     } finally {
-      setLoadingMore(false)
+      if (!controller.signal.aborted && activeRequestKeyRef.current === currentRequestKey) {
+        setLoadingMore(false)
+      }
     }
   }
 
@@ -153,28 +189,28 @@ export function SessionAuditDrawer({
 
         <ScrollArea className="min-h-0 flex-1 overflow-hidden">
           <div className="space-y-3 p-4">
-            {loading ? (
+            {visibleLoading ? (
               <StateCard icon={<Loader2 className="size-4 animate-spin" />} title="Loading audit log…" />
-            ) : error ? (
-              <StateCard title="Could not load session audit" detail={error} tone="error" />
-            ) : items.length === 0 ? (
+            ) : visibleError ? (
+              <StateCard title="Could not load session audit" detail={visibleError} tone="error" />
+            ) : visibleItems.length === 0 ? (
               <StateCard title="No audit rows found" detail="Try a different category or type filter." />
             ) : (
-              items.map((item) => <SessionAuditRow key={item.id} item={item} />)
+              visibleItems.map((item) => <SessionAuditRow key={item.id} item={item} />)
             )}
 
-            {!loading && !error && items.length > 0 ? (
+            {!visibleLoading && !visibleError && visibleItems.length > 0 ? (
               <div className="flex justify-center pt-1">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={!hasMore || loadingMore}
+                  disabled={!visibleHasMore || visibleLoadingMore}
                   onClick={() => void loadMore()}
                   className="gap-1.5 text-xs"
                 >
-                  {loadingMore ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                  {hasMore ? 'Load more audit rows' : 'End of audit log'}
+                  {visibleLoadingMore ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                  {visibleHasMore ? 'Load more audit rows' : 'End of audit log'}
                 </Button>
               </div>
             ) : null}
