@@ -84,6 +84,32 @@ describe('CollabWsClient (transport-backed)', () => {
     client.destroy()
   })
 
+  it('keeps the collab socket alive with transport heartbeats', () => {
+    const client = new CollabWsClient('ws://127.0.0.1:8787/collab')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    expect(socket).toBeDefined()
+
+    socket.emit('open')
+    expect(socket.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
+      { type: 'collab_bootstrap' },
+    ])
+
+    vi.advanceTimersByTime(24_999)
+    expect(socket.sentPayloads).toHaveLength(1)
+
+    vi.advanceTimersByTime(1)
+    expect(socket.sentPayloads.map((payload) => JSON.parse(payload))).toEqual([
+      { type: 'collab_bootstrap' },
+      { type: 'ping' },
+    ])
+
+    client.destroy()
+  })
+
   it('tracks collab worker snapshots, activity, and streaming timestamps for the active channel', () => {
     const client = new CollabWsClient('ws://127.0.0.1:8787/collab')
 

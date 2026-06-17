@@ -49,6 +49,7 @@ import { WebSocketTransport } from '../ws-client/websocket-transport'
 
 const INITIAL_CONNECT_DELAY_MS = 50
 const RECONNECT_MS = 1_200
+const HEARTBEAT_INTERVAL_MS = 25_000
 const RECONNECTING_SOCKET_ERROR = 'Collab WebSocket is disconnected. Reconnecting...'
 
 /**
@@ -131,6 +132,7 @@ export class CollabWsClient {
     this.transport = new WebSocketTransport({
       url,
       reconnectDelayMs: RECONNECT_MS,
+      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
       onOpen: () => {
         this.updateState({ connected: true, lastError: null, lastErrorCode: null })
         // Bootstrap on every connect/reconnect

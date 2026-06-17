@@ -669,6 +669,35 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('can disable page reloads for secondary sockets that reconnect', () => {
+    const reload = vi.fn()
+    ;(globalThis as any).window = {
+      location: {
+        reload,
+      },
+    }
+
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager', { reloadOnReconnect: false })
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    expect(socket).toBeDefined()
+
+    socket.emit('open')
+    socket.close()
+    vi.advanceTimersByTime(1200)
+
+    const reconnectedSocket = FakeWebSocket.instances[1]
+    expect(reconnectedSocket).toBeDefined()
+
+    reconnectedSocket.emit('open')
+    expect(reload).not.toHaveBeenCalled()
+
+    client.destroy()
+  })
+
   it('sends attachment-only user messages when images are provided', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

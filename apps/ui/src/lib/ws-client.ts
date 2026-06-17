@@ -122,6 +122,16 @@ export type {
   ProjectAgentReferenceSavedResult,
 } from './ws-client/types'
 
+export interface ManagerWsClientOptions {
+  /**
+   * Reload the page after reconnecting from a dropped socket. Builder keeps
+   * this enabled so the app refreshes state after backend restarts; secondary
+   * collab settings/admin sockets disable it to avoid refreshing the whole app
+   * for a non-primary connection.
+   */
+  reloadOnReconnect?: boolean
+}
+
 export class ManagerWsClient {
   private readonly transport: WebSocketTransport
   private desiredAgentId: string | null
@@ -133,6 +143,7 @@ export class ManagerWsClient {
 
   private hasConnectedOnce = false
   private shouldReloadOnReconnect = false
+  private readonly reloadOnReconnect: boolean
   private hasExplicitAgentSelection = false
   private explicitAgentSelectionAgentId: string | null = null
 
@@ -143,8 +154,9 @@ export class ManagerWsClient {
   private readonly bootstrapBuffer: BootstrapBuffer
   private readonly sessionWorkerCache: SessionWorkerCache
 
-  constructor(url: string, initialAgentId?: string | null) {
+  constructor(url: string, initialAgentId?: string | null, options: ManagerWsClientOptions = {}) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
+    this.reloadOnReconnect = options.reloadOnReconnect ?? true
     this.desiredAgentId = normalizedInitialAgentId
     this.state = createInitialManagerWsState(normalizedInitialAgentId)
 
@@ -725,7 +737,7 @@ export class ManagerWsClient {
   }
 
   private handleTransportClose(): void {
-    if (this.hasConnectedOnce) {
+    if (this.hasConnectedOnce && this.reloadOnReconnect) {
       this.shouldReloadOnReconnect = true
     }
 

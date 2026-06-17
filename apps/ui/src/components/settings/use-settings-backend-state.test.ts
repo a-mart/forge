@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const wsClientInstances: Array<{
   wsUrl: string
+  initialAgentId?: string | null
+  options?: { reloadOnReconnect?: boolean }
   started: boolean
   destroyed: boolean
   subscriber: ((state: Record<string, unknown>) => void) | null
@@ -21,8 +23,8 @@ vi.mock('@/lib/ws-client', () => ({
   ManagerWsClient: class MockManagerWsClient {
     _record: (typeof wsClientInstances)[number]
 
-    constructor(wsUrl: string) {
-      this._record = { wsUrl, started: false, destroyed: false, subscriber: null }
+    constructor(wsUrl: string, initialAgentId?: string | null, options?: { reloadOnReconnect?: boolean }) {
+      this._record = { wsUrl, initialAgentId, options, started: false, destroyed: false, subscriber: null }
       wsClientInstances.push(this._record)
     }
 
@@ -207,6 +209,8 @@ describe('useSettingsBackendState', () => {
       expect(capturedResult?.blockedReason).toBeNull()
       expect(wsClientInstances).toHaveLength(1)
       expect(wsClientInstances[0]!.wsUrl).toBe('wss://collab.example.com')
+      expect(wsClientInstances[0]!.initialAgentId).toBeNull()
+      expect(wsClientInstances[0]!.options).toEqual({ reloadOnReconnect: false })
       expect(wsClientInstances[0]!.started).toBe(true)
       expect(wsClientInstances[0]!.destroyed).toBe(false)
     })
