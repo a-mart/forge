@@ -86,6 +86,10 @@ describe('session audit routes', () => {
     const server = await createRouteServer(createSessionAuditRoutes({ swarmManager: fixture.host }))
 
     try {
+      const malformedResponse = await fetch(`${server.baseUrl}/api/sessions/%E0%A4%A/audit`)
+      expect(malformedResponse.status).toBe(400)
+      await expect(malformedResponse.json()).resolves.toMatchObject({ error: expect.stringContaining('Invalid encoded session agent id') })
+
       const missingResponse = await fetch(`${server.baseUrl}/api/sessions/missing/audit`)
       expect(missingResponse.status).toBe(404)
 

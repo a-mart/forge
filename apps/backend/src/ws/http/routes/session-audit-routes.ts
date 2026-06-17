@@ -59,9 +59,9 @@ async function handleSessionAuditRequest(
 
   const matched = requestUrl.pathname.match(SESSION_AUDIT_ENDPOINT_PATTERN)
   const rawSessionAgentId = matched?.[1] ?? ''
-  const sessionAgentId = decodeURIComponent(rawSessionAgentId).trim()
 
   try {
+    const sessionAgentId = decodeSessionAgentId(rawSessionAgentId)
     const pageRequest = parseAuditPageRequest(requestUrl.searchParams)
     const page = await auditService.getSessionAuditPage(sessionAgentId, pageRequest)
     sendJson(response, 200, page as unknown as Record<string, unknown>)
@@ -69,6 +69,17 @@ async function handleSessionAuditRequest(
     const message = error instanceof Error ? error.message : String(error)
     const statusCode = error instanceof SessionAuditError ? error.statusCode : 500
     sendJson(response, statusCode, { error: message })
+  }
+}
+
+function decodeSessionAgentId(rawSessionAgentId: string): string {
+  try {
+    return decodeURIComponent(rawSessionAgentId).trim()
+  } catch (error) {
+    if (error instanceof URIError) {
+      throw new SessionAuditError('Invalid encoded session agent id', 400)
+    }
+    throw error
   }
 }
 

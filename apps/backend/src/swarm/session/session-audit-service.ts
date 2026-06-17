@@ -73,6 +73,7 @@ interface ResolvedAuditSource {
 
 interface JsonlLineRecord {
   lineBytes: Buffer
+  rawBytes: number
   byteOffset: number
   nextByteOffset: number
   lineNumber?: number
@@ -315,23 +316,43 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
     let readOffset = options.startOffset
     let lineStartOffset = options.startOffset
     let lineNumber = options.startLineNumber
-    let pending = Buffer.alloc(0)
+    let lineChunks: Buffer[] = []
+    let lineBufferedBytes = 0
+    let lineRawBytes = 0
     let scannedLines = 0
     let scannedBytes = 0
     const items: SessionAuditEntry[] = []
 
-    const processLine = (lineBytes: Buffer, byteOffset: number, nextByteOffset: number): boolean => {
+    const appendLineSegment = (segment: Buffer): void => {
+      if (segment.length === 0) {
+        return
+      }
+      lineRawBytes += segment.length
+      if (lineBufferedBytes >= MAX_PARSE_LINE_BYTES) {
+        return
+      }
+      const remainingBufferedBytes = MAX_PARSE_LINE_BYTES - lineBufferedBytes
+      const retained = segment.subarray(0, Math.min(segment.length, remainingBufferedBytes))
+      lineChunks.push(Buffer.from(retained))
+      lineBufferedBytes += retained.length
+    }
+
+    const processLine = (nextByteOffset: number): boolean => {
       const record: JsonlLineRecord = {
-        lineBytes,
-        byteOffset,
+        lineBytes: stripTrailingCarriageReturn(Buffer.concat(lineChunks, lineBufferedBytes)),
+        rawBytes: lineRawBytes,
+        byteOffset: lineStartOffset,
         nextByteOffset,
         lineNumber,
       }
       scannedLines += 1
-      scannedBytes += nextByteOffset - byteOffset
+      scannedBytes += nextByteOffset - lineStartOffset
       const item = buildAuditEntry(record, options.source)
       lineStartOffset = nextByteOffset
       lineNumber = lineNumber === undefined ? undefined : lineNumber + 1
+      lineChunks = []
+      lineBufferedBytes = 0
+      lineRawBytes = 0
 
       if (matchesFilters(item, options.categories, options.types)) {
         items.push(item)
@@ -341,6 +362,7 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
     }
 
     while (readOffset < sourceBytes) {
+      const chunkStartOffset = readOffset
       const readLength = Math.min(buffer.length, sourceBytes - readOffset)
       const result = await fileHandle.read(buffer, 0, readLength, readOffset)
       if (result.bytesRead <= 0) {
@@ -348,26 +370,18 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
       }
 
       readOffset += result.bytesRead
-      let chunk = buffer.subarray(0, result.bytesRead)
-      const chunkBaseOffset = lineStartOffset
-      if (pending.length > 0) {
-        chunk = Buffer.concat([pending, chunk])
-        pending = Buffer.alloc(0)
-      }
-
+      const chunk = buffer.subarray(0, result.bytesRead)
       let segmentStart = 0
       while (segmentStart < chunk.length) {
         const newlineIndex = chunk.indexOf(0x0a, segmentStart)
         if (newlineIndex < 0) {
-          pending = Buffer.from(chunk.subarray(segmentStart))
-          lineStartOffset = chunkBaseOffset + segmentStart
+          appendLineSegment(chunk.subarray(segmentStart))
           break
         }
 
-        const byteOffset = chunkBaseOffset + segmentStart
-        const lineBytes = stripTrailingCarriageReturn(chunk.subarray(segmentStart, newlineIndex))
-        const nextByteOffset = chunkBaseOffset + newlineIndex + 1
-        const shouldStop = processLine(lineBytes, byteOffset, nextByteOffset)
+        appendLineSegment(chunk.subarray(segmentStart, newlineIndex))
+        const nextByteOffset = chunkStartOffset + newlineIndex + 1
+        const shouldStop = processLine(nextByteOffset)
         segmentStart = newlineIndex + 1
         if (shouldStop) {
           return {
@@ -384,8 +398,8 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
       }
     }
 
-    if (pending.length > 0) {
-      const shouldStop = processLine(stripTrailingCarriageReturn(pending), lineStartOffset, sourceBytes)
+    if (lineRawBytes > 0) {
+      const shouldStop = processLine(sourceBytes)
       if (shouldStop) {
         return {
           items,
@@ -416,8 +430,8 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
 }
 
 function buildAuditEntry(record: JsonlLineRecord, source: ResolvedAuditSource): SessionAuditEntry {
-  const lineText = record.lineBytes.toString('utf8')
-  const rawPreview = truncateUtf8(lineText, RAW_PREVIEW_MAX_BYTES)
+  const rawPreview = truncateUtf8(record.lineBytes.subarray(0, RAW_PREVIEW_MAX_BYTES).toString('utf8'), RAW_PREVIEW_MAX_BYTES)
+  const rawPreviewTruncated = rawPreview.truncated || record.rawBytes > RAW_PREVIEW_MAX_BYTES
   const base = {
     id: `${source.sourceKind}:${source.sourceId}:${record.byteOffset}`,
     scope: source.scope,
@@ -430,11 +444,11 @@ function buildAuditEntry(record: JsonlLineRecord, source: ResolvedAuditSource): 
     byteOffset: record.byteOffset,
     nextByteOffset: record.nextByteOffset,
     rawPreview: rawPreview.text,
-    rawPreviewTruncated: rawPreview.truncated,
-    rawBytes: record.lineBytes.byteLength,
+    rawPreviewTruncated,
+    rawBytes: record.rawBytes,
   }
 
-  if (record.lineBytes.byteLength > MAX_PARSE_LINE_BYTES) {
+  if (record.rawBytes > MAX_PARSE_LINE_BYTES) {
     return {
       ...base,
       category: 'unknown',
@@ -448,6 +462,7 @@ function buildAuditEntry(record: JsonlLineRecord, source: ResolvedAuditSource): 
     }
   }
 
+  const lineText = record.lineBytes.toString('utf8')
   let wrapper: Record<string, unknown>
   try {
     const parsed = JSON.parse(lineText) as unknown

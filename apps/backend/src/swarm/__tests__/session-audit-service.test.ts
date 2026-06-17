@@ -4,10 +4,10 @@ import { join } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import type { AgentDescriptor } from '@forge/protocol'
-import { getSessionDir, getSessionFilePath } from '../../storage/data-paths.js'
-import { CONVERSATION_ENTRY_TYPE } from '../conversation-timeline.js'
-import { SessionAuditService, type SessionAuditServiceHost } from '../session-audit-service.js'
-import type { SwarmConfig } from '../../types.js'
+import { getSessionDir, getSessionFilePath } from '../storage/data-paths.js'
+import { CONVERSATION_ENTRY_TYPE } from '../session/conversation-timeline.js'
+import { SessionAuditService, type SessionAuditServiceHost } from '../session/session-audit-service.js'
+import type { SwarmConfig } from '../types.js'
 
 const now = '2026-01-01T00:00:00.000Z'
 
@@ -107,6 +107,28 @@ describe('SessionAuditService', () => {
     expect(item?.rawPreviewTruncated).toBe(true)
     expect(item?.preview.length).toBeLessThan(longText.length)
     expect(item?.rawPreview.length).toBeLessThan(longText.length)
+  })
+
+  it('bounds a single huge JSONL line and emits one truncated audit row', async () => {
+    const fixture = await createFixture()
+    const sessionDir = getSessionDir(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId)
+    await mkdir(sessionDir, { recursive: true })
+    const hugeLine = `{"type":"custom","id":"huge","data":"${'x'.repeat(1024 * 1024 + 128)}"}`
+    await writeFile(getSessionFilePath(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId), hugeLine, 'utf8')
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]).toMatchObject({
+      category: 'unknown',
+      hiddenReason: 'payload_truncated',
+      byteOffset: 0,
+      nextByteOffset: Buffer.byteLength(hugeLine, 'utf8'),
+      rawBytes: Buffer.byteLength(hugeLine, 'utf8'),
+    })
+    expect(page.items[0].rawPreview.length).toBeLessThan(20_000)
+    expect(page.items[0].parseError).toContain('parser cap')
   })
 
   it('derives the canonical session path server-side instead of trusting descriptor paths', async () => {
