@@ -44,7 +44,7 @@ Forge Auth broker mode lets Forge use a separate broker for OpenAI/Codex short-l
 
 When broker mode is active, local OpenAI OAuth/API-key and pool credentials stay visible for reference but are read-only in Settings. If broker mode is forced by environment variables, Settings cannot redeem setup links or edit broker fields until the env override is removed.
 
-After adding credentials, you may need to restart the backend (`Ctrl+C` and re-run `pnpm prod:daemon`) for the changes to take effect. On macOS this usually isn't necessary, but on Windows the backend sometimes doesn't pick up auth changes without a restart.
+After adding or changing provider credentials, Forge recycles matching idle manager runtimes or defers the recycle until busy runtimes are idle, so the common case does not require recreating sessions or restarting the backend.
 
 If you use pooled OAuth credentials, Forge refreshes them through the shared auth path before runtime selection, then writes refreshed tokens back into `auth.json` under the pooled key. Missing or clearly expired pooled credentials show up as `auth_error` instead of looking healthy.
 

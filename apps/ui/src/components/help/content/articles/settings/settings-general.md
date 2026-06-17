@@ -38,7 +38,7 @@ Edit the default preferences Forge shares with new manager sessions. These are t
 
 ## Collaboration
 
-Open **Settings > Collaboration** to manage one or more collaboration backend connections. Add a connection, enter its backend URL, and click **Save** and **Test** for that connection to confirm it is reachable. Use the Builder/Collab toggle to open the collaboration sign-in surface. For configured remote backends, the toggle can take you to sign-in before you are authenticated. After sign-in succeeds, that backend's channels become available.
+Open **Settings > Collaboration** to manage one or more collaboration backend connections. Add a connection, enter its backend URL, and click **Save** and **Test** for that connection to confirm it is reachable. Use the Builder/Collab toggle to open the collaboration sign-in surface. For configured remote backends, the toggle can take you to sign-in before you are authenticated. Configured backends wait for sign-in before opening metadata or live subscriptions; unknown, network, and server errors remain retryable. After sign-in succeeds, that backend's channels become available.
 
 Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the selected collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the selected collaboration backend instead of copying or sharing the local Builder auth file.
 

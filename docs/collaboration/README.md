@@ -107,7 +107,7 @@ The Builder/Collab toggle lives in the sidebar header. When collaboration is ena
 5. Use the Builder/Collab toggle to open the collaboration surface. For configured remote backends, the toggle can open the collaboration sign-in surface before you are authenticated.
 6. Sign in with the selected backend's admin or member email and password. After sign-in succeeds, that backend's channels become available.
 
-The collaboration status panel reports the configured connection/backend, not the local Builder backend. It reflects the enabled state and auth status of the selected collaboration service. If a collaboration session or socket is invalidated by a lifecycle change, the UI shows sign-in recovery instead of retrying forever or leaving the screen stuck loading.
+The collaboration status panel reports the configured connection/backend, not the local Builder backend. It reflects the enabled state and auth status of the selected collaboration service. Configured backends wait for sign-in before opening metadata or live subscriptions; unknown, network, and server errors remain retryable. If a collaboration session or socket is invalidated by a lifecycle change, the UI shows sign-in recovery instead of retrying forever or leaving the screen stuck loading.
 
 Once connected, the main Settings surface switches context with the mode: Builder Settings continue to target the local backend, while Collab Settings target the collaboration backend. Only collaboration admins can access Collab Settings, and member/invite management is scoped per backend connection.
 

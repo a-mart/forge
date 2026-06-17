@@ -27,6 +27,8 @@ If `FORGE_OPENAI_CODEX_AUTH_MODE` is set in the environment, it overrides the Se
 
 Each provider row includes a **Get key** link when API key auth is supported, which opens the provider's key management page in your browser.
 
+Provider auth changes propagate by recycling matching idle manager runtimes or deferring the recycle until busy runtimes are idle. This includes collaboration channel sessions, direct OAuth login changes, and credential pool strategy changes, so the common case does not require recreating sessions or restarting the backend.
+
 ## OAuth login
 
 Anthropic and OpenAI support OAuth as an alternative to API keys. Click **Login with OAuth**, follow the browser authorization flow, then paste the authorization code back into Forge. OAuth tokens are stored and refreshed automatically. OpenAI OAuth is unavailable for edits while Forge Auth broker mode is active.
