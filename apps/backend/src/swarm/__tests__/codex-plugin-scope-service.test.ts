@@ -8,6 +8,7 @@ import {
   CodexMcpCatalog,
   type CodexCatalogSnapshot,
 } from "../codex-app-server/codex-mcp-catalog.js";
+import type { CodexAppServerClientPort } from "../codex-app-server/types.js";
 
 function catalog(overrides: Partial<CodexCatalogSnapshot> = {}): CodexCatalogSnapshot {
   return {
@@ -92,6 +93,80 @@ describe("CodexPluginScopeService", () => {
     expect(scope.allowedTools.some((tool) => tool.serverName === "RepoPrompt")).toBe(false);
   });
 
+  it("materializes current codex_apps object-map Fireflies tools while filtering unsafe tools", async () => {
+    const client: CodexAppServerClientPort = {
+      async connect() {},
+      async request<T>(method: string): Promise<T> {
+        if (method === "plugin/list") {
+          return {
+            plugins: [
+              {
+                name: "fireflies",
+                id: "fireflies@openai-curated",
+                enabled: true,
+                availability: "available",
+                interface: { displayName: "Fireflies" },
+              },
+            ],
+          } as T;
+        }
+        if (method === "app/list") {
+          return {
+            apps: [
+              {
+                id: "codex-apps-ecosystem",
+                name: "Codex Apps",
+                pluginDisplayNames: { fireflies: "Fireflies" },
+              },
+            ],
+          } as T;
+        }
+        if (method === "mcpServerStatus/list") {
+          return {
+            servers: [
+              {
+                name: "codex_apps",
+                tools: {
+                  fireflies_fireflies_get_summary: {
+                    description: "Get Fireflies meeting summary",
+                    readOnly: true,
+                    annotations: { readOnlyHint: true },
+                  },
+                  fireflies_fireflies_delete_meeting: {
+                    description: "Delete Fireflies meeting",
+                    readOnly: true,
+                    annotations: { readOnlyHint: true },
+                  },
+                },
+              },
+            ],
+          } as T;
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+      notify() {},
+      dispose() {},
+      isDisposed: () => false,
+    };
+    const resolver = new CodexMcpCatalog(async () => client);
+    const snapshot = await resolver.listCatalog(true);
+    const service = new CodexPluginScopeService({ catalog: adapter(snapshot) });
+
+    const { scope } = await service.materializePendingScope({
+      managerAgentId: "manager",
+      workerAgentId: "codex-plugin-fireflies",
+      selectors: ["fireflies"],
+    });
+
+    expect(snapshot.plugins[0]?.codexAppsToolNames).toEqual([
+      "fireflies_fireflies_get_summary",
+      "fireflies_fireflies_delete_meeting",
+    ]);
+    expect(scope.allowedTools.map((tool) => tool.displaySelector)).toEqual([
+      "codex_apps/fireflies_fireflies_get_summary",
+    ]);
+  });
+
   it("materializes exact advanced selectors without widening to plugin scope", async () => {
     const service = new CodexPluginScopeService({ catalog: adapter(catalog()) });
     const { scope } = await service.materializePendingScope({
@@ -106,6 +181,27 @@ describe("CodexPluginScopeService", () => {
       serverName: "RepoPrompt",
       toolName: "get_code_structure",
     });
+  });
+
+  it("reports MCP discovery diagnostics instead of no safe tools when tool discovery failed", async () => {
+    const service = new CodexPluginScopeService({
+      catalog: adapter(
+        catalog({
+          tools: [],
+          diagnostics: {
+            mcpToolsError: "Codex MCP catalog discovery failed for mcpServerStatus/list: timed out",
+          },
+        }),
+      ),
+    });
+
+    await expect(
+      service.materializePendingScope({
+        managerAgentId: "manager",
+        workerAgentId: "codex-plugin-fireflies",
+        selectors: ["fireflies"],
+      }),
+    ).rejects.toThrow(/mcpServerStatus\/list: timed out/);
   });
 
   it("fails closed for disabled plugins and open-world exact tools", async () => {

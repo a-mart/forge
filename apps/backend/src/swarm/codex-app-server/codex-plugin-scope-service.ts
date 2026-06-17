@@ -183,6 +183,10 @@ export class CodexPluginScopeService {
     }
 
     const catalog = await this.options.catalog.listCatalog();
+    if (catalog.diagnostics?.mcpToolsError && catalog.tools.length === 0) {
+      throw new Error(catalog.diagnostics.mcpToolsError);
+    }
+
     const allowedTools = this.resolveAllowedToolsForSelectors(selectors, catalog);
     if (allowedTools.length === 0) {
       throw new Error("Codex plugin delegation has no safe read-only tools for the selected scope.");
@@ -340,6 +344,9 @@ export class CodexPluginScopeService {
       );
       const safePluginTools = pluginTools.filter((tool) => classifyCodexMcpToolSafety(tool).allowed);
       if (safePluginTools.length === 0) {
+        if (catalog.diagnostics?.mcpToolsError) {
+          throw new Error(catalog.diagnostics.mcpToolsError);
+        }
         throw new Error(`Codex plugin ${selector} has no safe read-only tools available.`);
       }
 
