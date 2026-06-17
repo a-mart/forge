@@ -403,11 +403,12 @@ export class FileBrowserService {
     }
 
     const relativePath = relative(workspaceRoot, absolutePath);
-    if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    const normalizedRelativePath = normalizePlatformRelativePath(relativePath);
+    if (normalizedRelativePath.startsWith("..") || isAbsolute(relativePath)) {
       throw new Error("Path is outside CWD.");
     }
 
-    const segments = relativePath.split("/").filter(Boolean);
+    const segments = splitRelativePathSegments(normalizedRelativePath);
     let current = workspaceRoot;
 
     for (const segment of segments) {
@@ -813,7 +814,21 @@ function mapEditabilityReasonToConflict(
 
 function isLexicallyWithinRoot(root: string, target: string): boolean {
   const relativePath = relative(root, target);
-  return relativePath.length > 0 && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+  const normalizedRelativePath = normalizePlatformRelativePath(relativePath);
+  return normalizedRelativePath.length > 0 && !normalizedRelativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
+function normalizePlatformRelativePath(relativePath: string): string {
+  return relativePath.replace(/\\/g, "/");
+}
+
+function splitRelativePathSegments(relativePath: string): string[] {
+  const normalized = normalizePlatformRelativePath(relativePath);
+  if (normalized.length === 0) {
+    return [];
+  }
+
+  return normalized.split("/").filter(Boolean);
 }
 
 function normalizeRelativePath(pathValue: string): string {
@@ -828,8 +843,8 @@ export function normalizeRelativePathForTest(pathValue: string): string {
   return normalizeRelativePath(pathValue);
 }
 
-export function isLexicallyWithinRootForTest(root: string, target: string): boolean {
-  return isLexicallyWithinRoot(root, target);
+export function splitRelativePathSegmentsForTest(relativePath: string): string[] {
+  return splitRelativePathSegments(relativePath);
 }
 
 function isErrorCode(error: unknown, code: string): boolean {

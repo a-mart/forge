@@ -9,6 +9,7 @@ import {
   MAX_FILE_SAVE_BYTES,
   normalizeRelativePathForTest,
   rethrowPermissionDenied,
+  splitRelativePathSegmentsForTest,
 } from "../../services/file-browser-service.js";
 
 describe("file-browser-service helpers", () => {
@@ -50,6 +51,13 @@ describe("file-browser-service helpers", () => {
     expect(normalizeRelativePathForTest(" nested/ foo.txt ")).toBe(" nested/ foo.txt ");
     expect(normalizeRelativePathForTest("")).toBe("");
     expect(normalizeRelativePathForTest(".")).toBe("");
+  });
+
+  it("splits Windows-style relative path segments for symlink-safe walks", () => {
+    expect(splitRelativePathSegmentsForTest("nested\\child\\leaf.txt")).toEqual(["nested", "child", "leaf.txt"]);
+    expect(splitRelativePathSegmentsForTest("nested/child\\leaf.txt")).toEqual(["nested", "child", "leaf.txt"]);
+    expect(splitRelativePathSegmentsForTest("..\\outside\\leaf.txt")).toEqual(["..", "outside", "leaf.txt"]);
+    expect(splitRelativePathSegmentsForTest("")).toEqual([]);
   });
 
   it("maps EACCES and EPERM filesystem errors to permission-denied messages", () => {

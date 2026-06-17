@@ -109,6 +109,21 @@ describe("file browser delete", () => {
     expect(traversalDelete.status).toBe(403);
   });
 
+  it("rejects deletes through nested paths behind outside-target symlinks", async () => {
+    const harness = await createHarness();
+    const outsideNested = join(harness.root, "outside-nested");
+    await mkdir(join(outsideNested, "nested"), { recursive: true });
+    await writeFile(join(outsideNested, "nested", "leaf.txt"), "leaf\n", "utf8");
+    await symlink(outsideNested, join(harness.workspaceDir, "middle"));
+
+    const traversalDelete = await fetch(
+      `${harness.server.baseUrl}/api/files/content?agentId=manager-1&path=${encodeURIComponent("middle/nested/leaf.txt")}`,
+      { method: "DELETE" },
+    );
+    expect(traversalDelete.status).toBe(403);
+    await expect(readFile(join(outsideNested, "nested", "leaf.txt"), "utf8")).resolves.toBe("leaf\n");
+  });
+
   it("deletes internal file and directory symlinks without removing their targets", async () => {
     const harness = await createHarness();
     const targetFile = join(harness.workspaceDir, "target.txt");
