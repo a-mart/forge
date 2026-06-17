@@ -765,10 +765,6 @@ function encodeCursor(cursor: SessionAuditCursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
 }
 
-export function decodeSessionAuditCursor(raw: string): SessionAuditCursor {
-  return decodeCursor(raw)
-}
-
 function decodeCursor(raw: string): SessionAuditCursor {
   try {
     const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown
@@ -983,11 +979,4 @@ function numberValue(value: unknown): number | undefined {
 
 function isNodeErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === code
-}
-
-export const sessionAuditTestInternals = {
-  DEFAULT_AUDIT_LIMIT,
-  MAX_AUDIT_LIMIT,
-  RAW_PREVIEW_MAX_BYTES,
-  TEXT_PREVIEW_MAX_CHARS,
 }

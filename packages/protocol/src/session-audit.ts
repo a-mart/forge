@@ -6,6 +6,7 @@ export type SessionAuditScope = (typeof SESSION_AUDIT_SCOPES)[number]
 export const SESSION_AUDIT_SOURCE_KINDS = [
   'canonical_session_jsonl',
   'canonical_worker_jsonl',
+  // Reserved for a future projected-cache audit source; not currently accepted by the API.
   'conversation_cache_projection',
 ] as const
 export type SessionAuditSourceKind = (typeof SESSION_AUDIT_SOURCE_KINDS)[number]
