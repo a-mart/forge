@@ -1,9 +1,10 @@
-import type { ComponentPropsWithoutRef, RefObject } from 'react'
+import { useState, type ComponentPropsWithoutRef, type RefObject } from 'react'
 import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { ChatHeader } from '@/components/chat/ChatHeader'
 import { ChatSearchBar } from '@/components/chat/ChatSearchBar'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
+import { SessionAuditDrawer } from '@/components/chat/SessionAuditDrawer'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
@@ -46,9 +47,23 @@ export function ChatWorkspace({
   messageInputRef,
   messageInputProps,
 }: ChatWorkspaceProps) {
+  const [sessionAuditOpen, setSessionAuditOpen] = useState(false)
+  const showSessionAudit = headerProps.activeAgentRole === 'manager' && Boolean(headerProps.activeAgentId)
+
   return (
     <>
-      <ChatHeader {...headerProps} />
+      <ChatHeader
+        {...headerProps}
+        showSessionAudit={showSessionAudit}
+        onOpenSessionAudit={showSessionAudit ? () => setSessionAuditOpen(true) : undefined}
+      />
+      <SessionAuditDrawer
+        open={sessionAuditOpen}
+        onOpenChange={setSessionAuditOpen}
+        sessionAgentId={showSessionAudit ? headerProps.activeAgentId : null}
+        sessionLabel={headerProps.activeAgentLabel}
+        wsUrl={headerProps.wsUrl}
+      />
 
       {lastError ? (
         <div className="border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">

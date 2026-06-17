@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Eye, FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, Package, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
+import { ClipboardList, Eye, FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, Package, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -44,6 +44,8 @@ interface ChatHeaderProps {
   detailedAllView?: boolean
   /** Callback to toggle Detailed All mode. Present only for manager sessions. */
   onDetailedAllViewChange?: (value: boolean) => void
+  showSessionAudit?: boolean
+  onOpenSessionAudit?: () => void
   contextWindowUsage: { mode: 'known'; usedTokens: number; contextWindow: number } | { mode: 'updating'; contextWindow: number } | null
   modelCacheHeaderSummary?: ModelCacheHeaderSummary | null
   activeWorkSnapshot?: SessionTaskStateSnapshotEvent | null
@@ -160,6 +162,8 @@ export function ChatHeader({
   onChannelViewChange,
   detailedAllView = false,
   onDetailedAllViewChange,
+  showSessionAudit = false,
+  onOpenSessionAudit,
   contextWindowUsage,
   modelCacheHeaderSummary,
   activeWorkSnapshot,
@@ -413,6 +417,27 @@ export function ChatHeader({
             </TooltipProvider>
           ) : null}
 
+          {showSessionAudit && onOpenSessionAudit ? (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                    onClick={onOpenSessionAudit}
+                    aria-label="Open session audit log"
+                  >
+                    <ClipboardList className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={6}>
+                  Session Audit Log
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+
           {contextWindowUsage ? (
             <ContextWindowIndicator
               usedTokens={contextWindowUsage.mode === 'known' ? contextWindowUsage.usedTokens : undefined}
@@ -449,7 +474,7 @@ export function ChatHeader({
         ) : null}
 
         {/* ── Three-dots dropdown: secondary actions ── */}
-        {(showCompact || showSmartCompact || showNewChat || showStopAll || (channelView === 'all' && activeAgentRole === 'manager' && onDetailedAllViewChange)) ? (
+        {(showCompact || showSmartCompact || showNewChat || showStopAll || (showSessionAudit && onOpenSessionAudit) || (channelView === 'all' && activeAgentRole === 'manager' && onDetailedAllViewChange)) ? (
           <>
             <Separator orientation="vertical" className="hidden sm:block mx-0.5 h-4 bg-border/60" />
             <DropdownMenu>
@@ -479,6 +504,16 @@ export function ChatHeader({
                   >
                     <Eye className="size-3.5" />
                     {detailedAllView ? 'Hide worker tools' : 'Show worker tools'}
+                  </DropdownMenuItem>
+                ) : null}
+
+                {showSessionAudit && onOpenSessionAudit ? (
+                  <DropdownMenuItem
+                    onClick={onOpenSessionAudit}
+                    className="gap-2 text-xs"
+                  >
+                    <ClipboardList className="size-3.5" />
+                    Session Audit Log
                   </DropdownMenuItem>
                 ) : null}
 
