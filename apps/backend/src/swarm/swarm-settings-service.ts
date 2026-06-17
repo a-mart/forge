@@ -86,6 +86,7 @@ export interface SwarmSettingsServiceOptions {
   skillFileService: SkillFileService;
   secretsEnvService: SecretsEnvService;
   getSessionsForProfile: (profileId: string) => SessionDescriptor[];
+  getAllManagerSessions: () => SessionDescriptor[];
   getSessionById: (agentId: string) => SessionDescriptor | undefined;
   resolveAndValidateCwd: (cwd: string) => Promise<string>;
   assertCanChangeManagerCwd: (profileId: string, sessions: SessionDescriptor[]) => void;
@@ -547,13 +548,16 @@ export class SwarmSettingsService {
   }
 
   async updateSettingsAuth(values: Record<string, string>): Promise<void> {
-    await this.assertLocalOpenAIAuthMutationAllowed(Object.keys(values));
+    const providers = Object.keys(values);
+    await this.assertLocalOpenAIAuthMutationAllowed(providers);
     await this.options.secretsEnvService.updateSettingsAuth(values);
+    await this.recycleManagersForAuthProviderChange(providers);
   }
 
   async deleteSettingsAuth(provider: string): Promise<void> {
     await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.options.secretsEnvService.deleteSettingsAuth(provider);
+    await this.recycleManagersForAuthProviderChange([provider]);
   }
 
   async getOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
@@ -609,17 +613,41 @@ export class SwarmSettingsService {
       return;
     }
 
-    const sessions = Array.from(this.options.profiles.keys())
-      .flatMap((profileId) => this.options.getSessionsForProfile(profileId))
-      .filter((session) => session.model.provider.trim().toLowerCase() === "openai-codex");
+    await this.recycleManagersForAuthProviderChange(["openai-codex"], "openai_auth_broker:runtime_recycle:error");
+  }
+
+  private async recycleManagersForAuthProviderChange(
+    providers: string[],
+    errorLogContext = "settings_auth:runtime_recycle:error"
+  ): Promise<void> {
+    const normalizedProviders = new Set(
+      providers
+        .map((provider) => provider.trim().toLowerCase())
+        .filter((provider) => provider.length > 0)
+    );
+    if (normalizedProviders.size === 0) {
+      return;
+    }
+
+    const seenAgentIds = new Set<string>();
+    const sessions = this.options.getAllManagerSessions().filter((session) => {
+      if (seenAgentIds.has(session.agentId)) {
+        return false;
+      }
+      if (!normalizedProviders.has(session.model.provider.trim().toLowerCase())) {
+        return false;
+      }
+      seenAgentIds.add(session.agentId);
+      return true;
+    });
 
     const results = await Promise.allSettled(
-      sessions.map((session) => this.options.applyManagerRuntimeRecyclePolicy(session.agentId, "auth_source_change")),
+      sessions.map((session) => this.options.applyManagerRuntimeRecyclePolicy(session.agentId, "auth_source_change"))
     );
 
     results.forEach((result, index) => {
       if (result.status === "rejected") {
-        this.options.logDebug("openai_auth_broker:runtime_recycle:error", {
+        this.options.logDebug(errorLogContext, {
           agentId: sessions[index]?.agentId,
           message: result.reason instanceof Error ? result.reason.message : String(result.reason),
         });
@@ -653,11 +681,13 @@ export class SwarmSettingsService {
   async removePooledCredential(provider: string, credentialId: string): Promise<void> {
     await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().removeCredential(provider, credentialId);
+    await this.recycleManagersForAuthProviderChange([provider]);
   }
 
   async setPrimaryPooledCredential(provider: string, credentialId: string): Promise<void> {
     await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().setPrimary(provider, credentialId);
+    await this.recycleManagersForAuthProviderChange([provider]);
   }
 
   async setCredentialPoolStrategy(provider: string, strategy: CredentialPoolStrategy): Promise<void> {
@@ -676,7 +706,9 @@ export class SwarmSettingsService {
     identity?: { label?: string; autoLabel?: string; accountId?: string }
   ): Promise<PooledCredentialInfo> {
     await this.assertLocalOpenAIAuthMutationAllowed([provider]);
-    return this.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
+    const result = await this.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
+    await this.recycleManagersForAuthProviderChange([provider]);
+    return result;
   }
 
   private async applyProfileDefaultModel(

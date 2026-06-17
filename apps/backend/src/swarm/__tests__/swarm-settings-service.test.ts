@@ -131,7 +131,8 @@ function createService(options: {
     skillMetadataService: {} as any,
     skillFileService: {} as any,
     secretsEnvService: options.secretsEnvService ?? ({} as any),
-    getSessionsForProfile: () => options.sessions,
+    getSessionsForProfile: (profileId) => options.sessions.filter((session) => session.profileId === profileId),
+    getAllManagerSessions: () => options.sessions,
     getSessionById: (agentId) => options.sessions.find((session) => session.agentId === agentId),
     resolveAndValidateCwd: async (cwd) => cwd,
     assertCanChangeManagerCwd: () => {},
@@ -634,6 +635,103 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     expect(saveStore).toHaveBeenCalledTimes(1);
     expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
     await expect(readFile(session.sessionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("SwarmSettingsService auth provider runtime recycling", () => {
+  it("recycles matching provider managers after local auth updates, including collaboration sessions", async () => {
+    const root = await createTempRoot();
+    const builderOpenAISession = createSession(root, "manager", { provider: "openai-codex", modelId: "gpt-5.5" });
+    const builderAnthropicSession = createSession(root, "manager--anthropic", {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4.5"
+    });
+    const collaborationOpenAISession = {
+      ...createSession(root, "collab-channel", { provider: "openai-codex", modelId: "gpt-5.5" }),
+      managerId: "_collaboration",
+      profileId: "_collaboration",
+      sessionSurface: "collab" as const
+    };
+    const secretsEnvService = {
+      updateSettingsAuth: vi.fn(async () => undefined)
+    };
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async (agentId: string) =>
+      agentId === collaborationOpenAISession.agentId ? "deferred" : "recycled"
+    );
+    const service = createService({
+      rootDir: root,
+      sessions: [builderOpenAISession, builderAnthropicSession, collaborationOpenAISession],
+      applyManagerRuntimeRecyclePolicy,
+      secretsEnvService
+    });
+
+    await service.updateSettingsAuth({ "openai-codex": "sk-test" });
+
+    expect(secretsEnvService.updateSettingsAuth).toHaveBeenCalledWith({ "openai-codex": "sk-test" });
+    expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
+      ["manager", "auth_source_change"],
+      ["collab-channel", "auth_source_change"]
+    ]);
+  });
+
+  it("does not recycle sessions whose model provider does not match the local auth mutation", async () => {
+    const root = await createTempRoot();
+    const openAISession = createSession(root, "manager", { provider: "openai-codex", modelId: "gpt-5.5" });
+    const cursorSession = createSession(root, "manager--cursor", { provider: "cursor-sdk", modelId: "composer-2.5" });
+    const secretsEnvService = {
+      deleteSettingsAuth: vi.fn(async () => undefined)
+    };
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [openAISession, cursorSession],
+      applyManagerRuntimeRecyclePolicy,
+      secretsEnvService
+    });
+
+    await service.deleteSettingsAuth("anthropic");
+
+    expect(secretsEnvService.deleteSettingsAuth).toHaveBeenCalledWith("anthropic");
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+
+  it("recycles matching provider managers after pooled credential source changes", async () => {
+    const root = await createTempRoot();
+    const anthropicSession = createSession(root, "manager", {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4.5"
+    });
+    const openAISession = createSession(root, "manager--openai", { provider: "openai-codex", modelId: "gpt-5.5" });
+    const credentialPoolService = {
+      removeCredential: vi.fn(async () => undefined),
+      setPrimary: vi.fn(async () => undefined),
+      addCredential: vi.fn(async () => ({ id: "acct-ant-2" }))
+    };
+    const secretsEnvService = {
+      getCredentialPoolService: () => credentialPoolService
+    };
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [anthropicSession, openAISession],
+      applyManagerRuntimeRecyclePolicy,
+      secretsEnvService
+    });
+
+    await service.removePooledCredential("anthropic", "acct-ant-1");
+    await service.setPrimaryPooledCredential("anthropic", "acct-ant-2");
+    await expect(service.addPooledCredential("anthropic", { type: "oauth" } as any)).resolves.toEqual({
+      id: "acct-ant-2"
+    });
+
+    expect(credentialPoolService.removeCredential).toHaveBeenCalledWith("anthropic", "acct-ant-1");
+    expect(credentialPoolService.setPrimary).toHaveBeenCalledWith("anthropic", "acct-ant-2");
+    expect(credentialPoolService.addCredential).toHaveBeenCalledWith("anthropic", { type: "oauth" }, undefined);
+    expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
+      ["manager", "auth_source_change"],
+      ["manager", "auth_source_change"],
+      ["manager", "auth_source_change"]
+    ]);
   });
 });
 
