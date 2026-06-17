@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent } from '@testing-library/dom'
+import { fireEvent, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -433,8 +433,10 @@ describe('SettingsNotifications', () => {
       await flush()
 
       // The store should have been written with the backend value
-      const lastWriteCall = notificationMock.writeNotificationStore.mock.calls.at(-1)
-      expect(lastWriteCall?.[0]?.muteCliNotifications).toBe(true)
+      await waitFor(() => {
+        const lastWriteCall = notificationMock.writeNotificationStore.mock.calls.at(-1)
+        expect(lastWriteCall?.[0]?.muteCliNotifications).toBe(true)
+      })
     })
 
     it('does not overwrite user CLI mute toggle with stale GET response', async () => {

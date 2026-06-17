@@ -360,9 +360,11 @@ describe('KnowledgeFileViewer', () => {
     renderViewer()
     await flushPromises()
 
-    const badge = getByTestId(container, 'cortex-section-provenance-workflow-preferences')
-    expect(badge.textContent).toContain('Mar')
-    expect(badge.textContent).toContain('review-1')
+    await waitFor(() => {
+      const badge = getByTestId(container, 'cortex-section-provenance-workflow-preferences')
+      expect(badge.textContent).toContain('Mar')
+      expect(badge.textContent).toContain('review-1')
+    })
   })
 
   it('shows the recent change banner only when the latest review touched the current file', async () => {
@@ -419,6 +421,10 @@ describe('KnowledgeFileViewer', () => {
 
     fireEvent.click(getByRole(container, 'button', { name: 'Edit file' }))
     await flushPromises()
+
+    await waitFor(() => {
+      expect(getByRole(container, 'textbox')).toBeTruthy()
+    })
 
     const historyToggle = getByTestId(container, 'cortex-history-toggle') as HTMLButtonElement
     expect(historyToggle.disabled).toBe(false)
