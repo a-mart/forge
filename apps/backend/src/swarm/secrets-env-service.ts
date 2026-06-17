@@ -248,6 +248,18 @@ export class SecretsEnvService {
     await this.syncLegacyAuthProvider(resolvedProvider.storageProvider, undefined);
   }
 
+  async updateSettingsAuthCredential(provider: string, credential: AuthCredential): Promise<void> {
+    const resolvedProvider = resolveSettingsAuthProvider(provider);
+    if (!resolvedProvider) {
+      throw new Error(`Invalid auth provider: ${provider}`);
+    }
+
+    const authFile = await this.resolveAuthFileForWrite();
+    const authStorage = AuthStorage.create(authFile);
+    authStorage.set(resolvedProvider.storageProvider, credential);
+    await this.syncLegacyAuthProvider(resolvedProvider.storageProvider, credential);
+  }
+
   async loadSecretsStore(): Promise<void> {
     this.secrets = await this.readSecretsStore();
 

@@ -1,9 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { SessionManager } from '@mariozechner/pi-coding-agent'
+import { AuthStorage, SessionManager, type AuthCredential } from '@mariozechner/pi-coding-agent'
 import { vi } from 'vitest'
 import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
+import { ensureCanonicalAuthFilePath } from '../swarm/auth-storage-paths.js'
 import { getGlobalForgeExtensionsDir } from '../swarm/data-paths.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
@@ -165,6 +166,7 @@ export class P0HttpRouteFakeSwarmManager extends EventEmitter {
   private readonly forgeSettingsSnapshot: Record<string, unknown>
   private readonly perf: SidebarPerfRecorder
   readonly pooledCredentialAdds: Array<{ provider: string; credential: unknown; identity?: unknown }> = []
+  readonly authCredentialUpdates: Array<{ provider: string; credential: AuthCredential }> = []
 
   constructor(
     config: SwarmConfig,
@@ -277,6 +279,12 @@ export class P0HttpRouteFakeSwarmManager extends EventEmitter {
   }
 
   async deleteSettingsAuth(_provider: string): Promise<void> {}
+
+  async updateSettingsAuthCredential(provider: string, credential: AuthCredential): Promise<void> {
+    this.authCredentialUpdates.push({ provider, credential })
+    const authFilePath = await ensureCanonicalAuthFilePath(this.config)
+    AuthStorage.create(authFilePath).set(provider, credential)
+  }
 
   async addPooledCredential(provider: string, credential: unknown, identity?: unknown): Promise<{ id: string }> {
     this.pooledCredentialAdds.push({ provider, credential, identity })

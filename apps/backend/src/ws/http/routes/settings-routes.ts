@@ -5,7 +5,6 @@ import {
   type OAuthLoginCallbacks,
   type OAuthProviderInterface
 } from "@mariozechner/pi-ai/oauth";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   CredentialPoolState,
@@ -26,7 +25,6 @@ import type {
   SettingsEnvResponse,
 } from "@forge/protocol";
 import type { StatsService } from "../../../stats/stats-service.js";
-import { ensureCanonicalAuthFilePath } from "../../../swarm/auth-storage-paths.js";
 import { NotificationSettingsService, NotificationSettingsValidationError } from "../../../swarm/notification-settings-service.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
@@ -927,8 +925,6 @@ async function handleSettingsAuthLoginHttpRequest(
   activeSettingsAuthLoginFlows.set(providerId, flow);
 
   const provider = SETTINGS_AUTH_LOGIN_PROVIDERS[providerId];
-  const authFilePath = await ensureCanonicalAuthFilePath(swarmManager.getConfig());
-  const authStorage = AuthStorage.create(authFilePath);
 
   response.statusCode = 200;
   response.setHeader("Cache-Control", "no-cache, no-transform");
@@ -1059,7 +1055,7 @@ async function handleSettingsAuthLoginHttpRequest(
       return;
     }
 
-    authStorage.set(providerId, {
+    await swarmManager.updateSettingsAuthCredential(providerId, {
       type: "oauth",
       ...credentials
     });

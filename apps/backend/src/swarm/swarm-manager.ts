@@ -1587,6 +1587,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       skillFileService: this.skillFileService,
       secretsEnvService: this.secretsEnvService,
       getSessionsForProfile: (profileId) => this.getBuilderSessionsForProfile(profileId) as Array<AgentDescriptor & { role: "manager"; profileId: string }>,
+      getAllManagerSessions: () => Array.from(this.descriptors.values()).filter(
+        (descriptor): descriptor is AgentDescriptor & { role: "manager"; profileId: string } =>
+          descriptor.role === "manager" && typeof descriptor.profileId === "string"
+      ),
       getSessionById: (agentId) => {
         const descriptor = this.descriptors.get(agentId);
         if (!descriptor || descriptor.role !== "manager" || !descriptor.profileId) {
@@ -6971,6 +6975,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async deleteSettingsAuth(provider: string): Promise<void> {
     await this.settingsService.deleteSettingsAuth(provider);
+  }
+
+  async updateSettingsAuthCredential(provider: string, credential: AuthCredential): Promise<void> {
+    await this.settingsService.updateSettingsAuthCredential(provider, credential);
   }
 
   async getOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
