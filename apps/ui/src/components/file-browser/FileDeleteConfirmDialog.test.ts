@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getByRole } from '@testing-library/dom'
+import { getByRole, queryByRole } from '@testing-library/dom'
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
@@ -52,16 +52,35 @@ describe('FileDeleteConfirmDialog', () => {
     expect(document.body.textContent).toContain('folder and its contents')
   })
 
-  it('calls confirm and close handlers from actions', () => {
+  it('calls confirm and close handlers from app-styled actions', () => {
     renderDialog()
 
     const deleteButton = getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true })
     const cancelButton = getByRole(document.body, 'button', { name: 'Cancel', hidden: true })
+
+    expect(deleteButton.className).toContain('bg-destructive')
+    expect(cancelButton.className).toContain('border')
 
     flushSync(() => deleteButton.click())
     expect(onConfirm).toHaveBeenCalledTimes(1)
 
     flushSync(() => cancelButton.click())
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('shows an inline actionable delete failure without closing the dialog', () => {
+    renderDialog({ errorMessage: 'HTTP 404: Route not found' })
+
+    expect(getByRole(document.body, 'alert', { hidden: true }).textContent).toContain('HTTP 404: Route not found')
+    expect(getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true })).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Cancel', hidden: true })).toBeTruthy()
+  })
+
+  it('disables actions while delete is in progress', () => {
+    renderDialog({ isDeleting: true })
+
+    expect((getByRole(document.body, 'button', { name: 'Deleting…', hidden: true }) as HTMLButtonElement).disabled).toBe(true)
+    expect((getByRole(document.body, 'button', { name: 'Cancel', hidden: true }) as HTMLButtonElement).disabled).toBe(true)
+    expect(queryByRole(document.body, 'alert', { hidden: true })).toBeNull()
   })
 })

@@ -35,7 +35,7 @@ interface FileBrowserSidebarProps {
   desktopOnly?: boolean
   mobileOnly?: boolean
   refreshNonce?: number
-  onDeleteEntry?: (path: string, entryType: 'file' | 'directory') => void
+  onDeleteEntry?: (path: string, entryType: 'file' | 'directory') => Promise<boolean>
 }
 
 export function FileBrowserSidebar({
@@ -59,6 +59,8 @@ export function FileBrowserSidebar({
   const [seedStatus, setSeedStatus] = useState<'idle' | 'saving' | 'success'>('idle')
   const [seedError, setSeedError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<{ path: string; entryType: 'file' | 'directory' } | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const gatedAgentId = isOpen ? agentId : null
   const worktreeId = worktreeContext?.worktreeId ?? null
@@ -136,14 +138,34 @@ export function FileBrowserSidebar({
 
   const handleRequestDelete = useCallback((path: string, entryType: 'file' | 'directory') => {
     if (!onDeleteEntry) return
+    setDeleteError(null)
     setPendingDelete({ path, entryType })
   }, [onDeleteEntry])
 
   const handleConfirmDelete = useCallback(() => {
-    if (!pendingDelete || !onDeleteEntry) return
-    onDeleteEntry(pendingDelete.path, pendingDelete.entryType)
+    if (!pendingDelete || !onDeleteEntry || isDeleting) return
+
+    setIsDeleting(true)
+    setDeleteError(null)
+    void onDeleteEntry(pendingDelete.path, pendingDelete.entryType)
+      .then((deleted) => {
+        if (deleted) {
+          setPendingDelete(null)
+        }
+      })
+      .catch((error: unknown) => {
+        setDeleteError(error instanceof Error ? error.message : 'Unknown error')
+      })
+      .finally(() => {
+        setIsDeleting(false)
+      })
+  }, [isDeleting, onDeleteEntry, pendingDelete])
+
+  const handleCloseDeleteDialog = useCallback(() => {
+    if (isDeleting) return
     setPendingDelete(null)
-  }, [onDeleteEntry, pendingDelete])
+    setDeleteError(null)
+  }, [isDeleting])
 
   return (
     <>
@@ -337,8 +359,10 @@ export function FileBrowserSidebar({
         open={Boolean(pendingDelete)}
         entryName={pendingDelete?.path.split('/').pop() ?? ''}
         entryType={pendingDelete?.entryType ?? 'file'}
+        errorMessage={deleteError}
+        isDeleting={isDeleting}
         onConfirm={handleConfirmDelete}
-        onClose={() => setPendingDelete(null)}
+        onClose={handleCloseDeleteDialog}
       />
     </>
   )

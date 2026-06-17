@@ -136,14 +136,16 @@ async function parseResponseJson(response: Response): Promise<unknown> {
 }
 
 function getResponseErrorMessage(payload: unknown, response: Response): string {
+  const statusPrefix = `HTTP ${response.status}`
+
   if (payload && typeof payload === 'object') {
     const error = (payload as { error?: unknown }).error
     if (typeof error === 'string' && error.trim().length > 0) {
-      return error
+      return `${statusPrefix}: ${error}`
     }
   }
 
-  return response.statusText || `HTTP ${response.status}`
+  return response.statusText ? `${statusPrefix}: ${response.statusText}` : statusPrefix
 }
 
 /* ------------------------------------------------------------------ */

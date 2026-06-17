@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByLabelText, getByText, queryByLabelText, queryByText } from '@testing-library/dom'
+import { fireEvent, getByLabelText, getByRole, getByText, queryByLabelText, queryByRole, queryByText } from '@testing-library/dom'
 import { createElement, type ComponentProps } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
@@ -61,9 +61,17 @@ vi.mock('./use-file-browser-queries', () => ({
 
 const fileTreeMock = vi.hoisted(() => ({
   renderCount: 0,
-  FileTree: vi.fn(() => {
+  FileTree: vi.fn((props: { onRequestDelete?: (path: string, entryType: 'file' | 'directory') => void }) => {
     fileTreeMock.renderCount += 1
-    return createElement('div', { 'data-testid': 'file-tree' }, 'file tree')
+    return createElement('div', { 'data-testid': 'file-tree' },
+      'file tree',
+      props.onRequestDelete
+        ? createElement('button', {
+            type: 'button',
+            onClick: () => props.onRequestDelete?.('src', 'directory'),
+          }, 'Request delete folder')
+        : null,
+    )
   }),
 }))
 
@@ -171,6 +179,59 @@ describe('FileBrowserSidebar project resource scaffold action', () => {
     await flushPromises()
 
     expect(queryByText(container, 'Created .forge project resources.')).toBeNull()
+  })
+})
+
+describe('FileBrowserSidebar delete confirmation', () => {
+  it('keeps the delete dialog open and shows backend errors after a failed delete', async () => {
+    const onDeleteEntry = vi.fn().mockRejectedValue(new Error('HTTP 404: route not loaded'))
+    renderSidebar({ onDeleteEntry })
+
+    flushSync(() => fireEvent.click(getByText(container, 'Request delete folder')))
+    expect(getByText(document.body, 'Delete folder')).toBeTruthy()
+    expect(document.body.textContent).toContain('folder and its contents')
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true }))
+    await flushPromises()
+
+    expect(onDeleteEntry).toHaveBeenCalledWith('src', 'directory')
+    expect(getByRole(document.body, 'alert', { hidden: true }).textContent).toContain('HTTP 404: route not loaded')
+    expect(getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true })).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Cancel', hidden: true })).toBeTruthy()
+  })
+
+  it('closes the delete dialog after a successful delete and supports retry after failure', async () => {
+    const onDeleteEntry = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Permission denied'))
+      .mockResolvedValueOnce(true)
+    renderSidebar({ onDeleteEntry })
+
+    flushSync(() => fireEvent.click(getByText(container, 'Request delete folder')))
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true }))
+    await flushPromises()
+
+    expect(getByRole(document.body, 'alert', { hidden: true }).textContent).toContain('Permission denied')
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true }))
+    await flushPromises()
+
+    expect(onDeleteEntry).toHaveBeenCalledTimes(2)
+    expect(queryByRole(document.body, 'alertdialog', { hidden: true })).toBeNull()
+  })
+
+  it('leaves the delete dialog open without an error when dirty guard cancels deletion', async () => {
+    const onDeleteEntry = vi.fn().mockResolvedValue(false)
+    renderSidebar({ onDeleteEntry })
+
+    flushSync(() => fireEvent.click(getByText(container, 'Request delete folder')))
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true }))
+    await flushPromises()
+
+    expect(queryByRole(document.body, 'alert', { hidden: true })).toBeNull()
+    expect(getByRole(document.body, 'alertdialog', { hidden: true })).toBeTruthy()
+    expect((getByRole(document.body, 'button', { name: 'Delete permanently', hidden: true }) as HTMLButtonElement).disabled).toBe(false)
+    expect((getByRole(document.body, 'button', { name: 'Cancel', hidden: true }) as HTMLButtonElement).disabled).toBe(false)
   })
 })
 

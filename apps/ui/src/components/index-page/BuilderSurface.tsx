@@ -1523,53 +1523,51 @@ export function BuilderSurface({
     })
   }, [fileEditorCoordinator, handleFileBrowserSelectFile, selectedFileBrowserFile])
 
-  const handleFileBrowserDeleteEntry = useCallback((path: string, entryType: 'file' | 'directory') => {
-    const runDelete = () => {
-      void (async () => {
-        if (!activeAgentId) return
+  const handleFileBrowserDeleteEntry = useCallback((path: string, entryType: 'file' | 'directory'): Promise<boolean> => {
+    const runDelete = async (): Promise<boolean> => {
+      if (!activeAgentId) return false
 
-        try {
-          await deleteFilePath(wsUrl, {
-            agentId: activeAgentId,
-            path,
-            worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
-          })
-          applySuccessfulFileDeleteToCaches({
-            agentId: activeAgentId,
-            worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
-            path,
-            entryType,
-          })
-          if (doesDeleteAffectOpenFile(path, entryType, selectedFileBrowserFile)) {
-            handleFileBrowserClosePanel()
-          }
-          setFileBrowserRefreshNonce((previous) => previous + 1)
-          setSourceControlRefreshNonce((previous) => previous + 1)
-        } catch (error) {
-          setState((previous) => ({
-            ...previous,
-            lastError: `Failed to delete: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }))
-        }
-      })()
+      await deleteFilePath(wsUrl, {
+        agentId: activeAgentId,
+        path,
+        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+      })
+      applySuccessfulFileDeleteToCaches({
+        agentId: activeAgentId,
+        worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+        path,
+        entryType,
+      })
+      if (doesDeleteAffectOpenFile(path, entryType, selectedFileBrowserFile)) {
+        handleFileBrowserClosePanel()
+      }
+      setFileBrowserRefreshNonce((previous) => previous + 1)
+      setSourceControlRefreshNonce((previous) => previous + 1)
+      return true
     }
 
     if (
       doesDeleteAffectOpenFile(path, entryType, selectedFileBrowserFile) &&
       fileEditorCoordinator.getDirtySnapshot()?.isDirty
     ) {
-      fileEditorCoordinator.requestFileEditorTransition({ type: 'delete-entry', path, entryType }, runDelete)
-      return
+      return new Promise<boolean>((resolve, reject) => {
+        fileEditorCoordinator.requestFileEditorTransition(
+          { type: 'delete-entry', path, entryType },
+          () => {
+            void runDelete().then(resolve, reject)
+          },
+          () => resolve(false),
+        )
+      })
     }
 
-    runDelete()
+    return runDelete()
   }, [
     activeAgentId,
     fileBrowserWorktreeContext?.worktreeId,
     fileEditorCoordinator,
     handleFileBrowserClosePanel,
     selectedFileBrowserFile,
-    setState,
     wsUrl,
   ])
 

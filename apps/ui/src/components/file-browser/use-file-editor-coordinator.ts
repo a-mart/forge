@@ -40,6 +40,7 @@ interface PendingTransition {
   action: FileEditorTransitionAction
   run: () => void
   snapshot: FileEditorDirtySnapshot
+  onCancel?: () => void
 }
 
 export interface FileDirtyConfirmDialogState {
@@ -122,7 +123,11 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
     return guardsRef.current.get(serializeFileEditorKey(snapshot.key))?.api ?? null
   }, [activeGuard])
 
-  const requestFileEditorTransition = useCallback((action: FileEditorTransitionAction, run: () => void) => {
+  const requestFileEditorTransition = useCallback((
+    action: FileEditorTransitionAction,
+    run: () => void,
+    onCancel?: () => void,
+  ) => {
     const snapshot = getDirtySnapshot()
     if (!snapshot) {
       run()
@@ -134,13 +139,18 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
       return
     }
 
-    setPendingTransition({ action, run, snapshot })
+    setPendingTransition({ action, run, snapshot, onCancel })
   }, [getDirtySnapshot])
 
-  const cancelPendingTransition = useCallback(() => {
+  const abortPendingTransition = useCallback((transition: PendingTransition | null) => {
+    transition?.onCancel?.()
     setPendingTransition(null)
     setIsSavingPendingTransition(false)
   }, [])
+
+  const cancelPendingTransition = useCallback(() => {
+    abortPendingTransition(pendingTransition)
+  }, [abortPendingTransition, pendingTransition])
 
   const continuePendingTransition = useCallback((transition: PendingTransition) => {
     setPendingTransition(null)
@@ -165,14 +175,12 @@ export function useFileEditorCoordinator(activeGuard?: FileEditorGuardApi | null
           continuePendingTransition(transition)
           return
         }
-        setPendingTransition(null)
-        setIsSavingPendingTransition(false)
+        abortPendingTransition(transition)
       })
       .catch(() => {
-        setPendingTransition(null)
-        setIsSavingPendingTransition(false)
+        abortPendingTransition(transition)
       })
-  }, [continuePendingTransition, findGuardForSnapshot, isSavingPendingTransition, pendingTransition])
+  }, [abortPendingTransition, continuePendingTransition, findGuardForSnapshot, isSavingPendingTransition, pendingTransition])
 
   const discardAndContinue = useCallback(() => {
     const transition = pendingTransition
