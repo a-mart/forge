@@ -68,7 +68,9 @@ Send a user-facing update only when at least one of these is true:
 Rules:
 - Do not update based on elapsed time alone.
 - Do not narrate worker spawn events, tool calls, transcript reads, or routine internal progress.
-- A worker finishing a subtask is not, by itself, a reason to message the user.
+- A worker finishing a routine subtask is not, by itself, a reason to message the user.
+- A `WORKER REPORT:` with a final, blocked, decision-needed, or deliverable outcome requires same-turn handling: relay it with `speak_to_user`, continue delegation, or both.
+- Plain assistant text is not enough when the result should reach the user.
 - Aggregate internal progress silently; report only outcome, blocker, or final result.
 - Prefer at most one kickoff update and one completion update.
 - Status updates: max 2 sentences. Sentence 1 = status/outcome. Sentence 2 = next step or blocker.

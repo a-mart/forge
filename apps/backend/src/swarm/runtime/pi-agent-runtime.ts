@@ -69,6 +69,7 @@ type PromptDispatchResult = "sent" | "retry_scheduled" | "failed";
 
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
 const MAX_TERMINAL_REPORT_RESAMPLES = 2;
+const DIRECT_USER_SOURCE_CONTEXT_PATTERN = /^\[sourceContext\]\s+(\{[^\n]*\})(?:\n|$)/u;
 const TERMINAL_WORKER_REPORT_PATTERNS = [
   /^WORKER REPORT:\s*status:\s*(?:done|partial|blocked)\b/i,
   /^SYSTEM:\s*status:\s*(?:done|partial|blocked)\b/i,
@@ -79,6 +80,8 @@ const TERMINAL_WORKER_REPORT_PATTERNS = [
 // no visible side effect. Exported for tests.
 export const TERMINAL_REPORT_REDELIVERY_DIRECTIVE =
   "Plain assistant text is not visible here. Use speak_to_user, present_choices, delegate/follow up, or take an intentional non-user-visible coordination action now.";
+export const DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE =
+  "Plain assistant text is not visible to the user. Call speak_to_user or present_choices, delegate/use an appropriate tool, or take a visible coordination action now.";
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
 const MID_TURN_CONTEXT_GUARD_ENABLED = true;
 const HANDOFF_TURN_TOKEN_BUDGET = 2_048;
@@ -190,7 +193,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
   private suppressSessionEventsUntilIdle = false;
   private lastActivityAtMs = Date.now();
-  private terminalReportResampleState: { triggerText: string; attempts: number } | undefined;
+  private hiddenOutputResampleState: { triggerKey: string; attempts: number } | undefined;
   private readonly promptDispatchRestoreOptions = new WeakMap<RuntimeUserMessage, PromptDispatchRestoreOptions>();
 
   constructor(options: {
@@ -886,10 +889,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (event.type === "agent_end") {
       this.currentTurnReplayMessages = [];
-      if (await this.maybeResampleUnhandledTerminalReportTurn()) {
+      if (await this.maybeResampleUnhandledHiddenOutputTurn()) {
         return;
       }
-      this.terminalReportResampleState = undefined;
+      this.hiddenOutputResampleState = undefined;
       await this.openAIAuthBrokerController?.reportSuccess();
       if (this.status !== "terminated") {
         await this.updateStatus("idle");
@@ -1800,14 +1803,15 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   /**
-   * gpt-5.x managers intermittently answer a worker's terminal report with a
-   * side-effect-free assistant turn (no tool calls, stopReason "stop"). That
-   * can be whitespace-only or non-empty plain text; both leave the user with no
-   * visible update because manager plain assistant text is hidden. Drop the
-   * report and unhandled assistant from in-memory context, then re-dispatch the
-   * report with a bounded retry budget keyed to the directive-stripped report.
+   * gpt-5.x managers intermittently answer a worker's terminal report or a
+   * direct user-visible input with a side-effect-free assistant turn (no tool
+   * calls, stopReason "stop"). That can be whitespace-only or non-empty plain
+   * text; both leave the user with no visible update because manager plain
+   * assistant text is hidden. Drop the trigger and unhandled assistant from
+   * in-memory context, then re-dispatch the trigger with a bounded retry budget
+   * keyed to the directive-stripped trigger text.
    */
-  private async maybeResampleUnhandledTerminalReportTurn(): Promise<boolean> {
+  private async maybeResampleUnhandledHiddenOutputTurn(): Promise<boolean> {
     if (this.descriptor.role !== "manager" || this.status === "terminated") {
       return false;
     }
@@ -1822,62 +1826,68 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    const unhandledKind = classifyUnhandledTerminalReportAssistant(assistantMessage);
+    const unhandledKind = classifyUnhandledAssistantMessage(assistantMessage);
     if (!unhandledKind) {
       return false;
     }
 
-    const reportText = stripTerminalReportRedeliveryDirective(extractTextFromMessageRecord(triggerMessage));
-    if (!isTerminalWorkerReport(reportText)) {
+    const trigger = classifyHiddenOutputTrigger(extractTextFromMessageRecord(triggerMessage));
+    if (!trigger) {
       return false;
     }
 
     const previousAttempts =
-      this.terminalReportResampleState?.triggerText === reportText ? this.terminalReportResampleState.attempts : 0;
+      this.hiddenOutputResampleState?.triggerKey === trigger.key ? this.hiddenOutputResampleState.attempts : 0;
     if (previousAttempts >= MAX_TERMINAL_REPORT_RESAMPLES) {
-      console.error(`[swarm][${this.now()}] manager:terminal_report_unhandled`, {
+      console.error(`[swarm][${this.now()}] ${trigger.unhandledEvent}`, {
         runtime: "pi",
         agentId: this.descriptor.agentId,
+        triggerKind: trigger.kind,
         reason: unhandledKind,
         resampleAttempts: previousAttempts,
-        triggerPreview: previewForLog(reportText)
+        triggerPreview: previewForLog(trigger.text)
       });
       await this.reportRuntimeError({
         phase: "silent_turn",
-        message: "Manager produced no visible response to a worker's final report",
+        message: trigger.exhaustedMessage,
         details: {
+          triggerKind: trigger.kind,
           reason: unhandledKind,
           resampleAttempts: previousAttempts,
-          triggerPreview: previewForLog(reportText),
-          userFacingMessage:
-            "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."
+          triggerPreview: previewForLog(trigger.text),
+          userFacingMessage: trigger.userFacingExhaustedMessage
         }
       });
       return false;
     }
 
     const attempt = previousAttempts + 1;
-    const addDirective = unhandledKind === "hidden_text" || attempt >= MAX_TERMINAL_REPORT_RESAMPLES;
-    this.terminalReportResampleState = { triggerText: reportText, attempts: attempt };
+    const directiveAdded =
+      trigger.kind === "terminal_report" ? unhandledKind === "hidden_text" || attempt >= MAX_TERMINAL_REPORT_RESAMPLES : true;
+    const redeliveryDirective =
+      trigger.kind === "terminal_report" ? TERMINAL_REPORT_REDELIVERY_DIRECTIVE : DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE;
+    const redeliveryText = directiveAdded ? `${trigger.text}\n\n${redeliveryDirective}` : trigger.text;
+    this.hiddenOutputResampleState = { triggerKey: trigger.key, attempts: attempt };
     const restoreMessagesOnFailure = messages.map((message) => structuredClone(message));
     this.replaceSessionAgentMessages(messages.slice(0, -2));
-    this.closeStaleOpenAICodexWebSocketSession("terminal_report_resample");
-    console.warn(`[swarm][${this.now()}] manager:terminal_report_resample`, {
+    this.closeStaleOpenAICodexWebSocketSession(trigger.resampleStage);
+    console.warn(`[swarm][${this.now()}] ${trigger.resampleEvent}`, {
       runtime: "pi",
       agentId: this.descriptor.agentId,
+      triggerKind: trigger.kind,
       reason: unhandledKind,
       attempt,
       maxAttempts: MAX_TERMINAL_REPORT_RESAMPLES,
-      directiveAdded: addDirective,
-      triggerPreview: previewForLog(reportText)
+      directiveAdded,
+      triggerPreview: previewForLog(trigger.text)
     });
     this.dispatchPrompt(
       {
-        text: addDirective ? `${reportText}\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}` : reportText
+        text: redeliveryText
       },
       {
         restoreSessionMessagesOnFailure: restoreMessagesOnFailure,
-        restoreStage: "terminal_report_resample_dispatch_failed"
+        restoreStage: `${trigger.resampleStage}_dispatch_failed`
       }
     );
     return true;
@@ -2232,11 +2242,24 @@ function cloneRuntimeUserMessage(message: RuntimeUserMessage | undefined): Runti
   };
 }
 
-type UnhandledTerminalReportAssistantKind = "empty" | "hidden_text";
+type UnhandledAssistantKind = "empty" | "hidden_text";
 
-function classifyUnhandledTerminalReportAssistant(
+type HiddenOutputTriggerKind = "terminal_report" | "direct_user_input";
+
+interface HiddenOutputTrigger {
+  kind: HiddenOutputTriggerKind;
+  key: string;
+  text: string;
+  resampleEvent: string;
+  unhandledEvent: string;
+  resampleStage: string;
+  exhaustedMessage: string;
+  userFacingExhaustedMessage: string;
+}
+
+function classifyUnhandledAssistantMessage(
   message: Record<string, any>
-): UnhandledTerminalReportAssistantKind | undefined {
+): UnhandledAssistantKind | undefined {
   if (message.stopReason !== "stop") {
     return undefined;
   }
@@ -2274,6 +2297,40 @@ function isAssistantToolOrSideEffectBlockType(type: unknown): boolean {
   return type === "toolCall" || type === "tool_use" || type === "toolResult" || type === "tool_result";
 }
 
+function classifyHiddenOutputTrigger(text: string): HiddenOutputTrigger | undefined {
+  const reportText = stripTerminalReportRedeliveryDirective(text);
+  if (isTerminalWorkerReport(reportText)) {
+    return {
+      kind: "terminal_report",
+      key: `terminal_report:${reportText}`,
+      text: reportText,
+      resampleEvent: "manager:terminal_report_resample",
+      unhandledEvent: "manager:terminal_report_unhandled",
+      resampleStage: "terminal_report_resample",
+      exhaustedMessage: "Manager produced no visible response to a worker's final report",
+      userFacingExhaustedMessage:
+        "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."
+    };
+  }
+
+  const directUserText = stripDirectUserInputRedeliveryDirective(text);
+  if (!isDirectUserVisibleSourceMessage(directUserText)) {
+    return undefined;
+  }
+
+  return {
+    kind: "direct_user_input",
+    key: `direct_user_input:${directUserText}`,
+    text: directUserText,
+    resampleEvent: "manager:user_input_resample",
+    unhandledEvent: "manager:user_input_unhandled",
+    resampleStage: "user_input_resample",
+    exhaustedMessage: "Manager produced no visible response to a direct user message",
+    userFacingExhaustedMessage:
+      "⚠️ The manager received your message but did not produce a visible response after automatic retries. Send a follow-up message to continue."
+  };
+}
+
 function isTerminalWorkerReport(text: string): boolean {
   const normalized = text.trimStart();
   return TERMINAL_WORKER_REPORT_PATTERNS.some((pattern) => pattern.test(normalized));
@@ -2282,6 +2339,25 @@ function isTerminalWorkerReport(text: string): boolean {
 function stripTerminalReportRedeliveryDirective(text: string): string {
   const suffix = `\n\n${TERMINAL_REPORT_REDELIVERY_DIRECTIVE}`;
   return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
+}
+
+function stripDirectUserInputRedeliveryDirective(text: string): string {
+  const suffix = `\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`;
+  return text.endsWith(suffix) ? text.slice(0, -suffix.length) : text;
+}
+
+function isDirectUserVisibleSourceMessage(text: string): boolean {
+  const match = text.match(DIRECT_USER_SOURCE_CONTEXT_PATTERN);
+  if (!match) {
+    return false;
+  }
+
+  try {
+    const sourceContext = JSON.parse(match[1]) as { channel?: unknown };
+    return typeof sourceContext.channel === "string" && sourceContext.channel.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function extractTextFromMessageRecord(message: Record<string, any>): string {

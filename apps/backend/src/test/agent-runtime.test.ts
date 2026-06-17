@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
-import { AgentRuntime, TERMINAL_REPORT_REDELIVERY_DIRECTIVE } from '../swarm/agent-runtime.js'
+import { AgentRuntime, DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE, TERMINAL_REPORT_REDELIVERY_DIRECTIVE } from '../swarm/agent-runtime.js'
 import type { AgentDescriptor } from '../swarm/types.js'
 
 const openAICodexResponsesMockState = vi.hoisted(() => ({
@@ -1314,6 +1314,7 @@ describe('manager empty-turn retry after worker terminal report', () => {
   const LEGACY_SYSTEM_STATUS_CALLBACK = 'SYSTEM: status: done\nsummary: executed the guarded pilot once.'
   const LEGACY_WORKER_COMPLETED_CALLBACK = 'SYSTEM: Worker w-1 completed its turn.\n\nLast assistant message:\nDone.'
   const LEGACY_WORKER_ERROR_CALLBACK = 'SYSTEM: Worker w-1 ended its turn with an error.\n\nLast system message:\n⚠️ Agent error: failed.'
+  const DIRECT_WEB_INPUT = '[sourceContext] {"channel":"web"}\n\nPlease summarize the latest result.'
 
   beforeEach(() => {
     openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockReset()
@@ -1541,6 +1542,61 @@ describe('manager empty-turn retry after worker terminal report', () => {
 
     expect(session.promptCalls).toEqual([])
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('resamples non-empty hidden plain text that follows direct sourceContext user input', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(DIRECT_WEB_INPUT),
+      { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([`${DIRECT_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
+    expect(session.state.messages).toEqual([])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('resamples a blank direct sourceContext turn that only has thinking blocks', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(DIRECT_WEB_INPUT),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'I should answer visibly.' },
+          { type: 'text', text: ' ' },
+        ],
+        stopReason: 'stop',
+      },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([`${DIRECT_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('does not resample direct sourceContext turns that called tools', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(DIRECT_WEB_INPUT),
+      { role: 'assistant', content: [{ type: 'toolCall', toolName: 'speak_to_user' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    session.state.messages = [
+      userMessage(DIRECT_WEB_INPUT),
+      { role: 'assistant', content: [{ type: 'toolCall', toolName: 'spawn_agent' }], stopReason: 'stop' },
+    ]
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(2)
   })
 
   it('does not resample post-spawn empty finals without a terminal worker report', async () => {
