@@ -41,7 +41,7 @@ function cleanSnapshot(key: FileEditorSessionKey): FileEditorDirtySnapshot {
 }
 
 interface CapturedCoordinator {
-  requestFileEditorTransition: (action: FileEditorTransitionAction, run: () => void) => void
+  requestFileEditorTransition: (action: FileEditorTransitionAction, run: () => void, onCancel?: () => void) => void
   dialogOpen: boolean
   dialogSnapshot: FileEditorDirtySnapshot | null
   save: () => void
@@ -150,7 +150,55 @@ describe('useFileEditorCoordinator', () => {
     })
   })
 
-  it('clears pending transitions without running them when save reports conflict or error', async () => {
+  it('calls the optional cancel callback when a guarded transition is canceled', () => {
+    const run = vi.fn()
+    const onCancel = vi.fn()
+    renderHarness({
+      getSnapshot: () => dirtySnapshot(workspaceKey),
+      save: vi.fn(),
+      discard: vi.fn(),
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory' }, run, onCancel)
+    })
+    flushSync(() => {
+      captured.current?.cancel()
+    })
+
+    expect(run).not.toHaveBeenCalled()
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(captured.current?.dialogOpen).toBe(false)
+  })
+
+  it('clears pending transitions and calls abort callback when save reports conflict', async () => {
+    const save = vi.fn().mockResolvedValue(false)
+    const run = vi.fn()
+    const onCancel = vi.fn()
+    renderHarness({
+      getSnapshot: () => dirtySnapshot(workspaceKey),
+      save,
+      discard: vi.fn(),
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition({ type: 'close-file-browser' }, run, onCancel)
+    })
+    flushSync(() => {
+      captured.current?.save()
+    })
+
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1)
+    })
+    expect(run).not.toHaveBeenCalled()
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(captured.current?.dialogOpen).toBe(false)
+    })
+  })
+
+  it('settles a guarded delete transition as false when save reports conflict', async () => {
     const save = vi.fn().mockResolvedValue(false)
     const run = vi.fn()
     renderHarness({
@@ -159,8 +207,39 @@ describe('useFileEditorCoordinator', () => {
       discard: vi.fn(),
     })
 
+    const deleteSettled = new Promise<boolean>((resolve) => {
+      flushSync(() => {
+        captured.current?.requestFileEditorTransition(
+          { type: 'delete-entry', path: 'src', entryType: 'directory' },
+          run,
+          () => resolve(false),
+        )
+      })
+    })
+
     flushSync(() => {
-      captured.current?.requestFileEditorTransition({ type: 'close-file-browser' }, run)
+      captured.current?.save()
+    })
+
+    await expect(deleteSettled).resolves.toBe(false)
+    expect(run).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(captured.current?.dialogOpen).toBe(false)
+    })
+  })
+
+  it('clears pending transitions and calls abort callback when save rejects', async () => {
+    const save = vi.fn().mockRejectedValue(new Error('Save failed'))
+    const run = vi.fn()
+    const onCancel = vi.fn()
+    renderHarness({
+      getSnapshot: () => dirtySnapshot(workspaceKey),
+      save,
+      discard: vi.fn(),
+    })
+
+    flushSync(() => {
+      captured.current?.requestFileEditorTransition({ type: 'delete-entry', path: 'src', entryType: 'directory' }, run, onCancel)
     })
     flushSync(() => {
       captured.current?.save()
@@ -171,6 +250,7 @@ describe('useFileEditorCoordinator', () => {
     })
     expect(run).not.toHaveBeenCalled()
     await vi.waitFor(() => {
+      expect(onCancel).toHaveBeenCalledTimes(1)
       expect(captured.current?.dialogOpen).toBe(false)
     })
   })
