@@ -97,7 +97,8 @@ Protocol changes start in `packages/protocol/src/collaboration.ts`, then backend
 | State | Storage | Notes |
 |-------|---------|-------|
 | Users, sessions, invites, roles | SQLite | Better Auth/collaboration auth tables. |
-| Workspace/category/channel metadata | SQLite | Includes ordering, archived state, defaults, CWD/model defaults. |
+| Workspace/category/channel metadata | SQLite | Collaboration domain rows, including `backingSessionAgentId` references. |
+| Forge profile/session descriptors | `swarm/agents.json` | `_collaboration` profile/root descriptors and channel backing manager descriptors. `backingSessionAgentId` must resolve here. |
 | Per-user read state | SQLite | Transactional user/channel state. |
 | Selected global specialists | SQLite | Category defaults and channel active selections. |
 | Selected global skills | SQLite | Category defaults and channel active selections. |
@@ -106,7 +107,9 @@ Protocol changes start in `packages/protocol/src/collaboration.ts`, then backend
 | Channel reference docs | Files | `profiles/_collaboration/sessions/<sessionId>/reference/`. |
 | Specialist definitions | Files | Shared markdown in `shared/specialists/`; channel-local markdown under session `specialists/`. |
 | Forge skill definitions | Files | User-created global Forge skills live under `${FORGE_DATA_DIR}/skills/`; repository project skills live under repo-root `.forge/skills/`. |
-| Pi agent skill definitions | Files | Pi-discovered global worker/manager skills live under `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/`; profile/project Pi skills live under `${FORGE_DATA_DIR}/profiles/<profileId>/pi/skills/`. V1 has no channel-local skill authoring. |
+| Pi agent skill definitions | Files | Pi-discovered global worker/manager skills live under `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/`; profile/project Pi skills live under `${FORGE_DATA_DIR}/profiles/<profileId>/pi/skills/`. V1 channel skill selection is global-handle based with always-on `memory`; no channel-local skill authoring. |
+
+Structured collaboration domain state is SQLite-backed, but session identity still depends on Forge's normal agent registry. Back up `swarm/agents.json` with the collaboration database and `_collaboration` profile data or channel rows can become unresolved.
 
 The hidden collaboration profile constants live in `apps/backend/src/collaboration/constants.ts`:
 
@@ -136,6 +139,13 @@ A channel can have:
 ## HTTP and WebSocket flow
 
 HTTP routes are under `apps/backend/src/ws/http/routes/collaboration/*` and are mounted by `collaboration-routes.ts`. Important route families include status/readiness, current user, users, invites, categories, and channels.
+
+| Access class | Surface |
+|--------------|---------|
+| Public/unauthenticated | Health/status and auth entry points that must work before sign-in. |
+| Member | Channel collaboration actions and `collab_*` WebSocket commands. |
+| Admin | Collaboration settings, member/invite management, and admin configuration routes. |
+| Fail-closed default | Collaboration HTTP routes in the collaboration runtime unless deliberately classified otherwise. |
 
 WebSocket flow:
 

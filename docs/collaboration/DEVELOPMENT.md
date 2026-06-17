@@ -57,7 +57,7 @@ Never duplicate collaboration DTOs in app-local files when they belong in protoc
 
 ## SQLite migration policy
 
-SQLite is for structured collaboration state: users, sessions, invites, workspace/category/channel metadata, membership/read state, selected specialist handles, and selected skill handles.
+SQLite is for structured collaboration domain state: users, auth sessions, invites, workspace/category/channel metadata, membership/read state, selected specialist handles, and selected skill handles. Forge profile/session descriptors are separate: the `_collaboration` profile/root descriptors and channel backing manager descriptors remain in `${FORGE_DATA_DIR}/swarm/agents.json`.
 
 Migration rules:
 
@@ -65,7 +65,7 @@ Migration rules:
 - Prefer additive schema changes.
 - Wrap each migration in a transaction.
 - Make migrations idempotent and safe to rerun.
-- Back up the database before non-trivial migrations.
+- Back up the database before non-trivial migrations, and preserve `${FORGE_DATA_DIR}/swarm/agents.json` whenever channel/session identity could be affected.
 - Fail cleanly without destructive partial state.
 - Do not delete, overwrite, or normalize user-authored markdown/content files from a DB migration.
 - Do not silently delete missing selected specialist or skill handles; surface invalid/missing config.
@@ -75,15 +75,16 @@ Migration rules:
 
 Use SQLite for:
 
-- workspace/category/channel records
+- workspace/category/channel domain records, including `backingSessionAgentId` references
 - ordering and archived state
-- collaboration users, roles, sessions, invites
+- collaboration users, roles, auth sessions, invites
 - read-state/unread counters
 - selected global specialist handles
 - selected global skill handles
 
 Use files for:
 
+- Forge profile/session descriptors in `${FORGE_DATA_DIR}/swarm/agents.json`
 - channel session JSONL history
 - channel additional instructions
 - channel reference docs
@@ -94,7 +95,7 @@ Use files for:
 - Pi agent global worker/manager skill definitions under `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/`
 - provider auth/secrets through the existing Forge config/secret services
 
-If the state is user-authored prose or reusable agent content, keep it file-backed unless a design explicitly changes that boundary. Do not confuse Forge skill storage (`${FORGE_DATA_DIR}/skills/` for user-created global Forge skills) with Pi agent skill storage (`agent/skills`, `agent/manager/skills`, and profile `pi/skills`).
+If the state is user-authored prose or reusable agent content, keep it file-backed unless a design explicitly changes that boundary. Do not confuse Forge skill storage (`${FORGE_DATA_DIR}/skills/` for user-created global Forge skills) with Pi agent skill storage (`agent/skills`, `agent/manager/skills`, and profile `pi/skills`). Collaboration v1 channel skill selection stores global handles plus always-on `memory`; it does not imply channel-local skill authoring or that every Pi/profile/workspace skill directory participates in selected-skill handles.
 
 ## Runtime and data isolation for validation
 

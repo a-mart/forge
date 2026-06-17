@@ -49,13 +49,16 @@ See [../CONFIGURATION.md](../CONFIGURATION.md) for the broader environment refer
 
 ## Data directory and backup inventory
 
-Back up the whole dedicated collaboration data directory. At minimum, include:
+Back up the whole dedicated collaboration data directory. That is the authoritative procedure because collaboration state spans SQLite, the Forge agent registry, and file-backed session/content directories.
+
+High-value paths to verify in the backup include:
 
 ```text
 ${FORGE_DATA_DIR}/shared/config/collaboration/auth.db
 ${FORGE_DATA_DIR}/shared/config/collaboration/auth-secret.key
 ${FORGE_DATA_DIR}/shared/config/auth/
 ${FORGE_DATA_DIR}/shared/config/secrets.json
+${FORGE_DATA_DIR}/swarm/agents.json
 ${FORGE_DATA_DIR}/shared/specialists/
 ${FORGE_DATA_DIR}/profiles/_collaboration/
 ${FORGE_DATA_DIR}/skills/
@@ -64,7 +67,9 @@ ${FORGE_DATA_DIR}/agent/skills/
 ${FORGE_DATA_DIR}/agent/manager/skills/
 ```
 
-`${FORGE_DATA_DIR}/skills/` stores user-created global Forge skills. `${FORGE_DATA_DIR}/profiles/*/pi/skills/` stores profile/project-scoped Pi skills. `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/` store Pi-discovered global worker/manager skills.
+`${FORGE_DATA_DIR}/swarm/agents.json` stores Forge profile/session descriptors, including the `_collaboration` profile/root descriptors and channel backing manager descriptors. Losing it can orphan SQLite channel rows because `backingSessionAgentId` must resolve to a valid collaboration manager descriptor.
+
+`${FORGE_DATA_DIR}/skills/` stores user-created global Forge skills. `${FORGE_DATA_DIR}/profiles/*/pi/skills/` stores profile/project-scoped Pi skills. `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/` store Pi-discovered global worker/manager skills. Collaboration v1 selected-skill state stores global handles plus always-on `memory`; these paths are backup inventory for file-backed definitions, not evidence of channel-local skill authoring.
 
 If `FORGE_COLLABORATION_AUTH_SECRET` is supplied outside the data directory, back up the external secret source too.
 

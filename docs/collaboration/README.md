@@ -31,6 +31,7 @@ User-authored content stays file-backed in the normal Forge data tree, mainly un
 
 ```text
 ${FORGE_DATA_DIR}/profiles/_collaboration/
+${FORGE_DATA_DIR}/swarm/agents.json
 ${FORGE_DATA_DIR}/shared/specialists/
 ${FORGE_DATA_DIR}/skills/
 ${FORGE_DATA_DIR}/profiles/<profileId>/pi/skills/
@@ -38,7 +39,9 @@ ${FORGE_DATA_DIR}/agent/skills/
 ${FORGE_DATA_DIR}/agent/manager/skills/
 ```
 
-SQLite owns workspace, category, channel, member, invite, read-state, and selected specialist/skill state. Markdown prompts, reference docs, specialist definitions, Forge skill definitions, and Pi agent skill definitions remain files. User-created global Forge skills live under `${FORGE_DATA_DIR}/skills/`; Pi-discovered agent skill locations live under `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/`.
+SQLite owns structured collaboration domain state: workspace, category, channel, member, invite, read-state, and selected specialist/skill state. Forge profile/session descriptors are not in that database. The `_collaboration` profile/root descriptors and channel backing manager descriptors remain in `${FORGE_DATA_DIR}/swarm/agents.json`; losing that file can orphan SQLite channel rows because `backingSessionAgentId` must resolve to a valid collaboration manager descriptor.
+
+Markdown prompts, reference docs, specialist definitions, Forge skill definitions, and Pi agent skill definitions remain files. User-created global Forge skills live under `${FORGE_DATA_DIR}/skills/`; Pi-discovered agent skill locations live under `${FORGE_DATA_DIR}/agent/skills/` and `${FORGE_DATA_DIR}/agent/manager/skills/`.
 
 ## Migration policy summary
 
