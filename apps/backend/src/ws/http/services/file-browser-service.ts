@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, resolve } from "node:path";
+import { readdir, readFile, realpath, rm, stat, lstat, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   FileContentResult,
   FileCountResult,
@@ -335,21 +335,30 @@ export class FileBrowserService {
     relativePath: string,
     onDeleted?: (deleted: { resolvedPath: string; entryType: "file" | "directory" }) => Promise<void> | void
   ): Promise<FileDeleteResponse> {
-    const normalizedCwd = resolve(cwd);
     const normalizedRelativePath = normalizeRelativePath(relativePath);
     if (!normalizedRelativePath) {
       throw new Error("Cannot delete workspace root.");
     }
 
-    const resolvedPath = await this.resolvePathWithinCwd(normalizedCwd, normalizedRelativePath);
-    const workspaceRoot = resolve(await realpath(normalizedCwd).catch(() => normalizedCwd));
-    if (resolvedPath === workspaceRoot) {
+    const workspaceRoot = resolve(await realpath(cwd).catch(() => cwd));
+    const targetPath = resolve(workspaceRoot, normalizedRelativePath);
+
+    if (targetPath === workspaceRoot) {
       throw new Error("Cannot delete workspace root.");
+    }
+
+    if (!isLexicallyWithinRoot(workspaceRoot, targetPath)) {
+      throw new Error("Path is outside CWD.");
+    }
+
+    const parentPath = dirname(targetPath);
+    if (parentPath !== workspaceRoot) {
+      await this.ensureSymlinkSafePathWithinCwd(workspaceRoot, parentPath);
     }
 
     let targetStats;
     try {
-      targetStats = await stat(resolvedPath);
+      targetStats = await lstat(targetPath);
     } catch (error) {
       if (isErrorCode(error, "ENOENT")) {
         throw new Error("Path not found.");
@@ -358,19 +367,25 @@ export class FileBrowserService {
       rethrowPermissionDenied(error, "read");
     }
 
-    const entryType = targetStats.isDirectory() ? "directory" : "file";
-
+    let entryType: "file" | "directory";
     try {
-      await rm(resolvedPath, {
-        recursive: entryType === "directory",
-        force: true,
-      });
+      if (targetStats.isSymbolicLink()) {
+        const followedStats = await stat(targetPath);
+        entryType = followedStats.isDirectory() ? "directory" : "file";
+        await unlink(targetPath);
+      } else if (targetStats.isDirectory()) {
+        await rm(targetPath, { recursive: true, force: true });
+        entryType = "directory";
+      } else {
+        await unlink(targetPath);
+        entryType = "file";
+      }
     } catch (error) {
       rethrowPermissionDenied(error, "write");
     }
 
     try {
-      await onDeleted?.({ resolvedPath, entryType });
+      await onDeleted?.({ resolvedPath: targetPath, entryType });
     } catch {
       // Fail open: editor deletes succeed even when versioning cannot record them.
     }
@@ -380,6 +395,41 @@ export class FileBrowserService {
       path: normalizedRelativePath,
       entryType,
     };
+  }
+
+  private async ensureSymlinkSafePathWithinCwd(workspaceRoot: string, absolutePath: string): Promise<void> {
+    if (!isLexicallyWithinRoot(workspaceRoot, absolutePath)) {
+      throw new Error("Path is outside CWD.");
+    }
+
+    const relativePath = relative(workspaceRoot, absolutePath);
+    if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      throw new Error("Path is outside CWD.");
+    }
+
+    const segments = relativePath.split("/").filter(Boolean);
+    let current = workspaceRoot;
+
+    for (const segment of segments) {
+      current = join(current, segment);
+      try {
+        const stats = await lstat(current);
+        if (stats.isSymbolicLink()) {
+          const linkReal = await realpath(current);
+          if (!(await isPathWithinRoots(linkReal, [workspaceRoot]))) {
+            throw new Error("Path is outside CWD.");
+          }
+
+          current = linkReal;
+        }
+      } catch (error) {
+        if (isErrorCode(error, "ENOENT")) {
+          throw new Error("Path not found.");
+        }
+
+        rethrowPermissionDenied(error, "read");
+      }
+    }
   }
 
   async getRepoMetadata(cwd: string): Promise<RepoMetadata> {
@@ -761,6 +811,11 @@ function mapEditabilityReasonToConflict(
   }
 }
 
+function isLexicallyWithinRoot(root: string, target: string): boolean {
+  const relativePath = relative(root, target);
+  return relativePath.length > 0 && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
 function normalizeRelativePath(pathValue: string): string {
   if (pathValue.length === 0 || pathValue === ".") {
     return "";
@@ -771,6 +826,10 @@ function normalizeRelativePath(pathValue: string): string {
 
 export function normalizeRelativePathForTest(pathValue: string): string {
   return normalizeRelativePath(pathValue);
+}
+
+export function isLexicallyWithinRootForTest(root: string, target: string): boolean {
+  return isLexicallyWithinRoot(root, target);
 }
 
 function isErrorCode(error: unknown, code: string): boolean {

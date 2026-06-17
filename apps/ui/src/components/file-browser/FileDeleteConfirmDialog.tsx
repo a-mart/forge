@@ -1,5 +1,13 @@
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface FileDeleteConfirmDialogProps {
   open: boolean
@@ -19,29 +27,31 @@ export function FileDeleteConfirmDialog({
   const isDirectory = entryType === 'directory'
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
-      <DialogContent className="max-w-sm p-4">
-        <DialogHeader className="mb-3">
-          <DialogTitle>Delete {isDirectory ? 'folder' : 'file'}</DialogTitle>
-          <DialogDescription>
+    <AlertDialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
+      <AlertDialogContent className="max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {isDirectory ? 'folder' : 'file'}</AlertDialogTitle>
+          <AlertDialogDescription>
             {isDirectory
               ? `Delete folder "${entryName}" and everything inside it? This permanently removes the folder and its contents. This cannot be undone.`
               : `Delete "${entryName}"? This permanently removes the file. This cannot be undone.`}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex items-center justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onClose}>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={onClose}>
             Cancel
-          </Button>
-          <Button
-            type="button"
+          </AlertDialogCancel>
+          <AlertDialogAction
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            onClick={onConfirm}
+            onClick={(event) => {
+              event.preventDefault()
+              onConfirm()
+            }}
           >
             Delete permanently
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }

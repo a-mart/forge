@@ -1539,7 +1539,6 @@ export function BuilderSurface({
             worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
             path,
             entryType,
-            openFilePath: selectedFileBrowserFile,
           })
           if (doesDeleteAffectOpenFile(path, entryType, selectedFileBrowserFile)) {
             handleFileBrowserClosePanel()

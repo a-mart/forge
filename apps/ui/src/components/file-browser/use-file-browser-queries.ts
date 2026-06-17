@@ -389,7 +389,6 @@ export interface ApplySuccessfulFileDeleteOptions {
   worktreeId?: string | null
   path: string
   entryType: 'file' | 'directory'
-  openFilePath?: string | null
 }
 
 export function applySuccessfulFileDeleteToCaches(options: ApplySuccessfulFileDeleteOptions): void {

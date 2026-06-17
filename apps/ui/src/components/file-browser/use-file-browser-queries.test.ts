@@ -206,7 +206,6 @@ describe('file delete cache helpers', () => {
       worktreeId: null,
       path: 'src/file.ts',
       entryType: 'file',
-      openFilePath: 'src/file.ts',
     })
 
     expect(invalidateGitCaches).toHaveBeenCalledWith({ agentId: 'session-a', repoTarget: 'workspace' })

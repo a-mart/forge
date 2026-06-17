@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,7 +81,7 @@ describe("file browser delete", () => {
     await expect(readFile(outsideRoot, "utf8")).resolves.toBe("outside\n");
   });
 
-  it("rejects symlink escapes and records tracked deletes", async () => {
+  it("rejects outside-target symlink traversal and deletes only in-workspace symlinks", async () => {
     const harness = await createHarness();
     const outsideDir = join(harness.root, "outside");
     await mkdir(outsideDir, { recursive: true });
@@ -92,14 +92,73 @@ describe("file browser delete", () => {
       `${harness.server.baseUrl}/api/files/content?agentId=manager-1&path=${encodeURIComponent("escape-link")}`,
       { method: "DELETE" },
     );
-    expect(symlinkDelete.status).toBe(403);
+    expect(symlinkDelete.status).toBe(200);
+    expect((await symlinkDelete.json()) as FileDeleteResponse).toEqual({
+      success: true,
+      path: "escape-link",
+      entryType: "directory",
+    });
+    await expect(access(join(harness.workspaceDir, "escape-link"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(outsideDir, "secret.txt"), "utf8")).resolves.toBe("secret\n");
 
+    await symlink(outsideDir, join(harness.workspaceDir, "escape-link"));
+    const traversalDelete = await fetch(
+      `${harness.server.baseUrl}/api/files/content?agentId=manager-1&path=${encodeURIComponent("escape-link/secret.txt")}`,
+      { method: "DELETE" },
+    );
+    expect(traversalDelete.status).toBe(403);
+  });
+
+  it("deletes internal file and directory symlinks without removing their targets", async () => {
+    const harness = await createHarness();
+    const targetFile = join(harness.workspaceDir, "target.txt");
+    const fileLink = join(harness.workspaceDir, "file-link");
+    await writeFile(targetFile, "target-content\n", "utf8");
+    await symlink(targetFile, fileLink);
+
+    const targetDir = join(harness.workspaceDir, "target-dir");
+    const dirLink = join(harness.workspaceDir, "dir-link");
+    await mkdir(targetDir, { recursive: true });
+    await writeFile(join(targetDir, "kept.txt"), "kept\n", "utf8");
+    await symlink(targetDir, dirLink);
+
+    const fileLinkDelete = await fetch(
+      `${harness.server.baseUrl}/api/files/content?agentId=manager-1&path=${encodeURIComponent("file-link")}`,
+      { method: "DELETE" },
+    );
+    expect(fileLinkDelete.status).toBe(200);
+    expect((await fileLinkDelete.json()) as FileDeleteResponse).toEqual({
+      success: true,
+      path: "file-link",
+      entryType: "file",
+    });
+
+    const dirLinkDelete = await fetch(
+      `${harness.server.baseUrl}/api/files/content?agentId=manager-1&path=${encodeURIComponent("dir-link")}`,
+      { method: "DELETE" },
+    );
+    expect(dirLinkDelete.status).toBe(200);
+    expect((await dirLinkDelete.json()) as FileDeleteResponse).toEqual({
+      success: true,
+      path: "dir-link",
+      entryType: "directory",
+    });
+
+    await expect(access(fileLink)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(dirLink)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(targetFile, "utf8")).resolves.toBe("target-content\n");
+    await expect(readFile(join(targetDir, "kept.txt"), "utf8")).resolves.toBe("kept\n");
+  });
+
+  it("records tracked deletes", async () => {
+    const harness = await createHarness();
     const trackedPath = join(harness.workspaceDir, "tracked.txt");
     await writeFile(trackedPath, "tracked\n", "utf8");
-    const trackedRealPath = await realpath(trackedPath);
+    const workspaceRoot = await realpath(harness.workspaceDir);
+    const resolvedTrackedPath = join(workspaceRoot, "tracked.txt");
     const recordMutation = vi.fn(async () => true);
     harness.swarmManager.getVersioningService = () => ({
-      isTrackedPath: (pathValue: string) => pathValue === trackedRealPath,
+      isTrackedPath: (pathValue: string) => pathValue === resolvedTrackedPath || pathValue === trackedPath,
       recordMutation,
     }) as never;
 
@@ -109,7 +168,7 @@ describe("file browser delete", () => {
     );
     expect(trackedDelete.status).toBe(200);
     expect(recordMutation).toHaveBeenCalledWith({
-      path: trackedRealPath,
+      path: resolvedTrackedPath,
       action: "delete",
       source: "api-write-file",
       agentId: "manager-1",
