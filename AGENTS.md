@@ -19,9 +19,9 @@ The builtin manager archetype is intentionally concise and outcome-first in user
 
 ## Collaboration mode
 
-Use this public repo/worktree (`/Users/adam/repos/middleman`) as the source of truth for collaboration work, including the collaboration server/runtime target, backend auth/DB/routes/WS, UI, protocol, and Docker Compose/full UI serving path. Do not default to the stale `/Users/adam/repos/forge-collab` repo for current collaboration backend, development, Docker, or project-tracking work. Always pass an explicit `cwd` before editing.
+Use this repo/worktree as the source of truth for collaboration work, including the collaboration server/runtime target, backend auth/DB/routes/WS, UI, protocol, and Docker Compose/full UI serving path. Start with [docs/collaboration/](docs/collaboration/) for current architecture, operations, and development guidance. Always pass an explicit `cwd` before editing.
 
-Keep durable collaboration project tracking in [docs/collaboration/project/](docs/collaboration/project/). For any Collab SQLite schema or migration work, follow [docs/collaboration/README.md](docs/collaboration/README.md#collaboration-sqlite-migration-policy). Structured Collab state belongs in SQLite, while user-authored specialist markdown, prompts, reference docs, and skill definitions stay file-backed; SQLite stores only structured skill-selection state.
+Keep durable collaboration project tracking in [docs/collaboration/project/](docs/collaboration/project/). For any Collab SQLite schema or migration work, follow [docs/collaboration/DEVELOPMENT.md](docs/collaboration/DEVELOPMENT.md#sqlite-migration-policy). Structured Collab state belongs in SQLite, while user-authored specialist markdown, prompts, reference docs, and skill definitions stay file-backed.
 
 ## Prerequisites
 
