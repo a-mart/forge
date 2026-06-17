@@ -8,12 +8,12 @@ import {
 } from "./codex-mcp-catalog-live-fixtures.js";
 
 class FakeCatalogClient implements CodexAppServerClientPort {
-  readonly requests: Array<{ method: string; params?: unknown }> = [];
+  readonly requests: Array<{ method: string; params?: unknown; timeoutMs?: number }> = [];
 
   async connect(): Promise<void> {}
 
-  async request<T>(method: string, params?: unknown): Promise<T> {
-    this.requests.push({ method, params });
+  async request<T>(method: string, params?: unknown, timeoutMs?: number): Promise<T> {
+    this.requests.push({ method, params, timeoutMs });
 
     if (method === "plugin/list") {
       return {
@@ -161,6 +161,71 @@ describe("CodexMcpCatalog", () => {
       serverName: "fireflies",
       toolName: "list_recent",
     });
+  });
+
+  it("uses an extended timeout for mcpServerStatus/list discovery", async () => {
+    const client = new FakeCatalogClient();
+    const catalog = new CodexMcpCatalog(async () => client);
+
+    await catalog.listCatalog(true);
+
+    const mcpRequest = client.requests.find((entry) => entry.method === "mcpServerStatus/list");
+    expect(mcpRequest?.timeoutMs).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it("does not cache a poisoned empty tool catalog when MCP discovery fails", async () => {
+    const client = new FakeCatalogClient();
+    let failDiscovery = true;
+    let mcpRequests = 0;
+    client.request = async <T>(method: string, params?: unknown, timeoutMs?: number): Promise<T> => {
+      if (method === "mcpServerStatus/list") {
+        mcpRequests += 1;
+        client.requests.push({ method, params, timeoutMs });
+        if (failDiscovery) {
+          throw new Error("JSON-RPC request timed out: mcpServerStatus/list");
+        }
+        return {
+          servers: [
+            {
+              name: "fireflies",
+              tools: [{ name: "list_recent", readOnly: true, annotations: { readOnlyHint: true } }],
+            },
+          ],
+        } as T;
+      }
+      return new FakeCatalogClient().request(method, params, timeoutMs);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const failedSnapshot = await catalog.listCatalog(true);
+    expect(failedSnapshot.tools).toEqual([]);
+    expect(failedSnapshot.diagnostics?.mcpToolsError).toMatch(/mcpServerStatus\/list/);
+
+    failDiscovery = false;
+    const recoveredSnapshot = await catalog.listCatalog();
+    expect(recoveredSnapshot.diagnostics).toBeUndefined();
+    expect(recoveredSnapshot.tools.map((tool) => tool.selector)).toEqual(["fireflies/list_recent"]);
+    expect(mcpRequests).toBe(2);
+  });
+
+  it("returns a prior good snapshot when MCP discovery refresh fails", async () => {
+    const client = new FakeCatalogClient();
+    const catalog = new CodexMcpCatalog(async () => client);
+    const initialSnapshot = await catalog.listCatalog(true);
+    expect(initialSnapshot.tools.map((tool) => tool.selector)).toEqual(["fireflies/list_recent"]);
+
+    client.request = async <T>(method: string, params?: unknown, timeoutMs?: number): Promise<T> => {
+      client.requests.push({ method, params, timeoutMs });
+      if (method === "mcpServerStatus/list") {
+        throw new Error("JSON-RPC request timed out: mcpServerStatus/list");
+      }
+      return new FakeCatalogClient().request(method, params, timeoutMs);
+    };
+
+    const staleSnapshot = await catalog.listCatalog(true);
+    expect(staleSnapshot).toBe(initialSnapshot);
+    expect(staleSnapshot.diagnostics).toBeUndefined();
+    expect(staleSnapshot.tools.map((tool) => tool.selector)).toEqual(["fireflies/list_recent"]);
   });
 
   it("parses live-shaped plugin/list marketplaces and maps codex_apps tools to plugins", async () => {
