@@ -11,6 +11,7 @@ import {
   inferCatalogFamily,
   getWsRequestContract,
   isCatalogModelId,
+  SESSION_AUDIT_ENTRY_CATEGORIES,
   WS_REQUEST_CONTRACT_TYPES,
   WS_REQUEST_CONTRACTS,
 } from '../index.js'
@@ -32,6 +33,7 @@ import type {
   MessageChannel,
   ResolvedSpecialistDefinition,
   ServerEvent,
+  SessionAuditPageResponse,
   TerminalDescriptor,
   TerminalMeta,
   WorkPlanSnapshot,
@@ -204,6 +206,32 @@ const agent = {
   sessionFile: '/tmp/session.jsonl',
   profileId: profile.profileId,
 } satisfies AgentDescriptor
+
+const auditPage = {
+  sessionAgentId: agent.agentId,
+  manifest: {
+    sessionAgentId: agent.agentId,
+    sessionRelativePath: 'session.jsonl',
+    sessionBytes: 100,
+    workers: [],
+  },
+  scope: 'session',
+  sourceId: 'session',
+  sourceKind: 'canonical_session_jsonl',
+  order: 'asc',
+  limit: 100,
+  items: [],
+  page: {
+    startOffset: 0,
+    endOffset: 0,
+    sourceBytes: 100,
+    scannedLines: 0,
+    scannedBytes: 0,
+    returnedItems: 0,
+    scanLimited: false,
+  },
+  hasMore: false,
+} satisfies SessionAuditPageResponse
 
 const codexExternalThread = {
   type: 'codex_app_server',
@@ -703,6 +731,11 @@ describe('protocol root barrel contract', () => {
     expect(specialist.targetSpace).toContain('builder')
     expect(codexSidecar.externalThread?.threadId).toBe('codex-thread-1')
     expect(codexParentCard.externalThreadContext?.excludeFromModelContext).toBe(true)
+  })
+
+  it('exports session audit protocol contracts from the root barrel', () => {
+    expect(SESSION_AUDIT_ENTRY_CATEGORIES).toContain('malformed')
+    expect(auditPage.sourceKind).toBe('canonical_session_jsonl')
   })
 
   it('exports CLI protocol contracts from the root barrel', () => {

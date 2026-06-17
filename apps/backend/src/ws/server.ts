@@ -81,6 +81,7 @@ import { createProjectResourceRoutes } from "./http/routes/project-resource-rout
 import { createPhoenixObservabilityRoutes } from "./http/routes/phoenix-observability-routes.js";
 import { createPromptRoutes } from "./http/routes/prompt-routes.js";
 import { createSchedulerRoutes } from "./http/routes/scheduler-routes.js";
+import { createSessionAuditRoutes } from "./http/routes/session-audit-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./http/routes/settings-routes.js";
 import { createSkillRoutes } from "./http/routes/skill-routes.js";
 import { createSlashCommandRoutes } from "./http/routes/slash-command-routes.js";
@@ -536,6 +537,7 @@ export class SwarmWebSocketServer {
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
+      ...createSessionAuditRoutes({ swarmManager: this.swarmManager }),
       ...createCodexCatalogRoutes({ swarmManager: this.swarmManager }),
       ...(this.terminalService ? createTerminalRoutes({ terminalService: this.terminalService, settingsService: this.terminalSettingsService }) : []),
       ...this.settingsRoutes.routes,
