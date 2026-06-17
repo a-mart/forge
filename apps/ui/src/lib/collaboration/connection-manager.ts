@@ -20,6 +20,7 @@ import {
   createInitialCollabWsState,
   type CollabWsState,
 } from '../collab-ws-state'
+import type { CollaborationSessionInfo } from '@forge/protocol'
 import type { CollaborationEndpointTarget } from '../collaboration-connections'
 
 // ---------------------------------------------------------------------------
@@ -29,12 +30,53 @@ import type { CollaborationEndpointTarget } from '../collaboration-connections'
 export interface ConnectionEntry {
   connectionId: string
   target: CollaborationEndpointTarget
-  client: CollabWsClient
+  client: CollabWsClient | null
   state: CollabWsState
   unsubscribe: () => void
+  authProbeAbortController?: AbortController
+  authGateBlocked?: boolean
 }
 
 export type CollabConnectionManagerListener = () => void
+
+type AuthProbeResult = 'authenticated' | 'unauthenticated' | 'unknown'
+
+export interface CollabConnectionManagerOptions {
+  /**
+   * When true, probe /api/collaboration/me before opening a metadata WebSocket.
+   * This prevents known-unauthenticated collaboration backends from entering an
+   * impossible 401 upgrade/retry loop while keeping the target visible.
+   */
+  authGateMetadataConnections?: boolean
+  authProbe?: (target: CollaborationEndpointTarget, signal: AbortSignal) => Promise<AuthProbeResult>
+}
+
+async function defaultAuthProbe(
+  target: CollaborationEndpointTarget,
+  signal: AbortSignal,
+): Promise<AuthProbeResult> {
+  const response = await fetch(new URL('/api/collaboration/me', target.apiBaseUrl).toString(), {
+    credentials: 'include',
+    signal,
+  })
+
+  if (!response.ok) {
+    return 'unknown'
+  }
+
+  const session = (await response.json()) as CollaborationSessionInfo
+  if (session.authenticated === true) return 'authenticated'
+  if (session.authenticated === false) return 'unauthenticated'
+  return 'unknown'
+}
+
+function createAuthRequiredState(): CollabWsState {
+  return {
+    ...createInitialCollabWsState(),
+    lastError: 'Sign in to this collaboration backend to connect.',
+    lastErrorCode: 'COLLAB_AUTH_REQUIRED',
+  }
+}
 
 // ---------------------------------------------------------------------------
 // CollabConnectionManager
@@ -45,6 +87,13 @@ export class CollabConnectionManager {
   private _activeConnectionId: string | null = null
   private _activeChannelId: string | null = null
   private readonly listeners = new Set<CollabConnectionManagerListener>()
+  private readonly authGateMetadataConnections: boolean
+  private readonly authProbe: (target: CollaborationEndpointTarget, signal: AbortSignal) => Promise<AuthProbeResult>
+
+  constructor(options: CollabConnectionManagerOptions = {}) {
+    this.authGateMetadataConnections = options.authGateMetadataConnections === true
+    this.authProbe = options.authProbe ?? defaultAuthProbe
+  }
 
   // -----------------------------------------------------------------------
   // Accessors
@@ -164,13 +213,16 @@ export class CollabConnectionManager {
     for (const [id, target] of targetMap) {
       const existing = this.connections.get(id)
       if (existing) {
-        if (existing.target.wsUrl !== target.wsUrl) {
+        if (existing.target.wsUrl !== target.wsUrl || existing.target.apiBaseUrl !== target.apiBaseUrl) {
           // URL changed — recreate
           this.teardownConnection(id)
           this.createConnection(target)
         } else {
           // Metadata-only update (label, etc.)
           existing.target = target
+          if (existing.authGateBlocked && !existing.authProbeAbortController) {
+            this.probeAndConnect(existing)
+          }
         }
       } else {
         this.createConnection(target)
@@ -209,7 +261,7 @@ export class CollabConnectionManager {
 
     // Step 1: Clear old detail subscription if switching connections or clearing
     if (prevEntry && (prevConnectionId !== connectionId || channelId === null)) {
-      prevEntry.client.setActiveChannel(null)
+      prevEntry.client?.setActiveChannel(null)
     }
 
     // Step 2: Update tracked active state
@@ -220,7 +272,7 @@ export class CollabConnectionManager {
     if (connectionId && channelId) {
       const entry = this.connections.get(connectionId)
       if (entry) {
-        entry.client.setActiveChannel(channelId)
+        entry.client?.setActiveChannel(channelId)
       }
     }
 
@@ -241,8 +293,9 @@ export class CollabConnectionManager {
    */
   destroy(): void {
     for (const entry of this.connections.values()) {
+      entry.authProbeAbortController?.abort()
       entry.unsubscribe()
-      entry.client.destroy()
+      entry.client?.destroy()
     }
     this.connections.clear()
     this._activeConnectionId = null
@@ -272,19 +325,71 @@ export class CollabConnectionManager {
   // -----------------------------------------------------------------------
 
   private createConnection(target: CollaborationEndpointTarget): void {
-    const client = new CollabWsClient(target.wsUrl)
-
     const entry: ConnectionEntry = {
       connectionId: target.connectionId,
       target,
-      client,
-      state: client.getState(),
+      client: null,
+      state: createInitialCollabWsState(),
       unsubscribe: () => {},
     }
 
-    // Add to map BEFORE subscribing, so the initial subscribe callback
-    // (which fires synchronously) can find the entry.
+    // Add to map before async auth probing/client subscription so the target
+    // remains represented even when no WebSocket can be opened yet.
     this.connections.set(target.connectionId, entry)
+
+    if (this.authGateMetadataConnections) {
+      this.probeAndConnect(entry)
+      return
+    }
+
+    this.attachClient(entry)
+  }
+
+  private probeAndConnect(entry: ConnectionEntry): void {
+    entry.authProbeAbortController?.abort()
+    const controller = new AbortController()
+    entry.authProbeAbortController = controller
+    entry.authGateBlocked = false
+    entry.state = createInitialCollabWsState()
+    this.notify()
+
+    void this.authProbe(entry.target, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return
+        entry.authProbeAbortController = undefined
+
+        const current = this.connections.get(entry.connectionId)
+        if (current !== entry) return
+
+        if (result === 'unauthenticated') {
+          entry.authGateBlocked = true
+          entry.state = createAuthRequiredState()
+          this.notify()
+          return
+        }
+
+        entry.authGateBlocked = false
+        this.attachClient(entry)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        entry.authProbeAbortController = undefined
+
+        const current = this.connections.get(entry.connectionId)
+        if (current !== entry) return
+
+        entry.authGateBlocked = false
+        this.attachClient(entry)
+      })
+  }
+
+  private attachClient(entry: ConnectionEntry): void {
+    entry.unsubscribe()
+    entry.client?.destroy()
+
+    const client = new CollabWsClient(entry.target.wsUrl)
+    entry.client = client
+    entry.state = client.getState()
 
     entry.unsubscribe = client.subscribe((nextState) => {
       entry.state = nextState
@@ -292,6 +397,10 @@ export class CollabConnectionManager {
     })
 
     client.start()
+
+    if (this._activeConnectionId === entry.connectionId && this._activeChannelId) {
+      client.setActiveChannel(this._activeChannelId)
+    }
   }
 
   private teardownConnection(connectionId: string): void {
@@ -304,8 +413,9 @@ export class CollabConnectionManager {
       this._activeChannelId = null
     }
 
+    entry.authProbeAbortController?.abort()
     entry.unsubscribe()
-    entry.client.destroy()
+    entry.client?.destroy()
     this.connections.delete(connectionId)
   }
 

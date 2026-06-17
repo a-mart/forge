@@ -89,12 +89,18 @@ function parseSent(socket: FakeWebSocket): unknown[] {
   return socket.sentPayloads.map((p) => JSON.parse(p))
 }
 
+async function flushPromises(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
 
 describe('CollabConnectionManager', () => {
   const originalWebSocket = globalThis.WebSocket
+  const originalFetch = globalThis.fetch
   const originalWindow = (globalThis as unknown as Record<string, unknown>).window
 
   beforeEach(() => {
@@ -107,6 +113,7 @@ describe('CollabConnectionManager', () => {
   afterEach(() => {
     vi.useRealTimers()
     ;(globalThis as unknown as Record<string, unknown>).WebSocket = originalWebSocket
+    ;(globalThis as unknown as Record<string, unknown>).fetch = originalFetch
     ;(globalThis as unknown as Record<string, unknown>).window = originalWindow
   })
 
@@ -807,6 +814,156 @@ describe('CollabConnectionManager', () => {
     it('getTarget returns null for unknown connection', () => {
       const manager = new CollabConnectionManager()
       expect(manager.getTarget('unknown')).toBeNull()
+      manager.destroy()
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Auth-gated metadata connections
+  // -----------------------------------------------------------------------
+
+  describe('auth-gated metadata connections', () => {
+    it('keeps unauthenticated targets represented without creating a WebSocket or retry loop', async () => {
+      const authProbe = vi.fn().mockResolvedValue('unauthenticated')
+      const manager = new CollabConnectionManager({
+        authGateMetadataConnections: true,
+        authProbe,
+      })
+      const target = makeTarget('conn_unauth', 'ws://unauth.example.com')
+
+      manager.syncConnections([target])
+      await flushPromises()
+      vi.advanceTimersByTime(5_000)
+
+      expect(authProbe).toHaveBeenCalledTimes(1)
+      expect(manager.size).toBe(1)
+      expect(manager.getConnectionIds()).toEqual(['conn_unauth'])
+      expect(manager.getClient('conn_unauth')).toBeNull()
+      expect(FakeWebSocket.instances).toHaveLength(0)
+      expect(manager.getConnectionState('conn_unauth')?.lastErrorCode).toBe('COLLAB_AUTH_REQUIRED')
+
+      manager.destroy()
+    })
+
+    it('treats probe rejection as unknown and preserves retryable WebSocket behavior', async () => {
+      const authProbe = vi.fn().mockRejectedValue(new Error('network failed'))
+      const manager = new CollabConnectionManager({
+        authGateMetadataConnections: true,
+        authProbe,
+      })
+
+      manager.syncConnections([makeTarget('conn_unknown', 'ws://unknown.example.com')])
+      await flushPromises()
+      vi.advanceTimersByTime(100)
+
+      expect(authProbe).toHaveBeenCalledTimes(1)
+      expect(manager.getConnectionState('conn_unknown')?.lastErrorCode).not.toBe('COLLAB_AUTH_REQUIRED')
+      expect(manager.getClient('conn_unknown')).not.toBeNull()
+      expect(FakeWebSocket.instances).toHaveLength(1)
+
+      manager.destroy()
+    })
+
+    it('treats HTTP 500 from /api/collaboration/me as unknown and still creates a WebSocket', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response('server error', { status: 500 }))
+      ;(globalThis as unknown as Record<string, unknown>).fetch = fetchMock
+      const manager = new CollabConnectionManager({
+        authGateMetadataConnections: true,
+      })
+
+      manager.syncConnections([makeTarget('conn_500', 'ws://errors.example.com')])
+      await flushPromises()
+      vi.advanceTimersByTime(100)
+
+      expect(fetchMock).toHaveBeenCalledWith('http://errors.example.com/api/collaboration/me', expect.objectContaining({
+        credentials: 'include',
+      }))
+      expect(manager.getConnectionState('conn_500')?.lastErrorCode).not.toBe('COLLAB_AUTH_REQUIRED')
+      expect(manager.getClient('conn_500')).not.toBeNull()
+      expect(FakeWebSocket.instances).toHaveLength(1)
+
+      manager.destroy()
+    })
+
+    it('creates and bootstraps metadata WebSocket for authenticated targets', async () => {
+      const authProbe = vi.fn().mockResolvedValue('authenticated')
+      const manager = new CollabConnectionManager({
+        authGateMetadataConnections: true,
+        authProbe,
+      })
+
+      manager.syncConnections([makeTarget('conn_auth', 'ws://auth.example.com')])
+      await flushPromises()
+      vi.advanceTimersByTime(100)
+
+      expect(authProbe).toHaveBeenCalledTimes(1)
+      expect(FakeWebSocket.instances).toHaveLength(1)
+      expect(manager.getClient('conn_auth')).not.toBeNull()
+
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      bootstrapSocket(socket, 'ws-auth')
+
+      expect(manager.getConnectionState('conn_auth')?.hasBootstrapped).toBe(true)
+      expect(manager.getConnectionState('conn_auth')?.workspace?.workspaceId).toBe('ws-auth')
+
+      manager.destroy()
+    })
+
+    it('preserves mixed authenticated and unauthenticated target state entries', async () => {
+      const authProbe = vi.fn((target: CollaborationEndpointTarget) => {
+        return Promise.resolve(target.connectionId === 'conn_auth' ? 'authenticated' as const : 'unauthenticated' as const)
+      })
+      const manager = new CollabConnectionManager({
+        authGateMetadataConnections: true,
+        authProbe,
+      })
+
+      manager.syncConnections([
+        makeTarget('conn_auth', 'ws://auth.example.com'),
+        makeTarget('conn_unauth', 'ws://unauth.example.com'),
+      ])
+      await flushPromises()
+      vi.advanceTimersByTime(100)
+
+      expect(manager.size).toBe(2)
+      expect(manager.getConnectionIds()).toEqual(['conn_auth', 'conn_unauth'])
+      expect(FakeWebSocket.instances).toHaveLength(1)
+      expect(manager.getClient('conn_auth')).not.toBeNull()
+      expect(manager.getClient('conn_unauth')).toBeNull()
+      expect(manager.getConnectionState('conn_unauth')?.lastErrorCode).toBe('COLLAB_AUTH_REQUIRED')
+
+      manager.destroy()
+    })
+
+    it('retains active channel intent while authenticated target probe is pending', async () => {
+      let resolveProbe: (value: 'authenticated' | 'unauthenticated' | 'unknown') => void = () => {}
+      const authProbe = vi.fn(() => new Promise<'authenticated' | 'unauthenticated' | 'unknown'>((resolve) => {
+        resolveProbe = resolve
+      }))
+      const manager = new CollabConnectionManager({
+        authGateMetadataConnections: true,
+        authProbe,
+      })
+
+      manager.syncConnections([makeTarget('conn_auth', 'ws://auth.example.com')])
+      manager.setActiveChannel('conn_auth', 'ch-1')
+
+      expect(manager.activeConnectionId).toBe('conn_auth')
+      expect(manager.activeChannelId).toBe('ch-1')
+      expect(FakeWebSocket.instances).toHaveLength(0)
+
+      resolveProbe('authenticated')
+      await flushPromises()
+      vi.advanceTimersByTime(100)
+
+      expect(FakeWebSocket.instances).toHaveLength(1)
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      bootstrapSocket(socket, 'ws-auth')
+      const sent = parseSent(socket)
+      expect(sent).toContainEqual({ type: 'collab_subscribe_channel', channelId: 'ch-1' })
+
       manager.destroy()
     })
   })

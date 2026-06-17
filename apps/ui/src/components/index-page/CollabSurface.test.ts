@@ -36,6 +36,10 @@ vi.mock('./CollabWorkspace', () => ({
   },
 }))
 
+const collabWsProviderMock = vi.hoisted(() => ({
+  value: null as null | { clientRef?: { current: unknown } },
+}))
+
 vi.mock('@/hooks/index-page/use-collab-ws-connection', () => ({
   useCollabWsConnection: () => ({
     clientRef: createRef(),
@@ -47,8 +51,10 @@ vi.mock('@/hooks/index-page/use-collab-ws-connection', () => ({
       activeChannelId: null,
     },
   }),
-  CollabWsProvider: ({ children }: { children: unknown; value: unknown }) =>
-    createElement('div', { 'data-testid': 'collab-ws-provider' }, children as string),
+  CollabWsProvider: ({ children, value }: { children: unknown; value: unknown }) => {
+    collabWsProviderMock.value = value as { clientRef?: { current: unknown } }
+    return createElement('div', { 'data-testid': 'collab-ws-provider' }, children as string)
+  },
 }))
 
 const collabConnectionsMock = vi.hoisted(() => ({
@@ -109,6 +115,28 @@ const { CollabSurface } = await import('./CollabSurface')
 let container: HTMLDivElement
 let root: Root | null = null
 
+const defaultConnectionState = {
+  connected: false,
+  workspace: null,
+  categories: [],
+  channels: [],
+  currentUser: null,
+  activeChannelId: null,
+  channelHistory: [],
+  channelHistoryLoaded: false,
+  channelStatus: 'idle',
+  channelStreamingStartedAt: undefined,
+  sessionWorkers: [],
+  sessionActivity: [],
+  sessionAgentStatuses: {},
+  pendingChoiceRequests: [],
+  channelReadStates: {},
+  channelUnreadCounts: {},
+  lastError: null,
+  lastErrorCode: null,
+  hasBootstrapped: false,
+}
+
 const defaultTargets = [
   {
     connectionId: 'conn_test',
@@ -152,6 +180,17 @@ beforeEach(() => {
   document.body.appendChild(container)
   settingsPanelMountSpy.mockReset()
   collabWorkspaceMountSpy.mockReset()
+  collabWsProviderMock.value = null
+  collabConnectionsMock.value = {
+    connectionStates: {},
+    connectionIds: [],
+    targets: [],
+    activeConnectionId: null,
+    activeChannelId: null,
+    setActiveChannel: vi.fn(),
+    getClient: () => null,
+    managerRef: { current: null },
+  }
   backendStateMock.value = {
     ready: false,
     blockedReason: null,
@@ -616,6 +655,60 @@ describe('CollabSurface — Blocker 3: empty connectionIds guard (remount race)'
 
     // With connections synced, the stale param should be normalized.
     expect(onSelectChannel).toHaveBeenCalledWith('some-channel', undefined)
+  })
+})
+
+describe('CollabSurface — async active client attachment', () => {
+  it('refreshes CollabWsProvider clientRef when authenticated probe attaches a client after initial render', () => {
+    const firstState = { ...defaultConnectionState }
+    const attachedState = { ...defaultConnectionState, connected: true }
+    const attachedClient = { sendMessage: vi.fn() }
+    let currentClient: unknown = null
+
+    collabConnectionsMock.value = {
+      connectionStates: { conn_test: firstState },
+      connectionIds: ['conn_test'],
+      targets: [],
+      activeConnectionId: null,
+      activeChannelId: null,
+      setActiveChannel: vi.fn(),
+      getClient: () => currentClient as never,
+      managerRef: { current: null },
+    }
+
+    root = createRoot(container)
+    const props = {
+      targets: defaultTargets,
+      wsUrl: 'wss://collab.example.com',
+      collab: 'conn_test',
+      activeView: 'chat' as ActiveView,
+      activeSurface: 'collab' as const,
+      isAdmin: true,
+      isMember: false,
+      hasLoaded: true,
+      onSelectChannel: vi.fn(),
+      onSelectSurface: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onBackToChat: vi.fn(),
+    }
+
+    act(() => {
+      root?.render(createElement(CollabSurface, props))
+    })
+
+    expect(collabWsProviderMock.value?.clientRef?.current).toBeNull()
+
+    currentClient = attachedClient
+    collabConnectionsMock.value = {
+      ...collabConnectionsMock.value,
+      connectionStates: { conn_test: attachedState },
+    }
+
+    act(() => {
+      root?.render(createElement(CollabSurface, props))
+    })
+
+    expect(collabWsProviderMock.value?.clientRef?.current).toBe(attachedClient)
   })
 })
 

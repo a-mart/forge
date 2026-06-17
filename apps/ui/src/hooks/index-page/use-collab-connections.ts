@@ -111,7 +111,9 @@ export function useCollabConnections(
   // React-recommended lazy-init pattern (check-then-set on first render).
   /* eslint-disable react-hooks/refs */
   if (!managerRef.current) {
-    managerRef.current = new CollabConnectionManager()
+    managerRef.current = new CollabConnectionManager({
+      authGateMetadataConnections: true,
+    })
   }
 
   const manager = managerRef.current
