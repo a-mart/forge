@@ -3,12 +3,14 @@ import type {
   SessionAuditOrder,
   SessionAuditPageResponse,
   SessionAuditScope,
+  SessionAuditSourceKind,
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 export interface SessionAuditPageQuery {
   scope?: SessionAuditScope
   workerId?: string
+  sourceKind?: SessionAuditSourceKind
   cursor?: string
   offset?: number
   order?: SessionAuditOrder
@@ -38,6 +40,7 @@ export async function fetchSessionAuditPage(
   const params = new URLSearchParams()
   appendString(params, 'scope', query.scope)
   appendString(params, 'workerId', query.workerId)
+  appendString(params, 'sourceKind', query.sourceKind)
   appendString(params, 'cursor', query.cursor)
   appendNumber(params, 'offset', query.offset)
   appendString(params, 'order', query.order)

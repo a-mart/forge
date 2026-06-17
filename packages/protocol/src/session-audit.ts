@@ -33,6 +33,7 @@ export interface SessionAuditWorkerSummary {
   workerId: string
   displayName?: string
   status?: AgentStatus
+  descriptorPresent: boolean
   relativePath: string
   bytes?: number
   updatedAt?: string

@@ -321,6 +321,7 @@ export class SessionAuditService {
         workerId,
         displayName: descriptor?.displayName,
         status: descriptor?.status,
+        descriptorPresent: Boolean(descriptor),
         relativePath,
         bytes: fileStat.stats?.size,
         updatedAt: descriptor?.updatedAt ?? fileStat.stats?.mtime.toISOString(),

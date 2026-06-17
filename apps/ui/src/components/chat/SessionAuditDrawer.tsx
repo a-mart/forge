@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, Clipboard, Loader2, RotateCw } from 'lucide-react'
-import type { SessionAuditEntry, SessionAuditEntryCategory } from '@forge/protocol'
+import type { SessionAuditEntry, SessionAuditEntryCategory, SessionAuditManifest, SessionAuditWorkerSummary } from '@forge/protocol'
 import { SESSION_AUDIT_ENTRY_CATEGORIES } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 
 const PAGE_LIMIT = 50
 const ALL_CATEGORIES = 'all'
+const MANAGER_SOURCE_VALUE = 'session'
+const WORKER_SOURCE_PREFIX = 'worker:'
 
 interface SessionAuditDrawerProps {
   open: boolean
@@ -31,6 +33,11 @@ export function SessionAuditDrawer({
 }: SessionAuditDrawerProps) {
   const [category, setCategory] = useState<string>(ALL_CATEGORIES)
   const [typeFilter, setTypeFilter] = useState('')
+  const [selectedSource, setSelectedSource] = useState(MANAGER_SOURCE_VALUE)
+  const [manifestState, setManifestState] = useState<{
+    sessionKey: string
+    manifest: SessionAuditManifest
+  } | null>(null)
   const [pageState, setPageState] = useState<{
     requestKey: string
     items: SessionAuditEntry[]
@@ -43,7 +50,11 @@ export function SessionAuditDrawer({
 
   const normalizedTypeFilter = typeFilter.trim()
   const selectedCategory = category === ALL_CATEGORIES ? undefined : category as SessionAuditEntryCategory
-  const requestKey = `${open ? 'open' : 'closed'}:${sessionAgentId ?? ''}:${category}:${normalizedTypeFilter}:${wsUrl ?? ''}`
+  const selectedWorkerId = selectedSource.startsWith(WORKER_SOURCE_PREFIX) ? selectedSource.slice(WORKER_SOURCE_PREFIX.length) : undefined
+  const selectedScope = selectedWorkerId ? 'worker' : 'session'
+  const selectedSourceKind = selectedWorkerId ? 'canonical_worker_jsonl' : 'canonical_session_jsonl'
+  const sourceSessionKey = `${open ? 'open' : 'closed'}:${sessionAgentId ?? ''}:${wsUrl ?? ''}`
+  const requestKey = `${sourceSessionKey}:${selectedSource}:${category}:${normalizedTypeFilter}`
   const activeRequestKeyRef = useRef(requestKey)
   const requestGenerationRef = useRef(0)
   const loadMoreAbortRef = useRef<AbortController | null>(null)
@@ -54,6 +65,9 @@ export function SessionAuditDrawer({
   }
 
   const canShowRows = open && Boolean(sessionAgentId)
+  const currentManifest = canShowRows && manifestState?.sessionKey === sourceSessionKey ? manifestState.manifest : null
+  const sourceOptions = useMemo(() => buildSourceOptions(currentManifest), [currentManifest])
+  const selectedSourceMetadata = sourceOptions.find((source) => source.value === selectedSource) ?? sourceOptions[0]
   const currentPageState = canShowRows && pageState?.requestKey === requestKey ? pageState : null
   const visibleItems = currentPageState?.items ?? []
   const visibleLoading = canShowRows ? loading : false
@@ -66,10 +80,15 @@ export function SessionAuditDrawer({
     loadMoreAbortRef.current?.abort()
     loadMoreAbortRef.current = null
     setPageState(null)
+    setManifestState(null)
     setLoading(false)
     setLoadingMore(false)
     setError(null)
   }, [])
+
+  useEffect(() => {
+    setSelectedSource(MANAGER_SOURCE_VALUE)
+  }, [sessionAgentId, wsUrl])
 
   useEffect(() => {
     const generation = requestGenerationRef.current
@@ -91,12 +110,16 @@ export function SessionAuditDrawer({
       setError(null)
       try {
         const page = await fetchSessionAuditPage(wsUrl, sessionAgentId!, {
+          scope: selectedScope,
+          workerId: selectedWorkerId,
+          sourceKind: selectedSourceKind,
           limit: PAGE_LIMIT,
           categories: selectedCategory ? [selectedCategory] : undefined,
           types: normalizedTypeFilter ? [normalizedTypeFilter] : undefined,
           signal: controller.signal,
         })
         if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey || requestGenerationRef.current !== generation) return
+        setManifestState({ sessionKey: sourceSessionKey, manifest: page.manifest })
         setPageState({
           requestKey: currentRequestKey,
           items: page.items,
@@ -118,7 +141,7 @@ export function SessionAuditDrawer({
     return () => {
       controller.abort()
     }
-  }, [open, requestKey, resetAuditState, sessionAgentId, selectedCategory, normalizedTypeFilter, wsUrl])
+  }, [open, requestKey, resetAuditState, sessionAgentId, selectedCategory, normalizedTypeFilter, selectedScope, selectedSourceKind, selectedWorkerId, sourceSessionKey, wsUrl])
 
   async function loadMore() {
     if (!sessionAgentId || !visibleNextCursor || loadingMore) return
@@ -132,6 +155,9 @@ export function SessionAuditDrawer({
     setError(null)
     try {
       const page = await fetchSessionAuditPage(wsUrl, sessionAgentId, {
+        scope: selectedScope,
+        workerId: selectedWorkerId,
+        sourceKind: selectedSourceKind,
         cursor,
         limit: PAGE_LIMIT,
         categories: selectedCategory ? [selectedCategory] : undefined,
@@ -139,6 +165,7 @@ export function SessionAuditDrawer({
         signal: controller.signal,
       })
       if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey || requestGenerationRef.current !== generation) return
+      setManifestState({ sessionKey: sourceSessionKey, manifest: page.manifest })
       setPageState((current) => {
         if (!current || current.requestKey !== currentRequestKey || current.nextCursor !== cursor || requestGenerationRef.current !== generation) {
           return current
@@ -174,6 +201,22 @@ export function SessionAuditDrawer({
         </SheetHeader>
 
         <div className="flex flex-col gap-3 border-b border-border/70 p-4">
+          <div className="flex flex-col gap-2">
+            <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted-foreground">
+              Source
+              <Select value={selectedSource} onValueChange={setSelectedSource}>
+                <SelectTrigger className="h-8 text-xs" aria-label="Audit source">
+                  <SelectValue placeholder="Manager canonical JSONL" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sourceOptions.map((source) => (
+                    <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            {selectedSourceMetadata ? <SourceMetadata source={selectedSourceMetadata} /> : null}
+          </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
             <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
               Category
@@ -207,6 +250,7 @@ export function SessionAuditDrawer({
               onClick={() => {
                 setCategory(ALL_CATEGORIES)
                 setTypeFilter('')
+                setSelectedSource(MANAGER_SOURCE_VALUE)
               }}
             >
               <RotateCw className="size-3.5" />
@@ -250,6 +294,54 @@ export function SessionAuditDrawer({
       </SheetContent>
     </Sheet>
   )
+}
+
+interface AuditSourceOption {
+  value: string
+  label: string
+  description: string
+  relativePath: string
+  bytes?: number
+  updatedAt?: string
+  status?: string
+}
+
+function buildSourceOptions(manifest: SessionAuditManifest | null): AuditSourceOption[] {
+  return [
+    {
+      value: MANAGER_SOURCE_VALUE,
+      label: 'Manager canonical JSONL',
+      description: 'Canonical manager session history',
+      relativePath: manifest?.sessionRelativePath ?? 'session.jsonl',
+      bytes: manifest?.sessionBytes,
+    },
+    ...(manifest?.workers ?? []).map(workerToSourceOption),
+  ]
+}
+
+function workerToSourceOption(worker: SessionAuditWorkerSummary): AuditSourceOption {
+  const workerName = worker.displayName?.trim() || worker.workerId
+  return {
+    value: `${WORKER_SOURCE_PREFIX}${worker.workerId}`,
+    label: `Worker: ${workerName}${worker.descriptorPresent ? '' : ' (file only)'}`,
+    description: worker.descriptorPresent ? 'Canonical worker transcript' : 'Canonical worker transcript without a live descriptor',
+    relativePath: worker.relativePath,
+    bytes: worker.bytes,
+    updatedAt: worker.updatedAt,
+    status: worker.status,
+  }
+}
+
+function SourceMetadata({ source }: { source: AuditSourceOption }) {
+  const parts = [
+    source.description,
+    source.relativePath,
+    typeof source.bytes === 'number' ? formatBytes(source.bytes) : undefined,
+    source.updatedAt ? `updated ${formatTimestamp(source.updatedAt)}` : undefined,
+    source.status ? `status ${source.status}` : undefined,
+  ].filter(Boolean)
+
+  return <p className="text-xs text-muted-foreground">{parts.join(' · ')}</p>
 }
 
 function SessionAuditRow({ item }: { item: SessionAuditEntry }) {
@@ -390,4 +482,18 @@ function formatTimestamp(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString()
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} B`
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  for (const unit of units) {
+    if (value < 1024 || unit === units[units.length - 1]) {
+      return `${value.toFixed(value < 10 ? 1 : 0)} ${unit}`
+    }
+    value /= 1024
+  }
+  return `${bytes} B`
 }

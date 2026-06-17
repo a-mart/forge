@@ -196,7 +196,11 @@ describe('SessionAuditService', () => {
 
     expect(page.sourceId).toBe('orphan-worker')
     expect(page.items).toEqual([expect.objectContaining({ wrapperId: 'orphan-message', sourceId: 'orphan-worker' })])
-    expect(page.manifest.workers).toEqual([expect.objectContaining({ workerId: 'orphan-worker', relativePath: 'workers/orphan-worker.jsonl' })])
+    expect(page.manifest.workers).toEqual([expect.objectContaining({
+      workerId: 'orphan-worker',
+      descriptorPresent: false,
+      relativePath: 'workers/orphan-worker.jsonl',
+    })])
   })
 
   it('skips non-regular orphan worker entries and rejects them as audit sources', async () => {

@@ -20,6 +20,10 @@ beforeEach(() => {
   Object.assign(navigator, {
     clipboard: { writeText: vi.fn(async () => undefined) },
   })
+  HTMLElement.prototype.scrollIntoView = vi.fn()
+  HTMLElement.prototype.hasPointerCapture = vi.fn(() => false)
+  HTMLElement.prototype.setPointerCapture = vi.fn()
+  HTMLElement.prototype.releasePointerCapture = vi.fn()
 })
 
 afterEach(() => {
@@ -47,6 +51,7 @@ describe('SessionAuditDrawer', () => {
     await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
     expect(getByText(document.body, /Complete persisted session audit/)).toBeTruthy()
     expect(getByText(document.body, 'canonical_session_jsonl')).toBeTruthy()
+    expect(getByText(document.body, 'Manager canonical JSONL')).toBeTruthy()
     expect(getByText(document.body, 'sessions/manager-1/session.jsonl')).toBeTruthy()
     expect(getByText(document.body, '10 → 220')).toBeTruthy()
     expect(getByText(document.body, 'normal_view_hidden')).toBeTruthy()
@@ -57,6 +62,112 @@ describe('SessionAuditDrawer', () => {
 
     const requestUrl = new URL((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string)
     expect(requestUrl.searchParams.has('includeConversationEntry')).toBe(false)
+  })
+
+  it('switches from manager to worker source with worker request params and no stale manager rows', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.searchParams.get('scope') === 'worker') {
+        return responseFor(auditPageFixture({
+          title: 'Worker source row',
+          source: 'worker',
+          workers: [workerSummary({ workerId: 'worker-1', displayName: 'Frontend Worker' })],
+        }))
+      }
+      return responseFor(auditPageFixture({
+        title: 'Manager source row',
+        workers: [workerSummary({ workerId: 'worker-1', displayName: 'Frontend Worker' })],
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Manager source row')).toBeTruthy())
+    openAuditSourceSelect()
+    fireEvent.click(await waitForOption('Worker: Frontend Worker'))
+
+    await waitFor(() => expect(queryByText(document.body, 'Manager source row')).toBeNull())
+    await waitFor(() => expect(getByText(document.body, 'Worker source row')).toBeTruthy())
+
+    const workerUrl = new URL(String(fetchMock.mock.calls.at(-1)?.[0]))
+    expect(workerUrl.searchParams.get('scope')).toBe('worker')
+    expect(workerUrl.searchParams.get('workerId')).toBe('worker-1')
+    expect(workerUrl.searchParams.get('sourceKind')).toBe('canonical_worker_jsonl')
+  })
+
+  it('switches from worker back to manager source with manager request params', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.searchParams.get('scope') === 'worker') {
+        return responseFor(auditPageFixture({
+          title: 'Worker source row',
+          source: 'worker',
+          workers: [workerSummary({ workerId: 'worker-1', displayName: 'Frontend Worker' })],
+        }))
+      }
+      return responseFor(auditPageFixture({
+        title: fetchMock.mock.calls.length > 1 ? 'Manager source row again' : 'Manager source row',
+        workers: [workerSummary({ workerId: 'worker-1', displayName: 'Frontend Worker' })],
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Manager source row')).toBeTruthy())
+    openAuditSourceSelect()
+    fireEvent.click(await waitForOption('Worker: Frontend Worker'))
+    await waitFor(() => expect(getByText(document.body, 'Worker source row')).toBeTruthy())
+
+    openAuditSourceSelect()
+    fireEvent.click(await waitForOption('Manager canonical JSONL'))
+
+    await waitFor(() => expect(queryByText(document.body, 'Worker source row')).toBeNull())
+    await waitFor(() => expect(getByText(document.body, 'Manager source row again')).toBeTruthy())
+    const managerUrl = new URL(String(fetchMock.mock.calls.at(-1)?.[0]))
+    expect(managerUrl.searchParams.get('scope')).toBe('session')
+    expect(managerUrl.searchParams.get('sourceKind')).toBe('canonical_session_jsonl')
+    expect(managerUrl.searchParams.has('workerId')).toBe(false)
+  })
+
+  it('labels orphan worker sources as file-only when descriptor metadata is absent', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => responseFor(auditPageFixture({
+      workers: [workerSummary({ workerId: 'orphan-worker', descriptorPresent: false, displayName: undefined })],
+    }))))
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    openAuditSourceSelect()
+    expect(await waitForOption('Worker: orphan-worker (file only)')).toBeTruthy()
   })
 
   it('does not show previous manager rows immediately after switching sessions', async () => {
@@ -215,23 +326,36 @@ describe('SessionAuditDrawer', () => {
   })
 })
 
-function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCursor?: string } = {}) {
+function openAuditSourceSelect(): void {
+  const trigger = getByRole(document.body, 'combobox', { name: /audit source/i })
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
+}
+
+async function waitForOption(name: string): Promise<HTMLElement> {
+  return waitFor(() => getByRole(document.body, 'option', { name }))
+}
+
+function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCursor?: string; source?: 'session' | 'worker'; workers?: ReturnType<typeof workerSummary>[] } = {}) {
+  const source = options.source ?? 'session'
+  const sourceId = source === 'worker' ? 'worker-1' : 'manager-1'
+  const sourceKind = source === 'worker' ? 'canonical_worker_jsonl' : 'canonical_session_jsonl'
+  const relativePath = source === 'worker' ? 'workers/worker-1.jsonl' : 'sessions/manager-1/session.jsonl'
   return {
     sessionAgentId: 'manager-1',
-    manifest: { sessionAgentId: 'manager-1', sessionRelativePath: 'sessions/manager-1/session.jsonl', workers: [] },
-    scope: 'session',
-    sourceId: 'manager-1',
-    sourceKind: 'canonical_session_jsonl',
+    manifest: { sessionAgentId: 'manager-1', sessionRelativePath: 'sessions/manager-1/session.jsonl', sessionBytes: 220, workers: options.workers ?? [] },
+    scope: source,
+    sourceId,
+    sourceKind,
     order: 'asc',
     limit: 50,
     items: [
       {
-        id: 'canonical_session_jsonl:manager-1:10',
-        scope: 'session',
-        sourceId: 'manager-1',
-        sourceLabel: 'Manager session',
-        sourceKind: 'canonical_session_jsonl',
-        relativePath: 'sessions/manager-1/session.jsonl',
+        id: `${sourceKind}:${sourceId}:10`,
+        scope: source,
+        sourceId,
+        sourceLabel: source === 'worker' ? 'Worker worker-1' : 'Manager session',
+        sourceKind,
+        relativePath,
         lineNumber: 3,
         byteOffset: 10,
         nextByteOffset: 220,
@@ -252,6 +376,18 @@ function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCurs
     page: { startOffset: 0, endOffset: 220, sourceBytes: 220, scannedLines: 3, scannedBytes: 220, returnedItems: 1, scanLimited: false },
     nextCursor: options.nextCursor,
     hasMore: options.hasMore ?? false,
+  }
+}
+
+function workerSummary(options: { workerId: string; displayName?: string; descriptorPresent?: boolean }) {
+  return {
+    workerId: options.workerId,
+    displayName: options.displayName,
+    status: options.descriptorPresent === false ? undefined : 'idle' as const,
+    descriptorPresent: options.descriptorPresent ?? true,
+    relativePath: `workers/${options.workerId}.jsonl`,
+    bytes: 1234,
+    updatedAt: '2026-06-17T12:00:00.000Z',
   }
 }
 

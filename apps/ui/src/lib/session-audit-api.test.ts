@@ -25,6 +25,9 @@ describe('fetchSessionAuditPage', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await fetchSessionAuditPage('ws://127.0.0.1:47187/ws', 'manager 1', {
+      scope: 'worker',
+      workerId: 'worker 1',
+      sourceKind: 'canonical_worker_jsonl',
       limit: 25,
       cursor: 'next cursor',
       categories: ['worker_tool_call'],
@@ -36,6 +39,9 @@ describe('fetchSessionAuditPage', () => {
     const url = new URL(requestedUrl as unknown as string)
     expect(url.origin).toBe('http://127.0.0.1:47187')
     expect(url.pathname).toBe('/api/sessions/manager%201/audit')
+    expect(url.searchParams.get('scope')).toBe('worker')
+    expect(url.searchParams.get('workerId')).toBe('worker 1')
+    expect(url.searchParams.get('sourceKind')).toBe('canonical_worker_jsonl')
     expect(url.searchParams.get('limit')).toBe('25')
     expect(url.searchParams.get('cursor')).toBe('next cursor')
     expect(url.searchParams.getAll('category')).toEqual(['worker_tool_call'])
