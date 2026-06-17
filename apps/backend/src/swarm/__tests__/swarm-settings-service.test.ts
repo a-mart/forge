@@ -674,6 +674,33 @@ describe("SwarmSettingsService auth provider runtime recycling", () => {
     ]);
   });
 
+  it("recycles matching provider managers after direct OAuth credential updates", async () => {
+    const root = await createTempRoot();
+    const anthropicSession = createSession(root, "manager", {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4.5"
+    });
+    const openAISession = createSession(root, "manager--openai", { provider: "openai-codex", modelId: "gpt-5.5" });
+    const secretsEnvService = {
+      updateSettingsAuthCredential: vi.fn(async () => undefined)
+    };
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [anthropicSession, openAISession],
+      applyManagerRuntimeRecyclePolicy,
+      secretsEnvService
+    });
+
+    await service.updateSettingsAuthCredential("anthropic", { type: "oauth", access: "oauth-token" } as any);
+
+    expect(secretsEnvService.updateSettingsAuthCredential).toHaveBeenCalledWith("anthropic", {
+      type: "oauth",
+      access: "oauth-token"
+    });
+    expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([["manager", "auth_source_change"]]);
+  });
+
   it("does not recycle sessions whose model provider does not match the local auth mutation", async () => {
     const root = await createTempRoot();
     const openAISession = createSession(root, "manager", { provider: "openai-codex", modelId: "gpt-5.5" });

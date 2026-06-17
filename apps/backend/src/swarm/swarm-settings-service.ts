@@ -560,6 +560,12 @@ export class SwarmSettingsService {
     await this.recycleManagersForAuthProviderChange([provider]);
   }
 
+  async updateSettingsAuthCredential(provider: string, credential: AuthCredential): Promise<void> {
+    await this.assertLocalOpenAIAuthMutationAllowed([provider]);
+    await this.options.secretsEnvService.updateSettingsAuthCredential(provider, credential);
+    await this.recycleManagersForAuthProviderChange([provider]);
+  }
+
   async getOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
     return this.openAIAuthSettingsService.getSettings();
   }

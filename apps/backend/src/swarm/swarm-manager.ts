@@ -6977,6 +6977,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.settingsService.deleteSettingsAuth(provider);
   }
 
+  async updateSettingsAuthCredential(provider: string, credential: AuthCredential): Promise<void> {
+    await this.settingsService.updateSettingsAuthCredential(provider, credential);
+  }
+
   async getOpenAIAuthBrokerSettings(): Promise<OpenAIBrokerSettingsResponse> {
     return this.settingsService.getOpenAIAuthBrokerSettings();
   }

@@ -754,6 +754,16 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       expect(eventNames).toEqual(expect.arrayContaining(['progress', 'auth_url', 'prompt', 'complete']))
       expect(oauthMockState.anthropicLogin).toHaveBeenCalledTimes(1)
 
+      expect(manager.authCredentialUpdates).toEqual([
+        {
+          provider: 'anthropic',
+          credential: {
+            type: 'oauth',
+            accessToken: 'oauth-access-token',
+            refreshToken: 'oauth-refresh-token',
+          },
+        },
+      ])
       const storedAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<string, unknown>
       expect(storedAuth.anthropic).toMatchObject({
         type: 'oauth',
