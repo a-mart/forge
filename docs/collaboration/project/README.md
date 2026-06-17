@@ -1,8 +1,6 @@
 # Collaboration project tracker
 
-This directory is the durable project tracker for Forge collaboration work.
-
-Current collaboration development, Docker Compose validation, and project tracking use the main Forge repo at `/Users/adam/repos/middleman`. Do not use `/Users/adam/repos/forge-collab` as the current source of truth; treat it as stale historical reference only when explicitly needed.
+This directory is the durable project tracker for Forge collaboration work. For current architecture, operations, and development guidance, start at [../README.md](../README.md).
 
 Use these files to keep collaboration work recoverable across sessions:
 
