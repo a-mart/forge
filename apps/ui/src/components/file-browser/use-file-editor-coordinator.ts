@@ -20,6 +20,7 @@ export interface FileEditorGuardApi {
 }
 
 export type FileEditorTransitionAction =
+  | { type: 'delete-entry'; path: string; entryType: 'file' | 'directory' }
   | { type: 'select-file'; nextPath: string }
   | { type: 'close-viewer' }
   | { type: 'close-file-browser' }

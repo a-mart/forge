@@ -7,6 +7,7 @@ import { useResizablePanel } from '@/components/diff-viewer/useResizablePanel'
 import { useLatestRef } from '@/hooks/useLatestRef'
 import { FileTree } from './FileTree'
 import type { FileTreeHandle } from './FileTree'
+import { FileDeleteConfirmDialog } from './FileDeleteConfirmDialog'
 import {
   useDirectoryListing,
   useFileCount,
@@ -34,6 +35,7 @@ interface FileBrowserSidebarProps {
   desktopOnly?: boolean
   mobileOnly?: boolean
   refreshNonce?: number
+  onDeleteEntry?: (path: string, entryType: 'file' | 'directory') => void
 }
 
 export function FileBrowserSidebar({
@@ -51,10 +53,12 @@ export function FileBrowserSidebar({
   desktopOnly = false,
   mobileOnly = false,
   refreshNonce = 0,
+  onDeleteEntry,
 }: FileBrowserSidebarProps) {
   const fileTreeRef = useRef<FileTreeHandle>(null)
   const [seedStatus, setSeedStatus] = useState<'idle' | 'saving' | 'success'>('idle')
   const [seedError, setSeedError] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<{ path: string; entryType: 'file' | 'directory' } | null>(null)
 
   const gatedAgentId = isOpen ? agentId : null
   const worktreeId = worktreeContext?.worktreeId ?? null
@@ -129,6 +133,17 @@ export function FileBrowserSidebar({
         setSeedError(error instanceof Error ? error.message : 'Could not create .forge resources')
       })
   }, [handleRefresh, projectResourceProfileId, projectResourceSessionAgentId, seedStatus, wsUrl])
+
+  const handleRequestDelete = useCallback((path: string, entryType: 'file' | 'directory') => {
+    if (!onDeleteEntry) return
+    setPendingDelete({ path, entryType })
+  }, [onDeleteEntry])
+
+  const handleConfirmDelete = useCallback(() => {
+    if (!pendingDelete || !onDeleteEntry) return
+    onDeleteEntry(pendingDelete.path, pendingDelete.entryType)
+    setPendingDelete(null)
+  }, [onDeleteEntry, pendingDelete])
 
   return (
     <>
@@ -303,6 +318,7 @@ export function FileBrowserSidebar({
             fileCount={fileCount.data?.count ?? null}
             fileCountMethod={fileCount.data?.method ?? null}
             worktreeId={worktreeId}
+            onRequestDelete={onDeleteEntry ? handleRequestDelete : undefined}
           />
         ) : null}
       </div>
@@ -316,6 +332,14 @@ export function FileBrowserSidebar({
           className={cn(desktopOnly && 'max-md:hidden', mobileOnly && 'md:hidden')}
         />
       ) : null}
+
+      <FileDeleteConfirmDialog
+        open={Boolean(pendingDelete)}
+        entryName={pendingDelete?.path.split('/').pop() ?? ''}
+        entryType={pendingDelete?.entryType ?? 'file'}
+        onConfirm={handleConfirmDelete}
+        onClose={() => setPendingDelete(null)}
+      />
     </>
   )
 }

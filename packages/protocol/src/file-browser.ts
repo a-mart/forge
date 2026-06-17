@@ -115,3 +115,15 @@ export interface FileSaveSuccessResponse {
 }
 
 export type FileSaveResponse = FileSaveSuccessResponse | FileSaveConflictResponse
+
+export interface FileDeleteRequest {
+  agentId: string
+  path: string
+  worktreeId?: string | null
+}
+
+export interface FileDeleteResponse {
+  success: true
+  path: string
+  entryType: 'file' | 'directory'
+}

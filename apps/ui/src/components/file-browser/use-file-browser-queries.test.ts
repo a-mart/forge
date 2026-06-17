@@ -3,7 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FileContentResult, FileSaveRequest, FileSaveSuccessResponse } from './use-file-browser-queries'
 import {
+  applySuccessfulFileDeleteToCaches,
   applySuccessfulFileSaveToCaches,
+  deleteFilePath,
   invalidateFileBrowserCaches,
   saveFileContent,
 } from './use-file-browser-queries'
@@ -171,5 +173,42 @@ describe('file save cache helpers', () => {
     })
     expect(invalidateGitCaches).toHaveBeenCalledWith({ agentId: 'session-a', repoTarget: 'workspace' })
 
+  })
+})
+
+describe('deleteFilePath', () => {
+  it('deletes through DELETE /api/files/content with query params', async () => {
+    const success = {
+      success: true,
+      path: 'src/file.ts',
+      entryType: 'file' as const,
+    }
+    const fetchSpy = mockFetchResponse(200, success)
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await expect(deleteFilePath('ws://127.0.0.1:47187', {
+      agentId: 'session-a',
+      path: 'src/file.ts',
+      worktreeId: 'worktree-1',
+    })).resolves.toEqual(success)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/files/content?agentId=session-a&path=src%2Ffile.ts&worktreeId=worktree-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+  })
+})
+
+describe('file delete cache helpers', () => {
+  it('invalidates git caches after delete', () => {
+    applySuccessfulFileDeleteToCaches({
+      agentId: 'session-a',
+      worktreeId: null,
+      path: 'src/file.ts',
+      entryType: 'file',
+      openFilePath: 'src/file.ts',
+    })
+
+    expect(invalidateGitCaches).toHaveBeenCalledWith({ agentId: 'session-a', repoTarget: 'workspace' })
   })
 })

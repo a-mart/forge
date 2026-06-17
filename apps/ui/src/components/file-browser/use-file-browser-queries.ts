@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   FileContentResult,
   FileCountResult,
+  FileDeleteResponse,
   FileListResult,
   FileSaveRequest,
   FileSaveResponse,
@@ -16,6 +17,7 @@ import { invalidateGitCaches } from '@/components/diff-viewer/use-diff-queries'
 
 export type {
   FileContentResult,
+  FileDeleteResponse,
   FileListResult,
   FileSaveRequest,
   FileSaveResponse,
@@ -359,6 +361,68 @@ export function seedProjectResources(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(params),
   })
+}
+
+export async function deleteFilePath(
+  wsUrl: string,
+  request: { agentId: string; path: string; worktreeId?: string | null },
+): Promise<FileDeleteResponse> {
+  const params = buildFileBrowserParams(request.agentId, { path: request.path }, request.worktreeId)
+  const searchParams = new URLSearchParams(params)
+  const url = resolveApiEndpoint(wsUrl, `/api/files/content?${searchParams.toString()}`)
+  const response = await fetch(url, { method: 'DELETE' })
+
+  const payload = await parseResponseJson(response)
+  if (!response.ok) {
+    throw new Error(getResponseErrorMessage(payload, response))
+  }
+
+  if (!payload || typeof payload !== 'object' || (payload as FileDeleteResponse).success !== true) {
+    throw new Error(`Malformed file delete response (HTTP ${response.status})`)
+  }
+
+  return payload as FileDeleteResponse
+}
+
+export interface ApplySuccessfulFileDeleteOptions {
+  agentId: string
+  worktreeId?: string | null
+  path: string
+  entryType: 'file' | 'directory'
+  openFilePath?: string | null
+}
+
+export function applySuccessfulFileDeleteToCaches(options: ApplySuccessfulFileDeleteOptions): void {
+  invalidateFileContentCachesForDelete(
+    options.agentId,
+    options.worktreeId,
+    options.path,
+    options.entryType,
+  )
+  invalidateFileBrowserMetadataCaches()
+  invalidateGitCaches({ agentId: options.agentId, repoTarget: 'workspace' })
+}
+
+function invalidateFileContentCachesForDelete(
+  agentId: string,
+  worktreeId: string | null | undefined,
+  deletedPath: string,
+  entryType: 'file' | 'directory',
+) {
+  const prefix = `files:content:${agentId}:${worktreeId ?? ''}:`
+  for (const key of queryCache.keys()) {
+    if (!key.startsWith(prefix)) continue
+
+    const filePath = key.slice(prefix.length)
+    if (entryType === 'file' && filePath === deletedPath) {
+      queryCache.delete(key)
+      continue
+    }
+
+    if (entryType === 'directory' && (filePath === deletedPath || filePath.startsWith(`${deletedPath}/`))) {
+      queryCache.delete(key)
+    }
+  }
 }
 
 export async function saveFileContent(

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, resolve } from "node:path";
 import type {
   FileContentResult,
@@ -8,6 +8,7 @@ import type {
   FileEntry,
   FileListResult,
   FileSaveConflictReason,
+  FileDeleteResponse,
   FileSaveResponse,
   FileSearchResult,
   FileVersionToken,
@@ -327,6 +328,58 @@ export class FileBrowserService {
         bytesWritten: contentBytes
       };
     });
+  }
+
+  async deletePath(
+    cwd: string,
+    relativePath: string,
+    onDeleted?: (deleted: { resolvedPath: string; entryType: "file" | "directory" }) => Promise<void> | void
+  ): Promise<FileDeleteResponse> {
+    const normalizedCwd = resolve(cwd);
+    const normalizedRelativePath = normalizeRelativePath(relativePath);
+    if (!normalizedRelativePath) {
+      throw new Error("Cannot delete workspace root.");
+    }
+
+    const resolvedPath = await this.resolvePathWithinCwd(normalizedCwd, normalizedRelativePath);
+    const workspaceRoot = resolve(await realpath(normalizedCwd).catch(() => normalizedCwd));
+    if (resolvedPath === workspaceRoot) {
+      throw new Error("Cannot delete workspace root.");
+    }
+
+    let targetStats;
+    try {
+      targetStats = await stat(resolvedPath);
+    } catch (error) {
+      if (isErrorCode(error, "ENOENT")) {
+        throw new Error("Path not found.");
+      }
+
+      rethrowPermissionDenied(error, "read");
+    }
+
+    const entryType = targetStats.isDirectory() ? "directory" : "file";
+
+    try {
+      await rm(resolvedPath, {
+        recursive: entryType === "directory",
+        force: true,
+      });
+    } catch (error) {
+      rethrowPermissionDenied(error, "write");
+    }
+
+    try {
+      await onDeleted?.({ resolvedPath, entryType });
+    } catch {
+      // Fail open: editor deletes succeed even when versioning cannot record them.
+    }
+
+    return {
+      success: true,
+      path: normalizedRelativePath,
+      entryType,
+    };
   }
 
   async getRepoMetadata(cwd: string): Promise<RepoMetadata> {

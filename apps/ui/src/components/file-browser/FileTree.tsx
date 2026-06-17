@@ -93,6 +93,7 @@ interface FileTreeProps {
   fileCount: number | null
   fileCountMethod: string | null
   worktreeId?: string | null
+  onRequestDelete?: (path: string, entryType: 'file' | 'directory') => void
 }
 
 /* ------------------------------------------------------------------ */
@@ -131,7 +132,7 @@ const ROW_HEIGHT = 28
 
 export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
   function FileTree(
-    { wsUrl, agentId, cwd, selectedFile, onSelectFile, fileCount, fileCountMethod, worktreeId = null },
+    { wsUrl, agentId, cwd, selectedFile, onSelectFile, fileCount, fileCountMethod, worktreeId = null, onRequestDelete },
     ref,
   ) {
     const [filterText, setFilterText] = useState('')
@@ -544,6 +545,9 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
                         onClick={() =>
                           handleItemClick(itemId, isFolder)
                         }
+                        onRequestDelete={onRequestDelete
+                          ? () => onRequestDelete(itemId, itemData.type)
+                          : undefined}
                       />
                     </div>
                   )

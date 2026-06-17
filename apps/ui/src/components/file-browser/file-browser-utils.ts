@@ -19,3 +19,19 @@ export function isImageFile(filePath: string): boolean {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
   return IMAGE_EXTENSIONS.has(ext)
 }
+
+export function doesDeleteAffectOpenFile(
+  deletePath: string,
+  entryType: 'file' | 'directory',
+  openFilePath: string | null,
+): boolean {
+  if (!openFilePath) {
+    return false
+  }
+
+  if (entryType === 'file') {
+    return openFilePath === deletePath
+  }
+
+  return openFilePath === deletePath || openFilePath.startsWith(`${deletePath}/`)
+}

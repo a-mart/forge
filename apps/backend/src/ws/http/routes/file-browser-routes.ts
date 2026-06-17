@@ -2,6 +2,7 @@ import type {
   FileBrowserSourceContext,
   FileContentResult,
   FileCountResult,
+  FileDeleteResponse,
   FileListResult,
   FileSaveRequest,
   FileSaveResponse,
@@ -23,7 +24,7 @@ import {
 } from "../shared/route-helpers.js";
 
 const FILE_BROWSER_GET_METHODS = "GET, OPTIONS";
-const FILE_CONTENT_METHODS = "GET, PUT, OPTIONS";
+const FILE_CONTENT_METHODS = "GET, PUT, DELETE, OPTIONS";
 const DEFAULT_SEARCH_LIMIT = 50;
 const MAX_SEARCH_LIMIT = 200;
 
@@ -122,6 +123,12 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
         if (request.method === "PUT") {
           applyCorsHeaders(request, response, FILE_CONTENT_METHODS);
           await handlePutFileContent(request, response, swarmManager, service);
+          return;
+        }
+
+        if (request.method === "DELETE") {
+          applyCorsHeaders(request, response, FILE_CONTENT_METHODS);
+          await handleDeleteFileContent(request, response, swarmManager, service, requestUrl);
           return;
         }
 
@@ -230,6 +237,57 @@ async function handlePutFileContent(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to save file.";
     sendJson(response, resolveSaveHttpStatusCode(message), { error: message });
+  }
+}
+
+async function handleDeleteFileContent(
+  _request: IncomingMessage,
+  response: ServerResponse,
+  swarmManager: SwarmManager,
+  service: FileBrowserService,
+  requestUrl: URL
+): Promise<void> {
+  try {
+    const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+    const filePath = requireNonEmptyPathQuery(requestUrl.searchParams, "path");
+    const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
+    const { cwd } = await resolveFileBrowserContextByWorktree(swarmManager, agentId, worktreeId);
+
+    const result: FileDeleteResponse = await service.deletePath(cwd, filePath, ({ resolvedPath }) => {
+      try {
+        const versioningService = swarmManager.getVersioningService();
+        if (!versioningService) {
+          return;
+        }
+
+        let tracked = false;
+        try {
+          tracked = versioningService.isTrackedPath(resolvedPath);
+        } catch {
+          return;
+        }
+
+        if (!tracked) {
+          return;
+        }
+
+        void versioningService.recordMutation({
+          path: resolvedPath,
+          action: "delete",
+          source: "api-write-file",
+          agentId,
+        }).catch(() => {
+          // Fail open: editor deletes succeed even when versioning cannot record them.
+        });
+      } catch {
+        // Fail open: lookup/isTrackedPath/getVersioningService failures must not fail the delete.
+      }
+    });
+
+    sendJson(response, 200, result as unknown as Record<string, unknown>);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to delete file.";
+    sendJson(response, resolveHttpStatusCode(message), { error: message });
   }
 }
 
@@ -357,6 +415,7 @@ function resolveHttpStatusCode(message: string): number {
   if (
     normalized.includes("must be") ||
     normalized.includes("invalid") ||
+    normalized.includes("cannot delete") ||
     normalized.includes("unknown or invalid worktreeid") ||
     normalized.includes("no cwd")
   ) {

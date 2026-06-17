@@ -26,7 +26,12 @@ import { FileDirtyConfirmDialog } from '@/components/file-browser/FileDirtyConfi
 import { FILE_BROWSER_INLINE_EDITING_ENABLED } from '@/components/file-browser/file-editor-feature-gates'
 import { useFileEditSession, type KeyedFileEditorContent } from '@/components/file-browser/use-file-edit-session'
 import { useFileEditorCoordinator, type FileEditorSessionKey } from '@/components/file-browser/use-file-editor-coordinator'
-import type { FileContentResult } from '@/components/file-browser/use-file-browser-queries'
+import { doesDeleteAffectOpenFile } from '@/components/file-browser/file-browser-utils'
+import {
+  applySuccessfulFileDeleteToCaches,
+  deleteFilePath,
+  type FileContentResult,
+} from '@/components/file-browser/use-file-browser-queries'
 import { DiffViewerContent } from '@/components/diff-viewer/DiffViewerDialog'
 import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { StatsPage } from '@/components/index-page/StatsPage'
@@ -1518,6 +1523,57 @@ export function BuilderSurface({
     })
   }, [fileEditorCoordinator, handleFileBrowserSelectFile, selectedFileBrowserFile])
 
+  const handleFileBrowserDeleteEntry = useCallback((path: string, entryType: 'file' | 'directory') => {
+    const runDelete = () => {
+      void (async () => {
+        if (!activeAgentId) return
+
+        try {
+          await deleteFilePath(wsUrl, {
+            agentId: activeAgentId,
+            path,
+            worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+          })
+          applySuccessfulFileDeleteToCaches({
+            agentId: activeAgentId,
+            worktreeId: fileBrowserWorktreeContext?.worktreeId ?? null,
+            path,
+            entryType,
+            openFilePath: selectedFileBrowserFile,
+          })
+          if (doesDeleteAffectOpenFile(path, entryType, selectedFileBrowserFile)) {
+            handleFileBrowserClosePanel()
+          }
+          setFileBrowserRefreshNonce((previous) => previous + 1)
+          setSourceControlRefreshNonce((previous) => previous + 1)
+        } catch (error) {
+          setState((previous) => ({
+            ...previous,
+            lastError: `Failed to delete: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }))
+        }
+      })()
+    }
+
+    if (
+      doesDeleteAffectOpenFile(path, entryType, selectedFileBrowserFile) &&
+      fileEditorCoordinator.getDirtySnapshot()?.isDirty
+    ) {
+      fileEditorCoordinator.requestFileEditorTransition({ type: 'delete-entry', path, entryType }, runDelete)
+      return
+    }
+
+    runDelete()
+  }, [
+    activeAgentId,
+    fileBrowserWorktreeContext?.worktreeId,
+    fileEditorCoordinator,
+    handleFileBrowserClosePanel,
+    selectedFileBrowserFile,
+    setState,
+    wsUrl,
+  ])
+
   const handleGuardedFileBrowserClosePanel = useCallback(() => {
     fileEditorCoordinator.requestFileEditorTransition({ type: 'close-viewer' }, () => {
       handleFileBrowserClosePanel()
@@ -1931,6 +1987,7 @@ export function BuilderSurface({
               desktopPlacement="left"
               desktopOnly
               refreshNonce={fileBrowserRefreshNonce}
+              onDeleteEntry={handleFileBrowserDeleteEntry}
             />
           ) : null}
 
@@ -2266,6 +2323,7 @@ export function BuilderSurface({
                 projectResourceSessionAgentId: activeManagerAgent?.agentId ?? null,
                 mobileOnly: true,
                 refreshNonce: fileBrowserRefreshNonce,
+                onDeleteEntry: handleFileBrowserDeleteEntry,
               }}
             />
           ) : null}
