@@ -239,6 +239,59 @@ describe('audit view replay characterization (Phase 0 → Phase 1)', () => {
     })
   })
 
+  describe('D. alias evidence required for non-user-visible transcript rows', () => {
+    it('hides foreign choice_request rows without alias evidence in All view', () => {
+      const foreignChoice: ConversationEntry = {
+        type: 'choice_request',
+        agentId: 'foreign-manager',
+        choiceId: 'foreign-choice',
+        questions: [],
+        status: 'pending',
+        timestamp: '2026-01-01T00:00:01.000Z',
+      }
+
+      const result = deriveVisibleMessages({
+        messages: [foreignChoice],
+        activityMessages: [],
+        agents: [currentManager],
+        activeAgent: currentManager,
+        channelView: 'all',
+      })
+
+      expect(result.visibleMessages).toEqual([])
+    })
+
+    it('shows choice_request rows when manager alias evidence exists', () => {
+      const forkedTranscript: ConversationEntry = {
+        type: 'conversation_message',
+        agentId: ancestorManagerId,
+        role: 'user',
+        text: 'forked user turn',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'user_input',
+      }
+
+      const ancestorChoice: ConversationEntry = {
+        type: 'choice_request',
+        agentId: ancestorManagerId,
+        choiceId: 'ancestor-choice',
+        questions: [],
+        status: 'pending',
+        timestamp: '2026-01-01T00:00:01.000Z',
+      }
+
+      const result = deriveVisibleMessages({
+        messages: [forkedTranscript, ancestorChoice],
+        activityMessages: [],
+        agents: [currentManager],
+        activeAgent: currentManager,
+        channelView: 'all',
+      })
+
+      expect(result.visibleMessages).toEqual([forkedTranscript, ancestorChoice])
+    })
+  })
+
   describe('C. conversation_log hiding in manager normal views', () => {
     const managerRuntimeLog: ConversationEntry = {
       type: 'conversation_log',

@@ -178,5 +178,51 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
 
       expect(ids(selection.history)).not.toContain("unknown-spawn");
     });
+
+    it("respects bootstrap budget when conversation fits alone but protected activity exceeds budget", () => {
+      const history: ConversationEntryEvent[] = [
+        message("message-1"),
+        message("message-2"),
+        message("message-3"),
+        managerSpawn(MANAGER_ID, "bootstrap-spawn"),
+        managerSend(MANAGER_ID, "bootstrap-send"),
+        workerCallback(MANAGER_ID, "worker-1", "bootstrap-callback")
+      ];
+      const budget = 5;
+
+      const selection = selectBootstrapConversationHistory({
+        fullHistory: history,
+        managerId: MANAGER_ID,
+        isWithinBudget: (messages) => messages.length <= budget
+      });
+
+      expect(selection.history.length).toBeLessThanOrEqual(budget);
+      expect(selection.history.length).toBe(budget);
+      expect(ids(selection.history)).toEqual(
+        expect.arrayContaining(["message-2", "message-3", "bootstrap-spawn"])
+      );
+      expect(ids(selection.history)).not.toContain("message-1");
+    });
+
+    it("degrades within budget when protected activity alone exceeds bootstrap budget", () => {
+      const history: ConversationEntryEvent[] = [
+        message("message-1"),
+        managerSpawn(MANAGER_ID, "spawn-0"),
+        managerSend(MANAGER_ID, "send-0"),
+        managerSpawn(MANAGER_ID, "spawn-1"),
+        managerSend(MANAGER_ID, "send-1"),
+        managerSpawn(MANAGER_ID, "spawn-2")
+      ];
+      const budget = 2;
+
+      const selection = selectBootstrapConversationHistory({
+        fullHistory: history,
+        managerId: MANAGER_ID,
+        isWithinBudget: (messages) => messages.length <= budget
+      });
+
+      expect(selection.history.length).toBeLessThanOrEqual(budget);
+      expect(ids(selection.history)).toEqual(expect.arrayContaining(["spawn-0"]));
+    });
   });
 });

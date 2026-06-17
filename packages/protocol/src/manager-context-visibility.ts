@@ -146,8 +146,16 @@ export function isVisibleInManagerAllView(
     return false
   }
 
-  if (isManagerSessionTranscriptEntry(entry)) {
-    return true
+  if (entry.type === 'conversation_message') {
+    if (isUserVisibleManagerTranscriptEntry(entry)) {
+      return true
+    }
+
+    return managerAliasIds.has(entry.agentId.trim())
+  }
+
+  if (entry.type === 'choice_request' || entry.type === 'work_plan_created') {
+    return managerAliasIds.has(entry.agentId.trim())
   }
 
   if (entry.type === 'model_cache_observation') {
@@ -186,6 +194,5 @@ export function isVisibleInManagerAllView(
     return false
   }
 
-  const agentId = entry.agentId.trim()
-  return agentId.length > 0 && managerAliasIds.has(agentId)
+  return false
 }

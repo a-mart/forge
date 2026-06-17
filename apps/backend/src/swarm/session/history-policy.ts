@@ -182,7 +182,7 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
     };
   }
 
-  const selectedActivityEntries = selectBootstrapActivityEntriesWithinBudget(
+  const selectedBootstrapEntries = selectBootstrapActivityEntriesWithinBudget(
     requestedHistory,
     conversationEntries,
     protectedActivityEntries,
@@ -191,8 +191,8 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
   );
   const trimmedHistory = mergeBootstrapConversationHistory(
     requestedHistory,
-    conversationEntries,
-    selectedActivityEntries
+    selectedBootstrapEntries.conversationEntries,
+    selectedBootstrapEntries.activityEntries
   );
   const history = appendBootstrapDiagnosticEntriesIfBudgetAllows(
     requestedHistory,
@@ -229,52 +229,105 @@ function inferKnownWorkerIdsFromHistory(
   return workerIds;
 }
 
+interface BootstrapActivitySelection<Entry extends ConversationEntryEvent> {
+  conversationEntries: Entry[];
+  activityEntries: Entry[];
+}
+
 function selectBootstrapActivityEntriesWithinBudget<Entry extends ConversationEntryEvent>(
   sourceHistory: Entry[],
   conversationEntries: Entry[],
   protectedActivityEntries: Entry[],
   unprotectedActivityEntries: Entry[],
   isWithinBudget: (messages: Entry[]) => boolean
-): Entry[] {
-  const protectedHistory = mergeBootstrapConversationHistory(
-    sourceHistory,
-    conversationEntries,
-    protectedActivityEntries
-  );
+): BootstrapActivitySelection<Entry> {
+  const buildHistory = (transcript: Entry[], activity: Entry[]) =>
+    mergeBootstrapConversationHistory(sourceHistory, transcript, activity);
 
-  if (!isWithinBudget(protectedHistory)) {
-    const trimmedConversationEntries = trimBootstrapConversationHistoryTailToBudget(
+  let selectedConversation = conversationEntries;
+  let selectedActivity = protectedActivityEntries;
+
+  if (!isWithinBudget(buildHistory(selectedConversation, selectedActivity))) {
+    selectedConversation = trimBootstrapConversationHistoryTailToBudget(
       conversationEntries,
       (candidateConversationEntries) =>
-        isWithinBudget(
-          mergeBootstrapConversationHistory(
-            sourceHistory,
-            candidateConversationEntries,
-            protectedActivityEntries
-          )
-        )
+        isWithinBudget(buildHistory(candidateConversationEntries, protectedActivityEntries))
     );
-    return mergeBootstrapConversationHistory(
-      sourceHistory,
-      trimmedConversationEntries,
-      protectedActivityEntries
-    );
+    selectedActivity = protectedActivityEntries;
+
+    if (!isWithinBudget(buildHistory(selectedConversation, selectedActivity))) {
+      selectedActivity = trimBootstrapProtectedActivityPrefixToBudget(
+        sourceHistory,
+        selectedConversation,
+        protectedActivityEntries,
+        isWithinBudget
+      );
+    }
+  } else if (unprotectedActivityEntries.length > 0) {
+    let low = 0;
+    let high = unprotectedActivityEntries.length;
+
+    while (low < high) {
+      const mid = Math.floor((low + high + 1) / 2);
+      const candidateUnprotectedEntries = unprotectedActivityEntries.slice(-mid);
+      const candidateHistory = buildHistory(selectedConversation, [
+        ...protectedActivityEntries,
+        ...candidateUnprotectedEntries
+      ]);
+
+      if (isWithinBudget(candidateHistory)) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    selectedActivity = [
+      ...protectedActivityEntries,
+      ...unprotectedActivityEntries.slice(unprotectedActivityEntries.length - low)
+    ];
   }
 
-  if (unprotectedActivityEntries.length === 0) {
-    return protectedActivityEntries;
+  while (
+    selectedActivity.length > 0 &&
+    !isWithinBudget(buildHistory(selectedConversation, selectedActivity))
+  ) {
+    selectedActivity = selectedActivity.slice(0, -1);
+  }
+
+  while (
+    selectedConversation.length > 0 &&
+    !isWithinBudget(buildHistory(selectedConversation, selectedActivity))
+  ) {
+    selectedConversation = selectedConversation.slice(1);
+  }
+
+  return {
+    conversationEntries: selectedConversation,
+    activityEntries: selectedActivity
+  };
+}
+
+function trimBootstrapProtectedActivityPrefixToBudget<Entry extends ConversationEntryEvent>(
+  sourceHistory: Entry[],
+  conversationEntries: Entry[],
+  protectedActivityEntries: Entry[],
+  isWithinBudget: (messages: Entry[]) => boolean
+): Entry[] {
+  if (protectedActivityEntries.length === 0) {
+    return [];
   }
 
   let low = 0;
-  let high = unprotectedActivityEntries.length;
+  let high = protectedActivityEntries.length;
 
   while (low < high) {
     const mid = Math.floor((low + high + 1) / 2);
-    const candidateUnprotectedEntries = unprotectedActivityEntries.slice(-mid);
+    const candidateActivityEntries = protectedActivityEntries.slice(0, mid);
     const candidateHistory = mergeBootstrapConversationHistory(
       sourceHistory,
       conversationEntries,
-      [...protectedActivityEntries, ...candidateUnprotectedEntries]
+      candidateActivityEntries
     );
 
     if (isWithinBudget(candidateHistory)) {
@@ -284,10 +337,7 @@ function selectBootstrapActivityEntriesWithinBudget<Entry extends ConversationEn
     }
   }
 
-  return [
-    ...protectedActivityEntries,
-    ...unprotectedActivityEntries.slice(unprotectedActivityEntries.length - low)
-  ];
+  return protectedActivityEntries.slice(0, low);
 }
 
 function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
