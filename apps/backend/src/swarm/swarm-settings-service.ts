@@ -693,6 +693,7 @@ export class SwarmSettingsService {
   async setCredentialPoolStrategy(provider: string, strategy: CredentialPoolStrategy): Promise<void> {
     await this.assertLocalOpenAIAuthMutationAllowed([provider]);
     await this.getCredentialPoolService().setStrategy(provider, strategy);
+    await this.recycleManagersForAuthProviderChange([provider]);
   }
 
   async resetPooledCredentialCooldown(provider: string, credentialId: string): Promise<void> {

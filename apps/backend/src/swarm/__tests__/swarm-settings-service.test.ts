@@ -695,7 +695,7 @@ describe("SwarmSettingsService auth provider runtime recycling", () => {
     expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
   });
 
-  it("recycles matching provider managers after pooled credential source changes", async () => {
+  it("recycles matching provider managers after pooled credential source changes, including strategy", async () => {
     const root = await createTempRoot();
     const anthropicSession = createSession(root, "manager", {
       provider: "anthropic",
@@ -705,6 +705,7 @@ describe("SwarmSettingsService auth provider runtime recycling", () => {
     const credentialPoolService = {
       removeCredential: vi.fn(async () => undefined),
       setPrimary: vi.fn(async () => undefined),
+      setStrategy: vi.fn(async () => undefined),
       addCredential: vi.fn(async () => ({ id: "acct-ant-2" }))
     };
     const secretsEnvService = {
@@ -720,14 +721,17 @@ describe("SwarmSettingsService auth provider runtime recycling", () => {
 
     await service.removePooledCredential("anthropic", "acct-ant-1");
     await service.setPrimaryPooledCredential("anthropic", "acct-ant-2");
+    await service.setCredentialPoolStrategy("anthropic", "least_used");
     await expect(service.addPooledCredential("anthropic", { type: "oauth" } as any)).resolves.toEqual({
       id: "acct-ant-2"
     });
 
     expect(credentialPoolService.removeCredential).toHaveBeenCalledWith("anthropic", "acct-ant-1");
     expect(credentialPoolService.setPrimary).toHaveBeenCalledWith("anthropic", "acct-ant-2");
+    expect(credentialPoolService.setStrategy).toHaveBeenCalledWith("anthropic", "least_used");
     expect(credentialPoolService.addCredential).toHaveBeenCalledWith("anthropic", { type: "oauth" }, undefined);
     expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
+      ["manager", "auth_source_change"],
       ["manager", "auth_source_change"],
       ["manager", "auth_source_change"],
       ["manager", "auth_source_change"]
