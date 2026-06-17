@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { AgentDescriptor } from '@forge/protocol'
 import type { SwarmConfig } from '../../../../swarm/types.js'
-import { getSessionDir, getSessionFilePath } from '../../../../swarm/storage/data-paths.js'
+import { getSessionDir, getSessionFilePath, getWorkerSessionFilePath, getWorkersDir } from '../../../../swarm/storage/data-paths.js'
 import { CONVERSATION_ENTRY_TYPE } from '../../../../swarm/session/conversation-timeline.js'
 import type { SessionAuditServiceHost } from '../../../../swarm/session/session-audit-service.js'
 import { sendJson } from '../../../http-utils.js'
@@ -48,7 +48,42 @@ describe('session audit routes', () => {
     }
   })
 
-  it('returns 400 for unsupported search, bad cursors, worker scope, and invalid methods', async () => {
+  it('serves worker transcript audit pages with pagination, malformed rows, and source-aware ids', async () => {
+    const fixture = await createFixture()
+    const worker = createDescriptor({ agentId: 'worker-1', managerId: fixture.manager.agentId, role: 'worker', profileId: fixture.manager.profileId })
+    fixture.agents.push(worker)
+    await writeSessionLines(fixture.dataDir, fixture.manager, [sessionHeader()])
+    await writeWorkerLines(fixture.dataDir, fixture.manager, worker.agentId, [
+      conversationRow('worker-message', { type: 'conversation_message', agentId: worker.agentId, role: 'assistant', text: 'worker hello', timestamp: now, source: 'worker' }),
+      '{not json',
+      conversationRow('worker-tool', { type: 'agent_tool_call', agentId: fixture.manager.agentId, actorAgentId: worker.agentId, timestamp: now, kind: 'tool_execution_end', toolName: 'bash', text: 'done' }),
+    ])
+    const server = await createRouteServer(createSessionAuditRoutes({ swarmManager: fixture.host }))
+
+    try {
+      const response = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=${worker.agentId}&sourceKind=canonical_worker_jsonl&limit=2`)
+      const firstPage = await response.json() as { sourceId: string; sourceKind: string; items: Array<{ id: string; category: string; sourceId: string; byteOffset: number; parseError?: string }>; nextCursor?: string; hasMore: boolean }
+
+      expect(response.status).toBe(200)
+      expect(firstPage.sourceId).toBe(worker.agentId)
+      expect(firstPage.sourceKind).toBe('canonical_worker_jsonl')
+      expect(firstPage.items.map((item) => item.category)).toEqual(['conversation_message', 'malformed'])
+      expect(firstPage.items[0].id).toMatch(/^canonical_worker_jsonl:worker-1:\d+$/)
+      expect(firstPage.items[0].id).not.toBe(`canonical_session_jsonl:session:${firstPage.items[0].byteOffset}`)
+      expect(firstPage.items[1].parseError).toBeTruthy()
+      expect(firstPage.hasMore).toBe(true)
+
+      const nextResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=${worker.agentId}&cursor=${encodeURIComponent(firstPage.nextCursor ?? '')}`)
+      const nextPage = await nextResponse.json() as { items: Array<{ category: string; toolName?: string }>; hasMore: boolean }
+      expect(nextResponse.status).toBe(200)
+      expect(nextPage.items).toEqual([expect.objectContaining({ category: 'worker_tool_call', toolName: 'bash' })])
+      expect(nextPage.hasMore).toBe(false)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('returns 400 for unsupported search, bad cursors, source mismatches, and invalid methods', async () => {
     const fixture = await createFixture()
     await writeSessionLines(fixture.dataDir, fixture.manager, [sessionHeader()])
     const server = await createRouteServer(createSessionAuditRoutes({ swarmManager: fixture.host }))
@@ -61,8 +96,8 @@ describe('session audit routes', () => {
       const cursorResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?cursor=bad`)
       expect(cursorResponse.status).toBe(400)
 
-      const workerResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=worker-1`)
-      expect(workerResponse.status).toBe(400)
+      const sourceKindResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=worker-1&sourceKind=canonical_session_jsonl`)
+      expect(sourceKindResponse.status).toBe(400)
 
       const includeResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?includeConversationEntry=true`)
       expect(includeResponse.status).toBe(400)
@@ -72,6 +107,9 @@ describe('session audit routes', () => {
       expect(sourceResponse.status).toBe(400)
       await expect(sourceResponse.json()).resolves.toMatchObject({ error: expect.stringContaining('sourceKind') })
 
+      const workerIdOnSessionResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?workerId=worker-1`)
+      expect(workerIdOnSessionResponse.status).toBe(400)
+
       const postResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit`, { method: 'POST' })
       expect(postResponse.status).toBe(405)
       expect(postResponse.headers.get('allow')).toContain('GET')
@@ -80,7 +118,7 @@ describe('session audit routes', () => {
     }
   })
 
-  it('returns 404 for unknown or non-manager sessions and supports OPTIONS', async () => {
+  it('rejects missing worker sources, traversal worker ids, unknown or non-manager sessions, and supports OPTIONS', async () => {
     const fixture = await createFixture()
     fixture.agents.push(createDescriptor({ agentId: 'worker-1', managerId: fixture.manager.agentId, role: 'worker', profileId: fixture.manager.profileId }))
     const server = await createRouteServer(createSessionAuditRoutes({ swarmManager: fixture.host }))
@@ -95,6 +133,12 @@ describe('session audit routes', () => {
 
       const workerResponse = await fetch(`${server.baseUrl}/api/sessions/worker-1/audit`)
       expect(workerResponse.status).toBe(404)
+
+      const missingWorkerSourceResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=missing-worker`)
+      expect(missingWorkerSourceResponse.status).toBe(404)
+
+      const traversalWorkerResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?scope=worker&workerId=${encodeURIComponent('../worker-1')}`)
+      expect(traversalWorkerResponse.status).toBe(400)
 
       const optionsResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit`, { method: 'OPTIONS' })
       expect(optionsResponse.status).toBe(204)
@@ -142,6 +186,12 @@ async function writeSessionLines(dataDir: string, descriptor: AgentDescriptor, l
   const sessionDir = getSessionDir(dataDir, descriptor.profileId ?? descriptor.agentId, descriptor.agentId)
   await mkdir(sessionDir, { recursive: true })
   await writeFile(getSessionFilePath(dataDir, descriptor.profileId ?? descriptor.agentId, descriptor.agentId), `${lines.join('\n')}\n`, 'utf8')
+}
+
+async function writeWorkerLines(dataDir: string, manager: AgentDescriptor, workerId: string, lines: string[]): Promise<void> {
+  const profileId = manager.profileId ?? manager.agentId
+  await mkdir(getWorkersDir(dataDir, profileId, manager.agentId), { recursive: true })
+  await writeFile(getWorkerSessionFilePath(dataDir, profileId, manager.agentId, workerId), `${lines.join('\n')}\n`, 'utf8')
 }
 
 function sessionHeader(): string {

@@ -115,6 +115,7 @@ export interface SessionAuditPageInfo {
 export interface SessionAuditPageRequest {
   scope?: SessionAuditScope
   workerId?: string
+  sourceKind?: SessionAuditSourceKind
   cursor?: string
   offset?: number
   order?: SessionAuditOrder

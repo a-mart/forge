@@ -94,14 +94,16 @@ function parseAuditPageRequest(searchParams: URLSearchParams): SessionAuditPageR
     throw new SessionAuditError('Use sourceKind for audit source filtering', 400)
   }
 
-  const sourceKind = searchParams.get('sourceKind')
-  if (sourceKind && sourceKind !== 'canonical_session_jsonl') {
-    throw new SessionAuditError('Only canonical_session_jsonl audit source is supported', 400)
-  }
+  const sourceKind = parseOptionalEnum(
+    searchParams.get('sourceKind'),
+    ['canonical_session_jsonl', 'canonical_worker_jsonl'] as const,
+    'sourceKind',
+  )
 
   return {
     scope: parseOptionalEnum(searchParams.get('scope'), ['session', 'worker'] as const, 'scope'),
     workerId: optionalString(searchParams.get('workerId')),
+    sourceKind,
     cursor: optionalString(searchParams.get('cursor')),
     offset: parseOptionalInteger(searchParams.get('offset'), 'offset'),
     order: parseOptionalEnum(searchParams.get('order'), ['asc', 'desc'] as const, 'order'),

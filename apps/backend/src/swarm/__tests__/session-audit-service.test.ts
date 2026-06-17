@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import type { AgentDescriptor } from '@forge/protocol'
-import { getSessionDir, getSessionFilePath } from '../storage/data-paths.js'
+import { getSessionDir, getSessionFilePath, getWorkerSessionFilePath, getWorkersDir } from '../storage/data-paths.js'
 import { CONVERSATION_ENTRY_TYPE } from '../session/conversation-timeline.js'
 import { SessionAuditService, type SessionAuditServiceHost } from '../session/session-audit-service.js'
 import type { SwarmConfig } from '../types.js'
@@ -147,15 +147,73 @@ describe('SessionAuditService', () => {
     expect(page.items.map((item) => item.wrapperId)).not.toContain('outside')
   })
 
-  it('rejects unknown sessions, non-manager agents, unsupported worker scope, and invalid cursors', async () => {
+  it('reads descriptor-owned worker transcript sources with source-aware pagination and malformed rows', async () => {
     const fixture = await createFixture()
     const worker = createDescriptor({ agentId: 'worker-1', managerId: fixture.manager.agentId, role: 'worker', profileId: fixture.manager.profileId })
     fixture.agents.push(worker)
+    await writeSessionLines(fixture.dataDir, fixture.manager, [sessionHeader()])
+    await writeWorkerLines(fixture.dataDir, fixture.manager, worker.agentId, [
+      conversationRow('worker-message', { type: 'conversation_message', agentId: worker.agentId, role: 'assistant', text: 'worker hello', timestamp: now, source: 'worker' }),
+      '{not json',
+      conversationRow('worker-tool', { type: 'agent_tool_call', agentId: fixture.manager.agentId, actorAgentId: worker.agentId, timestamp: now, kind: 'tool_execution_end', toolName: 'bash', text: 'done' }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const firstPage = await service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: worker.agentId, limit: 2 })
+
+    expect(firstPage).toMatchObject({
+      scope: 'worker',
+      sourceId: worker.agentId,
+      sourceKind: 'canonical_worker_jsonl',
+      hasMore: true,
+    })
+    expect(firstPage.items.map((item) => item.category)).toEqual(['conversation_message', 'malformed'])
+    expect(firstPage.items[0]).toMatchObject({
+      scope: 'worker',
+      sourceId: worker.agentId,
+      sourceKind: 'canonical_worker_jsonl',
+      relativePath: `workers/${worker.agentId}.jsonl`,
+      conversationSource: 'worker',
+    })
+    expect(firstPage.items[0].id).toMatch(/^canonical_worker_jsonl:worker-1:\d+$/)
+    expect(firstPage.items[0].id).not.toBe(`canonical_session_jsonl:session:${firstPage.items[0].byteOffset}`)
+    expect(firstPage.items[1].parseError).toBeTruthy()
+
+    const secondPage = await service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: worker.agentId, cursor: firstPage.nextCursor })
+    expect(secondPage.items).toEqual([expect.objectContaining({ category: 'worker_tool_call', actorAgentId: worker.agentId, toolName: 'bash' })])
+    expect(secondPage.hasMore).toBe(false)
+  })
+
+  it('supports safely scoped orphan worker transcript files', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [sessionHeader()])
+    await writeWorkerLines(fixture.dataDir, fixture.manager, 'orphan-worker', [
+      conversationRow('orphan-message', { type: 'conversation_message', agentId: 'orphan-worker', role: 'assistant', text: 'orphan hello', timestamp: now, source: 'worker' }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: 'orphan-worker', limit: 10 })
+
+    expect(page.sourceId).toBe('orphan-worker')
+    expect(page.items).toEqual([expect.objectContaining({ wrapperId: 'orphan-message', sourceId: 'orphan-worker' })])
+    expect(page.manifest.workers).toEqual([expect.objectContaining({ workerId: 'orphan-worker', relativePath: 'workers/orphan-worker.jsonl' })])
+  })
+
+  it('rejects unknown sessions, non-manager agents, invalid worker sources, and invalid cursors', async () => {
+    const fixture = await createFixture()
+    const worker = createDescriptor({ agentId: 'worker-1', managerId: fixture.manager.agentId, role: 'worker', profileId: fixture.manager.profileId })
+    const otherManagerWorker = createDescriptor({ agentId: 'other-worker', managerId: 'other-manager', role: 'worker', profileId: fixture.manager.profileId })
+    fixture.agents.push(worker, otherManagerWorker)
     const service = new SessionAuditService(fixture.host)
 
     await expect(service.getSessionAuditPage('missing')).rejects.toMatchObject({ statusCode: 404 })
     await expect(service.getSessionAuditPage(worker.agentId)).rejects.toMatchObject({ statusCode: 404 })
-    await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: worker.agentId })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker' })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'session', workerId: worker.agentId })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: '../worker-1' })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: 'missing-worker' })).rejects.toMatchObject({ statusCode: 404 })
+    await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: otherManagerWorker.agentId })).rejects.toMatchObject({ statusCode: 404 })
+    await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: worker.agentId, sourceKind: 'canonical_session_jsonl' })).rejects.toMatchObject({ statusCode: 400 })
     await expect(service.getSessionAuditPage(fixture.manager.agentId, { cursor: 'not-base64' })).rejects.toMatchObject({ statusCode: 400 })
   })
 })
@@ -198,6 +256,12 @@ async function writeSessionLines(dataDir: string, descriptor: AgentDescriptor, l
   const sessionDir = getSessionDir(dataDir, descriptor.profileId ?? descriptor.agentId, descriptor.agentId)
   await mkdir(sessionDir, { recursive: true })
   await writeFile(getSessionFilePath(dataDir, descriptor.profileId ?? descriptor.agentId, descriptor.agentId), `${lines.join('\n')}\n`, 'utf8')
+}
+
+async function writeWorkerLines(dataDir: string, manager: AgentDescriptor, workerId: string, lines: string[]): Promise<void> {
+  const profileId = manager.profileId ?? manager.agentId
+  await mkdir(getWorkersDir(dataDir, profileId, manager.agentId), { recursive: true })
+  await writeFile(getWorkerSessionFilePath(dataDir, profileId, manager.agentId, workerId), `${lines.join('\n')}\n`, 'utf8')
 }
 
 function sessionHeader(): string {

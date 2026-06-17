@@ -13,7 +13,7 @@ import type {
   SessionAuditWorkerSummary,
 } from '@forge/protocol'
 import type { AgentDescriptor, SwarmConfig } from '../types.js'
-import { getSessionDir, getSessionFilePath, getWorkersDir, sanitizePathSegment } from '../storage/data-paths.js'
+import { getSessionDir, getSessionFilePath, getWorkerSessionFilePath, getWorkersDir, sanitizePathSegment } from '../storage/data-paths.js'
 import { CONVERSATION_ENTRY_TYPE } from './conversation-timeline.js'
 import { isCanonicalWorkerTranscriptFileName } from './worker-transcript-files.js'
 
@@ -110,26 +110,36 @@ export class SessionAuditService {
       throw new SessionAuditError('Session audit currently supports order=asc only', 400)
     }
 
-    const scope = request.scope ?? 'session'
-    if (scope !== 'session') {
-      throw new SessionAuditError('Worker session audit sources are not implemented yet', 400)
+    const scope = parseScope(request.scope ?? 'session')
+    if (scope === 'session' && request.workerId) {
+      throw new SessionAuditError('workerId is only valid for worker audit scope', 400)
+    }
+
+    if (request.sourceKind) {
+      const expectedSourceKind: SessionAuditSourceKind = scope === 'session' ? 'canonical_session_jsonl' : 'canonical_worker_jsonl'
+      if (request.sourceKind !== expectedSourceKind) {
+        throw new SessionAuditError('Audit sourceKind does not match the requested source', 400)
+      }
     }
 
     const limit = clampLimit(request.limit)
     const categories = normalizeCategories(request.categories)
     const types = normalizeStringSet(request.types)
+    const sessionSource = this.resolveSessionSource(normalizedSessionAgentId)
+    const source = scope === 'session'
+      ? sessionSource
+      : await this.resolveWorkerSource(sessionSource, request.workerId)
     const cursor = request.cursor ? decodeCursor(request.cursor) : undefined
     if (cursor) {
       validateCursor(cursor, {
         sessionAgentId: normalizedSessionAgentId,
         scope,
-        sourceId: SESSION_SOURCE_ID,
+        sourceId: source.sourceId,
         order,
       })
     }
 
-    const source = this.resolveSessionSource(normalizedSessionAgentId)
-    const manifest = await this.buildManifest(normalizedSessionAgentId, source.sessionDir, source.absolutePath)
+    const manifest = await this.buildManifest(normalizedSessionAgentId, sessionSource.sessionDir, sessionSource.absolutePath)
     const startOffset = cursor?.offset ?? normalizeOffset(request.offset)
     const readResult = await readJsonlPage({
       filePath: source.absolutePath,
@@ -147,7 +157,7 @@ export class SessionAuditService {
           v: 1,
           sessionAgentId: normalizedSessionAgentId,
           scope,
-          sourceId: SESSION_SOURCE_ID,
+          sourceId: source.sourceId,
           offset: readResult.nextOffset,
           lineNumber: readResult.nextLineNumber,
           order,
@@ -158,8 +168,8 @@ export class SessionAuditService {
       sessionAgentId: normalizedSessionAgentId,
       manifest,
       scope,
-      sourceId: SESSION_SOURCE_ID,
-      sourceKind: 'canonical_session_jsonl',
+      sourceId: source.sourceId,
+      sourceKind: source.sourceKind,
       order,
       limit,
       categories: categories ? [...categories] : undefined,
@@ -203,6 +213,65 @@ export class SessionAuditService {
     }
   }
 
+  private async resolveWorkerSource(sessionSource: ResolvedAuditSource, workerId: string | undefined): Promise<ResolvedAuditSource> {
+    const normalizedWorkerId = normalizeRequiredId(workerId, 'workerId')
+    const safeWorkerId = sanitizeAuditPathSegment(normalizedWorkerId, 'workerId')
+    const descriptor = this.findWorkerDescriptorForSession(sessionSource.sessionAgentId, normalizedWorkerId)
+    const dataDir = this.host.getConfig().paths.dataDir
+    const sessionDescriptor = this.host.getAgent(sessionSource.sessionAgentId)
+    const profileId = sessionDescriptor?.profileId ?? sessionSource.sessionAgentId
+    const workersDir = resolve(getWorkersDir(dataDir, profileId, sessionSource.sessionAgentId))
+    assertPathInside(workersDir, sessionSource.sessionDir, 'Workers directory is outside the selected session directory')
+    const workerFile = resolve(getWorkerSessionFilePath(dataDir, profileId, sessionSource.sessionAgentId, safeWorkerId))
+    assertPathInside(workerFile, workersDir, 'Worker audit file is outside the selected workers directory')
+
+    const fileExists = await stat(workerFile).then(() => true).catch((error: unknown) => {
+      if (isNodeErrorCode(error, 'ENOENT')) {
+        return false
+      }
+      throw error
+    })
+    if (!descriptor && !fileExists) {
+      throw new SessionAuditError('Unknown worker audit source', 404)
+    }
+
+    return {
+      sessionAgentId: sessionSource.sessionAgentId,
+      sourceId: normalizedWorkerId,
+      sourceKind: 'canonical_worker_jsonl',
+      scope: 'worker',
+      sourceLabel: descriptor?.displayName ? `Worker transcript: ${descriptor.displayName}` : `Worker transcript: ${normalizedWorkerId}`,
+      absolutePath: workerFile,
+      relativePath: join('workers', `${safeWorkerId}.jsonl`),
+      sessionDir: sessionSource.sessionDir,
+    }
+  }
+
+  private findWorkerDescriptorForSession(sessionAgentId: string, workerId: string): AgentDescriptor | undefined {
+    const direct = this.host.getAgent(workerId)
+    if (direct?.role === 'worker' && direct.managerId === sessionAgentId) {
+      return direct
+    }
+    return this.listWorkerDescriptorsForSession(sessionAgentId).get(workerId)
+  }
+
+  private listWorkerDescriptorsForSession(sessionAgentId: string): Map<string, AgentDescriptor> {
+    const descriptorWorkers = new Map<string, AgentDescriptor>()
+    for (const worker of this.host.listWorkersForSession?.(sessionAgentId) ?? []) {
+      if (worker.role === 'worker' && worker.managerId === sessionAgentId) {
+        descriptorWorkers.set(worker.agentId, worker)
+      }
+    }
+    if (descriptorWorkers.size === 0) {
+      for (const agent of this.host.listAgents?.() ?? []) {
+        if (agent.role === 'worker' && agent.managerId === sessionAgentId) {
+          descriptorWorkers.set(agent.agentId, agent)
+        }
+      }
+    }
+    return descriptorWorkers
+  }
+
   private async buildManifest(sessionAgentId: string, sessionDir: string, sessionFile: string): Promise<SessionAuditManifest> {
     const [sessionBytes, workers] = await Promise.all([
       readFileSize(sessionFile),
@@ -218,17 +287,7 @@ export class SessionAuditService {
   }
 
   private async listWorkerSummaries(sessionAgentId: string, sessionDir: string): Promise<SessionAuditWorkerSummary[]> {
-    const descriptorWorkers = new Map<string, AgentDescriptor>()
-    for (const worker of this.host.listWorkersForSession?.(sessionAgentId) ?? []) {
-      descriptorWorkers.set(worker.agentId, worker)
-    }
-    if (descriptorWorkers.size === 0) {
-      for (const agent of this.host.listAgents?.() ?? []) {
-        if (agent.role === 'worker' && agent.managerId === sessionAgentId) {
-          descriptorWorkers.set(agent.agentId, agent)
-        }
-      }
-    }
+    const descriptorWorkers = this.listWorkerDescriptorsForSession(sessionAgentId)
 
     const dataDir = this.host.getConfig().paths.dataDir
     const sessionDescriptor = this.host.getAgent(sessionAgentId)
@@ -245,12 +304,15 @@ export class SessionAuditService {
     })
     for (const fileName of files) {
       if (isCanonicalWorkerTranscriptFileName(fileName)) {
-        workerIds.add(fileName.slice(0, -'.jsonl'.length))
+        const workerId = fileName.slice(0, -'.jsonl'.length)
+        if (isSafeAuditPathSegment(workerId)) {
+          workerIds.add(workerId)
+        }
       }
     }
 
     const summaries = await Promise.all([...workerIds].sort().map(async (workerId) => {
-      const safeWorkerId = sanitizePathSegment(workerId)
+      const safeWorkerId = sanitizeAuditPathSegment(workerId, 'workerId')
       const relativePath = join('workers', `${safeWorkerId}.jsonl`)
       const filePath = resolve(workersDir, `${safeWorkerId}.jsonl`)
       assertPathInside(filePath, workersDir, 'Worker audit file is outside the selected workers directory')
@@ -824,6 +886,23 @@ function normalizeRequiredId(value: string | undefined, field: string): string {
     throw new SessionAuditError(`Missing ${field}`, 400)
   }
   return trimmed
+}
+
+function sanitizeAuditPathSegment(value: string, field: string): string {
+  try {
+    return sanitizePathSegment(value)
+  } catch {
+    throw new SessionAuditError(`Invalid ${field}`, 400)
+  }
+}
+
+function isSafeAuditPathSegment(value: string): boolean {
+  try {
+    sanitizePathSegment(value)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function assertPathInside(targetPath: string, parentPath: string, message: string): void {
