@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { basename, dirname, extname, resolve } from "node:path";
 import type {
   FileContentResult,
   FileCountResult,
@@ -49,7 +47,6 @@ interface RepoContext {
   isGitRepo: boolean;
   repoName: string;
   branch: string | null;
-  repoRoot?: string;
 }
 
 interface CurrentTextFileState {
@@ -100,19 +97,13 @@ export class FileBrowserService {
       throw error;
     }
 
-    const names = dirEntries.map((entry) => entry.name);
-    const ignoredNames = repoContext.isGitRepo && repoContext.repoRoot
-      ? await this.getGitIgnoredNames(repoContext.repoRoot, resolvedPath, names)
-      : new Set<string>();
-
     const entries = (
       await Promise.all(
         dirEntries.map((entry) => this.toDirectoryEntry({
           entry,
           cwd: normalizedCwd,
           parentDir: resolvedPath,
-          isGitRepo: repoContext.isGitRepo,
-          ignoredNames
+          isGitRepo: repoContext.isGitRepo
         }))
       )
     ).filter((entry): entry is FileEntry => entry !== null);
@@ -435,7 +426,6 @@ export class FileBrowserService {
 
     return {
       isGitRepo: true,
-      repoRoot,
       repoName: basename(repoRoot),
       branch
     };
@@ -487,58 +477,20 @@ export class FileBrowserService {
     }
   }
 
-  private async getGitIgnoredNames(repoRoot: string, parentDir: string, names: string[]): Promise<Set<string>> {
-    const candidates = names.filter((name) => name !== ".git");
-    if (candidates.length === 0) {
-      return new Set<string>();
-    }
-
-    const repoRelativeByName = new Map<string, string>();
-    for (const name of candidates) {
-      const absolutePath = resolve(parentDir, name);
-      const repoRelative = relative(repoRoot, absolutePath).replace(/\\/g, "/");
-      if (!repoRelative || repoRelative.startsWith("..") || repoRelative === ".") {
-        continue;
-      }
-
-      repoRelativeByName.set(name, repoRelative);
-    }
-
-    if (repoRelativeByName.size === 0) {
-      return new Set<string>();
-    }
-
-    const ignoredPaths = await runGitCheckIgnore(repoRoot, Array.from(repoRelativeByName.values()));
-    const ignoredNames = new Set<string>();
-
-    for (const [name, repoRelative] of repoRelativeByName.entries()) {
-      if (ignoredPaths.has(repoRelative)) {
-        ignoredNames.add(name);
-      }
-    }
-
-    return ignoredNames;
-  }
-
   private async toDirectoryEntry(options: {
     entry: { name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean };
     cwd: string;
     parentDir: string;
     isGitRepo: boolean;
-    ignoredNames: Set<string>;
   }): Promise<FileEntry | null> {
-    const { entry, cwd, parentDir, isGitRepo, ignoredNames } = options;
+    const { entry, cwd, parentDir, isGitRepo } = options;
     const name = entry.name;
 
     if (name === ".git") {
       return null;
     }
 
-    if (isGitRepo) {
-      if (ignoredNames.has(name)) {
-        return null;
-      }
-    } else if (isExcludedForNonGit(name)) {
+    if (!isGitRepo && isExcludedForNonGit(name)) {
       return null;
     }
 
@@ -805,59 +757,3 @@ function toFileExtension(name: string): string | undefined {
   return extension.slice(1).toLowerCase();
 }
 
-async function runGitCheckIgnore(repoRoot: string, paths: string[]): Promise<Set<string>> {
-  const child = spawn("git", ["check-ignore", "-z", "--stdin"], {
-    cwd: repoRoot,
-    stdio: ["pipe", "pipe", "pipe"]
-  });
-
-  child.stdin.setDefaultEncoding("utf8");
-  child.stdin.write(paths.join("\0"));
-  child.stdin.end();
-
-  const stdoutChunks: Buffer[] = [];
-  let stderr = "";
-
-  child.stdout.on("data", (chunk: Buffer) => {
-    stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  });
-
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => {
-    stderr += chunk;
-  });
-
-  const exitCode = await waitForChildProcessClose(child);
-
-  if (exitCode !== 0 && exitCode !== 1) {
-    throw new Error(`git check-ignore failed (${exitCode}): ${stderr.trim() || "unknown error"}`);
-  }
-
-  const stdoutBuffer = Buffer.concat(stdoutChunks);
-  if (stdoutBuffer.length === 0) {
-    return new Set<string>();
-  }
-
-  const stdoutStr = stdoutBuffer.toString("utf8");
-  return new Set(
-    stdoutStr
-      .split("\0")
-      .filter((segment) => segment.length > 0)
-  );
-}
-
-async function waitForChildProcessClose(child: ReturnType<typeof spawn>): Promise<number> {
-  const closePromise = once(child, "close") as Promise<[number | null]>;
-  const errorPromise = once(child, "error") as Promise<[Error]>;
-
-  const winner = await Promise.race([
-    closePromise.then(([code]) => ({ kind: "close" as const, code })),
-    errorPromise.then(([error]) => ({ kind: "error" as const, error }))
-  ]);
-
-  if (winner.kind === "error") {
-    throw winner.error;
-  }
-
-  return winner.code ?? 1;
-}
