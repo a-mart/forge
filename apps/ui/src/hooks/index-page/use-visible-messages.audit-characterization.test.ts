@@ -104,9 +104,31 @@ describe('audit view replay characterization (Phase 0 → Phase 1)', () => {
       '2026-01-01T00:00:04.000Z',
     )
 
-    it('shows forked transcript rows in Web view despite ancestor agentId', () => {
+    it('shows forked web/cli transcript rows in Web view despite ancestor agentId', () => {
       const result = deriveVisibleMessages({
         messages: [forkedTranscript],
+        activityMessages: [],
+        agents: [currentManager],
+        activeAgent: currentManager,
+        channelView: 'web',
+      })
+
+      expect(result.visibleMessages).toEqual([forkedTranscript])
+    })
+
+    it('hides non-web ancestor transcript rows in Web view', () => {
+      const telegramTranscript: ConversationEntry = {
+        type: 'conversation_message',
+        agentId: ancestorManagerId,
+        role: 'assistant',
+        text: 'telegram-only ancestor turn',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        source: 'speak_to_user',
+        sourceContext: { channel: 'telegram' },
+      }
+
+      const result = deriveVisibleMessages({
+        messages: [forkedTranscript, telegramTranscript],
         activityMessages: [],
         agents: [currentManager],
         activeAgent: currentManager,
@@ -133,16 +155,35 @@ describe('audit view replay characterization (Phase 0 → Phase 1)', () => {
       expect(result.visibleMessages).not.toContainEqual(workerInternalTool)
     })
 
-    it('renders manager-context agent_message with only manager descriptors present', () => {
+    it('renders manager-context agent_message when forked transcript establishes alias', () => {
       const result = deriveVisibleMessages({
-        messages: [],
+        messages: [forkedTranscript],
         activityMessages: [workerCallback],
         agents: [currentManager],
         activeAgent: currentManager,
         channelView: 'all',
       })
 
-      expect(result.visibleMessages).toEqual([workerCallback])
+      expect(result.visibleMessages).toEqual([forkedTranscript, workerCallback])
+    })
+
+    it('hides descriptorless foreign worker callbacks without alias evidence', () => {
+      const foreignCallback = makeAgentMessage(
+        'foreign-manager',
+        'worker-foreign',
+        'foreign-manager',
+        'foreign worker report',
+      )
+
+      const result = deriveVisibleMessages({
+        messages: [],
+        activityMessages: [foreignCallback],
+        agents: [currentManager],
+        activeAgent: currentManager,
+        channelView: 'all',
+      })
+
+      expect(result.visibleMessages).toEqual([])
     })
   })
 

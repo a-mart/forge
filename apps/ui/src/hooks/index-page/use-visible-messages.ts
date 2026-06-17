@@ -99,7 +99,6 @@ export function deriveVisibleMessages({
                 activeManagerId,
                 managerAliasIds,
                 knownWorkerIds,
-                sessionEntries: allMessages,
               }),
             )
           })()

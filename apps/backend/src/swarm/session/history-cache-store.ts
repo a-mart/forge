@@ -228,34 +228,13 @@ export class HistoryCacheStore {
 
       const metadata = parseConversationHistoryCacheMetadata(parsed);
       if (metadata) {
-        if (fileDescriptor !== undefined) {
-          closeSync(fileDescriptor);
-          fileDescriptor = undefined;
-        }
-
-        const raw = readFileSync(cacheFile, "utf8");
-        const firstNewline = raw.indexOf("\n");
-        const remainder = firstNewline >= 0 ? raw.slice(firstNewline + 1) : "";
-        const parsedEntryCount = countParsedConversationCacheEntries(remainder);
-        if (parsedEntryCount === null) {
-          return {
-            cacheState: "cache_read_error",
-            metadata: null,
-            cacheFileBytes,
-            cacheReadMs: performance.now() - startedAtMs,
-            fsReadOps,
-            fsReadBytes,
-            detail: "invalid_cache_payload"
-          };
-        }
-
         return {
           cacheState: "loaded",
           metadata,
           cacheFileBytes,
           cacheReadMs: performance.now() - startedAtMs,
-          fsReadOps: fsReadOps + 1,
-          fsReadBytes: Math.max(fsReadBytes, cacheFileBytes)
+          fsReadOps,
+          fsReadBytes
         };
       }
 
@@ -1065,36 +1044,4 @@ function isEnoentError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: string }).code === "ENOENT"
   );
-}
-
-function countParsedConversationCacheEntries(remainder: string): number | null {
-  if (remainder.trim().length === 0) {
-    return 0;
-  }
-
-  let parsedEntryCount = 0;
-  for (const line of remainder.split("\n")) {
-    if (!line.trim()) {
-      continue;
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      return null;
-    }
-
-    if (parseConversationHistoryCacheMetadata(parsed)) {
-      continue;
-    }
-
-    if (!isConversationEntryEvent(parsed)) {
-      return null;
-    }
-
-    parsedEntryCount += 1;
-  }
-
-  return parsedEntryCount;
 }

@@ -88,7 +88,7 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
     });
   }
 
-  describe("D. projector cap preserves manager-context rows over 2000 entries", () => {
+  describe("D1. projector cap preserves manager-context rows over 2000 entries", () => {
     it("preserves early manager spawn/send/callback rows when trimming overflow", () => {
       const protectedRows: ConversationEntryEvent[] = [
         message("ancestor-turn", {
@@ -111,11 +111,15 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
 
       expect(entries.length).toBe(MAX_CONVERSATION_HISTORY);
       expect(ids(entries)).toEqual(
-        expect.arrayContaining(["early-spawn", "early-send", "early-callback"])
+        expect.arrayContaining(["early-spawn", "early-send", "early-callback", "ancestor-turn"])
       );
-      expect(ids(entries).filter((id) => id.startsWith("filler-")).length).toBeLessThan(
-        MAX_CONVERSATION_HISTORY
+      expect(ids(entries).filter((id) => id.startsWith("filler-"))).toHaveLength(
+        MAX_CONVERSATION_HISTORY - protectedRows.length
       );
+      expect(ids(entries)).not.toContain("filler-0");
+      expect(ids(entries)).not.toContain("filler-1");
+      expect(ids(entries)).not.toContain("filler-2");
+      expect(ids(entries)).not.toContain("filler-3");
     });
 
     it("does not protect worker internal tool rows during overflow trim", () => {
@@ -133,7 +137,7 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
     });
   });
 
-  describe("D. bootstrap selection protects manager-context activity under budget pressure", () => {
+  describe("D2. bootstrap selection protects manager-context activity under budget pressure", () => {
     it("keeps early manager spawn/send rows ahead of tail worker internals", () => {
       const history: ConversationEntryEvent[] = [
         managerSpawn(MANAGER_ID, "bootstrap-spawn"),

@@ -91,10 +91,12 @@ describe("audit replay history cache characterization (Phase 0 → Phase 1)", ()
       );
 
       const header = store.loadConversationHistoryCacheHeader(sessionFile);
-      expect(header.cacheState).not.toBe("loaded");
+      expect(header.cacheState).toBe("loaded");
+      expect(header.metadata).not.toBeNull();
 
       const validation = store.validateCachedConversationHistory(sessionFile, metadata);
       expect(validation.ok).toBe(false);
+      expect(validation.cacheState).toBe("metadata_entries_mismatch");
       expect(validation.entries?.length ?? 0).not.toBe(2);
     });
 

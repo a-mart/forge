@@ -138,10 +138,9 @@ export function isVisibleInManagerAllView(
     activeManagerId: string
     managerAliasIds: ReadonlySet<string>
     knownWorkerIds: ReadonlySet<string>
-    sessionEntries?: readonly ConversationEntry[]
   },
 ): boolean {
-  const { activeManagerId, managerAliasIds, knownWorkerIds, sessionEntries = [] } = options
+  const { activeManagerId, managerAliasIds, knownWorkerIds } = options
 
   if (entry.type === 'conversation_log') {
     return false
@@ -184,53 +183,9 @@ export function isVisibleInManagerAllView(
       }
     }
 
-    return isSessionEmbeddedHistoricalWorkerCallback(
-      entry,
-      activeManagerId,
-      sessionEntries,
-      knownWorkerIds,
-    )
+    return false
   }
 
   const agentId = entry.agentId.trim()
   return agentId.length > 0 && managerAliasIds.has(agentId)
-}
-
-function isSessionEmbeddedHistoricalWorkerCallback(
-  entry: ConversationEntry,
-  activeManagerId: string,
-  sessionEntries: readonly ConversationEntry[],
-  knownWorkerIds: ReadonlySet<string>,
-): boolean {
-  if (entry.type !== 'agent_message') {
-    return false
-  }
-
-  const agentId = entry.agentId.trim()
-  const fromAgentId = entry.fromAgentId?.trim()
-  const toAgentId = entry.toAgentId.trim()
-  if (
-    agentId.length === 0 ||
-    agentId === activeManagerId ||
-    knownWorkerIds.has(agentId) ||
-    agentId !== toAgentId ||
-    !fromAgentId ||
-    fromAgentId === agentId
-  ) {
-    return false
-  }
-
-  const managerContextAgentIds = new Set<string>()
-  for (const candidate of sessionEntries) {
-    if (candidate.type !== 'agent_message') {
-      continue
-    }
-
-    const candidateAgentId = candidate.agentId.trim()
-    if (candidateAgentId.length > 0) {
-      managerContextAgentIds.add(candidateAgentId)
-    }
-  }
-
-  return managerContextAgentIds.size === 1 && managerContextAgentIds.has(agentId)
 }

@@ -1426,7 +1426,7 @@ describe('ConversationProjector session tree continuity', () => {
       ),
     ).toBe(true)
     expect(result.diagnostics).toMatchObject({
-      cacheState: 'cache_read_error',
+      cacheState: 'metadata_entries_mismatch',
       historySource: 'cache_rebuild',
       coldLoad: true,
     })
