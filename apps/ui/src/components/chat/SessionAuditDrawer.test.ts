@@ -5,7 +5,12 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { highlightCode } from '@/lib/syntax-highlight'
 import { SessionAuditDrawer } from './SessionAuditDrawer'
+
+vi.mock('@/lib/syntax-highlight', () => ({
+  highlightCode: vi.fn((source: string) => `HL:${source}`),
+}))
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -13,6 +18,7 @@ let root: Root | null = null
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  vi.mocked(highlightCode).mockClear()
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input))
     if (url.pathname.endsWith('/audit/entry')) {
@@ -85,7 +91,7 @@ describe('SessionAuditDrawer', () => {
     expect(getByText(document.body, 'canonical_session_jsonl')).toBeTruthy()
     expect(getByText(document.body, 'Manager canonical JSONL')).toBeTruthy()
     expect(getByText(document.body, 'sessions/manager-1/session.jsonl')).toBeTruthy()
-    expect(getByText(document.body, '10 → 220')).toBeTruthy()
+    expect(getByText(document.body, /compact summaries only/i)).toBeTruthy()
     expect(getByText(document.body, 'normal_view_hidden')).toBeTruthy()
     expect(queryByText(document.body, 'tool result raw')).toBeNull()
 
@@ -163,7 +169,54 @@ describe('SessionAuditDrawer', () => {
 
     fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: 'filtered' } })
     await waitFor(() => expect(queryByText(document.body, 'tool result raw')).toBeNull())
-    expect(getByText(document.body, 'Select an audit row to view full JSON details.')).toBeTruthy()
+    expect(getByText(document.body, /Select an audit row and choose View JSON/i)).toBeTruthy()
+  })
+
+  it('uses plain scrollable rendering for large detail payloads without syntax highlighting', async () => {
+    const hugeRaw = `{"payload":"${'z'.repeat(20_000)}"}`
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/audit/entry')) {
+        return responseFor({
+          sessionAgentId: 'manager-1',
+          scope: 'session',
+          sourceId: 'session',
+          sourceKind: 'canonical_session_jsonl',
+          relativePath: 'sessions/manager-1/session.jsonl',
+          byteOffset: 10,
+          nextByteOffset: 220,
+          rawBytes: hugeRaw.length,
+          rawText: hugeRaw,
+          truncated: false,
+          maxBytes: 8388608,
+          formattedJson: undefined,
+          parseError: 'Unexpected end of JSON input',
+        })
+      }
+      return responseFor(auditPageFixture())
+    }))
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    fireEvent.click(getByRole(document.body, 'button', { name: 'View JSON' }))
+    await waitFor(() => expect(getByText(document.body, /plain scrollable view/i)).toBeTruthy())
+
+    expect(vi.mocked(highlightCode)).not.toHaveBeenCalled()
+    expect(document.body.querySelector('pre')?.textContent).toContain(hugeRaw.slice(0, 32))
+    expect(document.body.querySelector('.syntax-highlight table')).toBeNull()
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Copy JSON' }))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(hugeRaw))
   })
 
   it('renders as a full-screen audit surface without a drawer resize dependency', async () => {

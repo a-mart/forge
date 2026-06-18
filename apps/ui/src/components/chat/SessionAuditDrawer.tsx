@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogDescription, DialogHeader, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { fetchSessionAuditEntryDetail, fetchSessionAuditPage } from '@/lib/session-audit-api'
+import { shouldUsePlainJsonDetailView } from '@/lib/session-audit-json-detail'
 import { highlightCode } from '@/lib/syntax-highlight'
 import { cn } from '@/lib/utils'
 import '@/styles/syntax-highlight.css'
@@ -286,6 +287,9 @@ export function SessionAuditDrawer({
             {sessionAgentId ? (
               <CopyPill label="Session" value={sessionAgentId} />
             ) : null}
+            <p className="text-xs text-muted-foreground">
+              List rows are compact summaries only. Select View JSON to fetch the full canonical JSONL row unless it exceeds the 8&nbsp;MB detail safety cap.
+            </p>
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
@@ -490,6 +494,7 @@ function SessionAuditDetailPanel({
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [wordWrap, setWordWrap] = useState(true)
+  const copyResetTimeoutRef = useRef<number | null>(null)
   const requestKey = entry ? `${entry.id}:${scope}:${workerId ?? ''}:${sourceKind}` : ''
   const activeRequestKeyRef = useRef(requestKey)
 
@@ -503,6 +508,10 @@ function SessionAuditDetailPanel({
     setError(null)
     setCopied(false)
     setWordWrap(true)
+    if (copyResetTimeoutRef.current) {
+      clearTimeout(copyResetTimeoutRef.current)
+      copyResetTimeoutRef.current = null
+    }
 
     if (!entry || !sessionAgentId) {
       setLoading(false)
@@ -540,21 +549,22 @@ function SessionAuditDetailPanel({
     void loadDetail()
     return () => {
       controller.abort()
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current)
+        copyResetTimeoutRef.current = null
+      }
     }
   }, [entry, requestKey, scope, sessionAgentId, sourceKind, workerId, wsUrl])
 
   const displayText = entry && (viewMode === 'formatted' && detail?.formattedJson
     ? detail.formattedJson
     : detail?.rawText ?? '')
-  const highlightedLines = useMemo(() => {
-    if (!displayText) return []
-    return displayText.split('\n').map((line) => highlightCode(line, 'json'))
-  }, [displayText])
+  const usePlainDetailView = Boolean(detail && (detail.truncated || (displayText ? shouldUsePlainJsonDetailView(displayText) : false)))
 
   if (!entry) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-        Select an audit row to view full JSON details.
+        Select an audit row and choose View JSON to load full canonical JSON details.
       </div>
     )
   }
@@ -565,7 +575,10 @@ function SessionAuditDetailPanel({
     try {
       await navigator.clipboard?.writeText(text)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1200)
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current)
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 1200)
     } catch {
       setCopied(false)
     }
@@ -641,27 +654,47 @@ function SessionAuditDetailPanel({
         ) : detail?.truncated ? (
           <div className="flex h-full flex-col overflow-hidden">
             <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-              This row exceeds the {formatBytes(detail.maxBytes)} detail cap. Showing the first {formatBytes(new TextEncoder().encode(detail.rawText).length)} of {formatBytes(detail.rawBytes)}.
+              This row exceeds the {formatBytes(detail.maxBytes)} detail cap. Showing the first {formatBytes(new TextEncoder().encode(detail.rawText).length)} of {formatBytes(detail.rawBytes)}. Copy includes the fetched partial JSON only.
             </div>
-            <JsonDetailView highlightedLines={highlightedLines} wordWrap={wordWrap} />
+            <JsonDetailView
+              text={displayText ?? ''}
+              wordWrap={wordWrap}
+              usePlainView
+              plainNotice="Server-truncated row — plain scrollable view to keep the audit UI responsive."
+            />
           </div>
         ) : detail?.parseError && viewMode === 'formatted' && !detail.formattedJson ? (
           <div className="flex h-full flex-col overflow-hidden">
             <div className="border-b border-border/70 bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
               JSON parse failed: {detail.parseError}. Switch to Raw to inspect the original line.
             </div>
-            <JsonDetailView highlightedLines={highlightedLines} wordWrap={wordWrap} />
+            <JsonDetailView text={displayText ?? ''} wordWrap={wordWrap} usePlainView={usePlainDetailView} />
           </div>
         ) : (
-          <JsonDetailView highlightedLines={highlightedLines} wordWrap={wordWrap} />
+          <JsonDetailView text={displayText ?? ''} wordWrap={wordWrap} usePlainView={usePlainDetailView} />
         )}
       </div>
     </div>
   )
 }
 
-function JsonDetailView({ highlightedLines, wordWrap }: { highlightedLines: string[]; wordWrap: boolean }) {
-  if (highlightedLines.length === 0) {
+function JsonDetailView({
+  text,
+  wordWrap,
+  usePlainView = false,
+  plainNotice,
+}: {
+  text: string
+  wordWrap: boolean
+  usePlainView?: boolean
+  plainNotice?: string
+}) {
+  const highlightedLines = useMemo(() => {
+    if (!text || usePlainView) return null
+    return text.split('\n').map((line) => highlightCode(line, 'json'))
+  }, [text, usePlainView])
+
+  if (!text) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
         No JSON content available.
@@ -669,11 +702,29 @@ function JsonDetailView({ highlightedLines, wordWrap }: { highlightedLines: stri
     )
   }
 
+  if (usePlainView) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="border-b border-border/70 bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          {plainNotice ?? 'Large JSON payload — plain scrollable view to keep the audit UI responsive. Copy still includes the full fetched JSON.'}
+        </div>
+        <pre
+          className={cn(
+            'min-h-0 flex-1 overflow-auto p-4 font-mono text-[12px] leading-relaxed text-foreground',
+            wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre',
+          )}
+        >
+          {text}
+        </pre>
+      </div>
+    )
+  }
+
   return (
-    <div className="syntax-highlight h-full overflow-auto font-mono text-[12px] leading-relaxed">
-      <table className="w-full min-w-max border-collapse">
+    <div className="syntax-highlight h-full min-h-0 overflow-auto font-mono text-[12px] leading-relaxed">
+      <table className="w-full min-w-0 border-collapse">
         <tbody>
-          {highlightedLines.map((html, index) => (
+          {(highlightedLines ?? []).map((html, index) => (
             <tr key={index} className="hover:bg-muted/20">
               <td className="sticky left-0 z-[1] select-none border-r border-border/30 bg-background/95 px-3 py-0 text-right align-top text-muted-foreground/50">
                 {index + 1}
@@ -703,13 +754,24 @@ function MetaItem({ label, value, copyable = false }: { label: string; value?: s
 
 function CopyPill({ label, value }: { label: string; value?: string | null }) {
   const [copied, setCopied] = useState(false)
+  const copyResetTimeoutRef = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (copyResetTimeoutRef.current) {
+      clearTimeout(copyResetTimeoutRef.current)
+    }
+  }, [])
+
   if (!value) return null
 
   async function copy() {
     try {
       await navigator.clipboard?.writeText(value ?? '')
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1200)
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current)
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 1200)
     } catch {
       setCopied(false)
     }
