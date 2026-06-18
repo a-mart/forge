@@ -119,8 +119,7 @@ export function DiffViewerContent({
   const effectiveWorktreeId = repoTarget === 'workspace' ? selectedWorktreeId : null
   const shouldLoadWorktrees =
     active && !!agentId && repoTarget === 'workspace' && activeTab === 'worktrees'
-  const shouldLoadPullRequests =
-    active && !!agentId && repoTarget === 'workspace' && activeTab === 'pull-requests'
+  const shouldLoadPullRequests = active && !!agentId && repoTarget === 'workspace'
   const statusQuery = useGitStatus(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId)
   const branchesQuery = useGitBranches(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId, {
     enabled: active && !!agentId && repoTarget === 'workspace',
@@ -140,10 +139,10 @@ export function DiffViewerContent({
     if (activeTab === 'worktrees') {
       worktreesQuery.refetch()
     }
-    if (activeTab === 'pull-requests') {
+    if (shouldLoadPullRequests) {
       pullRequestsQuery.refetch()
     }
-  }, [activeTab, agentId, branchesQuery, pullRequestsQuery, repoTarget, statusQuery, worktreesQuery])
+  }, [activeTab, agentId, branchesQuery, pullRequestsQuery, repoTarget, shouldLoadPullRequests, statusQuery, worktreesQuery])
 
   useEffect(() => {
     if (!active || externalRefreshNonce === 0 || externalRefreshNonce === lastExternalRefreshNonceRef.current) return
@@ -161,6 +160,12 @@ export function DiffViewerContent({
   const contextWorktree = selectedWorktreeSummary
   const worktreeCount =
     activeTab === 'worktrees' ? (worktreesQuery.data?.worktrees.length ?? null) : null
+  const pullRequestCount =
+    pullRequestsQuery.data?.providerStatus.available === true &&
+    pullRequestsQuery.data.providerStatus.authenticated === true &&
+    !pullRequestsQuery.data.listError
+      ? pullRequestsQuery.data.open.length
+      : null
   const changesViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:changes`
   const historyViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:history`
 
@@ -194,6 +199,7 @@ export function DiffViewerContent({
         branch={statusQuery.data?.branch ?? contextWorktree?.branch ?? null}
         currentWorktreePath={contextWorktree?.path ?? null}
         worktreeCount={worktreeCount}
+        pullRequestCount={pullRequestCount}
         selectedWorktreeId={selectedWorktreeId}
         isRefreshing={
           statusQuery.isLoading ||

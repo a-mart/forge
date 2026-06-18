@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { GitRepoTarget } from '@forge/protocol'
-import { GitBranch, HardDrive, RefreshCw, X } from 'lucide-react'
+import { GitBranch, GitPullRequest, HardDrive, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -24,6 +24,7 @@ interface DiffDialogHeaderProps {
   branch: string | null
   currentWorktreePath?: string | null
   worktreeCount?: number | null
+  pullRequestCount?: number | null
   selectedWorktreeId?: string | null
   isRefreshing: boolean
   onRefresh: () => void
@@ -42,6 +43,7 @@ export function DiffDialogHeader({
   branch,
   currentWorktreePath,
   worktreeCount,
+  pullRequestCount,
   selectedWorktreeId,
   isRefreshing,
   onRefresh,
@@ -87,22 +89,24 @@ export function DiffDialogHeader({
         </>
       ) : null}
 
-      <div
-        className="inline-flex h-7 shrink-0 items-center rounded-md border border-border/40 bg-background/40 p-0.5"
-        role="group"
-        aria-label="Source Control sections"
+      <nav
+        className="inline-flex h-7 shrink-0 items-center gap-1"
+        aria-label="Source Control shortcuts"
       >
-        <TabButton
+        <SourceControlShortcutButton
           label="Worktrees"
+          icon={<HardDrive className="size-3" />}
           active={activeTab === 'worktrees'}
           onClick={() => onTabChange('worktrees')}
         />
-        <TabButton
+        <SourceControlShortcutButton
           label="Pull Requests"
+          icon={<GitPullRequest className="size-3" />}
+          count={pullRequestCount}
           active={activeTab === 'pull-requests'}
           onClick={() => onTabChange('pull-requests')}
         />
-      </div>
+      </nav>
 
       {showRepoSelector ? (
         <>
@@ -194,6 +198,52 @@ export function DiffDialogHeader({
         <X className="size-4" />
       </Button>
     </div>
+  )
+}
+
+function SourceControlShortcutButton({
+  label,
+  icon,
+  count,
+  active,
+  onClick,
+}: {
+  label: string
+  icon: ReactNode
+  count?: number | null
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+        active
+          ? 'border-primary/35 bg-primary/10 text-foreground shadow-sm'
+          : 'border-border/60 bg-background/70 text-muted-foreground hover:border-border hover:bg-muted/40 hover:text-foreground',
+      )}
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={label}
+    >
+      {icon}
+      <span>{label}</span>
+      {typeof count === 'number' ? (
+        <span
+          className={cn(
+            'ml-0.5 inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4',
+            count > 0
+              ? 'bg-primary/15 text-primary'
+              : 'bg-muted text-muted-foreground',
+          )}
+          aria-hidden="true"
+        >
+          {count}
+        </span>
+      ) : null}
+    </button>
   )
 }
 

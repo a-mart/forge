@@ -17,6 +17,7 @@ const {
   WORKTREE_ERROR_BY_TARGET,
   WORKTREE_NOT_INITIALIZED_BY_TARGET,
   BRANCHES_BY_TARGET,
+  PULL_REQUESTS_QUERY_STATE,
 } = vi.hoisted(() => ({
   invalidateGitCachesMock: vi.fn(),
   hookCalls: {
@@ -25,6 +26,7 @@ const {
     diff: [] as Array<{ agentId: string | null; repoTarget: string; file: string | null }>,
     log: [] as Array<{ agentId: string | null; repoTarget: string; limit: number; offset: number }>,
     worktrees: [] as Array<{ agentId: string | null; repoTarget: string; enabled?: boolean }>,
+    pullRequests: [] as Array<{ agentId: string | null; repoTarget: string; worktreeId?: string | null; enabled?: boolean }>,
     commitDetail: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null }>,
     commitDiff: [] as Array<{ agentId: string | null; repoTarget: string; sha: string | null; file: string | null }>,
     refetches: [] as string[],
@@ -174,6 +176,21 @@ const {
   WORKTREE_NOT_INITIALIZED_BY_TARGET: {
     workspace: false,
     versioning: false,
+  },
+  PULL_REQUESTS_QUERY_STATE: {
+    data: null as null | {
+      open: Array<Record<string, unknown>>
+      recentlyClosed: Array<Record<string, unknown>>
+      currentBranchPullRequest: Record<string, unknown> | null
+      providerStatus: { provider: 'github'; available: boolean; authenticated: boolean; remoteUrl?: string; message?: string }
+      repoName: string
+      repoRoot: string
+      repoKind: 'workspace'
+      repoLabel: string
+      context: { repoTarget: 'workspace'; worktreeId?: string }
+      listError?: string
+    },
+    error: null as string | null,
   },
   BRANCHES_BY_TARGET: {
     workspace: {
@@ -420,12 +437,22 @@ vi.mock('./use-diff-queries', () => ({
       refetch: vi.fn(),
     }
   },
-  useGitPullRequests: () => ({
-    data: null,
-    isLoading: false,
-    error: null,
-    refetch: vi.fn(() => hookCalls.refetches.push('pull-requests')),
-  }),
+  useGitPullRequests: (
+    _wsUrl: string,
+    agentId: string | null,
+    repoTarget: 'workspace' | 'versioning',
+    worktreeId?: string | null,
+    options?: { enabled?: boolean },
+  ) => {
+    const enabled = options?.enabled ?? !!agentId
+    hookCalls.pullRequests.push({ agentId, repoTarget, worktreeId: worktreeId ?? null, enabled })
+    return {
+      data: enabled && agentId && repoTarget === 'workspace' ? PULL_REQUESTS_QUERY_STATE.data : null,
+      isLoading: false,
+      error: enabled ? PULL_REQUESTS_QUERY_STATE.error : null,
+      refetch: vi.fn(() => hookCalls.refetches.push('pull-requests')),
+    }
+  },
   useGitPullRequestDetail: () => ({
     data: null,
     isLoading: false,
@@ -460,6 +487,8 @@ beforeEach(() => {
   WORKTREE_ERROR_BY_TARGET.versioning = null
   WORKTREE_NOT_INITIALIZED_BY_TARGET.workspace = false
   WORKTREE_NOT_INITIALIZED_BY_TARGET.versioning = false
+  PULL_REQUESTS_QUERY_STATE.data = null
+  PULL_REQUESTS_QUERY_STATE.error = null
   WORKTREES_BY_TARGET.workspace.splice(0, WORKTREES_BY_TARGET.workspace.length,
     {
       id: 'workspace-main',
@@ -694,10 +723,12 @@ describe('DiffViewerDialog', () => {
     expect(hookCalls.status.at(-1)?.repoTarget).toBe('workspace')
     expect(getByRole(document.body, 'button', { name: 'Changes' }).getAttribute('aria-pressed')).toBe('true')
     expect(getByRole(document.body, 'group', { name: 'Repository activity' })).toBeTruthy()
-    const sourceControlSections = getByRole(document.body, 'group', { name: 'Source Control sections' })
-    expect(sourceControlSections).toBeTruthy()
-    expect(within(sourceControlSections).queryByRole('button', { name: 'Changes' })).toBeNull()
-    expect(within(sourceControlSections).queryByRole('button', { name: 'History' })).toBeNull()
+    const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
+    expect(sourceControlShortcuts).toBeTruthy()
+    expect(within(sourceControlShortcuts).queryByRole('button', { name: 'Changes' })).toBeNull()
+    expect(within(sourceControlShortcuts).queryByRole('button', { name: 'History' })).toBeNull()
+    expect(within(sourceControlShortcuts).getByRole('button', { name: 'Worktrees' }).getAttribute('aria-pressed')).toBe('false')
+    expect(within(sourceControlShortcuts).getByRole('button', { name: 'Pull Requests' }).getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(getByRole(document.body, 'button', { name: 'History' }))
     await flushEffects()
     expect(getByRole(document.body, 'listbox', { name: 'Commit history' })).toBeTruthy()
@@ -712,6 +743,83 @@ describe('DiffViewerDialog', () => {
     fireEvent.click(getByRole(document.body, 'button', { name: 'Worktrees' }))
     await flushEffects()
     expect(hookCalls.worktrees.some((call) => call.enabled !== false)).toBe(true)
+  })
+
+  it('shows the known open pull request count on the shortcut without changing its accessible name', async () => {
+    PULL_REQUESTS_QUERY_STATE.data = {
+      open: [{ number: 1 }, { number: 2 }],
+      recentlyClosed: [{ number: 3 }],
+      currentBranchPullRequest: null,
+      providerStatus: {
+        provider: 'github',
+        available: true,
+        authenticated: true,
+        remoteUrl: 'git@github.com:a-mart/forge.git',
+      },
+      repoName: 'middleman',
+      repoRoot: '/repo/middleman',
+      repoKind: 'workspace',
+      repoLabel: 'Workspace',
+      context: { repoTarget: 'workspace' },
+    }
+
+    renderDialog({ isCortex: false })
+    await flushEffects()
+
+    const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
+    expect(within(sourceControlShortcuts).getByRole('button', { name: 'Pull Requests' })).toBeTruthy()
+    expect(within(sourceControlShortcuts).getByText('2')).toBeTruthy()
+  })
+
+  it('shows a muted zero pull request count only when the provider returned a known authenticated list', async () => {
+    PULL_REQUESTS_QUERY_STATE.data = {
+      open: [],
+      recentlyClosed: [{ number: 3 }],
+      currentBranchPullRequest: null,
+      providerStatus: {
+        provider: 'github',
+        available: true,
+        authenticated: true,
+        remoteUrl: 'git@github.com:a-mart/forge.git',
+      },
+      repoName: 'middleman',
+      repoRoot: '/repo/middleman',
+      repoKind: 'workspace',
+      repoLabel: 'Workspace',
+      context: { repoTarget: 'workspace' },
+    }
+
+    renderDialog({ isCortex: false })
+    await flushEffects()
+
+    const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
+    expect(within(sourceControlShortcuts).getByText('0')).toBeTruthy()
+  })
+
+  it('hides the pull request count when the provider is unavailable', async () => {
+    PULL_REQUESTS_QUERY_STATE.data = {
+      open: [],
+      recentlyClosed: [],
+      currentBranchPullRequest: null,
+      providerStatus: {
+        provider: 'github',
+        available: false,
+        authenticated: false,
+        remoteUrl: 'git@github.com:a-mart/forge.git',
+        message: 'Install GitHub CLI (gh) and authenticate to view pull requests.',
+      },
+      repoName: 'middleman',
+      repoRoot: '/repo/middleman',
+      repoKind: 'workspace',
+      repoLabel: 'Workspace',
+      context: { repoTarget: 'workspace' },
+    }
+
+    renderDialog({ isCortex: false })
+    await flushEffects()
+
+    const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
+    expect(within(sourceControlShortcuts).queryByText('0')).toBeNull()
   })
 
   it('keeps Changes and History reachable from Pull Requests without a blank activity pane', async () => {
