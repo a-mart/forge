@@ -225,6 +225,7 @@ export class GitHostedProviderService {
 
     const currentBranch = await resolveCurrentBranch(new GitCli({ cwd: context.cwd }));
     const openLimit = options.openLimit ?? DEFAULT_OPEN_LIMIT;
+    const openFetchLimit = openLimit + 1;
     const closedLimit = options.closedLimit ?? DEFAULT_CLOSED_LIMIT;
 
     const [openRaw, closedRaw] = await Promise.all([
@@ -236,7 +237,7 @@ export class GitHostedProviderService {
         "--state",
         "open",
         "--limit",
-        String(openLimit),
+        String(openFetchLimit),
         "--json",
         PR_LIST_JSON_FIELDS
       ]),
@@ -267,7 +268,9 @@ export class GitHostedProviderService {
       };
     }
 
-    const open = parseGhPullRequestList(openRaw.stdout, currentBranch, repo);
+    const openEntries = parseGhPullRequestList(openRaw.stdout, currentBranch, repo);
+    const openCountTruncated = openEntries.length > openLimit;
+    const open = openEntries.slice(0, openLimit);
     const recentlyClosed = parseGhPullRequestList(closedRaw.stdout, currentBranch, repo);
     const currentBranchPullRequest =
       open.find((entry) => entry.isCurrentBranch) ??
@@ -279,6 +282,8 @@ export class GitHostedProviderService {
       open,
       recentlyClosed,
       currentBranchPullRequest,
+      openLimit,
+      openCountTruncated,
       listError: null
     };
   }

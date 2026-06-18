@@ -89,6 +89,7 @@ export function DiffViewerContent({
   const [selectedWorktreeSummary, setSelectedWorktreeSummary] = useState<GitWorktreeSummary | null>(null)
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusInfo | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
+  const [hasVisitedPullRequests, setHasVisitedPullRequests] = useState(activeTab === 'pull-requests')
   const lastExternalRefreshNonceRef = useRef(externalRefreshNonce)
   const prevActiveRef = useRef(active)
   const prevContextKeyRef = useRef(`${agentId ?? ''}:${isCortex ? 'cortex' : 'workspace'}`)
@@ -104,6 +105,7 @@ export function DiffViewerContent({
       setSelectedWorktreeId(null)
       setSelectedWorktreeSummary(null)
       setHistoryStatus(null)
+      setHasVisitedPullRequests(defaultTab === 'pull-requests')
     }
 
     prevActiveRef.current = active
@@ -116,10 +118,16 @@ export function DiffViewerContent({
     setSelectedWorktreeSummary(null)
   }, [repoTarget])
 
+  useEffect(() => {
+    if (active && repoTarget === 'workspace' && activeTab === 'pull-requests') {
+      setHasVisitedPullRequests(true)
+    }
+  }, [active, activeTab, repoTarget])
+
   const effectiveWorktreeId = repoTarget === 'workspace' ? selectedWorktreeId : null
   const shouldLoadWorktrees =
     active && !!agentId && repoTarget === 'workspace' && activeTab === 'worktrees'
-  const shouldLoadPullRequests = active && !!agentId && repoTarget === 'workspace'
+  const shouldLoadPullRequests = active && !!agentId && repoTarget === 'workspace' && hasVisitedPullRequests
   const statusQuery = useGitStatus(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId)
   const branchesQuery = useGitBranches(wsUrl, active ? agentId : null, repoTarget, effectiveWorktreeId, {
     enabled: active && !!agentId && repoTarget === 'workspace',
@@ -139,10 +147,10 @@ export function DiffViewerContent({
     if (activeTab === 'worktrees') {
       worktreesQuery.refetch()
     }
-    if (shouldLoadPullRequests) {
+    if (activeTab === 'pull-requests') {
       pullRequestsQuery.refetch()
     }
-  }, [activeTab, agentId, branchesQuery, pullRequestsQuery, repoTarget, shouldLoadPullRequests, statusQuery, worktreesQuery])
+  }, [activeTab, agentId, branchesQuery, pullRequestsQuery, repoTarget, statusQuery, worktreesQuery])
 
   useEffect(() => {
     if (!active || externalRefreshNonce === 0 || externalRefreshNonce === lastExternalRefreshNonceRef.current) return
@@ -155,7 +163,8 @@ export function DiffViewerContent({
     setSelectedWorktreeId(null)
     setSelectedWorktreeSummary(null)
     setHistoryStatus(null)
-  }, [])
+    setHasVisitedPullRequests(activeTab === 'pull-requests' && nextTarget === 'workspace')
+  }, [activeTab])
 
   const contextWorktree = selectedWorktreeSummary
   const worktreeCount =
@@ -166,6 +175,7 @@ export function DiffViewerContent({
     !pullRequestsQuery.data.listError
       ? pullRequestsQuery.data.open.length
       : null
+  const pullRequestCountTruncated = pullRequestsQuery.data?.openCountTruncated === true
   const changesViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:changes`
   const historyViewKey = `${agentId ?? 'none'}:${repoTarget}:${effectiveWorktreeId ?? 'session'}:history`
 
@@ -200,12 +210,13 @@ export function DiffViewerContent({
         currentWorktreePath={contextWorktree?.path ?? null}
         worktreeCount={worktreeCount}
         pullRequestCount={pullRequestCount}
+        pullRequestCountTruncated={pullRequestCountTruncated}
         selectedWorktreeId={selectedWorktreeId}
         isRefreshing={
           statusQuery.isLoading ||
           branchesQuery.isLoading ||
           (shouldLoadWorktrees && worktreesQuery.isLoading) ||
-          (shouldLoadPullRequests && pullRequestsQuery.isLoading)
+          (activeTab === 'pull-requests' && pullRequestsQuery.isLoading)
         }
         onRefresh={handleRefresh}
         onClose={onClose}

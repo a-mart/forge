@@ -183,6 +183,8 @@ const {
       recentlyClosed: Array<Record<string, unknown>>
       currentBranchPullRequest: Record<string, unknown> | null
       providerStatus: { provider: 'github'; available: boolean; authenticated: boolean; remoteUrl?: string; message?: string }
+      openLimit?: number
+      openCountTruncated?: boolean
       repoName: string
       repoRoot: string
       repoKind: 'workspace'
@@ -745,7 +747,17 @@ describe('DiffViewerDialog', () => {
     expect(hookCalls.worktrees.some((call) => call.enabled !== false)).toBe(true)
   })
 
-  it('shows the known open pull request count on the shortcut without changing its accessible name', async () => {
+  it('does not load or refresh pull requests for the badge before the Pull Requests tab has been visited', async () => {
+    renderDialog({ isCortex: false })
+    await flushEffects()
+
+    expect(hookCalls.pullRequests.every((call) => call.enabled === false)).toBe(true)
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Refresh' }))
+    await flushEffects()
+    expect(hookCalls.refetches).not.toContain('pull-requests')
+  })
+
+  it('shows the known open pull request count on the shortcut after visiting Pull Requests without changing its accessible name', async () => {
     PULL_REQUESTS_QUERY_STATE.data = {
       open: [{ number: 1 }, { number: 2 }],
       recentlyClosed: [{ number: 3 }],
@@ -765,10 +777,41 @@ describe('DiffViewerDialog', () => {
 
     renderDialog({ isCortex: false })
     await flushEffects()
+    expect(queryByText(document.body, '2')).toBeNull()
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Pull Requests' }))
+    await flushEffects()
 
     const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
     expect(within(sourceControlShortcuts).getByRole('button', { name: 'Pull Requests' })).toBeTruthy()
     expect(within(sourceControlShortcuts).getByText('2')).toBeTruthy()
+  })
+
+  it('renders a plus suffix when the pull request list reports a truncated open count', async () => {
+    PULL_REQUESTS_QUERY_STATE.data = {
+      open: [{ number: 1 }, { number: 2 }],
+      recentlyClosed: [],
+      currentBranchPullRequest: null,
+      providerStatus: {
+        provider: 'github',
+        available: true,
+        authenticated: true,
+        remoteUrl: 'git@github.com:a-mart/forge.git',
+      },
+      openLimit: 2,
+      openCountTruncated: true,
+      repoName: 'middleman',
+      repoRoot: '/repo/middleman',
+      repoKind: 'workspace',
+      repoLabel: 'Workspace',
+      context: { repoTarget: 'workspace' },
+    }
+
+    renderDialog({ isCortex: false, initialTab: 'pull-requests' })
+    await flushEffects()
+
+    const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
+    expect(within(sourceControlShortcuts).getByText('2+')).toBeTruthy()
   })
 
   it('shows a muted zero pull request count only when the provider returned a known authenticated list', async () => {
@@ -789,7 +832,7 @@ describe('DiffViewerDialog', () => {
       context: { repoTarget: 'workspace' },
     }
 
-    renderDialog({ isCortex: false })
+    renderDialog({ isCortex: false, initialTab: 'pull-requests' })
     await flushEffects()
 
     const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })
@@ -815,7 +858,7 @@ describe('DiffViewerDialog', () => {
       context: { repoTarget: 'workspace' },
     }
 
-    renderDialog({ isCortex: false })
+    renderDialog({ isCortex: false, initialTab: 'pull-requests' })
     await flushEffects()
 
     const sourceControlShortcuts = getByRole(document.body, 'navigation', { name: 'Source Control shortcuts' })

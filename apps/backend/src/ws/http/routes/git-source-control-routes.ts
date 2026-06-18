@@ -238,7 +238,7 @@ export function createGitSourceControlRoutes(options: {
           const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
           const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
           const closedLimit = parseOptionalLimit(requestUrl.searchParams.get("closedLimit"), 10, 50);
-          const openLimit = parseOptionalLimit(requestUrl.searchParams.get("openLimit"), 50, 100);
+          const openLimit = parseOptionalLimit(requestUrl.searchParams.get("openLimit"), 50, 99);
           const context = await resolveGitSourceControlContext(
             swarmManager,
             agentId,

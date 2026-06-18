@@ -105,6 +105,36 @@ describe("GitHostedProviderService", () => {
     expect(result.currentBranchPullRequest?.number).toBe(428);
   });
 
+  it("fetches one extra open pull request to expose truncated counts", async () => {
+    const openEntries = Array.from({ length: 51 }, (_, index) => ({
+      number: index + 1,
+      title: `Open PR ${index + 1}`,
+      state: "OPEN",
+      author: { login: "adam" },
+      createdAt: "2026-06-10T10:00:00Z",
+      updatedAt: "2026-06-12T09:00:00Z",
+      headRefName: `feature/pr-${index + 1}`,
+      baseRefName: "main",
+      isDraft: false,
+      url: `https://github.com/a-mart/forge/pull/${index + 1}`,
+      statusCheckRollup: { state: "SUCCESS" }
+    }));
+    const { fakeGhPath, repoDir } = await createFakeGhFixture({
+      branch: "main",
+      auth: "ok",
+      openJson: JSON.stringify(openEntries),
+      closedJson: "[]"
+    });
+
+    const service = new GitHostedProviderService({ ghBinary: fakeGhPath });
+    const context = createContext({ cwd: repoDir, remoteSetup: true });
+    const result = await service.listPullRequests(context, { openLimit: 50, closedLimit: 0 });
+
+    expect(result.open).toHaveLength(50);
+    expect(result.openLimit).toBe(50);
+    expect(result.openCountTruncated).toBe(true);
+  });
+
   it("degrades when gh auth fails", async () => {
     const { fakeGhPath, repoDir } = await createFakeGhFixture({
       branch: "main",

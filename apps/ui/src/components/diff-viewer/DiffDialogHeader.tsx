@@ -25,6 +25,7 @@ interface DiffDialogHeaderProps {
   currentWorktreePath?: string | null
   worktreeCount?: number | null
   pullRequestCount?: number | null
+  pullRequestCountTruncated?: boolean
   selectedWorktreeId?: string | null
   isRefreshing: boolean
   onRefresh: () => void
@@ -44,6 +45,7 @@ export function DiffDialogHeader({
   currentWorktreePath,
   worktreeCount,
   pullRequestCount,
+  pullRequestCountTruncated,
   selectedWorktreeId,
   isRefreshing,
   onRefresh,
@@ -103,6 +105,7 @@ export function DiffDialogHeader({
           label="Pull Requests"
           icon={<GitPullRequest className="size-3" />}
           count={pullRequestCount}
+          countTruncated={pullRequestCountTruncated}
           active={activeTab === 'pull-requests'}
           onClick={() => onTabChange('pull-requests')}
         />
@@ -205,12 +208,14 @@ function SourceControlShortcutButton({
   label,
   icon,
   count,
+  countTruncated,
   active,
   onClick,
 }: {
   label: string
   icon: ReactNode
   count?: number | null
+  countTruncated?: boolean
   active: boolean
   onClick: () => void
 }) {
@@ -240,7 +245,7 @@ function SourceControlShortcutButton({
           )}
           aria-hidden="true"
         >
-          {count}
+          {countTruncated ? `${count}+` : count}
         </span>
       ) : null}
     </button>
