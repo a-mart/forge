@@ -72,6 +72,27 @@ describe('SessionAuditService', () => {
     expect(sawRuntimeLog).toBe(true)
   })
 
+  it('paginates descending from newest rows to older rows', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      sessionHeader(),
+      conversationRow('oldest', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'oldest', timestamp: now, source: 'user_input' }),
+      conversationRow('middle', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'middle', timestamp: now, source: 'user_input' }),
+      conversationRow('newest', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'newest', timestamp: now, source: 'user_input' }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const firstPage = await service.getSessionAuditPage(fixture.manager.agentId, { order: 'desc', limit: 2 })
+
+    expect(firstPage.order).toBe('desc')
+    expect(firstPage.items.map((item) => item.wrapperId)).toEqual(['newest', 'middle'])
+    expect(firstPage.hasMore).toBe(true)
+
+    const secondPage = await service.getSessionAuditPage(fixture.manager.agentId, { order: 'desc', limit: 2, cursor: firstPage.nextCursor })
+    expect(secondPage.items.map((item) => item.wrapperId)).toEqual(['oldest', 'session-header'])
+    expect(secondPage.hasMore).toBe(false)
+  })
+
   it('applies category and type filters while advancing bounded pagination', async () => {
     const fixture = await createFixture()
     await writeSessionLines(fixture.dataDir, fixture.manager, [

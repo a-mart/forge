@@ -30,6 +30,7 @@ describe('fetchSessionAuditPage', () => {
       sourceKind: 'canonical_worker_jsonl',
       limit: 25,
       cursor: 'next cursor',
+      order: 'desc',
       categories: ['worker_tool_call'],
       types: ['agent_tool_call'],
     })
@@ -44,6 +45,7 @@ describe('fetchSessionAuditPage', () => {
     expect(url.searchParams.get('sourceKind')).toBe('canonical_worker_jsonl')
     expect(url.searchParams.get('limit')).toBe('25')
     expect(url.searchParams.get('cursor')).toBe('next cursor')
+    expect(url.searchParams.get('order')).toBe('desc')
     expect(url.searchParams.getAll('category')).toEqual(['worker_tool_call'])
     expect(url.searchParams.getAll('type')).toEqual(['agent_tool_call'])
     expect(url.searchParams.has('includeConversationEntry')).toBe(false)

@@ -9,9 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Input } from '@/components/ui/input'
 import { fetchSessionAuditPage } from '@/lib/session-audit-api'
+import { useDrawerResize } from '@/hooks/use-drawer-resize'
 import { cn } from '@/lib/utils'
 
 const PAGE_LIMIT = 50
+const AUDIT_DRAWER_WIDTH_KEY = 'forge-session-audit-drawer-width'
+const DEFAULT_AUDIT_DRAWER_WIDTH = 860
+const MIN_AUDIT_DRAWER_WIDTH = 560
+const MAX_AUDIT_DRAWER_WIDTH = 1280
 const ALL_CATEGORIES = 'all'
 const MANAGER_SOURCE_VALUE = 'session'
 const WORKER_SOURCE_PREFIX = 'worker:'
@@ -47,6 +52,12 @@ export function SessionAuditDrawer({
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { width: drawerWidth, isResizing, handleResizeStart } = useDrawerResize({
+    storageKey: AUDIT_DRAWER_WIDTH_KEY,
+    defaultWidth: DEFAULT_AUDIT_DRAWER_WIDTH,
+    minWidth: MIN_AUDIT_DRAWER_WIDTH,
+    maxWidth: MAX_AUDIT_DRAWER_WIDTH,
+  })
 
   const normalizedTypeFilter = typeFilter.trim()
   const selectedCategory = category === ALL_CATEGORIES ? undefined : category as SessionAuditEntryCategory
@@ -113,6 +124,7 @@ export function SessionAuditDrawer({
           scope: selectedScope,
           workerId: selectedWorkerId,
           sourceKind: selectedSourceKind,
+          order: 'desc',
           limit: PAGE_LIMIT,
           categories: selectedCategory ? [selectedCategory] : undefined,
           types: normalizedTypeFilter ? [normalizedTypeFilter] : undefined,
@@ -159,6 +171,7 @@ export function SessionAuditDrawer({
         workerId: selectedWorkerId,
         sourceKind: selectedSourceKind,
         cursor,
+        order: 'desc',
         limit: PAGE_LIMIT,
         categories: selectedCategory ? [selectedCategory] : undefined,
         types: normalizedTypeFilter ? [normalizedTypeFilter] : undefined,
@@ -192,11 +205,29 @@ export function SessionAuditDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-0 overflow-hidden sm:max-w-none md:w-[760px]" style={{ width: 'min(760px, 100vw)' }}>
+      <SheetContent
+        side="right"
+        className="w-full gap-0 overflow-hidden p-0 sm:max-w-none"
+        style={{ width: drawerWidth, maxWidth: '100vw' }}
+      >
+        <div
+          className={cn(
+            'absolute left-0 top-0 bottom-0 z-10 hidden w-1.5 cursor-col-resize select-none sm:block',
+            'hover:bg-primary/20',
+            isResizing && 'bg-primary/30',
+          )}
+          onMouseDown={handleResizeStart}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize session audit panel"
+          aria-valuenow={drawerWidth}
+          aria-valuemin={MIN_AUDIT_DRAWER_WIDTH}
+          aria-valuemax={MAX_AUDIT_DRAWER_WIDTH}
+        />
         <SheetHeader className="border-b border-border/70 pr-10">
           <SheetTitle>Session Audit Log</SheetTitle>
           <SheetDescription>
-            Complete persisted session audit for {sessionLabel}. This diagnostic view reads canonical session history and does not change normal Web, All, or Detailed chat visibility.
+            Complete persisted session audit for {sessionLabel}, newest items first. This diagnostic view reads canonical session history and does not change normal Web, All, or Detailed chat visibility.
           </SheetDescription>
         </SheetHeader>
 
@@ -285,7 +316,7 @@ export function SessionAuditDrawer({
                   className="gap-1.5 text-xs"
                 >
                   {visibleLoadingMore ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                  {visibleHasMore ? 'Load more audit rows' : 'End of audit log'}
+                  {visibleHasMore ? 'Load older audit rows' : 'End of audit log'}
                 </Button>
               </div>
             ) : null}

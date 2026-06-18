@@ -17,6 +17,22 @@ beforeEach(() => {
     ok: true,
     json: async () => auditPageFixture(),
   } as Response)))
+  const localStorageEntries = new Map<string, string>()
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => localStorageEntries.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        localStorageEntries.set(key, value)
+      }),
+      removeItem: vi.fn((key: string) => {
+        localStorageEntries.delete(key)
+      }),
+      clear: vi.fn(() => {
+        localStorageEntries.clear()
+      }),
+    },
+  })
   Object.assign(navigator, {
     clipboard: { writeText: vi.fn(async () => undefined) },
   })
@@ -61,7 +77,36 @@ describe('SessionAuditDrawer', () => {
     await waitFor(() => expect(getByText(document.body, 'tool result raw')).toBeTruthy())
 
     const requestUrl = new URL((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string)
+    expect(requestUrl.searchParams.get('order')).toBe('desc')
     expect(requestUrl.searchParams.has('includeConversationEntry')).toBe(false)
+  })
+
+  it('renders a desktop resize handle and persists bounded drawer width changes', async () => {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    const resizeHandle = getByRole(document.body, 'separator', { name: /resize session audit panel/i })
+    const drawer = resizeHandle.parentElement as HTMLElement
+
+    expect(resizeHandle.getAttribute('aria-valuenow')).toBe('860')
+    expect(drawer.style.width).toBe('860px')
+    expect(drawer.style.maxWidth).toBe('100vw')
+
+    fireEvent.mouseDown(resizeHandle, { clientX: 700 })
+    fireEvent.mouseMove(document, { clientX: 520 })
+    await waitFor(() => expect(drawer.style.width).toBe('1040px'))
+    fireEvent.mouseUp(document)
+
+    expect(window.localStorage.getItem('forge-session-audit-drawer-width')).toBe('1040')
   })
 
   it('switches from manager to worker source with worker request params and no stale manager rows', async () => {
@@ -255,7 +300,7 @@ describe('SessionAuditDrawer', () => {
     })
 
     await waitFor(() => expect(getByText(document.body, 'Initial row')).toBeTruthy())
-    fireEvent.click(getByRole(document.body, 'button', { name: /load more audit rows/i }))
+    fireEvent.click(getByRole(document.body, 'button', { name: /load older audit rows/i }))
     fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: 'filtered' } })
     await waitFor(() => expect(getByText(document.body, 'Filtered row')).toBeTruthy())
     fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: '' } })
@@ -295,7 +340,7 @@ describe('SessionAuditDrawer', () => {
     })
 
     await waitFor(() => expect(getByText(document.body, 'Before close row')).toBeTruthy())
-    fireEvent.click(getByRole(document.body, 'button', { name: /load more audit rows/i }))
+    fireEvent.click(getByRole(document.body, 'button', { name: /load older audit rows/i }))
 
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -346,7 +391,7 @@ function auditPageFixture(options: { title?: string; hasMore?: boolean; nextCurs
     scope: source,
     sourceId,
     sourceKind,
-    order: 'asc',
+    order: 'desc',
     limit: 50,
     items: [
       {

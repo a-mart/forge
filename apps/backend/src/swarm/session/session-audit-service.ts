@@ -84,6 +84,7 @@ interface ReadJsonlPageOptions {
   filePath: string
   startOffset: number
   startLineNumber?: number
+  order: SessionAuditOrder
   limit: number
   categories?: ReadonlySet<SessionAuditEntryCategory>
   types?: ReadonlySet<string>
@@ -107,9 +108,6 @@ export class SessionAuditService {
   async getSessionAuditPage(sessionAgentId: string, request: SessionAuditPageRequest = {}): Promise<SessionAuditPageResponse> {
     const normalizedSessionAgentId = normalizeRequiredId(sessionAgentId, 'sessionAgentId')
     const order = parseOrder(request.order)
-    if (order !== 'asc') {
-      throw new SessionAuditError('Session audit currently supports order=asc only', 400)
-    }
 
     const scope = parseScope(request.scope ?? 'session')
     if (scope === 'session' && request.workerId) {
@@ -141,11 +139,19 @@ export class SessionAuditService {
     }
 
     const manifest = await this.buildManifest(normalizedSessionAgentId, sessionSource.sessionDir, sessionSource.absolutePath)
-    const startOffset = cursor?.offset ?? normalizeOffset(request.offset)
+    const sourceStats = await lstat(source.absolutePath).catch((error: unknown) => {
+      if (isNodeErrorCode(error, 'ENOENT')) {
+        return undefined
+      }
+      throw error
+    })
+    const sourceBytes = sourceStats?.isFile() ? sourceStats.size : 0
+    const startOffset = cursor?.offset ?? (request.offset === undefined && order === 'desc' ? sourceBytes : normalizeOffset(request.offset))
     const readResult = await readJsonlPage({
       filePath: source.absolutePath,
       startOffset,
       startLineNumber: cursor?.lineNumber ?? (startOffset === 0 ? 1 : undefined),
+      order,
       limit,
       categories,
       types,
@@ -398,6 +404,10 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
 
   try {
     const sourceBytes = (await fileHandle.stat()).size
+    if (options.order === 'desc') {
+      return await readJsonlPageDescending(fileHandle, options, sourceBytes)
+    }
+
     if (options.startOffset >= sourceBytes) {
       return {
         items: [],
@@ -526,6 +536,122 @@ async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPa
     }
   } finally {
     await fileHandle.close()
+  }
+}
+
+async function readJsonlPageDescending(
+  fileHandle: Awaited<ReturnType<typeof open>>,
+  options: ReadJsonlPageOptions,
+  sourceBytes: number,
+): Promise<ReadJsonlPageResult> {
+  const startOffset = Math.min(Math.max(options.startOffset, 0), sourceBytes)
+  if (startOffset <= 0 || sourceBytes === 0) {
+    return {
+      items: [],
+      nextOffset: 0,
+      nextLineNumber: undefined,
+      sourceBytes,
+      scannedLines: 0,
+      scannedBytes: 0,
+      scanLimited: false,
+      reachedEof: true,
+    }
+  }
+
+  const maxScanLines = Math.min(MAX_SCAN_LINES, Math.max(options.limit, options.limit * DEFAULT_SCAN_LINE_MULTIPLIER))
+  const readLength = Math.min(MAX_SCAN_BYTES, startOffset)
+  const windowStart = startOffset - readLength
+  const buffer = Buffer.alloc(readLength)
+  const result = await fileHandle.read(buffer, 0, readLength, windowStart)
+  const chunk = buffer.subarray(0, result.bytesRead)
+  const records: JsonlLineRecord[] = []
+  let lineStart = windowStart
+  let segmentStart = 0
+
+  if (windowStart > 0) {
+    const firstNewlineIndex = chunk.indexOf(0x0a)
+    if (firstNewlineIndex < 0) {
+      return {
+        items: [],
+        nextOffset: windowStart,
+        nextLineNumber: undefined,
+        sourceBytes,
+        scannedLines: 0,
+        scannedBytes: result.bytesRead,
+        scanLimited: true,
+        reachedEof: false,
+      }
+    }
+    segmentStart = firstNewlineIndex + 1
+    lineStart = windowStart + segmentStart
+  }
+
+  while (segmentStart < chunk.length) {
+    const newlineIndex = chunk.indexOf(0x0a, segmentStart)
+    if (newlineIndex < 0) {
+      break
+    }
+
+    const lineBytes = stripTrailingCarriageReturn(Buffer.from(chunk.subarray(segmentStart, newlineIndex)))
+    const nextByteOffset = windowStart + newlineIndex + 1
+    records.push({
+      lineBytes,
+      rawBytes: newlineIndex - segmentStart,
+      byteOffset: lineStart,
+      nextByteOffset,
+    })
+
+    segmentStart = newlineIndex + 1
+    lineStart = windowStart + segmentStart
+  }
+
+  if (segmentStart < chunk.length) {
+    records.push({
+      lineBytes: stripTrailingCarriageReturn(Buffer.from(chunk.subarray(segmentStart))),
+      rawBytes: chunk.length - segmentStart,
+      byteOffset: lineStart,
+      nextByteOffset: startOffset,
+    })
+  }
+
+  const items: SessionAuditEntry[] = []
+  let scannedLines = 0
+  let scannedBytes = 0
+  let nextOffset = startOffset
+
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index]
+    nextOffset = record.byteOffset
+    scannedLines += 1
+    scannedBytes += record.nextByteOffset - record.byteOffset
+    const item = buildAuditEntry(record, options.source)
+    if (matchesFilters(item, options.categories, options.types)) {
+      items.push(item)
+    }
+
+    if (items.length >= options.limit || scannedLines >= maxScanLines || scannedBytes >= MAX_SCAN_BYTES) {
+      return {
+        items,
+        nextOffset,
+        nextLineNumber: undefined,
+        sourceBytes,
+        scannedLines,
+        scannedBytes,
+        scanLimited: items.length < options.limit && (scannedLines >= maxScanLines || scannedBytes >= MAX_SCAN_BYTES),
+        reachedEof: nextOffset <= 0,
+      }
+    }
+  }
+
+  return {
+    items,
+    nextOffset: records[0]?.byteOffset ?? windowStart,
+    nextLineNumber: undefined,
+    sourceBytes,
+    scannedLines,
+    scannedBytes,
+    scanLimited: records.length === 0 && windowStart > 0,
+    reachedEof: (records[0]?.byteOffset ?? windowStart) <= 0,
   }
 }
 
