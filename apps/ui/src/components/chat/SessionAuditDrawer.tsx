@@ -579,27 +579,27 @@ function SessionAuditRow({
         selected ? 'border-primary/70 bg-primary/10 ring-1 ring-primary/25' : 'border-border/70 bg-card/60',
       )}
     >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <span className="flex min-w-0 items-start justify-between gap-3">
+        <span className="block min-w-0 space-y-1">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <Badge variant={selected ? 'default' : 'outline'} className="max-w-full text-[10px]">{formatCategory(item.category)}</Badge>
             {typeLabel ? <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{typeLabel}</span> : null}
-          </div>
-          <div className="line-clamp-1 text-sm font-semibold text-foreground">{item.title}</div>
-        </div>
-        <div className="shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+          </span>
+          <span className="block line-clamp-1 text-sm font-semibold text-foreground">{item.title}</span>
+        </span>
+        <span className="shrink-0 text-right font-mono text-[10px] text-muted-foreground">
           {timestamp ? formatTimestamp(timestamp) : `line ${item.lineNumber ?? item.ordinal ?? '—'}`}
-        </div>
-      </div>
+        </span>
+      </span>
 
-      <p className="line-clamp-2 break-words text-xs leading-relaxed text-muted-foreground">{item.summary}</p>
+      <span className="block line-clamp-2 break-words text-xs leading-relaxed text-muted-foreground">{item.summary}</span>
 
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
         <span className="max-w-full truncate">{item.sourceLabel}</span>
         {agentLabel ? <span className="max-w-full truncate font-mono">agent {agentLabel}</span> : null}
         <span className="font-mono">offset {offsetLabel}</span>
         {item.hiddenReason ? <span className="max-w-full truncate">{item.hiddenReason}</span> : null}
-      </div>
+      </span>
     </button>
   )
 }
