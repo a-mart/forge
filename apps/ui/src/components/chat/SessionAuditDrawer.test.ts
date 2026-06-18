@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByPlaceholderText, getByRole, getByText, queryByText, waitFor } from '@testing-library/dom'
+import { fireEvent, getAllByText, getByPlaceholderText, getByRole, getByText, queryByRole, queryByText, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -74,7 +74,7 @@ afterEach(() => {
 })
 
 describe('SessionAuditDrawer', () => {
-  it('loads capped audit rows and lazy-loads full JSON detail on row selection', async () => {
+  it('loads capped audit rows and auto-loads full JSON detail for the selected row', async () => {
     root = createRoot(container)
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -86,16 +86,16 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
     expect(getByText(document.body, /Complete persisted session audit/)).toBeTruthy()
-    expect(getByText(document.body, 'canonical_session_jsonl')).toBeTruthy()
     expect(getByText(document.body, 'Manager canonical JSONL')).toBeTruthy()
-    expect(getByText(document.body, 'sessions/manager-1/session.jsonl')).toBeTruthy()
-    expect(getByText(document.body, /compact summaries only/i)).toBeTruthy()
+    expect(getAllByText(document.body, /sessions\/manager-1\/session\.jsonl/).length).toBeGreaterThan(0)
+    expect(getByText(document.body, /Select any audit row/i)).toBeTruthy()
     expect(getByText(document.body, 'normal_view_hidden')).toBeTruthy()
-    expect(queryByText(document.body, 'tool result raw')).toBeNull()
+    expect(getByRole(document.body, 'listbox', { name: /session audit rows/i })).toBeTruthy()
+    expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy()
+    expect(queryByText(document.body, 'View JSON')).toBeNull()
 
-    fireEvent.click(getByRole(document.body, 'button', { name: 'View JSON' }))
     await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
     await waitFor(() => expect(document.body.textContent).toContain('tool result raw'))
 
@@ -142,16 +142,15 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
-    fireEvent.click(getByRole(document.body, 'button', { name: 'View JSON' }))
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
     await waitFor(() => expect(getByText(document.body, /detail cap/)).toBeTruthy())
 
     fireEvent.click(getByRole(document.body, 'button', { name: 'Raw' }))
-    await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy raw JSON' })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
     expect(document.body.textContent).toContain('{"truncated":true}')
   })
 
-  it('clears selected detail when filters change', async () => {
+  it('keeps the inspector usable when filters change', async () => {
     root = createRoot(container)
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -163,13 +162,12 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
-    fireEvent.click(getByRole(document.body, 'button', { name: 'View JSON' }))
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
     await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
 
     fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: 'filtered' } })
-    await waitFor(() => expect(queryByText(document.body, 'tool result raw')).toBeNull())
-    expect(getByText(document.body, /Select an audit row and choose View JSON/i)).toBeTruthy()
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
   })
 
   it('uses plain scrollable rendering for large detail payloads without syntax highlighting', async () => {
@@ -207,8 +205,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
-    fireEvent.click(getByRole(document.body, 'button', { name: 'View JSON' }))
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
     await waitFor(() => expect(getByText(document.body, /plain scrollable view/i)).toBeTruthy())
 
     expect(vi.mocked(highlightCode)).not.toHaveBeenCalled()
@@ -231,7 +228,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
     const dialog = getByRole(document.body, 'dialog', { name: /session audit log/i }) as HTMLElement
 
     expect(dialog.style.inset).toBe('0')
@@ -274,12 +271,12 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Manager source row')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Manager source row/i })).toBeTruthy())
     openAuditSourceSelect()
     fireEvent.click(await waitForOption('Worker: Frontend Worker'))
 
-    await waitFor(() => expect(queryByText(document.body, 'Manager source row')).toBeNull())
-    await waitFor(() => expect(getByText(document.body, 'Worker source row')).toBeTruthy())
+    await waitFor(() => expect(queryByRole(document.body, 'option', { name: /Manager source row/i } )).toBeNull())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker source row/i })).toBeTruthy())
 
     const workerUrl = new URL(String(fetchMock.mock.calls.at(-1)?.[0]))
     expect(workerUrl.searchParams.get('scope')).toBe('worker')
@@ -315,16 +312,16 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Manager source row')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Manager source row/i })).toBeTruthy())
     openAuditSourceSelect()
     fireEvent.click(await waitForOption('Worker: Frontend Worker'))
-    await waitFor(() => expect(getByText(document.body, 'Worker source row')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker source row/i })).toBeTruthy())
 
     openAuditSourceSelect()
     fireEvent.click(await waitForOption('Manager canonical JSONL'))
 
-    await waitFor(() => expect(queryByText(document.body, 'Worker source row')).toBeNull())
-    await waitFor(() => expect(getByText(document.body, 'Manager source row again')).toBeTruthy())
+    await waitFor(() => expect(queryByRole(document.body, 'option', { name: /Worker source row/i } )).toBeNull())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Manager source row again/i })).toBeTruthy())
     const managerUrl = new URL(String(fetchMock.mock.calls.at(-1)?.[0]))
     expect(managerUrl.searchParams.get('scope')).toBe('session')
     expect(managerUrl.searchParams.get('sourceKind')).toBe('canonical_session_jsonl')
@@ -347,7 +344,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
     openAuditSourceSelect()
     expect(await waitForOption('Worker: orphan-worker (file only)')).toBeTruthy()
   })
@@ -364,7 +361,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
 
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -376,7 +373,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    expect(queryByText(document.body, 'Worker tool call')).toBeNull()
+    expect(queryByRole(document.body, 'option', { name: /Worker tool call/i } )).toBeNull()
   })
 
   it('clears loaded rows when the active session becomes ineligible', async () => {
@@ -391,7 +388,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
 
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -403,7 +400,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(queryByText(document.body, 'Worker tool call')).toBeNull())
+    await waitFor(() => expect(queryByRole(document.body, 'option', { name: /Worker tool call/i } )).toBeNull())
     expect(getByText(document.body, 'No audit rows found')).toBeTruthy()
   })
 
@@ -436,20 +433,20 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Initial row')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Initial row/i })).toBeTruthy())
     fireEvent.click(getByRole(document.body, 'button', { name: /load older audit rows/i }))
     fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: 'filtered' } })
-    await waitFor(() => expect(getByText(document.body, 'Filtered row')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Filtered row/i })).toBeTruthy())
     fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: '' } })
-    await waitFor(() => expect(getByText(document.body, 'Fresh row')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Fresh row/i })).toBeTruthy())
 
     loadMore.resolve(responseFor(auditPageFixture({ title: 'Stale old page', hasMore: false, nextCursor: undefined })))
     await settlePromises(loadMore.promise)
 
-    expect(queryByText(document.body, 'Stale old page')).toBeNull()
-    expect(queryByText(document.body, 'Initial row')).toBeNull()
-    expect(queryByText(document.body, 'Filtered row')).toBeNull()
-    expect(getByText(document.body, 'Fresh row')).toBeTruthy()
+    expect(queryByRole(document.body, 'option', { name: /Stale old page/i } )).toBeNull()
+    expect(queryByRole(document.body, 'option', { name: /Initial row/i } )).toBeNull()
+    expect(queryByRole(document.body, 'option', { name: /Filtered row/i } )).toBeNull()
+    expect(getByRole(document.body, 'option', { name: /Fresh row/i })).toBeTruthy()
   })
 
   it('does not append a stale load-more page after close and reopen with the same session', async () => {
@@ -476,7 +473,7 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'Before close row')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Before close row/i })).toBeTruthy())
     fireEvent.click(getByRole(document.body, 'button', { name: /load older audit rows/i }))
 
     flushSync(() => {
@@ -498,13 +495,13 @@ describe('SessionAuditDrawer', () => {
       }))
     })
 
-    await waitFor(() => expect(getByText(document.body, 'After reopen row')).toBeTruthy())
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /After reopen row/i })).toBeTruthy())
     loadMore.resolve(responseFor(auditPageFixture({ title: 'Stale after reopen page', hasMore: false, nextCursor: undefined })))
     await settlePromises(loadMore.promise)
 
-    expect(queryByText(document.body, 'Stale after reopen page')).toBeNull()
-    expect(queryByText(document.body, 'Before close row')).toBeNull()
-    expect(getByText(document.body, 'After reopen row')).toBeTruthy()
+    expect(queryByRole(document.body, 'option', { name: /Stale after reopen page/i } )).toBeNull()
+    expect(queryByRole(document.body, 'option', { name: /Before close row/i } )).toBeNull()
+    expect(getByRole(document.body, 'option', { name: /After reopen row/i })).toBeTruthy()
   })
 })
 

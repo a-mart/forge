@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import '@/styles/syntax-highlight.css'
 
 const PAGE_LIMIT = 50
+const EMPTY_AUDIT_ITEMS: SessionAuditEntry[] = []
 const ALL_CATEGORIES = 'all'
 const MANAGER_SOURCE_VALUE = 'session'
 const WORKER_SOURCE_PREFIX = 'worker:'
@@ -73,7 +74,7 @@ export function SessionAuditDrawer({
   const sourceOptions = useMemo(() => buildSourceOptions(currentManifest), [currentManifest])
   const selectedSourceMetadata = sourceOptions.find((source) => source.value === selectedSource) ?? sourceOptions[0]
   const currentPageState = canShowRows && pageState?.requestKey === requestKey ? pageState : null
-  const visibleItems = currentPageState?.items ?? []
+  const visibleItems = currentPageState?.items ?? EMPTY_AUDIT_ITEMS
   const visibleLoading = canShowRows ? loading : false
   const visibleLoadingMore = canShowRows ? loadingMore : false
   const visibleError = canShowRows ? error : null
@@ -204,6 +205,17 @@ export function SessionAuditDrawer({
 
   const selectedEntry = visibleItems.find((item) => item.id === selectedEntryId) ?? null
 
+  useEffect(() => {
+    if (!canShowRows || visibleLoading) return
+    if (visibleItems.length === 0) {
+      if (selectedEntryId !== null) setSelectedEntryId(null)
+      return
+    }
+    if (!selectedEntryId || !visibleItems.some((item) => item.id === selectedEntryId)) {
+      setSelectedEntryId(visibleItems[0]?.id ?? null)
+    }
+  }, [canShowRows, selectedEntryId, visibleItems, visibleLoading])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPortal>
@@ -285,16 +297,18 @@ export function SessionAuditDrawer({
               </Button>
             </div>
             {sessionAgentId ? (
-              <CopyPill label="Session" value={sessionAgentId} />
+              <div className="min-w-0 rounded-md border border-border/50 bg-muted/20 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                <span className="font-sans uppercase tracking-wide">Session</span> <span className="break-all">{sessionAgentId}</span>
+              </div>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              List rows are compact summaries only. Select View JSON to fetch the full canonical JSONL row unless it exceeds the 8&nbsp;MB detail safety cap.
+              Select any audit row to load its full canonical JSONL detail. Normal Web, All, and Detailed chat visibility is unchanged.
             </p>
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-            <ScrollArea className="min-h-0 w-full min-w-0 flex-1 overflow-hidden border-border/70 lg:max-w-[42%] lg:border-r">
-              <div className="min-w-0 space-y-3 p-4">
+            <ScrollArea className="min-h-0 w-full min-w-0 flex-1 overflow-hidden border-border/70 lg:max-w-[38%] lg:border-r">
+              <div className="min-w-0 space-y-2 p-3" role="listbox" aria-label="Session audit rows">
               {visibleLoading ? (
                 <StateCard icon={<Loader2 className="size-4 animate-spin" />} title="Loading audit log…" />
               ) : visibleError ? (
@@ -330,7 +344,7 @@ export function SessionAuditDrawer({
               </div>
             </ScrollArea>
 
-            <div className="flex min-h-[40vh] min-w-0 flex-1 flex-col overflow-hidden border-t border-border/70 lg:min-h-0 lg:border-t-0 lg:border-l">
+            <div className="flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden border-t border-border/70 lg:min-h-0 lg:border-t-0 lg:border-l">
               <SessionAuditDetailPanel
                 sessionAgentId={sessionAgentId}
                 wsUrl={wsUrl}
@@ -417,59 +431,43 @@ function SessionAuditRow({
 }) {
   const timestamp = item.entryTimestamp ?? item.wrapperTimestamp
   const typeLabel = useMemo(() => [item.wrapperType, item.conversationType, item.customType].filter(Boolean).join(' / '), [item.wrapperType, item.conversationType, item.customType])
+  const agentLabel = item.agentId ?? item.actorAgentId ?? item.fromAgentId ?? item.toAgentId
+  const offsetLabel = `${item.byteOffset}→${item.nextByteOffset}`
 
   return (
-    <article
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      onClick={onSelect}
       className={cn(
-        'min-w-0 rounded-lg border bg-card/60 p-3 shadow-sm transition-colors',
-        selected ? 'border-primary/60 bg-primary/5 ring-1 ring-primary/20' : 'border-border/70',
+        'group flex w-full min-w-0 cursor-pointer flex-col gap-2 rounded-lg border p-3 text-left shadow-sm outline-none transition-colors',
+        'hover:border-primary/50 hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+        selected ? 'border-primary/70 bg-primary/10 ring-1 ring-primary/25' : 'border-border/70 bg-card/60',
       )}
     >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 flex-1 space-y-1 overflow-hidden">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant="outline" className="text-[10px]">{formatCategory(item.category)}</Badge>
-            <Badge variant="secondary" className="max-w-full truncate text-[10px]">{item.sourceLabel}</Badge>
-            {typeLabel ? <span className="min-w-0 break-all font-mono text-[11px] text-muted-foreground">{typeLabel}</span> : null}
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <Badge variant={selected ? 'default' : 'outline'} className="max-w-full text-[10px]">{formatCategory(item.category)}</Badge>
+            {typeLabel ? <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{typeLabel}</span> : null}
           </div>
-          <h3 className="break-words text-sm font-semibold text-foreground">{item.title}</h3>
-          <p className="break-words text-xs text-muted-foreground">{item.summary}</p>
+          <div className="line-clamp-1 text-sm font-semibold text-foreground">{item.title}</div>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <div className="text-right font-mono text-[11px] text-muted-foreground">
-            {timestamp ? formatTimestamp(timestamp) : `line ${item.lineNumber ?? item.ordinal ?? '—'}`}
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant={selected ? 'secondary' : 'outline'}
-            className="h-7 text-xs"
-            aria-pressed={selected}
-            onClick={onSelect}
-          >
-            {selected ? 'Viewing JSON' : 'View JSON'}
-          </Button>
+        <div className="shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+          {timestamp ? formatTimestamp(timestamp) : `line ${item.lineNumber ?? item.ordinal ?? '—'}`}
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <CopyPill label="Row" value={item.id} />
-        <CopyPill label="Agent" value={item.agentId ?? item.actorAgentId ?? item.fromAgentId ?? item.toAgentId} />
-        <CopyPill label="Tool call" value={item.toolCallId} />
-        <CopyPill label="Source" value={item.sourceId} />
-      </div>
+      <p className="line-clamp-2 break-words text-xs leading-relaxed text-muted-foreground">{item.summary}</p>
 
-      <dl className="mt-3 grid min-w-0 gap-2 rounded-md border border-border/50 bg-muted/20 p-2 text-[11px] md:grid-cols-2 xl:grid-cols-4">
-        <MetaItem label="Source kind" value={item.sourceKind} />
-        <MetaItem label="Source label" value={item.sourceLabel} />
-        <MetaItem label="Conversation source" value={item.conversationSource} />
-        <MetaItem label="Relative path" value={item.relativePath} copyable />
-        <MetaItem label="Byte offsets" value={`${item.byteOffset} → ${item.nextByteOffset}`} />
-        <MetaItem label="Renderable" value={item.renderable ? 'yes' : 'no'} />
-        <MetaItem label="Hidden reason" value={item.hiddenReason} />
-        <MetaItem label="Line" value={item.lineNumber ? String(item.lineNumber) : undefined} />
-      </dl>
-    </article>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+        <span className="max-w-full truncate">{item.sourceLabel}</span>
+        {agentLabel ? <span className="max-w-full truncate font-mono">agent {agentLabel}</span> : null}
+        <span className="font-mono">offset {offsetLabel}</span>
+        {item.hiddenReason ? <span className="max-w-full truncate">{item.hiddenReason}</span> : null}
+      </div>
+    </button>
   )
 }
 
@@ -564,7 +562,7 @@ function SessionAuditDetailPanel({
   if (!entry) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-        Select an audit row and choose View JSON to load full canonical JSON details.
+        Select an audit row to load full canonical JSON details.
       </div>
     )
   }
@@ -636,7 +634,7 @@ function SessionAuditDetailPanel({
             onClick={() => void copyFullJson()}
           >
             <Clipboard className="size-3.5" />
-            {copied ? 'Copied' : viewMode === 'raw' ? 'Copy raw JSON' : 'Copy JSON'}
+            {copied ? 'Copied' : 'Copy JSON'}
           </Button>
         </div>
       </div>
@@ -737,60 +735,6 @@ function JsonDetailView({
         </tbody>
       </table>
     </div>
-  )
-}
-
-function MetaItem({ label, value, copyable = false }: { label: string; value?: string; copyable?: boolean }) {
-  if (!value) return null
-  return (
-    <div className="min-w-0">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 min-w-0 font-mono text-foreground">
-        {copyable ? <CopyPill label={label} value={value} /> : <span className="break-words">{value}</span>}
-      </dd>
-    </div>
-  )
-}
-
-function CopyPill({ label, value }: { label: string; value?: string | null }) {
-  const [copied, setCopied] = useState(false)
-  const copyResetTimeoutRef = useRef<number | null>(null)
-
-  useEffect(() => () => {
-    if (copyResetTimeoutRef.current) {
-      clearTimeout(copyResetTimeoutRef.current)
-    }
-  }, [])
-
-  if (!value) return null
-
-  async function copy() {
-    try {
-      await navigator.clipboard?.writeText(value ?? '')
-      setCopied(true)
-      if (copyResetTimeoutRef.current) {
-        clearTimeout(copyResetTimeoutRef.current)
-      }
-      copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 1200)
-    } catch {
-      setCopied(false)
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-1.5 py-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
-      onClick={(event) => {
-        event.stopPropagation()
-        void copy()
-      }}
-      title={`Copy ${label.toLowerCase()}: ${value}`}
-    >
-      <Clipboard className="size-3" aria-hidden="true" />
-      <span className="font-sans text-[10px] uppercase tracking-wide">{copied ? 'Copied' : label}</span>
-      <span className="min-w-0 truncate">{value}</span>
-    </button>
   )
 }
 
