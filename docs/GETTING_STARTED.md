@@ -122,7 +122,7 @@ Saves use the file version that was loaded when the file was opened. If the file
 
 Desktop Source Control opens inline in the workspace content area from the rail, not as a modal overlay. It evolves the old Changes/Git view into a workspace with tabs for current changes, commit history, worktrees, and pull requests. Selecting a worktree updates the Source Control context and the Files browsing context only; it does not move the chat session CWD or change where the manager sends workers.
 
-Source Control supports fetch, branch switching, branch creation, and fast-forward-only pull. These are write actions, so Forge asks for confirmation and runs a preflight check before sending the git command. Force push, stash, discard, rebase, branch deletion, and worktree create/remove are not available from this workspace.
+Source Control supports fetch, branch switching, branch creation, and fast-forward-only pull. When you enter Source Control or change repository context, Forge may quietly fetch stale origin data in the background; manual **Fetch** remains explicit and reports errors. These are write actions, so Forge asks for confirmation and runs a preflight check before sending the git command. Force push, stash, discard, rebase, branch deletion, and worktree create/remove are not available from this workspace.
 
 The Pull Requests tab uses the GitHub CLI (`gh`). If the selected repository does not have a GitHub remote, `gh` is missing, or `gh` is not authenticated, Forge shows an unavailable or degraded state instead of PR data. PR merge has its own confirmation flow, re-checks the PR head commit with GitHub's match-head-commit guard, and does not delete the branch or use admin bypass.
 

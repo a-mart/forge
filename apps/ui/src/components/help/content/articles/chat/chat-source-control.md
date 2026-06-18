@@ -13,12 +13,12 @@ Selecting a worktree changes the Source Control and Files context only. You can 
 
 ## Branch and remote actions
 
-Source Control can fetch from origin, switch branches, create branches, and run fast-forward-only pulls. Write actions use a confirmation flow with a preflight check, including the expected head and status state, before Forge sends the git command. If the matching Files worktree has unsaved inline edits, Forge guards the transition, mutation, or affected file/folder delete instead of discarding the draft.
+Source Control can fetch from origin, switch branches, create branches, and run fast-forward-only pulls. When you enter Source Control or change repository context, Forge may quietly fetch stale origin data in the background. Manual **Fetch** remains explicit and reports errors if it cannot complete. Write actions use a confirmation flow with a preflight check, including the expected head and status state, before Forge sends the git command. If the matching Files worktree has unsaved inline edits, Forge guards the transition, mutation, or affected file/folder delete instead of discarding the draft.
 
 Forge does not provide force push, stash, discard, rebase, branch deletion, or worktree create/remove actions from this workspace.
 
 ## Pull requests
 
-The Pull Requests tab uses the GitHub CLI (`gh`). If the selected repository does not have a GitHub remote, `gh` is not installed, or `gh` is not authenticated, the tab shows an unavailable or degraded state instead of pretending PR data is present.
+The Pull Requests tab uses the GitHub CLI (`gh`). Its shortcut can show an open PR count after you visit the tab. If the selected repository does not have a GitHub remote, `gh` is not installed, or `gh` is not authenticated, the tab shows an unavailable or degraded state instead of pretending PR data is present.
 
 PR merge uses an explicit confirmation dialog. Forge re-checks the latest PR head commit and sends the merge with GitHub's match-head-commit guard. It does not delete the branch after merge and does not use admin bypass. GitHub branch protection can still block the merge.
