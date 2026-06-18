@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createTempConfig, type TempConfigHandle } from '../../test-support/temp-config.js'
 import type { AgentDescriptor } from '../types.js'
@@ -42,7 +44,7 @@ describe('OpenAIAuthBrokerRuntimeService', () => {
   })
 
   it('acquires a broker lease for openai-codex runtimes without persisting tokens to auth.json', async () => {
-    vi.spyOn(globalThis, 'fetch')
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true })))
       .mockImplementationOnce(async () => new Response(JSON.stringify({
         leaseId: 'lease-runtime-1',
@@ -55,6 +57,11 @@ describe('OpenAIAuthBrokerRuntimeService', () => {
       })))
 
     const handle = await makeHandle()
+    await writeFile(
+      join(handle.config.paths.sharedConfigDir, 'telemetry.json'),
+      `${JSON.stringify({ installId: 'forge-telemetry-install-1', lastSuccessfulSendAt: null, lastFailedAttemptAt: null }, null, 2)}\n`,
+      'utf8',
+    )
     const service = new OpenAIAuthBrokerRuntimeService({ config: handle.config })
     const settingsService = new (await import('../openai-auth/openai-auth-settings-service.js')).OpenAIAuthSettingsService({
       config: handle.config,
@@ -71,6 +78,11 @@ describe('OpenAIAuthBrokerRuntimeService', () => {
       type: 'oauth',
       access: 'leased-access-token',
       accountId: 'broker-account-1',
+    })
+    const leaseBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
+    expect(leaseBody.client).toMatchObject({
+      clientId: 'forge',
+      forgeTelemetryInstallId: 'forge-telemetry-install-1',
     })
   })
 

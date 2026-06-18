@@ -14,6 +14,7 @@ const identity: OpenAIAuthBrokerRuntimeIdentity = {
   projectLabel: 'Profile One',
   agentId: 'agent-1',
   forgeVersion: '0.0.0-test',
+  forgeTelemetryInstallId: 'telemetry-install-123',
 }
 
 const expectedClient = {
@@ -26,6 +27,7 @@ const expectedClient = {
   projectLabel: 'Profile One',
   agentId: 'agent-1',
   forgeVersion: '0.0.0-test',
+  forgeTelemetryInstallId: 'telemetry-install-123',
 }
 
 const leaseCreateFixture = {

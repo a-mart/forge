@@ -7,6 +7,7 @@ import {
   type OpenAIAuthBrokerLease,
   type OpenAIAuthBrokerRuntimeIdentity,
 } from "./openai-auth-broker-client.js";
+import { readPersistedTelemetryInstallId } from "../../telemetry/telemetry-install-id.js";
 import { redactOpenAIAuthBrokerText } from "./openai-auth-redaction.js";
 import { OpenAIAuthSettingsService } from "./openai-auth-settings-service.js";
 
@@ -41,7 +42,7 @@ export class OpenAIAuthBrokerRuntimeService {
   }> {
     const effective = await this.settingsService.resolveEffectiveSettings();
     const client = await this.createClientFromResolved(effective.broker.url, effective.broker.token, effective.broker.timeoutMs);
-    const identity = buildRuntimeIdentity(descriptor, effective.broker);
+    const identity = await buildRuntimeIdentity(descriptor, effective.broker, this.options.config.paths.dataDir);
     const lease = await client.acquireLease(identity);
     const authStorage = AuthStorage.inMemory({
       "openai-codex": buildOpenAICodexAuthCredentialFromLease(lease),
@@ -172,7 +173,7 @@ export class OpenAIAuthBrokerRuntimeService {
   }
 }
 
-function buildRuntimeIdentity(
+async function buildRuntimeIdentity(
   descriptor: AgentDescriptor,
   broker: {
     clientId: string;
@@ -180,7 +181,9 @@ function buildRuntimeIdentity(
     instanceLabel?: string;
     userLabel?: string;
   },
-): OpenAIAuthBrokerRuntimeIdentity {
+  dataDir: string,
+): Promise<OpenAIAuthBrokerRuntimeIdentity> {
+  const forgeTelemetryInstallId = await readPersistedTelemetryInstallId(dataDir);
   return {
     clientId: broker.clientId,
     instanceId: broker.instanceId ?? broker.clientId,
@@ -190,6 +193,7 @@ function buildRuntimeIdentity(
     projectId: descriptor.profileId,
     projectLabel: descriptor.profileId,
     agentId: descriptor.agentId,
+    ...(forgeTelemetryInstallId ? { forgeTelemetryInstallId } : {}),
   };
 }
 

@@ -24,6 +24,7 @@ export interface OpenAIAuthBrokerRuntimeIdentity {
   projectLabel?: string;
   agentId?: string;
   forgeVersion?: string;
+  forgeTelemetryInstallId?: string;
 }
 
 export interface OpenAIAuthBrokerLeaseCredential {
