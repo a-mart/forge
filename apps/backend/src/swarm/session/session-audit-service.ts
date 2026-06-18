@@ -1071,6 +1071,31 @@ function buildAuditEntry(record: JsonlLineRecord, source: ResolvedAuditSource): 
     }
   }
 
+  const nativeProviderMessage = classifyNativeProviderMessage(wrapper)
+  if (nativeProviderMessage) {
+    const preview = truncateText(nativeProviderMessage.preview)
+    return {
+      ...base,
+      wrapperId,
+      parentId,
+      wrapperTimestamp,
+      wrapperType,
+      customType,
+      entryTimestamp: nativeProviderMessage.entryTimestamp ?? wrapperTimestamp,
+      category: 'runtime_log',
+      toolName: nativeProviderMessage.toolName,
+      toolCallId: nativeProviderMessage.toolCallId,
+      toolKind: nativeProviderMessage.toolKind,
+      role: nativeProviderMessage.role,
+      renderable: true,
+      hiddenReason: 'normal_view_hidden',
+      title: nativeProviderMessage.title,
+      summary: nativeProviderMessage.summary,
+      preview: preview.text,
+      previewTruncated: preview.truncated,
+    }
+  }
+
   const preview = truncateText(rawPreview.text)
   return {
     ...base,
@@ -1176,6 +1201,215 @@ function extractConversationPreview(entry: Record<string, unknown>): string {
     return stringValue(plan.title) ?? stringValue(plan.summary) ?? ''
   }
   return ''
+}
+
+interface NativeProviderMessageClassification {
+  role: string
+  title: string
+  summary: string
+  preview: string
+  toolName?: string
+  toolCallId?: string
+  toolKind?: string
+  entryTimestamp?: string
+}
+
+interface NativeProviderContentSummary {
+  kind: 'text' | 'system' | 'toolCall' | 'toolResult'
+  text?: string
+  toolName?: string
+  toolCallId?: string
+  toolKind?: string
+  contentItemCount?: number
+  textCharCount?: number
+}
+
+const NATIVE_PROVIDER_MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'toolResult'])
+const NATIVE_PROVIDER_TOOL_CALL_TYPES = new Set(['toolCall', 'tool_call', 'functionCall', 'function_call'])
+const NATIVE_PROVIDER_TOOL_RESULT_TYPES = new Set(['toolResult', 'tool_result', 'functionResult', 'function_result'])
+
+function classifyNativeProviderMessage(wrapper: Record<string, unknown>): NativeProviderMessageClassification | undefined {
+  if (stringValue(wrapper.type) !== 'message') {
+    return undefined
+  }
+
+  const message = wrapper.message
+  if (!isRecord(message)) {
+    return undefined
+  }
+
+  const role = stringValue(message.role)
+  if (!role || !NATIVE_PROVIDER_MESSAGE_ROLES.has(role)) {
+    return undefined
+  }
+
+  const contentSummary = summarizeNativeProviderContent(message, role)
+  if (!contentSummary) {
+    return undefined
+  }
+
+  const entryTimestamp = stringValue(message.timestamp) ?? stringValue(wrapper.timestamp)
+  const toolName = contentSummary.toolName ?? boundedMetadataValue(message.toolName) ?? boundedMetadataValue(message.name)
+  const toolCallId = contentSummary.toolCallId ?? boundedMetadataValue(message.toolCallId) ?? boundedMetadataValue(message.id)
+
+  if (contentSummary.kind === 'toolCall') {
+    const title = `Provider tool call${toolName ? `: ${toolName}` : ''}`
+    const preview = buildProviderToolPreview('tool call', toolName, toolCallId, contentSummary.contentItemCount)
+    return {
+      role,
+      entryTimestamp,
+      title,
+      summary: preview,
+      preview,
+      toolName,
+      toolCallId,
+      toolKind: 'tool_call',
+    }
+  }
+
+  if (contentSummary.kind === 'toolResult' || role === 'toolResult') {
+    const title = `Provider tool result${toolName ? `: ${toolName}` : ''}`
+    const preview = buildProviderToolPreview('tool result', toolName, toolCallId, contentSummary.contentItemCount)
+    return {
+      role,
+      entryTimestamp,
+      title,
+      summary: preview,
+      preview,
+      toolName,
+      toolCallId,
+      toolKind: 'tool_result',
+    }
+  }
+
+  if (role === 'system' || contentSummary.kind === 'system') {
+    const textCharCount = contentSummary.textCharCount ?? contentSummary.text?.length ?? 0
+    const itemCount = contentSummary.contentItemCount
+    const preview = `Provider system message content hidden${textCharCount > 0 ? ` (${textCharCount} text char${textCharCount === 1 ? '' : 's'}${itemCount !== undefined ? ` across ${itemCount} item${itemCount === 1 ? '' : 's'}` : ''})` : ''}`
+    return {
+      role,
+      entryTimestamp,
+      title: 'Provider system message',
+      summary: preview,
+      preview,
+    }
+  }
+
+  const textPreview = truncateText(contentSummary.text ?? '').text
+  const title = `Provider ${role} message`
+  const summary = textPreview ? `${title}: ${textPreview}` : title
+  return {
+    role,
+    entryTimestamp,
+    title,
+    summary,
+    preview: textPreview,
+  }
+}
+
+function summarizeNativeProviderContent(message: Record<string, unknown>, role: string): NativeProviderContentSummary | undefined {
+  const content = message.content
+  if (typeof content === 'string') {
+    if (role === 'toolResult') {
+      return { kind: 'toolResult', textCharCount: content.length }
+    }
+    if (role === 'system') {
+      return { kind: 'system', textCharCount: content.length }
+    }
+    return { kind: 'text', text: content, textCharCount: content.length }
+  }
+
+  if (!Array.isArray(content)) {
+    return undefined
+  }
+
+  const textParts: string[] = []
+  let textCharCount = 0
+  let toolCall: NativeProviderContentSummary | undefined
+  let toolResult: NativeProviderContentSummary | undefined
+
+  for (const item of content) {
+    if (typeof item === 'string') {
+      textParts.push(item)
+      textCharCount += item.length
+      continue
+    }
+    if (!isRecord(item)) {
+      return undefined
+    }
+
+    const itemType = stringValue(item.type)
+    if (itemType && NATIVE_PROVIDER_TOOL_CALL_TYPES.has(itemType)) {
+      toolCall ??= {
+        kind: 'toolCall',
+        toolName: boundedMetadataValue(item.name) ?? boundedMetadataValue(item.toolName),
+        toolCallId: boundedMetadataValue(item.toolCallId) ?? boundedMetadataValue(item.id) ?? boundedMetadataValue(item.callId),
+        contentItemCount: content.length,
+      }
+      continue
+    }
+
+    if (itemType && NATIVE_PROVIDER_TOOL_RESULT_TYPES.has(itemType)) {
+      toolResult ??= {
+        kind: 'toolResult',
+        toolName: boundedMetadataValue(item.name) ?? boundedMetadataValue(item.toolName),
+        toolCallId: boundedMetadataValue(item.toolCallId) ?? boundedMetadataValue(item.id) ?? boundedMetadataValue(item.callId),
+        contentItemCount: content.length,
+      }
+      continue
+    }
+
+    if (itemType === 'text' || (!itemType && typeof item.text === 'string')) {
+      const text = stringValue(item.text) ?? ''
+      textParts.push(text)
+      textCharCount += text.length
+      continue
+    }
+
+    return undefined
+  }
+
+  if (toolCall) {
+    return toolCall
+  }
+  if (toolResult || role === 'toolResult') {
+    return toolResult ?? { kind: 'toolResult', contentItemCount: content.length, textCharCount }
+  }
+  if (role === 'system') {
+    return { kind: 'system', contentItemCount: content.length, textCharCount }
+  }
+  return {
+    kind: 'text',
+    text: textParts.join('\n'),
+    contentItemCount: content.length,
+    textCharCount,
+  }
+}
+
+function buildProviderToolPreview(kind: 'tool call' | 'tool result', toolName: string | undefined, toolCallId: string | undefined, itemCount: number | undefined): string {
+  const parts = [`Provider ${kind}`]
+  if (toolName) {
+    parts.push(toolName)
+  }
+  if (toolCallId) {
+    parts.push(`(${toolCallId})`)
+  }
+  if (itemCount !== undefined && itemCount > 1) {
+    parts.push(`[${itemCount} content items]`)
+  }
+  return parts.join(' ')
+}
+
+function boundedMetadataValue(value: unknown): string | undefined {
+  const text = stringValue(value)
+  if (!text) {
+    return undefined
+  }
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= 120) {
+    return normalized
+  }
+  return `${normalized.slice(0, 119)}…`
 }
 
 function matchesFilters(

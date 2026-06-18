@@ -112,6 +112,115 @@ describe('SessionAuditService', () => {
     expect(customPage.items[0]).toMatchObject({ category: 'custom', customType: 'other_custom' })
   })
 
+  it('classifies native provider assistant tool-call rows as hidden runtime logs without leaking arguments', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      nativeMessageRow('native-tool-call', {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-1', name: 'speak_to_user', arguments: { text: 'DO_NOT_LEAK' } }],
+      }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const item = page.items[0]
+
+    expect(item).toMatchObject({
+      category: 'runtime_log',
+      wrapperType: 'message',
+      hiddenReason: 'normal_view_hidden',
+      role: 'assistant',
+      toolName: 'speak_to_user',
+      toolCallId: 'call-1',
+      title: 'Provider tool call: speak_to_user',
+    })
+    expect(item.summary).not.toContain('DO_NOT_LEAK')
+    expect(item.preview).not.toContain('DO_NOT_LEAK')
+    expect(item.title).not.toContain('DO_NOT_LEAK')
+  })
+
+  it('classifies native provider user and assistant text rows with bounded previews', async () => {
+    const fixture = await createFixture()
+    const longAssistantText = `assistant ${'x'.repeat(2_000)}`
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      nativeMessageRow('native-user', { role: 'user', content: 'hello from provider user' }),
+      nativeMessageRow('native-assistant', { role: 'assistant', content: [{ type: 'text', text: longAssistantText }] }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const userItem = page.items.find((item) => item.wrapperId === 'native-user')
+    const assistantItem = page.items.find((item) => item.wrapperId === 'native-assistant')
+
+    expect(userItem).toMatchObject({ category: 'runtime_log', role: 'user', title: 'Provider user message', preview: 'hello from provider user' })
+    expect(assistantItem).toMatchObject({ category: 'runtime_log', role: 'assistant', title: 'Provider assistant message', previewTruncated: true })
+    expect(assistantItem?.preview).toContain('assistant ')
+    expect(assistantItem?.preview.length).toBeLessThan(longAssistantText.length)
+  })
+
+  it('classifies native provider system rows conservatively without dumping full content', async () => {
+    const fixture = await createFixture()
+    const systemSecret = `SYSTEM_DO_NOT_LEAK ${'s'.repeat(2_000)}`
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      nativeMessageRow('native-system', { role: 'system', content: systemSecret }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const item = page.items[0]
+
+    expect(item).toMatchObject({ category: 'runtime_log', role: 'system', title: 'Provider system message' })
+    expect(item.summary).toContain('content hidden')
+    expect(item.summary).not.toContain('SYSTEM_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('SYSTEM_DO_NOT_LEAK')
+  })
+
+  it('classifies native provider tool-result rows without leaking result payloads', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      nativeMessageRow('native-tool-result', {
+        role: 'toolResult',
+        name: 'speak_to_user',
+        toolCallId: 'call-1',
+        content: 'RESULT_PAYLOAD_DO_NOT_LEAK',
+      }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const item = page.items[0]
+
+    expect(item).toMatchObject({
+      category: 'runtime_log',
+      role: 'toolResult',
+      toolName: 'speak_to_user',
+      toolCallId: 'call-1',
+      toolKind: 'tool_result',
+      title: 'Provider tool result: speak_to_user',
+    })
+    expect(item.summary).not.toContain('RESULT_PAYLOAD_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('RESULT_PAYLOAD_DO_NOT_LEAK')
+  })
+
+  it('leaves malformed native provider message rows as unknown raw-only rows', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      JSON.stringify({ type: 'message', id: 'missing-message', timestamp: now }),
+      JSON.stringify({ type: 'message', id: 'array-message', timestamp: now, message: [] }),
+      nativeMessageRow('unknown-role', { role: 'developer', content: 'hello' }),
+      nativeMessageRow('unsupported-content', { role: 'assistant', content: 123 }),
+      nativeMessageRow('unsupported-content-array', { role: 'assistant', content: [123] }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+
+    expect(page.items).toHaveLength(5)
+    for (const item of page.items) {
+      expect(item).toMatchObject({ category: 'unknown', hiddenReason: 'raw_only', wrapperType: 'message' })
+    }
+  })
+
   it('caps raw and text previews for oversized payloads', async () => {
     const fixture = await createFixture()
     const longText = 'x'.repeat(20_000)
@@ -530,6 +639,10 @@ function sessionHeader(): string {
 
 function conversationRow(id: string, data: Record<string, unknown>): string {
   return customRow(id, CONVERSATION_ENTRY_TYPE, data)
+}
+
+function nativeMessageRow(id: string, message: Record<string, unknown>): string {
+  return JSON.stringify({ type: 'message', id, timestamp: now, message })
 }
 
 function customRow(id: string, customType: string, data: unknown): string {
