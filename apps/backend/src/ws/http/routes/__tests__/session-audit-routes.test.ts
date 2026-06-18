@@ -101,7 +101,7 @@ describe('session audit routes', () => {
 
       const includeResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?includeConversationEntry=true`)
       expect(includeResponse.status).toBe(400)
-      await expect(includeResponse.json()).resolves.toMatchObject({ error: expect.stringContaining('capped previews') })
+      await expect(includeResponse.json()).resolves.toMatchObject({ error: expect.stringContaining('audit entry detail endpoint') })
 
       const sourceResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?source=session`)
       expect(sourceResponse.status).toBe(400)
@@ -113,6 +113,42 @@ describe('session audit routes', () => {
       const postResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit`, { method: 'POST' })
       expect(postResponse.status).toBe(405)
       expect(postResponse.headers.get('allow')).toContain('GET')
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('serves full audit entry detail by byte offset', async () => {
+    const fixture = await createFixture()
+    const payload = conversationRow('detail-row', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'full detail text', timestamp: now, source: 'user_input' })
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      sessionHeader(),
+      payload,
+    ])
+    const server = await createRouteServer(createSessionAuditRoutes({ swarmManager: fixture.host }))
+
+    try {
+      const pageResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit?limit=10`)
+      const page = await pageResponse.json() as { items: Array<{ wrapperId?: string; byteOffset: number }> }
+      const target = page.items.find((item) => item.wrapperId === 'detail-row')
+      expect(target).toBeTruthy()
+
+      const detailResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit/entry?byteOffset=${target!.byteOffset}&nextByteOffset=${target!.nextByteOffset}`)
+      const detail = await detailResponse.json() as { rawText: string; formattedJson?: string; truncated: boolean }
+
+      expect(detailResponse.status).toBe(200)
+      expect(detail.rawText).toBe(payload)
+      expect(detail.formattedJson).toBe(JSON.stringify(JSON.parse(payload), null, 2))
+      expect(detail.truncated).toBe(false)
+
+      const missingOffsetResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit/entry?byteOffset=999999`)
+      expect(missingOffsetResponse.status).toBe(404)
+
+      const missingParamResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit/entry`)
+      expect(missingParamResponse.status).toBe(400)
+
+      const insideLineResponse = await fetch(`${server.baseUrl}/api/sessions/${fixture.manager.agentId}/audit/entry?byteOffset=${target!.byteOffset + 2}`)
+      expect(insideLineResponse.status).toBe(400)
     } finally {
       await server.close()
     }

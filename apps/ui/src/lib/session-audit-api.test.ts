@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchSessionAuditPage, SessionAuditApiError } from './session-audit-api'
+import { fetchSessionAuditEntryDetail, fetchSessionAuditPage, SessionAuditApiError } from './session-audit-api'
 
 beforeEach(() => {
   vi.restoreAllMocks()
@@ -60,6 +60,59 @@ describe('fetchSessionAuditPage', () => {
 
     await expect(fetchSessionAuditPage(undefined, 'manager-1')).rejects.toEqual(
       new SessionAuditApiError('unsupported filter', 400),
+    )
+  })
+})
+
+describe('fetchSessionAuditEntryDetail', () => {
+  it('requests the audit entry detail endpoint with byte offset and source params', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        sessionAgentId: 'manager-1',
+        scope: 'worker',
+        sourceId: 'worker-1',
+        sourceKind: 'canonical_worker_jsonl',
+        relativePath: 'workers/worker-1.jsonl',
+        byteOffset: 42,
+        nextByteOffset: 128,
+        rawBytes: 86,
+        rawText: '{"ok":true}',
+        truncated: false,
+        maxBytes: 8388608,
+        formattedJson: '{\n  "ok": true\n}',
+      }),
+    } as Response))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await fetchSessionAuditEntryDetail('ws://127.0.0.1:47187/ws', 'manager-1', {
+      scope: 'worker',
+      workerId: 'worker-1',
+      sourceKind: 'canonical_worker_jsonl',
+      byteOffset: 42,
+      nextByteOffset: 128,
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const firstCall = (fetchMock.mock.calls as unknown as Array<[RequestInfo | URL]>)[0][0]
+    const url = new URL(String(firstCall))
+    expect(url.pathname).toBe('/api/sessions/manager-1/audit/entry')
+    expect(url.searchParams.get('scope')).toBe('worker')
+    expect(url.searchParams.get('workerId')).toBe('worker-1')
+    expect(url.searchParams.get('sourceKind')).toBe('canonical_worker_jsonl')
+    expect(url.searchParams.get('byteOffset')).toBe('42')
+    expect(url.searchParams.get('nextByteOffset')).toBe('128')
+  })
+
+  it('surfaces backend detail errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'byteOffset is not at a JSONL line boundary' }),
+    } as Response)))
+
+    await expect(fetchSessionAuditEntryDetail(undefined, 'manager-1', { byteOffset: 3 })).rejects.toEqual(
+      new SessionAuditApiError('byteOffset is not at a JSONL line boundary', 400),
     )
   })
 })

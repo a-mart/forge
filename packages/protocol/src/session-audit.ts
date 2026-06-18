@@ -141,3 +141,27 @@ export interface SessionAuditPageResponse {
   nextCursor?: string
   hasMore: boolean
 }
+
+export interface SessionAuditEntryDetailRequest {
+  scope?: SessionAuditScope
+  workerId?: string
+  sourceKind?: SessionAuditSourceKind
+  byteOffset: number
+  nextByteOffset?: number
+}
+
+export interface SessionAuditEntryDetailResponse {
+  sessionAgentId: string
+  scope: SessionAuditScope
+  sourceId: string
+  sourceKind: SessionAuditSourceKind
+  relativePath: string
+  byteOffset: number
+  nextByteOffset: number
+  rawBytes: number
+  rawText: string
+  truncated: boolean
+  maxBytes: number
+  parseError?: string
+  formattedJson?: string
+}

@@ -1,10 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { SessionAuditEntryCategory, SessionAuditPageRequest } from '@forge/protocol'
+import type { SessionAuditEntryCategory, SessionAuditEntryDetailRequest, SessionAuditPageRequest } from '@forge/protocol'
 import { SessionAuditError, SessionAuditService, type SessionAuditServiceHost } from '../../../swarm/session/session-audit-service.js'
 import { applyCorsHeaders, sendJson } from '../../http-utils.js'
 import type { HttpRoute } from '../shared/http-route.js'
 
 const SESSION_AUDIT_ENDPOINT_PATTERN = /^\/api\/sessions\/([^/]+)\/audit$/
+const SESSION_AUDIT_ENTRY_ENDPOINT_PATTERN = /^\/api\/sessions\/([^/]+)\/audit\/entry$/
 const METHODS = 'GET, OPTIONS'
 const SESSION_AUDIT_ENTRY_CATEGORY_VALUES = [
   'session_header',
@@ -27,12 +28,56 @@ export function createSessionAuditRoutes(options: { swarmManager: SessionAuditSe
   return [
     {
       methods: METHODS,
+      matches: (pathname) => SESSION_AUDIT_ENTRY_ENDPOINT_PATTERN.test(pathname),
+      handle: async (request, response, requestUrl) => {
+        await handleSessionAuditEntryRequest(auditService, request, response, requestUrl)
+      },
+    },
+    {
+      methods: METHODS,
       matches: (pathname) => SESSION_AUDIT_ENDPOINT_PATTERN.test(pathname),
       handle: async (request, response, requestUrl) => {
         await handleSessionAuditRequest(auditService, request, response, requestUrl)
       },
     },
   ]
+}
+
+async function handleSessionAuditEntryRequest(
+  auditService: SessionAuditService,
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestUrl: URL,
+): Promise<void> {
+  if (request.method === 'OPTIONS') {
+    applyCorsHeaders(request, response, METHODS)
+    response.statusCode = 204
+    response.end()
+    return
+  }
+
+  if (request.method !== 'GET') {
+    applyCorsHeaders(request, response, METHODS)
+    response.setHeader('Allow', METHODS)
+    sendJson(response, 405, { error: 'Method Not Allowed' })
+    return
+  }
+
+  applyCorsHeaders(request, response, METHODS)
+
+  const matched = requestUrl.pathname.match(SESSION_AUDIT_ENTRY_ENDPOINT_PATTERN)
+  const rawSessionAgentId = matched?.[1] ?? ''
+
+  try {
+    const sessionAgentId = decodeSessionAgentId(rawSessionAgentId)
+    const detailRequest = parseAuditEntryDetailRequest(requestUrl.searchParams)
+    const detail = await auditService.getSessionAuditEntryDetail(sessionAgentId, detailRequest)
+    sendJson(response, 200, detail as unknown as Record<string, unknown>)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const statusCode = error instanceof SessionAuditError ? error.statusCode : 500
+    sendJson(response, statusCode, { error: message })
+  }
 }
 
 async function handleSessionAuditRequest(
@@ -88,7 +133,7 @@ function parseAuditPageRequest(searchParams: URLSearchParams): SessionAuditPageR
     throw new SessionAuditError('Session audit search is not supported', 400)
   }
   if (searchParams.has('includeConversationEntry')) {
-    throw new SessionAuditError('Full conversation entries are not exposed by audit pages; use capped previews', 400)
+    throw new SessionAuditError('Use the audit entry detail endpoint for full row JSON', 400)
   }
   if (searchParams.has('source')) {
     throw new SessionAuditError('Use sourceKind for audit source filtering', 400)
@@ -110,6 +155,27 @@ function parseAuditPageRequest(searchParams: URLSearchParams): SessionAuditPageR
     limit: parseOptionalInteger(searchParams.get('limit'), 'limit'),
     categories: parseCategories(searchParams),
     types: parseCsv(searchParams, 'type', 'types'),
+  }
+}
+
+function parseAuditEntryDetailRequest(searchParams: URLSearchParams): SessionAuditEntryDetailRequest {
+  const byteOffset = parseOptionalInteger(searchParams.get('byteOffset'), 'byteOffset')
+  if (byteOffset === undefined) {
+    throw new SessionAuditError('Missing byteOffset', 400)
+  }
+
+  const sourceKind = parseOptionalEnum(
+    searchParams.get('sourceKind'),
+    ['canonical_session_jsonl', 'canonical_worker_jsonl'] as const,
+    'sourceKind',
+  )
+
+  return {
+    scope: parseOptionalEnum(searchParams.get('scope'), ['session', 'worker'] as const, 'scope'),
+    workerId: optionalString(searchParams.get('workerId')),
+    sourceKind,
+    byteOffset,
+    nextByteOffset: parseOptionalInteger(searchParams.get('nextByteOffset'), 'nextByteOffset'),
   }
 }
 

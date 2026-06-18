@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { ChevronDown, ChevronRight, Clipboard, Loader2, RotateCw, X } from 'lucide-react'
-import type { SessionAuditEntry, SessionAuditEntryCategory, SessionAuditManifest, SessionAuditWorkerSummary } from '@forge/protocol'
+import { Clipboard, Loader2, RotateCw, X } from 'lucide-react'
+import type { SessionAuditEntry, SessionAuditEntryCategory, SessionAuditEntryDetailResponse, SessionAuditManifest, SessionAuditWorkerSummary } from '@forge/protocol'
 import { SESSION_AUDIT_ENTRY_CATEGORIES } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -9,8 +9,10 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogDescription, DialogHeader, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { fetchSessionAuditPage } from '@/lib/session-audit-api'
+import { fetchSessionAuditEntryDetail, fetchSessionAuditPage } from '@/lib/session-audit-api'
+import { highlightCode } from '@/lib/syntax-highlight'
 import { cn } from '@/lib/utils'
+import '@/styles/syntax-highlight.css'
 
 const PAGE_LIMIT = 50
 const ALL_CATEGORIES = 'all'
@@ -48,6 +50,7 @@ export function SessionAuditDrawer({
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null)
   const normalizedTypeFilter = typeFilter.trim()
   const selectedCategory = category === ALL_CATEGORIES ? undefined : category as SessionAuditEntryCategory
   const selectedWorkerId = selectedSource.startsWith(WORKER_SOURCE_PREFIX) ? selectedSource.slice(WORKER_SOURCE_PREFIX.length) : undefined
@@ -84,11 +87,17 @@ export function SessionAuditDrawer({
     setLoading(false)
     setLoadingMore(false)
     setError(null)
+    setSelectedEntryId(null)
   }, [])
 
   useEffect(() => {
     setSelectedSource(MANAGER_SOURCE_VALUE)
+    setSelectedEntryId(null)
   }, [sessionAgentId, wsUrl])
+
+  useEffect(() => {
+    setSelectedEntryId(null)
+  }, [requestKey])
 
   useEffect(() => {
     const generation = requestGenerationRef.current
@@ -192,6 +201,8 @@ export function SessionAuditDrawer({
     }
   }
 
+  const selectedEntry = visibleItems.find((item) => item.id === selectedEntryId) ?? null
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPortal>
@@ -277,35 +288,55 @@ export function SessionAuditDrawer({
             ) : null}
           </div>
 
-          <ScrollArea className="min-h-0 flex-1 overflow-hidden">
-            <div className="min-w-0 space-y-3 p-4">
-            {visibleLoading ? (
-              <StateCard icon={<Loader2 className="size-4 animate-spin" />} title="Loading audit log…" />
-            ) : visibleError ? (
-              <StateCard title="Could not load session audit" detail={visibleError} tone="error" />
-            ) : visibleItems.length === 0 ? (
-              <StateCard title="No audit rows found" detail="Try a different category or type filter." />
-            ) : (
-              visibleItems.map((item) => <SessionAuditRow key={item.id} item={item} />)
-            )}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+            <ScrollArea className="min-h-0 w-full min-w-0 flex-1 overflow-hidden border-border/70 lg:max-w-[42%] lg:border-r">
+              <div className="min-w-0 space-y-3 p-4">
+              {visibleLoading ? (
+                <StateCard icon={<Loader2 className="size-4 animate-spin" />} title="Loading audit log…" />
+              ) : visibleError ? (
+                <StateCard title="Could not load session audit" detail={visibleError} tone="error" />
+              ) : visibleItems.length === 0 ? (
+                <StateCard title="No audit rows found" detail="Try a different category or type filter." />
+              ) : (
+                visibleItems.map((item) => (
+                  <SessionAuditRow
+                    key={item.id}
+                    item={item}
+                    selected={item.id === selectedEntryId}
+                    onSelect={() => setSelectedEntryId(item.id)}
+                  />
+                ))
+              )}
 
-            {!visibleLoading && !visibleError && visibleItems.length > 0 ? (
-              <div className="flex justify-center pt-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={!visibleHasMore || visibleLoadingMore}
-                  onClick={() => void loadMore()}
-                  className="gap-1.5 text-xs"
-                >
-                  {visibleLoadingMore ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                  {visibleHasMore ? 'Load older audit rows' : 'End of audit log'}
-                </Button>
+              {!visibleLoading && !visibleError && visibleItems.length > 0 ? (
+                <div className="flex justify-center pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!visibleHasMore || visibleLoadingMore}
+                    onClick={() => void loadMore()}
+                    className="gap-1.5 text-xs"
+                  >
+                    {visibleLoadingMore ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    {visibleHasMore ? 'Load older audit rows' : 'End of audit log'}
+                  </Button>
+                </div>
+              ) : null}
               </div>
-            ) : null}
+            </ScrollArea>
+
+            <div className="flex min-h-[40vh] min-w-0 flex-1 flex-col overflow-hidden border-t border-border/70 lg:min-h-0 lg:border-t-0 lg:border-l">
+              <SessionAuditDetailPanel
+                sessionAgentId={sessionAgentId}
+                wsUrl={wsUrl}
+                entry={selectedEntry}
+                scope={selectedScope}
+                workerId={selectedWorkerId}
+                sourceKind={selectedSourceKind}
+              />
             </div>
-          </ScrollArea>
+          </div>
           <DialogPrimitive.Close
             className={cn(
               'absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity',
@@ -371,13 +402,25 @@ function SourceMetadata({ source }: { source: AuditSourceOption }) {
   return <p className="min-w-0 break-words text-xs text-muted-foreground">{parts.join(' · ')}</p>
 }
 
-function SessionAuditRow({ item }: { item: SessionAuditEntry }) {
-  const [expanded, setExpanded] = useState(false)
+function SessionAuditRow({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: SessionAuditEntry
+  selected: boolean
+  onSelect: () => void
+}) {
   const timestamp = item.entryTimestamp ?? item.wrapperTimestamp
   const typeLabel = useMemo(() => [item.wrapperType, item.conversationType, item.customType].filter(Boolean).join(' / '), [item.wrapperType, item.conversationType, item.customType])
 
   return (
-    <article className="min-w-0 rounded-lg border border-border/70 bg-card/60 p-3 shadow-sm">
+    <article
+      className={cn(
+        'min-w-0 rounded-lg border bg-card/60 p-3 shadow-sm transition-colors',
+        selected ? 'border-primary/60 bg-primary/5 ring-1 ring-primary/20' : 'border-border/70',
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1 space-y-1 overflow-hidden">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -388,8 +431,20 @@ function SessionAuditRow({ item }: { item: SessionAuditEntry }) {
           <h3 className="break-words text-sm font-semibold text-foreground">{item.title}</h3>
           <p className="break-words text-xs text-muted-foreground">{item.summary}</p>
         </div>
-        <div className="shrink-0 text-right font-mono text-[11px] text-muted-foreground">
-          {timestamp ? formatTimestamp(timestamp) : `line ${item.lineNumber ?? item.ordinal ?? '—'}`}
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className="text-right font-mono text-[11px] text-muted-foreground">
+            {timestamp ? formatTimestamp(timestamp) : `line ${item.lineNumber ?? item.ordinal ?? '—'}`}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant={selected ? 'secondary' : 'outline'}
+            className="h-7 text-xs"
+            aria-pressed={selected}
+            onClick={onSelect}
+          >
+            {selected ? 'Viewing JSON' : 'View JSON'}
+          </Button>
         </div>
       </div>
 
@@ -410,23 +465,227 @@ function SessionAuditRow({ item }: { item: SessionAuditEntry }) {
         <MetaItem label="Hidden reason" value={item.hiddenReason} />
         <MetaItem label="Line" value={item.lineNumber ? String(item.lineNumber) : undefined} />
       </dl>
-
-      <button
-        type="button"
-        className="mt-3 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-      >
-        {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        {expanded ? 'Hide capped JSON preview' : 'Show capped JSON preview'}
-      </button>
-      {expanded ? (
-        <div className="mt-2 space-y-2">
-          <JsonPreview label={item.previewTruncated ? 'Parsed preview (truncated)' : 'Parsed preview'} value={item.preview} />
-          <JsonPreview label={item.rawPreviewTruncated ? 'Raw row preview (truncated)' : 'Raw row preview'} value={item.rawPreview} />
-        </div>
-      ) : null}
     </article>
+  )
+}
+
+function SessionAuditDetailPanel({
+  sessionAgentId,
+  wsUrl,
+  entry,
+  scope,
+  workerId,
+  sourceKind,
+}: {
+  sessionAgentId: string | null
+  wsUrl?: string
+  entry: SessionAuditEntry | null
+  scope: 'session' | 'worker'
+  workerId?: string
+  sourceKind: 'canonical_session_jsonl' | 'canonical_worker_jsonl'
+}) {
+  const [viewMode, setViewMode] = useState<'formatted' | 'raw'>('formatted')
+  const [detail, setDetail] = useState<SessionAuditEntryDetailResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [wordWrap, setWordWrap] = useState(true)
+  const requestKey = entry ? `${entry.id}:${scope}:${workerId ?? ''}:${sourceKind}` : ''
+  const activeRequestKeyRef = useRef(requestKey)
+
+  if (activeRequestKeyRef.current !== requestKey) {
+    activeRequestKeyRef.current = requestKey
+  }
+
+  useEffect(() => {
+    setViewMode('formatted')
+    setDetail(null)
+    setError(null)
+    setCopied(false)
+    setWordWrap(true)
+
+    if (!entry || !sessionAgentId) {
+      setLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    const currentRequestKey = requestKey
+
+    async function loadDetail() {
+      setLoading(true)
+      setError(null)
+      try {
+        const response = await fetchSessionAuditEntryDetail(wsUrl, sessionAgentId!, {
+          scope,
+          workerId,
+          sourceKind,
+          byteOffset: entry!.byteOffset,
+          nextByteOffset: entry!.nextByteOffset,
+          signal: controller.signal,
+        })
+        if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
+        setDetail(response)
+      } catch (loadError) {
+        if (controller.signal.aborted || activeRequestKeyRef.current !== currentRequestKey) return
+        setDetail(null)
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      } finally {
+        if (!controller.signal.aborted && activeRequestKeyRef.current === currentRequestKey) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void loadDetail()
+    return () => {
+      controller.abort()
+    }
+  }, [entry, requestKey, scope, sessionAgentId, sourceKind, workerId, wsUrl])
+
+  const displayText = entry && (viewMode === 'formatted' && detail?.formattedJson
+    ? detail.formattedJson
+    : detail?.rawText ?? '')
+  const highlightedLines = useMemo(() => {
+    if (!displayText) return []
+    return displayText.split('\n').map((line) => highlightCode(line, 'json'))
+  }, [displayText])
+
+  if (!entry) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+        Select an audit row to view full JSON details.
+      </div>
+    )
+  }
+
+  async function copyFullJson() {
+    const text = viewMode === 'raw' ? detail?.rawText : (detail?.formattedJson ?? detail?.rawText)
+    if (!text) return
+    try {
+      await navigator.clipboard?.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/70 px-4 py-3">
+        <div className="min-w-0 space-y-0.5">
+          <h3 className="truncate text-sm font-semibold text-foreground">{entry.title}</h3>
+          <p className="truncate text-xs text-muted-foreground">
+            {entry.relativePath} · bytes {entry.byteOffset} → {entry.nextByteOffset}
+            {detail ? ` · ${formatBytes(detail.rawBytes)}` : ''}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-md border border-border/60 p-0.5">
+            <Button
+              type="button"
+              size="sm"
+              variant={viewMode === 'formatted' ? 'secondary' : 'ghost'}
+              className="h-7 px-2 text-xs"
+              disabled={!detail?.formattedJson}
+              onClick={() => setViewMode('formatted')}
+            >
+              Formatted
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={viewMode === 'raw' ? 'secondary' : 'ghost'}
+              className="h-7 px-2 text-xs"
+              disabled={!detail}
+              onClick={() => setViewMode('raw')}
+            >
+              Raw
+            </Button>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 text-xs"
+            disabled={!detail}
+            onClick={() => setWordWrap((current) => !current)}
+          >
+            {wordWrap ? 'No wrap' : 'Wrap lines'}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-xs"
+            disabled={!detail || loading}
+            onClick={() => void copyFullJson()}
+          >
+            <Clipboard className="size-3.5" />
+            {copied ? 'Copied' : viewMode === 'raw' ? 'Copy raw JSON' : 'Copy JSON'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {loading ? (
+          <div className="flex h-full items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading full JSON…
+          </div>
+        ) : error ? (
+          <div className="p-4">
+            <StateCard title="Could not load full JSON" detail={error} tone="error" />
+          </div>
+        ) : detail?.truncated ? (
+          <div className="flex h-full flex-col overflow-hidden">
+            <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+              This row exceeds the {formatBytes(detail.maxBytes)} detail cap. Showing the first {formatBytes(new TextEncoder().encode(detail.rawText).length)} of {formatBytes(detail.rawBytes)}.
+            </div>
+            <JsonDetailView highlightedLines={highlightedLines} wordWrap={wordWrap} />
+          </div>
+        ) : detail?.parseError && viewMode === 'formatted' && !detail.formattedJson ? (
+          <div className="flex h-full flex-col overflow-hidden">
+            <div className="border-b border-border/70 bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+              JSON parse failed: {detail.parseError}. Switch to Raw to inspect the original line.
+            </div>
+            <JsonDetailView highlightedLines={highlightedLines} wordWrap={wordWrap} />
+          </div>
+        ) : (
+          <JsonDetailView highlightedLines={highlightedLines} wordWrap={wordWrap} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function JsonDetailView({ highlightedLines, wordWrap }: { highlightedLines: string[]; wordWrap: boolean }) {
+  if (highlightedLines.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+        No JSON content available.
+      </div>
+    )
+  }
+
+  return (
+    <div className="syntax-highlight h-full overflow-auto font-mono text-[12px] leading-relaxed">
+      <table className="w-full min-w-max border-collapse">
+        <tbody>
+          {highlightedLines.map((html, index) => (
+            <tr key={index} className="hover:bg-muted/20">
+              <td className="sticky left-0 z-[1] select-none border-r border-border/30 bg-background/95 px-3 py-0 text-right align-top text-muted-foreground/50">
+                {index + 1}
+              </td>
+              <td className={cn('px-3 py-0 align-top', wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre')}>
+                <span dangerouslySetInnerHTML={{ __html: html || '&nbsp;' }} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
@@ -438,15 +697,6 @@ function MetaItem({ label, value, copyable = false }: { label: string; value?: s
       <dd className="mt-0.5 min-w-0 font-mono text-foreground">
         {copyable ? <CopyPill label={label} value={value} /> : <span className="break-words">{value}</span>}
       </dd>
-    </div>
-  )
-}
-
-function JsonPreview({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="overflow-hidden rounded-md border border-border/60 bg-muted/30">
-      <div className="border-b border-border/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">{label}</div>
-      <pre className="max-h-96 overflow-auto whitespace-pre p-2 font-mono text-[11px] leading-relaxed text-foreground"><code className="block min-w-max">{value}</code></pre>
     </div>
   )
 }
@@ -469,7 +719,10 @@ function CopyPill({ label, value }: { label: string; value?: string | null }) {
     <button
       type="button"
       className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-1.5 py-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
-      onClick={() => void copy()}
+      onClick={(event) => {
+        event.stopPropagation()
+        void copy()
+      }}
       title={`Copy ${label.toLowerCase()}: ${value}`}
     >
       <Clipboard className="size-3" aria-hidden="true" />

@@ -1,5 +1,6 @@
 import type {
   SessionAuditEntryCategory,
+  SessionAuditEntryDetailResponse,
   SessionAuditOrder,
   SessionAuditPageResponse,
   SessionAuditScope,
@@ -17,6 +18,15 @@ export interface SessionAuditPageQuery {
   limit?: number
   categories?: SessionAuditEntryCategory[]
   types?: string[]
+  signal?: AbortSignal
+}
+
+export interface SessionAuditEntryDetailQuery {
+  scope?: SessionAuditScope
+  workerId?: string
+  sourceKind?: SessionAuditSourceKind
+  byteOffset: number
+  nextByteOffset?: number
   signal?: AbortSignal
 }
 
@@ -61,6 +71,40 @@ export async function fetchSessionAuditPage(
   }
 
   return payload as unknown as SessionAuditPageResponse
+}
+
+export async function fetchSessionAuditEntryDetail(
+  wsUrl: string | undefined,
+  sessionAgentId: string,
+  query: SessionAuditEntryDetailQuery,
+): Promise<SessionAuditEntryDetailResponse> {
+  const trimmedSessionAgentId = sessionAgentId.trim()
+  if (!trimmedSessionAgentId) {
+    throw new SessionAuditApiError('Missing session agent ID')
+  }
+  if (!Number.isSafeInteger(query.byteOffset) || query.byteOffset < 0) {
+    throw new SessionAuditApiError('Missing or invalid byteOffset')
+  }
+
+  const params = new URLSearchParams()
+  appendString(params, 'scope', query.scope)
+  appendString(params, 'workerId', query.workerId)
+  appendString(params, 'sourceKind', query.sourceKind)
+  params.set('byteOffset', String(query.byteOffset))
+  appendNumber(params, 'nextByteOffset', query.nextByteOffset)
+
+  const path = `/api/sessions/${encodeURIComponent(trimmedSessionAgentId)}/audit/entry?${params.toString()}`
+  const response = await fetch(resolveApiEndpoint(wsUrl, path), { signal: query.signal })
+  const payload = await readJson(response)
+
+  if (!response.ok) {
+    const message = typeof payload?.error === 'string'
+      ? payload.error
+      : `Session audit entry request failed (${response.status})`
+    throw new SessionAuditApiError(message, response.status)
+  }
+
+  return payload as unknown as SessionAuditEntryDetailResponse
 }
 
 function appendString(params: URLSearchParams, key: string, value: string | undefined): void {

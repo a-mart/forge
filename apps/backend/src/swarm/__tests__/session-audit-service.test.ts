@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentDescriptor } from '@forge/protocol'
 import { getSessionDir, getSessionFilePath, getWorkerSessionFilePath, getWorkersDir } from '../storage/data-paths.js'
 import { CONVERSATION_ENTRY_TYPE } from '../session/conversation-timeline.js'
-import { SessionAuditService, type SessionAuditServiceHost } from '../session/session-audit-service.js'
+import { SessionAuditService, SESSION_AUDIT_DETAIL_MAX_BYTES, type SessionAuditServiceHost } from '../session/session-audit-service.js'
 import type { SwarmConfig } from '../types.js'
 
 const now = '2026-01-01T00:00:00.000Z'
@@ -314,6 +314,135 @@ describe('SessionAuditService', () => {
     await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: 'orphan-worker' })).rejects.toMatchObject({ statusCode: 404 })
   })
 
+  it('returns full canonical JSONL row detail on demand with pretty-printed JSON when parseable', async () => {
+    const fixture = await createFixture()
+    const payload = { type: 'custom', id: 'detail-row', customType: CONVERSATION_ENTRY_TYPE, data: { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'full detail text', timestamp: now, source: 'user_input' } }
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      sessionHeader(),
+      JSON.stringify(payload),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const target = page.items.find((item) => item.wrapperId === 'detail-row')
+    expect(target).toBeTruthy()
+
+    const detail = await service.getSessionAuditEntryDetail(fixture.manager.agentId, {
+      byteOffset: target!.byteOffset,
+      nextByteOffset: target!.nextByteOffset,
+    })
+    expect(detail.rawText).toBe(JSON.stringify(payload))
+    expect(detail.formattedJson).toBe(JSON.stringify(payload, null, 2))
+    expect(detail.truncated).toBe(false)
+    expect(detail.parseError).toBeUndefined()
+    expect(detail.nextByteOffset).toBe(target!.nextByteOffset)
+  })
+
+  it('returns worker transcript detail using scoped source resolution', async () => {
+    const fixture = await createFixture()
+    const worker = createDescriptor({ agentId: 'worker-1', managerId: fixture.manager.agentId, role: 'worker', profileId: fixture.manager.profileId })
+    fixture.agents.push(worker)
+    await writeSessionLines(fixture.dataDir, fixture.manager, [sessionHeader()])
+    await writeWorkerLines(fixture.dataDir, fixture.manager, worker.agentId, [
+      conversationRow('worker-detail', { type: 'conversation_message', agentId: worker.agentId, role: 'assistant', text: 'worker detail text', timestamp: now, source: 'worker' }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: worker.agentId, limit: 10 })
+    const target = page.items.find((item) => item.wrapperId === 'worker-detail')
+    expect(target).toBeTruthy()
+
+    const detail = await service.getSessionAuditEntryDetail(fixture.manager.agentId, {
+      scope: 'worker',
+      workerId: worker.agentId,
+      sourceKind: 'canonical_worker_jsonl',
+      byteOffset: target!.byteOffset,
+      nextByteOffset: target!.nextByteOffset,
+    })
+    expect(detail.scope).toBe('worker')
+    expect(detail.sourceId).toBe(worker.agentId)
+    expect(detail.rawText).toContain('worker detail text')
+  })
+
+  it('rejects inside-line, out-of-range, and invalid nextByteOffset detail requests', async () => {
+    const fixture = await createFixture()
+    const firstLine = conversationRow('first', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'first', timestamp: now, source: 'user_input' })
+    const secondLine = conversationRow('second', { type: 'conversation_message', agentId: fixture.manager.agentId, role: 'user', text: 'second', timestamp: now, source: 'user_input' })
+    await writeSessionLines(fixture.dataDir, fixture.manager, [sessionHeader(), firstLine, secondLine])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const target = page.items.find((item) => item.wrapperId === 'first')
+    expect(target).toBeTruthy()
+
+    await expect(service.getSessionAuditEntryDetail(fixture.manager.agentId, { byteOffset: target!.byteOffset + 3 })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(service.getSessionAuditEntryDetail(fixture.manager.agentId, { byteOffset: 999_999 })).rejects.toMatchObject({ statusCode: 404 })
+    await expect(service.getSessionAuditEntryDetail(fixture.manager.agentId, {
+      byteOffset: target!.byteOffset,
+      nextByteOffset: target!.nextByteOffset - 1,
+    })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(service.getSessionAuditEntryDetail(fixture.manager.agentId, {
+      byteOffset: target!.byteOffset,
+      nextByteOffset: target!.byteOffset,
+    })).rejects.toMatchObject({ statusCode: 400 })
+  })
+
+  it('returns truncated detail when a row exceeds the detail byte cap', async () => {
+    const fixture = await createFixture()
+    const sessionDir = getSessionDir(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId)
+    await mkdir(sessionDir, { recursive: true })
+    const hugePayload = `{"type":"custom","id":"huge-detail","data":"${'y'.repeat(SESSION_AUDIT_DETAIL_MAX_BYTES + 256)}"}`
+    const sessionFile = getSessionFilePath(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId)
+    await writeFile(sessionFile, `${sessionHeader()}\n${hugePayload}\n`, 'utf8')
+    const byteOffset = Buffer.byteLength(`${sessionHeader()}\n`, 'utf8')
+    const nextByteOffset = byteOffset + Buffer.byteLength(`${hugePayload}\n`, 'utf8')
+
+    const service = new SessionAuditService(fixture.host)
+    const detail = await service.getSessionAuditEntryDetail(fixture.manager.agentId, {
+      byteOffset,
+      nextByteOffset,
+    })
+    expect(detail.truncated).toBe(true)
+    expect(detail.rawBytes).toBeGreaterThan(SESSION_AUDIT_DETAIL_MAX_BYTES)
+    expect(Buffer.byteLength(detail.rawText, 'utf8')).toBeLessThan(detail.rawBytes)
+    expect(detail.nextByteOffset).toBe(byteOffset + Buffer.byteLength(detail.rawText, 'utf8'))
+    expect(detail.parseError).toContain('detail cap')
+  })
+
+  it('returns raw detail for malformed rows', async () => {
+    const fixture = await createFixture()
+    const sessionDir = getSessionDir(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId)
+    await mkdir(sessionDir, { recursive: true })
+    const malformedLine = '{not json'
+    const hugeLine = `{"type":"custom","id":"huge","data":"${'x'.repeat(1024 * 1024 + 128)}"}`
+    await writeFile(
+      getSessionFilePath(fixture.dataDir, fixture.manager.profileId ?? fixture.manager.agentId, fixture.manager.agentId),
+      `${sessionHeader()}\n${malformedLine}\n${hugeLine}\n`,
+      'utf8',
+    )
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const malformed = page.items.find((item) => item.category === 'malformed')
+    const oversized = page.items.find((item) => item.hiddenReason === 'payload_truncated')
+
+    const malformedDetail = await service.getSessionAuditEntryDetail(fixture.manager.agentId, {
+      byteOffset: malformed!.byteOffset,
+      nextByteOffset: malformed!.nextByteOffset,
+    })
+    expect(malformedDetail.rawText).toBe(malformedLine)
+    expect(malformedDetail.formattedJson).toBeUndefined()
+    expect(malformedDetail.parseError).toBeTruthy()
+
+    const oversizedDetail = await service.getSessionAuditEntryDetail(fixture.manager.agentId, {
+      byteOffset: oversized!.byteOffset,
+      nextByteOffset: oversized!.nextByteOffset,
+    })
+    expect(oversizedDetail.truncated).toBe(false)
+    expect(oversizedDetail.rawBytes).toBeGreaterThan(1024 * 1024)
+    expect(oversizedDetail.formattedJson).toBeTruthy()
+  })
+
   it('rejects unknown sessions, non-manager agents, invalid worker sources, and invalid cursors', async () => {
     const fixture = await createFixture()
     const worker = createDescriptor({ agentId: 'worker-1', managerId: fixture.manager.agentId, role: 'worker', profileId: fixture.manager.profileId })
@@ -330,6 +459,14 @@ describe('SessionAuditService', () => {
     await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: otherManagerWorker.agentId })).rejects.toMatchObject({ statusCode: 404 })
     await expect(service.getSessionAuditPage(fixture.manager.agentId, { scope: 'worker', workerId: worker.agentId, sourceKind: 'canonical_session_jsonl' })).rejects.toMatchObject({ statusCode: 400 })
     await expect(service.getSessionAuditPage(fixture.manager.agentId, { cursor: 'not-base64' })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(service.getSessionAuditEntryDetail('missing', { byteOffset: 0 })).rejects.toMatchObject({ statusCode: 404 })
+    await expect(service.getSessionAuditEntryDetail(fixture.manager.agentId, { byteOffset: -1 })).rejects.toMatchObject({ statusCode: 400 })
+    await expect(service.getSessionAuditEntryDetail(fixture.manager.agentId, {
+      scope: 'worker',
+      workerId: worker.agentId,
+      sourceKind: 'canonical_session_jsonl',
+      byteOffset: 0,
+    })).rejects.toMatchObject({ statusCode: 400 })
   })
 })
 

@@ -5,6 +5,8 @@ import type {
   SessionAuditCursor,
   SessionAuditEntry,
   SessionAuditEntryCategory,
+  SessionAuditEntryDetailRequest,
+  SessionAuditEntryDetailResponse,
   SessionAuditManifest,
   SessionAuditOrder,
   SessionAuditPageRequest,
@@ -41,6 +43,7 @@ const MAX_SCAN_BYTES = 4 * 1024 * 1024
 const RAW_PREVIEW_MAX_BYTES = 16 * 1024
 const TEXT_PREVIEW_MAX_CHARS = 500
 const MAX_PARSE_LINE_BYTES = 1024 * 1024
+export const SESSION_AUDIT_DETAIL_MAX_BYTES = 8 * 1024 * 1024
 const SESSION_SOURCE_ID = 'session'
 const SESSION_RELATIVE_PATH = 'session.jsonl'
 
@@ -105,29 +108,72 @@ interface ReadJsonlPageResult {
 export class SessionAuditService {
   constructor(private readonly host: SessionAuditServiceHost) {}
 
+  async getSessionAuditEntryDetail(
+    sessionAgentId: string,
+    request: SessionAuditEntryDetailRequest,
+  ): Promise<SessionAuditEntryDetailResponse> {
+    const normalizedSessionAgentId = normalizeRequiredId(sessionAgentId, 'sessionAgentId')
+    const byteOffset = normalizeOffset(request.byteOffset)
+    const expectedNextByteOffset = request.nextByteOffset === undefined
+      ? undefined
+      : normalizeOffset(request.nextByteOffset)
+    if (expectedNextByteOffset !== undefined && expectedNextByteOffset <= byteOffset) {
+      throw new SessionAuditError('nextByteOffset must be greater than byteOffset', 400)
+    }
+    const source = await this.resolveAuditSource(normalizedSessionAgentId, request.scope ?? 'session', request.workerId, request.sourceKind)
+    const line = await readJsonlLineDetail({
+      filePath: source.absolutePath,
+      byteOffset,
+      expectedNextByteOffset,
+      maxBytes: SESSION_AUDIT_DETAIL_MAX_BYTES,
+    })
+    if (!line) {
+      throw new SessionAuditError('Audit row not found at the requested byte offset', 404)
+    }
+
+    const rawText = line.lineBytes.toString('utf8')
+    let formattedJson: string | undefined
+    let parseError: string | undefined
+    if (!line.truncated) {
+      try {
+        formattedJson = JSON.stringify(JSON.parse(rawText), null, 2)
+      } catch (error) {
+        parseError = error instanceof Error ? error.message : String(error)
+      }
+    } else {
+      parseError = `Row exceeds the ${SESSION_AUDIT_DETAIL_MAX_BYTES} byte detail cap`
+    }
+
+    return {
+      sessionAgentId: normalizedSessionAgentId,
+      scope: source.scope,
+      sourceId: source.sourceId,
+      sourceKind: source.sourceKind,
+      relativePath: source.relativePath,
+      byteOffset: line.byteOffset,
+      nextByteOffset: line.nextByteOffset,
+      rawBytes: line.rawBytes,
+      rawText,
+      truncated: line.truncated,
+      maxBytes: SESSION_AUDIT_DETAIL_MAX_BYTES,
+      parseError,
+      formattedJson,
+    }
+  }
+
   async getSessionAuditPage(sessionAgentId: string, request: SessionAuditPageRequest = {}): Promise<SessionAuditPageResponse> {
     const normalizedSessionAgentId = normalizeRequiredId(sessionAgentId, 'sessionAgentId')
     const order = parseOrder(request.order)
-
     const scope = parseScope(request.scope ?? 'session')
-    if (scope === 'session' && request.workerId) {
-      throw new SessionAuditError('workerId is only valid for worker audit scope', 400)
-    }
-
-    if (request.sourceKind) {
-      const expectedSourceKind: SessionAuditSourceKind = scope === 'session' ? 'canonical_session_jsonl' : 'canonical_worker_jsonl'
-      if (request.sourceKind !== expectedSourceKind) {
-        throw new SessionAuditError('Audit sourceKind does not match the requested source', 400)
-      }
-    }
-
     const limit = clampLimit(request.limit)
     const categories = normalizeCategories(request.categories)
     const types = normalizeStringSet(request.types)
-    const sessionSource = await this.resolveSessionSource(normalizedSessionAgentId)
-    const source = scope === 'session'
-      ? sessionSource
-      : await this.resolveWorkerSource(sessionSource, request.workerId)
+    const source = await this.resolveAuditSource(
+      normalizedSessionAgentId,
+      scope,
+      request.workerId,
+      request.sourceKind,
+    )
     const cursor = request.cursor ? decodeCursor(request.cursor) : undefined
     if (cursor) {
       validateCursor(cursor, {
@@ -138,6 +184,7 @@ export class SessionAuditService {
       })
     }
 
+    const sessionSource = await this.resolveSessionSource(normalizedSessionAgentId)
     const manifest = await this.buildManifest(normalizedSessionAgentId, sessionSource.sessionDir, sessionSource.absolutePath)
     const sourceStats = await lstat(source.absolutePath).catch((error: unknown) => {
       if (isNodeErrorCode(error, 'ENOENT')) {
@@ -194,6 +241,26 @@ export class SessionAuditService {
       nextCursor,
       hasMore,
     }
+  }
+
+  private async resolveAuditSource(
+    sessionAgentId: string,
+    scope: SessionAuditScope,
+    workerId: string | undefined,
+    sourceKind: SessionAuditSourceKind | undefined,
+  ): Promise<ResolvedAuditSource> {
+    if (scope === 'session' && workerId) {
+      throw new SessionAuditError('workerId is only valid for worker audit scope', 400)
+    }
+    if (sourceKind) {
+      const expectedSourceKind: SessionAuditSourceKind = scope === 'session' ? 'canonical_session_jsonl' : 'canonical_worker_jsonl'
+      if (sourceKind !== expectedSourceKind) {
+        throw new SessionAuditError('Audit sourceKind does not match the requested source', 400)
+      }
+    }
+
+    const sessionSource = await this.resolveSessionSource(sessionAgentId)
+    return scope === 'session' ? sessionSource : await this.resolveWorkerSource(sessionSource, workerId)
   }
 
   private async resolveSessionSource(sessionAgentId: string): Promise<ResolvedAuditSource> {
@@ -378,6 +445,204 @@ export class SessionAuditService {
     }))
 
     return summaries.filter((summary): summary is SessionAuditWorkerSummary => Boolean(summary))
+  }
+}
+
+interface JsonlLineAtOffset {
+  lineBytes: Buffer
+  rawBytes: number
+  byteOffset: number
+  nextByteOffset: number
+  truncated: boolean
+}
+
+interface ReadJsonlLineDetailOptions {
+  filePath: string
+  byteOffset: number
+  maxBytes: number
+  expectedNextByteOffset?: number
+}
+
+async function readJsonlLineDetail(options: ReadJsonlLineDetailOptions): Promise<JsonlLineAtOffset | undefined> {
+  const fileHandle = await open(options.filePath, 'r').catch((error: unknown) => {
+    if (isNodeErrorCode(error, 'ENOENT')) {
+      return undefined
+    }
+    throw error
+  })
+  if (!fileHandle) {
+    return undefined
+  }
+
+  try {
+    const sourceBytes = (await fileHandle.stat()).size
+    if (options.byteOffset >= sourceBytes) {
+      return undefined
+    }
+
+    await assertJsonlLineStart(fileHandle, options.byteOffset, sourceBytes)
+
+    if (options.expectedNextByteOffset !== undefined) {
+      await validateExpectedNextByteOffset(
+        fileHandle,
+        options.byteOffset,
+        options.expectedNextByteOffset,
+        sourceBytes,
+      )
+      const spanLength = options.expectedNextByteOffset - options.byteOffset
+      let contentLength = spanLength
+      if (spanLength > 0) {
+        const boundaryByte = Buffer.alloc(1)
+        const boundaryResult = await fileHandle.read(boundaryByte, 0, 1, options.expectedNextByteOffset - 1)
+        if (boundaryResult.bytesRead === 1 && boundaryByte[0] === 0x0a) {
+          contentLength = spanLength - 1
+        }
+      }
+      const readLength = Math.min(contentLength, options.maxBytes)
+      const buffer = Buffer.alloc(readLength)
+      const result = await fileHandle.read(buffer, 0, readLength, options.byteOffset)
+      if (result.bytesRead <= 0) {
+        return undefined
+      }
+      const truncated = contentLength > options.maxBytes
+      const lineBytes = stripTrailingCarriageReturn(buffer.subarray(0, result.bytesRead))
+      return {
+        lineBytes,
+        rawBytes: contentLength,
+        byteOffset: options.byteOffset,
+        nextByteOffset: truncated ? options.byteOffset + result.bytesRead : options.expectedNextByteOffset,
+        truncated,
+      }
+    }
+
+    return await scanJsonlLineDetail(fileHandle, options.byteOffset, sourceBytes, options.maxBytes)
+  } finally {
+    await fileHandle.close()
+  }
+}
+
+async function assertJsonlLineStart(
+  fileHandle: Awaited<ReturnType<typeof open>>,
+  byteOffset: number,
+  sourceBytes: number,
+): Promise<void> {
+  if (byteOffset === 0) {
+    return
+  }
+  const previousByte = Buffer.alloc(1)
+  const result = await fileHandle.read(previousByte, 0, 1, byteOffset - 1)
+  if (result.bytesRead !== 1 || previousByte[0] !== 0x0a) {
+    throw new SessionAuditError('byteOffset is not at a JSONL line boundary', 400)
+  }
+  if (byteOffset >= sourceBytes) {
+    throw new SessionAuditError('Audit row not found at the requested byte offset', 404)
+  }
+}
+
+async function validateExpectedNextByteOffset(
+  fileHandle: Awaited<ReturnType<typeof open>>,
+  byteOffset: number,
+  expectedNextByteOffset: number,
+  sourceBytes: number,
+): Promise<void> {
+  if (expectedNextByteOffset > sourceBytes) {
+    throw new SessionAuditError('nextByteOffset is outside the audit source', 400)
+  }
+  const lineLength = expectedNextByteOffset - byteOffset
+  if (lineLength <= 0) {
+    throw new SessionAuditError('nextByteOffset must be greater than byteOffset', 400)
+  }
+  if (expectedNextByteOffset === sourceBytes) {
+    return
+  }
+  const boundaryByte = Buffer.alloc(1)
+  const boundaryResult = await fileHandle.read(boundaryByte, 0, 1, expectedNextByteOffset - 1)
+  if (boundaryResult.bytesRead !== 1 || boundaryByte[0] !== 0x0a) {
+    throw new SessionAuditError('nextByteOffset is not at a JSONL line boundary', 400)
+  }
+}
+
+async function scanJsonlLineDetail(
+  fileHandle: Awaited<ReturnType<typeof open>>,
+  byteOffset: number,
+  sourceBytes: number,
+  maxBytes: number,
+): Promise<JsonlLineAtOffset | undefined> {
+  const buffer = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1))
+  let readOffset = byteOffset
+  const lineChunks: Buffer[] = []
+  let lineBufferedBytes = 0
+  let lineRawBytes = 0
+  let truncated = false
+
+  const appendLineSegment = (segment: Buffer): void => {
+    if (segment.length === 0 || truncated) {
+      return
+    }
+    lineRawBytes += segment.length
+    if (lineBufferedBytes >= maxBytes) {
+      truncated = true
+      return
+    }
+    const remainingBufferedBytes = maxBytes - lineBufferedBytes
+    const retained = segment.subarray(0, Math.min(segment.length, remainingBufferedBytes))
+    lineChunks.push(Buffer.from(retained))
+    lineBufferedBytes += retained.length
+    if (segment.length > retained.length) {
+      truncated = true
+    }
+  }
+
+  while (readOffset < sourceBytes) {
+    const chunkStartOffset = readOffset
+    const readLength = Math.min(buffer.length, sourceBytes - readOffset)
+    const result = await fileHandle.read(buffer, 0, readLength, readOffset)
+    if (result.bytesRead <= 0) {
+      break
+    }
+
+    readOffset += result.bytesRead
+    const chunk = buffer.subarray(0, result.bytesRead)
+    const segmentStart = 0
+    while (segmentStart < chunk.length) {
+      const newlineIndex = chunk.indexOf(0x0a, segmentStart)
+      if (newlineIndex < 0) {
+        appendLineSegment(chunk.subarray(segmentStart))
+        break
+      }
+
+      appendLineSegment(chunk.subarray(segmentStart, newlineIndex))
+      const nextByteOffset = chunkStartOffset + newlineIndex + 1
+      return {
+        lineBytes: stripTrailingCarriageReturn(Buffer.concat(lineChunks, lineBufferedBytes)),
+        rawBytes: lineRawBytes,
+        byteOffset,
+        nextByteOffset,
+        truncated,
+      }
+    }
+
+    if (truncated) {
+      return {
+        lineBytes: stripTrailingCarriageReturn(Buffer.concat(lineChunks, lineBufferedBytes)),
+        rawBytes: lineRawBytes,
+        byteOffset,
+        nextByteOffset: byteOffset + lineRawBytes,
+        truncated: true,
+      }
+    }
+  }
+
+  if (lineRawBytes === 0) {
+    return undefined
+  }
+
+  return {
+    lineBytes: stripTrailingCarriageReturn(Buffer.concat(lineChunks, lineBufferedBytes)),
+    rawBytes: lineRawBytes,
+    byteOffset,
+    nextByteOffset: sourceBytes,
+    truncated: false,
   }
 }
 

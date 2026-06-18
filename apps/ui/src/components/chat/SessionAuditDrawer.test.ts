@@ -13,10 +13,26 @@ let root: Root | null = null
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
-  vi.stubGlobal('fetch', vi.fn(async () => ({
-    ok: true,
-    json: async () => auditPageFixture(),
-  } as Response)))
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith('/audit/entry')) {
+      return responseFor({
+        sessionAgentId: 'manager-1',
+        scope: 'session',
+        sourceId: 'session',
+        sourceKind: 'canonical_session_jsonl',
+        relativePath: 'sessions/manager-1/session.jsonl',
+        byteOffset: Number(url.searchParams.get('byteOffset')),
+        nextByteOffset: 220,
+        rawBytes: 210,
+        rawText: '{"type":"custom","id":"tool-1","data":{"text":"tool result raw"}}',
+        truncated: false,
+        maxBytes: 8388608,
+        formattedJson: '{\n  "type": "custom",\n  "id": "tool-1",\n  "data": {\n    "text": "tool result raw"\n  }\n}',
+      })
+    }
+    return responseFor(auditPageFixture())
+  }))
   const localStorageEntries = new Map<string, string>()
   Object.defineProperty(window, 'localStorage', {
     configurable: true,
@@ -52,7 +68,7 @@ afterEach(() => {
 })
 
 describe('SessionAuditDrawer', () => {
-  it('loads capped audit rows and renders diagnostic metadata', async () => {
+  it('loads capped audit rows and lazy-loads full JSON detail on row selection', async () => {
     root = createRoot(container)
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -73,12 +89,81 @@ describe('SessionAuditDrawer', () => {
     expect(getByText(document.body, 'normal_view_hidden')).toBeTruthy()
     expect(queryByText(document.body, 'tool result raw')).toBeNull()
 
-    fireEvent.click(getByRole(document.body, 'button', { name: /show capped json preview/i }))
-    await waitFor(() => expect(getByText(document.body, 'tool result raw')).toBeTruthy())
+    fireEvent.click(getByRole(document.body, 'button', { name: 'View JSON' }))
+    await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
+    await waitFor(() => expect(document.body.textContent).toContain('tool result raw'))
 
-    const requestUrl = new URL((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string)
-    expect(requestUrl.searchParams.get('order')).toBe('desc')
-    expect(requestUrl.searchParams.has('includeConversationEntry')).toBe(false)
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    const listUrl = new URL(String(fetchMock.mock.calls[0][0]))
+    expect(listUrl.searchParams.get('order')).toBe('desc')
+    expect(listUrl.searchParams.has('includeConversationEntry')).toBe(false)
+
+    const detailUrl = new URL(String(fetchMock.mock.calls.find((call) => String(call[0]).includes('/audit/entry'))?.[0]))
+    expect(detailUrl.searchParams.get('byteOffset')).toBe('10')
+    expect(detailUrl.searchParams.get('nextByteOffset')).toBe('220')
+  })
+
+  it('supports formatted/raw toggle and truncated detail rendering', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/audit/entry')) {
+        return responseFor({
+          sessionAgentId: 'manager-1',
+          scope: 'session',
+          sourceId: 'session',
+          sourceKind: 'canonical_session_jsonl',
+          relativePath: 'sessions/manager-1/session.jsonl',
+          byteOffset: 10,
+          nextByteOffset: 220,
+          rawBytes: 5000,
+          rawText: '{"truncated":true}',
+          truncated: true,
+          maxBytes: 8388608,
+          parseError: 'Row exceeds the 8388608 byte detail cap',
+        })
+      }
+      return responseFor(auditPageFixture())
+    }))
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    fireEvent.click(getByRole(document.body, 'button', { name: 'View JSON' }))
+    await waitFor(() => expect(getByText(document.body, /detail cap/)).toBeTruthy())
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Raw' }))
+    await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy raw JSON' })).toBeTruthy())
+    expect(document.body.textContent).toContain('{"truncated":true}')
+  })
+
+  it('clears selected detail when filters change', async () => {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
+    fireEvent.click(getByRole(document.body, 'button', { name: 'View JSON' }))
+    await waitFor(() => expect(getByRole(document.body, 'button', { name: 'Copy JSON' })).toBeTruthy())
+
+    fireEvent.change(getByPlaceholderText(document.body, 'wrapper/custom/conversation type'), { target: { value: 'filtered' } })
+    await waitFor(() => expect(queryByText(document.body, 'tool result raw')).toBeNull())
+    expect(getByText(document.body, 'Select an audit row to view full JSON details.')).toBeTruthy()
   })
 
   it('renders as a full-screen audit surface without a drawer resize dependency', async () => {
