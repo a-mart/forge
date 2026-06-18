@@ -1215,18 +1215,20 @@ interface NativeProviderMessageClassification {
 }
 
 interface NativeProviderContentSummary {
-  kind: 'text' | 'system' | 'toolCall' | 'toolResult'
+  kind: 'text' | 'system' | 'toolCall' | 'toolResult' | 'thinking'
   text?: string
   toolName?: string
   toolCallId?: string
   toolKind?: string
   contentItemCount?: number
   textCharCount?: number
+  hiddenContentItemCount?: number
 }
 
 const NATIVE_PROVIDER_MESSAGE_ROLES = new Set(['user', 'assistant', 'system', 'toolResult'])
 const NATIVE_PROVIDER_TOOL_CALL_TYPES = new Set(['toolCall', 'tool_call', 'functionCall', 'function_call'])
 const NATIVE_PROVIDER_TOOL_RESULT_TYPES = new Set(['toolResult', 'tool_result', 'functionResult', 'function_result'])
+const NATIVE_PROVIDER_THINKING_TYPES = new Set(['thinking'])
 
 function classifyNativeProviderMessage(wrapper: Record<string, unknown>): NativeProviderMessageClassification | undefined {
   if (stringValue(wrapper.type) !== 'message') {
@@ -1295,6 +1297,18 @@ function classifyNativeProviderMessage(wrapper: Record<string, unknown>): Native
     }
   }
 
+  if (contentSummary.kind === 'thinking') {
+    const hiddenCount = contentSummary.hiddenContentItemCount ?? contentSummary.contentItemCount ?? 0
+    const preview = `Provider assistant thinking hidden${hiddenCount > 0 ? ` (${hiddenCount} block${hiddenCount === 1 ? '' : 's'})` : ''}`
+    return {
+      role,
+      entryTimestamp,
+      title: 'Provider assistant thinking',
+      summary: preview,
+      preview,
+    }
+  }
+
   const textPreview = truncateText(contentSummary.text ?? '').text
   const title = `Provider ${role} message`
   const summary = textPreview ? `${title}: ${textPreview}` : title
@@ -1327,6 +1341,7 @@ function summarizeNativeProviderContent(message: Record<string, unknown>, role: 
   let textCharCount = 0
   let toolCall: NativeProviderContentSummary | undefined
   let toolResult: NativeProviderContentSummary | undefined
+  let hiddenContentItemCount = 0
 
   for (const item of content) {
     if (typeof item === 'string') {
@@ -1339,12 +1354,18 @@ function summarizeNativeProviderContent(message: Record<string, unknown>, role: 
     }
 
     const itemType = stringValue(item.type)
+    if (itemType && NATIVE_PROVIDER_THINKING_TYPES.has(itemType)) {
+      hiddenContentItemCount += 1
+      continue
+    }
+
     if (itemType && NATIVE_PROVIDER_TOOL_CALL_TYPES.has(itemType)) {
       toolCall ??= {
         kind: 'toolCall',
         toolName: boundedMetadataValue(item.name) ?? boundedMetadataValue(item.toolName),
         toolCallId: boundedMetadataValue(item.toolCallId) ?? boundedMetadataValue(item.id) ?? boundedMetadataValue(item.callId),
         contentItemCount: content.length,
+        hiddenContentItemCount,
       }
       continue
     }
@@ -1355,6 +1376,7 @@ function summarizeNativeProviderContent(message: Record<string, unknown>, role: 
         toolName: boundedMetadataValue(item.name) ?? boundedMetadataValue(item.toolName),
         toolCallId: boundedMetadataValue(item.toolCallId) ?? boundedMetadataValue(item.id) ?? boundedMetadataValue(item.callId),
         contentItemCount: content.length,
+        hiddenContentItemCount,
       }
       continue
     }
@@ -1370,19 +1392,23 @@ function summarizeNativeProviderContent(message: Record<string, unknown>, role: 
   }
 
   if (toolCall) {
-    return toolCall
+    return { ...toolCall, hiddenContentItemCount }
   }
   if (toolResult || role === 'toolResult') {
-    return toolResult ?? { kind: 'toolResult', contentItemCount: content.length, textCharCount }
+    return toolResult ? { ...toolResult, hiddenContentItemCount } : { kind: 'toolResult', contentItemCount: content.length, textCharCount, hiddenContentItemCount }
   }
   if (role === 'system') {
-    return { kind: 'system', contentItemCount: content.length, textCharCount }
+    return { kind: 'system', contentItemCount: content.length, textCharCount, hiddenContentItemCount }
+  }
+  if (textParts.length === 0 && hiddenContentItemCount > 0) {
+    return { kind: 'thinking', contentItemCount: content.length, hiddenContentItemCount }
   }
   return {
     kind: 'text',
     text: textParts.join('\n'),
     contentItemCount: content.length,
     textCharCount,
+    hiddenContentItemCount,
   }
 }
 

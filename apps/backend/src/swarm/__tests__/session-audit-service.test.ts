@@ -139,6 +139,90 @@ describe('SessionAuditService', () => {
     expect(item.title).not.toContain('DO_NOT_LEAK')
   })
 
+  it('classifies native provider thinking plus tool-call rows without leaking thinking or arguments', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      nativeMessageRow('native-thinking-tool-call', {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'THINKING_DO_NOT_LEAK', signature: 'SIGNATURE_DO_NOT_LEAK' },
+          { type: 'toolCall', id: 'call-1', name: 'speak_to_user', arguments: { text: 'ARGS_DO_NOT_LEAK' } },
+        ],
+      }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const item = page.items[0]
+
+    expect(item).toMatchObject({
+      category: 'runtime_log',
+      wrapperType: 'message',
+      hiddenReason: 'normal_view_hidden',
+      role: 'assistant',
+      toolName: 'speak_to_user',
+      toolCallId: 'call-1',
+      title: 'Provider tool call: speak_to_user',
+    })
+    expect(item.summary).not.toContain('THINKING_DO_NOT_LEAK')
+    expect(item.summary).not.toContain('SIGNATURE_DO_NOT_LEAK')
+    expect(item.summary).not.toContain('ARGS_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('THINKING_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('SIGNATURE_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('ARGS_DO_NOT_LEAK')
+  })
+
+  it('classifies native provider thinking plus text rows with text preview only', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      nativeMessageRow('native-thinking-text', {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'THINKING_DO_NOT_LEAK', signature: 'SIGNATURE_DO_NOT_LEAK' },
+          { type: 'text', text: 'safe assistant text' },
+        ],
+      }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const item = page.items[0]
+
+    expect(item).toMatchObject({ category: 'runtime_log', role: 'assistant', title: 'Provider assistant message', preview: 'safe assistant text' })
+    expect(item.summary).toContain('safe assistant text')
+    expect(item.summary).not.toContain('THINKING_DO_NOT_LEAK')
+    expect(item.summary).not.toContain('SIGNATURE_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('THINKING_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('SIGNATURE_DO_NOT_LEAK')
+  })
+
+  it('classifies native provider thinking-only assistant rows as hidden runtime logs', async () => {
+    const fixture = await createFixture()
+    await writeSessionLines(fixture.dataDir, fixture.manager, [
+      nativeMessageRow('native-thinking-only', {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'THINKING_DO_NOT_LEAK', signature: 'SIGNATURE_DO_NOT_LEAK' }],
+      }),
+    ])
+
+    const service = new SessionAuditService(fixture.host)
+    const page = await service.getSessionAuditPage(fixture.manager.agentId, { limit: 10 })
+    const item = page.items[0]
+
+    expect(item).toMatchObject({
+      category: 'runtime_log',
+      wrapperType: 'message',
+      hiddenReason: 'normal_view_hidden',
+      role: 'assistant',
+      title: 'Provider assistant thinking',
+    })
+    expect(item.summary).toContain('hidden')
+    expect(item.summary).not.toContain('THINKING_DO_NOT_LEAK')
+    expect(item.summary).not.toContain('SIGNATURE_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('THINKING_DO_NOT_LEAK')
+    expect(item.preview).not.toContain('SIGNATURE_DO_NOT_LEAK')
+  })
+
   it('classifies native provider user and assistant text rows with bounded previews', async () => {
     const fixture = await createFixture()
     const longAssistantText = `assistant ${'x'.repeat(2_000)}`
