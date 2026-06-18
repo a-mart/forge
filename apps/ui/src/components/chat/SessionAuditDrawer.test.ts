@@ -560,9 +560,9 @@ describe('SessionAuditDrawer', () => {
     fireEvent.pointerMove(separator, { pointerId: 1, pointerType: 'mouse', clientX: 640 })
     fireEvent.pointerUp(separator, { pointerId: 1, pointerType: 'mouse' })
 
-    await waitFor(() => expect(listPane.style.flexBasis).toBe('64%'))
-    expect(separator.getAttribute('aria-valuenow')).toBe('64')
-    expect(window.localStorage.setItem).toHaveBeenLastCalledWith('forge.sessionAudit.splitPercent', '64')
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('62%'))
+    expect(separator.getAttribute('aria-valuenow')).toBe('62')
+    expect(window.localStorage.setItem).toHaveBeenLastCalledWith('forge.sessionAudit.splitPercent', '62')
   })
 
   it('resizes the split pane with keyboard controls and enforces bounds', async () => {
@@ -588,11 +588,11 @@ describe('SessionAuditDrawer', () => {
     expect(separator.getAttribute('aria-valuenow')).toBe('42')
 
     fireEvent.keyDown(separator, { key: 'End' })
-    await waitFor(() => expect(listPane.style.flexBasis).toBe('68%'))
-    expect(separator.getAttribute('aria-valuenow')).toBe('68')
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('62%'))
+    expect(separator.getAttribute('aria-valuenow')).toBe('62')
 
     fireEvent.keyDown(separator, { key: 'ArrowRight' })
-    await waitFor(() => expect(listPane.style.flexBasis).toBe('68%'))
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('62%'))
 
     fireEvent.keyDown(separator, { key: 'Home' })
     await waitFor(() => expect(listPane.style.flexBasis).toBe('26%'))
@@ -620,8 +620,8 @@ describe('SessionAuditDrawer', () => {
 
     const separator = getByRole(document.body, 'separator', { name: /resize audit panes/i })
     const listPane = separator.parentElement?.firstElementChild as HTMLElement
-    expect(listPane.style.flexBasis).toBe('68%')
-    expect(separator.getAttribute('aria-valuenow')).toBe('68')
+    expect(listPane.style.flexBasis).toBe('62%')
+    expect(separator.getAttribute('aria-valuenow')).toBe('62')
   })
 
   it('does not append a stale load-more page after close and reopen with the same session', async () => {

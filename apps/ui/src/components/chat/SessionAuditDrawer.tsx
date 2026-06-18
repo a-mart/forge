@@ -23,7 +23,7 @@ const WORKER_SOURCE_PREFIX = 'worker:'
 const SPLIT_STORAGE_KEY = 'forge.sessionAudit.splitPercent'
 const DEFAULT_SPLIT_PERCENT = 38
 const MIN_SPLIT_PERCENT = 26
-const MAX_SPLIT_PERCENT = 68
+const MAX_SPLIT_PERCENT = 62
 const SPLIT_KEYBOARD_STEP = 4
 
 interface SessionAuditDrawerProps {
@@ -433,7 +433,14 @@ export function SessionAuditDrawer({
               onPointerCancel={handleSplitPointerUp}
               onKeyDown={handleSplitKeyDown}
             >
-              <span className="my-2 w-px rounded-full bg-border transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-2" />
+              <span className="my-2 flex w-2 items-center justify-center rounded-full transition-colors group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-2">
+                <span className="h-full w-0.5 rounded-full bg-border transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary" />
+                <span className="absolute flex flex-col gap-1 rounded-full bg-background/80 px-0.5 py-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                  <span className="size-1 rounded-full bg-muted-foreground/60" />
+                  <span className="size-1 rounded-full bg-muted-foreground/60" />
+                  <span className="size-1 rounded-full bg-muted-foreground/60" />
+                </span>
+              </span>
             </div>
 
             <div className="flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden border-t border-border/70 lg:min-h-0 lg:border-t-0 lg:border-l-0">
