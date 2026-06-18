@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Clipboard, Loader2, RotateCw } from 'lucide-react'
+import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { ChevronDown, ChevronRight, Clipboard, Loader2, RotateCw, X } from 'lucide-react'
 import type { SessionAuditEntry, SessionAuditEntryCategory, SessionAuditManifest, SessionAuditWorkerSummary } from '@forge/protocol'
 import { SESSION_AUDIT_ENTRY_CATEGORIES } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogDescription, DialogHeader, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { fetchSessionAuditPage } from '@/lib/session-audit-api'
 import { cn } from '@/lib/utils'
@@ -193,89 +194,91 @@ export function SessionAuditDrawer({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="flex max-w-none flex-col gap-0 overflow-hidden p-0"
-        style={{
-          left: 12,
-          top: 12,
-          width: 'calc(100vw - 24px)',
-          maxWidth: 'none',
-          height: 'calc(100vh - 24px)',
-          maxHeight: 'calc(100vh - 24px)',
-          transform: 'none',
-        }}
-      >
-        <DialogHeader className="border-b border-border/70 p-4 pr-12">
-          <DialogTitle>Session Audit Log</DialogTitle>
-          <DialogDescription>
-            Complete persisted session audit for {sessionLabel}, newest items first. This full-screen diagnostic view reads canonical session history and does not change normal Web, All, or Detailed chat visibility.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogPrimitive.Content
+          className="fixed z-50 flex min-w-0 flex-col gap-0 overflow-hidden border border-border bg-background p-0 shadow-xl data-[state=closed]:animate-out data-[state=open]:animate-in"
+          style={{
+            inset: 0,
+            width: '100vw',
+            maxWidth: 'none',
+            height: '100vh',
+            maxHeight: 'none',
+            margin: 0,
+            transform: 'none',
+          }}
+        >
+          <DialogHeader className="min-w-0 shrink-0 border-b border-border/70 p-4 pr-12">
+            <DialogTitle>Session Audit Log</DialogTitle>
+            <DialogDescription>
+              Complete persisted session audit for {sessionLabel}, newest items first. This full-screen diagnostic view reads canonical session history and does not change normal Web, All, or Detailed chat visibility.
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="flex flex-col gap-3 border-b border-border/70 bg-background/95 p-4">
-          <div className="flex flex-col gap-2">
-            <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted-foreground">
-              Source
-              <Select value={selectedSource} onValueChange={setSelectedSource}>
-                <SelectTrigger className="h-8 text-xs" aria-label="Audit source">
-                  <SelectValue placeholder="Manager canonical JSONL" />
-                </SelectTrigger>
-                <SelectContent>
-                  {sourceOptions.map((source) => (
-                    <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            {selectedSourceMetadata ? <SourceMetadata source={selectedSourceMetadata} /> : null}
+          <div className="flex min-w-0 shrink-0 flex-col gap-3 border-b border-border/70 bg-background/95 p-4">
+            <div className="flex flex-col gap-2">
+              <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted-foreground">
+                Source
+                <Select value={selectedSource} onValueChange={setSelectedSource}>
+                  <SelectTrigger className="h-8 text-xs" aria-label="Audit source">
+                    <SelectValue placeholder="Manager canonical JSONL" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sourceOptions.map((source) => (
+                      <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              {selectedSourceMetadata ? <SourceMetadata source={selectedSourceMetadata} /> : null}
+            </div>
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end">
+              <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
+                Category
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="All categories" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
+                    {SESSION_AUDIT_ENTRY_CATEGORIES.map((value) => (
+                      <SelectItem key={value} value={value}>{formatCategory(value)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
+                Type filter
+                <Input
+                  value={typeFilter}
+                  onChange={(event) => setTypeFilter(event.target.value)}
+                  placeholder="wrapper/custom/conversation type"
+                  className="h-8 text-xs"
+                />
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs"
+                disabled={loading}
+                onClick={() => {
+                  setCategory(ALL_CATEGORIES)
+                  setTypeFilter('')
+                  setSelectedSource(MANAGER_SOURCE_VALUE)
+                }}
+              >
+                <RotateCw className="size-3.5" />
+                Reset
+              </Button>
+            </div>
+            {sessionAgentId ? (
+              <CopyPill label="Session" value={sessionAgentId} />
+            ) : null}
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
-              Category
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="All categories" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
-                  {SESSION_AUDIT_ENTRY_CATEGORIES.map((value) => (
-                    <SelectItem key={value} value={value}>{formatCategory(value)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
-              Type filter
-              <Input
-                value={typeFilter}
-                onChange={(event) => setTypeFilter(event.target.value)}
-                placeholder="wrapper/custom/conversation type"
-                className="h-8 text-xs"
-              />
-            </label>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5 text-xs"
-              disabled={loading}
-              onClick={() => {
-                setCategory(ALL_CATEGORIES)
-                setTypeFilter('')
-                setSelectedSource(MANAGER_SOURCE_VALUE)
-              }}
-            >
-              <RotateCw className="size-3.5" />
-              Reset
-            </Button>
-          </div>
-          {sessionAgentId ? (
-            <CopyPill label="Session" value={sessionAgentId} />
-          ) : null}
-        </div>
 
-        <ScrollArea className="min-h-0 flex-1 overflow-hidden">
-          <div className="min-w-0 space-y-3 p-4">
+          <ScrollArea className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-w-0 space-y-3 p-4">
             {visibleLoading ? (
               <StateCard icon={<Loader2 className="size-4 animate-spin" />} title="Loading audit log…" />
             ) : visibleError ? (
@@ -301,9 +304,21 @@ export function SessionAuditDrawer({
                 </Button>
               </div>
             ) : null}
-          </div>
-        </ScrollArea>
-      </DialogContent>
+            </div>
+          </ScrollArea>
+          <DialogPrimitive.Close
+            className={cn(
+              'absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity',
+              'hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+              'disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground',
+            )}
+            aria-label="Close session audit log"
+          >
+            <X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </DialogPortal>
     </Dialog>
   )
 }
@@ -364,7 +379,7 @@ function SessionAuditRow({ item }: { item: SessionAuditEntry }) {
   return (
     <article className="min-w-0 rounded-lg border border-border/70 bg-card/60 p-3 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0 flex-1 space-y-1 overflow-hidden">
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="outline" className="text-[10px]">{formatCategory(item.category)}</Badge>
             <Badge variant="secondary" className="max-w-full truncate text-[10px]">{item.sourceLabel}</Badge>
@@ -453,13 +468,13 @@ function CopyPill({ label, value }: { label: string; value?: string | null }) {
   return (
     <button
       type="button"
-      className="inline-flex max-w-full items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-1.5 py-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+      className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-1.5 py-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
       onClick={() => void copy()}
       title={`Copy ${label.toLowerCase()}: ${value}`}
     >
       <Clipboard className="size-3" aria-hidden="true" />
       <span className="font-sans text-[10px] uppercase tracking-wide">{copied ? 'Copied' : label}</span>
-      <span className="truncate">{value}</span>
+      <span className="min-w-0 truncate">{value}</span>
     </button>
   )
 }

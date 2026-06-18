@@ -96,11 +96,14 @@ describe('SessionAuditDrawer', () => {
     await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
     const dialog = getByRole(document.body, 'dialog', { name: /session audit log/i }) as HTMLElement
 
-    expect(dialog.style.width).toBe('calc(100vw - 24px)')
+    expect(dialog.style.inset).toBe('0')
+    expect(dialog.style.width).toBe('100vw')
     expect(dialog.style.maxWidth).toBe('none')
-    expect(dialog.style.height).toBe('calc(100vh - 24px)')
-    expect(dialog.style.maxHeight).toBe('calc(100vh - 24px)')
+    expect(dialog.style.height).toBe('100vh')
+    expect(dialog.style.maxHeight).toBe('none')
+    expect(dialog.style.margin).toBe('0px')
     expect(dialog.style.transform).toBe('none')
+    expect(getByRole(document.body, 'button', { name: /close session audit log/i })).toBeTruthy()
     expect(document.body.querySelector('[aria-label="Resize session audit panel"]')).toBeNull()
     expect(window.localStorage.setItem).not.toHaveBeenCalled()
   })
