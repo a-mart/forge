@@ -58,6 +58,16 @@ beforeEach(() => {
   Object.assign(navigator, {
     clipboard: { writeText: vi.fn(async () => undefined) },
   })
+  window.matchMedia = vi.fn((query: string) => ({
+    matches: query === '(min-width: 1024px)',
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }))
   HTMLElement.prototype.scrollIntoView = vi.fn()
   HTMLElement.prototype.hasPointerCapture = vi.fn(() => false)
   HTMLElement.prototype.setPointerCapture = vi.fn()
@@ -510,6 +520,108 @@ describe('SessionAuditDrawer', () => {
     expect(queryByRole(document.body, 'option', { name: /Initial row/i } )).toBeNull()
     expect(queryByRole(document.body, 'option', { name: /Filtered row/i } )).toBeNull()
     expect(getByRole(document.body, 'option', { name: /Fresh row/i })).toBeTruthy()
+  })
+
+  it('renders an accessible split-pane separator and resizes with pointer drag', async () => {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+
+    const separator = getByRole(document.body, 'separator', { name: /resize audit panes/i })
+    expect(separator.getAttribute('aria-orientation')).toBe('vertical')
+    expect(separator.getAttribute('aria-valuenow')).toBe('38')
+
+    const splitContainer = separator.parentElement as HTMLElement
+    splitContainer.getBoundingClientRect = vi.fn(() => ({
+      left: 0,
+      top: 0,
+      width: 1000,
+      height: 600,
+      right: 1000,
+      bottom: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }))
+
+    const listPane = splitContainer.firstElementChild as HTMLElement
+    expect(listPane.style.flexBasis).toBe('38%')
+
+    fireEvent.pointerDown(separator, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 600 })
+    fireEvent.pointerMove(separator, { pointerId: 1, pointerType: 'mouse', clientX: 640 })
+    fireEvent.pointerUp(separator, { pointerId: 1, pointerType: 'mouse' })
+
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('64%'))
+    expect(separator.getAttribute('aria-valuenow')).toBe('64')
+    expect(window.localStorage.setItem).toHaveBeenLastCalledWith('forge.sessionAudit.splitPercent', '64')
+  })
+
+  it('resizes the split pane with keyboard controls and enforces bounds', async () => {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+
+    const separator = getByRole(document.body, 'separator', { name: /resize audit panes/i })
+    const splitContainer = separator.parentElement as HTMLElement
+    const listPane = splitContainer.firstElementChild as HTMLElement
+
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('42%'))
+    expect(separator.getAttribute('aria-valuenow')).toBe('42')
+
+    fireEvent.keyDown(separator, { key: 'End' })
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('68%'))
+    expect(separator.getAttribute('aria-valuenow')).toBe('68')
+
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('68%'))
+
+    fireEvent.keyDown(separator, { key: 'Home' })
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('26%'))
+    expect(separator.getAttribute('aria-valuenow')).toBe('26')
+
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+    await waitFor(() => expect(listPane.style.flexBasis).toBe('26%'))
+  })
+
+  it('restores persisted split-pane size with bounds', async () => {
+    window.localStorage.setItem('forge.sessionAudit.splitPercent', '95')
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(getByRole(document.body, 'option', { name: /Worker tool call/i })).toBeTruthy())
+
+    const separator = getByRole(document.body, 'separator', { name: /resize audit panes/i })
+    const listPane = separator.parentElement?.firstElementChild as HTMLElement
+    expect(listPane.style.flexBasis).toBe('68%')
+    expect(separator.getAttribute('aria-valuenow')).toBe('68')
   })
 
   it('does not append a stale load-more page after close and reopen with the same session', async () => {

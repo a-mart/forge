@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { Clipboard, Loader2, RotateCw, X } from 'lucide-react'
 import type { SessionAuditEntry, SessionAuditEntryCategory, SessionAuditEntryDetailResponse, SessionAuditManifest, SessionAuditWorkerSummary } from '@forge/protocol'
@@ -20,6 +20,11 @@ const EMPTY_AUDIT_ITEMS: SessionAuditEntry[] = []
 const ALL_CATEGORIES = 'all'
 const MANAGER_SOURCE_VALUE = 'session'
 const WORKER_SOURCE_PREFIX = 'worker:'
+const SPLIT_STORAGE_KEY = 'forge.sessionAudit.splitPercent'
+const DEFAULT_SPLIT_PERCENT = 38
+const MIN_SPLIT_PERCENT = 26
+const MAX_SPLIT_PERCENT = 68
+const SPLIT_KEYBOARD_STEP = 4
 
 interface SessionAuditDrawerProps {
   open: boolean
@@ -63,6 +68,10 @@ export function SessionAuditDrawer({
   const activeRequestKeyRef = useRef(requestKey)
   const requestGenerationRef = useRef(0)
   const loadMoreAbortRef = useRef<AbortController | null>(null)
+  const splitContainerRef = useRef<HTMLDivElement | null>(null)
+  const resizingSplitPointerIdRef = useRef<number | null>(null)
+  const [splitPercent, setSplitPercent] = useState(() => readStoredSplitPercent())
+  const [splitLayoutEnabled, setSplitLayoutEnabled] = useState(() => isDesktopSplitLayout())
 
   if (activeRequestKeyRef.current !== requestKey) {
     activeRequestKeyRef.current = requestKey
@@ -90,6 +99,15 @@ export function SessionAuditDrawer({
     setLoadingMore(false)
     setError(null)
     setSelectedEntryId(null)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mediaQuery = window.matchMedia('(min-width: 1024px)')
+    const handleChange = () => setSplitLayoutEnabled(mediaQuery.matches)
+    handleChange()
+    mediaQuery.addEventListener?.('change', handleChange)
+    return () => mediaQuery.removeEventListener?.('change', handleChange)
   }, [])
 
   useEffect(() => {
@@ -154,6 +172,59 @@ export function SessionAuditDrawer({
       controller.abort()
     }
   }, [open, requestKey, resetAuditState, sessionAgentId, selectedCategory, normalizedTypeFilter, selectedScope, selectedSourceKind, selectedWorkerId, sourceSessionKey, wsUrl])
+
+  const updateSplitPercent = useCallback((nextPercent: number) => {
+    const boundedPercent = clampSplitPercent(nextPercent)
+    setSplitPercent(boundedPercent)
+    persistSplitPercent(boundedPercent)
+  }, [])
+
+  const updateSplitFromClientX = useCallback((clientX: number) => {
+    const container = splitContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    if (rect.width <= 0) return
+    updateSplitPercent(((clientX - rect.left) / rect.width) * 100)
+  }, [updateSplitPercent])
+
+  const handleSplitPointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    event.preventDefault()
+    resizingSplitPointerIdRef.current = event.pointerId
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    updateSplitFromClientX(event.clientX)
+  }, [updateSplitFromClientX])
+
+  const handleSplitPointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (resizingSplitPointerIdRef.current !== event.pointerId) return
+    event.preventDefault()
+    updateSplitFromClientX(event.clientX)
+  }, [updateSplitFromClientX])
+
+  const handleSplitPointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (resizingSplitPointerIdRef.current === event.pointerId) {
+      resizingSplitPointerIdRef.current = null
+    }
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    }
+  }, [])
+
+  const handleSplitKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      updateSplitPercent(splitPercent - SPLIT_KEYBOARD_STEP)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      updateSplitPercent(splitPercent + SPLIT_KEYBOARD_STEP)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      updateSplitPercent(MIN_SPLIT_PERCENT)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      updateSplitPercent(MAX_SPLIT_PERCENT)
+    }
+  }, [splitPercent, updateSplitPercent])
 
   async function loadMore() {
     if (!sessionAgentId || !visibleNextCursor || loadingMore) return
@@ -306,8 +377,11 @@ export function SessionAuditDrawer({
             </p>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-            <ScrollArea className="min-h-0 w-full min-w-0 flex-1 overflow-hidden border-border/70 lg:max-w-[38%] lg:border-r">
+          <div ref={splitContainerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+            <ScrollArea
+              className="min-h-0 w-full min-w-0 flex-1 overflow-hidden border-border/70 lg:flex-none"
+              style={splitLayoutEnabled ? { flexBasis: `${splitPercent}%` } : undefined}
+            >
               <div className="min-w-0 space-y-2 p-3" role="listbox" aria-label="Session audit rows">
               {visibleLoading ? (
                 <StateCard icon={<Loader2 className="size-4 animate-spin" />} title="Loading audit log…" />
@@ -344,7 +418,25 @@ export function SessionAuditDrawer({
               </div>
             </ScrollArea>
 
-            <div className="flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden border-t border-border/70 lg:min-h-0 lg:border-t-0 lg:border-l">
+            <div
+              role="separator"
+              aria-label="Resize audit panes"
+              aria-orientation="vertical"
+              aria-valuemin={MIN_SPLIT_PERCENT}
+              aria-valuemax={MAX_SPLIT_PERCENT}
+              aria-valuenow={Math.round(splitPercent)}
+              tabIndex={0}
+              className="group hidden w-3 shrink-0 cursor-col-resize touch-none items-stretch justify-center outline-none lg:flex"
+              onPointerDown={handleSplitPointerDown}
+              onPointerMove={handleSplitPointerMove}
+              onPointerUp={handleSplitPointerUp}
+              onPointerCancel={handleSplitPointerUp}
+              onKeyDown={handleSplitKeyDown}
+            >
+              <span className="my-2 w-px rounded-full bg-border transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-2" />
+            </div>
+
+            <div className="flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden border-t border-border/70 lg:min-h-0 lg:border-t-0 lg:border-l-0">
               <SessionAuditDetailPanel
                 sessionAgentId={sessionAgentId}
                 wsUrl={wsUrl}
@@ -380,6 +472,40 @@ interface AuditSourceOption {
   bytes?: number
   updatedAt?: string
   status?: string
+}
+
+function isDesktopSplitLayout(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(min-width: 1024px)').matches
+}
+
+function clampSplitPercent(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_SPLIT_PERCENT
+  return Math.min(MAX_SPLIT_PERCENT, Math.max(MIN_SPLIT_PERCENT, Math.round(value)))
+}
+
+function readStoredSplitPercent(): number {
+  if (typeof window === 'undefined') return DEFAULT_SPLIT_PERCENT
+  try {
+    const storage = window.localStorage
+    if (typeof storage?.getItem !== 'function') return DEFAULT_SPLIT_PERCENT
+    const storedValue = storage.getItem(SPLIT_STORAGE_KEY)
+    if (!storedValue) return DEFAULT_SPLIT_PERCENT
+    return clampSplitPercent(Number(storedValue))
+  } catch {
+    return DEFAULT_SPLIT_PERCENT
+  }
+}
+
+function persistSplitPercent(value: number): void {
+  if (typeof window === 'undefined') return
+  try {
+    const storage = window.localStorage
+    if (typeof storage?.setItem !== 'function') return
+    storage.setItem(SPLIT_STORAGE_KEY, String(clampSplitPercent(value)))
+  } catch {
+    // Ignore storage failures; resizing should still work for the current render.
+  }
 }
 
 function buildSourceOptions(manifest: SessionAuditManifest | null): AuditSourceOption[] {
