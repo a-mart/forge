@@ -6,6 +6,11 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SourceControlBranchActions } from './SourceControlBranchActions'
+import {
+  markOriginFetchCompleted,
+  resetSourceControlAutoFetchFreshnessForTests,
+  SOURCE_CONTROL_AUTO_FETCH_FRESHNESS_MS,
+} from './source-control-auto-fetch'
 
 const {
   fetchGitOriginMock,
@@ -63,6 +68,8 @@ beforeEach(() => {
   pullGitFfOnlyMock.mockReset()
   invalidateGitCachesMock.mockReset()
   fetchMutationPreflightMock.mockResolvedValue({ issues: [], allowed: true })
+  resetSourceControlAutoFetchFreshnessForTests()
+  fetchGitOriginMock.mockResolvedValue({ success: true, warnings: [], errors: [] })
 })
 
 afterEach(() => {
@@ -221,6 +228,99 @@ describe('SourceControlBranchActions', () => {
     expect((getByRole(document.body, 'button', { name: 'Pull fast-forward' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('auto-fetches origin when Source Control becomes active and fetch history is stale', async () => {
+    renderActions({ isDirty: false, sourceControlActive: true })
+
+    await vi.waitFor(() => {
+      expect(fetchGitOriginMock).toHaveBeenCalledTimes(1)
+    })
+
+    expect(fetchGitOriginMock).toHaveBeenCalledWith('ws://127.0.0.1:47187', {
+      agentId: 'agent-1',
+      repoTarget: 'workspace',
+      worktreeId: undefined,
+      remote: 'origin',
+      expectedHead: 'abc123',
+      expectedStatusHash: 'status123',
+    })
+  })
+
+  it('does not auto-fetch again inside the freshness window', async () => {
+    markOriginFetchCompleted('agent-1:workspace:session:origin', Date.now())
+
+    renderActions({ isDirty: false, sourceControlActive: true })
+    await Promise.resolve()
+
+    expect(fetchGitOriginMock).not.toHaveBeenCalled()
+  })
+
+  it('does not auto-fetch when Source Control is inactive', async () => {
+    renderActions({ isDirty: false, sourceControlActive: false })
+    await Promise.resolve()
+
+    expect(fetchGitOriginMock).not.toHaveBeenCalled()
+  })
+
+  it('does not auto-fetch for repos without origin configured', async () => {
+    renderActions({
+      isDirty: false,
+      sourceControlActive: true,
+      branchData: {
+        ...branchData,
+        remotes: [],
+      },
+    })
+    await Promise.resolve()
+
+    expect(fetchGitOriginMock).not.toHaveBeenCalled()
+  })
+
+  it('manual fetch still works and refreshes freshness state', async () => {
+    renderActions({ isDirty: false, sourceControlActive: true })
+    await vi.waitFor(() => {
+      expect(fetchGitOriginMock).toHaveBeenCalledTimes(1)
+    })
+    await vi.waitFor(() => {
+      const fetchButton = getByRole(container, 'button', { name: 'Fetch origin' }) as HTMLButtonElement
+      expect(fetchButton.disabled).toBe(false)
+    })
+    fetchGitOriginMock.mockClear()
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Fetch origin' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(fetchGitOriginMock).toHaveBeenCalledTimes(1)
+    })
+
+    fetchGitOriginMock.mockClear()
+    unmountActions()
+    renderActions({ isDirty: false, sourceControlActive: false })
+    await Promise.resolve()
+    unmountActions()
+    renderActions({ isDirty: false, sourceControlActive: true })
+    await Promise.resolve()
+
+    expect(fetchGitOriginMock).not.toHaveBeenCalled()
+  })
+
+  it('auto-fetches again after the freshness window expires', async () => {
+    const key = 'agent-1:workspace:session:origin'
+    const startedAt = 50_000
+    vi.spyOn(Date, 'now').mockReturnValue(startedAt)
+    markOriginFetchCompleted(key, startedAt)
+    vi.spyOn(Date, 'now').mockReturnValue(startedAt + SOURCE_CONTROL_AUTO_FETCH_FRESHNESS_MS)
+
+    renderActions({ isDirty: false, sourceControlActive: true })
+
+    await vi.waitFor(() => {
+      expect(fetchGitOriginMock).toHaveBeenCalledTimes(1)
+    })
+
+    vi.mocked(Date.now).mockRestore()
+  })
+
   it('passes worktreeId and expected guards in mutation requests', async () => {
     pullGitFfOnlyMock.mockResolvedValue({
       success: true,
@@ -251,9 +351,16 @@ describe('SourceControlBranchActions', () => {
   })
 })
 
+function unmountActions(): void {
+  root?.unmount()
+  root = null
+}
+
 function renderActions(options: {
   isDirty: boolean
   worktreeId?: string
+  sourceControlActive?: boolean
+  branchData?: typeof branchData
   onRequestMutation?: (
     mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
     target: { agentId: string; worktreeId: string | null },
@@ -269,12 +376,13 @@ function renderActions(options: {
         repoTarget: 'workspace',
         worktreeId: options.worktreeId,
         branchesQuery: {
-          data: branchData,
+          data: options.branchData ?? branchData,
           isLoading: false,
           error: null,
           refetch: vi.fn(),
         },
         isDirty: options.isDirty,
+        sourceControlActive: options.sourceControlActive ?? false,
         onMutationComplete: vi.fn(),
         onRequestMutation: options.onRequestMutation,
       }),

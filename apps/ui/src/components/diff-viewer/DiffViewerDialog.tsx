@@ -219,6 +219,7 @@ export function DiffViewerContent({
               selectedWorktreePath={contextWorktree?.path ?? null}
               branchesQuery={branchesQuery}
               isDirty={(statusQuery.data?.summary.filesChanged ?? 0) > 0}
+              sourceControlActive={active}
               onMutationComplete={handleRefresh}
               onRequestMutation={onRequestSourceControlMutation}
             />

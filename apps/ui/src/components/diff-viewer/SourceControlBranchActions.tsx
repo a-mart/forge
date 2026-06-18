@@ -1,6 +1,6 @@
 import type { GitBranchSummary } from '@forge/protocol'
 import { ArrowDown, ChevronDown, GitBranch, Plus, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -16,6 +16,12 @@ import {
   type GitBranchesQueryResult,
 } from './use-diff-queries'
 import { invalidateFileBrowserCaches } from '@/components/file-browser/use-file-browser-queries'
+import {
+  buildSourceControlAutoFetchKey,
+  isSourceControlAutoFetchEligible,
+  markOriginFetchCompleted,
+  shouldAutoFetchOrigin,
+} from './source-control-auto-fetch'
 
 type PendingMutation =
   | { kind: 'switch'; branch: string }
@@ -30,6 +36,7 @@ interface SourceControlBranchActionsProps {
   selectedWorktreePath?: string | null
   branchesQuery: GitBranchesQueryResult
   isDirty: boolean
+  sourceControlActive?: boolean
   onMutationComplete: () => void
   onRequestMutation?: (
     mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
@@ -46,6 +53,7 @@ export function SourceControlBranchActions({
   selectedWorktreePath,
   branchesQuery,
   isDirty,
+  sourceControlActive = true,
   onMutationComplete,
   onRequestMutation,
 }: SourceControlBranchActionsProps) {
@@ -59,6 +67,7 @@ export function SourceControlBranchActions({
   const [preflightWarnings, setPreflightWarnings] = useState<string[]>([])
   const [preflightBlockedReasons, setPreflightBlockedReasons] = useState<string[]>([])
   const [actionWarning, setActionWarning] = useState<string | null>(null)
+  const autoFetchInFlightKeyRef = useRef<string | null>(null)
 
   const branchData = branchesQuery.data
   const mutationsDisabled = repoTarget === 'versioning' || !agentId || !branchData?.currentHead || !branchData.statusHash
@@ -158,14 +167,29 @@ export function SourceControlBranchActions({
     onMutationComplete()
   }, [agentId, onMutationComplete, repoTarget])
 
-  const handleFetch = useCallback(async () => {
+  const autoFetchKey = useMemo(() => {
+    if (!agentId) {
+      return null
+    }
+    return buildSourceControlAutoFetchKey({
+      agentId,
+      repoTarget,
+      worktreeId,
+      remote: 'origin',
+    })
+  }, [agentId, repoTarget, worktreeId])
+
+  const handleFetch = useCallback(async (options?: { source?: 'manual' | 'auto' }) => {
+    const source = options?.source ?? 'manual'
     if (!agentId || !branchData?.currentHead || !branchData.statusHash) {
       return
     }
 
     setFetchState('loading')
-    setActionError(null)
-    setActionWarning(null)
+    if (source === 'manual') {
+      setActionError(null)
+      setActionWarning(null)
+    }
 
     try {
       const result = await fetchGitOrigin(wsUrl, {
@@ -179,20 +203,62 @@ export function SourceControlBranchActions({
 
       if (!result.success) {
         setFetchState('error')
-        setActionError(result.errors.join(' ') || 'Fetch failed.')
+        if (source === 'manual' || result.errors.length > 0) {
+          setActionError(result.errors.join(' ') || 'Fetch failed.')
+        }
         return
       }
 
-      setFetchState('success')
+      if (autoFetchKey) {
+        markOriginFetchCompleted(autoFetchKey)
+      }
+
+      if (source === 'manual') {
+        setFetchState('success')
+      } else {
+        setFetchState('idle')
+      }
+
       if (result.warnings.length > 0) {
         setActionWarning(result.warnings.join(' '))
       }
       invalidateAfterMutation()
     } catch (error) {
       setFetchState('error')
-      setActionError(error instanceof Error ? error.message : 'Fetch failed.')
+      if (source === 'manual') {
+        setActionError(error instanceof Error ? error.message : 'Fetch failed.')
+      }
     }
-  }, [agentId, branchData, invalidateAfterMutation, repoTarget, worktreeId, wsUrl])
+  }, [agentId, autoFetchKey, branchData, invalidateAfterMutation, repoTarget, worktreeId, wsUrl])
+
+  useEffect(() => {
+    if (!sourceControlActive || !autoFetchKey || !branchData) {
+      return
+    }
+
+    if (
+      !isSourceControlAutoFetchEligible({
+        repoTarget,
+        agentId,
+        currentHead: branchData.currentHead,
+        statusHash: branchData.statusHash,
+        remotes: branchData.remotes,
+      })
+    ) {
+      return
+    }
+
+    if (!shouldAutoFetchOrigin(autoFetchKey) || autoFetchInFlightKeyRef.current === autoFetchKey) {
+      return
+    }
+
+    autoFetchInFlightKeyRef.current = autoFetchKey
+    void handleFetch({ source: 'auto' }).finally(() => {
+      if (autoFetchInFlightKeyRef.current === autoFetchKey) {
+        autoFetchInFlightKeyRef.current = null
+      }
+    })
+  }, [agentId, autoFetchKey, branchData, handleFetch, repoTarget, sourceControlActive])
 
   const requestMutationGuard = useCallback((
     mutation: 'switch-branch' | 'create-branch' | 'pull-ff-only',
@@ -457,7 +523,7 @@ export function SourceControlBranchActions({
           variant="outline"
           size="sm"
           className="h-7 px-2 text-xs"
-          onClick={() => void handleFetch()}
+          onClick={() => void handleFetch({ source: 'manual' })}
           disabled={fetchState === 'loading'}
         >
           <RefreshCw className={cn('mr-1 size-3.5', fetchState === 'loading' && 'animate-spin')} />
