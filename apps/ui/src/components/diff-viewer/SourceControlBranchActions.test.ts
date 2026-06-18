@@ -305,6 +305,40 @@ describe('SourceControlBranchActions', () => {
     expect(fetchGitOriginMock).not.toHaveBeenCalled()
   })
 
+  it('does not render auto-fetch backend errors in the header', async () => {
+    fetchGitOriginMock.mockResolvedValue({
+      success: false,
+      errors: ['Active agents are attached to this worktree.'],
+      warnings: [],
+    })
+
+    renderActions({ isDirty: false, sourceControlActive: true })
+
+    await vi.waitFor(() => {
+      expect(fetchGitOriginMock).toHaveBeenCalledTimes(1)
+    })
+
+    expect(container.textContent ?? '').not.toContain('Active agents are attached to this worktree.')
+  })
+
+  it('renders manual fetch backend errors in the header', async () => {
+    fetchGitOriginMock.mockResolvedValue({
+      success: false,
+      errors: ['Active agents are attached to this worktree.'],
+      warnings: [],
+    })
+
+    renderActions({ isDirty: false, sourceControlActive: false })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Fetch origin' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(getByText(container, 'Active agents are attached to this worktree.')).toBeTruthy()
+    })
+  })
+
   it('auto-fetches again after the freshness window expires', async () => {
     const key = 'agent-1:workspace:session:origin'
     const startedAt = 50_000

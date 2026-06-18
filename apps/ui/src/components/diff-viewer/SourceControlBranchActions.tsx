@@ -202,9 +202,11 @@ export function SourceControlBranchActions({
       })
 
       if (!result.success) {
-        setFetchState('error')
-        if (source === 'manual' || result.errors.length > 0) {
+        if (source === 'manual') {
+          setFetchState('error')
           setActionError(result.errors.join(' ') || 'Fetch failed.')
+        } else {
+          setFetchState('idle')
         }
         return
       }
@@ -219,14 +221,16 @@ export function SourceControlBranchActions({
         setFetchState('idle')
       }
 
-      if (result.warnings.length > 0) {
+      if (source === 'manual' && result.warnings.length > 0) {
         setActionWarning(result.warnings.join(' '))
       }
       invalidateAfterMutation()
     } catch (error) {
-      setFetchState('error')
       if (source === 'manual') {
+        setFetchState('error')
         setActionError(error instanceof Error ? error.message : 'Fetch failed.')
+      } else {
+        setFetchState('idle')
       }
     }
   }, [agentId, autoFetchKey, branchData, invalidateAfterMutation, repoTarget, worktreeId, wsUrl])
