@@ -6,17 +6,12 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { fetchSessionAuditPage } from '@/lib/session-audit-api'
-import { useDrawerResize } from '@/hooks/use-drawer-resize'
 import { cn } from '@/lib/utils'
 
 const PAGE_LIMIT = 50
-const AUDIT_DRAWER_WIDTH_KEY = 'forge-session-audit-drawer-width'
-const DEFAULT_AUDIT_DRAWER_WIDTH = 860
-const MIN_AUDIT_DRAWER_WIDTH = 560
-const MAX_AUDIT_DRAWER_WIDTH = 1280
 const ALL_CATEGORIES = 'all'
 const MANAGER_SOURCE_VALUE = 'session'
 const WORKER_SOURCE_PREFIX = 'worker:'
@@ -52,13 +47,6 @@ export function SessionAuditDrawer({
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { width: drawerWidth, isResizing, handleResizeStart } = useDrawerResize({
-    storageKey: AUDIT_DRAWER_WIDTH_KEY,
-    defaultWidth: DEFAULT_AUDIT_DRAWER_WIDTH,
-    minWidth: MIN_AUDIT_DRAWER_WIDTH,
-    maxWidth: MAX_AUDIT_DRAWER_WIDTH,
-  })
-
   const normalizedTypeFilter = typeFilter.trim()
   const selectedCategory = category === ALL_CATEGORIES ? undefined : category as SessionAuditEntryCategory
   const selectedWorkerId = selectedSource.startsWith(WORKER_SOURCE_PREFIX) ? selectedSource.slice(WORKER_SOURCE_PREFIX.length) : undefined
@@ -204,34 +192,27 @@ export function SessionAuditDrawer({
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="w-full gap-0 overflow-hidden p-0 sm:max-w-none"
-        style={{ width: drawerWidth, maxWidth: '100vw' }}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="flex max-w-none flex-col gap-0 overflow-hidden p-0"
+        style={{
+          left: 12,
+          top: 12,
+          width: 'calc(100vw - 24px)',
+          maxWidth: 'none',
+          height: 'calc(100vh - 24px)',
+          maxHeight: 'calc(100vh - 24px)',
+          transform: 'none',
+        }}
       >
-        <div
-          className={cn(
-            'absolute left-0 top-0 bottom-0 z-10 hidden w-1.5 cursor-col-resize select-none sm:block',
-            'hover:bg-primary/20',
-            isResizing && 'bg-primary/30',
-          )}
-          onMouseDown={handleResizeStart}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize session audit panel"
-          aria-valuenow={drawerWidth}
-          aria-valuemin={MIN_AUDIT_DRAWER_WIDTH}
-          aria-valuemax={MAX_AUDIT_DRAWER_WIDTH}
-        />
-        <SheetHeader className="border-b border-border/70 pr-10">
-          <SheetTitle>Session Audit Log</SheetTitle>
-          <SheetDescription>
-            Complete persisted session audit for {sessionLabel}, newest items first. This diagnostic view reads canonical session history and does not change normal Web, All, or Detailed chat visibility.
-          </SheetDescription>
-        </SheetHeader>
+        <DialogHeader className="border-b border-border/70 p-4 pr-12">
+          <DialogTitle>Session Audit Log</DialogTitle>
+          <DialogDescription>
+            Complete persisted session audit for {sessionLabel}, newest items first. This full-screen diagnostic view reads canonical session history and does not change normal Web, All, or Detailed chat visibility.
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="flex flex-col gap-3 border-b border-border/70 p-4">
+        <div className="flex flex-col gap-3 border-b border-border/70 bg-background/95 p-4">
           <div className="flex flex-col gap-2">
             <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted-foreground">
               Source
@@ -294,7 +275,7 @@ export function SessionAuditDrawer({
         </div>
 
         <ScrollArea className="min-h-0 flex-1 overflow-hidden">
-          <div className="space-y-3 p-4">
+          <div className="min-w-0 space-y-3 p-4">
             {visibleLoading ? (
               <StateCard icon={<Loader2 className="size-4 animate-spin" />} title="Loading audit log…" />
             ) : visibleError ? (
@@ -322,8 +303,8 @@ export function SessionAuditDrawer({
             ) : null}
           </div>
         </ScrollArea>
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -372,7 +353,7 @@ function SourceMetadata({ source }: { source: AuditSourceOption }) {
     source.status ? `status ${source.status}` : undefined,
   ].filter(Boolean)
 
-  return <p className="text-xs text-muted-foreground">{parts.join(' · ')}</p>
+  return <p className="min-w-0 break-words text-xs text-muted-foreground">{parts.join(' · ')}</p>
 }
 
 function SessionAuditRow({ item }: { item: SessionAuditEntry }) {
@@ -381,16 +362,16 @@ function SessionAuditRow({ item }: { item: SessionAuditEntry }) {
   const typeLabel = useMemo(() => [item.wrapperType, item.conversationType, item.customType].filter(Boolean).join(' / '), [item.wrapperType, item.conversationType, item.customType])
 
   return (
-    <article className="rounded-lg border border-border/70 bg-card/60 p-3 shadow-sm">
+    <article className="min-w-0 rounded-lg border border-border/70 bg-card/60 p-3 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="outline" className="text-[10px]">{formatCategory(item.category)}</Badge>
-            <Badge variant="secondary" className="text-[10px]">{item.sourceLabel}</Badge>
-            {typeLabel ? <span className="font-mono text-[11px] text-muted-foreground">{typeLabel}</span> : null}
+            <Badge variant="secondary" className="max-w-full truncate text-[10px]">{item.sourceLabel}</Badge>
+            {typeLabel ? <span className="min-w-0 break-all font-mono text-[11px] text-muted-foreground">{typeLabel}</span> : null}
           </div>
-          <h3 className="text-sm font-semibold text-foreground">{item.title}</h3>
-          <p className="text-xs text-muted-foreground">{item.summary}</p>
+          <h3 className="break-words text-sm font-semibold text-foreground">{item.title}</h3>
+          <p className="break-words text-xs text-muted-foreground">{item.summary}</p>
         </div>
         <div className="shrink-0 text-right font-mono text-[11px] text-muted-foreground">
           {timestamp ? formatTimestamp(timestamp) : `line ${item.lineNumber ?? item.ordinal ?? '—'}`}
@@ -404,7 +385,7 @@ function SessionAuditRow({ item }: { item: SessionAuditEntry }) {
         <CopyPill label="Source" value={item.sourceId} />
       </div>
 
-      <dl className="mt-3 grid gap-2 rounded-md border border-border/50 bg-muted/20 p-2 text-[11px] sm:grid-cols-2">
+      <dl className="mt-3 grid min-w-0 gap-2 rounded-md border border-border/50 bg-muted/20 p-2 text-[11px] md:grid-cols-2 xl:grid-cols-4">
         <MetaItem label="Source kind" value={item.sourceKind} />
         <MetaItem label="Source label" value={item.sourceLabel} />
         <MetaItem label="Conversation source" value={item.conversationSource} />
@@ -450,7 +431,7 @@ function JsonPreview({ label, value }: { label: string; value: string }) {
   return (
     <div className="overflow-hidden rounded-md border border-border/60 bg-muted/30">
       <div className="border-b border-border/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">{label}</div>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words p-2 font-mono text-[11px] leading-relaxed text-foreground">{value}</pre>
+      <pre className="max-h-96 overflow-auto whitespace-pre p-2 font-mono text-[11px] leading-relaxed text-foreground"><code className="block min-w-max">{value}</code></pre>
     </div>
   )
 }

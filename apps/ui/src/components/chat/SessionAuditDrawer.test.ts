@@ -81,7 +81,7 @@ describe('SessionAuditDrawer', () => {
     expect(requestUrl.searchParams.has('includeConversationEntry')).toBe(false)
   })
 
-  it('renders a desktop resize handle and persists bounded drawer width changes', async () => {
+  it('renders as a full-screen audit surface without a drawer resize dependency', async () => {
     root = createRoot(container)
     flushSync(() => {
       root?.render(createElement(SessionAuditDrawer, {
@@ -94,19 +94,15 @@ describe('SessionAuditDrawer', () => {
     })
 
     await waitFor(() => expect(getByText(document.body, 'Worker tool call')).toBeTruthy())
-    const resizeHandle = getByRole(document.body, 'separator', { name: /resize session audit panel/i })
-    const drawer = resizeHandle.parentElement as HTMLElement
+    const dialog = getByRole(document.body, 'dialog', { name: /session audit log/i }) as HTMLElement
 
-    expect(resizeHandle.getAttribute('aria-valuenow')).toBe('860')
-    expect(drawer.style.width).toBe('860px')
-    expect(drawer.style.maxWidth).toBe('100vw')
-
-    fireEvent.mouseDown(resizeHandle, { clientX: 700 })
-    fireEvent.mouseMove(document, { clientX: 520 })
-    await waitFor(() => expect(drawer.style.width).toBe('1040px'))
-    fireEvent.mouseUp(document)
-
-    expect(window.localStorage.getItem('forge-session-audit-drawer-width')).toBe('1040')
+    expect(dialog.style.width).toBe('calc(100vw - 24px)')
+    expect(dialog.style.maxWidth).toBe('none')
+    expect(dialog.style.height).toBe('calc(100vh - 24px)')
+    expect(dialog.style.maxHeight).toBe('calc(100vh - 24px)')
+    expect(dialog.style.transform).toBe('none')
+    expect(document.body.querySelector('[aria-label="Resize session audit panel"]')).toBeNull()
+    expect(window.localStorage.setItem).not.toHaveBeenCalled()
   })
 
   it('switches from manager to worker source with worker request params and no stale manager rows', async () => {
