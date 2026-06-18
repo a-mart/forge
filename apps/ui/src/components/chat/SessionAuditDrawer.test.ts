@@ -109,6 +109,69 @@ describe('SessionAuditDrawer', () => {
     expect(detailUrl.searchParams.get('nextByteOffset')).toBe('220')
   })
 
+  it('fetches distinct JSON details when selecting a different row', async () => {
+    const page = auditPageFixture()
+    page.items = [
+      page.items[0],
+      {
+        ...page.items[0],
+        id: 'canonical_session_jsonl:manager-1:221',
+        byteOffset: 221,
+        nextByteOffset: 480,
+        title: 'Second audit row',
+        summary: 'manager-1 emitted a different audit row',
+        actorAgentId: 'manager-1',
+        toolCallId: 'tool-2',
+      },
+    ]
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/audit/entry')) {
+        const byteOffset = Number(url.searchParams.get('byteOffset'))
+        return responseFor({
+          sessionAgentId: 'manager-1',
+          scope: 'session',
+          sourceId: 'session',
+          sourceKind: 'canonical_session_jsonl',
+          relativePath: 'sessions/manager-1/session.jsonl',
+          byteOffset,
+          nextByteOffset: Number(url.searchParams.get('nextByteOffset')),
+          rawBytes: 100,
+          rawText: JSON.stringify({ byteOffset, detail: byteOffset === 221 ? 'second-row-detail' : 'first-row-detail' }),
+          truncated: false,
+          maxBytes: 8388608,
+          formattedJson: JSON.stringify({ byteOffset, detail: byteOffset === 221 ? 'second-row-detail' : 'first-row-detail' }, null, 2),
+        })
+      }
+      return responseFor(page)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(SessionAuditDrawer, {
+        open: true,
+        onOpenChange: vi.fn(),
+        sessionAgentId: 'manager-1',
+        sessionLabel: 'Project / Session',
+        wsUrl: 'ws://127.0.0.1:47187/ws',
+      }))
+    })
+
+    await waitFor(() => expect(document.body.textContent).toContain('first-row-detail'))
+    fireEvent.click(getByRole(document.body, 'option', { name: /Second audit row/i }))
+    await waitFor(() => expect(document.body.textContent).toContain('second-row-detail'))
+    expect(document.body.textContent).toContain('bytes 221 → 480')
+
+    const detailUrls = fetchMock.mock.calls
+      .map((call) => new URL(String(call[0])))
+      .filter((url) => url.pathname.endsWith('/audit/entry'))
+    expect(detailUrls.map((url) => url.searchParams.get('byteOffset'))).toContain('10')
+    expect(detailUrls.map((url) => url.searchParams.get('byteOffset'))).toContain('221')
+    expect(detailUrls.at(-1)?.searchParams.get('nextByteOffset')).toBe('480')
+  })
+
   it('supports formatted/raw toggle and truncated detail rendering', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
