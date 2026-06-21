@@ -210,7 +210,7 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
       expect(ids(selection.history)).not.toEqual(expect.arrayContaining(["hidden-log-0", "hidden-log-1", "hidden-log-2"]));
     });
 
-    it("respects bootstrap budget when conversation fits alone but protected activity exceeds budget", () => {
+    it("trims protected activity before visible transcript when conversation fits alone", () => {
       const history: ConversationEntryEvent[] = [
         message("message-1"),
         message("message-2"),
@@ -229,13 +229,17 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
 
       expect(selection.history.length).toBeLessThanOrEqual(budget);
       expect(selection.history.length).toBe(budget);
-      expect(ids(selection.history)).toEqual(
-        expect.arrayContaining(["message-2", "message-3", "bootstrap-spawn"])
-      );
-      expect(ids(selection.history)).not.toContain("message-1");
+      expect(ids(selection.history)).toEqual([
+        "message-1",
+        "message-2",
+        "message-3",
+        "bootstrap-send",
+        "bootstrap-callback"
+      ]);
+      expect(ids(selection.history)).not.toContain("bootstrap-spawn");
     });
 
-    it("degrades within budget when protected activity alone exceeds bootstrap budget", () => {
+    it("keeps transcript and only leftover protected activity when protected activity exceeds bootstrap budget", () => {
       const history: ConversationEntryEvent[] = [
         message("message-1"),
         managerSpawn(MANAGER_ID, "spawn-0"),
@@ -253,7 +257,7 @@ describe("audit replay history policy characterization (Phase 0 → Phase 1)", (
       });
 
       expect(selection.history.length).toBeLessThanOrEqual(budget);
-      expect(ids(selection.history)).toEqual(expect.arrayContaining(["spawn-0"]));
+      expect(ids(selection.history)).toEqual(["message-1", "spawn-2"]);
     });
   });
 });

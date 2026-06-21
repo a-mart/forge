@@ -18,7 +18,7 @@ import {
 const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
 const CONVERSATION_CACHE_META_TYPE = "swarm_conversation_cache_meta";
-const CONVERSATION_CACHE_VERSION = 3;
+const CONVERSATION_CACHE_VERSION = 4;
 
 interface HistoryCacheStoreOptions {
   logDebug: (message: string, details?: unknown) => void;
@@ -817,6 +817,10 @@ function safeJson(value: unknown): string {
 }
 
 function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {
+  if (entry.type === "choice_request") {
+    return entry.choiceId.trim().length > 0 ? entry.choiceId : undefined;
+  }
+
   if (
     entry.type !== "conversation_message" &&
     entry.type !== "work_plan_created" &&

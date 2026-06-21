@@ -171,12 +171,22 @@ export async function sendSubscriptionBootstrap(options: {
     : undefined;
   metricFields.requestedMessageCount = historyMessageCount ?? null;
 
+  const pendingChoicesStartedAtMs = performance.now();
+  const pendingChoices = swarmManager.getPendingChoiceRequestsForSession?.(targetAgentId) ?? [];
+  const pendingChoiceIds =
+    pendingChoices.length > 0
+      ? pendingChoices.map((choice) => choice.choiceId)
+      : swarmManager.getPendingChoiceIdsForSession(targetAgentId);
+  metricFields.pendingChoiceCount = pendingChoiceIds.length;
+  metricFields.pendingChoicesLookupMs = performance.now() - pendingChoicesStartedAtMs;
+
   const historyLoadStartedAtMs = performance.now();
   const historyResult = swarmManager.getConversationHistoryWithDiagnostics(targetAgentId);
   const conversationHistorySelection = selectBootstrapConversationHistoryByPolicy({
     fullHistory: historyResult.history,
     managerId: targetAgentId,
     requestedMessageCount: historyMessageCount,
+    pendingChoiceRequests: pendingChoices,
     includeDiagnosticEntries: swarmManager.isModelCacheVisualizationEnabled?.() ?? false,
     isWithinBudget: (messages) => isBootstrapConversationHistoryWithinBudget(targetAgentId, messages)
   });
@@ -207,13 +217,6 @@ export async function sendSubscriptionBootstrap(options: {
     messages: conversationHistory
   });
 
-  const pendingChoicesStartedAtMs = performance.now();
-  const pendingChoices = swarmManager.getPendingChoiceRequestsForSession?.(targetAgentId) ?? [];
-  const pendingChoiceIds =
-    pendingChoices.length > 0
-      ? pendingChoices.map((choice) => choice.choiceId)
-      : swarmManager.getPendingChoiceIdsForSession(targetAgentId);
-  metricFields.pendingChoiceCount = pendingChoiceIds.length;
   sendMeasured("pendingChoicesSnapshot", {
     type: "pending_choices_snapshot",
     agentId: targetAgentId,

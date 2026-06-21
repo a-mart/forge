@@ -56,6 +56,17 @@ function makeLog(text: string): ConversationEntryEvent {
   };
 }
 
+function makeChoiceRequest(choiceId: string): ConversationEntryEvent {
+  return {
+    type: "choice_request",
+    agentId: "manager",
+    choiceId,
+    questions: [{ id: "q1", question: "Pick one", options: [{ id: "a", label: "A" }] }],
+    status: "pending",
+    timestamp: FIXED_NOW,
+  };
+}
+
 function makeWorkPlanCreated(id: string): ConversationEntryEvent {
   return {
     type: "work_plan_created",
@@ -213,6 +224,28 @@ describe("HistoryCacheStore", () => {
     expect(validation.entries?.[0]?.type).toBe("work_plan_created");
   });
 
+  it("uses compact stable cache identity for choice_request entries", async () => {
+    const root = await createTempDir("history-cache-store-");
+    const sessionFile = join(root, "session.jsonl");
+    const store = makeStore();
+    const history = [makeChoiceRequest("choice-1")];
+    writeSession(sessionFile, history, root);
+
+    const metadata = store.buildMetadata(history, 1, store.readSessionFileCanonicalStat(sessionFile));
+    expect(metadata.firstPersistedEntryKey).toBe("choice_request:choice-1");
+    expect(metadata.lastPersistedEntryKey).toBe("choice_request:choice-1");
+    expect(metadata.firstPersistedEntryKey).not.toContain("questions");
+
+    store.queueCacheSnapshotWrite(sessionFile, history, metadata);
+    await store.flushPendingWrites();
+
+    const header = store.loadConversationHistoryCacheHeader(sessionFile);
+    expect(header.metadata?.firstPersistedEntryKey).toBe("choice_request:choice-1");
+    const validation = store.validateCachedConversationHistory(sessionFile, header.metadata!);
+    expect(validation.ok).toBe(true);
+    expect(validation.entries?.[0]?.type).toBe("choice_request");
+  });
+
   it("uses compact stable cache identity for model_cache_observation entries", async () => {
     const root = await createTempDir("history-cache-store-");
     const sessionFile = join(root, "session.jsonl");
@@ -295,7 +328,7 @@ describe("HistoryCacheStore", () => {
     expect(existsSync(cacheFile)).toBe(false);
   });
 
-  it("treats cache metadata version 2 as stale after bumping to version 3", async () => {
+  it("treats cache metadata version 3 as stale after bumping to version 4", async () => {
     const root = await createTempDir("history-cache-store-");
     const sessionFile = join(root, "session.jsonl");
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
@@ -306,7 +339,7 @@ describe("HistoryCacheStore", () => {
     const metadata = store.buildMetadata(history, 1, store.readSessionFileCanonicalStat(sessionFile));
     writeFileSync(
       cacheFile,
-      `${JSON.stringify({ ...metadata, version: 2 })}\n${JSON.stringify(history[0])}\n`,
+      `${JSON.stringify({ ...metadata, version: 3 })}\n${JSON.stringify(history[0])}\n`,
       "utf8"
     );
 

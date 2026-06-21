@@ -154,7 +154,7 @@ describe('sendSubscriptionBootstrap', () => {
     expect(bootstrapOptions?.fields).toMatchObject({
       targetAgentId: 'manager-1',
       historyDetail: 'fixture',
-      historyEntriesReturned: 1,
+      historyEntriesReturned: 2,
       pendingChoiceCount: 1,
       snapshotSkipped: false,
     })

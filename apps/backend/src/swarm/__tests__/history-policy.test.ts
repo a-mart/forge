@@ -48,6 +48,17 @@ function tool(id: string, kind: "tool_execution_start" | "tool_execution_update"
   };
 }
 
+function managerTool(id: string): ConversationEntryEvent {
+  return {
+    type: "agent_tool_call",
+    agentId: "manager-1",
+    actorAgentId: "manager-1",
+    timestamp: FIXED_NOW,
+    kind: "tool_execution_start",
+    text: id
+  };
+}
+
 function agentActivity(id: string): ConversationEntryEvent {
   return {
     type: "agent_message",
@@ -60,14 +71,18 @@ function agentActivity(id: string): ConversationEntryEvent {
   };
 }
 
-function choice(id: string): ConversationEntryEvent {
+function choice(
+  id: string,
+  options: Partial<Extract<ConversationEntryEvent, { type: "choice_request" }>> = {}
+): Extract<ConversationEntryEvent, { type: "choice_request" }> {
   return {
     type: "choice_request",
     agentId: "manager-1",
     choiceId: id,
     questions: [],
     status: "pending",
-    timestamp: FIXED_NOW
+    timestamp: FIXED_NOW,
+    ...options
   };
 }
 
@@ -255,7 +270,7 @@ describe("history policy", () => {
     expect(ids(entries)).not.toContain("remove-3");
   });
 
-  it("leaves all-protected overflow intact", () => {
+  it("trims visible transcript only as the retention last resort", () => {
     const entries = Array.from(
       { length: MAX_CONVERSATION_HISTORY + 2 },
       (_, index) => message(`protected-${index}`, { source: "user_input" })
@@ -263,7 +278,8 @@ describe("history policy", () => {
 
     trimConversationHistory(entries);
 
-    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY + 2);
+    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY);
+    expect(ids(entries)[0]).toBe("protected-2");
   });
 
   it("does not displace visible transcript rows with model_cache_observation under tight bootstrap budget", () => {
@@ -368,7 +384,7 @@ describe("history policy", () => {
     });
 
     expect(selection.trimmed).toBe(true);
-    expect(ids(selection.history)).toEqual(["choice-1", "message-3"]);
+    expect(ids(selection.history)).toEqual(["work-plan-created-1", "choice-1"]);
   });
 
   it("applies requested message count before bootstrap budget selection", () => {
@@ -388,5 +404,95 @@ describe("history policy", () => {
     expect(selection.trimmed).toBe(false);
     expect(selection.requestedHistoryLength).toBe(2);
     expect(ids(selection.history)).toEqual(["activity-1", "message-3"]);
+  });
+
+  it("does not trim visible transcript to make room for protected manager activity", () => {
+    const history = [
+      message("message-1", { source: "user_input" }),
+      managerTool("protected-activity-1"),
+      message("message-2", { source: "speak_to_user" }),
+      managerTool("protected-activity-2"),
+    ];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      managerId: "manager-1",
+      isWithinBudget: (messages) => messages.length <= 2
+    });
+
+    expect(selection.trimmed).toBe(true);
+    expect(ids(selection.history)).toEqual(["message-1", "message-2"]);
+  });
+
+  it("injects and dedupes pending choice requests before bootstrap selection", () => {
+    const history = [
+      message("message-1"),
+      choice("choice-1", { status: "cancelled", questions: [{ id: "old", question: "Old?", options: [] }] }),
+      choice("choice-1", { status: "expired", timestamp: "2026-01-01T00:00:00.500Z" }),
+      message("message-2")
+    ];
+    const pendingChoice = choice("choice-1", {
+      sessionAgentId: "worker-session-1",
+      timestamp: "2026-01-01T00:00:01.000Z",
+      questions: [{ id: "new", question: "New?", options: [{ id: "yes", label: "Yes" }] }]
+    });
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      pendingChoiceRequests: [pendingChoice],
+      isWithinBudget: () => true
+    });
+
+    expect(ids(selection.history)).toEqual(["message-1", "choice-1", "message-2"]);
+    expect(selection.history[1]).toMatchObject({
+      type: "choice_request",
+      choiceId: "choice-1",
+      status: "pending",
+      sessionAgentId: "worker-session-1",
+      timestamp: "2026-01-01T00:00:01.000Z",
+      questions: [{ id: "new", question: "New?", options: [{ id: "yes", label: "Yes" }] }]
+    });
+  });
+
+  it("does not let requestedMessageCount exclude active pending choice details", () => {
+    const history = [
+      choice("choice-1", { status: "cancelled" }),
+      message("message-1"),
+      message("message-2")
+    ];
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      requestedMessageCount: 1,
+      pendingChoiceRequests: [choice("choice-1", { sessionAgentId: "worker-session-1" })],
+      isWithinBudget: () => true
+    });
+
+    expect(selection.requestedHistoryLength).toBe(2);
+    expect(ids(selection.history)).toEqual(["message-2", "choice-1"]);
+    expect(selection.history.at(-1)).toMatchObject({
+      type: "choice_request",
+      choiceId: "choice-1",
+      status: "pending",
+      sessionAgentId: "worker-session-1"
+    });
+  });
+
+  it("retains pending choices and visible transcript while trimming activity first", () => {
+    const entries: ConversationEntryEvent[] = [
+      choice("pending-choice"),
+      message("visible-1", { source: "user_input" }),
+      ...Array.from({ length: 6 }, (_, index) => agentActivity(`activity-${index}`)),
+      ...Array.from({ length: MAX_CONVERSATION_HISTORY - 2 }, (_, index) =>
+        message(`visible-tail-${index}`, { source: "speak_to_user" })
+      )
+    ];
+
+    trimConversationHistory(entries);
+
+    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY);
+    expect(ids(entries)).toContain("pending-choice");
+    expect(ids(entries)).toContain("visible-1");
+    expect(ids(entries).filter((id) => id.startsWith("activity-"))).toHaveLength(0);
   });
 });
