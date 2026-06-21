@@ -454,6 +454,45 @@ describe("history policy", () => {
     });
   });
 
+  it("preserves terminal choice rows over stale pending rows during bootstrap selection", () => {
+    const history = [
+      choice("choice-a", { status: "pending", timestamp: "2026-01-01T00:00:00.000Z" }),
+      agentActivity("activity-1"),
+      message("visible-message", { source: "user_input" }),
+      agentActivity("activity-2"),
+      choice("choice-a", {
+        status: "answered",
+        answers: [{ questionId: "q1", selectedOptionIds: ["yes"] }],
+        timestamp: "2026-01-01T00:00:01.000Z"
+      }),
+      agentActivity("activity-3")
+    ];
+    const activePendingChoice = choice("choice-b", {
+      sessionAgentId: "worker-session-1",
+      questions: [{ id: "q2", question: "Still pending?", options: [{ id: "yes", label: "Yes" }] }]
+    });
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      pendingChoiceRequests: [activePendingChoice],
+      isWithinBudget: (messages) => messages.length <= 3
+    });
+
+    expect(ids(selection.history)).toEqual(["visible-message", "choice-a", "choice-b"]);
+    const choiceRows = selection.history.filter(
+      (entry): entry is Extract<ConversationEntryEvent, { type: "choice_request" }> => entry.type === "choice_request"
+    );
+    expect(choiceRows.map((entry) => [entry.choiceId, entry.status])).toEqual([
+      ["choice-a", "answered"],
+      ["choice-b", "pending"],
+    ]);
+    expect(choiceRows[0].answers).toEqual([{ questionId: "q1", selectedOptionIds: ["yes"] }]);
+    expect(selection.history).toContainEqual(expect.objectContaining({
+      type: "conversation_message",
+      id: "visible-message"
+    }));
+  });
+
   it("preserves non-active choice lifecycle rows while upserting active pending choices", () => {
     const history = [
       choice("choice-a", { status: "pending", timestamp: "2026-01-01T00:00:00.000Z" }),
@@ -515,6 +554,29 @@ describe("history policy", () => {
       status: "pending",
       sessionAgentId: "worker-session-1"
     });
+  });
+
+  it("retains terminal choice state over stale pending lifecycle rows", () => {
+    const entries: ConversationEntryEvent[] = [
+      choice("choice-a", { status: "pending", timestamp: "2026-01-01T00:00:00.000Z" }),
+      choice("choice-a", {
+        status: "answered",
+        answers: [{ questionId: "q1", selectedOptionIds: ["yes"] }],
+        timestamp: "2026-01-01T00:00:01.000Z"
+      }),
+      ...Array.from({ length: MAX_CONVERSATION_HISTORY - 1 }, (_, index) =>
+        message(`visible-tail-${index}`, { source: "speak_to_user" })
+      )
+    ];
+
+    trimConversationHistory(entries);
+
+    expect(entries).toHaveLength(MAX_CONVERSATION_HISTORY);
+    const choiceRows = entries.filter(
+      (entry): entry is Extract<ConversationEntryEvent, { type: "choice_request" }> => entry.type === "choice_request"
+    );
+    expect(choiceRows.map((entry) => [entry.choiceId, entry.status])).toEqual([["choice-a", "answered"]]);
+    expect(choiceRows[0].answers).toEqual([{ questionId: "q1", selectedOptionIds: ["yes"] }]);
   });
 
   it("retains pending choices and visible transcript while trimming activity first", () => {

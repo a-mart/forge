@@ -88,7 +88,8 @@ export function trimConversationHistory(
     overflow,
     managerAliasIds,
     knownWorkerIds,
-    Boolean(managerId)
+    Boolean(managerId),
+    collectLatestPendingChoiceIds(entries)
   );
   if (removableIndexes.length === 0) {
     return;
@@ -104,7 +105,8 @@ function collectRetentionTrimIndexes(
   overflow: number,
   managerAliasIds: ReadonlySet<string>,
   knownWorkerIds: ReadonlySet<string>,
-  hasManagerContext: boolean
+  hasManagerContext: boolean,
+  activePendingChoiceIds: ReadonlySet<string>
 ): number[] {
   const removableIndexes: number[] = [];
   const addTier = (predicate: (entry: ConversationEntryEvent) => boolean) => {
@@ -120,20 +122,21 @@ function collectRetentionTrimIndexes(
   };
 
   addTier((entry) =>
-    !isPendingChoiceRequestEntry(entry) &&
+    !isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
     !isAnsweredOrCancelledChoiceRequestEntry(entry) &&
     !isProtectedTranscriptEntry(entry) &&
     !(hasManagerContext && isProtectedManagerContextHistoryEntry(entry, managerAliasIds, knownWorkerIds))
   );
 
   addTier((entry) =>
-    !isPendingChoiceRequestEntry(entry) &&
+    !isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
     hasManagerContext &&
     isProtectedManagerContextHistoryEntry(entry, managerAliasIds, knownWorkerIds)
   );
 
   addTier(isAnsweredOrCancelledChoiceRequestEntry);
-  addTier((entry) => isProtectedTranscriptEntry(entry) && !isPendingChoiceRequestEntry(entry));
+  addTier((entry) => isProtectedTranscriptEntry(entry) && !isChoiceRequestEntry(entry));
+  addTier((entry) => isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds));
 
   return removableIndexes;
 }
@@ -180,15 +183,22 @@ export function selectBootstrapConversationHistory(options: {
   const managerAliasIds = managerId
     ? inferManagerAliasIds(requestedHistory, managerId, knownWorkerIds)
     : new Set<string>();
+  const activePendingChoiceIds = collectLatestPendingChoiceIds(requestedHistory);
 
-  const pendingChoiceEntries = requestedHistory.filter(isPendingChoiceRequestEntry);
+  const pendingChoiceEntries = requestedHistory.filter((entry) =>
+    isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds)
+  );
+  const stalePendingChoiceEntries = requestedHistory.filter((entry) =>
+    isStalePendingChoiceRequestEntry(entry, activePendingChoiceIds)
+  );
   const visibleTranscriptEntries = requestedHistory.filter(
-    (entry) => !isPendingChoiceRequestEntry(entry) && isProtectedTranscriptEntry(entry)
+    (entry) => !isChoiceRequestEntry(entry) && isProtectedTranscriptEntry(entry)
   );
   const remainingTranscriptEntries = requestedHistory.filter(
     (entry) =>
       isBootstrapTranscriptEntry(entry) &&
-      !isPendingChoiceRequestEntry(entry) &&
+      !isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
+      !isStalePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
       !isProtectedTranscriptEntry(entry)
   );
   const activityEntries = requestedHistory.filter(isBootstrapActivityEntry);
@@ -223,10 +233,16 @@ export function selectBootstrapConversationHistory(options: {
     unprotectedActivityEntries,
     isWithinBudget
   );
+  const selectedStalePendingChoiceEntries = selectBootstrapEntriesWithinBudget(
+    requestedHistory,
+    [...selectedTranscriptEntries, ...selectedActivityEntries, ...selectedUnprotectedActivityEntries],
+    stalePendingChoiceEntries,
+    isWithinBudget
+  );
   const primaryHistory = mergeBootstrapConversationHistory(
     requestedHistory,
     selectedTranscriptEntries,
-    [...selectedActivityEntries, ...selectedUnprotectedActivityEntries]
+    [...selectedActivityEntries, ...selectedUnprotectedActivityEntries, ...selectedStalePendingChoiceEntries]
   );
   const history = appendBootstrapDiagnosticEntriesIfBudgetAllows(
     requestedHistory,
@@ -403,12 +419,59 @@ function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry:
   );
 }
 
-function isPendingChoiceRequestEntry(entry: ConversationEntryEvent): boolean {
-  return entry.type === "choice_request" && entry.status === "pending";
+function collectLatestPendingChoiceIds(entries: readonly ConversationEntryEvent[]): Set<string> {
+  const latestChoiceStatusById = new Map<string, ChoiceRequestEvent["status"]>();
+  for (const entry of entries) {
+    if (!isChoiceRequestEntry(entry)) {
+      continue;
+    }
+
+    const choiceId = entry.choiceId.trim();
+    if (choiceId.length === 0) {
+      continue;
+    }
+
+    latestChoiceStatusById.set(choiceId, entry.status);
+  }
+
+  const pendingChoiceIds = new Set<string>();
+  for (const [choiceId, status] of latestChoiceStatusById) {
+    if (status === "pending") {
+      pendingChoiceIds.add(choiceId);
+    }
+  }
+
+  return pendingChoiceIds;
+}
+
+function isChoiceRequestEntry(entry: ConversationEntryEvent): entry is ChoiceRequestEvent {
+  return entry.type === "choice_request";
+}
+
+function isActivePendingChoiceRequestEntry(
+  entry: ConversationEntryEvent,
+  activePendingChoiceIds: ReadonlySet<string>
+): boolean {
+  return (
+    isChoiceRequestEntry(entry) &&
+    entry.status === "pending" &&
+    activePendingChoiceIds.has(entry.choiceId.trim())
+  );
+}
+
+function isStalePendingChoiceRequestEntry(
+  entry: ConversationEntryEvent,
+  activePendingChoiceIds: ReadonlySet<string>
+): boolean {
+  return (
+    isChoiceRequestEntry(entry) &&
+    entry.status === "pending" &&
+    !activePendingChoiceIds.has(entry.choiceId.trim())
+  );
 }
 
 function isAnsweredOrCancelledChoiceRequestEntry(entry: ConversationEntryEvent): boolean {
-  return entry.type === "choice_request" && entry.status !== "pending";
+  return isChoiceRequestEntry(entry) && entry.status !== "pending";
 }
 
 /** Hidden diagnostics — lowest bootstrap priority until header UI consumes them. */
