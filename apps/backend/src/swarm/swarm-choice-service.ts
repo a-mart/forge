@@ -42,26 +42,21 @@ export class SwarmChoiceService {
       : descriptor.managerId;
 
     const choiceId = randomUUID().slice(0, 12);
-
-    this.options.emitChoiceRequest({
-      type: "choice_request",
-      agentId,
-      choiceId,
-      questions,
-      status: "pending",
-      timestamp: this.options.now(),
-    });
+    const createdAt = this.options.now();
 
     return new Promise<ChoiceAnswer[]>((resolve, reject) => {
-      this.pendingChoiceRequests.set(choiceId, {
+      const pending: PendingChoiceRequest = {
         choiceId,
         agentId,
         sessionAgentId,
         questions,
         resolve,
         reject,
-        createdAt: this.options.now(),
-      });
+        createdAt,
+      };
+
+      this.options.emitChoiceRequest(this.buildChoiceRequestEvent(pending, "pending"));
+      this.pendingChoiceRequests.set(choiceId, pending);
       this.options.emitAgentsSnapshot();
     });
   }
@@ -74,15 +69,12 @@ export class SwarmChoiceService {
 
     this.pendingChoiceRequests.delete(choiceId);
 
-    this.options.emitChoiceRequest({
-      type: "choice_request",
-      agentId: pending.agentId,
-      choiceId,
-      questions: pending.questions,
-      status: "answered",
-      answers,
-      timestamp: this.options.now(),
-    });
+    this.options.emitChoiceRequest(
+      this.buildChoiceRequestEvent(pending, "answered", {
+        answers,
+        timestamp: this.options.now(),
+      }),
+    );
 
     pending.resolve(answers);
     this.options.emitAgentsSnapshot();
@@ -96,14 +88,11 @@ export class SwarmChoiceService {
 
     this.pendingChoiceRequests.delete(choiceId);
 
-    this.options.emitChoiceRequest({
-      type: "choice_request",
-      agentId: pending.agentId,
-      choiceId,
-      questions: pending.questions,
-      status: reason,
-      timestamp: this.options.now(),
-    });
+    this.options.emitChoiceRequest(
+      this.buildChoiceRequestEvent(pending, reason, {
+        timestamp: this.options.now(),
+      }),
+    );
 
     pending.reject(new ChoiceRequestCancelledError(reason));
     this.options.emitAgentsSnapshot();
@@ -136,6 +125,16 @@ export class SwarmChoiceService {
     return ids;
   }
 
+  getPendingChoiceRequestsForSession(sessionAgentId: string): ChoiceRequestEvent[] {
+    const pendingChoices: ChoiceRequestEvent[] = [];
+    for (const pending of this.pendingChoiceRequests.values()) {
+      if (pending.sessionAgentId === sessionAgentId) {
+        pendingChoices.push(this.buildChoiceRequestEvent(pending, "pending"));
+      }
+    }
+    return pendingChoices;
+  }
+
   getPendingChoiceOwner(choiceId: string): { agentId: string; sessionAgentId: string } | undefined {
     const pending = this.pendingChoiceRequests.get(choiceId);
     if (!pending) {
@@ -162,6 +161,26 @@ export class SwarmChoiceService {
       agentId: pending.agentId,
       sessionAgentId: pending.sessionAgentId,
       questions: pending.questions,
+    };
+  }
+
+  private buildChoiceRequestEvent(
+    pending: PendingChoiceRequest,
+    status: ChoiceRequestStatus,
+    overrides?: {
+      answers?: ChoiceAnswer[];
+      timestamp?: string;
+    },
+  ): ChoiceRequestEvent {
+    return {
+      type: "choice_request",
+      agentId: pending.agentId,
+      sessionAgentId: pending.sessionAgentId,
+      choiceId: pending.choiceId,
+      questions: pending.questions,
+      status,
+      ...(overrides?.answers ? { answers: overrides.answers } : {}),
+      timestamp: overrides?.timestamp ?? pending.createdAt,
     };
   }
 }

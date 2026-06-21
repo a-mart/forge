@@ -77,6 +77,36 @@ function makeToolCall(
 }
 
 describe('deriveVisibleMessages', () => {
+  it('keeps worker-origin session choices visible in web and manager all views', () => {
+    const choice: ConversationEntry = {
+      type: 'choice_request',
+      agentId: 'worker-1',
+      sessionAgentId: 'manager',
+      choiceId: 'choice-1',
+      questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+      status: 'pending',
+      timestamp: '2026-01-01T00:00:01.000Z',
+    }
+
+    const webResult = deriveVisibleMessages({
+      messages: [choice],
+      activityMessages: [],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'web',
+    })
+    const allResult = deriveVisibleMessages({
+      messages: [choice],
+      activityMessages: [],
+      agents: [manager, worker],
+      activeAgent: manager,
+      channelView: 'all',
+    })
+
+    expect(webResult.visibleMessages).toEqual([choice])
+    expect(allResult.visibleMessages).toEqual([choice])
+  })
+
   it('preserves all-view merge behavior for manager-scoped timelines', () => {
     const messages: ConversationEntry[] = [
       {

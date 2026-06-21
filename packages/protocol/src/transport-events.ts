@@ -1,4 +1,4 @@
-import type { ConversationEntry } from './conversation-events.js'
+import type { ChoiceRequestEvent, ConversationEntry } from './conversation-events.js'
 
 export interface ReadyEvent {
   type: 'ready'
@@ -23,6 +23,7 @@ export interface PendingChoicesSnapshotEvent {
   type: 'pending_choices_snapshot'
   agentId: string
   choiceIds: string[]
+  choices?: ChoiceRequestEvent[]
 }
 
 export interface ApiProxyResponseEvent {

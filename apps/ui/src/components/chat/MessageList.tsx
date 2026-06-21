@@ -19,6 +19,7 @@ import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
 import { ChoiceRequestCard } from './message-list/ChoiceRequestCard'
 import { ConversationMessageRow } from './message-list/ConversationMessageRow'
+import { MissingChoiceDetailsFallback } from './message-list/MissingChoiceDetailsFallback'
 import {
   buildStoppableExternalThreadMessageIds,
   resolveConversationMessageTargetId,
@@ -83,6 +84,7 @@ interface MessageListProps {
   onChoiceSubmit?: (agentId: string, choiceId: string, answers: ChoiceAnswer[]) => void
   onChoiceCancel?: (agentId: string, choiceId: string) => void
   pendingChoiceIds: Set<string>
+  missingPendingChoiceIds?: string[]
   streamingStartedAt?: number
   activeWorkSnapshot?: SessionTaskStateSnapshotEvent | null
   activeWorkExpanded?: boolean
@@ -164,6 +166,17 @@ function resolveConversationMessageLegacyTargetId(
   return timestampTargetId
 }
 
+function resolveChoiceResponseAgentId(
+  entry: ChoiceRequestDisplayEntry,
+  activeAgentId?: string | null,
+): string {
+  if (activeAgentId && activeAgentId === entry.agentId) {
+    return entry.agentId
+  }
+
+  return entry.sessionAgentId ?? entry.agentId
+}
+
 function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   const displayEntries: DisplayEntry[] = []
   const toolEntriesByCallId = new Map<string, ToolExecutionDisplayEntry>()
@@ -192,6 +205,8 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
     if (message.type === 'choice_request') {
       const existing = choiceEntriesByChoiceId.get(message.choiceId)
       if (existing) {
+        existing.agentId = message.agentId
+        existing.sessionAgentId = message.sessionAgentId
         existing.status = message.status
         existing.answers = message.answers
         existing.timestamp = message.timestamp
@@ -199,6 +214,7 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
         const entry: ChoiceRequestDisplayEntry = {
           choiceId: message.choiceId,
           agentId: message.agentId,
+          sessionAgentId: message.sessionAgentId,
           questions: message.questions,
           status: message.status,
           answers: message.answers,
@@ -344,6 +360,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onChoiceSubmit,
   onChoiceCancel,
   pendingChoiceIds,
+  missingPendingChoiceIds = [],
   streamingStartedAt,
   activeWorkSnapshot,
   activeWorkExpanded = false,
@@ -362,6 +379,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const [showScrollButton, setShowScrollButton] = useState(false)
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
+  const hasMissingPendingChoices = missingPendingChoiceIds.length > 0
 
   const stoppableExternalThreadMessageIds = useMemo(
     () => buildStoppableExternalThreadMessageIds(messages, statuses),
@@ -387,8 +405,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
     // Plan: only attempt completion when the rendered output is the real
     // post-bootstrap paint, not an in-flight loading state.
-    const hasContent = displayEntries.length > 0
-    const isResolvedEmpty = displayEntries.length === 0 && !isLoading
+    const renderedEntryCount = displayEntries.length + missingPendingChoiceIds.length
+    const hasContent = renderedEntryCount > 0
+    const isResolvedEmpty = renderedEntryCount === 0 && !isLoading
     if (!hasContent && !isResolvedEmpty) {
       return
     }
@@ -408,7 +427,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       const perfRegistry = getSidebarPerfRegistry()
       const interactionNonce = perfRegistry.getActiveSessionSwitch()?.token ?? 0
       perfRegistry.maybeCompleteFirstPaint(activeAgentId, interactionNonce, {
-        displayEntryCount: displayEntries.length,
+        displayEntryCount: renderedEntryCount,
         emptySession: isResolvedEmpty,
       })
     }
@@ -424,7 +443,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
     finalize()
     return undefined
-  }, [activeAgentId, displayEntries, isLoading])
+  }, [activeAgentId, displayEntries, isLoading, missingPendingChoiceIds.length])
 
   const handleChoiceSubmit = useCallback(
     (agentId: string, choiceId: string, answers: ChoiceAnswer[]) => {
@@ -574,7 +593,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   const showActiveWorkCard = hasActiveWork(activeWorkSnapshot)
 
-  if (displayEntries.length === 0 && !isLoading && !showActiveWorkCard) {
+  if (displayEntries.length === 0 && !isLoading && !showActiveWorkCard && !hasMissingPendingChoices) {
     return (
       <EmptyState
         activeAgentId={activeAgentId}
@@ -613,6 +632,18 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               onNavigateToWorker={onNavigateToWorker}
             />
           ) : null}
+          {missingPendingChoiceIds.map((choiceId) => (
+            <div
+              key={`missing-choice-${choiceId}`}
+              className="[content-visibility:auto] [contain-intrinsic-size:auto_160px]"
+            >
+              <MissingChoiceDetailsFallback
+                choiceId={choiceId}
+                responseAgentId={activeAgentId}
+                onCancel={handleChoiceCancel}
+              />
+            </div>
+          ))}
           {displayEntries.map((entry) => {
             if (entry.type === 'conversation_message') {
               const isAssistant = entry.message.role === 'assistant'
@@ -676,7 +707,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                   {isLive ? (
                     <ChoiceRequestCard
                       choiceId={entry.entry.choiceId}
-                      agentId={entry.entry.agentId}
+                      agentId={resolveChoiceResponseAgentId(entry.entry, activeAgentId)}
                       questions={entry.entry.questions}
                       onSubmit={handleChoiceSubmit}
                       onCancel={handleChoiceCancel}

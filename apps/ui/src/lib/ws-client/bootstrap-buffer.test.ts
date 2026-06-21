@@ -482,6 +482,26 @@ describe('BootstrapBuffer', () => {
     expect(patches).toHaveLength(1)
   })
 
+  it('force-flushes on worker-origin choice_request targeted at the session', () => {
+    const { buffer, patches } = setup()
+    buffer.begin('session-b')
+
+    buffer.handleEvent({ type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' } as ServerEvent)
+
+    const consumed = buffer.handleEvent({
+      type: 'choice_request',
+      agentId: 'worker-1',
+      sessionAgentId: 'session-b',
+      choiceId: 'c-1',
+      questions: [],
+      status: 'pending',
+      timestamp: new Date().toISOString(),
+    } as ServerEvent)
+
+    expect(consumed).toBe(false)
+    expect(patches).toHaveLength(1)
+  })
+
   // ---------------------------------------------------------------------------
   // No flush for unrelated events
   // ---------------------------------------------------------------------------

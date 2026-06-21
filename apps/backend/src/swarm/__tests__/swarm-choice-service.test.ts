@@ -89,6 +89,7 @@ describe("SwarmChoiceService", () => {
     expect(events[0]).toMatchObject({
       type: "choice_request",
       agentId: "manager-1",
+      sessionAgentId: "manager-1",
       questions,
       status: "pending",
     });
@@ -118,6 +119,7 @@ describe("SwarmChoiceService", () => {
     expect(events[1]).toMatchObject({
       type: "choice_request",
       agentId: "manager-1",
+      sessionAgentId: "manager-1",
       choiceId,
       questions,
       status: "answered",
@@ -148,6 +150,12 @@ describe("SwarmChoiceService", () => {
     const pending = service.requestUserChoice("worker-1", questions);
     const choiceId = events[0]?.choiceId ?? "";
 
+    expect(events[0]).toMatchObject({
+      type: "choice_request",
+      agentId: "worker-1",
+      sessionAgentId: "manager-1",
+      status: "pending",
+    });
     expect(service.getPendingChoiceOwner(choiceId)).toEqual({
       agentId: "worker-1",
       sessionAgentId: "manager-1",
@@ -165,6 +173,8 @@ describe("SwarmChoiceService", () => {
     await expect(pending).resolves.toEqual(answers);
     expect(events[1]).toMatchObject({
       status: "answered",
+      agentId: "worker-1",
+      sessionAgentId: "manager-1",
       answers: [
         {
           questionId: "q1",
@@ -187,6 +197,7 @@ describe("SwarmChoiceService", () => {
     expect(events[1]).toMatchObject({
       type: "choice_request",
       agentId: "manager-1",
+      sessionAgentId: "manager-1",
       choiceId,
       status: "cancelled",
     });
@@ -225,9 +236,51 @@ describe("SwarmChoiceService", () => {
     await expect(otherPending).resolves.toEqual([]);
 
     expect(events.slice(3)).toEqual([
-      expect.objectContaining({ choiceId: managerChoiceId, status: "cancelled" }),
-      expect.objectContaining({ choiceId: workerChoiceId, status: "cancelled" }),
-      expect.objectContaining({ choiceId: otherChoiceId, status: "answered", answers: [] }),
+      expect.objectContaining({ choiceId: managerChoiceId, status: "cancelled", sessionAgentId: "manager-1" }),
+      expect.objectContaining({ choiceId: workerChoiceId, status: "cancelled", sessionAgentId: "manager-1" }),
+      expect.objectContaining({ choiceId: otherChoiceId, status: "answered", answers: [], sessionAgentId: "manager-2" }),
     ]);
+  });
+
+  it("returns synthesized pending choice_request events for a manager session", async () => {
+    const { service, events, state } = createChoiceService();
+    const managerQuestions = [{ id: "m1", question: "Manager choice?" }];
+    const workerQuestions = [{ id: "w1", question: "Worker choice?" }];
+
+    void service.requestUserChoice("manager-1", managerQuestions);
+    void service.requestUserChoice("worker-1", workerQuestions);
+    void service.requestUserChoice("manager-2", [{ id: "m2", question: "Other choice?" }]);
+
+    const managerChoiceId = events[0]?.choiceId ?? "";
+    const workerChoiceId = events[1]?.choiceId ?? "";
+
+    expect(service.getPendingChoiceRequestsForSession("manager-1")).toEqual([
+      {
+        type: "choice_request",
+        agentId: "manager-1",
+        sessionAgentId: "manager-1",
+        choiceId: managerChoiceId,
+        questions: managerQuestions,
+        status: "pending",
+        timestamp: new Date(Date.UTC(2026, 3, 13, 0, 0, 0)).toISOString(),
+      },
+      {
+        type: "choice_request",
+        agentId: "worker-1",
+        sessionAgentId: "manager-1",
+        choiceId: workerChoiceId,
+        questions: workerQuestions,
+        status: "pending",
+        timestamp: new Date(Date.UTC(2026, 3, 13, 0, 0, 1)).toISOString(),
+      },
+    ]);
+    expect(service.getPendingChoiceRequestsForSession("manager-2")).toEqual([
+      expect.objectContaining({
+        agentId: "manager-2",
+        sessionAgentId: "manager-2",
+        status: "pending",
+      }),
+    ]);
+    expect(state.snapshotCount).toBe(3);
   });
 });

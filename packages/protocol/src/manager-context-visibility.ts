@@ -154,7 +154,17 @@ export function isVisibleInManagerAllView(
     return managerAliasIds.has(entry.agentId.trim())
   }
 
-  if (entry.type === 'choice_request' || entry.type === 'work_plan_created') {
+  if (entry.type === 'choice_request') {
+    const agentId = entry.agentId.trim()
+    if (managerAliasIds.has(agentId)) {
+      return true
+    }
+
+    const sessionAgentId = entry.sessionAgentId?.trim()
+    return sessionAgentId !== undefined && sessionAgentId.length > 0 && managerAliasIds.has(sessionAgentId)
+  }
+
+  if (entry.type === 'work_plan_created') {
     return managerAliasIds.has(entry.agentId.trim())
   }
 

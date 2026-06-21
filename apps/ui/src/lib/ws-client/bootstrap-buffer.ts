@@ -165,7 +165,11 @@ export class BootstrapBuffer {
     if (!targetAgentId) return false
 
     if (BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES.has(event.type)) {
-      return 'agentId' in event && (event as { agentId: string }).agentId === targetAgentId
+      return (
+        'agentId' in event &&
+        ((event as { agentId: string }).agentId === targetAgentId ||
+          (event.type === 'choice_request' && event.sessionAgentId === targetAgentId))
+      )
     }
 
     if (event.type === 'agent_status') {

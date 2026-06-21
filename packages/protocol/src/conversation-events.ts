@@ -137,6 +137,7 @@ export interface AgentToolCallEvent {
 export interface ChoiceRequestEvent {
   type: 'choice_request'
   agentId: string
+  sessionAgentId?: string
   choiceId: string
   questions: ChoiceQuestion[]
   status: ChoiceRequestStatus

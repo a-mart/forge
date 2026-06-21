@@ -36,6 +36,40 @@ export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string>
   'model_cache_observation',
 ])
 
+function isChoiceEventForTarget(
+  event: Extract<ServerEvent, { type: 'choice_request' }>,
+  targetAgentId: string | null,
+): boolean {
+  return Boolean(
+    targetAgentId &&
+      (event.agentId === targetAgentId || event.sessionAgentId === targetAgentId),
+  )
+}
+
+function upsertChoiceRequestMessages(
+  messages: ManagerWsConversationEventContext['state']['messages'],
+  choices: Extract<ServerEvent, { type: 'choice_request' }>[],
+): ManagerWsConversationEventContext['state']['messages'] {
+  if (choices.length === 0) {
+    return messages
+  }
+
+  const nextMessages = [...messages]
+  for (const choice of choices) {
+    const existingIdx = nextMessages.findIndex(
+      (message) => message.type === 'choice_request' && message.choiceId === choice.choiceId,
+    )
+
+    if (existingIdx >= 0) {
+      nextMessages[existingIdx] = choice
+    } else {
+      nextMessages.push(choice)
+    }
+  }
+
+  return nextMessages
+}
+
 export function handleConversationEvent(
   event: ServerEvent,
   context: ManagerWsConversationEventContext,
@@ -95,20 +129,11 @@ export function handleConversationEvent(
     }
 
     case 'choice_request': {
-      if (event.agentId !== context.state.targetAgentId) {
+      if (!isChoiceEventForTarget(event, context.state.targetAgentId)) {
         return true
       }
 
-      const existingIdx = context.state.messages.findIndex(
-        (message) => message.type === 'choice_request' && message.choiceId === event.choiceId,
-      )
-
-      let nextMessages = [...context.state.messages]
-      if (existingIdx >= 0) {
-        nextMessages[existingIdx] = event
-      } else {
-        nextMessages = [...nextMessages, event]
-      }
+      const nextMessages = upsertChoiceRequestMessages(context.state.messages, [event])
 
       const nextPendingChoiceIds = new Set(context.state.pendingChoiceIds)
       if (event.status === 'pending') {
@@ -198,13 +223,26 @@ export function handleConversationEvent(
       return true
     }
 
-    case 'pending_choices_snapshot':
+    case 'pending_choices_snapshot': {
       if (event.agentId !== context.state.targetAgentId) {
         return true
       }
 
-      context.updateState({ pendingChoiceIds: new Set(event.choiceIds) })
+      const pendingChoiceIds = new Set(event.choiceIds)
+      const choices = event.choices?.filter(
+        (choice) =>
+          pendingChoiceIds.has(choice.choiceId) &&
+          isChoiceEventForTarget(choice, context.state.targetAgentId),
+      ) ?? []
+
+      context.updateState({
+        pendingChoiceIds,
+        ...(choices.length > 0
+          ? { messages: upsertChoiceRequestMessages(context.state.messages, choices) }
+          : {}),
+      })
       return true
+    }
 
     case 'session_task_state_snapshot': {
       context.updateState({

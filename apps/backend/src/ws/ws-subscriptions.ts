@@ -99,7 +99,7 @@ export class WsSubscriptions {
         outboundEvent.type === "model_cache_observation" ||
         outboundEvent.type === "message_pinned"
       ) {
-        if (subscribedAgent !== outboundEvent.agentId) {
+        if (!this.shouldDeliverConversationEventToSubscriber(outboundEvent, subscribedAgent)) {
           continue;
         }
       }
@@ -448,6 +448,33 @@ export class WsSubscriptions {
     return typeof descriptor.profileId === "string" && descriptor.profileId.trim().length > 0
       ? descriptor.profileId.trim()
       : descriptor.agentId;
+  }
+
+  private shouldDeliverConversationEventToSubscriber(
+    event: Extract<
+      ServerEvent,
+      | { type: "conversation_message" }
+      | { type: "conversation_log" }
+      | { type: "agent_message" }
+      | { type: "agent_tool_call" }
+      | { type: "conversation_reset" }
+      | { type: "choice_request" }
+      | { type: "work_plan_created" }
+      | { type: "model_cache_observation" }
+      | { type: "message_pinned" }
+    >,
+    subscribedAgent: string,
+  ): boolean {
+    if (subscribedAgent === event.agentId) {
+      return true;
+    }
+
+    if (event.type === "choice_request") {
+      const sessionAgentId = event.sessionAgentId?.trim();
+      return sessionAgentId !== undefined && sessionAgentId.length > 0 && subscribedAgent === sessionAgentId;
+    }
+
+    return false;
   }
 
   private filterBuilderSnapshotEvent(event: ServerEvent): ServerEvent {

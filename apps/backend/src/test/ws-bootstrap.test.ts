@@ -112,6 +112,17 @@ describe('sendSubscriptionBootstrap', () => {
       listProfiles: () => [],
       getConversationHistoryWithDiagnostics: vi.fn(() => historyResult),
       getPendingChoiceIdsForSession: vi.fn(() => ['choice-1']),
+      getPendingChoiceRequestsForSession: vi.fn(() => [
+        {
+          type: 'choice_request' as const,
+          agentId: 'worker-1',
+          sessionAgentId: 'manager-1',
+          choiceId: 'choice-1',
+          questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+          status: 'pending' as const,
+          timestamp: '2026-01-01T00:00:00.000Z',
+        },
+      ]),
       getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
     } as any
 
@@ -143,9 +154,28 @@ describe('sendSubscriptionBootstrap', () => {
     expect(bootstrapOptions?.fields).toMatchObject({
       targetAgentId: 'manager-1',
       historyDetail: 'fixture',
-      historyEntriesReturned: 1,
+      historyEntriesReturned: 2,
       pendingChoiceCount: 1,
       snapshotSkipped: false,
+    })
+    const pendingChoicesSnapshot = vi
+      .mocked(send)
+      .mock.calls.find(([, event]) => (event as ServerEvent).type === 'pending_choices_snapshot')?.[1] as
+      | Extract<ServerEvent, { type: 'pending_choices_snapshot' }>
+      | undefined
+    expect(pendingChoicesSnapshot).toMatchObject({
+      type: 'pending_choices_snapshot',
+      agentId: 'manager-1',
+      choiceIds: ['choice-1'],
+      choices: [
+        expect.objectContaining({
+          type: 'choice_request',
+          agentId: 'worker-1',
+          sessionAgentId: 'manager-1',
+          choiceId: 'choice-1',
+          status: 'pending',
+        }),
+      ],
     })
     expect(bootstrapOptions?.fields).not.toHaveProperty('agentId')
     expect(send).toHaveBeenCalledTimes(7)
@@ -194,6 +224,7 @@ describe('sendSubscriptionBootstrap', () => {
           },
         }),
         getPendingChoiceIdsForSession: () => [],
+        getPendingChoiceRequestsForSession: () => [],
         getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
         isModelCacheVisualizationEnabled: () => false,
       } as any,
@@ -257,6 +288,7 @@ describe('sendSubscriptionBootstrap', () => {
           },
         }),
         getPendingChoiceIdsForSession: () => [],
+        getPendingChoiceRequestsForSession: () => [],
         getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
         isModelCacheVisualizationEnabled: () => true,
       } as any,
@@ -339,6 +371,7 @@ describe('sendSubscriptionBootstrap', () => {
         },
       })),
       getPendingChoiceIdsForSession: vi.fn(() => []),
+      getPendingChoiceRequestsForSession: vi.fn(() => []),
       getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
     } as any
 
@@ -403,6 +436,7 @@ describe('sendSubscriptionBootstrap', () => {
         },
       })),
       getPendingChoiceIdsForSession: vi.fn(() => []),
+      getPendingChoiceRequestsForSession: vi.fn(() => []),
       getSessionTaskStateSnapshot: vi.fn(async (agentId: string) => createTaskSnapshotEvent(agentId)),
     } as any
 
@@ -469,6 +503,17 @@ describe('sendSubscriptionBootstrap', () => {
           },
         }),
         getPendingChoiceIdsForSession: () => ['choice-1'],
+        getPendingChoiceRequestsForSession: () => [
+          {
+            type: 'choice_request' as const,
+            agentId: 'worker-1',
+            sessionAgentId: 'manager-1',
+            choiceId: 'choice-1',
+            questions: [{ id: 'q1', question: 'Worker choice?', options: [{ id: 'a', label: 'A' }] }],
+            status: 'pending' as const,
+            timestamp: '2026-01-01T00:00:00.000Z',
+          },
+        ],
         getSessionTaskStateSnapshot: async (agentId: string) => ({
           ...createTaskSnapshotEvent(agentId),
           revision: 7,
@@ -496,6 +541,18 @@ describe('sendSubscriptionBootstrap', () => {
       'session_task_state_snapshot',
       'terminals_snapshot',
     ])
+    expect(sentEvents[4]).toMatchObject({
+      type: 'pending_choices_snapshot',
+      agentId: 'manager-1',
+      choiceIds: ['choice-1'],
+      choices: [
+        expect.objectContaining({
+          agentId: 'worker-1',
+          sessionAgentId: 'manager-1',
+          choiceId: 'choice-1',
+        }),
+      ],
+    })
     expect(sentEvents[5]).toMatchObject({
       type: 'session_task_state_snapshot',
       sessionAgentId: 'manager-1',
@@ -535,6 +592,7 @@ describe('sendSubscriptionBootstrap', () => {
           },
         }),
         getPendingChoiceIdsForSession: () => [],
+        getPendingChoiceRequestsForSession: () => [],
         getSessionTaskStateSnapshot,
       } as any,
       integrationRegistry: null,
@@ -559,5 +617,56 @@ describe('sendSubscriptionBootstrap', () => {
       'pending_choices_snapshot',
       'terminals_snapshot',
     ])
+  })
+
+  it('falls back to pending choice ids when full pending requests are unavailable', async () => {
+    const sentEvents: ServerEvent[] = []
+
+    await sendSubscriptionBootstrap({
+      socket: {} as any,
+      targetAgentId: 'manager-1',
+      swarmManager: {
+        listBootstrapAgents: () => [],
+        listProfiles: () => [],
+        getConversationHistoryWithDiagnostics: () => ({
+          history: [],
+          diagnostics: {
+            cacheState: 'hit' as const,
+            historySource: 'cache_hit' as const,
+            coldLoad: false,
+            fsReadOps: 0,
+            fsReadBytes: 0,
+            sessionFileBytes: 0,
+            cacheFileBytes: 0,
+            persistedEntryCount: 0,
+            cachedEntryCount: 0,
+            sessionSummaryBytesScanned: 0,
+            cacheReadMs: 0,
+            sessionSummaryReadMs: 0,
+            detail: undefined,
+          },
+        }),
+        getPendingChoiceRequestsForSession: () => [],
+        getPendingChoiceIdsForSession: () => ['legacy-choice-1'],
+        getSessionTaskStateSnapshot: async (agentId: string) => createTaskSnapshotEvent(agentId),
+      } as any,
+      integrationRegistry: null,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        sentEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      resolveTaskSnapshotSessionAgentId: (agentId) => agentId,
+    })
+
+    expect(sentEvents.find((event) => event.type === 'pending_choices_snapshot')).toEqual({
+      type: 'pending_choices_snapshot',
+      agentId: 'manager-1',
+      choiceIds: ['legacy-choice-1'],
+    })
   })
 })

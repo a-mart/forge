@@ -69,6 +69,18 @@ function resolveManagerContextId(descriptor: AgentDescriptor | undefined, fallba
   return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
 }
 
+function resolveHistoryAgentId(
+  event: ConversationEntryEvent,
+  historyAgentId?: string,
+): string {
+  const normalizedHistoryAgentId = historyAgentId?.trim();
+  if (normalizedHistoryAgentId && normalizedHistoryAgentId.length > 0) {
+    return normalizedHistoryAgentId;
+  }
+
+  return event.agentId;
+}
+
 export class ConversationProjector {
   private readonly timeline: ConversationTimeline;
   private readonly historyCacheStore: HistoryCacheStore;
@@ -173,8 +185,8 @@ export class ConversationProjector {
     this.deps.emitServerEvent("agent_message", event satisfies ServerEvent);
   }
 
-  emitChoiceRequest(event: ChoiceRequestEvent): void {
-    this.emitConversationEntry(event);
+  emitChoiceRequest(event: ChoiceRequestEvent, options?: { historyAgentId?: string }): void {
+    this.emitConversationEntry(event, options);
     this.deps.emitServerEvent("choice_request", event satisfies ServerEvent);
   }
 
@@ -246,16 +258,20 @@ export class ConversationProjector {
     }
   }
 
-  private emitConversationEntry(event: ConversationEntryEvent): void {
-    const descriptor = this.deps.descriptors.get(event.agentId);
+  private emitConversationEntry(
+    event: ConversationEntryEvent,
+    options?: { historyAgentId?: string },
+  ): void {
+    const historyAgentId = resolveHistoryAgentId(event, options?.historyAgentId);
+    const descriptor = this.deps.descriptors.get(historyAgentId);
     const history =
-      descriptor && !this.loadedFromDisk.has(event.agentId)
+      descriptor && !this.loadedFromDisk.has(historyAgentId)
         ? this.loadConversationHistoryForDescriptor(descriptor)
-        : (this.deps.conversationEntriesByAgentId.get(event.agentId) ?? []);
+        : (this.deps.conversationEntriesByAgentId.get(historyAgentId) ?? []);
 
     history.push(event);
-    trimConversationHistory(history, resolveManagerContextId(descriptor, event.agentId));
-    this.deps.conversationEntriesByAgentId.set(event.agentId, history);
+    trimConversationHistory(history, resolveManagerContextId(descriptor, historyAgentId));
+    this.deps.conversationEntriesByAgentId.set(historyAgentId, history);
 
     // Runtime logs are valuable for the live in-memory transcript and cache, but
     // they are high-volume JSONL noise during replay/fork/recovery. Forks may omit
@@ -263,11 +279,11 @@ export class ConversationProjector {
     // focused on durable transcript/tool entries instead of transient runtime chatter.
     if (!shouldPersistConversationEntry(event)) {
       this.assignConversationMessageIdIfMissing(event);
-      this.queueConversationHistoryCacheWrite(event.agentId, history);
+      this.queueConversationHistoryCacheWrite(historyAgentId, history);
       return;
     }
 
-    const runtime = this.deps.runtimes.get(event.agentId);
+    const runtime = this.deps.runtimes.get(historyAgentId);
 
     try {
       if (runtime) {
@@ -277,26 +293,26 @@ export class ConversationProjector {
           this.timeline.trackLastSessionEntryId(descriptor.sessionFile, entryId);
           this.historyCacheStore.incrementPersistedEntryCount(descriptor.sessionFile);
         }
-        this.queueConversationHistoryCacheWrite(event.agentId, history);
+        this.queueConversationHistoryCacheWrite(historyAgentId, history);
         return;
       }
 
       if (!descriptor) {
         this.assignConversationMessageIdIfMissing(event);
-        this.queueConversationHistoryCacheWrite(event.agentId, history);
+        this.queueConversationHistoryCacheWrite(historyAgentId, history);
         return;
       }
 
       const { entryId } = this.timeline.appendConversationEntry(descriptor, event);
       this.assignConversationMessageIdIfMissing(event, entryId);
       this.historyCacheStore.incrementPersistedEntryCount(descriptor.sessionFile);
-      this.queueConversationHistoryCacheWrite(event.agentId, history);
+      this.queueConversationHistoryCacheWrite(historyAgentId, history);
     } catch (error) {
       this.deps.logDebug("history:save:error", {
         message: error instanceof Error ? error.message : String(error)
       });
       this.assignConversationMessageIdIfMissing(event);
-      this.queueConversationHistoryCacheWrite(event.agentId, history);
+      this.queueConversationHistoryCacheWrite(historyAgentId, history);
     }
   }
 

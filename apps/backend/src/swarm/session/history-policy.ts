@@ -1,4 +1,4 @@
-import type { ConversationEntryEvent } from "../types.js";
+import type { ChoiceRequestEvent, ConversationEntryEvent } from "../types.js";
 import { isCodexStreamDetailToolName } from "../codex-app-server/codex-app-server-event-normalizer.js";
 import {
   collectKnownWorkerIds,
@@ -83,27 +83,14 @@ export function trimConversationHistory(
     ? inferManagerAliasIds(entries, managerId, knownWorkerIds)
     : new Set<string>();
 
-  const removableIndexes: number[] = [];
-  for (let index = 0; index < entries.length; index += 1) {
-    if (removableIndexes.length >= overflow) {
-      break;
-    }
-
-    const entry = entries[index];
-    if (isProtectedTranscriptEntry(entry)) {
-      continue;
-    }
-
-    if (
-      managerId &&
-      isProtectedManagerContextHistoryEntry(entry, managerAliasIds, knownWorkerIds)
-    ) {
-      continue;
-    }
-
-    removableIndexes.push(index);
-  }
-
+  const removableIndexes = collectRetentionTrimIndexes(
+    entries,
+    overflow,
+    managerAliasIds,
+    knownWorkerIds,
+    Boolean(managerId),
+    collectLatestPendingChoiceIds(entries)
+  );
   if (removableIndexes.length === 0) {
     return;
   }
@@ -113,32 +100,76 @@ export function trimConversationHistory(
   }
 }
 
+function collectRetentionTrimIndexes(
+  entries: ConversationEntryEvent[],
+  overflow: number,
+  managerAliasIds: ReadonlySet<string>,
+  knownWorkerIds: ReadonlySet<string>,
+  hasManagerContext: boolean,
+  activePendingChoiceIds: ReadonlySet<string>
+): number[] {
+  const removableIndexes: number[] = [];
+  const addTier = (predicate: (entry: ConversationEntryEvent) => boolean) => {
+    for (let index = 0; index < entries.length && removableIndexes.length < overflow; index += 1) {
+      if (removableIndexes.includes(index)) {
+        continue;
+      }
+
+      if (predicate(entries[index])) {
+        removableIndexes.push(index);
+      }
+    }
+  };
+
+  addTier((entry) =>
+    !isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
+    !isAnsweredOrCancelledChoiceRequestEntry(entry) &&
+    !isProtectedTranscriptEntry(entry) &&
+    !(hasManagerContext && isProtectedManagerContextHistoryEntry(entry, managerAliasIds, knownWorkerIds))
+  );
+
+  addTier((entry) =>
+    !isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
+    hasManagerContext &&
+    isProtectedManagerContextHistoryEntry(entry, managerAliasIds, knownWorkerIds)
+  );
+
+  addTier(isAnsweredOrCancelledChoiceRequestEntry);
+  addTier((entry) => isProtectedTranscriptEntry(entry) && !isChoiceRequestEntry(entry));
+  addTier((entry) => isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds));
+
+  return removableIndexes;
+}
+
 export interface BootstrapConversationHistorySelection<Entry extends ConversationEntryEvent = ConversationEntryEvent> {
   history: Entry[];
   requestedHistoryLength: number;
   trimmed: boolean;
 }
 
-export function selectBootstrapConversationHistory<Entry extends ConversationEntryEvent>(options: {
-  fullHistory: Entry[];
+export function selectBootstrapConversationHistory(options: {
+  fullHistory: ConversationEntryEvent[];
   managerId?: string;
   requestedMessageCount?: number;
+  pendingChoiceRequests?: ChoiceRequestEvent[];
   includeDiagnosticEntries?: boolean;
-  isWithinBudget: (messages: Entry[]) => boolean;
-}): BootstrapConversationHistorySelection<Entry> {
+  isWithinBudget: (messages: ConversationEntryEvent[]) => boolean;
+}): BootstrapConversationHistorySelection {
   const {
     fullHistory,
     managerId,
     requestedMessageCount,
+    pendingChoiceRequests = [],
     includeDiagnosticEntries = true,
     isWithinBudget,
   } = options;
   const selectableHistory = includeDiagnosticEntries
     ? fullHistory
     : fullHistory.filter((entry) => !isBootstrapDiagnosticEntry(entry));
-  const requestedHistory = requestedMessageCount !== undefined
+  const countedHistory = requestedMessageCount !== undefined
     ? selectableHistory.slice(-requestedMessageCount)
     : selectableHistory;
+  const requestedHistory = upsertPendingChoiceRequests(countedHistory, pendingChoiceRequests);
 
   if (isWithinBudget(requestedHistory)) {
     return {
@@ -152,8 +183,24 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
   const managerAliasIds = managerId
     ? inferManagerAliasIds(requestedHistory, managerId, knownWorkerIds)
     : new Set<string>();
+  const activePendingChoiceIds = collectLatestPendingChoiceIds(requestedHistory);
 
-  const conversationEntries = requestedHistory.filter(isBootstrapTranscriptEntry);
+  const pendingChoiceEntries = requestedHistory.filter((entry) =>
+    isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds)
+  );
+  const stalePendingChoiceEntries = requestedHistory.filter((entry) =>
+    isStalePendingChoiceRequestEntry(entry, activePendingChoiceIds)
+  );
+  const visibleTranscriptEntries = requestedHistory.filter(
+    (entry) => !isChoiceRequestEntry(entry) && isProtectedTranscriptEntry(entry)
+  );
+  const remainingTranscriptEntries = requestedHistory.filter(
+    (entry) =>
+      isBootstrapTranscriptEntry(entry) &&
+      !isActivePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
+      !isStalePendingChoiceRequestEntry(entry, activePendingChoiceIds) &&
+      !isProtectedTranscriptEntry(entry)
+  );
   const activityEntries = requestedHistory.filter(isBootstrapActivityEntry);
   const diagnosticEntries = requestedHistory.filter(isBootstrapDiagnosticEntry);
   const protectedActivityEntries = managerId
@@ -167,36 +214,39 @@ export function selectBootstrapConversationHistory<Entry extends ConversationEnt
       )
     : activityEntries;
 
-  if (!isWithinBudget(conversationEntries)) {
-    const trimmedConversationEntries = trimBootstrapConversationHistoryTailToBudget(conversationEntries, isWithinBudget);
-    const history = appendBootstrapDiagnosticEntriesIfBudgetAllows(
-      requestedHistory,
-      trimmedConversationEntries,
-      diagnosticEntries,
-      isWithinBudget,
-    );
-    return {
-      history,
-      requestedHistoryLength: requestedHistory.length,
-      trimmed: history.length !== requestedHistory.length,
-    };
-  }
-
-  const selectedBootstrapEntries = selectBootstrapActivityEntriesWithinBudget(
+  const selectedTranscriptEntries = selectBootstrapTranscriptEntriesWithinBudget(
     requestedHistory,
-    conversationEntries,
+    pendingChoiceEntries,
+    visibleTranscriptEntries,
+    remainingTranscriptEntries,
+    isWithinBudget
+  );
+  const selectedActivityEntries = selectBootstrapEntriesWithinBudget(
+    requestedHistory,
+    selectedTranscriptEntries,
     protectedActivityEntries,
+    isWithinBudget
+  );
+  const selectedUnprotectedActivityEntries = selectBootstrapEntriesWithinBudget(
+    requestedHistory,
+    [...selectedTranscriptEntries, ...selectedActivityEntries],
     unprotectedActivityEntries,
     isWithinBudget
   );
-  const trimmedHistory = mergeBootstrapConversationHistory(
+  const selectedStalePendingChoiceEntries = selectBootstrapEntriesWithinBudget(
     requestedHistory,
-    selectedBootstrapEntries.conversationEntries,
-    selectedBootstrapEntries.activityEntries
+    [...selectedTranscriptEntries, ...selectedActivityEntries, ...selectedUnprotectedActivityEntries],
+    stalePendingChoiceEntries,
+    isWithinBudget
+  );
+  const primaryHistory = mergeBootstrapConversationHistory(
+    requestedHistory,
+    selectedTranscriptEntries,
+    [...selectedActivityEntries, ...selectedUnprotectedActivityEntries, ...selectedStalePendingChoiceEntries]
   );
   const history = appendBootstrapDiagnosticEntriesIfBudgetAllows(
     requestedHistory,
-    trimmedHistory,
+    primaryHistory,
     diagnosticEntries,
     isWithinBudget,
   );
@@ -229,105 +279,126 @@ function inferKnownWorkerIdsFromHistory(
   return workerIds;
 }
 
-interface BootstrapActivitySelection<Entry extends ConversationEntryEvent> {
-  conversationEntries: Entry[];
-  activityEntries: Entry[];
+function upsertPendingChoiceRequests(
+  countedHistory: ConversationEntryEvent[],
+  pendingChoiceRequests: ChoiceRequestEvent[]
+): ConversationEntryEvent[] {
+  if (pendingChoiceRequests.length === 0) {
+    return countedHistory;
+  }
+
+  const pendingByChoiceId = new Map<string, ChoiceRequestEvent>();
+  for (const pendingChoice of pendingChoiceRequests) {
+    const choiceId = pendingChoice.choiceId.trim();
+    if (choiceId.length === 0) {
+      continue;
+    }
+    pendingByChoiceId.set(choiceId, pendingChoice);
+  }
+
+  if (pendingByChoiceId.size === 0) {
+    return countedHistory;
+  }
+
+  const upsertedHistory: ConversationEntryEvent[] = [];
+  const seenChoiceIds = new Set<string>();
+  for (const entry of countedHistory) {
+    if (entry.type !== "choice_request") {
+      upsertedHistory.push(entry);
+      continue;
+    }
+
+    const choiceId = entry.choiceId.trim();
+    const pendingChoice = pendingByChoiceId.get(choiceId);
+    if (!pendingChoice) {
+      upsertedHistory.push(entry);
+      continue;
+    }
+
+    if (seenChoiceIds.has(choiceId)) {
+      continue;
+    }
+
+    upsertedHistory.push(pendingChoice);
+    seenChoiceIds.add(choiceId);
+  }
+
+  for (const pendingChoice of pendingByChoiceId.values()) {
+    if (!seenChoiceIds.has(pendingChoice.choiceId.trim())) {
+      upsertedHistory.push(pendingChoice);
+    }
+  }
+
+  return upsertedHistory;
 }
 
-function selectBootstrapActivityEntriesWithinBudget<Entry extends ConversationEntryEvent>(
-  sourceHistory: Entry[],
-  conversationEntries: Entry[],
-  protectedActivityEntries: Entry[],
-  unprotectedActivityEntries: Entry[],
-  isWithinBudget: (messages: Entry[]) => boolean
-): BootstrapActivitySelection<Entry> {
-  const buildHistory = (transcript: Entry[], activity: Entry[]) =>
-    mergeBootstrapConversationHistory(sourceHistory, transcript, activity);
+function selectBootstrapTranscriptEntriesWithinBudget(
+  sourceHistory: ConversationEntryEvent[],
+  pendingChoiceEntries: ConversationEntryEvent[],
+  visibleTranscriptEntries: ConversationEntryEvent[],
+  remainingTranscriptEntries: ConversationEntryEvent[],
+  isWithinBudget: (messages: ConversationEntryEvent[]) => boolean
+): ConversationEntryEvent[] {
+  const pendingEntries = isWithinBudget(pendingChoiceEntries)
+    ? pendingChoiceEntries
+    : selectBootstrapEntriesWithinBudget(sourceHistory, [], pendingChoiceEntries, isWithinBudget);
 
-  let selectedConversation = conversationEntries;
-  let selectedActivity = protectedActivityEntries;
-
-  if (!isWithinBudget(buildHistory(selectedConversation, selectedActivity))) {
-    selectedConversation = trimBootstrapConversationHistoryTailToBudget(
-      conversationEntries,
-      (candidateConversationEntries) =>
-        isWithinBudget(buildHistory(candidateConversationEntries, protectedActivityEntries))
+  const pendingAndVisibleEntries = mergeBootstrapConversationHistory(
+    sourceHistory,
+    pendingEntries,
+    visibleTranscriptEntries
+  );
+  if (!isWithinBudget(pendingAndVisibleEntries)) {
+    const selectedVisibleEntries = selectBootstrapEntriesWithinBudget(
+      sourceHistory,
+      pendingEntries,
+      visibleTranscriptEntries,
+      isWithinBudget
     );
-    selectedActivity = protectedActivityEntries;
-
-    if (!isWithinBudget(buildHistory(selectedConversation, selectedActivity))) {
-      selectedActivity = trimBootstrapProtectedActivityPrefixToBudget(
-        sourceHistory,
-        selectedConversation,
-        protectedActivityEntries,
-        isWithinBudget
-      );
-    }
-  } else if (unprotectedActivityEntries.length > 0) {
-    let low = 0;
-    let high = unprotectedActivityEntries.length;
-
-    while (low < high) {
-      const mid = Math.floor((low + high + 1) / 2);
-      const candidateUnprotectedEntries = unprotectedActivityEntries.slice(-mid);
-      const candidateHistory = buildHistory(selectedConversation, [
-        ...protectedActivityEntries,
-        ...candidateUnprotectedEntries
-      ]);
-
-      if (isWithinBudget(candidateHistory)) {
-        low = mid;
-      } else {
-        high = mid - 1;
-      }
-    }
-
-    selectedActivity = [
-      ...protectedActivityEntries,
-      ...unprotectedActivityEntries.slice(unprotectedActivityEntries.length - low)
-    ];
+    return mergeBootstrapConversationHistory(sourceHistory, pendingEntries, selectedVisibleEntries);
   }
 
-  while (
-    selectedActivity.length > 0 &&
-    !isWithinBudget(buildHistory(selectedConversation, selectedActivity))
-  ) {
-    selectedActivity = selectedActivity.slice(0, -1);
+  const allTranscriptEntries = mergeBootstrapConversationHistory(
+    sourceHistory,
+    pendingAndVisibleEntries,
+    remainingTranscriptEntries
+  );
+  if (isWithinBudget(allTranscriptEntries)) {
+    return allTranscriptEntries;
   }
 
-  while (
-    selectedConversation.length > 0 &&
-    !isWithinBudget(buildHistory(selectedConversation, selectedActivity))
-  ) {
-    selectedConversation = selectedConversation.slice(1);
-  }
-
-  return {
-    conversationEntries: selectedConversation,
-    activityEntries: selectedActivity
-  };
+  const selectedRemainingTranscriptEntries = selectBootstrapEntriesWithinBudget(
+    sourceHistory,
+    pendingAndVisibleEntries,
+    remainingTranscriptEntries,
+    isWithinBudget
+  );
+  return mergeBootstrapConversationHistory(
+    sourceHistory,
+    pendingAndVisibleEntries,
+    selectedRemainingTranscriptEntries
+  );
 }
 
-function trimBootstrapProtectedActivityPrefixToBudget<Entry extends ConversationEntryEvent>(
-  sourceHistory: Entry[],
-  conversationEntries: Entry[],
-  protectedActivityEntries: Entry[],
-  isWithinBudget: (messages: Entry[]) => boolean
-): Entry[] {
-  if (protectedActivityEntries.length === 0) {
+function selectBootstrapEntriesWithinBudget(
+  sourceHistory: ConversationEntryEvent[],
+  fixedEntries: ConversationEntryEvent[],
+  candidateEntries: ConversationEntryEvent[],
+  isWithinBudget: (messages: ConversationEntryEvent[]) => boolean
+): ConversationEntryEvent[] {
+  if (candidateEntries.length === 0) {
     return [];
   }
 
   let low = 0;
-  let high = protectedActivityEntries.length;
-
+  let high = candidateEntries.length;
   while (low < high) {
     const mid = Math.floor((low + high + 1) / 2);
-    const candidateActivityEntries = protectedActivityEntries.slice(0, mid);
+    const candidateTailEntries = candidateEntries.slice(-mid);
     const candidateHistory = mergeBootstrapConversationHistory(
       sourceHistory,
-      conversationEntries,
-      candidateActivityEntries
+      fixedEntries,
+      candidateTailEntries
     );
 
     if (isWithinBudget(candidateHistory)) {
@@ -337,7 +408,7 @@ function trimBootstrapProtectedActivityPrefixToBudget<Entry extends Conversation
     }
   }
 
-  return protectedActivityEntries.slice(0, low);
+  return candidateEntries.slice(candidateEntries.length - low);
 }
 
 function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
@@ -348,6 +419,61 @@ function isBootstrapTranscriptEntry<Entry extends ConversationEntryEvent>(entry:
   );
 }
 
+function collectLatestPendingChoiceIds(entries: readonly ConversationEntryEvent[]): Set<string> {
+  const latestChoiceStatusById = new Map<string, ChoiceRequestEvent["status"]>();
+  for (const entry of entries) {
+    if (!isChoiceRequestEntry(entry)) {
+      continue;
+    }
+
+    const choiceId = entry.choiceId.trim();
+    if (choiceId.length === 0) {
+      continue;
+    }
+
+    latestChoiceStatusById.set(choiceId, entry.status);
+  }
+
+  const pendingChoiceIds = new Set<string>();
+  for (const [choiceId, status] of latestChoiceStatusById) {
+    if (status === "pending") {
+      pendingChoiceIds.add(choiceId);
+    }
+  }
+
+  return pendingChoiceIds;
+}
+
+function isChoiceRequestEntry(entry: ConversationEntryEvent): entry is ChoiceRequestEvent {
+  return entry.type === "choice_request";
+}
+
+function isActivePendingChoiceRequestEntry(
+  entry: ConversationEntryEvent,
+  activePendingChoiceIds: ReadonlySet<string>
+): boolean {
+  return (
+    isChoiceRequestEntry(entry) &&
+    entry.status === "pending" &&
+    activePendingChoiceIds.has(entry.choiceId.trim())
+  );
+}
+
+function isStalePendingChoiceRequestEntry(
+  entry: ConversationEntryEvent,
+  activePendingChoiceIds: ReadonlySet<string>
+): boolean {
+  return (
+    isChoiceRequestEntry(entry) &&
+    entry.status === "pending" &&
+    !activePendingChoiceIds.has(entry.choiceId.trim())
+  );
+}
+
+function isAnsweredOrCancelledChoiceRequestEntry(entry: ConversationEntryEvent): boolean {
+  return isChoiceRequestEntry(entry) && entry.status !== "pending";
+}
+
 /** Hidden diagnostics — lowest bootstrap priority until header UI consumes them. */
 function isBootstrapDiagnosticEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
   return entry.type === "model_cache_observation";
@@ -355,27 +481,6 @@ function isBootstrapDiagnosticEntry<Entry extends ConversationEntryEvent>(entry:
 
 function isBootstrapActivityEntry<Entry extends ConversationEntryEvent>(entry: Entry): boolean {
   return entry.type === "agent_message" || entry.type === "agent_tool_call";
-}
-
-function trimBootstrapConversationHistoryTailToBudget<Entry extends ConversationEntryEvent>(
-  history: Entry[],
-  isWithinBudget: (messages: Entry[]) => boolean
-): Entry[] {
-  let low = 0;
-  let high = history.length;
-
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-    const candidate = history.slice(mid);
-
-    if (isWithinBudget(candidate)) {
-      high = mid;
-    } else {
-      low = mid + 1;
-    }
-  }
-
-  return history.slice(low);
 }
 
 function appendBootstrapDiagnosticEntriesIfBudgetAllows<Entry extends ConversationEntryEvent>(

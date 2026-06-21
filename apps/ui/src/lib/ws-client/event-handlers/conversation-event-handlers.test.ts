@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelCacheObservationEntry } from '@/lib/ws-state'
 import { createInitialManagerWsState } from '@/lib/ws-state'
+import type { ChoiceRequestEvent } from '@forge/protocol'
 import { applyLoadedModelCacheVisualizationSetting } from '../model-cache-visualization-state'
 import { handleConversationEvent } from './conversation-event-handlers'
 import type { ManagerWsState } from '@/lib/ws-state'
@@ -33,6 +34,18 @@ function makeCacheObservation(id: string): ModelCacheObservationEntry {
   }
 }
 
+function makeChoice(overrides: Partial<ChoiceRequestEvent> = {}): ChoiceRequestEvent {
+  return {
+    type: 'choice_request',
+    agentId: 'manager',
+    choiceId: 'choice-1',
+    questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+    status: 'pending',
+    timestamp: '2026-06-02T12:00:00.000Z',
+    ...overrides,
+  }
+}
+
 function runHandler(
   state: ManagerWsState,
   event: Parameters<typeof handleConversationEvent>[0],
@@ -46,6 +59,68 @@ function runHandler(
   })
   return next
 }
+
+describe('handleConversationEvent choice requests', () => {
+  it('accepts live worker-origin choices targeted at the active session', () => {
+    const state = createInitialManagerWsState('manager')
+
+    const next = runHandler(state, makeChoice({
+      agentId: 'worker-1',
+      sessionAgentId: 'manager',
+      choiceId: 'choice-worker',
+    }))
+
+    expect(next.messages).toHaveLength(1)
+    expect(next.messages[0]).toMatchObject({
+      type: 'choice_request',
+      agentId: 'worker-1',
+      sessionAgentId: 'manager',
+      choiceId: 'choice-worker',
+    })
+    expect(next.pendingChoiceIds.has('choice-worker')).toBe(true)
+  })
+
+  it('upserts enriched pending snapshot choices over stale history rows', () => {
+    const stale = makeChoice({ choiceId: 'choice-1', questions: [{ id: 'old', question: 'Old?' }], timestamp: '2026-06-02T11:00:00.000Z' })
+    const state = {
+      ...createInitialManagerWsState('manager'),
+      messages: [stale],
+    }
+
+    const next = runHandler(state, {
+      type: 'pending_choices_snapshot',
+      agentId: 'manager',
+      choiceIds: ['choice-1'],
+      choices: [makeChoice({
+        choiceId: 'choice-1',
+        questions: [{ id: 'new', question: 'New?', options: [{ id: 'b', label: 'B' }] }],
+        timestamp: '2026-06-02T12:30:00.000Z',
+      })],
+    })
+
+    expect(next.pendingChoiceIds.has('choice-1')).toBe(true)
+    expect(next.messages).toHaveLength(1)
+    expect(next.messages[0]).toMatchObject({
+      type: 'choice_request',
+      choiceId: 'choice-1',
+      timestamp: '2026-06-02T12:30:00.000Z',
+      questions: [{ id: 'new', question: 'New?', options: [{ id: 'b', label: 'B' }] }],
+    })
+  })
+
+  it('keeps legacy ids-only pending snapshots without inventing choice rows', () => {
+    const state = createInitialManagerWsState('manager')
+
+    const next = runHandler(state, {
+      type: 'pending_choices_snapshot',
+      agentId: 'manager',
+      choiceIds: ['missing-choice'],
+    })
+
+    expect(next.pendingChoiceIds.has('missing-choice')).toBe(true)
+    expect(next.messages).toEqual([])
+  })
+})
 
 describe('handleConversationEvent model cache observations', () => {
   it('buffers bootstrap observations until setting loads, then promotes them when enabled', () => {
