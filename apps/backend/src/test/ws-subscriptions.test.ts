@@ -96,6 +96,7 @@ function createManagerStub() {
       },
     }),
     getPendingChoiceIdsForSession: () => [],
+    getPendingChoiceRequestsForSession: () => [],
     getSessionTaskStateSnapshot: async (sessionAgentId: string) => createTaskSnapshotEvent(sessionAgentId),
     getAgentsSnapshotVersion: () => agentsSnapshotVersion,
     getProfilesSnapshotVersion: () => profilesSnapshotVersion,
@@ -371,6 +372,7 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
         },
       }),
       getPendingChoiceIdsForSession: () => [],
+      getPendingChoiceRequestsForSession: () => [],
       getSessionTaskStateSnapshot,
       getAgentsSnapshotVersion: () => 0,
       getProfilesSnapshotVersion: () => 0,
@@ -414,5 +416,91 @@ describe('WsSubscriptions snapshot delivery tracking', () => {
       'pending_choices_snapshot',
       'terminals_snapshot',
     ])
+  })
+})
+
+describe('WsSubscriptions choice_request delivery', () => {
+  it('delivers worker-origin choice_request to manager session subscribers via sessionAgentId', async () => {
+    const manager = createManagerStub()
+    const managerSocket = createSocket()
+    const otherSessionSocket = createSocket()
+    const managerEvents: ServerEvent[] = []
+    const otherSessionEvents: ServerEvent[] = []
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (socket, event) => {
+        if (socket === managerSocket) {
+          managerEvents.push(event)
+        }
+        if (socket === otherSessionSocket) {
+          otherSessionEvents.push(event)
+        }
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([managerSocket, otherSessionSocket]) }) as any,
+    })
+
+    await subscriptions.handleSubscribe(managerSocket, 'manager')
+    await subscriptions.handleSubscribe(otherSessionSocket, 'session-1')
+    managerEvents.length = 0
+    otherSessionEvents.length = 0
+
+    subscriptions.broadcastToSubscribed({
+      type: 'choice_request',
+      agentId: 'worker-1',
+      sessionAgentId: 'manager',
+      choiceId: 'choice-worker-1',
+      questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+      status: 'pending',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    })
+
+    expect(managerEvents).toEqual([
+      expect.objectContaining({
+        type: 'choice_request',
+        agentId: 'worker-1',
+        sessionAgentId: 'manager',
+        choiceId: 'choice-worker-1',
+      }),
+    ])
+    expect(otherSessionEvents).toEqual([])
+  })
+
+  it('does not broaden conversation_message delivery beyond agentId', async () => {
+    const manager = createManagerStub()
+    const managerSocket = createSocket()
+    const managerEvents: ServerEvent[] = []
+    const subscriptions = new WsSubscriptions({
+      swarmManager: manager as any,
+      integrationRegistry: null,
+      allowNonManagerSubscriptions: true,
+      terminalService: null,
+      unreadTracker: null,
+      perf: createPerfStub(),
+      send: (_socket, event) => {
+        managerEvents.push(event)
+        return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      },
+      getServer: () => ({ clients: new Set([managerSocket]) }) as any,
+    })
+
+    await subscriptions.handleSubscribe(managerSocket, 'manager')
+    managerEvents.length = 0
+
+    subscriptions.broadcastToSubscribed({
+      type: 'conversation_message',
+      agentId: 'worker-1',
+      role: 'assistant',
+      text: 'worker-only message',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      source: 'speak_to_user',
+    })
+
+    expect(managerEvents).toEqual([])
   })
 })

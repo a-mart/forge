@@ -208,12 +208,17 @@ export async function sendSubscriptionBootstrap(options: {
   });
 
   const pendingChoicesStartedAtMs = performance.now();
-  const pendingChoiceIds = swarmManager.getPendingChoiceIdsForSession(targetAgentId);
+  const pendingChoices = swarmManager.getPendingChoiceRequestsForSession?.(targetAgentId) ?? [];
+  const pendingChoiceIds =
+    pendingChoices.length > 0
+      ? pendingChoices.map((choice) => choice.choiceId)
+      : swarmManager.getPendingChoiceIdsForSession(targetAgentId);
   metricFields.pendingChoiceCount = pendingChoiceIds.length;
   sendMeasured("pendingChoicesSnapshot", {
     type: "pending_choices_snapshot",
     agentId: targetAgentId,
     choiceIds: pendingChoiceIds,
+    ...(pendingChoices.length > 0 ? { choices: pendingChoices } : {}),
   });
   metricFields.pendingChoicesMs = performance.now() - pendingChoicesStartedAtMs;
 

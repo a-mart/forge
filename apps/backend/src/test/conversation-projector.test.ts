@@ -2090,6 +2090,31 @@ describe('ConversationProjector session tree continuity', () => {
       matches: (text) => text.includes('"choiceId":"choice-worker-1"') && text.includes('"agentId":"worker"'),
     })
     expect(cacheText).toContain('"sessionAgentId":"manager"')
+
+    const reloadedProjector = new ConversationProjector({
+      descriptors: new Map([
+        [managerDescriptor.agentId, managerDescriptor],
+        [workerDescriptor.agentId, workerDescriptor],
+      ]),
+      runtimes: new Map(),
+      conversationEntriesByAgentId: new Map(),
+      now: () => FIXED_NOW,
+      emitServerEvent: () => {},
+      logDebug: () => {},
+    })
+    const reloadedHistory = reloadedProjector.getConversationHistory(managerDescriptor.agentId)
+
+    expect(reloadedHistory).toEqual([
+      {
+        type: 'choice_request',
+        agentId: workerDescriptor.agentId,
+        sessionAgentId: managerDescriptor.agentId,
+        choiceId: 'choice-worker-1',
+        questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+        status: 'pending',
+        timestamp: FIXED_NOW,
+      },
+    ])
   })
 
   it('preserves project-agent transcript entries during history trimming even without sourceContext', async () => {
