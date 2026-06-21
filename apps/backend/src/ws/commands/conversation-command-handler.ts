@@ -38,14 +38,19 @@ export async function handleConversationCommand(context: ConversationCommandRout
   } = context;
 
   if (command.type === "choice_response" || command.type === "choice_cancel") {
-    const { agentId, choiceId } = command;
+    const responseTargetAgentId = command.agentId;
+    const { choiceId } = command;
 
-    if (subscribedAgentId !== agentId) {
-      logDebug("choice:rejected:subscription_mismatch", { choiceId, agentId, subscribedAgentId });
+    if (subscribedAgentId !== responseTargetAgentId) {
+      logDebug("choice:rejected:subscription_mismatch", {
+        choiceId,
+        agentId: responseTargetAgentId,
+        subscribedAgentId,
+      });
       send(socket, {
         type: "error",
         code: "CHOICE_SUBSCRIPTION_MISMATCH",
-        message: `Choice response rejected: not subscribed to agent ${agentId}`,
+        message: `Choice response rejected: not subscribed to agent ${responseTargetAgentId}`,
       });
       return true;
     }
@@ -61,12 +66,16 @@ export async function handleConversationCommand(context: ConversationCommandRout
       return true;
     }
 
-    if (pendingChoice.agentId !== agentId && pendingChoice.sessionAgentId !== agentId) {
-      logDebug("choice:rejected:owner_mismatch", { choiceId, agentId, pendingOwner: pendingChoice });
+    if (!isChoiceResponseTargetAuthorized(responseTargetAgentId, pendingChoice)) {
+      logDebug("choice:rejected:owner_mismatch", {
+        choiceId,
+        agentId: responseTargetAgentId,
+        pendingOwner: pendingChoice,
+      });
       send(socket, {
         type: "error",
         code: "CHOICE_OWNER_MISMATCH",
-        message: `Choice ${choiceId} does not belong to agent ${agentId}`,
+        message: `Choice ${choiceId} does not belong to agent ${responseTargetAgentId}`,
       });
       return true;
     }
@@ -74,7 +83,11 @@ export async function handleConversationCommand(context: ConversationCommandRout
     if (command.type === "choice_response") {
       const validationError = validateChoiceAnswers(pendingChoice.questions, command.answers);
       if (validationError) {
-        logDebug("choice:rejected:invalid_response", { choiceId, agentId, validationError });
+        logDebug("choice:rejected:invalid_response", {
+          choiceId,
+          agentId: responseTargetAgentId,
+          validationError,
+        });
         send(socket, {
           type: "error",
           code: "CHOICE_INVALID_RESPONSE",
@@ -83,10 +96,10 @@ export async function handleConversationCommand(context: ConversationCommandRout
         return true;
       }
 
-      logDebug("choice_response:received", { choiceId });
+      logDebug("choice_response:received", { choiceId, agentId: responseTargetAgentId });
       swarmManager.resolveChoiceRequest(choiceId, command.answers);
     } else {
-      logDebug("choice_cancel:received", { choiceId });
+      logDebug("choice_cancel:received", { choiceId, agentId: responseTargetAgentId });
       swarmManager.cancelChoiceRequest(choiceId, "cancelled");
     }
     return true;
@@ -247,4 +260,14 @@ function previewForLog(value: string, maxLength = 180): string {
   }
 
   return `${normalized.slice(0, maxLength)}…`;
+}
+
+function isChoiceResponseTargetAuthorized(
+  responseTargetAgentId: string,
+  pendingChoice: { agentId: string; sessionAgentId: string },
+): boolean {
+  return (
+    responseTargetAgentId === pendingChoice.sessionAgentId ||
+    responseTargetAgentId === pendingChoice.agentId
+  );
 }
