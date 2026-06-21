@@ -3241,6 +3241,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.choiceService.getPendingChoiceIdsForSession(sessionAgentId);
   }
 
+  getPendingChoiceRequestsForSession(sessionAgentId: string): ChoiceRequestEvent[] {
+    return this.choiceService.getPendingChoiceRequestsForSession(sessionAgentId);
+  }
+
   getPendingChoiceOwner(choiceId: string): { agentId: string; sessionAgentId: string } | undefined {
     return this.choiceService.getPendingChoiceOwner(choiceId);
   }
@@ -7060,7 +7064,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private emitChoiceRequest(event: ChoiceRequestEvent): void {
-    this.conversationProjector.emitChoiceRequest(event);
+    const historyAgentId = event.sessionAgentId?.trim() || event.agentId;
+    this.conversationProjector.emitChoiceRequest(event, { historyAgentId });
   }
 
   private emitWorkPlanCreated(event: WorkPlanCreatedEvent): void {

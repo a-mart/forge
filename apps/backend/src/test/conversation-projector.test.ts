@@ -2009,6 +2009,89 @@ describe('ConversationProjector session tree continuity', () => {
     }
   })
 
+  it('persists worker-origin choice_request entries to the manager session history while preserving requester agentId', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-worker-choice-'))
+    const managerSessionFile = join(root, 'manager.jsonl')
+    const workerSessionFile = join(root, 'worker.jsonl')
+    const managerDescriptor = makeDescriptor(managerSessionFile, root)
+    const workerDescriptor: AgentDescriptor = {
+      ...makeDescriptor(workerSessionFile, root),
+      agentId: 'worker',
+      displayName: 'Worker',
+      role: 'worker',
+      managerId: managerDescriptor.agentId,
+      sessionFile: workerSessionFile,
+    }
+    const seededSession = SessionManager.open(managerSessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed entry to create session header' }],
+    } as any)
+    const runtime = makeRuntimeForSession(managerDescriptor)
+
+    const projector = new ConversationProjector({
+      descriptors: new Map([
+        [managerDescriptor.agentId, managerDescriptor],
+        [workerDescriptor.agentId, workerDescriptor],
+      ]),
+      runtimes: new Map([[managerDescriptor.agentId, runtime]]),
+      conversationEntriesByAgentId: new Map(),
+      now: () => FIXED_NOW,
+      emitServerEvent: () => {},
+      logDebug: () => {},
+    })
+
+    projector.emitChoiceRequest(
+      {
+        type: 'choice_request',
+        agentId: workerDescriptor.agentId,
+        sessionAgentId: managerDescriptor.agentId,
+        choiceId: 'choice-worker-1',
+        questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+        status: 'pending',
+        timestamp: FIXED_NOW,
+      },
+      { historyAgentId: managerDescriptor.agentId },
+    )
+
+    const managerHistory = projector.getConversationHistory(managerDescriptor.agentId)
+    expect(managerHistory).toEqual([
+      {
+        type: 'choice_request',
+        agentId: workerDescriptor.agentId,
+        sessionAgentId: managerDescriptor.agentId,
+        choiceId: 'choice-worker-1',
+        questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+        status: 'pending',
+        timestamp: FIXED_NOW,
+      },
+    ])
+    expect(projector.getConversationHistory(workerDescriptor.agentId)).toEqual([])
+
+    const persistedConversationEntries = SessionManager.open(managerSessionFile)
+      .getEntries()
+      .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')
+      .map((entry: any) => entry.data)
+
+    expect(persistedConversationEntries).toEqual([
+      {
+        type: 'choice_request',
+        agentId: workerDescriptor.agentId,
+        sessionAgentId: managerDescriptor.agentId,
+        choiceId: 'choice-worker-1',
+        questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+        status: 'pending',
+        timestamp: FIXED_NOW,
+      },
+    ])
+
+    const cacheFile = getConversationHistoryCacheFilePath(managerSessionFile)
+    const cacheText = await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('"choiceId":"choice-worker-1"') && text.includes('"agentId":"worker"'),
+    })
+    expect(cacheText).toContain('"sessionAgentId":"manager"')
+  })
+
   it('preserves project-agent transcript entries during history trimming even without sourceContext', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-project-agent-trim-'))
     const sessionFile = join(root, 'manager.jsonl')
