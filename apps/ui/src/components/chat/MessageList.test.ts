@@ -38,6 +38,26 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+function makeChoiceRequest(
+  overrides: Partial<Extract<ConversationEntry, { type: 'choice_request' }>> = {},
+): Extract<ConversationEntry, { type: 'choice_request' }> {
+  return {
+    type: 'choice_request',
+    agentId: 'session-1',
+    choiceId: 'choice-1',
+    questions: [
+      {
+        id: 'q1',
+        question: 'Pick one',
+        options: [{ id: 'a', label: 'Alpha' }],
+      },
+    ],
+    status: 'pending',
+    timestamp: now,
+    ...overrides,
+  }
+}
+
 function makeWorkPlanCreated(): Extract<ConversationEntry, { type: 'work_plan_created' }> {
   return {
     type: 'work_plan_created',
@@ -124,6 +144,85 @@ function makeActiveWorkSnapshot(overrides: Partial<SessionTaskStateSnapshotEvent
     ...overrides,
   }
 }
+
+describe('MessageList choice requests', () => {
+  it('submits and cancels worker-origin session choices using sessionAgentId', () => {
+    const onChoiceSubmit = vi.fn()
+    const onChoiceCancel = vi.fn()
+    render([makeChoiceRequest({ agentId: 'worker-1', sessionAgentId: 'session-1' })], {
+      pendingChoiceIds: new Set(['choice-1']),
+      onChoiceSubmit,
+      onChoiceCancel,
+    })
+
+    const option = container.querySelector<HTMLButtonElement>('button[aria-pressed]')
+    expect(option).toBeTruthy()
+    flushSync(() => option?.click())
+
+    const submit = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Submit',
+    )
+    expect(submit).toBeTruthy()
+    flushSync(() => submit?.click())
+
+    expect(onChoiceSubmit).toHaveBeenCalledWith('session-1', 'choice-1', [
+      { questionId: 'q1', selectedOptionIds: ['a'], text: undefined },
+    ])
+
+    render([makeChoiceRequest({ choiceId: 'choice-2', agentId: 'worker-1', sessionAgentId: 'session-1' })], {
+      pendingChoiceIds: new Set(['choice-2']),
+      onChoiceSubmit,
+      onChoiceCancel,
+    })
+
+    const skip = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Skip',
+    )
+    expect(skip).toBeTruthy()
+    flushSync(() => skip?.click())
+
+    expect(onChoiceCancel).toHaveBeenCalledWith('session-1', 'choice-2')
+  })
+
+  it('renders missing-details fallback and cancels against active session id', () => {
+    const onChoiceCancel = vi.fn()
+    render([], {
+      pendingChoiceIds: new Set(['missing-choice']),
+      missingPendingChoiceIds: ['missing-choice'],
+      onChoiceCancel,
+    })
+
+    expect(container.textContent).toContain('Input request details unavailable')
+    expect(container.textContent).toContain('Choice ID: missing-choice')
+
+    const skip = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Skip',
+    )
+    expect(skip).toBeTruthy()
+    flushSync(() => skip?.click())
+
+    expect(onChoiceCancel).toHaveBeenCalledWith('session-1', 'missing-choice')
+  })
+
+  it('keeps a pending choice row visible after submit until backend clears it', () => {
+    const onChoiceSubmit = vi.fn()
+    render([makeChoiceRequest()], {
+      pendingChoiceIds: new Set(['choice-1']),
+      onChoiceSubmit,
+    })
+
+    const option = container.querySelector<HTMLButtonElement>('button[aria-pressed]')
+    flushSync(() => option?.click())
+    const submit = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Submit',
+    )
+    flushSync(() => submit?.click())
+
+    expect(onChoiceSubmit).toHaveBeenCalled()
+    expect(container.textContent).toContain('Input requested')
+    expect(container.textContent).toContain('Pick one')
+  })
+})
 
 describe('MessageList work_plan_created rows', () => {
   it('renders the creation receipt chronologically between adjacent conversation entries', () => {

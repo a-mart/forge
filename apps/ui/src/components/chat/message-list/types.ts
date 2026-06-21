@@ -51,6 +51,7 @@ export interface ToolExecutionDisplayEntry {
 export interface ChoiceRequestDisplayEntry {
   choiceId: string
   agentId: string
+  sessionAgentId?: string
   questions: ChoiceQuestion[]
   status: ChoiceRequestStatus
   answers?: ChoiceAnswer[]

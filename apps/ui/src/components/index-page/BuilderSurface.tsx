@@ -55,6 +55,7 @@ import {
 } from '@/hooks/index-page/deleted-agent-fallback'
 import { fetchModelCacheVisualizationEnabled } from '@/components/settings/model-cache-visualization-api'
 import { buildModelCacheHeaderSummary } from '@/components/chat/model-cache'
+import { deriveMissingPendingChoiceIds } from '@/lib/ws-client/utils'
 import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
 import { useVisibleMessages } from '@/hooks/index-page/use-visible-messages'
@@ -579,6 +580,10 @@ export function BuilderSurface({
   })
 
   const isLoading = activeAgentStatus === 'streaming' || isAwaitingResponseStart
+  const missingPendingChoiceIds = useMemo(
+    () => deriveMissingPendingChoiceIds(state.pendingChoiceIds, state.messages, activeAgentId),
+    [activeAgentId, state.messages, state.pendingChoiceIds],
+  )
   const hasActivePendingChoice = state.pendingChoiceIds.size > 0
   const canStopAllAgents =
     isActiveManager &&
@@ -2188,6 +2193,7 @@ export function BuilderSurface({
                   onChoiceSubmit: handleChoiceSubmit,
                   onChoiceCancel: handleChoiceCancel,
                   pendingChoiceIds: state.pendingChoiceIds,
+                  missingPendingChoiceIds,
                   activeWorkSnapshot,
                   activeWorkExpanded,
                   onActiveWorkExpandedChange: setActiveWorkExpanded,
