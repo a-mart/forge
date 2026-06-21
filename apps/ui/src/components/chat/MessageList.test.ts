@@ -146,10 +146,11 @@ function makeActiveWorkSnapshot(overrides: Partial<SessionTaskStateSnapshotEvent
 }
 
 describe('MessageList choice requests', () => {
-  it('submits and cancels worker-origin session choices using sessionAgentId', () => {
+  it('submits and cancels manager-active worker-origin session choices with the session agent id', () => {
     const onChoiceSubmit = vi.fn()
     const onChoiceCancel = vi.fn()
     render([makeChoiceRequest({ agentId: 'worker-1', sessionAgentId: 'session-1' })], {
+      activeAgentId: 'session-1',
       pendingChoiceIds: new Set(['choice-1']),
       onChoiceSubmit,
       onChoiceCancel,
@@ -170,6 +171,7 @@ describe('MessageList choice requests', () => {
     ])
 
     render([makeChoiceRequest({ choiceId: 'choice-2', agentId: 'worker-1', sessionAgentId: 'session-1' })], {
+      activeAgentId: 'session-1',
       pendingChoiceIds: new Set(['choice-2']),
       onChoiceSubmit,
       onChoiceCancel,
@@ -182,6 +184,66 @@ describe('MessageList choice requests', () => {
     flushSync(() => skip?.click())
 
     expect(onChoiceCancel).toHaveBeenCalledWith('session-1', 'choice-2')
+  })
+
+  it('submits and cancels worker-active worker-origin session choices with the worker agent id', () => {
+    const onChoiceSubmit = vi.fn()
+    const onChoiceCancel = vi.fn()
+    render([makeChoiceRequest({ agentId: 'worker-1', sessionAgentId: 'session-1' })], {
+      activeAgentId: 'worker-1',
+      pendingChoiceIds: new Set(['choice-1']),
+      onChoiceSubmit,
+      onChoiceCancel,
+    })
+
+    const option = container.querySelector<HTMLButtonElement>('button[aria-pressed]')
+    expect(option).toBeTruthy()
+    flushSync(() => option?.click())
+
+    const submit = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Submit',
+    )
+    expect(submit).toBeTruthy()
+    flushSync(() => submit?.click())
+
+    expect(onChoiceSubmit).toHaveBeenCalledWith('worker-1', 'choice-1', [
+      { questionId: 'q1', selectedOptionIds: ['a'], text: undefined },
+    ])
+
+    render([makeChoiceRequest({ choiceId: 'choice-2', agentId: 'worker-1', sessionAgentId: 'session-1' })], {
+      activeAgentId: 'worker-1',
+      pendingChoiceIds: new Set(['choice-2']),
+      onChoiceSubmit,
+      onChoiceCancel,
+    })
+
+    const skip = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Skip',
+    )
+    expect(skip).toBeTruthy()
+    flushSync(() => skip?.click())
+
+    expect(onChoiceCancel).toHaveBeenCalledWith('worker-1', 'choice-2')
+  })
+
+  it('submits legacy manager-origin choices with the manager agent id', () => {
+    const onChoiceSubmit = vi.fn()
+    render([makeChoiceRequest({ agentId: 'session-1', sessionAgentId: undefined })], {
+      activeAgentId: 'session-1',
+      pendingChoiceIds: new Set(['choice-1']),
+      onChoiceSubmit,
+    })
+
+    const option = container.querySelector<HTMLButtonElement>('button[aria-pressed]')
+    flushSync(() => option?.click())
+    const submit = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Submit',
+    )
+    flushSync(() => submit?.click())
+
+    expect(onChoiceSubmit).toHaveBeenCalledWith('session-1', 'choice-1', [
+      { questionId: 'q1', selectedOptionIds: ['a'], text: undefined },
+    ])
   })
 
   it('renders missing-details fallback and cancels against active session id', () => {

@@ -166,6 +166,17 @@ function resolveConversationMessageLegacyTargetId(
   return timestampTargetId
 }
 
+function resolveChoiceResponseAgentId(
+  entry: ChoiceRequestDisplayEntry,
+  activeAgentId?: string | null,
+): string {
+  if (activeAgentId && activeAgentId === entry.agentId) {
+    return entry.agentId
+  }
+
+  return entry.sessionAgentId ?? entry.agentId
+}
+
 function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   const displayEntries: DisplayEntry[] = []
   const toolEntriesByCallId = new Map<string, ToolExecutionDisplayEntry>()
@@ -696,7 +707,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                   {isLive ? (
                     <ChoiceRequestCard
                       choiceId={entry.entry.choiceId}
-                      agentId={entry.entry.sessionAgentId ?? entry.entry.agentId}
+                      agentId={resolveChoiceResponseAgentId(entry.entry, activeAgentId)}
                       questions={entry.entry.questions}
                       onSubmit={handleChoiceSubmit}
                       onCancel={handleChoiceCancel}
