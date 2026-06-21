@@ -454,6 +454,45 @@ describe("history policy", () => {
     });
   });
 
+  it("preserves non-active choice lifecycle rows while upserting active pending choices", () => {
+    const history = [
+      choice("choice-a", { status: "pending", timestamp: "2026-01-01T00:00:00.000Z" }),
+      choice("choice-a", {
+        status: "answered",
+        answers: [{ questionId: "q1", selectedOptionIds: ["yes"] }],
+        timestamp: "2026-01-01T00:00:01.000Z"
+      }),
+      choice("choice-b", { status: "cancelled", timestamp: "2026-01-01T00:00:02.000Z" }),
+      message("message-1")
+    ];
+    const pendingChoiceB = choice("choice-b", {
+      sessionAgentId: "worker-session-1",
+      timestamp: "2026-01-01T00:00:03.000Z",
+      questions: [{ id: "q2", question: "Still pending?", options: [{ id: "yes", label: "Yes" }] }]
+    });
+
+    const selection = selectBootstrapConversationHistory({
+      fullHistory: history,
+      pendingChoiceRequests: [pendingChoiceB],
+      isWithinBudget: () => true
+    });
+
+    const choiceRows = selection.history.filter(
+      (entry): entry is Extract<ConversationEntryEvent, { type: "choice_request" }> => entry.type === "choice_request"
+    );
+    expect(choiceRows.map((entry) => [entry.choiceId, entry.status])).toEqual([
+      ["choice-a", "pending"],
+      ["choice-a", "answered"],
+      ["choice-b", "pending"],
+    ]);
+    expect(choiceRows[1].answers).toEqual([{ questionId: "q1", selectedOptionIds: ["yes"] }]);
+    expect(choiceRows[2]).toMatchObject({
+      sessionAgentId: "worker-session-1",
+      timestamp: "2026-01-01T00:00:03.000Z",
+      questions: [{ id: "q2", question: "Still pending?", options: [{ id: "yes", label: "Yes" }] }]
+    });
+  });
+
   it("does not let requestedMessageCount exclude active pending choice details", () => {
     const history = [
       choice("choice-1", { status: "cancelled" }),

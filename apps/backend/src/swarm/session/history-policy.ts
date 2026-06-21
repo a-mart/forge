@@ -293,12 +293,17 @@ function upsertPendingChoiceRequests(
     }
 
     const choiceId = entry.choiceId.trim();
+    const pendingChoice = pendingByChoiceId.get(choiceId);
+    if (!pendingChoice) {
+      upsertedHistory.push(entry);
+      continue;
+    }
+
     if (seenChoiceIds.has(choiceId)) {
       continue;
     }
 
-    const pendingChoice = pendingByChoiceId.get(choiceId);
-    upsertedHistory.push(pendingChoice ?? entry);
+    upsertedHistory.push(pendingChoice);
     seenChoiceIds.add(choiceId);
   }
 
