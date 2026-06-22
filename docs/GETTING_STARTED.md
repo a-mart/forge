@@ -101,8 +101,8 @@ The main panel is a chat window. You type messages to your manager, it responds.
 
 Two view modes, toggled at the top:
 
-- **Web** (default) — Shows only the messages between you and the manager. Clean, focused.
-- **All** — Stays manager-focused. Worker/internal JSONL and tool rows live in Session Audit Log; **Detailed** can show owned direct-worker activity, but it still does not surface every worker internal inline.
+- **Web** (default) — Prioritizes the visible conversation transcript and pending choices you can answer. Clean, focused.
+- **All** — Stays manager-focused and adds manager-session activity and tool rows. Worker/internal JSONL and tool rows live in Session Audit Log; **Detailed** can show owned direct-worker activity, but it still does not surface every worker internal inline.
 
 Use **Session Audit Log** from the chat header menu when you need the canonical persisted rows. It opens a list/detail inspector: the row list stays compact and paginated, and selecting a row loads the full JSON detail for inspection and copy. On desktop, the list and detail panes are separated by a draggable, keyboard-accessible divider that remembers its width locally. Supported native provider rows, including provider text, tool calls/results, system rows, and hidden thinking blocks, are classified as hidden runtime rows instead of appearing as `Unknown row: message`. Provider internals such as thinking, tool arguments/results, and system content stay out of normal Web/All/Detailed summaries and list previews; inspect the JSON detail view when you need the underlying row and have access to it.
 

@@ -18,7 +18,7 @@ To stop a running response, open the **⋮ menu** in the header and choose **Sto
 
 ## Channel views
 
-The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" adds manager-session activity that belongs to the visible chat flow. Worker-internal tool activity is not shown in normal Web, All, or Detailed chat views.
+The header has a **Web / All** toggle. "Web" prioritizes the visible conversation transcript and pending choices you can answer. "All" adds manager-session activity and tool rows that belong to the visible chat flow. Worker-internal tool activity is not shown in normal Web, All, or Detailed chat views.
 
 For diagnostics, use **Session Audit Log** from the chat header menu. It reads the persisted session history directly from canonical JSONL files. The manager source shows the manager session log; selecting a worker source shows that worker's transcript and internal tool activity. On desktop, Session Audit uses a split list/detail inspector with a draggable, resizable divider. The list stays paginated with compact, clickable summaries and capped previews for performance. Select any row to automatically load the full canonical row into the detail pane, where you can switch between formatted/raw JSON, toggle wrapping, and copy the JSON. Detail fetch is capped at 8 MB per row; very large JSON falls back to a plain scrollable viewer so the audit UI stays responsive while copy still includes the fetched text. Rows include category/type filters, byte offsets, and hidden reasons. This audit surface is for inspection only and is not part of the normal chat transcript or model context.
 
