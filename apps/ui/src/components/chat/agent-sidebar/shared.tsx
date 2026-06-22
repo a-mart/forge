@@ -14,6 +14,32 @@ export function CodexExternalThreadIcon({ className }: { className?: string }) {
   )
 }
 
+export function SidebarStreamingWorkerBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-amber-500 bg-transparent"
+      style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
+      aria-label={`${count} worker${count !== 1 ? 's' : ''} active`}
+    >
+      <span className="text-[8px] font-bold leading-none text-amber-500">
+        {count}
+      </span>
+    </span>
+  )
+}
+
+export function SidebarCompactionBadge() {
+  return (
+    <span
+      className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-violet-400 bg-transparent"
+      style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
+      aria-label="Compacting context"
+    >
+      <span className="text-[8px] font-bold leading-none text-violet-400">C</span>
+    </span>
+  )
+}
+
 export function SessionStatusDot({ running, isCli }: { running: boolean; isCli?: boolean }) {
   return (
     <span

@@ -284,3 +284,46 @@ describe('SessionRowItem repo-sourced project agent badge', () => {
     expect(text).not.toContain('Demote to Session')
   })
 })
+
+describe('SessionRowItem compaction indicator', () => {
+  it('shows a violet C badge when context recovery/compaction is in progress', () => {
+    renderRow({
+      statuses: {
+        'session-1': {
+          status: 'idle',
+          pendingCount: 0,
+          contextRecoveryInProgress: true,
+        },
+      },
+    })
+
+    const badge = container.querySelector('[aria-label="Compacting context"]')
+    expect(badge).not.toBeNull()
+    expect(badge?.textContent).toBe('C')
+  })
+
+  it('shows worker count and compaction badges together when both are active', () => {
+    renderRow({
+      session: {
+        sessionAgent: makeAgent({ activeWorkerCount: 2 }),
+        workers: [
+          makeAgent({ agentId: 'worker-1', role: 'worker', managerId: 'session-1', status: 'streaming' }),
+          makeAgent({ agentId: 'worker-2', role: 'worker', managerId: 'session-1', status: 'streaming' }),
+        ],
+        isDefault: false,
+      },
+      statuses: {
+        'session-1': {
+          status: 'idle',
+          pendingCount: 0,
+          contextRecoveryInProgress: true,
+        },
+        'worker-1': { status: 'streaming', pendingCount: 0 },
+        'worker-2': { status: 'streaming', pendingCount: 0 },
+      },
+    })
+
+    expect(container.querySelector('[aria-label="2 workers active"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Compacting context"]')).not.toBeNull()
+  })
+})

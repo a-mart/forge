@@ -13,6 +13,10 @@ export function getAgentLiveStatus(
   }
 }
 
+export function isSessionCompactionInProgress(agentId: string, statuses: StatusMap): boolean {
+  return statuses[agentId]?.contextRecoveryInProgress === true
+}
+
 export function slugifySessionName(name: string): string {
   return name
     .trim()

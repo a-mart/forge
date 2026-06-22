@@ -288,6 +288,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       }
 
       this.contextRecoveryInProgress = true;
+      await this.emitStatus();
 
       try {
         const summary = await this.captureCompactionSummary(session, customInstructions);

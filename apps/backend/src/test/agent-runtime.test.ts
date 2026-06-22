@@ -1069,8 +1069,10 @@ describe('AgentRuntime', () => {
     }
 
     const contextTokensByStatus: number[] = []
+    let runtime: AgentRuntime
 
     session.compact = async (): Promise<{ ok: true }> => {
+      expect(runtime.isContextRecoveryInProgress()).toBe(true)
       session.contextUsage = {
         tokens: 220,
         contextWindow: 1000,
@@ -1079,7 +1081,7 @@ describe('AgentRuntime', () => {
       return { ok: true }
     }
 
-    const runtime = new AgentRuntime({
+    runtime = new AgentRuntime({
       descriptor: makeDescriptor(),
       session: session as any,
       callbacks: {
@@ -1094,6 +1096,7 @@ describe('AgentRuntime', () => {
     await runtime.compact('trim older turns')
 
     expect(contextTokensByStatus.at(-1)).toBe(220)
+    expect(runtime.isContextRecoveryInProgress()).toBe(false)
   })
 
   it('terminates by aborting active session and marking status terminated', async () => {

@@ -29,9 +29,9 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { isSessionRunning } from '@/lib/agent-hierarchy'
 import { cn } from '@/lib/utils'
-import { SessionStatusDot, HighlightedText } from './shared'
+import { SessionStatusDot, HighlightedText, SidebarCompactionBadge, SidebarStreamingWorkerBadge } from './shared'
 import { WorkerRow } from './WorkerRow'
-import { getAgentLiveStatus } from './utils'
+import { getAgentLiveStatus, isSessionCompactionInProgress } from './utils'
 import { MAX_VISIBLE_WORKERS } from './constants'
 import type { SessionRowItemProps } from './types'
 
@@ -168,6 +168,33 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   const streamingWorkerCount = workers.filter(
     (w) => getAgentLiveStatus(w, statuses).status === 'streaming',
   ).length || sessionAgent.activeWorkerCount || 0
+  const compactionInProgress = isSessionCompactionInProgress(sessionAgent.agentId, statuses)
+  const showActivityBadges = streamingWorkerCount > 0 || compactionInProgress
+
+  const sessionStatusIndicator = showActivityBadges ? (
+    <span className="inline-flex shrink-0 items-center gap-0.5">
+      {streamingWorkerCount > 0 ? <SidebarStreamingWorkerBadge count={streamingWorkerCount} /> : null}
+      {compactionInProgress ? <SidebarCompactionBadge /> : null}
+    </span>
+  ) : hasPendingChoice ? (
+    <span
+      className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-blue-400 bg-transparent"
+      style={{ boxShadow: '0 0 6px rgba(96,165,250,0.5)' }}
+      aria-label="Awaiting your response"
+    >
+      <span className="text-[8px] font-bold leading-none text-blue-400">?</span>
+    </span>
+  ) : managerStreaming ? (
+    <span
+      className="inline-flex size-3 shrink-0 rounded-full border-2 border-amber-500 bg-transparent"
+      style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
+      aria-label="Manager streaming"
+    />
+  ) : isAgentCreator ? (
+    <Sparkles className="size-3 shrink-0 text-violet-400" aria-label="Agent Creator" />
+  ) : (
+    <SessionStatusDot running={running} isCli={Boolean(sessionAgent.cli)} />
+  )
 
   return (
     <li>
@@ -214,35 +241,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                       hasWorkers ? 'pl-7' : 'pl-5',
                     )}
                   >
-                    {streamingWorkerCount > 0 ? (
-                      <span
-                        className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-amber-500 bg-transparent"
-                        style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
-                        aria-label={`${streamingWorkerCount} worker${streamingWorkerCount !== 1 ? 's' : ''} active`}
-                      >
-                        <span className="text-[8px] font-bold leading-none text-amber-500">
-                          {streamingWorkerCount}
-                        </span>
-                      </span>
-                    ) : hasPendingChoice ? (
-                      <span
-                        className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-blue-400 bg-transparent"
-                        style={{ boxShadow: '0 0 6px rgba(96,165,250,0.5)' }}
-                        aria-label="Awaiting your response"
-                      >
-                        <span className="text-[8px] font-bold leading-none text-blue-400">?</span>
-                      </span>
-                    ) : managerStreaming ? (
-                      <span
-                        className="inline-flex size-3 shrink-0 rounded-full border-2 border-amber-500 bg-transparent"
-                        style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
-                        aria-label="Manager streaming"
-                      />
-                    ) : isAgentCreator ? (
-                      <Sparkles className="size-3 shrink-0 text-violet-400" aria-label="Agent Creator" />
-                    ) : (
-                      <SessionStatusDot running={running} isCli={Boolean(sessionAgent.cli)} />
-                    )}
+                    {sessionStatusIndicator}
                     <span className="min-w-0 flex-1 truncate">
                       <span className="block truncate text-sm leading-5">
                         {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}

@@ -30,7 +30,7 @@ export interface CortexScanBadgeResponse {
   }
 }
 
-export type StatusMap = Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
+export type StatusMap = Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean }>
 
 export interface AgentSidebarProps {
   connected: boolean

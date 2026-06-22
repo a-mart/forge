@@ -187,6 +187,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private preparedSpecialistFallbackSessionMessages: EmergencyContextTrimMessage[] | undefined;
   private contextRecoveryInProgress = false;
   private contextRecoveryGraceUntilMs = 0;
+  private manualCompactionInProgress = false;
   private autoCompactionRecoveryInProgress = false;
   private guardAbortController: AbortController | undefined;
   private lastContextBudgetCheckAtMs = 0;
@@ -292,7 +293,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   isContextRecoveryInProgress(): boolean {
-    return this.contextRecoveryInProgress;
+    return Boolean(
+      this.contextRecoveryInProgress || this.manualCompactionInProgress || this.session.isCompacting,
+    );
   }
 
   async prepareForSpecialistFallbackReplay(): Promise<SpecialistFallbackReplaySnapshot | undefined> {
@@ -611,6 +614,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   async compact(customInstructions?: string): Promise<unknown> {
     this.ensureNotTerminated();
+    this.manualCompactionInProgress = true;
+    await this.emitStatus();
     try {
       const result = await this.session.compact(customInstructions);
       await this.emitStatus();
@@ -620,6 +625,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
         customInstructionsPreview: previewForLog(customInstructions ?? "")
       });
       throw error;
+    } finally {
+      this.manualCompactionInProgress = false;
+      await this.emitStatus();
     }
   }
 
