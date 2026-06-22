@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { getOrCreateCollaborationBetterAuthService, clearCollaborationBetterAuthService } from "../collaboration/auth/better-auth-service.js";
 import { resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
 import { closeCollaborationAuthDb } from "../collaboration/auth/collaboration-db.js";
+import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import { startServer, type StartedServer } from "../server.js";
 import { createTempConfig, type TempConfigHandle } from "../test-support/temp-config.js";
 
@@ -772,7 +773,7 @@ describe("collaboration HTTP routes", () => {
       ok: true,
       channel: expect.objectContaining({
         channelId: createChannelBody.channel.channelId,
-        modelId: "pi-codex",
+        modelId: "pi-5.5",
         reasoningLevel: codexDefaultReasoning,
       }),
     });
@@ -796,7 +797,7 @@ describe("collaboration HTTP routes", () => {
       ok: true,
       channel: expect.objectContaining({
         channelId: createChannelBody.channel.channelId,
-        modelId: "pi-codex",
+        modelId: "pi-5.5",
         reasoningLevel: codexDefaultReasoning,
         promptOverlay: "Prefer concise answers.",
       }),
@@ -890,6 +891,70 @@ describe("collaboration HTTP routes", () => {
     });
     expect(channelsAfterArchiveResponse.status).toBe(200);
     await expect(channelsAfterArchiveResponse.json()).resolves.toEqual({ channels: [] });
+  });
+
+  it("returns descriptor-effective channel model fields when channel DB model fields are stale", async () => {
+    const { baseUrl, config } = await startCollaborationServer();
+    const loginResponse = await fetch(`${baseUrl}/api/auth/sign-in/email`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: baseUrl,
+      },
+      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+    });
+    expect(loginResponse.ok).toBe(true);
+    const adminCookieHeader = setCookieHeadersToCookieHeader(readSetCookieHeaders(loginResponse));
+
+    const createChannelResponse = await fetch(`${baseUrl}/api/collaboration/channels`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookieHeader,
+      },
+      body: JSON.stringify({ name: "Stale DB model channel" }),
+    });
+    expect(createChannelResponse.status).toBe(200);
+    const createChannelBody = await createChannelResponse.json() as {
+      channel: { channelId: string; sessionAgentId: string };
+    };
+
+    const updateChannelModelResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookieHeader,
+        },
+        body: JSON.stringify({ modelId: "pi-5.4" }),
+      },
+    );
+    expect(updateChannelModelResponse.status).toBe(200);
+
+    await expect(readStoredChannelModel(config.paths.agentsStoreFile, createChannelBody.channel.sessionAgentId)).resolves.toMatchObject({
+      modelId: resolveModelDescriptorFromPreset("pi-5.4").modelId,
+    });
+
+    const dbHelpers = await createCollaborationDbHelpers(config);
+    dbHelpers.updateChannel(createChannelBody.channel.channelId, {
+      modelId: "pi-opus",
+      modelThinkingLevel: "low",
+      updatedAt: new Date().toISOString(),
+    });
+
+    const channelResponse = await fetch(
+      `${baseUrl}/api/collaboration/channels/${encodeURIComponent(createChannelBody.channel.channelId)}`,
+      { headers: { cookie: adminCookieHeader } },
+    );
+    expect(channelResponse.status).toBe(200);
+    await expect(channelResponse.json()).resolves.toMatchObject({
+      channel: expect.objectContaining({
+        channelId: createChannelBody.channel.channelId,
+        modelId: "pi-5.4",
+        reasoningLevel: resolveModelDescriptorFromPreset("pi-5.4").thinkingLevel,
+      }),
+    });
   });
 });
 

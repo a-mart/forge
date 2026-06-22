@@ -252,33 +252,38 @@ export function createCollaborationChannelRoutes(options: {
             update.modelId !== undefined || update.reasoningLevel !== undefined
               ? resolveRequestedChannelModelSettings(existingChannel, update)
               : null;
-          if (nextModelSettings) {
+          const modelMutation =
+            nextModelSettings !== null &&
+            (nextModelSettings.modelId !== existingChannel.modelId ||
+              nextModelSettings.reasoningLevel !== existingChannel.reasoningLevel);
+          if (nextModelSettings && modelMutation) {
             const updateCollaborationModel = options.swarmManager?.updateCollaborationSessionModel
               ?? options.swarmManager?.updateManagerModel;
             if (!updateCollaborationModel) {
               throw new Error("Collaboration channel model updates require swarm manager support");
             }
 
-            const modelChanged = nextModelSettings.modelId !== existingChannel.modelId;
-            const reasoningChanged = nextModelSettings.reasoningLevel !== existingChannel.reasoningLevel;
-            if (modelChanged || reasoningChanged) {
-              await updateCollaborationModel.call(
-                options.swarmManager,
-                existingChannel.sessionAgentId,
-                nextModelSettings.modelId,
-                nextModelSettings.reasoningLevel,
-              );
-            }
+            await updateCollaborationModel.call(
+              options.swarmManager,
+              existingChannel.sessionAgentId,
+              nextModelSettings.modelId,
+              nextModelSettings.reasoningLevel,
+            );
           }
-          const channel = channelService.updateChannel(channelId, {
-            ...update,
-            ...(nextModelSettings
+          let channel = channelService.updateChannel(channelId, {
+            ...(modelMutation
+              ? (({ modelId: _modelId, reasoningLevel: _reasoningLevel, ...rest }) => rest)(update)
+              : update),
+            ...(nextModelSettings && !modelMutation
               ? {
                   modelId: nextModelSettings.modelId,
                   reasoningLevel: nextModelSettings.reasoningLevel,
                 }
               : {}),
           });
+          if (nextModelSettings && modelMutation) {
+            channel = channelService.persistChannelModelDatabaseFields(channelId, nextModelSettings);
+          }
           if (update.promptOverlay !== undefined) {
             await promptOverlayService.setPromptOverlay(channel.channelId, update.promptOverlay);
             await recycleCollaborationBackingSessionRuntime(options.swarmManager, channel.sessionAgentId);

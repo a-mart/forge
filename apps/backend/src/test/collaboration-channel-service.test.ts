@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCollaborationAuthMigrations } from "../collaboration/auth/migration-runner.js";
-import { CollaborationChannelService, type CollaborationChannelServiceSwarmManager } from "../collaboration/channel-service.js";
+import { CollaborationChannelService, type CollaborationChannelServiceSwarmManager, attachEffectiveChannelModelSettings } from "../collaboration/channel-service.js";
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import { COLLABORATION_PROFILE_ID } from "../collaboration/constants.js";
 import { DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES } from "../collaboration/specialist-selection.js";
@@ -73,7 +73,7 @@ async function createChannelHarness() {
     availableGlobalSkillHandles: () => availableSkillHandles,
   });
 
-  return { config: handle.config, dbHelpers, service, workspace, availableHandles, availableSkillHandles };
+  return { config: handle.config, dbHelpers, service, workspace, availableHandles, availableSkillHandles, manager, descriptors };
 }
 
 describe("collaboration channel service", () => {
@@ -192,5 +192,56 @@ describe("collaboration channel service", () => {
     });
     expect(updated.activeSelectedSpecialistHandles).toEqual(["custom-collab", "stale-collab"]);
     expect(updated.missingSelectedSpecialistHandles).toEqual(["stale-collab"]);
+  });
+
+  it("prefers backing descriptor model fields over stale channel DB values", async () => {
+    const { dbHelpers, service, workspace, manager } = await createChannelHarness();
+
+    const channel = await service.createChannel({
+      workspaceId: workspace.workspaceId,
+      name: "Model precedence",
+    });
+
+    const descriptor = manager.getAgent(channel.sessionAgentId);
+    expect(descriptor).toBeTruthy();
+    descriptor!.model = {
+      provider: "openai-codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "xhigh",
+    };
+
+    dbHelpers.updateChannel(channel.channelId, {
+      modelId: "pi-opus",
+      modelThinkingLevel: "low",
+      updatedAt: new Date().toISOString(),
+    });
+
+    const effective = attachEffectiveChannelModelSettings(manager, service.getChannel(channel.channelId));
+    expect(effective.modelId).toBe("pi-5.4");
+    expect(effective.reasoningLevel).toBe("xhigh");
+  });
+
+  it("persists channel model database fields with retry before surfacing failure", async () => {
+    const { dbHelpers, service, workspace } = await createChannelHarness();
+    const channel = await service.createChannel({
+      workspaceId: workspace.workspaceId,
+      name: "Model persist",
+    });
+
+    const updateChannel = vi.spyOn(dbHelpers, "updateChannel");
+    updateChannel.mockImplementationOnce(() => {
+      throw new Error("transient db failure");
+    });
+
+    const persisted = service.persistChannelModelDatabaseFields(channel.channelId, {
+      modelId: "pi-codex",
+      reasoningLevel: "xhigh",
+    });
+
+    expect(dbHelpers.getChannel(channel.channelId)?.modelId).toBe("pi-codex");
+    expect(dbHelpers.getChannel(channel.channelId)?.modelThinkingLevel).toBe("xhigh");
+    expect(persisted.modelId).toBe("pi-5.5");
+    expect(updateChannel).toHaveBeenCalledTimes(2);
+    updateChannel.mockRestore();
   });
 });

@@ -2252,4 +2252,139 @@ describe('SwarmManager', () => {
     expect(listed.resolvedPath).toBe(validation.resolvedPath)
     expect(listed.roots).toEqual([])
   })
+
+  async function createCollabChannelSession(
+    manager: TestSwarmManager,
+    config: SwarmConfig,
+    sessionAgentId: string,
+    channelId: string,
+  ) {
+    await manager.ensureCollaborationStorageProfile()
+    return manager.createSessionFromBaseDescriptor(
+      '_collaboration',
+      {
+        model: resolveModelDescriptorFromPreset('pi-5.4'),
+        cwd: join(config.paths.dataDir, 'profiles', '_collaboration', 'sessions', sessionAgentId, 'workspace'),
+        archetypeId: 'collaboration-channel',
+      },
+      {
+        label: 'Collab Channel',
+        name: 'Collab Channel',
+        sessionAgentId,
+      },
+      {
+        sessionSurface: 'collab',
+        collab: {
+          workspaceId: 'workspace-1',
+          channelId,
+        },
+      },
+    )
+  }
+
+  it('writes continuity requests for collab session Pi -> Cursor model changes and defers Cursor applied markers', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sessionAgentId = 'collab-pi-to-cursor'
+    const created = await createCollabChannelSession(manager, config, sessionAgentId, 'channel-pi-cursor')
+    appendSessionConversationMessage(created.sessionAgent.sessionFile, sessionAgentId, 'Durable collab context before Cursor.')
+
+    await manager.updateCollaborationSessionModel(sessionAgentId, 'cursor-composer')
+
+    const beforeState = await loadModelChangeContinuityState(created.sessionAgent.sessionFile)
+    expect(beforeState.requests).toHaveLength(1)
+    expect(beforeState.requests[0]?.targetModel.runtimeKind).toBe('cursor-sdk')
+    expect(beforeState.applied).toHaveLength(0)
+
+    await manager.handleUserMessage('Continue on Cursor', { targetAgentId: sessionAgentId })
+
+    const recoveryOptions = manager.runtimeCreationOptionsByAgentId.get(sessionAgentId)
+    expect(recoveryOptions?.startupRecoveryContext?.reason).toBe('model_change')
+    expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('Durable collab context before Cursor.')
+    expect(manager.systemPromptByAgentId.get(sessionAgentId)).not.toContain('# Recovered Forge Conversation Context')
+
+    const afterState = await loadModelChangeContinuityState(created.sessionAgent.sessionFile)
+    expect(afterState.applied).toHaveLength(0)
+  })
+
+  it('defers collab model-change recycle while the backing manager is streaming', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sessionAgentId = 'collab-deferred-model-change'
+    const created = await createCollabChannelSession(manager, config, sessionAgentId, 'channel-deferred')
+    await manager.handleUserMessage('Start collab turn', { targetAgentId: sessionAgentId })
+
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgentId)
+    const descriptor = manager.getAgent(sessionAgentId)
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      runtimeTokensByAgentId: Map<string, number>
+      runtimeRecoveryState: { hasPendingManagerRuntimeRecycle: (agentId: string) => boolean }
+      handleRuntimeStatus: (
+        runtimeToken: number,
+        agentId: string,
+        status: AgentDescriptor['status'],
+        pendingCount: number,
+        contextUsage?: AgentContextUsage,
+      ) => Promise<void>
+    }
+
+    if (!descriptor || descriptor.role !== 'manager' || !sessionRuntime) {
+      throw new Error('Expected collab manager runtime to exist')
+    }
+
+    descriptor.status = 'streaming'
+    sessionRuntime.busy = true
+    sessionRuntime.terminateMutatesDescriptorStatus = true
+
+    await manager.updateCollaborationSessionModel(sessionAgentId, 'cursor-composer')
+
+    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(0)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgentId)).toBe(true)
+
+    const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgentId)
+    sessionRuntime.busy = false
+    await state.handleRuntimeStatus(runtimeToken as number, sessionAgentId, 'idle', 0)
+
+    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(1)
+    expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgentId)).toBe(false)
+    expect(manager.getAgent(sessionAgentId)?.model).toEqual(resolveModelDescriptorFromPreset('cursor-composer'))
+
+    appendSessionConversationMessage(created.sessionAgent.sessionFile, sessionAgentId, 'Deferred collab context.')
+    await manager.handleUserMessage('Continue after deferred Cursor switch', { targetAgentId: sessionAgentId })
+
+    expect(manager.runtimeCreationOptionsByAgentId.get(sessionAgentId)?.startupRecoveryContext?.blockText).toContain(
+      'Deferred collab context.',
+    )
+  })
+
+  it('leaves collab continuity pending when Cursor runtime creation fails before attach', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sessionAgentId = 'collab-cursor-create-failure'
+    const created = await createCollabChannelSession(manager, config, sessionAgentId, 'channel-cursor-failure')
+    appendSessionConversationMessage(created.sessionAgent.sessionFile, sessionAgentId, 'Context before failed Cursor attach.')
+
+    manager.onCreateRuntime = async ({ descriptor, creationCount }) => {
+      if (descriptor.agentId === sessionAgentId && creationCount > 0) {
+        throw new Error('simulated collab cursor runtime failure')
+      }
+    }
+
+    await manager.updateCollaborationSessionModel(sessionAgentId, 'cursor-composer')
+
+    await expect(
+      manager.handleUserMessage('Try to recreate collab cursor runtime', { targetAgentId: sessionAgentId }),
+    ).rejects.toThrow('simulated collab cursor runtime failure')
+
+    const afterState = await loadModelChangeContinuityState(created.sessionAgent.sessionFile)
+    expect(afterState.requests).toHaveLength(1)
+    expect(afterState.applied).toHaveLength(0)
+  })
 })

@@ -13,6 +13,7 @@ import {
 } from '../swarm/swarm-manager-utils.js'
 import type { AgentDescriptor, SwarmConfig } from '../swarm/types.js'
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
+import { loadModelChangeContinuityState } from '../swarm/runtime/model-change-continuity.js'
 
 const PROJECT_ROOT = resolve(process.cwd(), '..', '..')
 const TEST_TIMESTAMP = '2026-01-01T00:00:00.000Z'
@@ -377,5 +378,56 @@ describe('collaboration session surface metadata', () => {
       sessionSurface: 'collab',
       status: 'idle',
     })
+  })
+
+  it('updates collaboration session models through the collab helper with continuity requests', async () => {
+    const manager = new TestSwarmManagerBase(await makeConfig())
+    await bootWithDefaultManager(manager, manager.getConfig())
+    await manager.ensureCollaborationStorageProfile()
+
+    const sessionAgentId = 'collab-model-update'
+    const created = await manager.createSessionFromBaseDescriptor(
+      '_collaboration',
+      {
+        model: {
+          provider: 'openai-codex',
+          modelId: 'gpt-5.5',
+          thinkingLevel: 'medium',
+        },
+        cwd: join(manager.getConfig().paths.dataDir, 'profiles', '_collaboration', 'sessions', sessionAgentId, 'workspace'),
+        archetypeId: 'collaboration-channel',
+      },
+      {
+        label: 'Collab Model',
+        name: 'Collab Model',
+        sessionAgentId,
+      },
+      {
+        sessionSurface: 'collab',
+        collab: {
+          workspaceId: 'workspace-1',
+          channelId: 'channel-model',
+        },
+      },
+    )
+
+    await manager.updateCollaborationSessionModel(sessionAgentId, 'sdk-opus')
+
+    expect(manager.getAgent(sessionAgentId)).toMatchObject({
+      model: {
+        provider: 'claude-sdk',
+        modelId: 'claude-opus-4-8',
+        thinkingLevel: 'high',
+      },
+      modelOrigin: 'session_override',
+      sessionSurface: 'collab',
+    })
+    await expect(manager.updateSessionModel(sessionAgentId, 'override', 'pi-5.4')).rejects.toThrow(
+      /Cannot update Builder session model for collaboration-backed session/,
+    )
+
+    const continuityState = await loadModelChangeContinuityState(created.sessionAgent.sessionFile)
+    expect(continuityState.requests).toHaveLength(1)
+    expect(continuityState.applied).toHaveLength(0)
   })
 })

@@ -387,6 +387,42 @@ export class CollaborationChannelService {
     }
   }
 
+  persistChannelModelDatabaseFields(
+    channelId: string,
+    modelSettings: { modelId: string; reasoningLevel: SwarmReasoningLevel },
+  ): CollaborationChannel {
+    const normalizedChannelId = normalizeRequiredString(channelId, "channelId");
+    const existing = this.requireChannel(normalizedChannelId);
+    const payload = {
+      modelId: modelSettings.modelId,
+      modelThinkingLevel: modelSettings.reasoningLevel,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const attemptUpdate = () => {
+      const updated = this.dbHelpers.updateChannel(normalizedChannelId, payload);
+      if (!updated) {
+        throw new CollaborationChannelServiceError(
+          "not_found",
+          `Unknown collaboration channel: ${normalizedChannelId}`,
+        );
+      }
+      return updated;
+    };
+
+    try {
+      const updated = attemptUpdate();
+      return attachEffectiveChannelModelSettings(this.swarmManager, this.toChannelDto(updated));
+    } catch (firstError) {
+      try {
+        const updated = attemptUpdate();
+        return attachEffectiveChannelModelSettings(this.swarmManager, this.toChannelDto(updated));
+      } catch {
+        throw mapChannelPersistenceError(firstError, existing.workspaceId);
+      }
+    }
+  }
+
   reorderChannels(params: ReorderCollaborationChannelsParams): CollaborationChannel[] {
     const normalizedWorkspaceId = normalizeRequiredString(params.workspaceId, "workspaceId");
     this.requireWorkspace(normalizedWorkspaceId);
@@ -753,22 +789,31 @@ export function attachEffectiveChannelModelSettings(
   channel: CollaborationChannel,
 ): CollaborationChannel {
   const descriptor = swarmManager?.getAgent(channel.sessionAgentId);
-  const inferredModelId = channel.modelId ?? inferSwarmModelPresetFromDescriptor(descriptor?.model);
-  const inferredReasoningLevel =
+  const descriptorModelId = descriptor
+    ? inferSwarmModelPresetFromDescriptor(descriptor.model)
+    : undefined;
+  const descriptorReasoningLevel = descriptor
+    ? normalizeChannelReasoningLevel(descriptor.model.thinkingLevel)
+    : undefined;
+
+  // Prefer the backing session descriptor when present so stale non-null DB fields
+  // cannot permanently override the authoritative runtime model after descriptor updates.
+  const effectiveModelId = descriptorModelId ?? channel.modelId;
+  const effectiveReasoningLevel =
+    descriptorReasoningLevel ??
     channel.reasoningLevel ??
-    normalizeChannelReasoningLevel(descriptor?.model.thinkingLevel) ??
     normalizeChannelReasoningLevel(
-      inferredModelId ? resolveModelDescriptorFromPreset(inferredModelId).thinkingLevel : undefined,
+      effectiveModelId ? resolveModelDescriptorFromPreset(effectiveModelId).thinkingLevel : undefined,
     );
 
-  if (inferredModelId === channel.modelId && inferredReasoningLevel === channel.reasoningLevel) {
+  if (effectiveModelId === channel.modelId && effectiveReasoningLevel === channel.reasoningLevel) {
     return channel;
   }
 
   return {
     ...channel,
-    ...(inferredModelId ? { modelId: inferredModelId } : {}),
-    ...(inferredReasoningLevel ? { reasoningLevel: inferredReasoningLevel } : {}),
+    ...(effectiveModelId ? { modelId: effectiveModelId } : {}),
+    ...(effectiveReasoningLevel ? { reasoningLevel: effectiveReasoningLevel } : {}),
   };
 }
 
