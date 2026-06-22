@@ -18,6 +18,7 @@ import { requireNonSystemProfile } from "../swarm/system-profile-guards.js";
 import type { SmartCompactResult } from "../swarm/runtime-contracts.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { AgentDescriptor, ConversationAttachment, RequestedDeliveryMode } from "../swarm/types.js";
+import { classifyCompactionErrorMessage } from "./compaction-error-utils.js";
 import { sendWsEvent } from "./ws-send.js";
 import { CliHeadlessSubscriptions } from "./cli-headless-subscriptions.js";
 import { getCliChoiceOwner } from "./cli-choice-owners.js";
@@ -279,6 +280,10 @@ export class CliWsHandler {
           });
         } catch (error) {
           throw mapCliCompactionError(error, "smart_compact", "agentId");
+        }
+        const blockerError = mapCliSmartCompactionResultBlocker(smartResult, "agentId");
+        if (blockerError) {
+          throw blockerError;
         }
         this.sendRequestSuccess(socket, command, buildCliSessionCompactionResult({
           action: "smart_compact",
@@ -869,35 +874,40 @@ function isSkippedSmartCompactionReason(reason: string): boolean {
   );
 }
 
+function mapCliSmartCompactionResultBlocker(result: SmartCompactResult, field: string): CliCommandError | undefined {
+  if (result.compacted) {
+    return undefined;
+  }
+
+  const classified = classifyCompactionErrorMessage(result.reason);
+  if (classified.code === "compaction_in_progress" || classified.code === "compaction_requires_idle") {
+    return buildCliCompactionError(classified.code, result.reason, classified.status, field);
+  }
+
+  return undefined;
+}
+
 function mapCliCompactionError(error: unknown, action: "compact" | "smart_compact", field: string): CliCommandError {
   const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.toLowerCase();
-
-  if (normalized.includes("not running")) {
-    return new CliCommandError("non_running_session", message, 409, [{ field, message: "Session is not running." }]);
-  }
-
-  if (normalized.includes("does not support") && normalized.includes("compaction")) {
-    return new CliCommandError("compaction_unsupported", message, 409, [{ field, message: "Runtime does not support compaction." }]);
-  }
-
-  if (
-    normalized.includes("context recovery is already in progress") ||
-    normalized.includes("already compacting") ||
-    normalized.includes("already in progress")
-  ) {
-    return new CliCommandError("compaction_in_progress", message, 409, [{ field, message: "Compaction is already in progress." }]);
-  }
-
-  if (normalized.includes("requires") && normalized.includes("to be idle")) {
-    return new CliCommandError("compaction_requires_idle", message, 409, [{ field, message: "Compaction requires an idle session." }]);
-  }
-
-  if (normalized.includes("only supported") && normalized.includes("compaction")) {
-    return new CliCommandError("compaction_unsupported", message, 409, [{ field, message: "Compaction is not supported for this target." }]);
+  const classified = classifyCompactionErrorMessage(message);
+  if (classified.status !== 500) {
+    return buildCliCompactionError(classified.code, message, classified.status, field);
   }
 
   return new CliCommandError(`${action}_failed`, message, 500);
+}
+
+function buildCliCompactionError(code: string, message: string, status: number, field: string): CliCommandError {
+  const fieldMessage = code === "non_running_session"
+    ? "Session is not running."
+    : code === "compaction_unsupported"
+      ? "Runtime does not support compaction."
+      : code === "compaction_in_progress"
+        ? "Compaction is already in progress."
+        : code === "compaction_requires_idle"
+          ? "Compaction requires an idle session."
+          : "Compaction request failed.";
+  return new CliCommandError(code, message, status, [{ field, message: fieldMessage }]);
 }
 
 function buildCliSourceContext(command: CliSendMessageCommand | CliRunCommand): MessageSourceContext {

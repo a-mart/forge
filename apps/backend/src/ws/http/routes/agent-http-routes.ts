@@ -6,6 +6,7 @@ import {
 } from "../../http-utils.js";
 import { readSessionMeta } from "../../../swarm/session-manifest.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
+import { classifyCompactionErrorMessage } from "../../compaction-error-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const AGENT_COMPACT_ENDPOINT_PATTERN = /^\/api\/agents\/([^/]+)\/compact$/;
@@ -95,18 +96,8 @@ async function handleCompactAgentHttpRequest(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const statusCode =
-      message.includes("Unknown target agent")
-        ? 404
-        : message.includes("not running") ||
-            message.includes("does not support") ||
-            message.includes("only supported")
-          ? 409
-          : message.includes("Invalid") || message.includes("Missing")
-            ? 400
-            : 500;
-
-    sendJson(response, statusCode, { error: message });
+    const { status } = classifyCompactionErrorMessage(message);
+    sendJson(response, status, { error: message });
   }
 }
 
@@ -159,19 +150,8 @@ async function handleSmartCompactAgentHttpRequest(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const statusCode =
-      message.includes("Unknown target agent")
-        ? 404
-        : message.includes("not running") ||
-            message.includes("does not support") ||
-            message.includes("only supported") ||
-            message.includes("already in progress")
-          ? 409
-          : message.includes("Invalid") || message.includes("Missing")
-            ? 400
-            : 500;
-
-    sendJson(response, statusCode, { error: message });
+    const { status } = classifyCompactionErrorMessage(message);
+    sendJson(response, status, { error: message });
   }
 }
 

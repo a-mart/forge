@@ -102,6 +102,51 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
+  it('maps manual compaction operational blockers to 409 through POST /api/agents/:agentId/compact', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const runtime = manager.runtimeByAgentId.get('manager')
+    expect(runtime).toBeDefined()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const cases = [
+        'Claude runtime for agent manager is already compacting.',
+        'Context recovery is already in progress',
+        'Claude runtime compaction requires agent manager to be idle.',
+        'agent busy',
+      ]
+
+      for (const message of cases) {
+        runtime!.compactImpl = async () => {
+          throw new Error(message)
+        }
+        const response = await fetch(`http://${config.host}:${config.port}/api/agents/manager/compact`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ customInstructions: 'Preserve blockers.' }),
+        })
+        expect(response.status, message).toBe(409)
+        await expect(response.json()).resolves.toEqual({ error: message })
+      }
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('returns smart compaction result parity through POST /api/agents/:agentId/smart-compact', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)

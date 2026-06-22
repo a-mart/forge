@@ -3061,6 +3061,32 @@ describe('SwarmWebSocketServer', () => {
     } satisfies Partial<CliSessionCompactionResult>)
     expect(runtime!.smartCompactCalls.at(-1)).toContain('Preserve open TODOs')
 
+    runtime!.smartCompactResult = { compacted: false, reason: 'Claude runtime for agent manager is already compacting.' }
+    client.send(JSON.stringify({
+      type: 'smart_compact_session',
+      requestId: 'smart-compact-in-progress-result',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliError(events, 'smart-compact-in-progress-result')).resolves.toMatchObject({
+      commandType: 'smart_compact_session',
+      code: 'compaction_in_progress',
+      status: 409,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    runtime!.smartCompactResult = { compacted: false, reason: 'Claude runtime compaction requires agent manager to be idle.' }
+    client.send(JSON.stringify({
+      type: 'smart_compact_session',
+      requestId: 'smart-compact-requires-idle-result',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliError(events, 'smart-compact-requires-idle-result')).resolves.toMatchObject({
+      commandType: 'smart_compact_session',
+      code: 'compaction_requires_idle',
+      status: 409,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
     runtime!.smartCompactResult = { compacted: false, reason: 'runtime_aborted' }
     client.send(JSON.stringify({
       type: 'smart_compact_session',
