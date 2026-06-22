@@ -1,6 +1,6 @@
 import type { Writable } from 'node:stream'
 
-import type { AgentDescriptor, CliSessionTranscriptResponse, CliStatusResponse, ManagerProfile } from '@forge/protocol'
+import type { AgentDescriptor, CliSessionCompactionResult, CliSessionTranscriptResponse, CliStatusResponse, ManagerProfile } from '@forge/protocol'
 import { describe, expect, it } from 'vitest'
 
 import type { ForgeClientLike } from '../forge-client.js'
@@ -202,7 +202,72 @@ describe('runCli', () => {
     expect(io.stderr.toString()).toContain('--limit must be an integer')
   })
 
-  it('documents choice answer schema, duration examples, and destructive safety in help', async () => {
+  it('renders manual and smart compaction commands in JSON and human formats', async () => {
+    const client = mockClient()
+    const calls: Array<{ action: 'compact' | 'smart'; agentId: string; customInstructions?: string }> = []
+    client.compactSession = async (agentId, options = {}) => {
+      calls.push({ action: 'compact', agentId, ...(options.customInstructions ? { customInstructions: options.customInstructions } : {}) })
+      return compactionResult({ action: 'compact', outcome: 'compacted', compacted: true, customInstructionsProvided: Boolean(options.customInstructions) })
+    }
+    client.smartCompactSession = async (agentId, options = {}) => {
+      calls.push({ action: 'smart', agentId, ...(options.customInstructions ? { customInstructions: options.customInstructions } : {}) })
+      return compactionResult({
+        action: 'smart_compact',
+        outcome: 'skipped',
+        compacted: false,
+        reason: 'runtime_already_compacted',
+        customInstructionsProvided: Boolean(options.customInstructions),
+      })
+    }
+
+    const jsonIo = makeIo()
+    await expect(runCli(['sessions', 'compact', 'session-1', '--instructions', 'Preserve pinned context', '--json'], {
+      io: jsonIo,
+      createClient: async () => client,
+    })).resolves.toBe(EXIT_CODES.success)
+    expect(JSON.parse(jsonIo.stdout.toString())).toMatchObject({
+      action: 'compact',
+      sessionAgentId: 'session-1',
+      outcome: 'compacted',
+      customInstructionsProvided: true,
+    })
+
+    const humanIo = makeIo()
+    await expect(runCli(['sessions', 'smart-compact', 'session-1'], {
+      io: humanIo,
+      createClient: async () => client,
+    })).resolves.toBe(EXIT_CODES.success)
+    expect(humanIo.stdout.toString()).toContain('action')
+    expect(humanIo.stdout.toString()).toContain('smart_compact')
+    expect(humanIo.stdout.toString()).toContain('outcome')
+    expect(humanIo.stdout.toString()).toContain('skipped')
+    expect(humanIo.stdout.toString()).toContain('reason')
+    expect(humanIo.stdout.toString()).toContain('runtime_already_compacted')
+    expect(calls).toEqual([
+      { action: 'compact', agentId: 'session-1', customInstructions: 'Preserve pinned context' },
+      { action: 'smart', agentId: 'session-1' },
+    ])
+  })
+
+  it('maps compaction unsupported errors to exit 23 JSON errors', async () => {
+    const io = makeIo()
+    const client = mockClient()
+    client.smartCompactSession = async () => {
+      throw new CliError('Forge server does not support required CLI capability: sessionCompaction', {
+        exitCode: EXIT_CODES.unsupported,
+        code: 'unsupported_capability',
+        details: { feature: 'sessionCompaction' },
+      })
+    }
+
+    const exit = await runCli(['sessions', 'smart-compact', 'session-1', '--json'], { io, createClient: async () => client })
+    expect(exit).toBe(EXIT_CODES.unsupported)
+    expect(JSON.parse(io.stderr.toString())).toMatchObject({
+      error: { code: 'unsupported_capability', message: expect.stringContaining('sessionCompaction') },
+    })
+  })
+
+  it('documents choice answer schema, duration examples, compaction semantics, and destructive safety in help', async () => {
     const choicesIo = makeIo()
     await runCli(['choices', '--help'], { io: choicesIo })
     expect(choicesIo.stdout.toString()).toContain('[{"questionId":"q1","selectedOptionIds":["yes"]}]')
@@ -217,6 +282,8 @@ describe('runCli', () => {
     await runCli(['sessions', '--help'], { io: sessionsIo })
     expect(sessionsIo.stdout.toString()).toContain('Destructive session commands require --yes.')
     expect(sessionsIo.stdout.toString()).toContain('transcript <agentId>')
+    expect(sessionsIo.stdout.toString()).toContain('compact <agentId>')
+    expect(sessionsIo.stdout.toString()).toContain('first-class CLI WebSocket mutations')
   })
 
   it('requires --yes for destructive session commands before creating a client', async () => {
@@ -292,6 +359,8 @@ function mockClient(overrides: { status?: CliStatusResponse } = {}): ForgeClient
     renameSession: async () => ({ agentId: 'session-1' }),
     pinSession: async () => ({ agentId: 'session-1' }),
     forkSession: async () => ({ sourceAgentId: 'session-1', session }),
+    compactSession: async () => compactionResult({ action: 'compact', outcome: 'compacted', compacted: true }),
+    smartCompactSession: async () => compactionResult({ action: 'smart_compact', outcome: 'compacted', compacted: true }),
     answerChoice: async () => ({ choiceId: 'choice-1', sessionAgentId: 'session-1', status: 'answered' }),
     cancelChoice: async () => ({ choiceId: 'choice-1', sessionAgentId: 'session-1', status: 'cancelled' }),
   }
@@ -351,6 +420,19 @@ function transcriptResponse(options: { includeWorkerUpdates?: boolean; limit?: n
       hasMore: false,
     },
     messages,
+  }
+}
+
+function compactionResult(overrides: Partial<CliSessionCompactionResult> = {}): CliSessionCompactionResult {
+  return {
+    action: 'compact',
+    sessionAgentId: 'session-1',
+    profileId: 'profile-1',
+    outcome: 'compacted',
+    compacted: true,
+    customInstructionsProvided: false,
+    completedAt: '2026-05-11T00:00:00.000Z',
+    ...overrides,
   }
 }
 

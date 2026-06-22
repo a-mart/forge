@@ -60,6 +60,7 @@ forge sessions list --profile <profileId>
 forge sessions create --profile <profileId> --label "CLI task"
 forge sessions send <agentId> --message "Summarize the current repo state"
 forge sessions transcript <agentId> --limit 50
+forge sessions smart-compact <agentId> --json
 forge run --profile <profileId> --message "Run the requested automation" --json
 forge launch --profile <profileId> --message @prompt.md
 forge wait <agentId> --timeout 10m --stop-on-timeout
@@ -74,6 +75,14 @@ Durations accept milliseconds by default or `ms`, `s`, and `m` suffixes. Example
 ## Session transcripts
 
 `forge sessions transcript <agentId>` prints a chronological, user-facing transcript by default: user inputs and assistant messages sent through `speak_to_user`. Add `--include-worker-updates` to include worker reports sent back to the manager. Use `--limit <n>` and `--offset <n>` for pagination, or `--json` for the stable `CliSessionTranscriptResponse` payload.
+
+## Session compaction
+
+`forge sessions compact <agentId> [--instructions <text>]` triggers manual context compaction for a manager session. `forge sessions smart-compact <agentId> [--instructions <text>]` asks the runtime to compact only when useful. Both commands use first-class CLI WebSocket commands, not slash-command wrapping.
+
+The CLI waits for the backend compaction mutation to finish or fail, then prints the normalized result. JSON output includes `action`, `sessionAgentId`, `profileId` when available, `outcome` (`compacted`, `skipped`, or `not_reduced`), `compacted`, `reason` when no compaction happened, `customInstructionsProvided`, and `completedAt`. Human output prints the same compact summary. Context before/after values are shown only if the server includes them.
+
+Compaction is Builder-runtime-only in v1 and requires the server to advertise the `sessionCompaction` capability. Older servers, collaboration runtimes, worker sessions, and runtime providers that do not support compaction return stable unsupported or usage errors instead of falling back to slash commands. If the CLI WebSocket disconnects before the request result arrives, the CLI exits with the connection error code and does not infer whether compaction continued server-side.
 
 ## Run semantics
 

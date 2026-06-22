@@ -1,4 +1,4 @@
-import type { CliChoiceRouteResult, CliSessionCreatedResult } from '@forge/protocol'
+import type { CliChoiceRouteResult, CliSessionCompactionResult, CliSessionCreatedResult } from '@forge/protocol'
 
 import { CliError, formatObject, writeHuman, writeJson } from '../output.js'
 import { EXIT_CODES } from '../version.js'
@@ -82,8 +82,24 @@ export async function handleSessionsMutationCommand(context: CommandContext): Pr
       })
       return EXIT_CODES.success
     }
+    case 'compact': {
+      const agentId = requireArg(arg, 'agentId')
+      const customInstructions = normalizeCustomInstructions(context.args.options.instructions)
+      const client = await context.createClient()
+      const result = await client.compactSession(agentId, { customInstructions })
+      writeCompactionResult(context, result)
+      return EXIT_CODES.success
+    }
+    case 'smart-compact': {
+      const agentId = requireArg(arg, 'agentId')
+      const customInstructions = normalizeCustomInstructions(context.args.options.instructions)
+      const client = await context.createClient()
+      const result = await client.smartCompactSession(agentId, { customInstructions })
+      writeCompactionResult(context, result)
+      return EXIT_CODES.success
+    }
     default:
-      throw usage('Usage: forge sessions create|send|wait|stop|resume|fork|rename|pin|unpin|clear|delete ...')
+      throw usage('Usage: forge sessions create|send|wait|stop|resume|fork|compact|smart-compact|rename|pin|unpin|clear|delete ...')
   }
 }
 
@@ -171,6 +187,38 @@ function writeChoiceRouteResult(context: CommandContext, result: CliChoiceRouteR
     return
   }
   writeHuman(context.io, context.args.options, formatObject(result as unknown as Record<string, unknown>))
+}
+
+function writeCompactionResult(context: CommandContext, result: CliSessionCompactionResult): void {
+  if (context.args.options.json) {
+    writeJson(context.io, result)
+    return
+  }
+
+  const payload: Record<string, unknown> = {
+    action: result.action,
+    sessionAgentId: result.sessionAgentId,
+    profileId: result.profileId,
+    outcome: result.outcome,
+    compacted: result.compacted,
+    reason: result.reason,
+    customInstructionsProvided: result.customInstructionsProvided,
+    completedAt: result.completedAt,
+  }
+  copyIfPresent(result as unknown as Record<string, unknown>, payload, 'contextBefore')
+  copyIfPresent(result as unknown as Record<string, unknown>, payload, 'contextAfter')
+  copyIfPresent(result as unknown as Record<string, unknown>, payload, 'contextUsageBefore')
+  copyIfPresent(result as unknown as Record<string, unknown>, payload, 'contextUsageAfter')
+  writeHuman(context.io, context.args.options, formatObject(payload))
+}
+
+function normalizeCustomInstructions(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
+function copyIfPresent(source: Record<string, unknown>, target: Record<string, unknown>, key: string): void {
+  if (source[key] !== undefined) target[key] = source[key]
 }
 
 function requireYes(context: CommandContext): void {

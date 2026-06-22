@@ -20,6 +20,8 @@ Commands:
   sessions list --profile <profileId>
   sessions show <agentId>
   sessions transcript <agentId> [--include-worker-updates] [--limit <n>] [--offset <n>]
+  sessions compact <agentId> [--instructions <text>]
+  sessions smart-compact <agentId> [--instructions <text>]
   sessions create|send|wait|stop|resume|fork|rename|pin|unpin|clear|delete ...
   agents list [--profile <profileId>]
   agents show <agentId>
@@ -45,7 +47,7 @@ export function commandHelp(command: string | undefined): string {
     case 'profiles':
       return 'Usage: forge profiles list | forge profiles show <profileId>'
     case 'sessions':
-      return 'Usage: forge sessions list --profile <profileId> | show <agentId> | transcript <agentId> [--include-worker-updates] [--limit <n>] [--offset <n>] | create --profile <profileId> [--label <label>] [--name <name>] | send <agentId> --message <text|@file> | wait <agentId> [--timeout <duration>] [--stop-on-timeout] | stop|resume <agentId> | fork <agentId> [--label <label>] [--from-message-id <messageId>] | rename <agentId> --label <label> | pin|unpin <agentId> [--pinned true|false] | clear|delete <agentId> --yes\n\nTranscript defaults to user-facing messages only. Add --include-worker-updates for worker reports. Destructive session commands require --yes.'
+      return 'Usage: forge sessions list --profile <profileId> | show <agentId> | transcript <agentId> [--include-worker-updates] [--limit <n>] [--offset <n>] | create --profile <profileId> [--label <label>] [--name <name>] | send <agentId> --message <text|@file> | wait <agentId> [--timeout <duration>] [--stop-on-timeout] | stop|resume <agentId> | fork <agentId> [--label <label>] [--from-message-id <messageId>] | compact <agentId> [--instructions <text>] | smart-compact <agentId> [--instructions <text>] | rename <agentId> --label <label> | pin|unpin <agentId> [--pinned true|false] | clear|delete <agentId> --yes\n\nTranscript defaults to user-facing messages only. Add --include-worker-updates for worker reports. Compact commands use first-class CLI WebSocket mutations, wait for the backend compaction command to finish or fail, and require server sessionCompaction capability. Smart compaction may skip or report not_reduced when the runtime decides compaction is unnecessary. Destructive session commands require --yes.'
     case 'agents':
       return 'Usage: forge agents list [--profile <profileId>] | forge agents show <agentId>'
     case 'project-agents':

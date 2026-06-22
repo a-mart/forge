@@ -100,6 +100,64 @@ describe('ForgeClient', () => {
     ])
   })
 
+  it('sends first-class compaction WebSocket commands with custom instructions', async () => {
+    const socket = new FakeWebSocket()
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: statusFetch,
+      WebSocketImpl: fakeWebSocketImpl(socket),
+    })
+
+    await expect(client.compactSession('session-1', { customInstructions: 'Preserve pinned context' })).resolves.toMatchObject({
+      action: 'compact',
+      outcome: 'compacted',
+      customInstructionsProvided: true,
+    })
+    await expect(client.smartCompactSession('session-1')).resolves.toMatchObject({
+      action: 'smart_compact',
+      outcome: 'skipped',
+      reason: 'runtime_already_compacted',
+    })
+    expect(socket.sent).toEqual([
+      expect.objectContaining({ type: 'compact_session', agentId: 'session-1', customInstructions: 'Preserve pinned context' }),
+      expect.objectContaining({ type: 'smart_compact_session', agentId: 'session-1' }),
+    ])
+  })
+
+  it('maps runtime compaction unsupported request errors to unsupported exit code', async () => {
+    const socket = new FakeWebSocket({ compactionUnsupported: true })
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: statusFetch,
+      WebSocketImpl: fakeWebSocketImpl(socket),
+    })
+
+    await expect(client.smartCompactSession('session-1')).rejects.toMatchObject({
+      code: 'compaction_unsupported',
+      exitCode: EXIT_CODES.unsupported,
+    })
+  })
+
+  it('reports old servers without the session compaction capability as unsupported', async () => {
+    const client = new ForgeClient({
+      url: 'http://127.0.0.1:47287',
+      apiKey: 'secret-token',
+      fetchImpl: async () => {
+        const status = await statusFetch()
+        const payload = await status.json()
+        payload.capabilities.features.sessionCompaction = false
+        return Response.json(payload)
+      },
+    })
+
+    await expect(client.compactSession('session-1')).rejects.toMatchObject({
+      code: 'unsupported_capability',
+      exitCode: EXIT_CODES.unsupported,
+    })
+  })
+
   it('reports old servers without the session transcript capability as unsupported', async () => {
     const calls: string[] = []
     const client = new ForgeClient({
@@ -201,6 +259,7 @@ async function statusFetch(): Promise<Response> {
 
 function fakeWebSocketImpl(socket: FakeWebSocket): typeof WebSocket {
   return function createFakeWebSocket() {
+    socket.readyState = WebSocket.OPEN
     queueMicrotask(() => socket.emit('open'))
     return socket
   } as unknown as typeof WebSocket
@@ -220,7 +279,7 @@ class FakeWebSocket extends EventEmitter {
   readonly sent: CliWsCommand[] = []
   readyState = WebSocket.OPEN
 
-  constructor(private readonly options: { closeAfterRunAck?: boolean; closeBeforeHeadlessReady?: boolean } = {}) {
+  constructor(private readonly options: { closeAfterRunAck?: boolean; closeBeforeHeadlessReady?: boolean; compactionUnsupported?: boolean } = {}) {
     super()
   }
 
@@ -255,6 +314,34 @@ class FakeWebSocket extends EventEmitter {
           workers: [],
           activeTools: [],
           status: { agentId: 'session-1', status: 'idle', pendingCount: 0 },
+        })
+      }
+    }
+    if (command.type === 'compact_session' || command.type === 'smart_compact_session') {
+      if (this.options.compactionUnsupported) {
+        this.emitEvent({
+          type: 'cli_request_error',
+          requestId: command.requestId,
+          commandType: command.type,
+          code: 'compaction_unsupported',
+          message: 'Runtime does not support compaction.',
+          status: 501,
+        })
+      } else {
+        this.emitEvent({
+          type: 'cli_request_success',
+          requestId: command.requestId,
+          commandType: command.type,
+          result: {
+            action: command.type === 'compact_session' ? 'compact' : 'smart_compact',
+            sessionAgentId: command.agentId,
+            profileId: 'profile-1',
+            outcome: command.type === 'compact_session' ? 'compacted' : 'skipped',
+            compacted: command.type === 'compact_session',
+            ...(command.type === 'smart_compact_session' ? { reason: 'runtime_already_compacted' } : {}),
+            customInstructionsProvided: Boolean(command.customInstructions),
+            completedAt: 'now',
+          },
         })
       }
     }

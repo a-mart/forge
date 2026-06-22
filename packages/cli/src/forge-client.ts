@@ -21,6 +21,7 @@ import type {
   CliRunCommand,
   CliRunResult,
   CliRunTarget,
+  CliSessionCompactionResult,
   CliSessionCreatedResult,
   CliSessionMutationCommand,
   CliSessionShowResponse,
@@ -82,6 +83,10 @@ export interface ClientWaitOptions {
   stopOnTimeout?: boolean
 }
 
+export interface ClientCompactionOptions {
+  customInstructions?: string
+}
+
 export interface ClientSessionTranscriptOptions {
   includeWorkerUpdates?: boolean
   limit?: number
@@ -115,6 +120,8 @@ export interface ForgeClientLike {
   renameSession(agentId: string, label: string): Promise<unknown>
   pinSession(agentId: string, pinned: boolean): Promise<unknown>
   forkSession(sourceAgentId: string, options?: { label?: string; fromMessageId?: string }): Promise<unknown>
+  compactSession(agentId: string, options?: ClientCompactionOptions): Promise<CliSessionCompactionResult>
+  smartCompactSession(agentId: string, options?: ClientCompactionOptions): Promise<CliSessionCompactionResult>
   answerChoice(choiceId: string, answers: ChoiceAnswer[], sessionAgentId?: string): Promise<CliChoiceRouteResult>
   cancelChoice(choiceId: string, sessionAgentId?: string): Promise<CliChoiceRouteResult>
 }
@@ -353,6 +360,24 @@ export class ForgeClient implements ForgeClientLike {
     })
   }
 
+  compactSession(agentId: string, options: ClientCompactionOptions = {}): Promise<CliSessionCompactionResult> {
+    return this.sessionMutation<CliSessionCompactionResult>({
+      type: 'compact_session',
+      requestId: randomUUID(),
+      agentId,
+      ...(options.customInstructions ? { customInstructions: options.customInstructions } : {}),
+    }, ['headlessWs', 'sessionCompaction'])
+  }
+
+  smartCompactSession(agentId: string, options: ClientCompactionOptions = {}): Promise<CliSessionCompactionResult> {
+    return this.sessionMutation<CliSessionCompactionResult>({
+      type: 'smart_compact_session',
+      requestId: randomUUID(),
+      agentId,
+      ...(options.customInstructions ? { customInstructions: options.customInstructions } : {}),
+    }, ['headlessWs', 'sessionCompaction'])
+  }
+
   async answerChoice(choiceId: string, answers: ChoiceAnswer[], sessionAgentId?: string): Promise<CliChoiceRouteResult> {
     await this.ensureFeatures(['headlessWs', 'choiceOwnerLookup'])
     const ownerSessionAgentId = sessionAgentId ?? (await this.showChoice(choiceId)).choice.sessionAgentId
@@ -386,11 +411,14 @@ export class ForgeClient implements ForgeClientLike {
     }
   }
 
-  private async sessionMutation(command: CliSessionMutationCommand): Promise<unknown> {
-    await this.ensureFeatures(['headlessWs'])
+  private async sessionMutation<T = unknown>(
+    command: CliSessionMutationCommand,
+    features: Array<keyof CliStatusResponse['capabilities']['features']> = ['headlessWs'],
+  ): Promise<T> {
+    await this.ensureFeatures(features)
     const connection = await this.openWsConnection()
     try {
-      return await connection.request(command)
+      return await connection.request<T>(command)
     } finally {
       connection.close()
     }
@@ -984,7 +1012,7 @@ function mapHttpErrorExitCode(status: number, code: string) {
 
 function mapCliRequestErrorExitCode(event: CliRequestErrorEvent) {
   if (event.status === 401 || isAuthErrorCode(event.code)) return EXIT_CODES.auth
-  if (event.code === 'unsupported_command' || event.code === 'unsupported_target') return EXIT_CODES.unsupported
+  if (event.code === 'unsupported_command' || event.code === 'unsupported_target' || event.code === 'compaction_unsupported') return EXIT_CODES.unsupported
   if (event.status && event.status >= 400 && event.status < 500) return EXIT_CODES.usage
   return EXIT_CODES.connection
 }

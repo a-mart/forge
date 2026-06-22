@@ -15,6 +15,7 @@ const VALUE_FLAGS = new Set([
   '--limit',
   '--offset',
   '--from-message-id',
+  '--instructions',
   '--answers',
   '--pinned',
 ])
@@ -117,6 +118,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       options.fromMessageId = token.slice('--from-message-id='.length)
       continue
     }
+    if (token.startsWith('--instructions=')) {
+      options.instructions = token.slice('--instructions='.length)
+      continue
+    }
     if (token.startsWith('--answers=')) {
       options.answers = token.slice('--answers='.length)
       continue
@@ -173,6 +178,9 @@ function assignValueFlag(options: ParsedArgs['options'], flag: string, value: st
       return
     case '--from-message-id':
       options.fromMessageId = value
+      return
+    case '--instructions':
+      options.instructions = value
       return
     case '--answers':
       options.answers = value

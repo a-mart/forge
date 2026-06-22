@@ -42,6 +42,8 @@ forge profiles show <profileId>
 forge sessions list --profile <profileId>
 forge sessions show <agentId>
 forge sessions transcript <agentId> [--include-worker-updates] [--limit <n>] [--offset <n>]
+forge sessions compact <agentId> [--instructions <text>]
+forge sessions smart-compact <agentId> [--instructions <text>]
 forge agents list [--profile <profileId>]
 forge agents show <agentId>
 forge project-agents list --profile <profileId>
@@ -58,6 +60,8 @@ forge sessions send <agentId> --message <text|@file>
 forge sessions wait <agentId> [--timeout <duration>] [--stop-on-timeout]
 forge sessions stop|resume <agentId>
 forge sessions fork <agentId> [--label <label>] [--from-message-id <messageId>]
+forge sessions compact <agentId> [--instructions <text>]
+forge sessions smart-compact <agentId> [--instructions <text>]
 forge sessions rename <agentId> --label <label>
 forge sessions pin|unpin <agentId> [--pinned true|false]
 forge sessions clear|delete <agentId> --yes
@@ -70,6 +74,8 @@ forge wait <agentId> [--timeout <duration>] [--stop-on-timeout]
 ```
 
 Durations accept milliseconds by default, or `ms`, `s`, and `m` suffixes.
+
+Compaction commands use first-class CLI WebSocket mutations. They do not wrap slash commands. `sessions compact` waits for manual compaction to finish or fail. `sessions smart-compact` waits for the runtime smart-compaction decision and returns `outcome: "compacted"`, `"skipped"`, or `"not_reduced"`. Both commands require a Builder runtime that advertises `sessionCompaction`; old servers and runtime providers without compaction support return exit code 23, while invalid or unsupported session targets return typed usage errors.
 
 ## Automation notes
 

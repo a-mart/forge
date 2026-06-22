@@ -16,6 +16,7 @@ export interface ParsedArgs {
     limit?: string
     offset?: string
     fromMessageId?: string
+    instructions?: string
     answers?: string
     pinned?: string
     yes?: boolean

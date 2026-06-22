@@ -131,6 +131,8 @@ function isSessionMutationAction(action: string | undefined): boolean {
     action === 'stop' ||
     action === 'resume' ||
     action === 'fork' ||
+    action === 'compact' ||
+    action === 'smart-compact' ||
     action === 'rename' ||
     action === 'pin' ||
     action === 'unpin' ||
