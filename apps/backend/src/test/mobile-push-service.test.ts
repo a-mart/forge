@@ -3,7 +3,7 @@ import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AgentDescriptor } from '../swarm/types.js'
+import type { AgentDescriptor, ManagerProfile } from '../swarm/types.js'
 import type { SwarmManager } from '../swarm/swarm-manager.js'
 import { getSharedMobileDevicesPath } from '../swarm/data-paths.js'
 import { NotificationSettingsService } from '../swarm/notification-settings-service.js'
@@ -12,16 +12,24 @@ import { MobilePushService } from '../mobile/mobile-push-service.js'
 
 class FakeSwarmManager extends EventEmitter {
   private readonly descriptors = new Map<string, AgentDescriptor>()
+  private readonly profiles = new Map<string, ManagerProfile>()
 
-  constructor(descriptors: AgentDescriptor[]) {
+  constructor(descriptors: AgentDescriptor[], profiles: ManagerProfile[] = []) {
     super()
     for (const descriptor of descriptors) {
       this.descriptors.set(descriptor.agentId, descriptor)
+    }
+    for (const profile of profiles) {
+      this.profiles.set(profile.profileId, profile)
     }
   }
 
   getAgent(agentId: string): AgentDescriptor | undefined {
     return this.descriptors.get(agentId)
+  }
+
+  listProfiles(): ManagerProfile[] {
+    return Array.from(this.profiles.values())
   }
 }
 
@@ -47,6 +55,21 @@ function createManagerDescriptor(
     sessionFile: `/tmp/${agentId}.jsonl`,
     profileId,
     sessionPurpose,
+  }
+}
+
+function createTestProfile(profileId = 'profile-a', displayName = 'Forge'): ManagerProfile {
+  return {
+    profileId,
+    displayName,
+    defaultSessionAgentId: 'manager',
+    defaultModel: {
+      provider: 'openai-codex',
+      modelId: 'gpt-5.5',
+      thinkingLevel: 'medium',
+    },
+    createdAt: '2026-03-12T00:00:00.000Z',
+    updatedAt: '2026-03-12T00:00:00.000Z',
   }
 }
 
@@ -112,9 +135,17 @@ afterEach(() => {
 })
 
 describe('MobilePushService', () => {
-  it('dispatches unread notifications with routing data', async () => {
+  it('dispatches unread notifications with contextual session titles and routing data', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
-    const manager = new FakeSwarmManager([createManagerDescriptor()])
+    const manager = new FakeSwarmManager(
+      [
+        {
+          ...createManagerDescriptor(),
+          sessionLabel: 'Release Notes',
+        },
+      ],
+      [createTestProfile('profile-a', 'Forge')],
+    )
 
     const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-1' }))
     const receiptsMock = vi.fn(async () => ({}))
@@ -155,7 +186,7 @@ describe('MobilePushService', () => {
     const payload = (calls[0]?.[0] as Record<string, unknown> | undefined) ?? {}
     expect(calls[0]).toBeDefined()
     expect(payload.to).toBe('ExpoPushToken[test-device]')
-    expect(payload.title).toBe('New message')
+    expect(payload.title).toBe('Forge / Release Notes')
     expect(payload.data).toMatchObject({
       v: 1,
       type: 'unread',
@@ -165,6 +196,55 @@ describe('MobilePushService', () => {
       profileId: 'profile-a',
       route: '/profiles/profile-a/sessions/manager',
     })
+  })
+
+  it('uses the session title when the project/session title would be too long', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
+    const manager = new FakeSwarmManager(
+      [
+        {
+          ...createManagerDescriptor(),
+          sessionLabel: 'Mobile QA',
+        },
+      ],
+      [createTestProfile('profile-a', 'A very long Forge project name that would crowd the notification title')],
+    )
+
+    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-1' }))
+
+    const service = new MobilePushService({
+      swarmManager: manager as unknown as SwarmManager,
+      dataDir,
+      expoPushClient: {
+        send: sendMock,
+        getReceipts: vi.fn(async () => ({})),
+      } as unknown as ExpoPushClient,
+      isSessionActive: () => false,
+      receiptPollIntervalMs: 60_000,
+    })
+
+    await service.registerDevice({
+      token: 'ExpoPushToken[test-device]',
+      platform: 'ios',
+      deviceName: 'iPhone',
+    })
+
+    await service.start()
+    manager.emit('conversation_message', {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'hello from manager',
+      timestamp: new Date().toISOString(),
+      source: 'speak_to_user',
+    })
+
+    await waitForCondition(() => sendMock.mock.calls.length === 1)
+    await service.stop()
+
+    const calls = sendMock.mock.calls as unknown as Array<Array<unknown>>
+    const payload = (calls[0]?.[0] as Record<string, unknown> | undefined) ?? {}
+    expect(payload.title).toBe('Mobile QA')
   })
 
   it('suppresses pushes for CLI-originated sessions when notification settings mute them', async () => {

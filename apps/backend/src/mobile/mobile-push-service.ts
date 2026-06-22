@@ -18,6 +18,7 @@ const DEFAULT_SEND_RETRY_BACKOFF_MS = [250, 1000, 2_500] as const;
 const RECEIPTS_CHUNK_SIZE = 100;
 const DEFAULT_PUSH_TITLE = "Forge";
 const DEFAULT_TEST_BODY = "Forge push notifications are configured.";
+const MAX_PUSH_TITLE_LENGTH = 64;
 
 type PushNotificationType = "unread" | "choice_request" | "agent_status" | "error" | "test";
 type UnreadNotificationReason = "message" | "choice_request";
@@ -26,6 +27,8 @@ interface AgentRoutingContext {
   sessionAgentId: string;
   profileId: string;
   agentDisplayName: string;
+  sessionDisplayName: string;
+  projectDisplayName?: string;
   route: string;
 }
 
@@ -247,7 +250,6 @@ export class MobilePushService {
       type: "unread",
       reason: "message",
       agentId: event.agentId,
-      title: "New message",
       body: truncateText(event.text, 180)
     });
   }
@@ -302,7 +304,7 @@ export class MobilePushService {
     type: PushNotificationType;
     reason?: UnreadNotificationReason;
     agentId: string;
-    title: string;
+    title?: string;
     body: string;
   }): Promise<void> {
     if (!this.started) {
@@ -329,7 +331,7 @@ export class MobilePushService {
     }
 
     const payload: Omit<ExpoPushMessage, "to"> = {
-      title: notification.title,
+      title: notification.title ?? buildMessageNotificationTitle(context),
       body: notification.body,
       sound: "default",
       data: {
@@ -458,6 +460,8 @@ export class MobilePushService {
         sessionAgentId: descriptor.agentId,
         profileId,
         agentDisplayName: descriptor.displayName,
+        sessionDisplayName: getSessionDisplayName(descriptor),
+        projectDisplayName: this.resolveProjectDisplayName(profileId),
         route: buildSessionRoute({
           profileId,
           sessionAgentId: descriptor.agentId
@@ -476,6 +480,8 @@ export class MobilePushService {
         sessionAgentId: descriptor.managerId,
         profileId,
         agentDisplayName: descriptor.displayName,
+        sessionDisplayName: managerDescriptor ? getSessionDisplayName(managerDescriptor) : descriptor.managerId,
+        projectDisplayName: this.resolveProjectDisplayName(profileId),
         route: buildSessionRoute({
           profileId,
           sessionAgentId: descriptor.managerId
@@ -487,11 +493,17 @@ export class MobilePushService {
       sessionAgentId: agentId,
       profileId: agentId,
       agentDisplayName: agentId,
+      sessionDisplayName: agentId,
       route: buildSessionRoute({
         profileId: agentId,
         sessionAgentId: agentId
       })
     };
+  }
+
+  private resolveProjectDisplayName(profileId: string): string | undefined {
+    const profile = this.swarmManager.listProfiles().find((entry) => entry.profileId === profileId);
+    return normalizeOptionalString(profile?.displayName);
   }
 
   private async isPushSuppressedForSession(sessionAgentId: string): Promise<boolean> {
@@ -543,6 +555,24 @@ function isNotificationTypeEnabled(
     default:
       return false;
   }
+}
+
+function buildMessageNotificationTitle(context: AgentRoutingContext): string {
+  const sessionDisplayName = normalizeOptionalString(context.sessionDisplayName) ?? context.sessionAgentId;
+  const projectDisplayName = normalizeOptionalString(context.projectDisplayName);
+
+  if (projectDisplayName && projectDisplayName !== sessionDisplayName) {
+    const combinedTitle = `${projectDisplayName} / ${sessionDisplayName}`;
+    if (combinedTitle.length <= MAX_PUSH_TITLE_LENGTH) {
+      return combinedTitle;
+    }
+  }
+
+  return truncateText(sessionDisplayName, MAX_PUSH_TITLE_LENGTH);
+}
+
+function getSessionDisplayName(descriptor: { agentId: string; displayName: string; sessionLabel?: string }): string {
+  return normalizeOptionalString(descriptor.sessionLabel) ?? normalizeOptionalString(descriptor.displayName) ?? descriptor.agentId;
 }
 
 function buildChoiceRequestNotificationContent(options: {
