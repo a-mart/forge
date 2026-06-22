@@ -1069,10 +1069,10 @@ describe('AgentRuntime', () => {
     }
 
     const contextTokensByStatus: number[] = []
-    let runtime: AgentRuntime
+    const runtimeRef: { current?: AgentRuntime } = {}
 
     session.compact = async (): Promise<{ ok: true }> => {
-      expect(runtime.isContextRecoveryInProgress()).toBe(true)
+      expect(runtimeRef.current?.isContextRecoveryInProgress()).toBe(true)
       session.contextUsage = {
         tokens: 220,
         contextWindow: 1000,
@@ -1081,7 +1081,7 @@ describe('AgentRuntime', () => {
       return { ok: true }
     }
 
-    runtime = new AgentRuntime({
+    const runtime = new AgentRuntime({
       descriptor: makeDescriptor(),
       session: session as any,
       callbacks: {
@@ -1092,6 +1092,7 @@ describe('AgentRuntime', () => {
         },
       },
     })
+    runtimeRef.current = runtime
 
     await runtime.compact('trim older turns')
 
@@ -1103,14 +1104,13 @@ describe('AgentRuntime', () => {
     const session = new FakeSession()
     let compactCalled = false
     let statusEmitCalls = 0
-    let runtime: AgentRuntime
 
     session.compact = async (): Promise<{ ok: true }> => {
       compactCalled = true
       return { ok: true }
     }
 
-    runtime = new AgentRuntime({
+    const runtime = new AgentRuntime({
       descriptor: makeDescriptor(),
       session: session as any,
       callbacks: {
