@@ -288,39 +288,41 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       }
 
       this.contextRecoveryInProgress = true;
-      await this.emitStatus();
-
       try {
-        const summary = await this.captureCompactionSummary(session, customInstructions);
-        const detachedSession = this.detachActiveSession();
-        await this.stopDetachedSession(detachedSession, {
-          abort: true,
-          shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS
-        });
+        await this.emitCompactionStatusSafely("compact_start_status_emit");
 
-        this.liveReplayMessages.length = 0;
-        this.generation += 1;
-        this.persistCompactionSummary(summary);
-        this.activeSystemPrompt = this.buildActiveSystemPrompt(summary);
-        this.persistRuntimeState({ claudeSessionId: null, generationId: this.generation });
-        await this.resetToIdleState();
-        await this.ensureSessionStarted();
+        try {
+          const summary = await this.captureCompactionSummary(session, customInstructions);
+          const detachedSession = this.detachActiveSession();
+          await this.stopDetachedSession(detachedSession, {
+            abort: true,
+            shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS
+          });
 
-        return {
-          generationId: this.generation,
-          mode: "summary_rollover",
-          summary
-        };
-      } catch (error) {
-        await this.callbacks.onRuntimeError?.(this.descriptor.agentId, {
-          phase: "compaction",
-          message: error instanceof Error ? error.message : String(error),
-          ...(error instanceof Error && error.stack ? { stack: error.stack } : {})
-        });
-        throw error;
+          this.liveReplayMessages.length = 0;
+          this.generation += 1;
+          this.persistCompactionSummary(summary);
+          this.activeSystemPrompt = this.buildActiveSystemPrompt(summary);
+          this.persistRuntimeState({ claudeSessionId: null, generationId: this.generation });
+          await this.resetToIdleState();
+          await this.ensureSessionStarted();
+
+          return {
+            generationId: this.generation,
+            mode: "summary_rollover",
+            summary
+          };
+        } catch (error) {
+          await this.callbacks.onRuntimeError?.(this.descriptor.agentId, {
+            phase: "compaction",
+            message: error instanceof Error ? error.message : String(error),
+            ...(error instanceof Error && error.stack ? { stack: error.stack } : {})
+          });
+          throw error;
+        }
       } finally {
         this.contextRecoveryInProgress = false;
-        await this.emitStatus();
+        await this.emitCompactionStatusSafely("compact_end_status_emit");
       }
     });
   }
@@ -1118,6 +1120,19 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       this.pendingCount,
       this.contextUsage
     );
+  }
+
+  private async emitCompactionStatusSafely(stage: string): Promise<void> {
+    try {
+      await this.emitStatus();
+    } catch (error) {
+      await this.callbacks.onRuntimeError?.(this.descriptor.agentId, {
+        phase: "compaction",
+        message: error instanceof Error ? error.message : String(error),
+        details: { stage },
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {})
+      });
+    }
   }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {

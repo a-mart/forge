@@ -1099,6 +1099,36 @@ describe('AgentRuntime', () => {
     expect(runtime.isContextRecoveryInProgress()).toBe(false)
   })
 
+  it('continues manual compaction and clears in-progress flag when start status emit rejects', async () => {
+    const session = new FakeSession()
+    let compactCalled = false
+    let statusEmitCalls = 0
+    let runtime: AgentRuntime
+
+    session.compact = async (): Promise<{ ok: true }> => {
+      compactCalled = true
+      return { ok: true }
+    }
+
+    runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: async () => {
+          statusEmitCalls += 1
+          if (statusEmitCalls === 1) {
+            throw new Error('start status emit failed')
+          }
+        },
+      },
+    })
+
+    await runtime.compact('trim older turns')
+
+    expect(compactCalled).toBe(true)
+    expect(runtime.isContextRecoveryInProgress()).toBe(false)
+  })
+
   it('terminates by aborting active session and marking status terminated', async () => {
     const session = new FakeSession()
 

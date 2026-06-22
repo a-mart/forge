@@ -1077,6 +1077,48 @@ describe("ClaudeAgentRuntime", () => {
     await runtime.terminate({ abort: false });
   });
 
+  it("continues manual compaction and clears in-progress flag when start status emit rejects", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const hiddenPrompts: string[] = [];
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createCompactionMockClaudeSdk(queryCalls, hiddenPrompts)));
+
+    let recoveryStatusEmitCalls = 0;
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {
+          if (!runtime.isContextRecoveryInProgress()) {
+            return;
+          }
+
+          recoveryStatusEmitCalls += 1;
+          if (recoveryStatusEmitCalls === 1) {
+            throw new Error("start status emit failed");
+          }
+        }
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    await runtime.sendMessage("hello");
+    await runtime.compact();
+
+    expect(hiddenPrompts).toHaveLength(1);
+    expect(runtime.isContextRecoveryInProgress()).toBe(false);
+
+    await runtime.terminate({ abort: false });
+  });
+
   it("toggles context recovery while SDK auto-compaction events are in flight", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
     const descriptor = makeDescriptor(tempDir);

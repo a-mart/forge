@@ -615,10 +615,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
   async compact(customInstructions?: string): Promise<unknown> {
     this.ensureNotTerminated();
     this.manualCompactionInProgress = true;
-    await this.emitStatus();
     try {
+      await this.emitCompactionStatusSafely("compact_start_status_emit");
       const result = await this.session.compact(customInstructions);
-      await this.emitStatus();
+      await this.emitCompactionStatusSafely("compact_complete_status_emit");
       return result;
     } catch (error) {
       this.logRuntimeError("compaction", error, {
@@ -627,7 +627,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       throw error;
     } finally {
       this.manualCompactionInProgress = false;
-      await this.emitStatus();
+      await this.emitCompactionStatusSafely("compact_end_status_emit");
     }
   }
 
@@ -1984,6 +1984,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.pendingDeliveries.length,
       contextUsage
     );
+  }
+
+  private async emitCompactionStatusSafely(stage: string): Promise<void> {
+    try {
+      await this.emitStatus();
+    } catch (error) {
+      this.logRuntimeError("compaction", error, { stage });
+    }
   }
 
   private refreshContextUsage(): AgentContextUsage | undefined {
