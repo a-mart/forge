@@ -186,7 +186,7 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
     this.cliWsHandler.broadcast(event);
 
-    const collabSessionAgentId = this.resolveChoiceSessionAgentId(event.agentId);
+    const collabSessionAgentId = this.resolveCollaborationChoiceSessionAgentId(event);
     if (collabSessionAgentId) {
       this.wsHandler.broadcastCollaborationChoiceRequest(event, collabSessionAgentId);
     }
@@ -343,6 +343,41 @@ export class SwarmWebSocketServer {
     }
 
     return { profileId: descriptor.profileId ?? descriptor.agentId };
+  }
+
+  private resolveCollaborationChoiceSessionAgentId(event: Extract<ServerEvent, { type: "choice_request" }>): string | undefined {
+    const explicitSessionAgentId = event.sessionAgentId?.trim();
+    if (explicitSessionAgentId) {
+      const sessionDescriptor = this.swarmManager.getAgent(explicitSessionAgentId);
+      if (
+        !sessionDescriptor ||
+        sessionDescriptor.role !== "manager" ||
+        !isCollabSession(sessionDescriptor)
+      ) {
+        console.warn(
+          `[collab] Dropping choice_request fanout: invalid sessionAgentId ${explicitSessionAgentId}`,
+        );
+        return undefined;
+      }
+
+      const requesterDescriptor = this.swarmManager.getAgent(event.agentId);
+      if (requesterDescriptor) {
+        const requesterSessionAgentId =
+          requesterDescriptor.role === "manager"
+            ? requesterDescriptor.agentId
+            : requesterDescriptor.managerId;
+        if (requesterSessionAgentId !== explicitSessionAgentId) {
+          console.warn(
+            `[collab] Dropping choice_request fanout: sessionAgentId ${explicitSessionAgentId} mismatches requester ${event.agentId}`,
+          );
+          return undefined;
+        }
+      }
+
+      return explicitSessionAgentId;
+    }
+
+    return this.resolveChoiceSessionAgentId(event.agentId);
   }
 
   private resolveChoiceSessionAgentId(agentId: string): string | undefined {

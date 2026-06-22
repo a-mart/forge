@@ -12,9 +12,8 @@ import type { CollabChoiceRequest } from '@/lib/collab-ws-state'
  * into Builder's {@link ConversationEntry[]} format so the collab surface
  * can reuse the Builder `MessageList` component.
  *
- * Every mapped entry carries `agentId: sessionAgentId` so downstream
- * Builder components (artifact/file wiring, tool display, etc.) resolve
- * correctly.
+ * Transcript and activity entries use the channel backing `sessionAgentId`.
+ * Choice rows preserve requester `agentId` plus optional manager `sessionAgentId`.
  */
 export function adaptCollabToConversationEntries(options: {
   messages: CollaborationTranscriptMessage[]
@@ -83,7 +82,8 @@ function mapChoiceRequest(
 ): ChoiceRequestEvent {
   return {
     type: 'choice_request',
-    agentId: r.agentId || sessionAgentId,
+    agentId: r.agentId || r.sessionAgentId || sessionAgentId,
+    sessionAgentId: r.sessionAgentId ?? sessionAgentId,
     choiceId: r.choiceId,
     questions: r.questions,
     status: r.status,

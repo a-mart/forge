@@ -41,6 +41,7 @@ import {
   createInitialCollabWsState,
   type CollabWsState,
 } from '../collab-ws-state'
+import { upsertCollabChoiceRequest } from './choice-requests'
 import { WebSocketTransport } from '../ws-client/websocket-transport'
 
 // ---------------------------------------------------------------------------
@@ -568,18 +569,12 @@ export class CollabWsClient {
   private handleChoiceRequest(event: CollaborationChoiceRequestEvent): void {
     if (event.channelId !== this.state.activeChannelId) return
 
-    const existing = this.state.pendingChoiceRequests
-    const idx = existing.findIndex((cr) => cr.choiceId === event.request.choiceId)
-
-    if (idx >= 0) {
-      // Update existing choice request
-      const updated = [...existing]
-      updated[idx] = event.request
-      this.updateState({ pendingChoiceRequests: updated })
-    } else if (event.request.status === 'pending') {
-      // Add new pending request
-      this.updateState({ pendingChoiceRequests: [...existing, event.request] })
-    }
+    this.updateState({
+      pendingChoiceRequests: upsertCollabChoiceRequest(
+        this.state.pendingChoiceRequests,
+        event.request,
+      ),
+    })
   }
 
   private handleMessagePinned(event: CollaborationMessagePinnedEvent): void {

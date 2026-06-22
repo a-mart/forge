@@ -204,24 +204,18 @@ export class CollabCommandHandler {
     for (const historicalChoiceRequest of conversationHistory
       .filter(isHistoricalChoiceRequest)
       .slice(-DEFAULT_SUBSCRIBE_MESSAGE_COUNT)) {
-      this.send(socket, toCollaborationChoiceRequestEvent(channelId, historicalChoiceRequest));
-    }
-
-    for (const pendingChoiceId of this.swarmManager.getPendingChoiceIdsForSession(channel.sessionAgentId)) {
-      const pendingChoice = this.swarmManager.getPendingChoice(pendingChoiceId);
-      if (!pendingChoice || pendingChoice.sessionAgentId !== channel.sessionAgentId) {
-        continue;
-      }
-
       this.send(
         socket,
-        toCollaborationChoiceRequestEvent(channelId, {
-          agentId: pendingChoice.agentId,
-          choiceId: pendingChoiceId,
-          questions: pendingChoice.questions,
-          status: "pending",
-          timestamp: new Date().toISOString(),
-        }),
+        toCollaborationChoiceRequestEvent(channelId, historicalChoiceRequest, channel.sessionAgentId),
+      );
+    }
+
+    for (const pendingChoiceEvent of this.swarmManager.getPendingChoiceRequestsForSession(
+      channel.sessionAgentId,
+    )) {
+      this.send(
+        socket,
+        toCollaborationChoiceRequestEvent(channelId, pendingChoiceEvent, channel.sessionAgentId),
       );
     }
 
@@ -574,9 +568,11 @@ function toCollaborationChoiceRequestEvent(
   channelId: string,
   entry: Pick<
     Extract<ConversationEntry, { type: "choice_request" }>,
-    "agentId" | "choiceId" | "questions" | "status" | "answers" | "timestamp"
+    "agentId" | "choiceId" | "questions" | "status" | "answers" | "timestamp" | "sessionAgentId"
   >,
+  fallbackSessionAgentId?: string,
 ): CollaborationChoiceRequestEvent {
+  const sessionAgentId = entry.sessionAgentId ?? fallbackSessionAgentId;
   return {
     type: "collab_choice_request",
     channelId,
@@ -587,6 +583,7 @@ function toCollaborationChoiceRequestEvent(
       status: entry.status,
       ...(entry.answers ? { answers: entry.answers } : {}),
       timestamp: entry.timestamp,
+      ...(sessionAgentId ? { sessionAgentId } : {}),
     },
   };
 }

@@ -388,6 +388,8 @@ export interface CollaborationChoiceRequestEvent {
   channelId: string
   request: {
     agentId: string
+    /** Owning channel backing manager session; optional for mixed-version payloads. */
+    sessionAgentId?: string
     choiceId: string
     questions: ChoiceQuestion[]
     status: ChoiceRequestStatus

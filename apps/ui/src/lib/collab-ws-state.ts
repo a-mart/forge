@@ -20,6 +20,8 @@ import type {
 
 export interface CollabChoiceRequest {
   agentId: string
+  /** Owning channel backing manager session; optional for mixed-version payloads. */
+  sessionAgentId?: string
   choiceId: string
   questions: ChoiceQuestion[]
   status: ChoiceRequestStatus
@@ -79,7 +81,7 @@ export interface CollabWsState {
     streamingStartedAt?: number
   }>
 
-  /** Pending choice requests for the active channel */
+  /** Recent choice lifecycle rows (pending, answered, cancelled, expired) for the active channel */
   pendingChoiceRequests: CollabChoiceRequest[]
 
   // --- Unread / read-state tracking (server-authoritative per-channel) ---

@@ -541,6 +541,7 @@ export class CollabSubscriptionManager {
         status: event.status,
         ...(event.answers ? { answers: event.answers } : {}),
         timestamp: event.timestamp,
+        sessionAgentId: event.sessionAgentId ?? backingSessionAgentId,
       },
     };
 

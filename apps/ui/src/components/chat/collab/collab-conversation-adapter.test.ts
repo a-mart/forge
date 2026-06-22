@@ -214,7 +214,42 @@ describe('adaptCollabToConversationEntries', () => {
       sessionAgentId: AGENT_ID,
     })
 
-    expect(entries[0]).toMatchObject({ agentId: AGENT_ID })
+    expect(entries[0]).toMatchObject({ agentId: AGENT_ID, sessionAgentId: AGENT_ID })
+  })
+
+  it('maps worker-owned choices with requester agentId and manager sessionAgentId', () => {
+    const entries = adaptCollabToConversationEntries({
+      messages: [],
+      choiceRequests: [
+        choice({
+          agentId: 'worker-1',
+          sessionAgentId: AGENT_ID,
+          status: 'pending',
+        }),
+      ],
+      activity: [],
+      sessionAgentId: AGENT_ID,
+    })
+
+    expect(entries[0]).toMatchObject({
+      type: 'choice_request',
+      agentId: 'worker-1',
+      sessionAgentId: AGENT_ID,
+    })
+  })
+
+  it('falls back to selected channel sessionAgentId for old payloads missing sessionAgentId', () => {
+    const entries = adaptCollabToConversationEntries({
+      messages: [],
+      choiceRequests: [choice({ agentId: 'worker-1' })],
+      activity: [],
+      sessionAgentId: AGENT_ID,
+    })
+
+    expect(entries[0]).toMatchObject({
+      agentId: 'worker-1',
+      sessionAgentId: AGENT_ID,
+    })
   })
 
   it('handles empty inputs gracefully', () => {

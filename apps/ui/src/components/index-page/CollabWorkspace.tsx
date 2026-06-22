@@ -46,8 +46,12 @@ function filterEntriesByView(
     return entries
   }
 
-  // Web view: show only conversation_message entries sourced from the web channel
+  // Web view: show conversation messages from web/cli/default channels plus choice lifecycle rows
   return entries.filter((entry) => {
+    if (entry.type === 'choice_request') {
+      return true
+    }
+
     if (entry.type !== 'conversation_message') {
       return false
     }

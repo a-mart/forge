@@ -389,6 +389,137 @@ describe('CollabWorkspace MessageList integration', () => {
 
     expect(pinMessage).toHaveBeenCalledWith('channel-1', 'msg-1', true)
   })
+
+  it('includes choice lifecycle rows in the default web view', () => {
+    collabAdapterCapture.entries = [
+      {
+        type: 'conversation_message',
+        agentId: 'session-1',
+        id: 'msg-1',
+        role: 'assistant',
+        text: 'Hello',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'speak_to_user',
+        sourceContext: { channel: 'web' },
+      },
+      {
+        type: 'choice_request',
+        agentId: 'session-1',
+        sessionAgentId: 'session-1',
+        choiceId: 'choice-1',
+        questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+        status: 'answered',
+        answers: [{ questionId: 'q1', selectedOptionIds: ['a'] }],
+        timestamp: '2026-01-01T00:01:00.000Z',
+      },
+      {
+        type: 'agent_tool_call',
+        agentId: 'session-1',
+        actorAgentId: 'worker-1',
+        timestamp: '2026-01-01T00:02:00.000Z',
+        kind: 'tool_execution_start',
+        toolName: 'bash',
+        toolCallId: 'tool-1',
+        text: '{}',
+      },
+    ]
+
+    collabContextMock.value = {
+      clientRef: { current: { markChannelRead: vi.fn() } },
+      state: buildStateWithChannel({ channelHistoryLoaded: true }),
+    }
+
+    renderWorkspace({ channelId: 'channel-1' })
+
+    const visibleEntries = messageListCapture.lastPropsRef.current?.messages as Array<{ type: string }>
+    expect(visibleEntries.map((entry) => entry.type)).toEqual(['conversation_message', 'choice_request'])
+  })
+
+  it('derives pendingChoiceIds only from pending lifecycle rows', () => {
+    collabAdapterCapture.entries = [
+      {
+        type: 'conversation_message',
+        agentId: 'session-1',
+        id: 'msg-1',
+        role: 'assistant',
+        text: 'Hello',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'speak_to_user',
+        sourceContext: { channel: 'web' },
+      },
+    ]
+
+    collabContextMock.value = {
+      clientRef: { current: { sendChoiceResponse: vi.fn(), sendChoiceCancel: vi.fn(), markChannelRead: vi.fn() } },
+      state: buildStateWithChannel({
+        channelHistoryLoaded: true,
+        pendingChoiceRequests: [
+          {
+            agentId: 'session-1',
+            sessionAgentId: 'session-1',
+            choiceId: 'pending-choice',
+            questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+            status: 'pending',
+            timestamp: '2026-01-01T00:00:00.000Z',
+          },
+          {
+            agentId: 'session-1',
+            sessionAgentId: 'session-1',
+            choiceId: 'answered-choice',
+            questions: [{ id: 'q2', question: 'Done?', options: [{ id: 'a', label: 'A' }] }],
+            status: 'answered',
+            answers: [{ questionId: 'q2', selectedOptionIds: ['a'] }],
+            timestamp: '2026-01-01T00:01:00.000Z',
+          },
+        ],
+      }),
+    }
+
+    renderWorkspace({ channelId: 'channel-1' })
+
+    const pendingChoiceIds = messageListCapture.lastPropsRef.current?.pendingChoiceIds as Set<string>
+    expect(Array.from(pendingChoiceIds)).toEqual(['pending-choice'])
+  })
+
+  it('sends choice submit/cancel using the active channel id only', () => {
+    const sendChoiceResponse = vi.fn()
+    const sendChoiceCancel = vi.fn()
+
+    collabAdapterCapture.entries = [
+      {
+        type: 'conversation_message',
+        agentId: 'session-1',
+        id: 'msg-1',
+        role: 'assistant',
+        text: 'Hello',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        source: 'speak_to_user',
+        sourceContext: { channel: 'web' },
+      },
+    ]
+
+    collabContextMock.value = {
+      clientRef: { current: { sendChoiceResponse, sendChoiceCancel, markChannelRead: vi.fn() } },
+      state: buildStateWithChannel({ channelHistoryLoaded: true }),
+    }
+
+    renderWorkspace({ channelId: 'channel-1' })
+
+    const onChoiceSubmit = messageListCapture.lastPropsRef.current?.onChoiceSubmit as
+      | ((agentId: string, choiceId: string, answers: unknown[]) => void)
+      | undefined
+    const onChoiceCancel = messageListCapture.lastPropsRef.current?.onChoiceCancel as
+      | ((agentId: string, choiceId: string) => void)
+      | undefined
+
+    onChoiceSubmit?.('ignored-agent', 'choice-1', [{ questionId: 'q1', selectedOptionIds: ['a'] }])
+    onChoiceCancel?.('ignored-agent', 'choice-2')
+
+    expect(sendChoiceResponse).toHaveBeenCalledWith('channel-1', 'choice-1', [
+      { questionId: 'q1', selectedOptionIds: ['a'] },
+    ])
+    expect(sendChoiceCancel).toHaveBeenCalledWith('channel-1', 'choice-2')
+  })
 })
 
 describe('CollabWorkspace MessageInput integration', () => {

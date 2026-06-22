@@ -855,4 +855,65 @@ describe('CollabWsClient (transport-backed)', () => {
       client.destroy()
     })
   })
+
+  it('upserts choice lifecycle rows for the active channel', () => {
+    const client = new CollabWsClient('ws://127.0.0.1:8787/collab')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    client.setActiveChannel('channel-1')
+
+    emitServerEvent(socket, {
+      type: 'collab_choice_request',
+      channelId: 'channel-1',
+      request: {
+        agentId: 'session-1',
+        sessionAgentId: 'session-1',
+        choiceId: 'choice-1',
+        questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+        status: 'pending',
+        timestamp: '2026-04-14T12:00:00.000Z',
+      },
+    })
+
+    emitServerEvent(socket, {
+      type: 'collab_choice_request',
+      channelId: 'channel-1',
+      request: {
+        agentId: 'session-1',
+        sessionAgentId: 'session-1',
+        choiceId: 'choice-1',
+        questions: [{ id: 'q1', question: 'Pick one', options: [{ id: 'a', label: 'A' }] }],
+        status: 'answered',
+        answers: [{ questionId: 'q1', selectedOptionIds: ['a'] }],
+        timestamp: '2026-04-14T12:01:00.000Z',
+      },
+    })
+
+    expect(client.getState().pendingChoiceRequests).toEqual([
+      expect.objectContaining({ choiceId: 'choice-1', status: 'answered', sessionAgentId: 'session-1' }),
+    ])
+
+    emitServerEvent(socket, {
+      type: 'collab_choice_request',
+      channelId: 'channel-2',
+      request: {
+        agentId: 'session-2',
+        choiceId: 'choice-2',
+        questions: [{ id: 'q1', question: 'Other', options: [{ id: 'a', label: 'A' }] }],
+        status: 'pending',
+        timestamp: '2026-04-14T12:02:00.000Z',
+      },
+    })
+
+    expect(client.getState().pendingChoiceRequests).toHaveLength(1)
+
+    client.setActiveChannel('channel-2')
+    expect(client.getState().pendingChoiceRequests).toEqual([])
+
+    client.destroy()
+  })
 })

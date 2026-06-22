@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   AgentToolCallEvent,
+  ChoiceRequestEvent,
   CollaborationBootstrapEvent,
   CollaborationChannel,
   CollaborationChannelActivityUpdatedEvent,
   CollaborationChannelMessageEvent,
+  CollaborationChoiceRequestEvent,
   CollaborationReadStateUpdatedEvent,
   ConversationMessageEvent,
   ServerEvent,
@@ -1159,6 +1161,178 @@ describe("collaboration websocket protocol", () => {
       (event) => event.channelId === channel.channelId && event.messageId === messageEvent.message.id,
     );
     expect(pinnedEvent.pinned).toBe(true);
+  });
+
+  it("fans out live manager-origin and worker-origin choices with sessionAgentId", async () => {
+    const { server, baseUrl } = await startCollaborationServer();
+    const cookie = await login(baseUrl);
+    const channel = await createChannel(baseUrl, cookie, { name: "Choices", aiEnabled: false });
+    const ws = await openAuthenticatedWs(baseUrl, cookie);
+
+    ws.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channel.channelId }));
+    await ws.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channel.channelId);
+
+    const swarmManager = (server as unknown as {
+      swarmManager: {
+        conversationProjector: {
+          emitChoiceRequest(event: ChoiceRequestEvent, options?: { historyAgentId?: string }): void;
+        };
+      };
+    }).swarmManager;
+
+    swarmManager.conversationProjector.emitChoiceRequest({
+      type: "choice_request",
+      agentId: channel.sessionAgentId,
+      sessionAgentId: channel.sessionAgentId,
+      choiceId: "manager-choice-1",
+      questions: [{ id: "q1", question: "Manager choice?", options: [{ id: "a", label: "A" }] }],
+      status: "pending",
+      timestamp: "2026-04-14T12:00:00.000Z",
+    });
+
+    const managerChoice = await ws.waitForEvent(
+      "collab_choice_request",
+      (event) => event.request.choiceId === "manager-choice-1",
+    ) as CollaborationChoiceRequestEvent;
+    expect(managerChoice.request).toMatchObject({
+      agentId: channel.sessionAgentId,
+      sessionAgentId: channel.sessionAgentId,
+      status: "pending",
+    });
+
+    swarmManager.conversationProjector.emitChoiceRequest({
+      type: "choice_request",
+      agentId: "worker-choice-origin",
+      sessionAgentId: channel.sessionAgentId,
+      choiceId: "worker-choice-1",
+      questions: [{ id: "q1", question: "Worker choice?", options: [{ id: "a", label: "A" }] }],
+      status: "pending",
+      timestamp: "2026-04-14T12:00:01.000Z",
+    });
+
+    const workerChoice = await ws.waitForEvent(
+      "collab_choice_request",
+      (event) => event.request.choiceId === "worker-choice-1",
+    ) as CollaborationChoiceRequestEvent;
+    expect(workerChoice.request).toMatchObject({
+      agentId: "worker-choice-origin",
+      sessionAgentId: channel.sessionAgentId,
+      status: "pending",
+    });
+    expect(workerChoice.request.agentId).not.toBe(workerChoice.request.sessionAgentId);
+  });
+
+  it("replays answered lifecycle rows and pending registry rows with original timestamps", async () => {
+    const { server, baseUrl } = await startCollaborationServer();
+    const cookie = await login(baseUrl);
+    const channel = await createChannel(baseUrl, cookie, { name: "Choice Replay", aiEnabled: false });
+
+    const swarmManager = (server as unknown as {
+      swarmManager: {
+        conversationProjector: {
+          emitChoiceRequest(event: ChoiceRequestEvent, options?: { historyAgentId?: string }): void;
+        };
+        requestUserChoice(
+          agentId: string,
+          questions: Array<{ id: string; question: string; options?: Array<{ id: string; label: string }> }>,
+        ): Promise<unknown>;
+      };
+    }).swarmManager;
+
+    swarmManager.conversationProjector.emitChoiceRequest({
+      type: "choice_request",
+      agentId: channel.sessionAgentId,
+      sessionAgentId: channel.sessionAgentId,
+      choiceId: "answered-choice-1",
+      questions: [{ id: "q1", question: "Answered?", options: [{ id: "a", label: "A" }] }],
+      status: "answered",
+      answers: [{ questionId: "q1", selectedOptionIds: ["a"] }],
+      timestamp: "2026-04-14T12:00:00.000Z",
+    }, { historyAgentId: channel.sessionAgentId });
+
+    const pendingPromise = swarmManager.requestUserChoice(channel.sessionAgentId, [
+      { id: "q2", question: "Still pending?", options: [{ id: "a", label: "A" }] },
+    ]);
+    const pendingRegistryEvents = (server as unknown as {
+      swarmManager: {
+        getPendingChoiceRequestsForSession(sessionAgentId: string): ChoiceRequestEvent[];
+      };
+    }).swarmManager.getPendingChoiceRequestsForSession(channel.sessionAgentId);
+    expect(pendingRegistryEvents).toHaveLength(1);
+    const registryPendingTimestamp = pendingRegistryEvents[0]?.timestamp;
+    expect(registryPendingTimestamp).toBeTruthy();
+
+    const replayWs = await openAuthenticatedWs(baseUrl, cookie);
+    replayWs.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channel.channelId }));
+    await replayWs.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channel.channelId);
+
+    const replayEvents = replayWs.events.filter(
+      (event): event is CollaborationChoiceRequestEvent => event.type === "collab_choice_request",
+    );
+
+    expect(replayEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          request: expect.objectContaining({
+            choiceId: "answered-choice-1",
+            status: "answered",
+            sessionAgentId: channel.sessionAgentId,
+            timestamp: "2026-04-14T12:00:00.000Z",
+          }),
+        }),
+        expect.objectContaining({
+          request: expect.objectContaining({
+            status: "pending",
+            sessionAgentId: channel.sessionAgentId,
+          }),
+        }),
+      ]),
+    );
+
+    const pendingRows = replayEvents.filter((event) => event.request.status === "pending");
+    expect(pendingRows.length).toBeGreaterThanOrEqual(1);
+    expect(
+      pendingRows.some((event) => event.request.timestamp === registryPendingTimestamp),
+    ).toBe(true);
+    expect(
+      pendingRows.every((event) => event.request.sessionAgentId === channel.sessionAgentId),
+    ).toBe(true);
+
+    pendingPromise.catch(() => undefined);
+  });
+
+  it("drops live collab fanout when sessionAgentId is present but mismatched", async () => {
+    const { server, baseUrl } = await startCollaborationServer();
+    const cookie = await login(baseUrl);
+    const channel = await createChannel(baseUrl, cookie, { name: "Mismatch", aiEnabled: false });
+    const ws = await openAuthenticatedWs(baseUrl, cookie);
+
+    ws.socket.send(JSON.stringify({ type: "collab_subscribe_channel", channelId: channel.channelId }));
+    await ws.waitForEvent("collab_channel_ready", (event) => event.channel.channelId === channel.channelId);
+
+    const swarmManager = (server as unknown as {
+      swarmManager: {
+        conversationProjector: {
+          emitChoiceRequest(event: ChoiceRequestEvent, options?: { historyAgentId?: string }): void;
+        };
+      };
+    }).swarmManager;
+
+    swarmManager.conversationProjector.emitChoiceRequest({
+      type: "choice_request",
+      agentId: channel.sessionAgentId,
+      sessionAgentId: "not-a-collab-session",
+      choiceId: "invalid-session-choice",
+      questions: [{ id: "q1", question: "Invalid?", options: [{ id: "a", label: "A" }] }],
+      status: "pending",
+      timestamp: "2026-04-14T12:00:00.000Z",
+    });
+
+    await expectNoSocketEvent(
+      ws,
+      "collab_choice_request",
+      (event) => event.request.choiceId === "invalid-session-choice",
+    );
   });
 });
 
