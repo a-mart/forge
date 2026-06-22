@@ -5,7 +5,7 @@ The Authentication pane lists each provider on its own row. Every row shows the 
 - **Anthropic** — Claude-based workers and managers. Supports either OAuth or API key auth.
 - **OpenAI** — Codex runtime sessions and voice transcription. Supports OAuth, API key auth, or Forge Auth broker mode for OpenAI/Codex in v1.
 - **Claude SDK** — Native Claude Code CLI OAuth path for Claude models. OAuth only.
-- **Cursor SDK** — Native Cursor SDK runtime for Composer 2.5. API key only via `CURSOR_API_KEY` for both manager and specialist sessions. Background auth/transport failures stay inside the worker runtime and surface as worker failures, not app crashes.
+- **Cursor SDK** — Native Cursor SDK runtime for Composer 2.5 specialist sessions. API key only via `CURSOR_API_KEY`. Background auth/transport failures stay inside the worker runtime and surface as worker failures, not app crashes.
 - **xAI** — Grok-based workers.
 
 ## Configuring a provider
@@ -39,4 +39,4 @@ If the OAuth flow gets stuck, click **Clear** to reset it and try again.
 
 ## Which credential do I need?
 
-You need at least one provider credential to run agents. Most setups use Anthropic for Claude-based workers. Add OpenAI or enable Forge Auth broker mode if you want Codex runtime sessions; local OpenAI credentials are still the path for voice transcription. Add xAI if you want to use Grok models. Use Claude SDK if you want the native Claude Code CLI OAuth path instead of an API key. Use Cursor SDK if you want Composer 2.5 access through `CURSOR_API_KEY` in manager and specialist selectors.
+You need at least one provider credential to run agents. Most setups use Anthropic for Claude-based workers. Add OpenAI or enable Forge Auth broker mode if you want Codex runtime sessions; local OpenAI credentials are still the path for voice transcription. Add xAI if you want to use Grok models. Use Claude SDK if you want the native Claude Code CLI OAuth path instead of an API key. Use Cursor SDK if you want Composer 2.5 access through `CURSOR_API_KEY` in specialist selectors.
