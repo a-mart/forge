@@ -35,6 +35,7 @@ export interface CliFeatureFlags {
   activeToolSnapshot: boolean
   projectAgentRunTarget: boolean
   sessionTranscript: boolean
+  sessionCompaction: boolean
   builderRuntimeOnly: boolean
 }
 
@@ -360,6 +361,20 @@ export interface CliRunCommand {
   cli?: CliSessionMetadata
 }
 
+export type CliSessionCompactionAction = 'compact' | 'smart_compact'
+export type CliSessionCompactionOutcome = 'compacted' | 'skipped' | 'not_reduced'
+
+export interface CliSessionCompactionResult {
+  action: CliSessionCompactionAction
+  sessionAgentId: string
+  profileId?: string
+  outcome: CliSessionCompactionOutcome
+  compacted: boolean
+  reason?: string
+  customInstructionsProvided: boolean
+  completedAt: string
+}
+
 export type CliSessionMutationCommand =
   | { type: 'stop_session'; requestId: string; agentId: string }
   | { type: 'resume_session'; requestId: string; agentId: string }
@@ -368,6 +383,8 @@ export type CliSessionMutationCommand =
   | { type: 'rename_session'; requestId: string; agentId: string; label: string }
   | { type: 'pin_session'; requestId: string; agentId: string; pinned: boolean }
   | { type: 'fork_session'; requestId: string; sourceAgentId: string; label?: string; fromMessageId?: string }
+  | { type: 'compact_session'; requestId: string; agentId: string; customInstructions?: string }
+  | { type: 'smart_compact_session'; requestId: string; agentId: string; customInstructions?: string }
 
 export interface CliChoiceResponseCommand {
   type: 'cli_choice_response'

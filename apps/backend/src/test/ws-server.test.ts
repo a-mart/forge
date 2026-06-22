@@ -13,7 +13,7 @@ import { getCommonKnowledgePath, getProfileUnreadStatePath } from '../swarm/data
 import { getSessionTasksPath } from '../swarm/storage/data-paths.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
-import type { ServerEvent } from '@forge/protocol'
+import type { CliSessionCompactionResult, ServerEvent } from '@forge/protocol'
 import { getAvailablePort } from '../test-support/index.js'
 import {
   WsServerTestSwarmManager as TestSwarmManager,
@@ -2926,6 +2926,275 @@ describe('SwarmWebSocketServer', () => {
       fieldErrors: [{ field: 'agentId' }],
     })
 
+    client.send(JSON.stringify({
+      type: 'compact_session',
+      requestId: 'compact-missing-session',
+      agentId: 'missing-session',
+    }))
+    expect(await waitForCliError(events, 'compact-missing-session')).toMatchObject({
+      commandType: 'compact_session',
+      code: 'unknown_session',
+      status: 404,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'smart_compact_session',
+      requestId: 'smart-compact-worker-session',
+      agentId: worker.agentId,
+    }))
+    expect(await waitForCliError(events, 'smart-compact-worker-session')).toMatchObject({
+      commandType: 'smart_compact_session',
+      code: 'invalid_session_target',
+      status: 400,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'compact_session',
+      requestId: 'compact-system-session',
+      agentId: cortexSession.agentId,
+    }))
+    expect(await waitForCliError(events, 'compact-system-session')).toMatchObject({
+      commandType: 'compact_session',
+      code: 'system_profile',
+      status: 403,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'smart_compact_session',
+      requestId: 'smart-compact-collab-session',
+      agentId: collabSession.agentId,
+    }))
+    expect(await waitForCliError(events, 'smart-compact-collab-session')).toMatchObject({
+      commandType: 'smart_compact_session',
+      code: 'unsupported_session_surface',
+      status: 403,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('runs first-class CLI compaction commands without slash-command wrapping', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI compaction' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const pinned = await manager.appendConversationUserMessage('Pinned context for CLI compaction.', {
+      targetAgentId: 'manager',
+      sourceContext: { channel: 'web' },
+    })
+    expect(pinned.event.id).toBeTruthy()
+    await manager.pinMessage('manager', pinned.event.id!, true)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+    client.send(JSON.stringify({ type: 'subscribe_headless', agentId: 'manager', requestId: 'sub-cli-compaction' }))
+    await waitForEvent(events, (event) => event.type === 'headless_ready' && event.requestId === 'sub-cli-compaction')
+
+    const runtime = manager.runtimeByAgentId.get('manager')
+    expect(runtime).toBeDefined()
+    const sendCallCountBeforeCompaction = runtime!.sendCalls.length
+
+    client.send(JSON.stringify({
+      type: 'compact_session',
+      requestId: 'compact-cli-session',
+      agentId: 'manager',
+      customInstructions: '   ',
+    }))
+    const compactAck = await waitForCliSuccess(events, 'compact-cli-session')
+    expect(compactAck.result).toMatchObject({
+      action: 'compact',
+      sessionAgentId: 'manager',
+      profileId: 'manager',
+      outcome: 'compacted',
+      compacted: true,
+      customInstructionsProvided: false,
+      completedAt: expect.any(String),
+    } satisfies Partial<CliSessionCompactionResult>)
+    expect(runtime!.compactCalls).toHaveLength(1)
+    expect(runtime!.compactCalls[0]).toContain('Pinned context for CLI compaction.')
+    expect(runtime!.sendCalls).toHaveLength(sendCallCountBeforeCompaction)
+    expect(runtime!.sendCalls.some((call) => call.message.includes('/compact'))).toBe(false)
+    const compactSystemMessage = await waitForEvent(
+      events,
+      (event) => event.type === 'conversation_message' && event.text === 'Compacting manager context...',
+    )
+    expect(compactSystemMessage).toMatchObject({
+      type: 'conversation_message',
+      sourceContext: { channel: 'cli', messageId: 'compact-cli-session' },
+    })
+
+    runtime!.smartCompactResult = { compacted: false, reason: 'claude_runtime_below_compaction_threshold' }
+    client.send(JSON.stringify({
+      type: 'smart_compact_session',
+      requestId: 'smart-compact-skip',
+      agentId: 'manager',
+      customInstructions: ' Preserve open TODOs ',
+    }))
+    const skippedAck = await waitForCliSuccess(events, 'smart-compact-skip')
+    expect(skippedAck.result).toMatchObject({
+      action: 'smart_compact',
+      sessionAgentId: 'manager',
+      outcome: 'skipped',
+      compacted: false,
+      reason: 'claude_runtime_below_compaction_threshold',
+      customInstructionsProvided: true,
+    } satisfies Partial<CliSessionCompactionResult>)
+    expect(runtime!.smartCompactCalls.at(-1)).toContain('Preserve open TODOs')
+
+    runtime!.smartCompactResult = { compacted: false, reason: 'runtime_aborted' }
+    client.send(JSON.stringify({
+      type: 'smart_compact_session',
+      requestId: 'smart-compact-not-reduced',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliSuccess(events, 'smart-compact-not-reduced')).resolves.toMatchObject({
+      result: {
+        action: 'smart_compact',
+        outcome: 'not_reduced',
+        compacted: false,
+        reason: 'runtime_aborted',
+        customInstructionsProvided: false,
+      },
+    })
+
+    runtime!.smartCompactResult = { compacted: true }
+    client.send(JSON.stringify({
+      type: 'smart_compact_session',
+      requestId: 'smart-compact-success',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliSuccess(events, 'smart-compact-success')).resolves.toMatchObject({
+      result: {
+        action: 'smart_compact',
+        outcome: 'compacted',
+        compacted: true,
+      },
+    })
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('maps known CLI compaction runtime errors to typed request errors', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+    const cliAccessService = new CliAccessService({
+      dataDir: config.paths.dataDir,
+      now: () => '2026-05-11T00:00:00.000Z',
+    })
+    const key = await cliAccessService.generateKey({ name: 'CLI compaction errors' })
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const runtime = manager.runtimeByAgentId.get('manager')
+    expect(runtime).toBeDefined()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      cliAccessService,
+    })
+    await server.start()
+
+    const { client, events } = await openCliWebSocket(`ws://${config.host}:${config.port}/api/cli/ws`, key.plaintextKey)
+
+    runtime!.compactImpl = async () => {
+      throw new Error('Claude runtime for agent manager is already compacting.')
+    }
+    client.send(JSON.stringify({
+      type: 'compact_session',
+      requestId: 'compact-in-progress',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliError(events, 'compact-in-progress')).resolves.toMatchObject({
+      commandType: 'compact_session',
+      code: 'compaction_in_progress',
+      status: 409,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    runtime!.compactImpl = async () => {
+      throw new Error('Context recovery is already in progress')
+    }
+    client.send(JSON.stringify({
+      type: 'compact_session',
+      requestId: 'compact-context-recovery',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliError(events, 'compact-context-recovery')).resolves.toMatchObject({
+      commandType: 'compact_session',
+      code: 'compaction_in_progress',
+      status: 409,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    runtime!.compactImpl = async () => {
+      throw new Error('Claude runtime compaction requires agent manager to be idle.')
+    }
+    client.send(JSON.stringify({
+      type: 'compact_session',
+      requestId: 'compact-requires-idle',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliError(events, 'compact-requires-idle')).resolves.toMatchObject({
+      commandType: 'compact_session',
+      code: 'compaction_requires_idle',
+      status: 409,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    runtime!.smartCompactImpl = async () => {
+      throw new Error('Agent manager does not support smart compaction')
+    }
+    client.send(JSON.stringify({
+      type: 'smart_compact_session',
+      requestId: 'smart-compact-unsupported',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliError(events, 'smart-compact-unsupported')).resolves.toMatchObject({
+      commandType: 'smart_compact_session',
+      code: 'compaction_unsupported',
+      status: 409,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
+    const liveState = manager as unknown as { descriptors: Map<string, { status: AgentDescriptor['status'] }> }
+    liveState.descriptors.get('manager')!.status = 'stopped'
+    client.send(JSON.stringify({
+      type: 'compact_session',
+      requestId: 'compact-non-running',
+      agentId: 'manager',
+    }))
+    await expect(waitForCliError(events, 'compact-non-running')).resolves.toMatchObject({
+      commandType: 'compact_session',
+      code: 'non_running_session',
+      status: 409,
+      fieldErrors: [{ field: 'agentId' }],
+    })
+
     client.close()
     await once(client, 'close')
     await server.stop()
@@ -3110,6 +3379,20 @@ describe('SwarmWebSocketServer', () => {
       code: 'bad_request',
       status: 400,
       fieldErrors: [{ field: 'answers', message: 'Required field must be an array of valid choice answers.' }],
+    })
+
+    client.send(JSON.stringify({
+      type: 'compact_session',
+      requestId: 'compact-bad-instructions',
+      agentId: 'manager',
+      customInstructions: 42,
+    }))
+    const compactError = await waitForCliError(events, 'compact-bad-instructions')
+    expect(compactError).toMatchObject({
+      commandType: 'compact_session',
+      code: 'bad_request',
+      status: 400,
+      fieldErrors: [{ field: 'customInstructions', message: 'Must be a string when provided.' }],
     })
 
     client.close()
@@ -5230,6 +5513,39 @@ describe('SwarmWebSocketServer', () => {
       expect(Array.isArray(body.commands)).toBe(true)
       expect(body.commands).toHaveLength(0)
     }
+
+    const runtime = manager.runtimeByAgentId.get('manager')
+    expect(runtime).toBeDefined()
+    runtime!.smartCompactResult = { compacted: false, reason: 'runtime_already_compacted' }
+    client.send(
+      JSON.stringify({
+        type: 'api_proxy',
+        requestId: 'proxy-smart-compact-1',
+        method: 'POST',
+        path: '/api/agents/manager/smart-compact',
+        body: JSON.stringify({ customInstructions: 'Preserve API proxy parity.' }),
+      }),
+    )
+
+    const smartCompactResponse = await waitForEvent(
+      events,
+      (event) => event.type === 'api_proxy_response' && event.requestId === 'proxy-smart-compact-1',
+    )
+    expect(smartCompactResponse.type).toBe('api_proxy_response')
+    if (smartCompactResponse.type === 'api_proxy_response') {
+      expect(smartCompactResponse.status).toBe(200)
+      const body = JSON.parse(smartCompactResponse.body) as {
+        ok?: boolean
+        agentId?: string
+        result?: { compacted: false; reason: string }
+      }
+      expect(body).toEqual({
+        ok: true,
+        agentId: 'manager',
+        result: { compacted: false, reason: 'runtime_already_compacted' },
+      })
+    }
+    expect(runtime!.smartCompactCalls.at(-1)).toBe('Preserve API proxy parity.')
 
     client.send(
       JSON.stringify({

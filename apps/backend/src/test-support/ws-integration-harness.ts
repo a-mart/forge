@@ -23,6 +23,10 @@ export class WsServerTestFakeRuntime {
   readonly descriptor: AgentDescriptor
   private readonly sessionManager: SessionManager
   compactCalls: Array<string | undefined> = []
+  smartCompactCalls: Array<string | undefined> = []
+  smartCompactResult: { compacted: true } | { compacted: false; reason: string } = { compacted: true }
+  compactImpl?: (customInstructions?: string) => Promise<unknown>
+  smartCompactImpl?: (customInstructions?: string) => Promise<{ compacted: true } | { compacted: false; reason: string }>
   sendCalls: Array<{ message: string; delivery: RequestedDeliveryMode }> = []
   pendingCount = 0
   terminateCalls = 0
@@ -85,10 +89,21 @@ export class WsServerTestFakeRuntime {
 
   async compact(customInstructions?: string): Promise<unknown> {
     this.compactCalls.push(customInstructions)
+    if (this.compactImpl) {
+      return this.compactImpl(customInstructions)
+    }
     return {
       status: 'ok',
       customInstructions: customInstructions ?? null,
     }
+  }
+
+  async smartCompact(customInstructions?: string): Promise<{ compacted: true } | { compacted: false; reason: string }> {
+    this.smartCompactCalls.push(customInstructions)
+    if (this.smartCompactImpl) {
+      return this.smartCompactImpl(customInstructions)
+    }
+    return this.smartCompactResult
   }
 
   getCustomEntries(customType: string): unknown[] {

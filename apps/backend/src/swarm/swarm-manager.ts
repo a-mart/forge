@@ -274,6 +274,7 @@ import type {
   RuntimeShutdownOptions,
   RuntimeUserMessage,
   SetPinnedContentOptions,
+  SmartCompactResult,
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
 import type { SwarmToolHost, SwarmToolSideEffectEvent } from "./swarm-tool-host.js";
@@ -5355,7 +5356,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options?: {
       customInstructions?: string;
       sourceContext?: MessageSourceContext;
-      trigger?: "api" | "slash_command";
+      trigger?: "api" | "slash_command" | "cli";
     }
   ): Promise<unknown> {
     const descriptor = this.descriptors.get(agentId);
@@ -5456,9 +5457,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options?: {
       customInstructions?: string;
       sourceContext?: MessageSourceContext;
-      trigger?: "api" | "slash_command";
+      trigger?: "api" | "slash_command" | "cli";
     }
-  ): Promise<void> {
+  ): Promise<SmartCompactResult> {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor) {
       throw new Error(`Unknown target agent: ${agentId}`);
@@ -5547,6 +5548,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         compacted: result.compacted,
         reason: result.compacted ? undefined : result.reason
       });
+
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 

@@ -7,6 +7,7 @@ import type {
   CliFieldError,
   CliRunCommand,
   CliSendMessageCommand,
+  CliSessionCompactionResult,
   CliSessionMutationCommand,
   CliWsCommand,
   MessageSourceContext,
@@ -14,6 +15,7 @@ import type {
 } from "@forge/protocol";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { requireNonSystemProfile } from "../swarm/system-profile-guards.js";
+import type { SmartCompactResult } from "../swarm/runtime-contracts.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { AgentDescriptor, ConversationAttachment, RequestedDeliveryMode } from "../swarm/types.js";
 import { sendWsEvent } from "./ws-send.js";
@@ -241,6 +243,49 @@ export class CliWsHandler {
         this.requireCliSession(command.agentId);
         const result = await this.swarmManager.pinSession(command.agentId, command.pinned);
         this.sendRequestSuccess(socket, command, { agentId: command.agentId, pinned: command.pinned, ...result });
+        return;
+      }
+
+      case "compact_session": {
+        const session = this.requireCliSession(command.agentId);
+        const customInstructions = normalizeCliCustomInstructions(command.customInstructions);
+        try {
+          await this.swarmManager.compactAgentContext(command.agentId, {
+            customInstructions,
+            sourceContext: { channel: "cli", messageId: command.requestId },
+            trigger: "cli",
+          });
+        } catch (error) {
+          throw mapCliCompactionError(error, "compact", "agentId");
+        }
+        this.sendRequestSuccess(socket, command, buildCliSessionCompactionResult({
+          action: "compact",
+          session,
+          customInstructionsProvided: customInstructions !== undefined,
+          smartResult: { compacted: true },
+        }));
+        return;
+      }
+
+      case "smart_compact_session": {
+        const session = this.requireCliSession(command.agentId);
+        const customInstructions = normalizeCliCustomInstructions(command.customInstructions);
+        let smartResult: SmartCompactResult;
+        try {
+          smartResult = await this.swarmManager.smartCompactAgentContext(command.agentId, {
+            customInstructions,
+            sourceContext: { channel: "cli", messageId: command.requestId },
+            trigger: "cli",
+          });
+        } catch (error) {
+          throw mapCliCompactionError(error, "smart_compact", "agentId");
+        }
+        this.sendRequestSuccess(socket, command, buildCliSessionCompactionResult({
+          action: "smart_compact",
+          session,
+          customInstructionsProvided: customInstructions !== undefined,
+          smartResult,
+        }));
         return;
       }
 
@@ -488,6 +533,8 @@ const KNOWN_CLI_COMMAND_TYPES = new Set<CliCommandType>([
   "rename_session",
   "pin_session",
   "fork_session",
+  "compact_session",
+  "smart_compact_session",
   "cli_choice_response",
   "cli_choice_cancel",
 ]);
@@ -587,6 +634,13 @@ function validateCliCommand(record: Record<string, unknown>, type: CliCommandTyp
     case "clear_session":
       requireString(record, "requestId", errors);
       requireString(record, "agentId", errors);
+      break;
+
+    case "compact_session":
+    case "smart_compact_session":
+      requireString(record, "requestId", errors);
+      requireString(record, "agentId", errors);
+      optionalString(record, "customInstructions", errors);
       break;
 
     case "rename_session":
@@ -775,6 +829,77 @@ function buildRequestContext(record: Record<string, unknown>): CliRequestContext
   };
 }
 
+function normalizeCliCustomInstructions(customInstructions: string | undefined): string | undefined {
+  const trimmed = customInstructions?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function buildCliSessionCompactionResult(options: {
+  action: "compact" | "smart_compact";
+  session: AgentDescriptor & { role: "manager"; profileId: string };
+  customInstructionsProvided: boolean;
+  smartResult: SmartCompactResult;
+}): CliSessionCompactionResult {
+  const outcome = normalizeCliCompactionOutcome(options.smartResult);
+  return {
+    action: options.action,
+    sessionAgentId: options.session.agentId,
+    profileId: options.session.profileId,
+    outcome,
+    compacted: options.smartResult.compacted,
+    ...(!options.smartResult.compacted ? { reason: options.smartResult.reason } : {}),
+    customInstructionsProvided: options.customInstructionsProvided,
+    completedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeCliCompactionOutcome(result: SmartCompactResult): CliSessionCompactionResult["outcome"] {
+  if (result.compacted) {
+    return "compacted";
+  }
+
+  return isSkippedSmartCompactionReason(result.reason) ? "skipped" : "not_reduced";
+}
+
+function isSkippedSmartCompactionReason(reason: string): boolean {
+  return (
+    reason === "claude_runtime_below_compaction_threshold" ||
+    reason === "claude_runtime_context_usage_unknown" ||
+    reason === "runtime_already_compacted"
+  );
+}
+
+function mapCliCompactionError(error: unknown, action: "compact" | "smart_compact", field: string): CliCommandError {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("not running")) {
+    return new CliCommandError("non_running_session", message, 409, [{ field, message: "Session is not running." }]);
+  }
+
+  if (normalized.includes("does not support") && normalized.includes("compaction")) {
+    return new CliCommandError("compaction_unsupported", message, 409, [{ field, message: "Runtime does not support compaction." }]);
+  }
+
+  if (
+    normalized.includes("context recovery is already in progress") ||
+    normalized.includes("already compacting") ||
+    normalized.includes("already in progress")
+  ) {
+    return new CliCommandError("compaction_in_progress", message, 409, [{ field, message: "Compaction is already in progress." }]);
+  }
+
+  if (normalized.includes("requires") && normalized.includes("to be idle")) {
+    return new CliCommandError("compaction_requires_idle", message, 409, [{ field, message: "Compaction requires an idle session." }]);
+  }
+
+  if (normalized.includes("only supported") && normalized.includes("compaction")) {
+    return new CliCommandError("compaction_unsupported", message, 409, [{ field, message: "Compaction is not supported for this target." }]);
+  }
+
+  return new CliCommandError(`${action}_failed`, message, 500);
+}
+
 function buildCliSourceContext(command: CliSendMessageCommand | CliRunCommand): MessageSourceContext {
   const messageId = command.type === "cli_run" ? command.cli?.runId ?? command.requestId : command.requestId;
   return { channel: "cli", messageId };
@@ -788,7 +913,9 @@ function isCliSessionMutationCommand(command: CliWsCommand): command is CliSessi
     command.type === "clear_session" ||
     command.type === "rename_session" ||
     command.type === "pin_session" ||
-    command.type === "fork_session"
+    command.type === "fork_session" ||
+    command.type === "compact_session" ||
+    command.type === "smart_compact_session"
   );
 }
 

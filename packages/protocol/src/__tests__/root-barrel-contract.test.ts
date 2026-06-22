@@ -22,6 +22,7 @@ import type {
   ExternalThreadInfo,
   CliCapabilities,
   CliRunResult,
+  CliSessionCompactionResult,
   CliWsCommand,
   ClientCommand,
   CollaborationBootstrapEvent,
@@ -163,6 +164,7 @@ const cliCapabilities = {
     activeToolSnapshot: true,
     projectAgentRunTarget: true,
     sessionTranscript: true,
+    sessionCompaction: true,
     builderRuntimeOnly: true,
   },
 } satisfies CliCapabilities
@@ -183,6 +185,17 @@ const cliRunResult = {
   timedOut: false,
   durationMs: 100,
 } satisfies CliRunResult
+
+const cliCompactionResult = {
+  action: 'smart_compact',
+  sessionAgentId: 'agent-1',
+  profileId: 'profile-1',
+  outcome: 'not_reduced',
+  compacted: false,
+  reason: 'runtime_aborted',
+  customInstructionsProvided: false,
+  completedAt: now,
+} satisfies CliSessionCompactionResult
 
 const profile = {
   profileId: 'profile-1',
@@ -743,8 +756,10 @@ describe('protocol root barrel contract', () => {
 
     expect(channel).toBe('cli')
     expect(cliCapabilities.features.headlessWs).toBe(true)
+    expect(cliCapabilities.features.sessionCompaction).toBe(true)
     expect(cliCommand.type).toBe('subscribe_headless')
     expect(cliRunResult.status).toBe('success')
+    expect(cliCompactionResult.outcome).toBe('not_reduced')
   })
 
   it('pins current ClientCommand discriminator coverage', () => {

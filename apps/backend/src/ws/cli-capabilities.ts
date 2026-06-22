@@ -19,6 +19,7 @@ export function buildCliCapabilities(runtimeTarget: RuntimeTarget): CliCapabilit
       activeToolSnapshot: available,
       projectAgentRunTarget: available,
       sessionTranscript: available,
+      sessionCompaction: available,
       builderRuntimeOnly: true,
     },
   };

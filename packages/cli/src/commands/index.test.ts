@@ -374,6 +374,7 @@ function statusResponse(): CliStatusResponse {
         activeToolSnapshot: true,
         projectAgentRunTarget: true,
         sessionTranscript: true,
+        sessionCompaction: true,
         builderRuntimeOnly: true,
       },
     },

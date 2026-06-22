@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CliCapabilities, CliSessionTranscriptResponse } from '../cli.js'
+import type { CliCapabilities, CliSessionCompactionResult, CliSessionTranscriptResponse, CliWsCommand } from '../cli.js'
 
 describe('CLI protocol DTOs', () => {
   it('includes the additive session transcript feature flag', () => {
@@ -17,11 +17,35 @@ describe('CLI protocol DTOs', () => {
         activeToolSnapshot: true,
         projectAgentRunTarget: true,
         sessionTranscript: true,
+        sessionCompaction: true,
         builderRuntimeOnly: true,
       },
     }
 
     expect(capabilities.features.sessionTranscript).toBe(true)
+    expect(capabilities.features.sessionCompaction).toBe(true)
+  })
+
+  it('models first-class CLI compaction commands and normalized result DTOs', () => {
+    const command = {
+      type: 'smart_compact_session',
+      requestId: 'compact-1',
+      agentId: 'session-a',
+      customInstructions: 'Preserve TODOs',
+    } satisfies CliWsCommand
+    const result = {
+      action: 'smart_compact',
+      sessionAgentId: 'session-a',
+      profileId: 'profile-a',
+      outcome: 'skipped',
+      compacted: false,
+      reason: 'claude_runtime_below_compaction_threshold',
+      customInstructionsProvided: true,
+      completedAt: '2026-06-22T00:00:00.000Z',
+    } satisfies CliSessionCompactionResult
+
+    expect(command.type).toBe('smart_compact_session')
+    expect(result.outcome).toBe('skipped')
   })
 
   it('models transcript responses without raw source context or attachment bodies', () => {

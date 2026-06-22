@@ -146,7 +146,7 @@ async function handleSmartCompactAgentHttpRequest(
   const customInstructions = parseCompactCustomInstructionsBody(payload);
 
   try {
-    await swarmManager.smartCompactAgentContext(agentId, {
+    const result = await swarmManager.smartCompactAgentContext(agentId, {
       customInstructions,
       sourceContext: { channel: "web" },
       trigger: "api"
@@ -154,7 +154,8 @@ async function handleSmartCompactAgentHttpRequest(
 
     sendJson(response, 200, {
       ok: true,
-      agentId
+      agentId,
+      result
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -102,6 +102,54 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
+  it('returns smart compaction result parity through POST /api/agents/:agentId/smart-compact', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const runtime = manager.runtimeByAgentId.get('manager')
+    expect(runtime).toBeDefined()
+    runtime!.smartCompactResult = { compacted: false, reason: 'claude_runtime_below_compaction_threshold' }
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/agents/manager/smart-compact`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          customInstructions: 'Preserve unresolved TODOs in the summary.',
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as {
+        ok: boolean
+        agentId: string
+        result: { compacted: false; reason: string }
+      }
+
+      expect(payload).toEqual({
+        ok: true,
+        agentId: 'manager',
+        result: { compacted: false, reason: 'claude_runtime_below_compaction_threshold' },
+      })
+      expect(runtime!.smartCompactCalls).toEqual(['Preserve unresolved TODOs in the summary.'])
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('returns persisted manager system prompts through GET /api/agents/:agentId/system-prompt', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)

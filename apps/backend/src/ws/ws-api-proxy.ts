@@ -441,14 +441,15 @@ export class WsApiProxy {
     }
 
     try {
-      await this.swarmManager.smartCompactAgentContext(decodedAgentId, {
+      const result = await this.swarmManager.smartCompactAgentContext(decodedAgentId, {
         customInstructions,
         sourceContext: { channel: "web" },
         trigger: "api"
       });
       return this.createApiProxyJsonResponse(command.requestId, 200, {
         ok: true,
-        agentId: decodedAgentId
+        agentId: decodedAgentId,
+        result
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
