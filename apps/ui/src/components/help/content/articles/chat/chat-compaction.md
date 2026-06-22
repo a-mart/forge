@@ -15,7 +15,7 @@ If you run Smart compact manually while a Pi-backed manager is already idle, it 
 
 ## Auto-compaction
 
-When the context window fills up during an active conversation, Forge triggers compaction automatically. You'll see a spinning indicator on the ⋮ menu button while it runs. This prevents the agent from failing mid-response due to context limits.
+When the context window fills up during an active conversation, Forge triggers compaction automatically. You'll see a spinning indicator on the ⋮ menu button and a violet pulsing `C` badge on the session row while compaction or context recovery is active. This prevents the agent from failing mid-response due to context limits.
 
 Claude SDK sessions use the SDK's native auto-compaction at 80% of the context window, and the SDK handles it internally without restarting the session.
 
@@ -25,4 +25,4 @@ If you've pinned messages (shown by the pin count in the header), their content 
 
 ## After compaction
 
-Your older messages are replaced with a summary. Recent messages stay intact. The context window indicator should reflect the live runtime state rather than stale pre-compaction descriptor usage. You can continue the conversation normally.
+Your older messages are replaced with a summary. Recent messages stay intact. The context window indicator should reflect the live runtime state rather than stale pre-compaction descriptor usage, and the sidebar `C` badge clears when compaction or recovery is done. You can continue the conversation normally.

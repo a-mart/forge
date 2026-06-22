@@ -22,4 +22,4 @@ Workers spawned from a specialist template show a colored badge with the special
 
 ## Monitoring
 
-The session row itself shows a numbered amber ring when workers are actively streaming, telling you at a glance how many are running. Hover the session in the sidebar for model and reasoning details.
+The session row itself shows a numbered amber ring when workers are actively streaming, telling you at a glance how many are running. If compaction or context recovery is also active, a violet pulsing `C` badge appears beside the worker-count badge. Hover the session in the sidebar for model and reasoning details.

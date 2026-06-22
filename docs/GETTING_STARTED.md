@@ -130,7 +130,7 @@ The Pull Requests tab uses the GitHub CLI (`gh`). If the selected repository doe
 
 ### Session Sidebar
 
-The left sidebar shows all your sessions across all managers. You can switch sessions by clicking them, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Use the Archive nav in the Builder sidebar to view archived projects and directly archived sessions. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them from there.
+The left sidebar shows all your sessions across all managers. You can switch sessions by clicking them, search by name or message content (with highlights), rename sessions, create new ones with the + button, and fork sessions from any point in a conversation. Session rows can show status badges, including active worker counts and a violet pulsing `C` while compaction or context recovery is active. Use the Archive nav in the Builder sidebar to view archived projects and directly archived sessions. Archive entries are sorted by last user-message activity and show the last-used date. Restore and reopen them from there.
 
 **Pinning sessions:** Right-click any session and select "Pin" to keep it at the top of the sidebar. Pinned sessions appear below project agents but above regular sessions and are never hidden by the "Show N more" pagination. Click "Unpin" to return a session to regular sorting. Sessions are pinned per profile — forked sessions don't inherit pin state.
 
@@ -437,7 +437,7 @@ Forge's smart compaction works differently:
 5. **Pinned messages** — Any messages you've pinned (up to 10 per session) are preserved verbatim in the summary under a dedicated "Preserved Messages (Pinned)" section.
 6. **Resume** — If compaction happened while the session was active, interrupted, or waiting on dispatch, the agent comes back with the detailed recent context, a high-level summary of older work, pinned messages, and the handoff file.
 
-If you trigger Smart compact manually while the Pi-backed manager is already idle, it compacts and stays idle afterward. If it was active, interrupted, or dispatch-pending, it resumes after compaction.
+If you trigger Smart compact manually while the Pi-backed manager is already idle, it compacts and stays idle afterward. If it was active, interrupted, or dispatch-pending, it resumes after compaction. While compaction or context recovery is active, the session row shows a violet pulsing `C` badge in the sidebar.
 
 Sessions can compact 50+ times and still maintain full continuity. You can just keep going indefinitely.
 
@@ -456,7 +456,7 @@ While a runtime is live, the context meter follows runtime status rather than a 
 
 ### Context Window Indicator
 
-The small dial icon in the chat header shows current context utilization. When the runtime is live, that live status is authoritative for the meter. Watch it creep up during long sessions. When smart compaction triggers during active work, you'll see a brief pause while the handoff and summary are generated, then work resumes.
+The small dial icon in the chat header shows current context utilization. When the runtime is live, that live status is authoritative for the meter. Watch it creep up during long sessions. When smart compaction triggers during active work, you'll see a brief pause while the handoff and summary are generated, a violet pulsing `C` appears on the session row, then work resumes.
 
 You can also trigger compaction manually from the three-dot menu (**⋯ → Smart Compact**) if you want to proactively clear space. Pinned messages are preserved during manual compaction the same way they are during automatic compaction. If the manager is already idle, a manual Smart compact leaves it idle afterward on Pi-backed managers.
 

@@ -25,7 +25,7 @@ Right-click any session to access: Copy session data path, Rename, Fork, Overrid
 
 ## Workers
 
-Sessions with active workers show a numbered badge. Expand the session to see individual workers with their status dots and specialist badges. Right-click a worker to stop, resume, or delete it.
+Sessions with active workers show a numbered amber badge. Sessions in compaction or context recovery show a violet pulsing `C` badge. If both are active, the worker-count badge and `C` badge appear side by side. Expand the session to see individual workers with their status dots and specialist badges. Right-click a worker to stop, resume, or delete it.
 
 ## Mobile
 
