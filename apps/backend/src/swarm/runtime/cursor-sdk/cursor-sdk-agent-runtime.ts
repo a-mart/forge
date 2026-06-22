@@ -104,6 +104,8 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
   private readonly now: () => string;
   private readonly model: CursorSdkModelSelection;
   private readonly systemPrompt: string;
+  private readonly startupSystemPromptOverride: string | undefined;
+  private readonly onStartupRecoveryConsumed: (() => void | Promise<void>) | undefined;
   private readonly mcpServers: CursorSdkMcpServers;
   private readonly stateRoot: string;
   private readonly eventMapper: CursorSdkEventMapper;
@@ -114,6 +116,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
   private status: AgentStatus;
   private sdkAgent: CursorSdkAgent;
   private needsPromptInjection = true;
+  private startupRecoveryConsumed = false;
   private activePrompt: ActivePromptState | undefined;
   private promptDispatchPending = false;
   private stoppedPendingDispatch = false;
@@ -130,6 +133,8 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     apiKey: string;
     model: CursorSdkModelSelection;
     systemPrompt: string;
+    startupSystemPromptOverride?: string;
+    onStartupRecoveryConsumed?: () => void | Promise<void>;
     mcpServers: CursorSdkMcpServers;
     stateRoot: string;
     promptHash?: string;
@@ -140,6 +145,8 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     this.sdkAgent = options.sdkAgent;
     this.model = options.model;
     this.systemPrompt = options.systemPrompt;
+    this.startupSystemPromptOverride = options.startupSystemPromptOverride?.trim() || undefined;
+    this.onStartupRecoveryConsumed = options.onStartupRecoveryConsumed;
     this.mcpServers = options.mcpServers;
     this.stateRoot = options.stateRoot;
     this.promptHash = options.promptHash;
@@ -175,6 +182,9 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
     apiKey: string;
     model: CursorSdkModelSelection;
     systemPrompt: string;
+    startupSystemPromptOverride?: string;
+    skipInitialSessionResume?: boolean;
+    onStartupRecoveryConsumed?: () => void | Promise<void>;
     mcpServers: CursorSdkMcpServers;
     stateRoot: string;
     promptHash?: string;
@@ -183,7 +193,7 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       throw new Error("Cursor SDK runtime requires a Forge-owned stateRoot.");
     }
 
-    const persisted = readLatestRuntimeState(options.descriptor.sessionFile);
+    const persisted = options.skipInitialSessionResume ? undefined : readLatestRuntimeState(options.descriptor.sessionFile);
     const agentOptions: CursorSdkAgentOptions = {
       apiKey: options.apiKey,
       model: options.model,
@@ -204,7 +214,21 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
       sdkAgent = await options.sdk.Agent.create(agentOptions);
     }
 
-    const runtime = new CursorSdkAgentRuntime({ ...options, sdkAgent });
+    const runtime = new CursorSdkAgentRuntime({
+      descriptor: options.descriptor,
+      callbacks: options.callbacks,
+      now: options.now,
+      sdk: options.sdk,
+      sdkAgent,
+      apiKey: options.apiKey,
+      model: options.model,
+      systemPrompt: options.systemPrompt,
+      startupSystemPromptOverride: options.startupSystemPromptOverride,
+      onStartupRecoveryConsumed: options.onStartupRecoveryConsumed,
+      mcpServers: options.mcpServers,
+      stateRoot: options.stateRoot,
+      promptHash: options.promptHash,
+    });
     runtime.persistRuntimeState();
     return runtime;
   }
@@ -409,13 +433,14 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
           ));
           active.run = run;
           backgroundScope.update({ sdkAgentId: run.agentId ?? this.sdkAgent.agentId, runId: run.id });
-          if (preparedPayload.consumesPromptInjection && !promptInjectionCommitted) {
-            this.needsPromptInjection = false;
-            promptInjectionCommitted = true;
-          }
           if (this.shouldAbortPromptBeforeSend(active, token)) {
             await run.cancel().catch(() => undefined);
             return;
+          }
+          if (preparedPayload.consumesPromptInjection && !promptInjectionCommitted) {
+            this.needsPromptInjection = false;
+            promptInjectionCommitted = true;
+            await this.commitStartupRecoveryConsumption();
           }
 
           await backgroundScope.runWithAttribution(() => this.raceContainedBackgroundFailure(
@@ -584,12 +609,22 @@ export class CursorSdkAgentRuntime implements SwarmAgentRuntime {
 
   private prepareSendPayload(message: RuntimeUserMessage): PreparedSendPayload {
     const consumesPromptInjection = this.needsPromptInjection;
-    const text = consumesPromptInjection ? wrapWithForgeSystemContext(this.systemPrompt, message.text) : message.text;
+    const injectionPrompt = this.startupSystemPromptOverride ?? this.systemPrompt;
+    const text = consumesPromptInjection ? wrapWithForgeSystemContext(injectionPrompt, message.text) : message.text;
     const images = (message.images ?? []).map((image) => ({ data: image.data, mimeType: image.mimeType }));
     return {
       payload: images.length > 0 ? { text, images } : text,
       consumesPromptInjection
     };
+  }
+
+  private async commitStartupRecoveryConsumption(): Promise<void> {
+    if (this.startupRecoveryConsumed || !this.onStartupRecoveryConsumed) {
+      return;
+    }
+
+    this.startupRecoveryConsumed = true;
+    await this.onStartupRecoveryConsumed();
   }
 
   private async streamCursorRun(active: ActivePromptState, token: number, run: CursorSdkRun): Promise<void> {

@@ -128,6 +128,9 @@ async function setupRuntime(options: {
   sdkAgent?: CursorSdkAgent;
   sdk?: CursorSdkModule;
   systemPrompt?: string;
+  startupSystemPromptOverride?: string;
+  skipInitialSessionResume?: boolean;
+  onStartupRecoveryConsumed?: () => void | Promise<void>;
   promptHash?: string;
   callbacks?: Partial<SwarmRuntimeCallbacks>;
 } = {}) {
@@ -157,6 +160,9 @@ async function setupRuntime(options: {
     apiKey: "cursor-key",
     model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
     systemPrompt: options.systemPrompt ?? "Forge worker instructions",
+    startupSystemPromptOverride: options.startupSystemPromptOverride,
+    skipInitialSessionResume: options.skipInitialSessionResume,
+    onStartupRecoveryConsumed: options.onStartupRecoveryConsumed,
     mcpServers: { forge: { type: "http", url: "http://127.0.0.1:1/mcp" } },
     stateRoot: join(rootDir, "cursor-sdk-state", descriptor.agentId),
     promptHash: options.promptHash ?? "hash-1",
@@ -1083,5 +1089,103 @@ describe("CursorSdkAgentRuntime", () => {
     expect(snapshot?.messages).toEqual([message]);
     expect(snapshot?.messages[0]?.text).not.toContain("forge_system_context");
     gate.resolve();
+  });
+
+  it("skips Agent.resume when startup recovery requests a fresh SDK agent", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-cursor-sdk-runtime-"));
+    await mkdir(rootDir, { recursive: true });
+    const descriptor = createDescriptor(rootDir);
+    await writeFile(descriptor.sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "session-1", timestamp: "now", cwd: rootDir })}\n${JSON.stringify({
+      type: "custom",
+      customType: CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE,
+      id: "state-1",
+      parentId: "session-1",
+      timestamp: "now",
+      data: { version: 1, sdkAgentId: "persisted-agent", model: descriptor.model, cwd: rootDir, stateRoot: "old", savedAt: "old" },
+    })}\n`, "utf8");
+
+    const send = vi.fn(async () => createRun());
+    const create = vi.fn(async () => ({ agentId: "fresh-sdk-agent", send, close: vi.fn() }));
+    const resume = vi.fn(async () => ({ agentId: "persisted-agent", send, close: vi.fn() }));
+
+    await CursorSdkAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: vi.fn(async () => undefined),
+        onSessionEvent: vi.fn(async () => undefined),
+        onAgentEnd: vi.fn(async () => undefined),
+        onRuntimeError: vi.fn(async () => undefined),
+      },
+      now: () => "2026-01-01T00:00:00.000Z",
+      sdk: { Agent: { create, resume }, Cursor: { models: { list: vi.fn() } } },
+      apiKey: "cursor-key",
+      model: { id: "composer-2.5", params: [{ id: "thinking", value: "medium" }] },
+      systemPrompt: "Base Cursor prompt",
+      startupSystemPromptOverride: "Base Cursor prompt\n\n# Recovered Forge Conversation Context\nRecovered history",
+      skipInitialSessionResume: true,
+      mcpServers: {},
+      stateRoot: join(rootDir, "cursor-sdk-state", descriptor.agentId),
+      promptHash: "hash-1",
+    });
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("injects startup recovery on first send only and consumes the applied callback after send accepts", async () => {
+    const onStartupRecoveryConsumed = vi.fn(async () => undefined);
+    const send = vi.fn(async () => createRun());
+    const { runtime } = await setupRuntime({
+      sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() },
+      systemPrompt: "Base Cursor prompt",
+      startupSystemPromptOverride: "Base Cursor prompt\n\n# Recovered Forge Conversation Context\nRecovered history",
+      skipInitialSessionResume: true,
+      onStartupRecoveryConsumed,
+    });
+
+    await runtime.sendMessage("hello");
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+
+    const firstPayload = payloadText(send.mock.calls[0]?.[0] as string | { text: string });
+    expect(firstPayload).toContain("# Recovered Forge Conversation Context");
+    expect(firstPayload).toContain("<forge_system_context>");
+    expect(onStartupRecoveryConsumed).toHaveBeenCalledTimes(1);
+    expect(runtime.getSystemPrompt()).toBe("Base Cursor prompt");
+
+    await runtime.sendMessage("second");
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    const secondPayload = payloadText(send.mock.calls[1]?.[0] as string | { text: string });
+    expect(secondPayload).not.toContain("# Recovered Forge Conversation Context");
+    expect(onStartupRecoveryConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not consume startup recovery when the first send is cancelled before run acceptance", async () => {
+    const sendGate = deferred();
+    const send = vi.fn(async () => {
+      await sendGate.promise;
+      return createRun();
+    });
+    const onStartupRecoveryConsumed = vi.fn(async () => undefined);
+    const { runtime } = await setupRuntime({
+      sdkAgent: { agentId: "sdk-agent-1", send, close: vi.fn() },
+      startupSystemPromptOverride: "Base Cursor prompt\n\n# Recovered Forge Conversation Context\nRecovered history",
+      skipInitialSessionResume: true,
+      onStartupRecoveryConsumed,
+    });
+
+    const sendPromise = runtime.sendMessage("hello");
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    await runtime.stopInFlight();
+    sendGate.resolve();
+    await sendPromise.catch(() => undefined);
+    await waitFor(() => expect(runtime.getStatus()).toBe("idle"));
+
+    expect(onStartupRecoveryConsumed).not.toHaveBeenCalled();
+
+    await runtime.sendMessage("retry");
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(onStartupRecoveryConsumed).toHaveBeenCalledTimes(1));
+    const retryPayload = payloadText(send.mock.calls[1]?.[0] as string | { text: string });
+    expect(retryPayload).toContain("# Recovered Forge Conversation Context");
   });
 });

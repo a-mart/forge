@@ -8,7 +8,7 @@ import {
 const MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE = "swarm_model_change_continuity_request";
 const MODEL_CHANGE_CONTINUITY_APPLIED_ENTRY_TYPE = "swarm_model_change_continuity_applied";
 
-export type ModelChangeContinuityRuntimeKind = "pi" | "claude";
+export type ModelChangeContinuityRuntimeKind = "pi" | "claude" | "cursor-sdk";
 
 export interface ModelChangeContinuityModel {
   provider: string;
@@ -49,6 +49,9 @@ export function inferModelChangeContinuityRuntimeKind(
   const provider = model.provider.trim().toLowerCase();
   if (provider === "claude-sdk") {
     return "claude";
+  }
+  if (provider === "cursor-sdk") {
+    return "cursor-sdk";
   }
 
   return "pi";
@@ -351,7 +354,7 @@ function isValidModelChangeContinuityModel(value: unknown): value is ModelChange
 }
 
 function isPersistedRuntimeKind(value: unknown): value is ModelChangeContinuityRuntimeKind | "codex" {
-  return value === "pi" || value === "claude" || value === "codex";
+  return value === "pi" || value === "claude" || value === "cursor-sdk" || value === "codex";
 }
 
 function normalizeRuntimeKind(value: ModelChangeContinuityRuntimeKind | "codex"): ModelChangeContinuityRuntimeKind {

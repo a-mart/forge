@@ -71,6 +71,7 @@ export interface SpecialistFallbackReplaySnapshot {
 export interface RuntimeStartupRecoveryContext {
   reason: "model_change";
   blockText: string;
+  requestId?: string;
 }
 
 export interface RuntimeCodexTransportDebugStats {
@@ -97,6 +98,8 @@ export interface RuntimeCodexTransportDebugDiagnostics {
 
 export interface RuntimeCreationOptions {
   startupRecoveryContext?: RuntimeStartupRecoveryContext;
+  /** Invoked after startup recovery context is committed on the first accepted prompt dispatch. */
+  onStartupRecoveryConsumed?: () => void | Promise<void>;
 }
 
 export type RuntimeSessionEvent =

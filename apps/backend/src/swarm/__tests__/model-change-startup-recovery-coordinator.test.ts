@@ -257,8 +257,9 @@ describe("ModelChangeStartupRecoveryCoordinator", () => {
     expect(result.runtimeCreationOptions).toEqual({
       startupRecoveryContext: {
         reason: "model_change",
-        blockText: ""
-      }
+        blockText: "",
+        requestId: "req-1",
+      },
     });
     expect(logDebug).toHaveBeenCalledWith(
       "manager:model_change_continuity:prepare",

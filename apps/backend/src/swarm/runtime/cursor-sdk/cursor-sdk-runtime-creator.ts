@@ -14,6 +14,7 @@ import type { SwarmToolHost } from "../../swarm-tool-host.js";
 import type { AgentContextUsage, AgentDescriptor, AgentStatus, SwarmConfig } from "../../types.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
 import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
+import { planCursorSdkRuntimePrompt } from "../runtime-prompt-plan.js";
 import { planRuntimeTools } from "../runtime-tool-plan.js";
 import { CursorSdkAgentRuntime, getDefaultCursorSdkStateRoot } from "./cursor-sdk-agent-runtime.js";
 import { loadCursorSdkModule } from "./cursor-sdk-loader.js";
@@ -62,7 +63,7 @@ export class CursorSdkRuntimeCreator {
     sessionDescriptor: AgentDescriptor | undefined;
     creationOptions?: RuntimeCreationOptions;
   }): Promise<SwarmAgentRuntime> {
-    const { descriptor, systemPrompt, runtimeToken, sessionDescriptor } = options;
+    const { descriptor, systemPrompt, runtimeToken, sessionDescriptor, creationOptions } = options;
 
     const projectExecutableTrustPlan = await this.deps.resolveProjectExecutableTrustPlan({
       descriptor,
@@ -85,6 +86,10 @@ export class CursorSdkRuntimeCreator {
     const sdk = await loadCursorSdkModule();
     const auth = await resolveCursorSdkApiKey(this.deps.config);
     const cursorSystemPrompt = await this.deps.buildCursorSdkRuntimeSystemPrompt(descriptor, systemPrompt);
+    const promptPlan = planCursorSdkRuntimePrompt({
+      systemPrompt: cursorSystemPrompt,
+      startupRecoveryContext: creationOptions?.startupRecoveryContext,
+    });
     const stateRoot = getDefaultCursorSdkStateRoot(descriptor);
     const model = toCursorSdkModelSelection(descriptor.model);
     const mcpBridge = await createCursorSdkMcpToolBridge(swarmTools, { serverName: `forge-swarm-${descriptor.agentId}` });
@@ -123,6 +128,9 @@ export class CursorSdkRuntimeCreator {
         apiKey: auth.apiKey,
         model,
         systemPrompt: cursorSystemPrompt,
+        startupSystemPromptOverride: promptPlan.startupSystemPromptOverride,
+        skipInitialSessionResume: promptPlan.skipInitialSessionResume,
+        onStartupRecoveryConsumed: creationOptions?.onStartupRecoveryConsumed,
         mcpServers: mcpBridge.mcpServers,
         stateRoot,
         promptHash: hashPrompt(cursorSystemPrompt)
@@ -150,6 +158,7 @@ export class CursorSdkRuntimeCreator {
       runtimeType: "cursor-sdk",
       forgeResolvedPrompt: systemPrompt,
       finalSystemPrompt: cursorSystemPrompt,
+      startupSystemPromptOverride: promptPlan.startupSystemPromptOverride,
       activeTools: summarizeRuntimeTools(swarmTools),
       mcpServers: [mcpBridge.serverName],
       metadata: {

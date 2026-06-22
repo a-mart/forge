@@ -61,6 +61,10 @@ export function planClaudeRuntimePrompt(options: PlanClaudeRuntimePromptOptions)
   };
 }
 
+export function planCursorSdkRuntimePrompt(options: PlanClaudeRuntimePromptOptions): ClaudeRuntimePromptPlan {
+  return planClaudeRuntimePrompt(options);
+}
+
 export function appendStartupRecoveryContext(
   systemPrompt: string,
   startupRecoveryContext: RuntimeStartupRecoveryContext | undefined

@@ -1610,13 +1610,57 @@ export class SwarmAgentLifecycleService {
       ? await this.options.prepareManagerRuntimeCreation?.(descriptor as ProvisionedSessionDescriptor, systemPrompt)
       : undefined;
 
+    const shouldDeferCursorStartupRecoveryAppliedMarker =
+      descriptor.role === "manager" &&
+      managerRuntimeCreation?.continuityRequest?.targetModel.runtimeKind === "cursor-sdk" &&
+      Boolean(managerRuntimeCreation.runtimeCreationOptions?.startupRecoveryContext);
+
+    const deferredContinuityRequest = managerRuntimeCreation?.continuityRequest;
     const runtimeToken = this.options.allocateRuntimeToken(descriptor.agentId);
+    const deferredRecoveryRuntimeRef: { current?: SwarmAgentRuntime } = {};
+    const runtimeCreationOptions =
+      shouldDeferCursorStartupRecoveryAppliedMarker && deferredContinuityRequest
+        ? {
+            ...managerRuntimeCreation?.runtimeCreationOptions,
+            onStartupRecoveryConsumed: async () => {
+              try {
+                if (this.options.getRuntimeToken(descriptor.agentId) !== runtimeToken) {
+                  return;
+                }
+
+                const attachedRuntime = this.options.runtimes.get(descriptor.agentId);
+                if (!attachedRuntime || attachedRuntime !== deferredRecoveryRuntimeRef.current) {
+                  return;
+                }
+
+                const attachDescriptorForApplied = this.options.descriptors.get(descriptor.agentId);
+                if (!attachDescriptorForApplied || attachDescriptorForApplied.role !== "manager") {
+                  return;
+                }
+
+                await this.options.appendAppliedModelChangeContinuity?.(
+                  attachDescriptorForApplied as ProvisionedSessionDescriptor,
+                  deferredContinuityRequest,
+                  attachedRuntime
+                );
+              } catch (error) {
+                this.options.logDebug("manager:model_change_continuity:cursor_first_send_applied_write_error", {
+                  agentId: descriptor.agentId,
+                  requestId: deferredContinuityRequest.requestId,
+                  message: error instanceof Error ? error.message : String(error)
+                });
+              }
+            }
+          }
+        : managerRuntimeCreation?.runtimeCreationOptions;
+
     const runtime = await this.options.createRuntimeForDescriptor(
       descriptor,
       systemPrompt,
       runtimeToken,
-      managerRuntimeCreation?.runtimeCreationOptions
+      runtimeCreationOptions
     );
+    deferredRecoveryRuntimeRef.current = runtime;
     if (descriptor.role === "manager") {
       await this.options.syncPinnedContentForManagerRuntime(descriptor as ProvisionedSessionDescriptor, { runtime });
     }
@@ -1680,7 +1724,11 @@ export class SwarmAgentLifecycleService {
       throw new Error(`Runtime token is stale for agent: ${descriptor.agentId}`);
     }
 
-    if (attachDescriptor.role === "manager" && managerRuntimeCreation?.continuityRequest) {
+    if (
+      attachDescriptor.role === "manager" &&
+      managerRuntimeCreation?.continuityRequest &&
+      !shouldDeferCursorStartupRecoveryAppliedMarker
+    ) {
       try {
         await this.options.appendAppliedModelChangeContinuity?.(
           attachDescriptor as ProvisionedSessionDescriptor,

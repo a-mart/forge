@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { planClaudeRuntimePrompt, planPiRuntimePrompt } from "../runtime/runtime-prompt-plan.js";
+import { planClaudeRuntimePrompt, planCursorSdkRuntimePrompt, planPiRuntimePrompt } from "../runtime/runtime-prompt-plan.js";
 import type { AgentDescriptor } from "../types.js";
 
 function descriptor(role: AgentDescriptor["role"]): Pick<AgentDescriptor, "role"> {
@@ -104,6 +104,23 @@ describe("runtime prompt planning", () => {
 
       expect(plan.systemPrompt).toBe("Base Claude prompt");
       expect(plan.startupSystemPromptOverride).toBeUndefined();
+      expect(plan.skipInitialSessionResume).toBe(true);
+    });
+  });
+
+  describe("planCursorSdkRuntimePrompt", () => {
+    it("mirrors Claude startup recovery override and skip-resume semantics", () => {
+      const plan = planCursorSdkRuntimePrompt({
+        systemPrompt: "Base Cursor prompt",
+        startupRecoveryContext: {
+          reason: "model_change",
+          blockText: "# Recovered Forge Conversation Context\nRecovered history",
+          requestId: "req-1",
+        },
+      });
+
+      expect(plan.systemPrompt).toBe("Base Cursor prompt");
+      expect(plan.startupSystemPromptOverride).toContain("# Recovered Forge Conversation Context");
       expect(plan.skipInitialSessionResume).toBe(true);
     });
   });

@@ -66,8 +66,9 @@ export class ModelChangeStartupRecoveryCoordinator {
         : {
             startupRecoveryContext: {
               reason: "model_change",
-              blockText: recovery.recoveryContext?.blockText ?? ""
-            }
+              blockText: recovery.recoveryContext?.blockText ?? "",
+              requestId: recovery.request.requestId,
+            },
           }
     };
   }

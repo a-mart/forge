@@ -6,7 +6,7 @@ import {
   createModelChangeContinuityApplied,
   createModelChangeContinuityRequest
 } from "../runtime/model-change-continuity.js";
-import { resolvePendingModelChangeRuntimeStartup } from "../runtime/model-change-runtime-startup.js";
+import { resolvePendingModelChangeRuntimeStartup, shouldApplyModelChangeRecoveryContext } from "../runtime/model-change-runtime-startup.js";
 
 const createdDirs: string[] = [];
 
@@ -181,5 +181,52 @@ describe("resolvePendingModelChangeRuntimeStartup", () => {
     expect(result.policy).toBe("skip_pi_to_pi");
     expect(result.request?.requestId).toBe("req-pi");
     expect(result.recoveryContext).toBeUndefined();
+  });
+
+  it("applies recovery for cursor-involved transitions except pi-to-pi", () => {
+    const piToPi = createModelChangeContinuityRequest({
+      requestId: "req-pi-pi",
+      createdAt: "2026-04-08T00:00:00.000Z",
+      sessionAgentId: "manager-1",
+      sourceModel: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "high" },
+      targetModel: { provider: "anthropic", modelId: "claude-opus-4-6", thinkingLevel: "high" },
+    });
+    piToPi.sourceModel.runtimeKind = "pi";
+    piToPi.targetModel.runtimeKind = "pi";
+
+    const piToCursor = createModelChangeContinuityRequest({
+      requestId: "req-pi-cursor",
+      createdAt: "2026-04-08T00:00:01.000Z",
+      sessionAgentId: "manager-1",
+      sourceModel: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "high" },
+      targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+    });
+    const cursorToPi = createModelChangeContinuityRequest({
+      requestId: "req-cursor-pi",
+      createdAt: "2026-04-08T00:00:02.000Z",
+      sessionAgentId: "manager-1",
+      sourceModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+      targetModel: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "high" },
+    });
+    const cursorToClaude = createModelChangeContinuityRequest({
+      requestId: "req-cursor-claude",
+      createdAt: "2026-04-08T00:00:03.000Z",
+      sessionAgentId: "manager-1",
+      sourceModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+      targetModel: { provider: "claude-sdk", modelId: "claude-opus-4-6", thinkingLevel: "high" },
+    });
+    const cursorToCursor = createModelChangeContinuityRequest({
+      requestId: "req-cursor-cursor",
+      createdAt: "2026-04-08T00:00:04.000Z",
+      sessionAgentId: "manager-1",
+      sourceModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+      targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "high" },
+    });
+
+    expect(shouldApplyModelChangeRecoveryContext(piToPi)).toBe(false);
+    expect(shouldApplyModelChangeRecoveryContext(piToCursor)).toBe(true);
+    expect(shouldApplyModelChangeRecoveryContext(cursorToPi)).toBe(true);
+    expect(shouldApplyModelChangeRecoveryContext(cursorToClaude)).toBe(true);
+    expect(shouldApplyModelChangeRecoveryContext(cursorToCursor)).toBe(true);
   });
 });

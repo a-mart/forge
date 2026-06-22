@@ -35,6 +35,7 @@ async function createTempDir(prefix: string): Promise<string> {
 describe("model-change-continuity", () => {
   it("infers runtime kind from provider", () => {
     expect(inferModelChangeContinuityRuntimeKind({ provider: "claude-sdk" })).toBe("claude");
+    expect(inferModelChangeContinuityRuntimeKind({ provider: "cursor-sdk" })).toBe("cursor-sdk");
     expect(inferModelChangeContinuityRuntimeKind({ provider: "openai-codex-app-server" })).toBe("pi");
     expect(inferModelChangeContinuityRuntimeKind({ provider: "openai-codex" })).toBe("pi");
   });
@@ -211,5 +212,48 @@ describe("model-change-continuity", () => {
     });
 
     expect(pending).toBeUndefined();
+  });
+
+  it("matches pending cursor-sdk target requests separately from pi requests", () => {
+    const cursorRequest = createModelChangeContinuityRequest({
+      requestId: "req-cursor",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      sessionAgentId: "manager-1",
+      sourceModel: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "high" },
+      targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+    });
+
+    const pending = findLatestPendingModelChangeContinuityRequest({
+      sessionAgentId: "manager-1",
+      requests: [cursorRequest],
+      applied: [],
+      targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", thinkingLevel: "medium" },
+    });
+
+    expect(pending?.requestId).toBe("req-cursor");
+    expect(pending?.targetModel.runtimeKind).toBe("cursor-sdk");
+  });
+
+  it("normalizes legacy codex runtime kind entries to pi on reload", async () => {
+    const root = await createTempDir("model-change-continuity-codex-");
+    const sessionFile = join(root, "session.jsonl");
+    const request = createModelChangeContinuityRequest({
+      requestId: "req-codex",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      sessionAgentId: "manager-1",
+      sourceModel: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "high" },
+      targetModel: { provider: "anthropic", modelId: "claude-opus-4-1", thinkingLevel: "high" },
+    });
+    request.sourceModel.runtimeKind = "codex" as unknown as typeof request.sourceModel.runtimeKind;
+
+    await appendModelChangeContinuityRequest({
+      sessionFile,
+      cwd: root,
+      request,
+      now: () => "2026-01-02T00:00:00.000Z",
+    });
+
+    const state = await loadModelChangeContinuityState(sessionFile);
+    expect(state.requests[0]?.sourceModel.runtimeKind).toBe("pi");
   });
 });

@@ -1797,6 +1797,71 @@ describe("RuntimeFactory", () => {
     expect(claudeOptions.skipInitialSessionResume).toBe(true);
   });
 
+  it("passes startup-only recovery overrides to the Cursor SDK runtime while preserving the base prompt", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    process.env.CURSOR_API_KEY = "cursor-test-key";
+    piCodingAgentMockState.authStorageCreate.mockReturnValue({ get: () => undefined });
+
+    const descriptor = createManagerDescriptor(rootDir, {
+      model: {
+        provider: "cursor-sdk",
+        modelId: "composer-2.5",
+        thinkingLevel: "medium",
+      },
+    });
+    await writeFile(descriptor.sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "session-1", timestamp: "now", cwd: rootDir })}\n${JSON.stringify({
+      type: "custom",
+      customType: "swarm_cursor_sdk_runtime_state",
+      id: "state-1",
+      parentId: "session-1",
+      timestamp: "now",
+      data: {
+        version: 1,
+        sdkAgentId: "persisted-agent",
+        model: descriptor.model,
+        cwd: rootDir,
+        stateRoot: join(rootDir, "cursor-sdk-state", descriptor.agentId),
+        savedAt: "old",
+      },
+    })}\n`, "utf8");
+
+    const resume = vi.fn(async () => ({
+      agentId: "persisted-agent",
+      close: vi.fn(),
+      send: vi.fn(),
+    }));
+    const create = vi.fn(async () => ({
+      agentId: "fresh-sdk-agent",
+      close: vi.fn(),
+      send: vi.fn(async () => ({
+        id: "run-1",
+        agentId: "fresh-sdk-agent",
+        status: "finished",
+        stream: async function* () {},
+        wait: vi.fn(async () => ({ status: "finished" })),
+        cancel: vi.fn(async () => undefined),
+      })),
+    }));
+    setCursorSdkImporterForTests(async () => ({
+      Agent: { create, resume },
+      Cursor: { models: { list: vi.fn() } },
+    }));
+
+    const factory = createFactory(rootDir);
+    const runtime = await factory.createRuntimeForDescriptor(descriptor, "Base Cursor prompt", 1, {
+      startupRecoveryContext: {
+        reason: "model_change",
+        blockText: "# Recovered Forge Conversation Context\nRecovered history",
+        requestId: "req-1",
+      },
+    });
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(runtime.getSystemPrompt?.()).toBe("Base Cursor prompt");
+  });
+
   it("prepares and activates Claude Forge extension bindings with runtimeType claude and runtime token", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });

@@ -335,6 +335,259 @@ describe("SwarmAgentLifecycleService", () => {
     expect(position("attach")).toBeLessThan(position("stats"));
   });
 
+  it("defers model-change continuity applied marker for Cursor startup recovery until first send consumption", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-cursor-defer-applied",
+      role: "manager",
+      managerId: "m-cursor-defer-applied",
+      profileId: "m-cursor-defer-applied",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtime = makeRuntimeStub({ descriptor: manager });
+    const runtimeOptions = {
+      startupRecoveryContext: {
+        reason: "model_change" as const,
+        blockText: "recover",
+        requestId: "req-cursor-defer"
+      }
+    };
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-cursor-defer",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
+    };
+    let capturedCreationOptions: unknown;
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {});
+    const attachRuntime = vi.fn((agentId, attachedRuntime) => {
+      runtimes.set(agentId, attachedRuntime);
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({
+          continuityRequest,
+          runtimeCreationOptions: runtimeOptions
+        })),
+        createRuntimeForDescriptor: vi.fn(async (_descriptor, _prompt, _token, options) => {
+          capturedCreationOptions = options;
+          return runtime;
+        }),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        allocateRuntimeToken: vi.fn(() => 101),
+        getRuntimeToken: vi.fn(() => 101)
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).resolves.toBe(runtime);
+
+    expect(appendAppliedModelChangeContinuity).not.toHaveBeenCalled();
+    expect(capturedCreationOptions).toEqual(
+      expect.objectContaining({
+        startupRecoveryContext: runtimeOptions.startupRecoveryContext,
+        onStartupRecoveryConsumed: expect.any(Function)
+      })
+    );
+
+    await (capturedCreationOptions as { onStartupRecoveryConsumed: () => Promise<void> }).onStartupRecoveryConsumed();
+
+    expect(appendAppliedModelChangeContinuity).toHaveBeenCalledWith(manager, continuityRequest, runtime);
+  });
+
+  it("logs and leaves continuity pending when deferred Cursor applied-write callback fails", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-cursor-defer-applied-failure",
+      role: "manager",
+      managerId: "m-cursor-defer-applied-failure",
+      profileId: "m-cursor-defer-applied-failure",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtime = makeRuntimeStub({ descriptor: manager });
+    const runtimeOptions = {
+      startupRecoveryContext: {
+        reason: "model_change" as const,
+        blockText: "recover",
+        requestId: "req-cursor-defer-failure"
+      }
+    };
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-cursor-defer-failure",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
+    };
+    let capturedCreationOptions: unknown;
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {
+      throw new Error("applied write failed");
+    });
+    const logDebug = vi.fn();
+    const attachRuntime = vi.fn((agentId, attachedRuntime) => {
+      runtimes.set(agentId, attachedRuntime);
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        logDebug,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({
+          continuityRequest,
+          runtimeCreationOptions: runtimeOptions
+        })),
+        createRuntimeForDescriptor: vi.fn(async (_descriptor, _prompt, _token, options) => {
+          capturedCreationOptions = options;
+          return runtime;
+        }),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        allocateRuntimeToken: vi.fn(() => 102),
+        getRuntimeToken: vi.fn(() => 102)
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).resolves.toBe(runtime);
+    expect(attachRuntime).toHaveBeenCalledWith(manager.agentId, runtime);
+    expect(appendAppliedModelChangeContinuity).not.toHaveBeenCalled();
+
+    await (capturedCreationOptions as { onStartupRecoveryConsumed: () => Promise<void> }).onStartupRecoveryConsumed();
+
+    expect(appendAppliedModelChangeContinuity).toHaveBeenCalledTimes(1);
+    expect(logDebug).toHaveBeenCalledWith(
+      "manager:model_change_continuity:cursor_first_send_applied_write_error",
+      expect.objectContaining({
+        agentId: manager.agentId,
+        requestId: continuityRequest.requestId
+      })
+    );
+  });
+
+  it("does not append deferred Cursor continuity when runtime token is stale at first send", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-cursor-defer-stale-token",
+      role: "manager",
+      managerId: "m-cursor-defer-stale-token",
+      profileId: "m-cursor-defer-stale-token",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtime = makeRuntimeStub({ descriptor: manager });
+    const runtimeOptions = {
+      startupRecoveryContext: {
+        reason: "model_change" as const,
+        blockText: "recover",
+        requestId: "req-cursor-defer-stale"
+      }
+    };
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-cursor-defer-stale",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
+    };
+    let capturedCreationOptions: unknown;
+    let activeRuntimeToken = 103;
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {});
+    const attachRuntime = vi.fn((agentId, attachedRuntime) => {
+      runtimes.set(agentId, attachedRuntime);
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({
+          continuityRequest,
+          runtimeCreationOptions: runtimeOptions
+        })),
+        createRuntimeForDescriptor: vi.fn(async (_descriptor, _prompt, _token, options) => {
+          capturedCreationOptions = options;
+          return runtime;
+        }),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        allocateRuntimeToken: vi.fn(() => activeRuntimeToken),
+        getRuntimeToken: vi.fn(() => activeRuntimeToken)
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).resolves.toBe(runtime);
+
+    activeRuntimeToken = 999;
+    await (capturedCreationOptions as { onStartupRecoveryConsumed: () => Promise<void> }).onStartupRecoveryConsumed();
+
+    expect(appendAppliedModelChangeContinuity).not.toHaveBeenCalled();
+  });
+
+  it("does not append deferred Cursor continuity when a replacement runtime is attached at first send", async () => {
+    const manager = createAgentDescriptor({
+      agentId: "m-cursor-defer-replaced-runtime",
+      role: "manager",
+      managerId: "m-cursor-defer-replaced-runtime",
+      profileId: "m-cursor-defer-replaced-runtime",
+      status: "idle"
+    });
+    const descriptors = new Map([[manager.agentId, manager]]);
+    const runtimes = new Map<string, SwarmAgentRuntime>();
+    const runtime = makeRuntimeStub({ descriptor: manager });
+    const replacementRuntime = makeRuntimeStub({ descriptor: manager });
+    const runtimeOptions = {
+      startupRecoveryContext: {
+        reason: "model_change" as const,
+        blockText: "recover",
+        requestId: "req-cursor-defer-replaced"
+      }
+    };
+    const continuityRequest = {
+      version: 1 as const,
+      requestId: "req-cursor-defer-replaced",
+      createdAt: NOW,
+      sessionAgentId: manager.agentId,
+      sourceModel: { provider: "claude-sdk", modelId: "claude", runtimeKind: "claude" as const },
+      targetModel: { provider: "cursor-sdk", modelId: "composer-2.5", runtimeKind: "cursor-sdk" as const }
+    };
+    let capturedCreationOptions: unknown;
+    const appendAppliedModelChangeContinuity = vi.fn(async () => {});
+    const attachRuntime = vi.fn((agentId, attachedRuntime) => {
+      runtimes.set(agentId, attachedRuntime);
+    });
+    const svc = new SwarmAgentLifecycleService(
+      baseLifecycleOptions({
+        descriptors,
+        runtimes,
+        prepareManagerRuntimeCreation: vi.fn(async () => ({
+          continuityRequest,
+          runtimeCreationOptions: runtimeOptions
+        })),
+        createRuntimeForDescriptor: vi.fn(async (_descriptor, _prompt, _token, options) => {
+          capturedCreationOptions = options;
+          return runtime;
+        }),
+        appendAppliedModelChangeContinuity,
+        attachRuntime,
+        allocateRuntimeToken: vi.fn(() => 104),
+        getRuntimeToken: vi.fn(() => 104)
+      })
+    );
+
+    await expect(svc.getOrCreateRuntimeForDescriptor(manager)).resolves.toBe(runtime);
+
+    runtimes.set(manager.agentId, replacementRuntime);
+    await (capturedCreationOptions as { onStartupRecoveryConsumed: () => Promise<void> }).onStartupRecoveryConsumed();
+
+    expect(appendAppliedModelChangeContinuity).not.toHaveBeenCalled();
+  });
+
   it("does not mark model-change continuity applied when the real stop-session path runs before attach", async () => {
     const manager = createAgentDescriptor({
       agentId: "m-stop-before-attach",
