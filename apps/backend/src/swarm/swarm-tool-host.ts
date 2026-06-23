@@ -9,7 +9,11 @@ import type {
   SpawnAgentInput
 } from "./types.js";
 import type { CodexCatalogSnapshot, CodexMcpToolCallResult } from "./codex-app-server/codex-mcp-catalog.js";
-import type { CodexPluginScopeRuntimeView } from "./codex-app-server/codex-plugin-scope-service.js";
+import type {
+  CodexPluginExportFormat,
+  CodexPluginScopedExportResult,
+  CodexPluginScopeRuntimeView,
+} from "./codex-app-server/codex-plugin-scope-service.js";
 import type { TaskToolInput, TaskToolResult } from "./coordination/task-tool.js";
 
 export interface SwarmToolSideEffectEvent {
@@ -97,4 +101,18 @@ export interface SwarmToolHost {
     scopedToolName: string,
     args?: Record<string, unknown>,
   ): Promise<CodexMcpToolCallResult>;
+  exportCodexPluginScopedToolResult?(
+    workerAgentId: string,
+    input: {
+      scopedToolName: string;
+      args?: Record<string, unknown>;
+      fileName?: string;
+      format: CodexPluginExportFormat;
+      includePreview: boolean;
+    },
+  ): Promise<CodexPluginScopedExportResult>;
+  retryCodexPluginWorker?(
+    managerAgentId: string,
+    input: { initialMessage: string; retryContextId?: string },
+  ): Promise<AgentDescriptor>;
 }

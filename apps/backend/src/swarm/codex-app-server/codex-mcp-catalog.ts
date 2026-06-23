@@ -773,7 +773,10 @@ function shouldExposeFullRedactedPayloadToScopedWorker(tool: CodexCatalogMcpTool
     .toLowerCase()
     .split(/\s+/)
     .filter((token) => token.length > 0);
-  if (!tokens.includes("transcript") && !tokens.includes("transcripts")) {
+  const isExportableContentKind = tokens.some((token) =>
+    ["transcript", "transcripts", "summary", "summaries"].includes(token),
+  );
+  if (!isExportableContentKind) {
     return false;
   }
 
