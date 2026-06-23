@@ -731,8 +731,8 @@ describe("SwarmPromptService", () => {
 
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
     expect(resolved).toContain("Forge Project Agent Operating Contract");
-    expect(resolved).toContain("Direct end-user requests to this Project Agent session");
-    expect(resolved.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
+    expect(resolved).toContain("Final/standalone direct web end-user replies in this Project Agent session");
+    expect(resolved.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
 
     const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
     const systemSection = preview.sections.find((section) => section.label === "System Prompt");
@@ -972,7 +972,7 @@ describe("SwarmPromptService", () => {
     expect(resolved).toContain("Repo prompt body");
     expect(resolved).toContain("Repo reference body");
     expect(resolved.indexOf("Repo reference body")).toBeLessThan(resolved.indexOf("# Non-Negotiable Forge Routing Contract"));
-    expect(resolved.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
+    expect(resolved.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
     expect(resolved).not.toContain("Stale local prompt");
     expect(resolved).not.toContain("Stale local reference");
   });
@@ -1087,7 +1087,7 @@ describe("SwarmPromptService", () => {
     const finalPrompt = await service.buildResolvedManagerPrompt(descriptor);
     expect(finalPrompt).toContain("Local reference body");
     expect(finalPrompt.indexOf("Local reference body")).toBeLessThan(finalPrompt.indexOf("# Non-Negotiable Forge Routing Contract"));
-    expect(finalPrompt.trimEnd()).toMatch(/Never rely on plain assistant text as user-visible output\.$/);
+    expect(finalPrompt.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
   });
 
   it("getSwarmContextFiles walks parent directories and returns nearest-first ordering", async () => {

@@ -56,7 +56,7 @@ const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - Use coding tools (read/bash/edit/write) to execute implementation tasks.
 - Report progress and outcomes back to the manager using send_message_to_agent.
 - You are not user-facing.
-- End users only see messages they send and manager speak_to_user outputs.
+- End users see only manager-owned user-visible outputs: final web replies, \`speak_to_user\` deliveries, and structured choice UI.
 - Your plain assistant text is not directly visible to end users.
 - Incoming messages prefixed with "SYSTEM:" are internal control/context updates, not direct end-user chat.
 - Persistent memory for this runtime is at \${SWARM_MEMORY_FILE} and is auto-loaded into context.
@@ -88,17 +88,19 @@ const COLLABORATION_CHANNEL_INSTRUCTIONS = `This session backs a trusted Forge c
 const PROJECT_AGENT_BASE_PROMPT_ID = "project-agent-base";
 const PROJECT_AGENT_BASE_FALLBACK = `# Forge Project Agent Operating Contract
 
-You are a Forge Project Agent: a promoted peer manager session. Direct end-user requests must be answered with speak_to_user. Peer manager or Project Agent context messages must be coordinated with send_message_to_agent unless explicitly reporting to the end user.
+You are a Forge Project Agent: a promoted peer manager session. Final/standalone direct web end-user replies may use normal assistant final text. Kickoff/progress before continuing work, non-web, explicit-target, proactive, or internal-to-user delivery uses speak_to_user. Peer manager or Project Agent context messages must be coordinated with send_message_to_agent unless explicitly reporting to the end user.
 
-Treat WORKER REPORT: status: done|partial|blocked messages as terminal worker reports that require same-turn handling via speak_to_user for user-facing outcomes, send_message_to_agent for peer/context replies, or further delegation when needed.
+Treat WORKER REPORT: status: done|partial|blocked messages as terminal worker reports that require same-turn handling via speak_to_user for user-facing closeouts, send_message_to_agent for peer/context replies, or further delegation when needed.
 
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
 \${SPECIALIST_ROSTER}`;
 const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
-- Direct end-user requests to this Project Agent session: reply with \`speak_to_user\`.
+- Final/standalone direct web end-user replies in this Project Agent session: answer with normal assistant final text unless a structured choice or explicit routed delivery is needed.
+- Kickoff/progress before continuing work, non-web, proactive, or explicit-target user delivery: use \`speak_to_user\` with the appropriate target metadata.
 - Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender; do not use \`speak_to_user\` unless explicitly reporting to the end user.
-- Never rely on plain assistant text as user-visible output.`;
+- Worker reports still require explicit same-turn handling: use \`speak_to_user\` for user-facing closeouts, \`send_message_to_agent\` for peer/context replies, or delegate follow-up work.
+- Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply.`;
 
 export type ProjectAgentPromptSource =
   | { kind: "project_agent_base"; sourcePath?: string; fallback?: boolean }

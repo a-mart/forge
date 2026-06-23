@@ -735,7 +735,8 @@ describe('SwarmManager', () => {
         sessionCwd: expect.stringContaining('swarm-manager-test-'),
       })
       expect(options.currentSystemPrompt).toContain('Forge Project Agent Operating Contract')
-      expect(options.currentSystemPrompt).toContain('Never rely on plain assistant text as user-visible output.')
+      expect(options.currentSystemPrompt).toContain('Final/standalone direct web end-user replies in this Project Agent session: answer with normal assistant final text')
+      expect(options.currentSystemPrompt).toContain('Do not both call `speak_to_user` and emit a normal assistant final answer')
       expect(options.currentSystemPrompt).not.toContain('old release-notes override prompt')
     } finally {
       if (previousAnthropicApiKey === undefined) {
@@ -789,8 +790,10 @@ describe('SwarmManager', () => {
     const managerPrompt = manager.systemPromptByAgentId.get('manager')
     const managerMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
     expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
-    expect(managerPrompt).toContain('Never use plain assistant text for user communication.')
-    expect(managerPrompt).toContain('End users only see:')
+    expect(managerPrompt).toContain('Final/standalone direct web user reply: answer with normal assistant final text.')
+    expect(managerPrompt).toContain('Kickoff/progress/status before continuing work, explicit non-web target, proactive target, or worker-report closeout: call `speak_to_user`.')
+    expect(managerPrompt).toContain('Do not both call `speak_to_user` and emit a normal assistant final answer')
+    expect(managerPrompt).toContain('End users see:')
     expect(managerPrompt).toContain('Messages prefixed `SYSTEM:` are internal context, not direct user requests.')
     expect(managerPrompt).toContain('Project agents in this profile — none configured.')
     expect(managerPrompt).toContain('Workers do not receive the project-agent directory.')
@@ -805,7 +808,7 @@ describe('SwarmManager', () => {
     const workerPrompt = manager.systemPromptByAgentId.get(worker.agentId)
 
     expect(workerPrompt).toBeDefined()
-    expect(workerPrompt).toContain('End users only see messages they send and manager speak_to_user outputs.')
+    expect(workerPrompt).toContain('End users see only manager-owned user-visible outputs: final web replies, `speak_to_user` deliveries, and structured choice UI.')
     expect(workerPrompt).toContain('Incoming messages prefixed with "SYSTEM:"')
     // eslint-disable-next-line no-template-curly-in-string
     expect(workerPrompt).toContain('Persistent memory for this runtime is at ${SWARM_MEMORY_FILE}')
