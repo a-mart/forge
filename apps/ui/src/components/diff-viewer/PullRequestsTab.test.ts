@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getAllByText, getByRole, getByText, getByTitle } from '@testing-library/dom'
+import { fireEvent, getAllByText, getByRole, getByText, getByTitle } from '@testing-library/dom'
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
@@ -142,8 +142,40 @@ describe('PullRequestsTab', () => {
 
     const resizeHandle = getByRole(container, 'separator', { name: /resize pull request list/i })
     expect(resizeHandle.previousElementSibling).toBeInstanceOf(HTMLElement)
-    expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('340px')
+    expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('460px')
     expect(getByRole(container, 'button', { name: /Pull request #428/i }).className).toContain('border-b')
+  })
+
+  it('uses the new pull request list storage key so old narrow persisted widths do not override the wider default', () => {
+    window.localStorage.setItem('forge-diff-pull-requests-list-width', '340')
+
+    renderTab({
+      data: readyPullRequestsData(),
+      currentBranch: 'feature/git-source-control-workspace',
+    })
+
+    const resizeHandle = getByRole(container, 'separator', { name: /resize pull request list/i })
+    expect(resizeHandle.previousElementSibling).toBeInstanceOf(HTMLElement)
+    expect((resizeHandle.previousElementSibling as HTMLElement).style.width).toBe('460px')
+  })
+
+  it('allows resizing the pull request list wider for real row content', async () => {
+    renderTab({
+      data: readyPullRequestsData(),
+      currentBranch: 'feature/git-source-control-workspace',
+    })
+
+    const resizeHandle = getByRole(container, 'separator', { name: /resize pull request list/i })
+    const listPane = resizeHandle.previousElementSibling as HTMLElement
+
+    fireEvent.mouseDown(resizeHandle, { clientX: 0 })
+    await waitForResizableDragListeners()
+    fireEvent.mouseMove(document, { clientX: 1_000 })
+    fireEvent.mouseUp(document)
+    await waitForResizableDragListeners()
+
+    expect(listPane.style.width).toBe('720px')
+    expect(window.localStorage.getItem('forge-diff-pull-requests-list-width-v2')).toBe('720')
   })
 
   it('keeps long pull request titles and branch refs in compact truncation affordances', () => {
@@ -232,6 +264,10 @@ describe('PullRequestsTab', () => {
     expect(getByText(container, /GitHub pull request request failed/i)).toBeTruthy()
   })
 })
+
+async function waitForResizableDragListeners() {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
 
 function readyPullRequestsData(): NonNullable<GitPullRequestsQueryResult['data']> {
   return {

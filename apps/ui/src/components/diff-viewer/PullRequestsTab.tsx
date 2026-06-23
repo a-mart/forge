@@ -24,6 +24,11 @@ import {
   type GitPullRequestsQueryResult,
 } from './use-diff-queries'
 
+const PULL_REQUEST_LIST_WIDTH_STORAGE_KEY = 'forge-diff-pull-requests-list-width-v2'
+const PULL_REQUEST_LIST_DEFAULT_WIDTH = 460
+const PULL_REQUEST_LIST_MIN_WIDTH = 280
+const PULL_REQUEST_LIST_MAX_WIDTH = 720
+
 interface PullRequestsTabProps {
   wsUrl: string
   agentId: string | null
@@ -225,7 +230,7 @@ function PullRequestDetailPane({
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-b border-border/60 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
+          <div className="min-w-0 flex-1 space-y-1">
             <h2 className="break-words text-base font-semibold text-foreground">
               #{pullRequest.number} {pullRequest.title}
             </h2>
@@ -436,10 +441,10 @@ export function PullRequestsTab({
     isDragging: isListDragging,
     handleRef: listResizeHandleRef,
   } = useResizablePanel({
-    storageKey: 'forge-diff-pull-requests-list-width',
-    defaultWidth: 340,
-    minWidth: 280,
-    maxWidth: 460,
+    storageKey: PULL_REQUEST_LIST_WIDTH_STORAGE_KEY,
+    defaultWidth: PULL_REQUEST_LIST_DEFAULT_WIDTH,
+    minWidth: PULL_REQUEST_LIST_MIN_WIDTH,
+    maxWidth: PULL_REQUEST_LIST_MAX_WIDTH,
   })
   const [isLargeLayout, setIsLargeLayout] = useState(true)
 
