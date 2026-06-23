@@ -145,6 +145,7 @@ describe("runtime tool plan", () => {
       "list_agents",
       "send_message_to_agent",
       "spawn_agent",
+      "retry_codex_plugin_worker",
       "kill_agent",
       "speak_to_user",
       "present_choices",

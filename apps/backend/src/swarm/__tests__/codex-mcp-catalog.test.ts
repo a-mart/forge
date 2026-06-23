@@ -472,6 +472,45 @@ describe("CodexMcpCatalog", () => {
     expect(result.redactedModelContentTruncated).toBe(false);
   });
 
+  it("returns full redacted content for Fireflies summary tools", async () => {
+    const client = new FakeCatalogClient();
+    client.request = async <T>(method: string, params?: unknown): Promise<T> => {
+      if (method === "mcpServer/tool/call") {
+        return {
+          content: [{ type: "text", text: `summary ${"body ".repeat(600)}summary-tail` }],
+          structuredContent: { email: "adam@example.com" },
+        } as T;
+      }
+      return new FakeCatalogClient().request(method, params);
+    };
+
+    const catalog = new CodexMcpCatalog(async () => client);
+    const result = await catalog.callTool(
+      {
+        managerAgentId: "manager",
+        cwd: "/tmp",
+        threadId: "thread-1",
+        serverName: "fireflies",
+        toolName: "get_summary",
+        args: { transcriptId: "transcript-1" },
+      },
+      {
+        selector: "fireflies/get_summary",
+        serverName: "fireflies",
+        toolName: "get_summary",
+        description: "Get meeting summary by ID.",
+        readOnly: true,
+        annotations: { readOnlyHint: true },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.redactedPreview).not.toContain("summary-tail");
+    expect(result.redactedModelContent).toContain("summary-tail");
+    expect(result.redactedModelContent).toContain("[redacted-email]");
+    expect(result.redactedModelContentTruncated).toBe(false);
+  });
+
   it("blocks non-Fireflies transcript download lookalikes without exposing full model content", async () => {
     const client = new FakeCatalogClient();
     const catalog = new CodexMcpCatalog(async () => client);

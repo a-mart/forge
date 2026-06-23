@@ -198,6 +198,7 @@ describe("claude-mcp-tool-bridge", () => {
       "list_agents",
       "send_message_to_agent",
       "spawn_agent",
+      "retry_codex_plugin_worker",
       "kill_agent",
       "speak_to_user",
       "present_choices"
@@ -206,6 +207,7 @@ describe("claude-mcp-tool-bridge", () => {
       "mcp__forge-swarm__list_agents",
       "mcp__forge-swarm__send_message_to_agent",
       "mcp__forge-swarm__spawn_agent",
+      "mcp__forge-swarm__retry_codex_plugin_worker",
       "mcp__forge-swarm__kill_agent",
       "mcp__forge-swarm__speak_to_user",
       "mcp__forge-swarm__present_choices"
