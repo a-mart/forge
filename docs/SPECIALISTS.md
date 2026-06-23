@@ -133,6 +133,8 @@ Only exhausted fallback failures surface upward.
 
 `cursor-builder` is the built-in Cursor SDK specialist. It targets Composer 2.5, ships disabled by default, and is intended for opt-in implementation work rather than manager sessions; runtime containment is provider-local and fail-closed, with one pre-output retry only for attributed transient transport or throttle failures.
 
+`codex-plugin` is a contextual built-in specialist. It appears only when a user turn includes an active `@Codex` plugin selector, and Forge binds that worker to the server-stored selector scope. Normal scoped plugin tools return bounded preview/metadata only. Full connector exports, such as Fireflies transcripts or summaries, must use the scoped export artifact tool, which writes redacted JSON artifacts under the session and returns only path/metadata plus a bounded preview. If that scoped worker is stopped or fails, Forge can authorize retry only for an explicit retry/continuation turn that refers to the same Codex/plugin context; unrelated turns require a fresh selector tag.
+
 ### Resolution Order
 
 When resolving the roster for a Builder profile:
