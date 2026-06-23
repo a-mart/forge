@@ -736,7 +736,10 @@ describe('SwarmManager', () => {
       })
       expect(options.currentSystemPrompt).toContain('Forge Project Agent Operating Contract')
       expect(options.currentSystemPrompt).toContain('Final/standalone direct web end-user replies in this Project Agent session: answer with normal assistant final text')
+      expect(options.currentSystemPrompt).toContain('inherited direct web/session-transcript user-facing closeouts')
+      expect(options.currentSystemPrompt).toContain('`speak_to_user` for protected/non-web/external/proactive/internal user-facing closeouts')
       expect(options.currentSystemPrompt).toContain('Do not both call `speak_to_user` and emit a normal assistant final answer')
+      expect(options.currentSystemPrompt).not.toContain('use `speak_to_user` for user-facing closeouts')
       expect(options.currentSystemPrompt).not.toContain('old release-notes override prompt')
     } finally {
       if (previousAnthropicApiKey === undefined) {
@@ -790,8 +793,8 @@ describe('SwarmManager', () => {
     const managerPrompt = manager.systemPromptByAgentId.get('manager')
     const managerMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
     expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
-    expect(managerPrompt).toContain('Final/standalone direct web user reply: answer with normal assistant final text.')
-    expect(managerPrompt).toContain('Kickoff/progress/status before continuing work, explicit non-web target, proactive target, or worker-report closeout: call `speak_to_user`.')
+    expect(managerPrompt).toContain('Final/standalone direct web/session-transcript user reply: answer with normal assistant final text.')
+    expect(managerPrompt).toContain('worker-report closeout without an inherited session-transcript target: call `speak_to_user`.')
     expect(managerPrompt).toContain('Do not both call `speak_to_user` and emit a normal assistant final answer')
     expect(managerPrompt).toContain('End users see:')
     expect(managerPrompt).toContain('Messages prefixed `SYSTEM:` are internal context, not direct user requests.')

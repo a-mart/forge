@@ -90,7 +90,7 @@ const PROJECT_AGENT_BASE_FALLBACK = `# Forge Project Agent Operating Contract
 
 You are a Forge Project Agent: a promoted peer manager session. Final/standalone direct web end-user replies may use normal assistant final text. Kickoff/progress before continuing work, non-web, explicit-target, proactive, or internal-to-user delivery uses speak_to_user. Peer manager or Project Agent context messages must be coordinated with send_message_to_agent unless explicitly reporting to the end user.
 
-Treat WORKER REPORT: status: done|partial|blocked messages as terminal worker reports that require same-turn handling via speak_to_user for user-facing closeouts, send_message_to_agent for peer/context replies, or further delegation when needed.
+Treat WORKER REPORT: status: done|partial|blocked messages as terminal worker reports that require same-turn handling. Use normal assistant final text only for inherited direct web/session-transcript closeouts, speak_to_user for unknown/protected user-facing closeouts, send_message_to_agent for peer/context replies, or further delegation when needed.
 
 \${MODEL_SPECIFIC_INSTRUCTIONS}
 
@@ -99,7 +99,7 @@ const PROJECT_AGENT_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Final/standalone direct web end-user replies in this Project Agent session: answer with normal assistant final text unless a structured choice or explicit routed delivery is needed.
 - Kickoff/progress before continuing work, non-web, proactive, or explicit-target user delivery: use \`speak_to_user\` with the appropriate target metadata.
 - Peer manager / Project Agent context messages: coordinate or reply with \`send_message_to_agent\` to the sender; do not use \`speak_to_user\` unless explicitly reporting to the end user.
-- Worker reports still require explicit same-turn handling: use \`speak_to_user\` for user-facing closeouts, \`send_message_to_agent\` for peer/context replies, or delegate follow-up work.
+- Worker reports require explicit same-turn handling. Use normal assistant final text only for inherited direct web/session-transcript user-facing closeouts; use routed delivery (\`speak_to_user\` for protected/non-web/external/proactive/internal user-facing closeouts, \`send_message_to_agent\` for peer/context replies), or delegate follow-up work.
 - Do not both call \`speak_to_user\` and emit a normal assistant final answer with the same reply.`;
 
 export type ProjectAgentPromptSource =

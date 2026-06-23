@@ -1847,7 +1847,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    if (trigger.kind === "direct_user_input" && trigger.allowsProjectedAssistantOutput && unhandledKind === "hidden_text") {
+    if (trigger.allowsProjectedAssistantOutput && unhandledKind === "hidden_text") {
       return false;
     }
 
@@ -2333,7 +2333,8 @@ function classifyHiddenOutputTrigger(text: string): HiddenOutputTrigger | undefi
       resampleStage: "terminal_report_resample",
       exhaustedMessage: "Manager produced no visible response to a worker's final report",
       userFacingExhaustedMessage:
-        "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome."
+        "⚠️ The manager processed a worker's final report but did not produce a visible response after automatic retries. Send a message (e.g. \"update?\") to surface the outcome.",
+      allowsProjectedAssistantOutput: runtimeInputAllowsProjectedAssistantOutput(reportText)
     };
   }
 

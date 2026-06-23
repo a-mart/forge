@@ -40,6 +40,13 @@ afterEach(async () => {
   await Promise.all(tempHandles.splice(0).map((handle) => handle.cleanup()));
 });
 
+function expectCurrentProjectAgentRoutingFooter(prompt: string): void {
+  expect(prompt).toContain("Worker reports require explicit same-turn handling.");
+  expect(prompt).toContain("inherited direct web/session-transcript user-facing closeouts");
+  expect(prompt).toContain("`speak_to_user` for protected/non-web/external/proactive/internal user-facing closeouts");
+  expect(prompt).not.toContain("use `speak_to_user` for user-facing closeouts");
+}
+
 async function makeConfig(): Promise<{ config: SwarmConfig; cleanup: () => Promise<void> }> {
   const handle = await createTempConfig({
     prefix: "swarm-prompt-service-",
@@ -732,6 +739,7 @@ describe("SwarmPromptService", () => {
     const resolved = await service.buildResolvedManagerPrompt(descriptor);
     expect(resolved).toContain("Forge Project Agent Operating Contract");
     expect(resolved).toContain("Final/standalone direct web end-user replies in this Project Agent session");
+    expectCurrentProjectAgentRoutingFooter(resolved);
     expect(resolved.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
 
     const preview = await service.previewManagerSystemPromptForAgent(descriptor.agentId);
@@ -972,6 +980,7 @@ describe("SwarmPromptService", () => {
     expect(resolved).toContain("Repo prompt body");
     expect(resolved).toContain("Repo reference body");
     expect(resolved.indexOf("Repo reference body")).toBeLessThan(resolved.indexOf("# Non-Negotiable Forge Routing Contract"));
+    expectCurrentProjectAgentRoutingFooter(resolved);
     expect(resolved.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
     expect(resolved).not.toContain("Stale local prompt");
     expect(resolved).not.toContain("Stale local reference");
@@ -1087,6 +1096,7 @@ describe("SwarmPromptService", () => {
     const finalPrompt = await service.buildResolvedManagerPrompt(descriptor);
     expect(finalPrompt).toContain("Local reference body");
     expect(finalPrompt.indexOf("Local reference body")).toBeLessThan(finalPrompt.indexOf("# Non-Negotiable Forge Routing Contract"));
+    expectCurrentProjectAgentRoutingFooter(finalPrompt);
     expect(finalPrompt.trimEnd()).toMatch(/Do not both call `speak_to_user` and emit a normal assistant final answer with the same reply\.$/);
   });
 
