@@ -4,7 +4,7 @@ import { fireEvent, getAllByText, getByRole, getByText, getByTitle } from '@test
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PullRequestsTab } from './PullRequestsTab'
 import type { GitPullRequestsQueryResult } from './use-diff-queries'
 
@@ -12,6 +12,7 @@ let container: HTMLDivElement
 let root: Root | null = null
 
 beforeEach(() => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-06-23T12:00:00Z'))
   const storage = new Map<string, string>()
   Object.defineProperty(window, 'localStorage', {
     configurable: true,
@@ -35,6 +36,7 @@ afterEach(() => {
   root = null
   container?.remove()
   window.localStorage.clear()
+  vi.restoreAllMocks()
 })
 
 describe('PullRequestsTab', () => {
@@ -132,6 +134,56 @@ describe('PullRequestsTab', () => {
     expect(getByText(container, 'Current')).toBeTruthy()
     expect(getAllByText(container, /Enhanced Source Control workspace/).length).toBeGreaterThan(0)
     expect(getByRole(container, 'link', { name: /Open in browser/i })).toBeTruthy()
+  })
+
+  it('labels recently closed row timestamps by merged or closed time and sorts by close time', () => {
+    renderTab({
+      data: {
+        ...readyPullRequestsData(),
+        recentlyClosed: [
+          {
+            number: 421,
+            title: 'Closed without merge',
+            state: 'closed',
+            author: 'reviewer',
+            createdAt: '2026-06-01T10:00:00Z',
+            updatedAt: '2026-06-22T11:00:00Z',
+            closedAt: '2026-06-18T12:00:00Z',
+            headRef: 'fix/closed-pr',
+            baseRef: 'main',
+            isDraft: false,
+            isCurrentBranch: false,
+            providerUrl: 'https://github.com/a-mart/forge/pull/421',
+          },
+          {
+            number: 417,
+            title: 'Merged three weeks ago despite later updates',
+            state: 'merged',
+            author: 'backend-specialist',
+            createdAt: '2026-05-31T10:00:00Z',
+            updatedAt: '2026-06-23T11:00:00Z',
+            closedAt: '2026-06-02T10:00:00Z',
+            mergedAt: '2026-06-02T10:00:00Z',
+            headRef: 'fix/merged-pr',
+            baseRef: 'main',
+            isDraft: false,
+            isCurrentBranch: false,
+            providerUrl: 'https://github.com/a-mart/forge/pull/417',
+          },
+        ],
+      },
+    })
+
+    expect(getByText(container, 'closed 5d ago')).toBeTruthy()
+    expect(getByText(container, 'merged 21d ago')).toBeTruthy()
+    expect(() => getByText(container, '1h ago')).toThrow()
+
+    const pullRequestButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Pull request #"]'))
+    expect(pullRequestButtons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Pull request #428: Enhanced Source Control workspace',
+      'Pull request #421: Closed without merge',
+      'Pull request #417: Merged three weeks ago despite later updates',
+    ])
   })
 
   it('renders a dense resizable pull request list column by default', () => {

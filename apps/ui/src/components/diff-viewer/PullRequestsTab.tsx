@@ -95,6 +95,27 @@ function compactCheckStatusLabel(status: GitPullRequestSummary['checkStatus']): 
   }
 }
 
+function pullRequestRowTimestamp(pullRequest: GitPullRequestSummary): string {
+  if (pullRequest.state === 'open') {
+    return formatRelativeTimestamp(pullRequest.updatedAt)
+  }
+
+  if (pullRequest.mergedAt) {
+    return `merged ${formatRelativeTimestamp(pullRequest.mergedAt)}`
+  }
+
+  if (pullRequest.closedAt) {
+    return `closed ${formatRelativeTimestamp(pullRequest.closedAt)}`
+  }
+
+  return `updated ${formatRelativeTimestamp(pullRequest.updatedAt)}`
+}
+
+function recentlyClosedSortTime(pullRequest: GitPullRequestSummary): number {
+  const parsed = Date.parse(pullRequest.mergedAt ?? pullRequest.closedAt ?? pullRequest.updatedAt)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
 function CheckStatusIcon({ status }: { status: GitPullRequestSummary['checkStatus'] }) {
   if (status === 'success') {
     return <CheckCircle2 className="size-3.5 text-emerald-500" />
@@ -145,7 +166,7 @@ function PullRequestRow({
           <span className="min-w-0 flex-1 truncate font-mono" title={branchLabel}>
             {branchLabel}
           </span>
-          <span className="shrink-0">{formatRelativeTimestamp(pullRequest.updatedAt)}</span>
+          <span className="shrink-0">{pullRequestRowTimestamp(pullRequest)}</span>
         </div>
         <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground/80">
           <span className="min-w-0 truncate" title={pullRequest.author}>
@@ -402,9 +423,14 @@ export function PullRequestsTab({
     { enabled: !!agentId && selectedNumber != null },
   )
 
+  const recentlyClosedPullRequests = useMemo(
+    () => [...(data?.recentlyClosed ?? [])].sort((left, right) => recentlyClosedSortTime(right) - recentlyClosedSortTime(left)),
+    [data?.recentlyClosed],
+  )
+
   const allPullRequests = useMemo(
-    () => [...(data?.open ?? []), ...(data?.recentlyClosed ?? [])],
-    [data?.open, data?.recentlyClosed],
+    () => [...(data?.open ?? []), ...recentlyClosedPullRequests],
+    [data?.open, recentlyClosedPullRequests],
   )
 
   useEffect(() => {
@@ -608,7 +634,7 @@ export function PullRequestsTab({
     )
   }
 
-  const hasAnyPullRequests = (data?.open.length ?? 0) > 0 || (data?.recentlyClosed.length ?? 0) > 0
+  const hasAnyPullRequests = (data?.open.length ?? 0) > 0 || recentlyClosedPullRequests.length > 0
 
   return (
     <>
@@ -646,13 +672,13 @@ export function PullRequestsTab({
                   </div>
                 </section>
               ) : null}
-              {(data?.recentlyClosed.length ?? 0) > 0 ? (
+              {recentlyClosedPullRequests.length > 0 ? (
                 <section className="min-w-0" aria-label="Recently closed pull requests">
                   <p className="border-b border-border/50 bg-muted/30 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     Recently closed
                   </p>
                   <div role="list" className="min-w-0">
-                    {data?.recentlyClosed.map((pullRequest) => (
+                    {recentlyClosedPullRequests.map((pullRequest) => (
                       <div key={pullRequest.number} role="listitem" className="min-w-0">
                         <PullRequestRow
                           pullRequest={pullRequest}
