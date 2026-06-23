@@ -352,6 +352,65 @@ describe("CodexPluginScopeService", () => {
     expect(JSON.stringify(result.details)).not.toContain("full redacted transcript tail");
   });
 
+  it("adds an export tool that returns artifact metadata without full content", async () => {
+    const baseCatalog = catalog();
+    const service = new CodexPluginScopeService({
+      catalog: adapter(
+        catalog({
+          tools: [
+            ...baseCatalog.tools,
+            {
+              selector: "fireflies/fetch_transcript",
+              serverName: "fireflies",
+              toolName: "fetch_transcript",
+              description: "Fetch full transcript by ID",
+              readOnly: true,
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+      ),
+    });
+    const { scope } = await service.materializePendingScope({
+      managerAgentId: "manager",
+      workerAgentId: "codex-plugin-fireflies",
+      selectors: ["fireflies/fetch_transcript"],
+    });
+    const definitions = buildCodexPluginScopedToolDefinitions({
+      scope,
+      executeScopedTool: async () => {
+        throw new Error("export path should call export handler");
+      },
+      exportScopedToolResult: async (scopedToolName, args, options) => ({
+        ok: true,
+        absolutePath: "/tmp/forge/session/artifacts/codex-plugin/delegation/transcript.json",
+        bytes: 44,
+        selector: "fireflies/fetch_transcript",
+        serverName: "fireflies",
+        toolName: "fetch_transcript",
+        scopedToolName,
+        format: options.format,
+        auditId: "audit-1",
+        truncated: false,
+        preview: `bounded preview for ${String(args?.transcriptId)}`,
+      }),
+    });
+
+    expect(definitions.map((tool) => tool.name)).toContain("export_scoped_codex_plugin_result");
+    const exportTool = definitions.find((tool) => tool.name === "export_scoped_codex_plugin_result")!;
+    const result = await exportTool.execute("tc-export", {
+      selector: "fireflies/fetch_transcript",
+      args: { transcriptId: "transcript-1" },
+      fileName: "../transcript",
+    });
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+    expect(text).toContain("transcript.json");
+    expect(text).toContain("bounded preview");
+    expect(text).not.toContain("fullRedactedContent");
+    expect(JSON.stringify(result.details)).not.toContain("full redacted transcript tail");
+  });
+
   it("list fallback returns scoped cards only", async () => {
     const service = new CodexPluginScopeService({ catalog: adapter(catalog()) });
     const { scope } = await service.materializePendingScope({

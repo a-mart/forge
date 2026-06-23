@@ -378,6 +378,8 @@ import {
   CodexPluginScopeService,
   createCodexPluginDelegationId,
   isCodexPluginWorkerDescriptor,
+  type CodexPluginExportFormat,
+  type CodexPluginScopedExportResult,
   type CodexPluginScopeRuntimeView,
 } from "./codex-app-server/codex-plugin-scope-service.js";
 import { reconcilePersistedCodexDetailStateForBoot } from "./codex-app-server/codex-detail-boot-reconciliation.js";
@@ -451,6 +453,13 @@ interface PendingCodexPluginSpawnContext {
   activeContext: CodexPluginDelegationTurnContext;
   task: string;
   materializedWorkerAgentIds: Set<string>;
+}
+
+interface CodexPluginRetryContext {
+  retryContextId: string;
+  activeContext: CodexPluginDelegationTurnContext;
+  createdAt: number;
+  lastWorkerAgentId?: string;
 }
 
 interface PendingInboundTurnContext {
@@ -1123,6 +1132,7 @@ Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
 const PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS = 15_000;
 const MODEL_CAPACITY_BLOCK_DEFAULT_MS = 10 * 60_000;
+const CODEX_PLUGIN_RETRY_CONTEXT_TTL_MS = 2 * 60 * 60_000;
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
 
@@ -1268,6 +1278,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingInboundTurnContextsByAgentId = new Map<string, PendingInboundTurnContext[]>();
   private readonly codexMcpToolTurnGateByManagerId = new Map<string, CodexMcpToolGateEvaluation>();
   private readonly activeCodexPluginDelegationByManagerId = new Map<string, CodexPluginDelegationTurnContext>();
+  private readonly lastCodexPluginDelegationByManagerId = new Map<string, CodexPluginRetryContext>();
   private readonly pendingCodexPluginSpawnByManagerId = new Map<string, PendingCodexPluginSpawnContext>();
   private readonly pendingCodexPluginSpawnByInput = new WeakMap<SpawnAgentInput, PendingCodexPluginSpawnContext>();
   private readonly pendingCodexPluginInitialTaskByWorkerId = new Map<string, string>();
@@ -3477,6 +3488,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async archiveSession(agentId: string): Promise<{ agentId: string; profileId: string; archivedAt: string; terminatedWorkerIds: string[] }> {
     this.codexPluginScopeService.closeScopesForManager(agentId);
+    this.clearCodexPluginRetryContextForManager(agentId);
     const result = await this.archiveService.archiveSession(agentId);
     this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
     this.emitAgentsSnapshot();
@@ -3500,6 +3512,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async archiveProfile(profileId: string): Promise<{ profileId: string; archivedAt: string; terminatedWorkerIds: string[] }> {
     for (const session of this.getSessionsForProfile(profileId)) {
       this.codexPluginScopeService.closeScopesForManager(session.agentId);
+      this.clearCodexPluginRetryContextForManager(session.agentId);
     }
     const result = await this.archiveService.archiveProfile(profileId);
     for (const session of this.getSessionsForProfile(profileId)) {
@@ -3545,6 +3558,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     this.getRequiredBuilderSessionDescriptor(agentId, "stop Builder sessions");
     this.codexPluginScopeService.closeScopesForManager(agentId);
+    this.clearCodexPluginRetryContextForManager(agentId);
     const result = await this.lifecycleService.stopSession(agentId);
     this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
     return result;
@@ -3553,6 +3567,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async stopCollaborationSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     this.getRequiredCollaborationSessionDescriptor(agentId, "stop collaboration sessions");
     this.codexPluginScopeService.closeScopesForManager(agentId);
+    this.clearCodexPluginRetryContextForManager(agentId);
     const result = await this.lifecycleService.stopSession(agentId);
     this.emitSessionActiveToolsSnapshot(this.sessionActiveTools.clearSession(agentId));
     return result;
@@ -3567,6 +3582,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async deleteCollaborationSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     this.codexPluginScopeService.closeScopesForManager(agentId);
+    this.clearCodexPluginRetryContextForManager(agentId);
     const deletedSessionDescriptor = cloneDescriptor(
       this.getRequiredCollaborationSessionDescriptor(agentId, "delete collaboration sessions")
     );
@@ -3581,6 +3597,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     this.codexPluginScopeService.closeScopesForManager(agentId);
+    this.clearCodexPluginRetryContextForManager(agentId);
     const deletedSessionDescriptor = cloneDescriptor(
       this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder sessions")
     );
@@ -3939,6 +3956,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     managerTerminated: boolean;
   }> {
     this.codexPluginScopeService.closeScopesForManager(targetManagerId);
+    this.clearCodexPluginRetryContextForManager(targetManagerId);
     return this.lifecycleService.stopAllAgents(callerAgentId, targetManagerId);
   }
 
@@ -3970,6 +3988,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     for (const sessionDescriptor of sessionDescriptors) {
       this.codexPluginScopeService.closeScopesForManager(sessionDescriptor.agentId);
+      this.clearCodexPluginRetryContextForManager(sessionDescriptor.agentId);
     }
 
     const deletedSessionDescriptors = sessionDescriptors.map((sessionDescriptor) => cloneDescriptor(sessionDescriptor));
@@ -5913,6 +5932,46 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("Codex Plugin specialist context is bound to a different manager session.");
     }
 
+    return this.spawnCodexPluginSpecialistWorkerForContext(manager, input, activeContext, "active_selector");
+  }
+
+  async retryCodexPluginWorker(
+    managerAgentId: string,
+    input: { initialMessage: string; retryContextId?: string },
+  ): Promise<AgentDescriptor> {
+    const manager = this.descriptors.get(managerAgentId);
+    if (!manager || manager.role !== "manager") {
+      throw new Error(`Codex Plugin retry requires a manager session: ${managerAgentId}`);
+    }
+    this.assertDescriptorNotEffectivelyArchived(manager);
+    if (isNonRunningAgentStatus(manager.status)) {
+      throw new Error(`Codex Plugin retry requires a running manager session: ${managerAgentId}`);
+    }
+
+    const retryContext = this.requireCodexPluginRetryContext(manager.agentId, input.retryContextId);
+    const task = input.initialMessage.trim();
+    if (!task) {
+      throw new Error("retry_codex_plugin_worker requires a non-empty initialMessage.");
+    }
+
+    return this.spawnCodexPluginSpecialistWorkerForContext(
+      manager,
+      {
+        agentId: this.defaultCodexPluginWorkerAgentId(retryContext.activeContext),
+        specialist: CODEX_PLUGIN_SPECIALIST_ID,
+        initialMessage: task,
+      },
+      retryContext.activeContext,
+      "retry",
+    );
+  }
+
+  private async spawnCodexPluginSpecialistWorkerForContext(
+    manager: AgentDescriptor,
+    input: SpawnAgentInput,
+    activeContext: CodexPluginDelegationTurnContext,
+    source: "active_selector" | "retry",
+  ): Promise<AgentDescriptor> {
     const task = input.initialMessage?.trim() || activeContext.strippedText.trim() || activeContext.originalText.trim();
     if (!task) {
       throw new Error("Codex Plugin specialist requires a non-empty initialMessage task.");
@@ -5948,6 +6007,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.pendingCodexPluginInitialTaskByWorkerId.delete(descriptor.agentId);
       }
 
+      this.rememberCodexPluginRetryContext(activeContext, descriptor.agentId);
       this.logDebug("codex_plugin:specialist_spawned", {
         managerAgentId: manager.agentId,
         workerAgentId: descriptor.agentId,
@@ -5955,6 +6015,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         selectors: activeContext.selectors,
         toolCount: this.getCodexPluginScopeForWorker(descriptor.agentId)?.allowedTools.length ?? 0,
         userMessageId: activeContext.userMessageId,
+        source,
       });
 
       return descriptor;
@@ -5968,6 +6029,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         requestedAgentId,
         delegationId,
         selectors: activeContext.selectors,
+        source,
         message: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -5977,6 +6039,49 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
       this.pendingCodexPluginSpawnByInput.delete(spawnInput);
     }
+  }
+
+  private rememberCodexPluginRetryContext(
+    context: CodexPluginDelegationTurnContext,
+    lastWorkerAgentId?: string,
+  ): void {
+    const existing = this.lastCodexPluginDelegationByManagerId.get(context.managerAgentId);
+    this.lastCodexPluginDelegationByManagerId.set(context.managerAgentId, {
+      retryContextId: context.contextId,
+      activeContext: {
+        ...context,
+        selectors: [...context.selectors],
+        sourceContext: { ...context.sourceContext },
+      },
+      createdAt: existing?.retryContextId === context.contextId ? existing.createdAt : Date.now(),
+      lastWorkerAgentId: lastWorkerAgentId ?? existing?.lastWorkerAgentId,
+    });
+  }
+
+  private clearCodexPluginRetryContextForManager(managerAgentId: string): void {
+    this.lastCodexPluginDelegationByManagerId.delete(managerAgentId);
+  }
+
+  private requireCodexPluginRetryContext(
+    managerAgentId: string,
+    retryContextId?: string,
+  ): CodexPluginRetryContext {
+    const retryContext = this.lastCodexPluginDelegationByManagerId.get(managerAgentId);
+    if (!retryContext) {
+      throw new Error("No Codex Plugin retry context is available. Ask the user to re-tag the request with @Codex and the desired plugin selector.");
+    }
+    if (retryContext.activeContext.managerAgentId !== managerAgentId) {
+      throw new Error("Codex Plugin retry context belongs to a different manager session. Ask the user to re-tag the request.");
+    }
+    if (retryContextId && retryContext.retryContextId !== retryContextId) {
+      throw new Error("Codex Plugin retry context id is unavailable or expired. Ask the user to re-tag the request.");
+    }
+    if (Date.now() - retryContext.createdAt > CODEX_PLUGIN_RETRY_CONTEXT_TTL_MS) {
+      this.clearCodexPluginRetryContextForManager(managerAgentId);
+      throw new Error("Codex Plugin retry context expired. Ask the user to re-tag the request with @Codex and the desired plugin selector.");
+    }
+
+    return retryContext;
   }
 
   private defaultCodexPluginWorkerAgentId(context: CodexPluginDelegationTurnContext | undefined): string {
@@ -6019,6 +6124,101 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     scopedToolName: string,
     args?: Record<string, unknown>,
   ): Promise<CodexMcpToolCallResult> {
+    const { worker, manager, allowed } = this.authorizeCodexPluginScopedTool(workerAgentId, scopedToolName);
+    return this.codexAppServerService.callCodexMcpToolByExactTool({
+      managerAgentId: manager.agentId,
+      ownerId: workerAgentId,
+      cwd: manager.cwd ?? worker.cwd ?? process.cwd(),
+      tool: {
+        selector: `${allowed.serverName}/${allowed.toolName}`,
+        serverName: allowed.serverName,
+        toolName: allowed.toolName,
+        description: allowed.description,
+        inputSchema: allowed.inputSchema,
+        readOnly: true,
+        annotations: { readOnlyHint: true },
+      },
+      args,
+    });
+  }
+
+  async exportCodexPluginScopedToolResult(
+    workerAgentId: string,
+    input: {
+      scopedToolName: string;
+      args?: Record<string, unknown>;
+      fileName?: string;
+      format: CodexPluginExportFormat;
+      includePreview: boolean;
+    },
+  ): Promise<CodexPluginScopedExportResult> {
+    const { manager, allowed, scope } = this.authorizeCodexPluginScopedTool(workerAgentId, input.scopedToolName);
+    const result = await this.callCodexPluginScopedTool(workerAgentId, input.scopedToolName, input.args);
+    if (!result.ok) {
+      throw new Error(result.errorPreview ?? "Codex plugin scoped tool call failed; no export artifact was written.");
+    }
+    if (!result.redactedModelContent) {
+      throw new Error(
+        "Codex plugin scoped tool returned only a bounded preview; full export payload is unavailable, so no artifact was written.",
+      );
+    }
+    if (result.redactedModelContentTruncated) {
+      throw new Error(
+        "Codex plugin scoped tool full payload was truncated before export; no artifact was written. Ask the user to narrow the request or use a plugin-native export if available.",
+      );
+    }
+
+    const format = input.format;
+    const artifactBody = format === "json"
+      ? JSON.stringify(JSON.parse(result.redactedModelContent), null, 2)
+      : result.redactedModelContent;
+    const extension = format === "markdown" ? "md" : format;
+    const baseName = sanitizePathSegment(
+      input.fileName ?? `${allowed.toolName}-${Date.now()}`,
+      allowed.toolName || "codex-plugin-result",
+    ).replace(/\.(json|txt|text|md|markdown)$/i, "");
+    const sessionDir = this.getSessionDirForDescriptor(manager);
+    const artifactDir = join(
+      sessionDir,
+      "artifacts",
+      "codex-plugin",
+      sanitizePathSegment(scope.delegationId, "delegation"),
+    );
+    await mkdir(artifactDir, { recursive: true });
+    const absolutePath = await writeUniqueArtifactFile(
+      artifactDir,
+      baseName,
+      extension,
+      artifactBody,
+    );
+    const bytes = Buffer.byteLength(artifactBody, "utf8");
+
+    return {
+      ok: true,
+      absolutePath,
+      bytes,
+      selector: result.selector,
+      serverName: result.serverName,
+      toolName: result.toolName,
+      scopedToolName: input.scopedToolName,
+      format,
+      auditId: result.auditId,
+      truncated: false,
+      ...(input.includePreview && result.redactedPreview
+        ? { preview: truncateCodexPreview(result.redactedPreview) }
+        : {}),
+    };
+  }
+
+  private authorizeCodexPluginScopedTool(
+    workerAgentId: string,
+    scopedToolName: string,
+  ): {
+    worker: AgentDescriptor & { role: "worker" };
+    manager: AgentDescriptor & { role: "manager" };
+    allowed: ReturnType<CodexPluginScopeService["authorizeScopedToolCall"]>["tool"];
+    scope: ReturnType<CodexPluginScopeService["authorizeScopedToolCall"]>["scope"];
+  } {
     const worker = this.descriptors.get(workerAgentId);
     if (!isCodexPluginWorkerDescriptor(worker)) {
       throw new Error("Codex plugin scoped tools are only available to scoped Codex Plugin specialist workers.");
@@ -6041,22 +6241,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("Codex plugin worker is no longer owned by the scoped manager.");
     }
 
-    const allowed = authorization.tool;
-    return this.codexAppServerService.callCodexMcpToolByExactTool({
-      managerAgentId: manager.agentId,
-      ownerId: workerAgentId,
-      cwd: manager.cwd ?? worker.cwd ?? process.cwd(),
-      tool: {
-        selector: `${allowed.serverName}/${allowed.toolName}`,
-        serverName: allowed.serverName,
-        toolName: allowed.toolName,
-        description: allowed.description,
-        inputSchema: allowed.inputSchema,
-        readOnly: true,
-        annotations: { readOnlyHint: true },
-      },
-      args,
-    });
+    return {
+      worker,
+      manager: manager as AgentDescriptor & { role: "manager" },
+      allowed: authorization.tool,
+      scope: authorization.scope,
+    };
   }
 
   private requireManagerForCodexTools(
@@ -6242,7 +6432,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       `Selected selector(s), bound server-side for this scoped Codex Plugin worker: ${context.selectors.join(", ")}`,
       `Request after removing selector tokens: ${strippedRequest}`,
       "If plugin data or work is needed, spawn the visible Codex Plugin specialist with spawn_agent({ specialist: \"codex-plugin\", initialMessage: \"<task and context>\" }). The server binds only the selected scope to that worker for its lifetime; do not include or invent selectors in the worker input.",
+      `Retry context id for follow-ups after a stopped/failed scoped worker: ${context.contextId}. If the user later asks to try again, continue, or use a different export path without changing plugins, use retry_codex_plugin_worker({ initialMessage, retryContextId: \"${context.contextId}\" }); ask for a fresh @Codex tag only if this context is unavailable or the plugin/scope must change.`,
       "If this user turn includes attachments, inspect them in the manager context and pass only relevant text summaries to the Codex Plugin specialist; attachment payloads are not forwarded to Codex Plugin workers.",
+      "Do not relay full transcripts or long connector results in chunks. Tell Codex Plugin workers to use export_scoped_codex_plugin_result for full Fireflies transcript/summary downloads, then report only artifact metadata/path and a bounded preview.",
       "Do not call raw Codex MCP tools. Do not start a plain Codex sidecar unless the user specifically requested plain @Codex sidecar behavior.",
     ].join("\n");
   }
@@ -6409,6 +6601,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
       if (codexPluginDelegationContext && receipt.acceptedMode === "prompt") {
         this.activeCodexPluginDelegationByManagerId.set(managerContextId, codexPluginDelegationContext);
+        this.rememberCodexPluginRetryContext(codexPluginDelegationContext);
       }
       this.logDebug("manager:user_message_dispatch_complete", {
         managerContextId,
@@ -6751,6 +6944,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
         if (nextContext?.codexPluginDelegationContext) {
           this.activeCodexPluginDelegationByManagerId.set(agentId, nextContext.codexPluginDelegationContext);
+          this.rememberCodexPluginRetryContext(nextContext.codexPluginDelegationContext);
         } else {
           this.activeCodexPluginDelegationByManagerId.delete(agentId);
         }
@@ -8461,7 +8655,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const nonCodexRoster = roster.filter((entry) => entry.specialistId !== CODEX_PLUGIN_SPECIALIST_ID);
-    if (!this.activeCodexPluginDelegationByManagerId.has(managerAgentId)) {
+    if (
+      !this.activeCodexPluginDelegationByManagerId.has(managerAgentId) &&
+      !this.pendingCodexPluginSpawnByManagerId.has(managerAgentId)
+    ) {
       return nonCodexRoster;
     }
 
@@ -8742,6 +8939,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<void> {
     if (descriptor.role === "manager") {
       this.codexPluginScopeService.closeScopesForManager(descriptor.agentId);
+      this.clearCodexPluginRetryContextForManager(descriptor.agentId);
     } else if (isCodexPluginWorkerDescriptor(descriptor)) {
       this.codexPluginScopeService.closeScopeForWorker(descriptor.agentId);
     }
@@ -8846,6 +9044,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.pendingInboundTurnContextsByAgentId.delete(agentId);
     this.codexMcpToolTurnGateByManagerId.delete(agentId);
     this.activeCodexPluginDelegationByManagerId.delete(agentId);
+    this.clearCodexPluginRetryContextForManager(agentId);
     this.codexPluginScopeService.closeScopesForManager(agentId);
   }
 
@@ -8886,6 +9085,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor?.role === "manager") {
       this.pendingInboundTurnContextsByAgentId.delete(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
+      this.clearCodexPluginRetryContextForManager(agentId);
       this.codexPluginScopeService.closeScopesForManager(agentId);
     } else if (isCodexPluginWorkerDescriptor(descriptor)) {
       this.codexPluginScopeService.closeScopeForWorker(agentId);
@@ -9615,6 +9815,33 @@ function hasExistingExecutableSurface(resolution: { repoRootResources: { forgeEx
     resolution.repoRootResources.piSettingsPath,
     ...resolution.legacyExecutableSurfaces.filter((surface) => surface.activeToday).map((surface) => surface.path)
   ].some((pathValue) => Boolean(pathValue && existsSync(pathValue)));
+}
+
+async function writeUniqueArtifactFile(
+  artifactDir: string,
+  baseName: string,
+  extension: string,
+  body: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const suffix = attempt === 0 ? "" : `-${attempt + 1}`;
+    const candidate = join(artifactDir, `${baseName}${suffix}.${extension}`);
+    try {
+      await writeFile(candidate, body, { encoding: "utf8", flag: "wx" });
+      return candidate;
+    } catch (error) {
+      if (isNodeErrorCode(error, "EEXIST")) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("Unable to allocate a unique Codex plugin artifact file name.");
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === code);
 }
 
 function isSessionRenameHistoryEntry(value: unknown): value is SessionRenameHistoryEntry {

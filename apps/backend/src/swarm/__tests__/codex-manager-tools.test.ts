@@ -110,6 +110,7 @@ describe("codex manager tools", () => {
     expect(managerTools).not.toContain("list_codex_mcp_tools");
     expect(managerTools).not.toContain("call_codex_mcp_tool");
     expect(managerTools).toContain("spawn_agent");
+    expect(managerTools).toContain("retry_codex_plugin_worker");
   });
 
   it("exposes scoped Codex plugin tools only to the bound scoped specialist worker", async () => {
@@ -124,6 +125,19 @@ describe("codex manager tools", () => {
     const host = createHost({
       getCodexPluginScopeForWorker: (agentId) => (agentId === "codex-plugin-fireflies" ? createScope() : undefined),
       callCodexPluginScopedTool: callScoped,
+      exportCodexPluginScopedToolResult: async () => ({
+        ok: true,
+        absolutePath: "/tmp/artifact.json",
+        bytes: 2,
+        selector: "fireflies/list_recent",
+        serverName: "fireflies",
+        toolName: "list_recent",
+        scopedToolName: "codex_fireflies_list_recent",
+        format: "json",
+        auditId: "audit-1",
+        truncated: false,
+        preview: "{}",
+      }),
     });
 
     const ordinaryWorkerTools = buildSwarmTools(host, createWorker()).map((tool) => tool.name);
@@ -138,6 +152,7 @@ describe("codex manager tools", () => {
     expect(scopedTools.map((tool) => tool.name)).toEqual([
       "send_message_to_agent",
       "list_scoped_codex_plugin_tools",
+      "export_scoped_codex_plugin_result",
       "codex_fireflies_list_recent",
     ]);
     const tool = scopedTools.find((entry) => entry.name === "codex_fireflies_list_recent");

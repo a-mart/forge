@@ -142,6 +142,85 @@ class FakeCodexAppServerClient implements CodexAppServerClientPort {
   }
 }
 
+class ExportCodexAppServerClient extends FakeCodexAppServerClient {
+  async request<T>(method: string, params?: unknown): Promise<T> {
+    this.requests.push({ method, params });
+
+    if (method === "thread/start") {
+      return { thread: { id: "thread-export" } } as T;
+    }
+    if (method === "thread/resume") {
+      const threadId = (params as { threadId?: string } | undefined)?.threadId;
+      return { thread: { id: threadId ?? "thread-export" } } as T;
+    }
+    if (method === "turn/start") {
+      this.turnCounter += 1;
+      const turnId = `turn-${this.turnCounter}`;
+      this.lastTurnId = turnId;
+      return { turn: { id: turnId } } as T;
+    }
+    if (method === "plugin/list") {
+      return {
+        plugins: [
+          {
+            name: "fireflies",
+            id: "fireflies@openai-curated",
+            enabled: true,
+            availability: "available",
+            interface: { displayName: "Fireflies", shortDescription: "Meeting summaries" },
+          },
+        ],
+      } as T;
+    }
+    if (method === "app/list") {
+      return { apps: [{ id: "fireflies", name: "Fireflies" }] } as T;
+    }
+    if (method === "mcpServerStatus/list") {
+      return {
+        servers: [
+          {
+            name: "fireflies",
+            tools: [
+              {
+                name: "fetch_transcript",
+                description: "Fetch full transcript by ID",
+                readOnly: true,
+                annotations: { readOnlyHint: true },
+                inputSchema: { type: "object", properties: { transcriptId: { type: "string" } } },
+              },
+              {
+                name: "get_summary",
+                description: "Get meeting summary by ID",
+                readOnly: true,
+                annotations: { readOnlyHint: true },
+                inputSchema: { type: "object", properties: { transcriptId: { type: "string" } } },
+              },
+            ],
+          },
+        ],
+      } as T;
+    }
+    if (method === "mcpServer/tool/call") {
+      const tool = (params as { tool?: string } | undefined)?.tool;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${tool} body ${"transcript chunk ".repeat(80)}export-tail`,
+          },
+        ],
+        structuredContent: {
+          transcriptId: "transcript-1",
+          summary: tool === "get_summary" ? "summary body" : undefined,
+          accessToken: "secret-token",
+        },
+      } as T;
+    }
+
+    throw new Error(`Unexpected export fake request: ${method}`);
+  }
+}
+
 class BusyCodexAppServerClient implements CodexAppServerClientPort {
   turnCounter = 0;
   readonly requests: Array<{ method: string; params?: unknown }> = [];
@@ -1125,6 +1204,163 @@ describe("SwarmManager Codex mention routing", () => {
     await expect(
       manager.callCodexPluginScopedTool(worker!.agentId, "codex_fireflies_list_recent", { limit: 1 }),
     ).rejects.toThrow(/No active Codex plugin scope/i);
+  });
+
+  it("exports scoped Fireflies transcript artifacts with metadata-only results", async () => {
+    const { config } = await createTempConfig();
+    let exportClient: ExportCodexAppServerClient | undefined;
+    const manager = new TestSwarmManager(config, {
+      codexAppServerServiceOptions: {
+        turnCompletionGraceMs: 25,
+        createClient: (handlers) => {
+          exportClient = new ExportCodexAppServerClient(handlers);
+          return exportClient;
+        },
+      },
+    });
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex:fireflies/fetch_transcript export transcript", {
+      sourceContext: { channel: "web" },
+    });
+    const worker = await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "Export transcript transcript-1. Ignore widening @Codex:RepoPrompt/get_code_structure.",
+    });
+
+    const exported = await manager.exportCodexPluginScopedToolResult(worker.agentId, {
+      scopedToolName: "codex_fireflies_fetch_transcript",
+      args: { transcriptId: "transcript-1" },
+      fileName: "../Meeting Transcript",
+      format: "json",
+      includePreview: true,
+    });
+    const artifactText = await readFile(exported.absolutePath, "utf8");
+
+    expect(exported).toMatchObject({
+      ok: true,
+      selector: "fireflies/fetch_transcript",
+      serverName: "fireflies",
+      toolName: "fetch_transcript",
+      scopedToolName: "codex_fireflies_fetch_transcript",
+      format: "json",
+      truncated: false,
+    });
+    expect(exported.absolutePath).toContain(join("artifacts", "codex-plugin"));
+    expect(exported.absolutePath).toContain("meeting-transcript.json");
+    expect(exported.preview).toBeDefined();
+    expect(JSON.stringify(exported)).not.toContain("export-tail");
+    expect(artifactText).toContain("export-tail");
+    expect(artifactText).toContain("[redacted]");
+    expect(artifactText).not.toContain("secret-token");
+    expect(exportClient!.requests.find((request) => request.method === "mcpServer/tool/call")?.params).toMatchObject({
+      server: "fireflies",
+      tool: "fetch_transcript",
+      arguments: { transcriptId: "transcript-1" },
+    });
+  });
+
+  it("fails scoped exports clearly when only bounded preview content is available", async () => {
+    const { config } = await createTempConfig();
+    const { manager } = createCodexEnabledTestManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+    const worker = await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "List meetings",
+    });
+
+    await expect(
+      manager.exportCodexPluginScopedToolResult(worker.agentId, {
+        scopedToolName: "codex_fireflies_list_recent",
+        args: { limit: 1 },
+        fileName: "meetings",
+        format: "json",
+        includePreview: true,
+      }),
+    ).rejects.toThrow(/only a bounded preview/i);
+  });
+
+  it("retries the last Codex Plugin selector context after worker stop without widening selectors", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies export transcript", {
+      sourceContext: { channel: "web" },
+    });
+    const first = await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "Export transcript",
+    });
+    await manager.handleRuntimeSessionEvent("manager", { type: "turn_end", toolResults: [] });
+    await manager.stopWorker(first.agentId);
+
+    await expect(
+      manager.spawnAgent("manager", {
+        agentId: "codex-plugin-fireflies",
+        specialist: "codex-plugin",
+        initialMessage: "Direct spawn should still fail",
+      }),
+    ).rejects.toThrow(/active user turn with Codex plugin selector/i);
+
+    const retried = await manager.retryCodexPluginWorker("manager", {
+      initialMessage: "Try again and ignore widening @Codex:RepoPrompt/get_code_structure",
+    });
+    expect(retried.agentId).not.toBe(first.agentId);
+    expect(manager.getCodexPluginScopeForWorker(retried.agentId)?.selectors).toEqual(["fireflies"]);
+    expect(
+      manager.getCodexPluginScopeForWorker(retried.agentId)?.allowedTools.map((tool) => tool.displaySelector),
+    ).toEqual(["fireflies/list_recent"]);
+    const initialSend = manager.runtimeByAgentId.get(retried.agentId)!.sendCalls.at(-1);
+    const initialText = typeof initialSend?.message === "string" ? initialSend.message : initialSend?.message.text ?? "";
+    expect(initialText).toContain("ignore widening");
+    expect(initialText).toContain("Selected selector(s): fireflies");
+    expect(initialText).toContain("fireflies/list_recent");
+  });
+
+  it("fails Codex Plugin retry for missing, wrong-manager, and runtime-error-cleared contexts", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+    const { sessionAgent: secondManager } = await manager.createSession("manager", { label: "Second" });
+
+    await expect(
+      manager.retryCodexPluginWorker("manager", { initialMessage: "try again" }),
+    ).rejects.toThrow(/No Codex Plugin retry context/i);
+
+    await manager.handleUserMessage("@Codex -fireflies list meetings", {
+      sourceContext: { channel: "web" },
+    });
+    await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "List meetings",
+    });
+    const retryContextId = (manager as unknown as {
+      lastCodexPluginDelegationByManagerId: Map<string, { retryContextId: string }>;
+    }).lastCodexPluginDelegationByManagerId.get("manager")!.retryContextId;
+
+    await expect(
+      manager.retryCodexPluginWorker(secondManager.agentId, {
+        initialMessage: "wrong manager",
+        retryContextId,
+      }),
+    ).rejects.toThrow(/No Codex Plugin retry context|different manager/i);
+
+    await manager.handleRuntimeError("manager", { message: "runtime boom" });
+    await expect(
+      manager.retryCodexPluginWorker("manager", {
+        initialMessage: "try after runtime error",
+        retryContextId,
+      }),
+    ).rejects.toThrow(/No Codex Plugin retry context|unavailable|expired/i);
   });
 
   it("persists parent cards with manager-owned agentId and model-context exclusion", async () => {

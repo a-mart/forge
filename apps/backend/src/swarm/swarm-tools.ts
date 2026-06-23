@@ -6,6 +6,7 @@ import { ChoiceRequestCancelledError } from "./swarm-manager.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
 import {
   buildCodexPluginScopedToolDefinitions,
+  CODEX_PLUGIN_SPECIALIST_ID,
   isCodexPluginWorkerDescriptor,
 } from "./codex-app-server/codex-plugin-scope-service.js";
 import {
@@ -354,6 +355,14 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           scope: codexPluginScope,
           executeScopedTool: (scopedToolName, args) =>
             host.callCodexPluginScopedTool!(descriptor.agentId, scopedToolName, args),
+          exportScopedToolResult: host.exportCodexPluginScopedToolResult
+            ? (scopedToolName, args, options) =>
+                host.exportCodexPluginScopedToolResult!(descriptor.agentId, {
+                  scopedToolName,
+                  args,
+                  ...options,
+                })
+            : undefined,
         })
       : [];
 
@@ -451,6 +460,48 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             {
               type: "text",
               text: `Spawned agent ${spawned.agentId} (${spawned.displayName})`
+            }
+          ],
+          details: spawned
+        };
+      }
+    },
+    {
+      name: "retry_codex_plugin_worker",
+      label: "Retry Codex Plugin Worker",
+      description:
+        "Respawn a Codex Plugin specialist using the last server-owned plugin selector context for this manager. Use after a scoped Codex Plugin worker was stopped or failed and the user asks to try again, continue, or use a different export path. Does not accept selectors; ask the user to re-tag @Codex if the context is unavailable, expired, or the plugin/scope must change.",
+      parameters: Type.Object({
+        initialMessage: Type.String({ description: "Task/context for the retried Codex Plugin worker." }),
+        retryContextId: Type.Optional(
+          Type.String({ description: "Optional opaque retry context id from prior retry/export guidance. Selectors are never accepted here." })
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        if (!host.retryCodexPluginWorker) {
+          throw new Error("Codex Plugin retry is not available in this runtime.");
+        }
+        const parsed = params as { initialMessage?: string; retryContextId?: string };
+        const spawned = await host.retryCodexPluginWorker(descriptor.agentId, {
+          initialMessage: parsed.initialMessage ?? "",
+          retryContextId: parsed.retryContextId,
+        });
+        recordToolSideEffect(host, descriptor, {
+          toolName: "retry_codex_plugin_worker",
+          toolCallId: _toolCallId,
+          phase: "side_effect",
+          input: parsed,
+          output: { agentId: spawned.agentId, role: spawned.role, displayName: spawned.displayName },
+          metadata: {
+            spawnedAgentId: spawned.agentId,
+            specialist: CODEX_PLUGIN_SPECIALIST_ID,
+          },
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Respawned Codex Plugin worker ${spawned.agentId} (${spawned.displayName})`
             }
           ],
           details: spawned
