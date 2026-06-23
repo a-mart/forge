@@ -6185,16 +6185,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return false;
     }
 
-    const hasRetryAction = /\b(retry|rerun|resume|continue|finish|re-?try|export|download|save)\b/.test(normalized) ||
+    const hasContinuationAction = /\b(retry|rerun|resume|continue|finish|re-?try)\b/.test(normalized) ||
       /\btry\s+(it|that|this|again)\b/.test(normalized) ||
       /\b(run|do)\s+(it|that|this)\s+again\b/.test(normalized) ||
+      /\bagain\b/.test(normalized) ||
       /\bkeep\s+going\b/.test(normalized) ||
       /\bpick\s+(it|that|this)?\s*back\s+up\b/.test(normalized);
-    if (!hasRetryAction) {
+    const hasGenericExportAction = /\b(export|download|save)\b/.test(normalized);
+    if (!hasContinuationAction && !hasGenericExportAction) {
       return false;
     }
 
-    return /\b(codex|plugin|fireflies|transcript|summary|meeting|worker|specialist|export|download|same|previous|last|that|this|it)\b/.test(normalized);
+    const hasAnaphoricReference = /\b(same|previous|last|that|this|it|again)\b/.test(normalized);
+    const hasConnectorReference = /\b(codex|plugin|fireflies|transcript|summary|meeting|worker|specialist)\b/.test(normalized);
+
+    if (hasContinuationAction) {
+      return hasAnaphoricReference || hasConnectorReference;
+    }
+
+    // Generic export/download/save requests are common non-Codex turns. They authorize retry only
+    // when they explicitly name the prior Codex/plugin/app connector scope.
+    return hasConnectorReference;
   }
 
   private requireActiveCodexPluginRetryAuthorization(

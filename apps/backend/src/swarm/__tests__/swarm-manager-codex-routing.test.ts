@@ -315,6 +315,25 @@ function hasInternalCodexPluginWorker(manager: { listAgentsForInternalUse(): Age
   return Boolean(findInternalCodexPluginWorker(manager));
 }
 
+async function createStoppedFirefliesRetryManager() {
+  const { config } = await createTempConfig();
+  const manager = createCodexEnabledManagerOnly(config);
+  await bootWithDefaultManager(manager, config);
+
+  await manager.handleUserMessage("@Codex -fireflies export transcript", {
+    sourceContext: { channel: "web" },
+  });
+  const first = await manager.spawnAgent("manager", {
+    agentId: "codex-plugin-fireflies",
+    specialist: "codex-plugin",
+    initialMessage: "Export transcript",
+  });
+  await manager.handleRuntimeSessionEvent("manager", { type: "turn_end", toolResults: [] });
+  await manager.stopWorker(first.agentId);
+
+  return { manager, first };
+}
+
 function createBusyCodexTestManager(config: Awaited<ReturnType<typeof createTempConfig>>["config"]) {
   let busyClient: BusyCodexAppServerClient | undefined;
   const manager = new TestSwarmManager(config, {
@@ -1349,6 +1368,48 @@ describe("SwarmManager Codex mention routing", () => {
     expect(initialText).toContain("ignore widening");
     expect(initialText).toContain("Selected selector(s): fireflies");
     expect(initialText).toContain("fireflies/list_recent");
+  });
+
+  it.each([
+    "export the repo diff",
+    "download the logs",
+    "save this file",
+  ])("clears prior Codex Plugin retry context for unrelated generic request: %s", async (message) => {
+    const { manager } = await createStoppedFirefliesRetryManager();
+
+    await manager.handleUserMessage(message, {
+      sourceContext: { channel: "web" },
+    });
+    const managerMessage = manager.runtimeByAgentId.get("manager")!.sendCalls.at(-1)?.message;
+    const managerText = typeof managerMessage === "string" ? managerMessage : managerMessage?.text ?? "";
+    expect(managerText).not.toContain("[Codex Plugin retry authorization]");
+
+    await expect(
+      manager.retryCodexPluginWorker("manager", {
+        initialMessage: "Try the Fireflies export again",
+      }),
+    ).rejects.toThrow(/No Codex Plugin retry context|only available during the current user turn/i);
+  });
+
+  it.each([
+    "try that again",
+    "continue the Fireflies export",
+    "retry the same transcript download",
+  ])("authorizes Codex Plugin retry for explicit continuation request: %s", async (message) => {
+    const { manager } = await createStoppedFirefliesRetryManager();
+
+    await manager.handleUserMessage(message, {
+      sourceContext: { channel: "web" },
+    });
+    const managerMessage = manager.runtimeByAgentId.get("manager")!.sendCalls.at(-1)?.message;
+    const managerText = typeof managerMessage === "string" ? managerMessage : managerMessage?.text ?? "";
+    expect(managerText).toContain("[Codex Plugin retry authorization]");
+    expect(managerText).toContain("Stored selector(s), bound server-side for the retried scoped worker: fireflies");
+
+    const retried = await manager.retryCodexPluginWorker("manager", {
+      initialMessage: message,
+    });
+    expect(manager.getCodexPluginScopeForWorker(retried.agentId)?.selectors).toEqual(["fireflies"]);
   });
 
   it("clears the prior Codex Plugin retry context on unrelated non-Codex user input", async () => {
