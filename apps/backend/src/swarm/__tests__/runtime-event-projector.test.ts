@@ -80,6 +80,7 @@ function createHarness(debug = false): {
       captureConversationEventFromRuntime: vi.fn(),
       emitConversationMessage: vi.fn()
     },
+    markSessionActivity: vi.fn(),
     maybeRecordModelCapacityBlock: vi.fn(),
     maybeRecoverWorkerWithSpecialistFallback: vi.fn(async () => false),
     consumePendingManualManagerStopNoticeIfApplicable: vi.fn(() => false),
@@ -112,6 +113,47 @@ function stallState(overrides: Partial<WorkerStallStateLike> = {}): WorkerStallS
 }
 
 describe("RuntimeEventProjector", () => {
+  it("projects activated manager assistant output after conversation capture at turn end", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Final answer", stopReason: "stop" } },
+    });
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+
+    expect(deps.conversationProjector.captureConversationEventFromRuntime).toHaveBeenCalledTimes(2);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "conversation_message",
+      agentId: manager.agentId,
+      role: "assistant",
+      source: "assistant_output",
+      text: "Final answer",
+      sourceContext: { channel: "web" },
+    }));
+    expect(deps.markSessionActivity).toHaveBeenCalledWith(manager.agentId, "2026-05-06T00:00:01.000Z");
+  });
+
+  it("does not project manager assistant output after post-projection cleanup clears the turn", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "message_end", message: { role: "assistant", content: "Too late", stopReason: "stop" } },
+    });
+
+    expect(deps.conversationProjector.emitConversationMessage).not.toHaveBeenCalled();
+  });
+
   it("forwards missing-descriptor events to conversation capture and skips descriptor-dependent side effects", async () => {
     const { projector, deps } = createHarness();
     const event: RuntimeSessionEvent = { type: "tool_execution_start", toolName: "write", toolCallId: "t1", args: { path: "/tmp/a" } };

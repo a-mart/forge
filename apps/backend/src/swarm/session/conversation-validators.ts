@@ -1,4 +1,5 @@
 import {
+  isConversationMessageSource,
   MODEL_CACHE_CLASSIFICATION_VERSION,
   MODEL_CACHE_ELIGIBILITY_THRESHOLD_TOKENS,
   MODEL_CACHE_HIT_RATIO_THRESHOLD,
@@ -70,12 +71,7 @@ function isConversationMessageEvent(value: unknown): value is ConversationMessag
   }
   if (typeof maybe.text !== "string") return false;
   if (typeof maybe.timestamp !== "string") return false;
-  if (
-    maybe.source !== "user_input" &&
-    maybe.source !== "speak_to_user" &&
-    maybe.source !== "system" &&
-    maybe.source !== "project_agent_input"
-  ) return false;
+  if (!isConversationMessageSource(maybe.source)) return false;
 
   if (maybe.attachments !== undefined) {
     if (!Array.isArray(maybe.attachments)) {

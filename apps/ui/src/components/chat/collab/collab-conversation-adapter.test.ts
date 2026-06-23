@@ -69,6 +69,24 @@ describe('adaptCollabToConversationEntries', () => {
     })
   })
 
+  it('passes assistant_output transcript source through to ConversationMessageEvent', () => {
+    const entries = adaptCollabToConversationEntries({
+      messages: [msg({ role: 'assistant', text: 'projected', source: 'assistant_output' })],
+      choiceRequests: [],
+      activity: [],
+      sessionAgentId: AGENT_ID,
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      type: 'conversation_message',
+      role: 'assistant',
+      text: 'projected',
+      source: 'assistant_output',
+      agentId: AGENT_ID,
+    })
+  })
+
   it('maps system transcript messages to ConversationMessageEvent', () => {
     const entries = adaptCollabToConversationEntries({
       messages: [msg({ role: 'system', text: 'notice', source: 'system' })],

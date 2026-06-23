@@ -1347,7 +1347,10 @@ describe('manager empty-turn retry after worker terminal report', () => {
   const LEGACY_SYSTEM_STATUS_CALLBACK = 'SYSTEM: status: done\nsummary: executed the guarded pilot once.'
   const LEGACY_WORKER_COMPLETED_CALLBACK = 'SYSTEM: Worker w-1 completed its turn.\n\nLast assistant message:\nDone.'
   const LEGACY_WORKER_ERROR_CALLBACK = 'SYSTEM: Worker w-1 ended its turn with an error.\n\nLast system message:\n⚠️ Agent error: failed.'
-  const DIRECT_WEB_INPUT = '[sourceContext] {"channel":"web"}\n\nPlease summarize the latest result.'
+  const DIRECT_WEB_INPUT = '[sourceContext] {"channel":"web"}\n[assistantOutputTarget] {"kind":"session_transcript"}\n\nPlease summarize the latest result.'
+  const DIRECT_CORTEX_WEB_INPUT = '[sourceContext] {"channel":"web"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"cortex_session"}\n\nPlease summarize the latest result.'
+  const DIRECT_COLLAB_WEB_INPUT = '[sourceContext] {"channel":"web","channelId":"collab-channel","userId":"user-1"}\n[collaborationAuthor] {"displayName":"Adam","role":"admin"}\n[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"collaboration_channel"}\n\nPlease summarize the latest result.'
+  const DIRECT_TELEGRAM_INPUT = '[sourceContext] {"channel":"telegram","channelId":"c1"}\n[assistantOutputTarget] {"kind":"external_channel"}\n\nPlease summarize the latest result.'
 
   beforeEach(() => {
     openAICodexResponsesMockState.closeOpenAICodexWebSocketSessions.mockReset()
@@ -1577,7 +1580,7 @@ describe('manager empty-turn retry after worker terminal report', () => {
     expect(onAgentEnd).toHaveBeenCalledTimes(1)
   })
 
-  it('resamples non-empty hidden plain text that follows direct sourceContext user input', async () => {
+  it('does not resample non-empty direct web assistant text because backend projection can publish it', async () => {
     const { session, runtime, onAgentEnd } = makeRuntime()
     session.state.messages = [
       userMessage(DIRECT_WEB_INPUT),
@@ -1585,9 +1588,52 @@ describe('manager empty-turn retry after worker terminal report', () => {
     ]
 
     await (runtime as any).handleEvent({ type: 'agent_end' })
+
+    expect(session.promptCalls).toEqual([])
+    expect(onAgentEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('resamples non-empty plain text that follows direct Cortex web input marked explicit-tool-required', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(DIRECT_CORTEX_WEB_INPUT),
+      { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
     await waitForCondition(() => session.promptCalls.length === 1)
 
-    expect(session.promptCalls).toEqual([`${DIRECT_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
+    expect(session.promptCalls).toEqual([`${DIRECT_CORTEX_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
+    expect(session.state.messages).toEqual([])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('resamples non-empty plain text that follows direct collaboration web input', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(DIRECT_COLLAB_WEB_INPUT),
+      { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([`${DIRECT_COLLAB_WEB_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
+    expect(session.state.messages).toEqual([])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('resamples non-empty plain text that follows direct non-web sourceContext input', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [
+      userMessage(DIRECT_TELEGRAM_INPUT),
+      { role: 'assistant', content: [{ type: 'text', text: 'The answer is ready.' }], stopReason: 'stop' },
+    ]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([`${DIRECT_TELEGRAM_INPUT}\n\n${DIRECT_USER_INPUT_REDELIVERY_DIRECTIVE}`])
     expect(session.state.messages).toEqual([])
     expect(onAgentEnd).not.toHaveBeenCalled()
   })

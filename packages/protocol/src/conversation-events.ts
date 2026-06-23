@@ -59,6 +59,33 @@ export interface ExternalThreadMessageContext {
   excludeFromModelContext: true
 }
 
+export const CONVERSATION_MESSAGE_SOURCES = [
+  'user_input',
+  'speak_to_user',
+  'assistant_output',
+  'system',
+  'project_agent_input',
+] as const
+
+export type ConversationMessageSource = (typeof CONVERSATION_MESSAGE_SOURCES)[number]
+
+export const USER_VISIBLE_ASSISTANT_MESSAGE_SOURCES = [
+  'speak_to_user',
+  'assistant_output',
+] as const satisfies readonly ConversationMessageSource[]
+
+export type UserVisibleAssistantMessageSource = (typeof USER_VISIBLE_ASSISTANT_MESSAGE_SOURCES)[number]
+
+export function isConversationMessageSource(value: unknown): value is ConversationMessageSource {
+  return typeof value === 'string' && (CONVERSATION_MESSAGE_SOURCES as readonly string[]).includes(value)
+}
+
+export function isUserVisibleAssistantConversationSource(
+  source: unknown,
+): source is UserVisibleAssistantMessageSource {
+  return typeof source === 'string' && (USER_VISIBLE_ASSISTANT_MESSAGE_SOURCES as readonly string[]).includes(source)
+}
+
 export interface ConversationMessageEvent {
   type: 'conversation_message'
   agentId: string
@@ -67,7 +94,7 @@ export interface ConversationMessageEvent {
   text: string
   attachments?: ConversationMessageAttachment[]
   timestamp: string
-  source: 'user_input' | 'speak_to_user' | 'system' | 'project_agent_input'
+  source: ConversationMessageSource
   sourceContext?: MessageSourceContext
   collaborationAuthor?: CollaborationAuthor
   projectAgentContext?: ProjectAgentMessageContext
@@ -164,5 +191,39 @@ export type ConversationEntry =
   | ChoiceRequestEvent
   | WorkPlanCreatedEvent
   | ModelCacheObservationEvent
+
+export function isUserVisibleAssistantConversationMessage(
+  entry: ConversationEntry,
+): entry is ConversationMessageEvent & { role: 'assistant'; source: UserVisibleAssistantMessageSource } {
+  return (
+    entry.type === 'conversation_message' &&
+    entry.role === 'assistant' &&
+    isUserVisibleAssistantConversationSource(entry.source)
+  )
+}
+
+export function isUserVisibleConversationMessage(
+  entry: ConversationEntry,
+): entry is ConversationMessageEvent {
+  if (entry.type !== 'conversation_message') {
+    return false
+  }
+
+  if (entry.source === 'system') {
+    return entry.role === 'system'
+  }
+
+  if (entry.source === 'project_agent_input' || entry.source === 'user_input') {
+    return entry.role === 'user'
+  }
+
+  return isUserVisibleAssistantConversationMessage(entry)
+}
+
+export function isExplicitRoutedAssistantConversationMessage(
+  entry: ConversationEntry,
+): entry is ConversationMessageEvent & { role: 'assistant'; source: 'speak_to_user' } {
+  return entry.type === 'conversation_message' && entry.role === 'assistant' && entry.source === 'speak_to_user'
+}
 
 export type ConversationEntryEvent = ConversationEntry

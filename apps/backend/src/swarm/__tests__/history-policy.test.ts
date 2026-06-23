@@ -215,6 +215,7 @@ describe("history policy", () => {
     expect(isProtectedWebTranscriptEntry(message("project", { source: "project_agent_input" }))).toBe(true);
     expect(isProtectedWebTranscriptEntry(message("web-user", { source: "user_input" }))).toBe(true);
     expect(isProtectedWebTranscriptEntry(message("web-assistant", { source: "speak_to_user" }))).toBe(true);
+    expect(isProtectedWebTranscriptEntry(message("projected-assistant", { source: "assistant_output" }))).toBe(true);
     expect(isProtectedWebTranscriptEntry(message("cli-user", {
       source: "user_input",
       sourceContext: { channel: "cli" }

@@ -32,8 +32,15 @@ describe("CLI session transcript filtering", () => {
         source: "speak_to_user",
         text: "Manager replies",
       }),
+      expect.objectContaining({
+        ordinal: 2,
+        kind: "assistant",
+        role: "assistant",
+        source: "assistant_output",
+        text: "Projected manager reply",
+      }),
     ]);
-    expect(response.page).toMatchObject({ total: 2, returned: 2, hasMore: false });
+    expect(response.page).toMatchObject({ total: 3, returned: 3, hasMore: false });
     expect(JSON.stringify(response)).not.toContain("rawIndex");
     expect(JSON.stringify(response)).not.toContain("Hidden system");
     expect(JSON.stringify(response)).not.toContain("project agent input");
@@ -55,6 +62,7 @@ describe("CLI session transcript filtering", () => {
       [0, "user", "User asks"],
       [1, "worker_update", "Worker report"],
       [2, "assistant", "Manager replies"],
+      [3, "assistant", "Projected manager reply"],
     ]);
     expect(response.messages[1]).toMatchObject({
       role: "worker",
@@ -155,7 +163,7 @@ describe("CLI session transcript filtering", () => {
     });
 
     expect(response.messages).toEqual([expect.objectContaining({ ordinal: 1, text: "Worker report" })]);
-    expect(response.page).toEqual({ total: 3, returned: 1, offset: 1, limit: 1, hasMore: true, nextOffset: 2 });
+    expect(response.page).toEqual({ total: 4, returned: 1, offset: 1, limit: 1, hasMore: true, nextOffset: 2 });
   });
 
   it("normalizes and validates query options", () => {
@@ -304,6 +312,16 @@ function createMixedHistory(): ConversationEntryEvent[] {
       text: "Manager replies",
       timestamp: "2026-06-15T00:00:12.000Z",
       source: "speak_to_user",
+    },
+    {
+      type: "conversation_message",
+      agentId: "session-a",
+      id: "assistant-2",
+      role: "assistant",
+      text: "Projected manager reply",
+      timestamp: "2026-06-15T00:00:13.000Z",
+      source: "assistant_output",
+      sourceContext: { channel: "web" },
     },
   ];
 }

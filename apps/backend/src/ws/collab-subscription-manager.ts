@@ -1,3 +1,4 @@
+import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
 import type {
   AgentMessageEvent,
   AgentStatusEvent,
@@ -697,8 +698,5 @@ function toCollaborationTranscriptMessage(
 }
 
 function isUnreadWorthyCollabMessage(event: ConversationMessageEvent): boolean {
-  return (
-    (event.role === "assistant" && event.source === "speak_to_user") ||
-    event.source === "project_agent_input"
-  );
+  return isUserVisibleAssistantConversationMessage(event) || event.source === "project_agent_input";
 }

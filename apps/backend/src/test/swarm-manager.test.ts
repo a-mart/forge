@@ -71,6 +71,30 @@ async function waitForCondition(
   throw new Error('Timed out waiting for async condition')
 }
 
+async function projectAssistantFinalText(
+  manager: TestSwarmManager,
+  agentId: string,
+  runtimeMessage: unknown,
+  text: string,
+): Promise<void> {
+  expect(typeof runtimeMessage).toBe('string')
+  await (manager as any).handleRuntimeSessionEvent(agentId, {
+    type: 'message_start',
+    message: { role: 'user', content: runtimeMessage },
+  })
+  await (manager as any).handleRuntimeSessionEvent(agentId, {
+    type: 'message_end',
+    message: { role: 'assistant', content: text, stopReason: 'stop' },
+  })
+  await (manager as any).handleRuntimeSessionEvent(agentId, { type: 'turn_end', toolResults: [] })
+}
+
+function assistantOutputsFor(manager: TestSwarmManager, agentId: string): any[] {
+  return manager
+    .getConversationHistory(agentId)
+    .filter((entry) => entry.type === 'conversation_message' && entry.source === 'assistant_output')
+}
+
 function seedManagerDescriptorForRuntimeEventTests(manager: TestSwarmManager, config: SwarmConfig): void {
   const createdAt = '2026-01-01T00:00:00.000Z'
   const state = manager as unknown as {
@@ -231,7 +255,7 @@ describe('SwarmManager', () => {
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
     expect(managerRuntime?.sendCalls.at(-1)?.delivery).toBe('steer')
-    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('[sourceContext] {"channel":"web"}\n\ninterrupt current plan')
+    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('[sourceContext] {"channel":"web"}\n[assistantOutputTarget] {"kind":"session_transcript"}\n\ninterrupt current plan')
   })
 
   it('streams worker active-tool snapshots even when the manager is idle', async () => {
@@ -840,6 +864,201 @@ describe('SwarmManager', () => {
     }
   })
 
+  it('projects direct web manager assistant final text as assistant_output', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('summarize this')
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const runtimeMessage = managerRuntime?.sendCalls.at(-1)?.message
+    expect(typeof runtimeMessage).toBe('string')
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_start',
+      message: { role: 'user', content: runtimeMessage },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'assistant', content: 'Direct final answer', stopReason: 'stop' },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    const assistantOutputs = manager
+      .getConversationHistory('manager')
+      .filter((entry) => entry.type === 'conversation_message' && entry.source === 'assistant_output')
+
+    expect(assistantOutputs).toHaveLength(1)
+    expect(assistantOutputs[0]).toMatchObject({
+      role: 'assistant',
+      text: 'Direct final answer',
+      sourceContext: { channel: 'web' },
+    })
+  })
+
+  it('does not project direct assistant final text for collaboration or telegram inputs', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.dispatchRuntimeUserMessage({
+      targetAgentId: 'manager',
+      text: 'collab update',
+      sourceContext: { channel: 'web', channelId: 'collab-channel', userId: 'user-1' },
+      collaborationAuthor: {
+        userId: 'user-1',
+        displayName: 'Adam',
+        role: 'admin',
+        workspaceId: 'workspace-1',
+        channelId: 'collab-channel',
+      },
+    })
+    const collabRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(typeof collabRuntimeMessage).toBe('string')
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_start',
+      message: { role: 'user', content: collabRuntimeMessage },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'assistant', content: 'Collab direct final', stopReason: 'stop' },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    await manager.handleUserMessage('telegram update', {
+      sourceContext: { channel: 'telegram', channelId: 'telegram-channel', userId: 'telegram-user' },
+    })
+    const telegramRuntimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(typeof telegramRuntimeMessage).toBe('string')
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_start',
+      message: { role: 'user', content: telegramRuntimeMessage },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'assistant', content: 'Telegram direct final', stopReason: 'stop' },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    const assistantOutputs = manager
+      .getConversationHistory('manager')
+      .filter((entry) => entry.type === 'conversation_message' && entry.source === 'assistant_output')
+
+    expect(assistantOutputs).toEqual([])
+  })
+
+  it('allows assistant_output for direct web project-agent and Agent Architect session transcripts', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.setSessionProjectAgent('manager', { whenToUse: 'Answer as a project agent' })
+    await manager.handleUserMessage('project-agent direct web turn')
+    await projectAssistantFinalText(
+      manager,
+      'manager',
+      manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message,
+      'Project agent direct answer',
+    )
+
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    state.descriptors.get('manager')!.projectAgent = undefined
+    state.descriptors.get('manager')!.archetypeId = 'agent-architect'
+    state.descriptors.get('manager')!.sessionPurpose = 'agent_creator'
+
+    await manager.handleUserMessage('agent architect direct web turn')
+    await projectAssistantFinalText(
+      manager,
+      'manager',
+      manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message,
+      'Agent Architect direct answer',
+    )
+
+    expect(assistantOutputsFor(manager, 'manager').map((entry) => entry.text)).toEqual([
+      'Project agent direct answer',
+      'Agent Architect direct answer',
+    ])
+  })
+
+  it('keeps Cortex direct web assistant text explicit-tool-only for now', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    state.descriptors.get('manager')!.archetypeId = 'cortex'
+
+    await manager.handleUserMessage('cortex direct web turn')
+    await projectAssistantFinalText(
+      manager,
+      'manager',
+      manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message,
+      'Cortex direct answer',
+    )
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
+  it('does not project assistant_output for internal manager messages or project-agent peer context', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const sender = await bootWithDefaultManager(manager, config)
+    const target = await manager.createManager(sender.agentId, {
+      name: 'Docs Agent',
+      cwd: config.defaultCwd,
+    })
+    await manager.setSessionProjectAgent(target.agentId, { whenToUse: 'Use for docs updates.' })
+
+    await manager.sendMessage(sender.agentId, sender.agentId, 'SYSTEM: status: done\nsummary: worker report', 'auto', {
+      origin: 'internal',
+    })
+    await projectAssistantFinalText(
+      manager,
+      sender.agentId,
+      manager.runtimeByAgentId.get(sender.agentId)?.sendCalls.at(-1)?.message,
+      'Internal direct text',
+    )
+
+    await manager.sendMessage(sender.agentId, target.agentId, 'Need a docs update', 'auto')
+    await projectAssistantFinalText(
+      manager,
+      target.agentId,
+      manager.runtimeByAgentId.get(target.agentId)?.sendCalls.at(-1)?.message,
+      'Peer direct text',
+    )
+
+    expect(assistantOutputsFor(manager, sender.agentId)).toEqual([])
+    expect(assistantOutputsFor(manager, target.agentId)).toEqual([])
+  })
+
+  it('suppresses assistant_output after canonical speak_to_user publication regardless of tool result payload', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.handleUserMessage('answer explicitly')
+    const runtimeMessage = manager.runtimeByAgentId.get('manager')?.sendCalls.at(-1)?.message
+    expect(typeof runtimeMessage).toBe('string')
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_start',
+      message: { role: 'user', content: runtimeMessage },
+    })
+    await manager.publishToUser('manager', 'Explicit answer', 'speak_to_user')
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_end',
+      toolName: 'speak_to_user',
+      toolCallId: 'tool-1',
+      isError: false,
+      result: { providerWrappedResult: { noPublishedFlag: true } },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: { role: 'assistant', content: 'Duplicate direct final', stopReason: 'stop' },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', { type: 'turn_end', toolResults: [] })
+
+    expect(assistantOutputsFor(manager, 'manager')).toEqual([])
+  })
+
   it('includes full sourceContext annotation when forwarding telegram user messages to manager runtime', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -858,7 +1077,7 @@ describe('SwarmManager', () => {
 
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"telegram","channelId":"123456","userId":"456789","threadTs":"173.456","channelType":"group","teamId":"T789"}\n\nreply in telegram thread',
+      '[sourceContext] {"channel":"telegram","channelId":"123456","userId":"456789","threadTs":"173.456","channelType":"group","teamId":"T789"}\n[assistantOutputTarget] {"kind":"external_channel"}\n\nreply in telegram thread',
     )
   })
 

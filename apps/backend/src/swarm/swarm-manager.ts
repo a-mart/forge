@@ -138,6 +138,7 @@ import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import { CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE } from "./runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
+import type { AssistantOutputTarget } from "./runtime/manager-assistant-output-tracker.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 import { ModelChangeStartupRecoveryCoordinator } from "./runtime/model-change-startup-recovery-coordinator.js";
 import { reconcileInterruptedToolCallsForBoot } from "./interrupted-tool-reconciliation.js";
@@ -476,6 +477,9 @@ interface PendingInboundTurnContext {
   parentRootTurnId?: string;
   runtimeMessageText?: string;
   projectAgentContext?: ConversationMessageEvent["projectAgentContext"];
+  sourceContext?: MessageSourceContext;
+  collaborationAuthor?: CollaborationAuthor;
+  assistantOutputTarget?: AssistantOutputTarget;
   codexMcpToolGate?: CodexMcpToolGateEvaluation;
   codexPluginDelegationContext?: CodexPluginDelegationTurnContext;
   codexPluginRetryAuthorizationContext?: CodexPluginRetryAuthorizationContext;
@@ -4991,6 +4995,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           "project_agent_input",
         ),
         projectAgentContext,
+        assistantOutputTarget: { kind: "peer_agent", fromAgentId: sender.agentId },
       });
 
       let deliveryResult;
@@ -5127,6 +5132,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           rootTurnId: observabilityInput.rootTurnId,
           parentRootTurnId,
           runtimeMessageText: extractRuntimeMessageText(modelMessage),
+          assistantOutputTarget: { kind: "explicit_tool_required", reason: "agent_message" },
         })
       : undefined;
 
@@ -5364,6 +5370,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitConversationMessage(payload);
     if (source === "speak_to_user") {
+      this.runtimeController.markExplicitManagerAssistantOutput(agentId);
       this.markSessionActivity(agentId, payload.timestamp);
     }
 
@@ -6718,7 +6725,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw error;
     }
 
-    const managerVisibleMessage = formatInboundUserMessageForManager(text, sourceContext, collaborationAuthor);
+    const assistantOutputTarget = this.resolveAssistantOutputTargetForUserInput(target, sourceContext, collaborationAuthor);
+    const managerVisibleMessage = formatInboundUserMessageForManager(text, sourceContext, collaborationAuthor, assistantOutputTarget);
     const runtimeVisibleMessage = codexPluginDelegationContext
       ? this.appendCodexPluginManagerTurnGuidance(managerVisibleMessage, codexPluginDelegationContext)
       : codexPluginRetryAuthorizationContext
@@ -6774,6 +6782,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       source: "user_input",
       rootTurnId: observabilityInput?.rootTurnId,
       runtimeMessageText: extractRuntimeMessageText(runtimeMessage),
+      sourceContext,
+      collaborationAuthor,
+      assistantOutputTarget,
       codexMcpToolGate,
       codexPluginDelegationContext,
       codexPluginRetryAuthorizationContext,
@@ -6873,9 +6884,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.observability;
   }
 
-  onAcceptedRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
-    this.applyInboundTurnContextRuntimeEvent(agentId, event);
+  beforeRuntimeEventProjection(agentId: string, _runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.applyInboundTurnContextRuntimeEvent(agentId, event, "before_projection");
+  }
+
+  afterRuntimeEventProjection(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.applyInboundTurnContextRuntimeEvent(agentId, event, "after_projection");
     this.recordObservabilityRuntimeSessionEvent(agentId, runtimeToken, event);
+  }
+
+  onAcceptedRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
+    this.afterRuntimeEventProjection(agentId, runtimeToken, event);
   }
 
   private recordObservabilityRuntimeSessionEvent(agentId: string, runtimeToken: number | undefined, event: RuntimeSessionEvent): void {
@@ -7042,6 +7061,33 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.versioningService;
   }
 
+  private resolveAssistantOutputTargetForUserInput(
+    target: AgentDescriptor,
+    sourceContext: MessageSourceContext,
+    collaborationAuthor?: CollaborationAuthor,
+  ): AssistantOutputTarget {
+    if (collaborationAuthor) {
+      return { kind: "explicit_tool_required", reason: "collaboration_channel" };
+    }
+
+    if (target.sessionPurpose === "cortex_review" || normalizeArchetypeId(target.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
+      return { kind: "explicit_tool_required", reason: "cortex_session" };
+    }
+
+    // Prompt migration is intentionally scoped to normal web session transcripts for now.
+    // Worker-report inheritance, collaboration, external channels, and secondary system
+    // archetypes remain explicit-tool-required until they are deliberately opted in.
+    if (sourceContext.channel === "web") {
+      return { kind: "session_transcript", channel: "web", sourceContext };
+    }
+
+    if (sourceContext.channel === "telegram") {
+      return { kind: "external_channel", sourceContext };
+    }
+
+    return { kind: "explicit_tool_required", reason: `unsupported_direct_${sourceContext.channel}_source` };
+  }
+
   private enqueueInboundTurnContext(agentId: string, context: PendingInboundTurnContext): () => void {
     const queue = this.pendingInboundTurnContextsByAgentId.get(agentId) ?? [];
     queue.push(context);
@@ -7089,15 +7135,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return nextContext;
   }
 
-  private applyInboundTurnContextRuntimeEvent(agentId: string, event: RuntimeSessionEvent): void {
+  private applyInboundTurnContextRuntimeEvent(
+    agentId: string,
+    event: RuntimeSessionEvent,
+    phase: "before_projection" | "after_projection",
+  ): void {
     const descriptor = this.descriptors.get(agentId);
-    if (isCodexPluginWorkerDescriptor(descriptor)) {
+    if (phase === "before_projection" && isCodexPluginWorkerDescriptor(descriptor)) {
       if (event.type === "message_start" && extractRole(event.message) === "user") {
         this.codexPluginScopeService.noteWorkerTurnStarted(agentId);
       }
     }
 
-    if (event.type === "message_start" && extractRole(event.message) === "user") {
+    if (phase === "before_projection" && event.type === "message_start" && extractRole(event.message) === "user") {
       const nextContext = this.dequeueInboundTurnContextForRuntimeMessage(agentId, event.message);
 
       if (nextContext?.rootTurnId) {
@@ -7130,6 +7180,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       const manager = descriptor ?? this.descriptors.get(agentId);
       if (manager?.role === "manager") {
+        if (nextContext?.assistantOutputTarget) {
+          this.runtimeController.activateManagerAssistantOutputTurn(agentId, nextContext.assistantOutputTarget);
+        } else {
+          this.runtimeController.clearManagerAssistantOutputTurn(agentId);
+        }
+
         if (nextContext?.codexMcpToolGate) {
           this.codexMcpToolTurnGateByManagerId.set(agentId, nextContext.codexMcpToolGate);
         } else if (!this.hasActiveAuthorizedCodexMcpToolGate(agentId)) {
@@ -7156,12 +7212,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    if (event.type === "turn_end" || event.type === "agent_end") {
+    if (phase === "after_projection" && (event.type === "turn_end" || event.type === "agent_end")) {
       this.activeExternalProjectAgentTurnByAgentId.delete(agentId);
       this.activeObservabilityRootByAgentId.delete(agentId);
       this.codexMcpToolTurnGateByManagerId.delete(agentId);
       this.activeCodexPluginDelegationByManagerId.delete(agentId);
       this.activeCodexPluginRetryAuthorizationByManagerId.delete(agentId);
+      // The tracker also self-clears on terminal turn events; keep this manager-level
+      // clear as lifecycle belt-and-suspenders for skipped/suppressed projections.
+      this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     }
   }
 
@@ -9247,6 +9306,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private discardPendingInboundTurnContexts(agentId: string): void {
     this.pendingInboundTurnContextsByAgentId.delete(agentId);
+    this.runtimeController.clearManagerAssistantOutputTurn(agentId);
     this.codexMcpToolTurnGateByManagerId.delete(agentId);
     this.activeCodexPluginDelegationByManagerId.delete(agentId);
     this.clearCodexPluginRetryContextForManager(agentId);

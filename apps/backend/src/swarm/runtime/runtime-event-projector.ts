@@ -23,6 +23,7 @@ import type { VersioningMutation } from "../../versioning/versioning-types.js";
 import { MANUAL_MANAGER_STOP_NOTICE } from "../manual-stop-notice.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "./worker-health-types.js";
 import type { RuntimeRecoveryState } from "./runtime-recovery-state.js";
+import { ManagerAssistantOutputTracker, type AssistantOutputTarget } from "./manager-assistant-output-tracker.js";
 
 export type RuntimeEventProjectorRecoveryState = Pick<
   RuntimeRecoveryState,
@@ -40,6 +41,7 @@ export interface RuntimeEventProjectorDeps {
     captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void;
     emitConversationMessage(event: ConversationMessageEvent): void;
   };
+  markSessionActivity(agentId: string, timestamp: string): void;
   maybeRecordModelCapacityBlock(
     agentId: string,
     descriptor: AgentDescriptor,
@@ -77,8 +79,27 @@ export interface RuntimeEventProjectionInput {
 
 export class RuntimeEventProjector {
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
+  private readonly managerAssistantOutputTracker: ManagerAssistantOutputTracker;
 
-  constructor(private readonly deps: RuntimeEventProjectorDeps) {}
+  constructor(private readonly deps: RuntimeEventProjectorDeps) {
+    this.managerAssistantOutputTracker = new ManagerAssistantOutputTracker({
+      now: deps.now,
+      emitConversationMessage: (event) => deps.conversationProjector.emitConversationMessage(event),
+      markSessionActivity: (agentId, timestamp) => deps.markSessionActivity(agentId, timestamp),
+    });
+  }
+
+  activateManagerAssistantOutputTurn(agentId: string, target: AssistantOutputTarget): void {
+    this.managerAssistantOutputTracker.activateTurn(agentId, target);
+  }
+
+  clearManagerAssistantOutputTurn(agentId: string): void {
+    this.managerAssistantOutputTracker.clearTurn(agentId);
+  }
+
+  markExplicitManagerAssistantOutput(agentId: string): void {
+    this.managerAssistantOutputTracker.markExplicitAssistantOutput(agentId);
+  }
 
   getTrackedToolPathsByAgentId(): Map<string, Map<string, { toolName: string; path: string }>> {
     return this.trackedToolPathsByAgentId;
@@ -230,7 +251,10 @@ export class RuntimeEventProjector {
       : event;
 
     this.deps.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent);
-    if (!shouldSurfaceManualStopNotice && !isContextRecoveryAbort) {
+    if (shouldSurfaceManualStopNotice || isContextRecoveryAbort) {
+      this.managerAssistantOutputTracker.clearTurn(agentId);
+    } else {
+      this.managerAssistantOutputTracker.handleRuntimeEvent(agentId, effectiveEvent);
       this.maybeEmitModelCacheObservation(agentId, descriptor, effectiveEvent);
     }
     if (shouldSurfaceManualStopNotice) {

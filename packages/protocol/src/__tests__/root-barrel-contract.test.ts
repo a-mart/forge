@@ -11,6 +11,8 @@ import {
   inferCatalogFamily,
   getWsRequestContract,
   isCatalogModelId,
+  isConversationMessageSource,
+  isUserVisibleAssistantConversationMessage,
   SESSION_AUDIT_ENTRY_CATEGORIES,
   WS_REQUEST_CONTRACT_TYPES,
   WS_REQUEST_CONTRACTS,
@@ -381,6 +383,7 @@ const serverEventsByLeafModule = [
     channels: [{ ...channel, readState: { channelId: channel.channelId, lastReadMessageSeq: 0, unreadCount: 0 } }],
   },
   { type: 'conversation_message', agentId: agent.agentId, role: 'assistant', text: 'hello', timestamp: now, source: 'speak_to_user' },
+  { type: 'conversation_message', agentId: agent.agentId, role: 'assistant', text: 'hello', timestamp: now, source: 'assistant_output' },
   {
     type: 'work_plan_created',
     agentId: agent.agentId,
@@ -485,6 +488,15 @@ describe('protocol root barrel contract', () => {
     expect(getSpecialistFamilies().some((family) => family.familyId === 'pi-opus')).toBe(true)
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4')).toBe('pi-5.4')
     expect(isCatalogModelId('gpt-5.4')).toBe(true)
+    expect(isConversationMessageSource('assistant_output')).toBe(true)
+    expect(isUserVisibleAssistantConversationMessage({
+      type: 'conversation_message',
+      agentId: agent.agentId,
+      role: 'assistant',
+      text: 'projected',
+      timestamp: now,
+      source: 'assistant_output',
+    })).toBe(true)
   })
 
   it('exports minimal WebSocket request contracts from the root barrel', () => {
@@ -791,6 +803,7 @@ describe('protocol root barrel contract', () => {
       'cli_request_success',
       'cli_request_error',
       'collab_bootstrap',
+      'conversation_message',
       'conversation_message',
       'work_plan_created',
       'agent_status',

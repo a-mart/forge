@@ -1,12 +1,13 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
-import type {
-  CollaborationStatus,
-  ServerEvent,
-  TerminalClosedEvent,
-  TerminalCreatedEvent,
-  TerminalUpdatedEvent,
+import {
+  isUserVisibleAssistantConversationMessage,
+  type CollaborationStatus,
+  type ServerEvent,
+  type TerminalClosedEvent,
+  type TerminalCreatedEvent,
+  type TerminalUpdatedEvent,
 } from "@forge/protocol";
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
@@ -152,7 +153,7 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastCollaborationConversationMessage(event);
 
     const triggersUnread =
-      (event.role === "assistant" && event.source === "speak_to_user") ||
+      isUserVisibleAssistantConversationMessage(event) ||
       event.source === "project_agent_input";
 
     if (triggersUnread) {

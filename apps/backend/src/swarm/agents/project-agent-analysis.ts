@@ -1,4 +1,5 @@
 import { complete, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
+import { isUserVisibleAssistantConversationMessage } from "@forge/protocol";
 import { normalizeProjectAgentInlineText } from "../project-agents.js";
 import type { ConversationEntryEvent, ConversationMessageEvent } from "../types.js";
 import { shouldExcludeConversationMessageFromModelContext } from "../external-threads.js";
@@ -195,7 +196,7 @@ function isTranscriptConversationMessage(entry: ConversationEntryEvent): entry i
   return (
     entry.type === "conversation_message" &&
     !shouldExcludeConversationMessageFromModelContext(entry) &&
-    (entry.source === "user_input" || entry.source === "speak_to_user" || entry.source === "project_agent_input")
+    (entry.source === "user_input" || isUserVisibleAssistantConversationMessage(entry) || entry.source === "project_agent_input")
   );
 }
 
