@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByRole, getByText } from '@testing-library/dom'
+import { fireEvent, getByRole, getByText, queryByText } from '@testing-library/dom'
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
@@ -198,6 +198,38 @@ describe('SourceControlBranchActions', () => {
     await vi.waitFor(() => {
       expect(getByText(document.body, 'Idle sessions are attached to this worktree (Builder).')).toBeTruthy()
     })
+  })
+
+  it('summarizes huge idle attached-session warnings from mutation preflight', async () => {
+    const sessionNames = Array.from({ length: 312 }, (_, index) => `Session ${index + 1}`)
+    const hugeWarning = `Idle sessions are attached to this worktree (${sessionNames.join(', ')}).`
+    fetchMutationPreflightMock.mockResolvedValue({
+      allowed: true,
+      issues: [
+        {
+          code: 'idle_agents_attached',
+          message: hugeWarning,
+          severity: 'warn',
+        },
+      ],
+      currentBranch: 'main',
+      currentHead: 'abc123',
+      statusHash: 'status123',
+    })
+
+    renderActions({ isDirty: false })
+
+    flushSync(() => {
+      fireEvent.click(getByRole(container, 'button', { name: 'Pull FF only' }))
+    })
+
+    await vi.waitFor(() => {
+      expect(getByText(document.body, '312 idle sessions are attached to this worktree.')).toBeTruthy()
+    })
+
+    expect(queryByText(document.body, hugeWarning)).toBeNull()
+    expect(getByRole(document.body, 'button', { name: 'Cancel' })).toBeTruthy()
+    expect(getByRole(document.body, 'button', { name: 'Pull fast-forward' })).toBeTruthy()
   })
 
   it('shows blocking mutation-preflight issues inside the confirmation dialog', async () => {

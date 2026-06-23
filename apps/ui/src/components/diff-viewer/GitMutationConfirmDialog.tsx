@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Fragment } from 'react'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -38,20 +39,25 @@ export function GitMutationConfirmDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel() }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
+      <AlertDialogContent
+        className="overflow-hidden"
+        style={{ maxHeight: 'calc(100vh - 2rem)', gridTemplateRows: 'auto minmax(0, 1fr) auto' }}
+      >
+        <AlertDialogHeader className="min-w-0">
           <AlertDialogTitle>{title}</AlertDialogTitle>
         </AlertDialogHeader>
         <AlertDialogDescription asChild>
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <p>{description}</p>
+          <div className="min-h-0 space-y-3 overflow-y-auto overflow-x-hidden pr-1 text-sm text-muted-foreground">
+            <p className="break-words">{description}</p>
             {extraContent}
             {warnings.length > 0 ? (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-100">
                 <p className="font-medium">Warnings</p>
                 <ul className="mt-1 list-disc space-y-1 pl-4">
                   {warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
+                    <li className="break-words" key={warning}>
+                      <GitMutationMessage message={warning} />
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -61,14 +67,14 @@ export function GitMutationConfirmDialog({
                 <p className="font-medium">Blocked</p>
                 <ul className="mt-1 list-disc space-y-1 pl-4">
                   {blockedReasons.map((reason) => (
-                    <li key={reason}>{reason}</li>
+                    <li className="break-words" key={reason}>{reason}</li>
                   ))}
                 </ul>
               </div>
             ) : null}
           </div>
         </AlertDialogDescription>
-        <AlertDialogFooter>
+        <AlertDialogFooter className="shrink-0 border-t border-border pt-3">
           <Button variant="outline" onClick={onCancel} disabled={isSubmitting}>
             Cancel
           </Button>
@@ -79,4 +85,50 @@ export function GitMutationConfirmDialog({
       </AlertDialogContent>
     </AlertDialog>
   )
+}
+
+function GitMutationMessage({ message }: { message: string }) {
+  const attachedSessions = summarizeAttachedSessionWarning(message)
+
+  if (!attachedSessions) {
+    return <Fragment>{message}</Fragment>
+  }
+
+  return (
+    <span>
+      {attachedSessions.summary}
+      {attachedSessions.preview.length > 0 ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-xs font-medium underline-offset-2 hover:underline">
+            Show affected sessions
+          </summary>
+          <span className="mt-1 block text-xs">
+            {attachedSessions.preview.join(', ')}
+            {attachedSessions.remainingCount > 0 ? `, and ${attachedSessions.remainingCount} more` : ''}
+          </span>
+        </details>
+      ) : null}
+    </span>
+  )
+}
+
+function summarizeAttachedSessionWarning(message: string): { summary: string; preview: string[]; remainingCount: number } | null {
+  const match = /^Idle sessions are attached to this worktree \((.*)\)\.$/s.exec(message.trim())
+  if (!match) {
+    return null
+  }
+
+  const sessions = match[1]
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+  if (sessions.length <= 8) {
+    return null
+  }
+
+  return {
+    summary: `${sessions.length} idle sessions are attached to this worktree.`,
+    preview: sessions.slice(0, 5),
+    remainingCount: Math.max(0, sessions.length - 5),
+  }
 }
