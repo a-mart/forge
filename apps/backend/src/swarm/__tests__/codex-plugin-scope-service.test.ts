@@ -302,7 +302,7 @@ describe("CodexPluginScopeService", () => {
     expect(scope.allowedTools.some((tool) => tool.inputMode === "args")).toBe(true);
   });
 
-  it("returns full redacted Fireflies fetch_transcript content to the worker while keeping public details preview-only", async () => {
+  it("keeps ordinary Fireflies fetch_transcript tool output preview-only for worker models", async () => {
     const baseCatalog = catalog();
     const service = new CodexPluginScopeService({
       catalog: adapter(
@@ -345,8 +345,9 @@ describe("CodexPluginScopeService", () => {
     const result = await transcriptTool.execute("tc-1", { transcriptId: "transcript-1" });
     const contentText = result.content[0]?.type === "text" ? result.content[0].text : "";
 
-    expect(contentText).toContain("fullRedactedContent");
-    expect(contentText).toContain("full redacted transcript tail");
+    expect(contentText).toContain("preview");
+    expect(contentText).not.toContain("fullRedactedContent");
+    expect(contentText).not.toContain("full redacted transcript tail");
     expect(JSON.stringify(result.details)).toContain("preview");
     expect(JSON.stringify(result.details)).not.toContain("fullRedactedContent");
     expect(JSON.stringify(result.details)).not.toContain("full redacted transcript tail");

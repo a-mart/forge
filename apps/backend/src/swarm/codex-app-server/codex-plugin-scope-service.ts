@@ -530,17 +530,8 @@ export function buildCodexPluginScopedToolDefinitions(params: {
           errorPreview: result.errorPreview ? boundCodexMcpToolUiPreview(result.errorPreview) : undefined,
           auditId: result.auditId,
         };
-        const modelPayload = result.redactedModelContent
-          ? {
-              ...publicDetails,
-              fullRedactedContent: result.redactedModelContent,
-              fullRedactedContentTruncated: result.redactedModelContentTruncated === true,
-              note:
-                "fullRedactedContent is provided only for this narrow read-only connector content tool; UI/audit details remain preview-bounded.",
-            }
-          : publicDetails;
         return {
-          content: [{ type: "text", text: JSON.stringify(modelPayload) }],
+          content: [{ type: "text", text: JSON.stringify(publicDetails) }],
           details: publicDetails,
         };
       },
