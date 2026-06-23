@@ -1374,6 +1374,9 @@ describe("SwarmManager Codex mention routing", () => {
     "export the repo diff",
     "download the logs",
     "save this file",
+    "download the transcript",
+    "export meeting summary",
+    "save the meeting notes",
   ])("clears prior Codex Plugin retry context for unrelated generic request: %s", async (message) => {
     const { manager } = await createStoppedFirefliesRetryManager();
 
@@ -1395,6 +1398,8 @@ describe("SwarmManager Codex mention routing", () => {
     "try that again",
     "continue the Fireflies export",
     "retry the same transcript download",
+    "download that meeting summary",
+    "try the plugin again",
   ])("authorizes Codex Plugin retry for explicit continuation request: %s", async (message) => {
     const { manager } = await createStoppedFirefliesRetryManager();
 

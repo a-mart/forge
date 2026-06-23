@@ -6196,16 +6196,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return false;
     }
 
-    const hasAnaphoricReference = /\b(same|previous|last|that|this|it|again)\b/.test(normalized);
-    const hasConnectorReference = /\b(codex|plugin|fireflies|transcript|summary|meeting|worker|specialist)\b/.test(normalized);
+    const hasAnaphoricReference = /\b(same|previous|last|that|it|again)\b/.test(normalized);
+    const hasConnectorReference = /\b(codex|plugin|fireflies|connector)\b/.test(normalized);
 
     if (hasContinuationAction) {
       return hasAnaphoricReference || hasConnectorReference;
     }
 
-    // Generic export/download/save requests are common non-Codex turns. They authorize retry only
-    // when they explicitly name the prior Codex/plugin/app connector scope.
-    return hasConnectorReference;
+    // Generic export/download/save requests are common non-Codex turns. Broad nouns like
+    // transcript/summary/meeting are not enough; require an explicit prior-work reference or
+    // explicit connector/scope naming.
+    return hasAnaphoricReference || hasConnectorReference;
   }
 
   private requireActiveCodexPluginRetryAuthorization(
