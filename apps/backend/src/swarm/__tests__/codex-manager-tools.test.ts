@@ -128,6 +128,7 @@ describe("codex manager tools", () => {
       exportCodexPluginScopedToolResult: async () => ({
         ok: true,
         absolutePath: "/tmp/artifact.json",
+        manifestPath: "/tmp/artifact.json.manifest.json",
         bytes: 2,
         selector: "fireflies/list_recent",
         serverName: "fireflies",

@@ -470,7 +470,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "retry_codex_plugin_worker",
       label: "Retry Codex Plugin Worker",
       description:
-        "Respawn a Codex Plugin specialist using the last server-owned plugin selector context for this manager. Use after a scoped Codex Plugin worker was stopped or failed and the user asks to try again, continue, or use a different export path. Does not accept selectors; ask the user to re-tag @Codex if the context is unavailable, expired, or the plugin/scope must change.",
+        "Respawn a Codex Plugin specialist using the last server-owned plugin selector context for this manager. Server-side authorization is valid only during a current user turn that Forge classified as an explicit retry/continuation after a scoped Codex Plugin worker was stopped or failed. Does not accept selectors; ask the user to re-tag @Codex if authorization is unavailable, expired, or the plugin/scope must change.",
       parameters: Type.Object({
         initialMessage: Type.String({ description: "Task/context for the retried Codex Plugin worker." }),
         retryContextId: Type.Optional(

@@ -384,6 +384,7 @@ describe("CodexPluginScopeService", () => {
       exportScopedToolResult: async (scopedToolName, args, options) => ({
         ok: true,
         absolutePath: "/tmp/forge/session/artifacts/codex-plugin/delegation/transcript.json",
+        manifestPath: "/tmp/forge/session/artifacts/codex-plugin/delegation/transcript.json.manifest.json",
         bytes: 44,
         selector: "fireflies/fetch_transcript",
         serverName: "fireflies",

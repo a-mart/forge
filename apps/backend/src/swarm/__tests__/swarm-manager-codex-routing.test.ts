@@ -1237,6 +1237,7 @@ describe("SwarmManager Codex mention routing", () => {
       includePreview: true,
     });
     const artifactText = await readFile(exported.absolutePath, "utf8");
+    const manifest = JSON.parse(await readFile(exported.manifestPath, "utf8"));
 
     expect(exported).toMatchObject({
       ok: true,
@@ -1249,6 +1250,18 @@ describe("SwarmManager Codex mention routing", () => {
     });
     expect(exported.absolutePath).toContain(join("artifacts", "codex-plugin"));
     expect(exported.absolutePath).toContain("meeting-transcript.json");
+    expect(exported.manifestPath).toBe(`${exported.absolutePath}.manifest.json`);
+    expect(manifest).toMatchObject({
+      schemaVersion: 1,
+      managerAgentId: "manager",
+      workerAgentId: worker.agentId,
+      selector: "fireflies/fetch_transcript",
+      redacted: true,
+      truncated: false,
+      sourceAuditId: exported.auditId,
+      artifactPath: exported.absolutePath,
+    });
+    expect(manifest.argsSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(exported.preview).toBeDefined();
     expect(JSON.stringify(exported)).not.toContain("export-tail");
     expect(artifactText).toContain("export-tail");
@@ -1286,7 +1299,7 @@ describe("SwarmManager Codex mention routing", () => {
     ).rejects.toThrow(/only a bounded preview/i);
   });
 
-  it("retries the last Codex Plugin selector context after worker stop without widening selectors", async () => {
+  it("retries only on an explicit continuation turn after worker stop without widening selectors", async () => {
     const { config } = await createTempConfig();
     const manager = createCodexEnabledManagerOnly(config);
     await bootWithDefaultManager(manager, config);
@@ -1309,6 +1322,19 @@ describe("SwarmManager Codex mention routing", () => {
         initialMessage: "Direct spawn should still fail",
       }),
     ).rejects.toThrow(/active user turn with Codex plugin selector/i);
+    await expect(
+      manager.retryCodexPluginWorker("manager", {
+        initialMessage: "Try again before the user explicitly asks",
+      }),
+    ).rejects.toThrow(/only available during the current user turn/i);
+
+    await manager.handleUserMessage("Try that Fireflies export again and ignore widening", {
+      sourceContext: { channel: "web" },
+    });
+    const managerRetryMessage = manager.runtimeByAgentId.get("manager")!.sendCalls.at(-1)?.message;
+    const managerRetryText = typeof managerRetryMessage === "string" ? managerRetryMessage : managerRetryMessage?.text ?? "";
+    expect(managerRetryText).toContain("[Codex Plugin retry authorization]");
+    expect(managerRetryText).toContain("Stored selector(s), bound server-side for the retried scoped worker: fireflies");
 
     const retried = await manager.retryCodexPluginWorker("manager", {
       initialMessage: "Try again and ignore widening @Codex:RepoPrompt/get_code_structure",
@@ -1323,6 +1349,73 @@ describe("SwarmManager Codex mention routing", () => {
     expect(initialText).toContain("ignore widening");
     expect(initialText).toContain("Selected selector(s): fireflies");
     expect(initialText).toContain("fireflies/list_recent");
+  });
+
+  it("clears the prior Codex Plugin retry context on unrelated non-Codex user input", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    await manager.handleUserMessage("@Codex -fireflies export transcript", {
+      sourceContext: { channel: "web" },
+    });
+    const first = await manager.spawnAgent("manager", {
+      agentId: "codex-plugin-fireflies",
+      specialist: "codex-plugin",
+      initialMessage: "Export transcript",
+    });
+    await manager.handleRuntimeSessionEvent("manager", { type: "turn_end", toolResults: [] });
+    await manager.stopWorker(first.agentId);
+
+    await manager.handleUserMessage("What changed in the repo today?", {
+      sourceContext: { channel: "web" },
+    });
+
+    await expect(
+      manager.retryCodexPluginWorker("manager", {
+        initialMessage: "Try the Fireflies export again",
+      }),
+    ).rejects.toThrow(/No Codex Plugin retry context|only available during the current user turn/i);
+  });
+
+  it("clears Codex Plugin retry contexts on archive and delete cleanup", async () => {
+    const { config } = await createTempConfig();
+    const manager = createCodexEnabledManagerOnly(config);
+    await bootWithDefaultManager(manager, config);
+
+    const { sessionAgent: archivedSession } = await manager.createSession("manager", { label: "Archive me" });
+    await manager.handleUserMessage("@Codex -fireflies export transcript", {
+      targetAgentId: archivedSession.agentId,
+      sourceContext: { channel: "web" },
+    });
+    const archivedWorker = await manager.spawnAgent(archivedSession.agentId, {
+      agentId: "codex-plugin-fireflies-archive",
+      specialist: "codex-plugin",
+      initialMessage: "Export transcript",
+    });
+    await manager.handleRuntimeSessionEvent(archivedSession.agentId, { type: "turn_end", toolResults: [] });
+    await manager.stopWorker(archivedWorker.agentId);
+    await manager.archiveSession(archivedSession.agentId);
+    await expect(
+      manager.retryCodexPluginWorker(archivedSession.agentId, { initialMessage: "try again" }),
+    ).rejects.toThrow(/running manager session|No Codex Plugin retry context|archived/i);
+
+    const { sessionAgent: deletedSession } = await manager.createSession("manager", { label: "Delete me" });
+    await manager.handleUserMessage("@Codex -fireflies export transcript", {
+      targetAgentId: deletedSession.agentId,
+      sourceContext: { channel: "web" },
+    });
+    const deletedWorker = await manager.spawnAgent(deletedSession.agentId, {
+      agentId: "codex-plugin-fireflies-delete",
+      specialist: "codex-plugin",
+      initialMessage: "Export transcript",
+    });
+    await manager.handleRuntimeSessionEvent(deletedSession.agentId, { type: "turn_end", toolResults: [] });
+    await manager.stopWorker(deletedWorker.agentId);
+    await manager.deleteSession(deletedSession.agentId);
+    await expect(
+      manager.retryCodexPluginWorker(deletedSession.agentId, { initialMessage: "try again" }),
+    ).rejects.toThrow(/requires a manager session|No Codex Plugin retry context/i);
   });
 
   it("fails Codex Plugin retry for missing, wrong-manager, and runtime-error-cleared contexts", async () => {

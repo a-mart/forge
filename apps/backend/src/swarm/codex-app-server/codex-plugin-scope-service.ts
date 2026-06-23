@@ -67,11 +67,12 @@ export interface CodexPluginScopedToolCallAuthorization {
   tool: CodexPluginAllowedTool;
 }
 
-export type CodexPluginExportFormat = "json" | "text" | "markdown";
+export type CodexPluginExportFormat = "json";
 
 export interface CodexPluginScopedExportResult {
   ok: true;
   absolutePath: string;
+  manifestPath: string;
   bytes: number;
   selector: string;
   serverName: string;
@@ -473,8 +474,8 @@ export function buildCodexPluginScopedToolDefinitions(params: {
           Type.String({ description: "Optional safe artifact file name. Forge sanitizes it and appends the selected format extension." }),
         ),
         format: Type.Optional(
-          Type.Union([Type.Literal("json"), Type.Literal("text"), Type.Literal("markdown")], {
-            description: "Artifact format. Defaults to json.",
+          Type.Literal("json", {
+            description: "Artifact format. Only json is supported; full connector content is written as redacted structured JSON.",
           }),
         ),
         includePreview: Type.Optional(
@@ -582,7 +583,10 @@ function resolveExportScopedToolName(
 }
 
 function normalizeExportFormat(value: unknown): CodexPluginExportFormat {
-  return value === "text" || value === "markdown" || value === "json" ? value : "json";
+  if (value === undefined || value === "json") {
+    return "json";
+  }
+  throw new Error("export_scoped_codex_plugin_result supports only json artifacts.");
 }
 
 function normalizeSelectors(selectors: readonly string[]): string[] {
