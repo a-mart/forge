@@ -74,7 +74,7 @@ Durations accept milliseconds by default or `ms`, `s`, and `m` suffixes. Example
 
 ## Session transcripts
 
-`forge sessions transcript <agentId>` prints a chronological, user-facing transcript by default: user inputs and assistant messages sent through `speak_to_user`. Add `--include-worker-updates` to include worker reports sent back to the manager. Use `--limit <n>` and `--offset <n>` for pagination, or `--json` for the stable `CliSessionTranscriptResponse` payload.
+`forge sessions transcript <agentId>` prints a chronological, user-facing transcript by default: user inputs plus manager-visible assistant output, including normal final replies projected as `assistant_output` and explicit routed deliveries sent through `speak_to_user`. Add `--include-worker-updates` to include worker reports sent back to the manager. Use `--limit <n>` and `--offset <n>` for pagination, or `--json` for the stable `CliSessionTranscriptResponse` payload.
 
 ## Session compaction
 
