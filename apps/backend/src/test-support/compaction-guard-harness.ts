@@ -1,5 +1,9 @@
 import type { AgentDescriptor } from "../swarm/types.js";
 import { AgentRuntime, buildHandoffFilePath, buildHandoffPrompt, buildResumePrompt } from "../swarm/agent-runtime.js";
+import {
+  createStaticCompactionRuntimeSettingsProvider,
+  type CompactionRuntimeSettingsProvider,
+} from "../swarm/compaction-runtime-settings-provider.js";
 
 export class CompactionGuardFakeSession {
   isStreaming = true;
@@ -99,8 +103,17 @@ export function makeCompactionGuardDescriptor(): AgentDescriptor {
   };
 }
 
+export const COMPACTION_GUARD_TEST_TIMEOUT_MS = 180_000;
+
+export function createCompactionGuardTestSettingsProvider(
+  timeoutMs = COMPACTION_GUARD_TEST_TIMEOUT_MS,
+): CompactionRuntimeSettingsProvider {
+  return createStaticCompactionRuntimeSettingsProvider({ timeoutMs });
+}
+
 export function createCompactionGuardRuntime(options?: {
   session?: CompactionGuardFakeSession;
+  compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
 }): {
   runtime: AgentRuntime;
   session: CompactionGuardFakeSession;
@@ -112,6 +125,8 @@ export function createCompactionGuardRuntime(options?: {
   const runtime = new AgentRuntime({
     descriptor: makeCompactionGuardDescriptor(),
     session: session as never,
+    compactionRuntimeSettingsProvider:
+      options?.compactionRuntimeSettingsProvider ?? createCompactionGuardTestSettingsProvider(),
     callbacks: {
       onStatusChange: () => {},
       onSessionEvent: () => {},

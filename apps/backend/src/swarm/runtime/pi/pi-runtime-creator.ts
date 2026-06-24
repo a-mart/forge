@@ -52,6 +52,7 @@ import type {
 } from "../../types.js";
 import { planPiRuntimePrompt } from "../runtime-prompt-plan.js";
 import { planPiResourceLoaderOptions, planRuntimeResourcePaths } from "../runtime-resource-plan.js";
+import type { CompactionRuntimeSettingsProvider } from "../../compaction-runtime-settings-provider.js";
 import { recordRuntimePromptAndCreation, summarizeRuntimeTools } from "../runtime-observability-capture.js";
 import { planForgePiToolBridgeFactory, planPiExtensionFactories, planRuntimeTools } from "../runtime-tool-plan.js";
 
@@ -65,6 +66,7 @@ interface PiRuntimeCreatorDependencies {
   getCredentialPoolService?: () => CredentialPoolService;
   getOpenAIAuthBrokerRuntimeService?: () => OpenAIAuthBrokerRuntimeService;
   observability?: ObservabilityFacade;
+  getCompactionRuntimeSettingsProvider: () => CompactionRuntimeSettingsProvider;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
@@ -378,6 +380,7 @@ export class PiRuntimeCreator {
       descriptor: cloneRuntimeDescriptor(descriptor),
       session: session as AgentSession,
       systemPrompt,
+      compactionRuntimeSettingsProvider: this.deps.getCompactionRuntimeSettingsProvider(),
       callbacks: {
         onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
           await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);

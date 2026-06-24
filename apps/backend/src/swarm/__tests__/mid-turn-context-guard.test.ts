@@ -8,6 +8,10 @@ import {
   computeGuardThresholds,
   isAlreadyCompactedError
 } from "../agent-runtime.js";
+import {
+  COMPACTION_GUARD_TEST_TIMEOUT_MS,
+  createCompactionGuardTestSettingsProvider,
+} from "../../test-support/compaction-guard-harness.js";
 import type { AgentDescriptor } from "../types.js";
 
 const resizeImageIfNeededMock = vi.hoisted(() =>
@@ -154,6 +158,7 @@ function createRuntime(options?: {
   const runtime = new AgentRuntime({
     descriptor: makeDescriptor(),
     session: session as any,
+    compactionRuntimeSettingsProvider: createCompactionGuardTestSettingsProvider(),
     callbacks: {
       onStatusChange: () => {},
       onSessionEvent: (_agentId, event) => {
@@ -277,16 +282,11 @@ describe("mid-turn context guard", () => {
       percent: 86
     };
 
-    const nowSpy = vi.spyOn(Date, "now");
-    nowSpy
-      .mockReturnValueOnce(10_000)
-      .mockReturnValueOnce(10_000)
-      .mockReturnValueOnce(11_000)
-      .mockReturnValueOnce(11_000)
-      .mockReturnValueOnce(14_100)
-      .mockReturnValueOnce(14_100);
+    let nowMs = 10_000;
+    vi.spyOn(Date, "now").mockImplementation(() => nowMs);
     (runtime as any).checkContextBudget();
     (runtime as any).checkContextBudget();
+    nowMs = 14_100;
     (runtime as any).checkContextBudget();
 
     expect(runGuardSpy).toHaveBeenCalledTimes(2);
@@ -844,7 +844,7 @@ describe("mid-turn context guard", () => {
     expect(runtimeErrors.some((entry) => entry.message.includes("context_guard_abort timed out"))).toBe(true);
   });
 
-  it("runContextGuard compact timeout reports error and still resumes", async () => {
+  it("runContextGuard compact timeout reports error and does not resume", async () => {
     vi.useFakeTimers();
     const { runtime, session, runtimeErrors } = createRuntime();
     session.contextUsage = {
@@ -862,12 +862,12 @@ describe("mid-turn context guard", () => {
       percent: 86
     });
 
-    await vi.advanceTimersByTimeAsync(180_000);
+    await vi.advanceTimersByTimeAsync(COMPACTION_GUARD_TEST_TIMEOUT_MS);
     await guardPromise;
 
     expect(session.compactCalls).toBe(1);
     expect(session.abortCompactionCalls).toBe(1);
-    expect(session.promptCalls).toHaveLength(2);
+    expect(session.promptCalls).toHaveLength(1);
     expect(runtimeErrors.some((entry) => entry.details?.stage === "compaction_failed")).toBe(true);
     expect(runtimeErrors.some((entry) => entry.message.includes("context_guard_compact timed out"))).toBe(true);
   });
@@ -884,6 +884,7 @@ describe("mid-turn context guard", () => {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 179_999);
       });
+      session.entries.push({ type: "compaction", id: "compact-1" });
       return { ok: true };
     };
 
@@ -993,7 +994,7 @@ describe("mid-turn context guard", () => {
     expect(session.promptCalls).toHaveLength(2);
   });
 
-  it("runContextGuard logs compaction failure but still sends resume prompt", async () => {
+  it("runContextGuard logs compaction failure and does not send resume prompt", async () => {
     const { runtime, session, runtimeErrors } = createRuntime();
     session.contextUsage = {
       tokens: 176_000,
@@ -1010,7 +1011,7 @@ describe("mid-turn context guard", () => {
       percent: 86
     });
 
-    expect(session.promptCalls).toHaveLength(2);
+    expect(session.promptCalls).toHaveLength(1);
     expect(runtimeErrors.some((entry) => entry.details?.stage === "compaction_failed")).toBe(true);
   });
 
@@ -1046,7 +1047,7 @@ describe("mid-turn context guard", () => {
       source: "test"
     });
 
-    await vi.advanceTimersByTimeAsync(180_000);
+    await vi.advanceTimersByTimeAsync(COMPACTION_GUARD_TEST_TIMEOUT_MS);
     const result = await retryPromise;
 
     expect(result.recovered).toBe(false);

@@ -9,6 +9,7 @@ import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import { SwarmRuntimeController, type SwarmRuntimeControllerHost } from "../swarm-runtime-controller.js";
+import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { SwarmWorkerHealthService, TRANSIENT_WORKER_TERMINATED_GRACE_MS } from "../swarm-worker-health-service.js";
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { AgentDescriptor, AgentStatus, SwarmConfig } from "../types.js";
@@ -177,6 +178,7 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
       handleManagerStatusTransition: cortexHandleManagerStatus
     },
     getPiModelsJsonPathOrThrow: vi.fn(() => join(config.paths.sharedCacheDir, "pi-models.json")),
+    getCompactionRuntimeSettingsProvider: () => createDefaultCompactionRuntimeSettingsProvider(),
     getMemoryRuntimeResources: vi.fn(async () => ({
       memoryContextFile: { path: "/mem", content: "" },
       additionalSkillPaths: []

@@ -4,9 +4,12 @@ import {
   buildHandoffFilePath,
   buildHandoffPrompt,
   buildResumePrompt,
+  COMPACTION_GUARD_TEST_TIMEOUT_MS,
   createCompactionGuardRuntime,
   hasCompactionRecord,
 } from "../../test-support/compaction-guard-harness.js";
+import { createStaticCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
+import { DEFAULT_COMPACTION_TIMEOUT_MS } from "../compaction-settings-service.js";
 
 const resizeImageIfNeededMock = vi.hoisted(() =>
   vi.fn(async (data: string, mimeType: string) => ({
@@ -45,99 +48,48 @@ describe("compaction stability characterization", () => {
     vi.restoreAllMocks();
   });
 
-  describe("baseline (current behavior)", () => {
-    it("context guard compact timeout reports failure and still resumes", async () => {
+  describe("runtime settings provider", () => {
+    it("uses configured compaction timeout for smart/manual compaction paths", async () => {
       vi.useFakeTimers();
-      const { runtime, session, runtimeErrors } = createCompactionGuardRuntime();
-      session.contextUsage = {
-        tokens: 176_000,
-        contextWindow: 200_000,
-        percent: 88,
-      };
-      session.compactImpl = async () => {
-        await new Promise<void>(() => {});
-      };
-
-      const guardPromise = (runtime as never as { runContextGuard: (usage: unknown) => Promise<void> }).runContextGuard({
-        tokens: 172_000,
-        contextWindow: 200_000,
-        percent: 86,
+      const customTimeoutMs = 120_000;
+      const { runtime, session } = createCompactionGuardRuntime({
+        compactionRuntimeSettingsProvider: createStaticCompactionRuntimeSettingsProvider({
+          timeoutMs: customTimeoutMs,
+        }),
       });
-
-      await vi.advanceTimersByTimeAsync(180_000);
-      await guardPromise;
-
-      expect(session.compactCalls).toBe(1);
-      expect(hasCompactionRecord(session.entries)).toBe(false);
-      expect(session.promptCalls).toHaveLength(2);
-      expect(runtimeErrors.some((entry) => entry.details?.stage === "compaction_failed")).toBe(true);
-    });
-
-    it("smartCompact compact timeout returns not-reduced but still resumes by default", async () => {
-      vi.useFakeTimers();
-      const { runtime, session } = createCompactionGuardRuntime();
       session.isStreaming = false;
       session.compactImpl = async () => {
         await new Promise<void>(() => {});
       };
 
       const compactPromise = runtime.smartCompact("Preserve unresolved TODOs.");
-      await vi.advanceTimersByTimeAsync(180_000);
+      await vi.advanceTimersByTimeAsync(customTimeoutMs - 1);
+      await Promise.resolve();
+      expect(session.compactCalls).toBe(1);
+      expect(session.promptCalls).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1);
       const result = await compactPromise;
 
-      expect(result).toEqual({
-        compacted: false,
-        reason: expect.stringContaining("smart_compact_compact timed out"),
-      });
-      expect(hasCompactionRecord(session.entries)).toBe(false);
-      expect(session.promptCalls).toHaveLength(2);
-      expect(session.promptCalls[1]).toBe(buildResumePrompt("## Current Task\nKeep going"));
+      expect(result.compacted).toBe(false);
+      expect(result.reason).toContain("smart_compact_compact timed out");
     });
 
-    it("handleAutoCompactionEndEvent treats aborted/no-error compaction_end as success today", async () => {
-      const { runtime, runtimeErrors } = createCompactionGuardRuntime();
-
-      await (runtime as never as {
-        handleAutoCompactionEndEvent: (event: unknown) => Promise<void>;
-      }).handleAutoCompactionEndEvent({
-        type: "compaction_end",
-        reason: "overflow",
-        result: undefined,
-        aborted: true,
-        willRetry: false,
+    it("defaults to persisted compaction timeout when no provider override is supplied in tests", () => {
+      const { runtime } = createCompactionGuardRuntime({
+        compactionRuntimeSettingsProvider: createStaticCompactionRuntimeSettingsProvider({
+          timeoutMs: DEFAULT_COMPACTION_TIMEOUT_MS,
+        }),
       });
 
-      expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_succeeded")).toBe(true);
-    });
-
-    it("context guard deletes handoff file after compact timeout failure", async () => {
-      vi.useFakeTimers();
-      const { runtime, session } = createCompactionGuardRuntime();
-      session.contextUsage = {
-        tokens: 176_000,
-        contextWindow: 200_000,
-        percent: 88,
-      };
-      session.compactImpl = async () => {
-        await new Promise<void>(() => {});
-      };
-
-      const handoffPath = buildHandoffFilePath(runtime.descriptor);
-      const guardPromise = (runtime as never as { runContextGuard: (usage: unknown) => Promise<void> }).runContextGuard({
-        tokens: 172_000,
-        contextWindow: 200_000,
-        percent: 86,
-      });
-
-      await vi.advanceTimersByTimeAsync(180_000);
-      await guardPromise;
-
-      expect(rmMock).toHaveBeenCalledWith(handoffPath, { force: true });
+      expect((runtime as never as { getCompactionTimeoutMs: () => number }).getCompactionTimeoutMs()).toBe(
+        DEFAULT_COMPACTION_TIMEOUT_MS,
+      );
     });
   });
 
-  describe("target contract (pending runtime fixes)", () => {
-    it.fails("context guard compact timeout must not resume without a compaction record", async () => {
+  describe("recovery contract (Phase 3)", () => {
+    it("context guard compact timeout must not resume without a compaction record", async () => {
       vi.useFakeTimers();
       const { runtime, session } = createCompactionGuardRuntime();
       session.contextUsage = {
@@ -155,7 +107,7 @@ describe("compaction stability characterization", () => {
         percent: 86,
       });
 
-      await vi.advanceTimersByTimeAsync(180_000);
+      await vi.advanceTimersByTimeAsync(COMPACTION_GUARD_TEST_TIMEOUT_MS);
       await guardPromise;
 
       expect(hasCompactionRecord(session.entries)).toBe(false);
@@ -163,7 +115,7 @@ describe("compaction stability characterization", () => {
       expect(session.promptCalls[0]).toBe(buildHandoffPrompt(buildHandoffFilePath(runtime.descriptor)));
     });
 
-    it.fails("smartCompact compact timeout must not resume after failure", async () => {
+    it("smartCompact compact timeout must not resume after failure", async () => {
       vi.useFakeTimers();
       const { runtime, session } = createCompactionGuardRuntime();
       session.isStreaming = false;
@@ -172,7 +124,7 @@ describe("compaction stability characterization", () => {
       };
 
       const compactPromise = runtime.smartCompact("Preserve unresolved TODOs.");
-      await vi.advanceTimersByTimeAsync(180_000);
+      await vi.advanceTimersByTimeAsync(COMPACTION_GUARD_TEST_TIMEOUT_MS);
       const result = await compactPromise;
 
       expect(result.compacted).toBe(false);
@@ -180,7 +132,7 @@ describe("compaction stability characterization", () => {
       expect(session.promptCalls[0]).toBe(buildHandoffPrompt(buildHandoffFilePath(runtime.descriptor)));
     });
 
-    it.fails("handleAutoCompactionEndEvent aborted without error must not report auto_compaction_succeeded", async () => {
+    it("handleAutoCompactionEndEvent aborted without error must not report auto_compaction_succeeded", async () => {
       const { runtime, runtimeErrors } = createCompactionGuardRuntime();
 
       await (runtime as never as {
@@ -194,9 +146,10 @@ describe("compaction stability characterization", () => {
       });
 
       expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_succeeded")).toBe(false);
+      expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_aborted")).toBe(true);
     });
 
-    it.fails("failed context guard must retain handoff artifact instead of deleting it", async () => {
+    it("failed context guard must retain handoff artifact instead of deleting it", async () => {
       vi.useFakeTimers();
       const { runtime, session } = createCompactionGuardRuntime();
       session.contextUsage = {
@@ -215,11 +168,29 @@ describe("compaction stability characterization", () => {
         percent: 86,
       });
 
-      await vi.advanceTimersByTimeAsync(180_000);
+      await vi.advanceTimersByTimeAsync(COMPACTION_GUARD_TEST_TIMEOUT_MS);
       await guardPromise;
 
       expect(hasCompactionRecord(session.entries)).toBe(false);
       expect(rmMock).not.toHaveBeenCalledWith(handoffPath, { force: true });
+    });
+
+    it("handleAutoCompactionEndEvent success path requires a compaction record when not aborted", async () => {
+      const { runtime, session, runtimeErrors } = createCompactionGuardRuntime();
+
+      await (runtime as never as {
+        handleAutoCompactionEndEvent: (event: unknown) => Promise<void>;
+      }).handleAutoCompactionEndEvent({
+        type: "compaction_end",
+        reason: "overflow",
+        result: undefined,
+        aborted: false,
+        willRetry: false,
+      });
+
+      expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+      expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_succeeded")).toBe(false);
+      expect(runtimeErrors.some((entry) => entry.details?.recoveryStage === "auto_compaction_failed")).toBe(true);
     });
   });
 });

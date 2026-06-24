@@ -102,6 +102,10 @@ import type {
   SidebarPerfSummary
 } from "../stats/sidebar-perf-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
+import {
+  createDefaultCompactionRuntimeSettingsProvider,
+  type CompactionRuntimeSettingsProvider,
+} from "./compaction-runtime-settings-provider.js";
 import { AgentDescriptorStore } from "./agents/agent-descriptor-store.js";
 import { ArchiveService } from "./archive/archive-service.js";
 import { ArchiveLastUsedHydrator, type ArchiveLastUsedHydrationResult } from "./archive/archive-last-used-hydrator.js";
@@ -1253,6 +1257,7 @@ type SwarmManagerOptions = {
   interruptExternalThreadSidecarTurn?: ExternalThreadStopInterruptCallback;
   /** Kill/delete cleanup-only seam. Distinct from stop interrupts; defaults to Codex cleanup. */
   terminateExternalThreadSidecarTurn?: ExternalThreadTerminateCleanupCallback;
+  compactionRuntimeSettingsProvider?: CompactionRuntimeSettingsProvider;
 };
 
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
@@ -1342,6 +1347,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
   private workPlansEnabled = false;
   private modelCacheVisualizationEnabled = false;
+  private compactionRuntimeSettingsProvider: CompactionRuntimeSettingsProvider;
 
   constructor(config: SwarmConfig, options?: SwarmManagerOptions) {
     super();
@@ -1355,6 +1361,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.now = options?.now ?? nowIso;
     this.versioningService = options?.versioningService;
     this.observability = options?.observability;
+    this.compactionRuntimeSettingsProvider =
+      options?.compactionRuntimeSettingsProvider ?? createDefaultCompactionRuntimeSettingsProvider();
     const resourcesDir = this.config.paths.resourcesDir ?? this.config.paths.rootDir;
     this.promptRegistry = new FileBackedPromptRegistry({
       dataDir: this.config.paths.dataDir,
@@ -9667,6 +9675,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return this.piModelsJsonPath;
+  }
+
+  getCompactionRuntimeSettingsProvider(): CompactionRuntimeSettingsProvider {
+    return this.compactionRuntimeSettingsProvider;
+  }
+
+  setCompactionRuntimeSettingsProvider(provider: CompactionRuntimeSettingsProvider): void {
+    this.compactionRuntimeSettingsProvider = provider;
   }
 
   private async refreshPiModelsJsonProjection(): Promise<void> {

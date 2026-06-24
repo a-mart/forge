@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPiModelsProjectionPath } from "../model-catalog-projection.js";
+import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { planPiExtensionFactories } from "../runtime/runtime-tool-plan.js";
 
 const piAiMockState = vi.hoisted(() => ({
@@ -323,6 +324,9 @@ function createFactory(
     getCredentialPoolService: overrides.getCredentialPoolService,
     getOpenAIAuthBrokerRuntimeService: overrides.getOpenAIAuthBrokerRuntimeService,
     observability: overrides.observability,
+    getCompactionRuntimeSettingsProvider:
+      overrides.getCompactionRuntimeSettingsProvider ??
+      (() => createDefaultCompactionRuntimeSettingsProvider()),
     getMemoryRuntimeResources: overrides.getMemoryRuntimeResources ?? (async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),

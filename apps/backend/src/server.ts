@@ -24,7 +24,12 @@ import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
 import { isBuilderRuntimeTarget, isCollaborationServerRuntimeTarget } from "./runtime-target.js";
 import { FeedbackService } from "./swarm/feedback-service.js";
+import { CompactionSettingsService } from "./swarm/compaction-settings-service.js";
+import {
+  createCompactionRuntimeSettingsProviderFromService,
+} from "./swarm/compaction-runtime-settings-provider.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
+import { getManagedModelProviderCredentialAvailability } from "./swarm/secrets-env-service.js";
 import { seedBuiltins } from "./swarm/specialists/specialist-registry.js";
 import { UnreadTracker } from "./swarm/unread-tracker.js";
 import type { AgentDescriptor, SessionLifecycleEvent, SwarmConfig } from "./swarm/types.js";
@@ -186,6 +191,21 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
   try {
     await swarmManager.boot();
+
+    let compactionSettingsService: CompactionSettingsService | null = null;
+    if (isBuilderRuntimeTarget(config.runtimeTarget)) {
+      compactionSettingsService = new CompactionSettingsService({
+        dataDir: config.paths.dataDir,
+        getProviderAvailability: () =>
+          getManagedModelProviderCredentialAvailability(config, {
+            credentialPoolService: swarmManager.getCredentialPoolService(),
+          }),
+      });
+      await compactionSettingsService.load();
+      swarmManager.setCompactionRuntimeSettingsProvider(
+        createCompactionRuntimeSettingsProviderFromService(compactionSettingsService),
+      );
+    }
 
     if (isCollaborationServerRuntimeTarget(config.runtimeTarget)) {
       const collaborationDatabase = await getOrCreateCollaborationAuthDb(config);
@@ -381,6 +401,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       feedbackService,
       collaborationSettingsService,
       collaborationReadinessService,
+      compactionSettingsService: compactionSettingsService ?? undefined,
 
     });
 

@@ -20,6 +20,7 @@ import type {
   AgentStatus,
   SwarmConfig
 } from "../types.js";
+import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { assertForgeRuntimeEligibleDescriptor } from "../external-thread-compatibility.js";
 import { ClaudeRuntimeCreator } from "./claude/claude-runtime-creator.js";
 import { PiRuntimeCreator } from "./pi/pi-runtime-creator.js";
@@ -38,6 +39,7 @@ interface RuntimeFactoryDependencies {
   getCredentialPoolService?: () => CredentialPoolService;
   getOpenAIAuthBrokerRuntimeService?: () => OpenAIAuthBrokerRuntimeService;
   observability?: ObservabilityFacade;
+  getCompactionRuntimeSettingsProvider: () => CompactionRuntimeSettingsProvider;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
