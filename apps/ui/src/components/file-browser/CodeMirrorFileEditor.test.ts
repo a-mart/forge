@@ -165,6 +165,16 @@ describe('CodeMirrorFileEditor', () => {
     expect(contentElement().getAttribute('aria-label')).toBe('File editor')
   })
 
+  it('opts the CodeMirror scroller into file browser scrollbar styling', () => {
+    renderEditor()
+
+    const editorRoot = container.querySelector<HTMLElement>('[data-testid="codemirror-file-editor"]')
+
+    expect(editorRoot).not.toBeNull()
+    expect(editorRoot?.classList.contains('file-browser-code-editor')).toBe(true)
+    expect(container.querySelector('.cm-scroller')).not.toBeNull()
+  })
+
   it('uses the light-safe CodeMirror theme extension by default', () => {
     renderEditor()
 
