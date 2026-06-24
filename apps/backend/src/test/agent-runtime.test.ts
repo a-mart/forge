@@ -1344,6 +1344,7 @@ describe('AgentRuntime', () => {
 
 describe('manager empty-turn retry after worker terminal report', () => {
   const TERMINAL_CALLBACK = 'WORKER REPORT: status: blocked\nsummary: rerun failed before a Graph response.'
+  const COMPLETED_TERMINAL_CALLBACK = 'WORKER REPORT: status: completed\nsummary: clean reset finished.'
   const LEGACY_SYSTEM_STATUS_CALLBACK = 'SYSTEM: status: done\nsummary: executed the guarded pilot once.'
   const LEGACY_WORKER_COMPLETED_CALLBACK = 'SYSTEM: Worker w-1 completed its turn.\n\nLast assistant message:\nDone.'
   const LEGACY_WORKER_ERROR_CALLBACK = 'SYSTEM: Worker w-1 ended its turn with an error.\n\nLast system message:\n⚠️ Agent error: failed.'
@@ -1407,6 +1408,17 @@ describe('manager empty-turn retry after worker terminal report', () => {
 
     expect(session.promptCalls).toEqual([TERMINAL_CALLBACK])
     expect(session.state.messages).toEqual([])
+    expect(onAgentEnd).not.toHaveBeenCalled()
+  })
+
+  it('resamples an empty turn that follows a completed terminal worker report', async () => {
+    const { session, runtime, onAgentEnd } = makeRuntime()
+    session.state.messages = [userMessage(COMPLETED_TERMINAL_CALLBACK), emptyAssistantMessage()]
+
+    await (runtime as any).handleEvent({ type: 'agent_end' })
+    await waitForCondition(() => session.promptCalls.length === 1)
+
+    expect(session.promptCalls).toEqual([COMPLETED_TERMINAL_CALLBACK])
     expect(onAgentEnd).not.toHaveBeenCalled()
   })
 

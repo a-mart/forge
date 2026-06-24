@@ -72,8 +72,8 @@ const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
 const MAX_TERMINAL_REPORT_RESAMPLES = 2;
 const DIRECT_USER_SOURCE_CONTEXT_PATTERN = /^\[sourceContext\]\s+(\{[^\n]*\})(?:\n|$)/u;
 const TERMINAL_WORKER_REPORT_PATTERNS = [
-  /^WORKER REPORT:\s*status:\s*(?:done|partial|blocked)\b/i,
-  /^SYSTEM:\s*status:\s*(?:done|partial|blocked)\b/i,
+  /^WORKER REPORT:\s*status:\s*(?:done|partial|blocked|completed)\b/i,
+  /^SYSTEM:\s*status:\s*(?:done|partial|blocked|completed)\b/i,
   /^SYSTEM:\s*Worker\s+\S+\s+completed its turn\b/i,
   /^SYSTEM:\s*Worker\s+\S+\s+ended its turn with an error\b/i,
 ];

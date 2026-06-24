@@ -7264,15 +7264,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       // Providers that do not echo user messages may emit either a synthetic message_start
       // or only the completed user message for the selected runtime input; match by content
       // instead of assuming queued turn FIFO.
-      if (this.inboundTurnContextActivatedByAgentId.has(agentId)) {
-        return;
-      }
-
       const nextContext = this.dequeueInboundTurnContextForRuntimeMessage(agentId, event.message);
       if (nextContext) {
         this.inboundTurnContextActivatedByAgentId.add(agentId);
         this.activateInboundTurnContext(agentId, descriptor, nextContext);
-      } else {
+      } else if (!this.inboundTurnContextActivatedByAgentId.has(agentId)) {
         this.activateInboundTurnContext(agentId, descriptor, undefined);
       }
       return;

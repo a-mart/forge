@@ -83,6 +83,9 @@ export class ManagerAssistantOutputTracker {
 
       case "tool_execution_end":
         activeTurn.openToolCallIds.delete(event.toolCallId);
+        if (event.isError && activeTurn.candidate?.preserveThroughToolName === event.toolName) {
+          activeTurn.candidate = undefined;
+        }
         break;
 
       case "message_end":
